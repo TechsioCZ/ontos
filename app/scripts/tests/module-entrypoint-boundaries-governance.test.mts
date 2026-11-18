@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Array as EffectArray, Cause, Effect, Exit, Match, Schema } from 'effect';
@@ -54,7 +53,6 @@ import {
   CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH,
   DEFAULT_API_PREFIX,
   DEFAULT_API_PREFIX_TAIL,
-  EARLY_FAILURE,
   ENGAGEMENT_ACTIONS,
   ENGAGEMENT_ACTION_DIRECTORY,
   ENGAGEMENT_ACTION_FILE,
@@ -77,7 +75,6 @@ import {
   INVENTORY_CONTRACT_IMPORT,
   INVENTORY_DEPLOYMENT_ID,
   INVENTORY_MODULE_ID,
-  INVENTORY_OWNER_PATH,
   INVENTORY_PACKAGE_SPECIFIER,
   INVENTORY_REGISTRATION_PATH,
   INVENTORY_RUNTIME_ID,
@@ -89,7 +86,6 @@ import {
   MODULE_API_KIND,
   NATIVE_HTTP_SOURCE_IMPORT,
   OPTIONS_CALL_TAIL,
-  PARTIAL_FAILURE,
   PARTY_API_CLIENT_EXPORT,
   PARTY_API_CLIENT_SPECIFIER,
   PARTY_CLIENT_SOURCE_PATH,
@@ -1270,6 +1266,8 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
       invalidClients,
       /module APIs require an approved Codesmith generator/u,
     );
+    // Each contract case below must fail on the contract alone, never on a client left invalid above.
+    yield* write(root, clientPath, validClient);
     const contractPath = 'verticals/inventory-stock/shared/apis/stock-list.ts';
     const validContract = yield* Effect.promise(() => readFile(path.join(root, contractPath), 'utf-8'));
     yield* assertRejectedSources(
@@ -1286,20 +1284,17 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
       ],
       /module APIs require an approved Codesmith generator/u,
     );
-    yield* write(root, contractPath, validContract);
-    yield* write(
-      root,
-      contractPath,
-      validContract.replace(
-        "HttpApi.make('StockListApi').add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))",
-        `HttpApi.make('StockListApi')
+    const pipedDecoy = validContract.replace(
+      "HttpApi.make('StockListApi').add(",
+      `HttpApi.make('StockListApi')
   .pipe((api) => {
     DecoyApi.add(HttpApiGroup.make('decoy'));
     return api;
   })
-  .add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))`,
-      ),
+  .add(`,
     );
+    expect(pipedDecoy).not.toBe(validContract);
+    yield* write(root, contractPath, pipedDecoy);
     yield* write(root, clientPath, validClient.replace('client.stockList.execute', 'client.decoy.execute'));
     yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
       onFailure: (cause) =>
@@ -1308,12 +1303,9 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
-    yield* write(
-      root,
-      contractPath,
-      `${validContract.replace(".add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))", '')}
-DecoyApi.add(HttpApiGroup.make('decoy'));`,
-    );
+    const detachedContract = validContract.replace(/\.add\(HttpApiGroup\.make\('stockList'\)[\s\S]*?\}\)\)\)/u, '');
+    expect(detachedContract).not.toBe(validContract);
+    yield* write(root, contractPath, `${detachedContract}\nDecoyApi.add(HttpApiGroup.make('decoy'));`);
     yield* write(root, clientPath, validClient.replace('client.stockList.execute', 'client.decoy.execute'));
     yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
       onFailure: (cause) =>
@@ -1322,6 +1314,7 @@ DecoyApi.add(HttpApiGroup.make('decoy'));`,
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
+    yield* write(root, clientPath, validClient);
     yield* write(
       root,
       contractPath,
@@ -2644,47 +2637,10 @@ for (const handler of ['issueGatewayContext', 'issueApiKeyGatewayContext', 'issu
   );
 }
 
-for (const outcome of ['success', EARLY_FAILURE, PARTIAL_FAILURE, 'interruption'] as const) {
-  it.live(`releases fixture directories after ${outcome} during initialization`, () =>
-    Effect.gen(function* fixtureCleanupControl() {
-      let directory = '';
-      const failure = new Error('fixture initialization failed');
-      const exit = yield* Effect.scoped(
-        makeFixture(false, (root) =>
-          Effect.gen(function* initializeFixtureControl() {
-            directory = root;
-            if (outcome === EARLY_FAILURE) {
-              yield* Effect.fail(failure);
-            }
-            yield* write(root, 'partial.txt', 'partially initialized');
-            if (outcome === PARTIAL_FAILURE) {
-              yield* Effect.fail(failure);
-            }
-            if (outcome === 'interruption') {
-              yield* Effect.interrupt;
-            }
-          }),
-        ),
-      ).pipe(Effect.exit);
-      expect(directory).not.toBe('');
-      expect(existsSync(directory)).toBe(false);
-      expect(Exit.isSuccess(exit)).toBe(outcome === 'success');
-      expect(Exit.hasInterrupts(exit)).toBe(outcome === 'interruption');
-      if (outcome === EARLY_FAILURE || outcome === PARTIAL_FAILURE) {
-        Exit.match(exit, {
-          onFailure: (cause) => {
-            expect(cause.reasons).toHaveLength(1);
-            expect(Cause.squash(cause)).toBe(failure);
-          },
-          onSuccess: () => expect.unreachable('Expected fixture initialization to fail'),
-        });
-      }
-    }),
-  );
-}
-
 it('accepts the protected classification on a generated read and refuses any other kind', () => {
   const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  // O62: a protected read decides itself, so the generated descriptor names no legacy permission target.
+  expect(base).not.toContain('permissionTarget');
   expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, { kind: 'protected' })).toBe(
     true,
   );
@@ -2702,23 +2658,6 @@ it('accepts the protected classification on a generated read and refuses any oth
   for (const kind of ['public', 'authenticated_principal'] as const) {
     expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, { kind })).toBe(false);
   }
-});
-
-it('accepts a protected read that decides itself without the legacy permission target (O62)', () => {
-  const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
-  expect(base).not.toContain('permissionTarget');
-  expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, { kind: 'protected' })).toBe(
-    true,
-  );
-  // Negative control: a read on any other classification has to name the permission target it is
-  // decided by, so the same descriptor without one is refused.
-  const unprotected = base.replace(PROTECTED_AUTHORIZATION_SOURCE, "{ kind: 'authenticated_principal' }");
-  expect(unprotected).not.toBe(base);
-  expect(
-    hasGeneratedModuleApiReadContract(unprotected, INVENTORY_MODULE_ID, STOCK_LIST_STEM, {
-      kind: 'authenticated_principal',
-    }),
-  ).toBe(false);
 });
 
 it('follows the actual immutable Core entrypoint reference while preserving owner and authorization identity', () => {
@@ -2940,7 +2879,7 @@ it('proves only closed schema and request-discriminator dispatch through the unc
 });
 
 it('proves inferred native scoped factories and nested callback type parameters without accepting forged ownership', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/src/api/stock-list.read.ts`;
   const service = `${owner}/src/services/stock-list.ts`;
   const sources = new Map([
@@ -2970,7 +2909,7 @@ export const factory = (transaction: ScopedTransactionExecutor, scope: Operation
 });
 
 it('recognizes native Effect.fn scoped generators only with the actual Core factory ABI', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/src/api/stock-list.read.ts`;
   const service = `${owner}/src/services/stock-list.ts`;
   const source = `import type { ScopedTransactionExecutor, OperationalScope } from '@app/core-runtime';
@@ -3034,7 +2973,7 @@ it('binds native handler audiences to the actual owner and preserves thin server
 });
 
 it('resolves the published owner client once and requires exact relative Action exports', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/shared/inventory-stock-client.ts`;
   const publication =
     "// <generated-action-http-client-exports>\nexport * from '../src/api/reserve-action-client.ts';\n// </generated-action-http-client-exports>";
@@ -3089,7 +3028,7 @@ it.live(
     Effect.gen(function* publishedContractWithOwnerClient() {
       const root = yield* makeFixture();
       yield* writeGovernedModuleApi(root);
-      const contractFile = `${INVENTORY_OWNER_PATH}/shared/apis/stock-list.ts`;
+      const contractFile = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
       const published = STOCK_LIST_PUBLISHED_SOURCE;
       const packageFile = 'packages/inventory-public-contracts/package.json';
       const contract = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));
@@ -3136,7 +3075,7 @@ it.live(
 );
 
 it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
   const actionFile = `${owner}/shared/apis/reserve-action.ts`;

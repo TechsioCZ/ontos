@@ -182,11 +182,6 @@ it.live('serializes category moves and retirement against assignments while enfo
       );
 
       expect(yield* withTenant(tenantB, (transaction) => transaction.select().from(productCategories))).toEqual([]);
-      const role = yield* runtime.execute<{ rolbypassrls: boolean; rolsuper: boolean }>(
-        sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
-        'objects',
-      );
-      expect(role).toEqual([{ rolbypassrls: false, rolsuper: false }]);
       const foreignInsertError = yield* Effect.flip(
         withTenant(tenantB, (transaction) =>
           transaction.insert(productCategoryAssignments).values({

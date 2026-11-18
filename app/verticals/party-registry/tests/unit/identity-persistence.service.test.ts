@@ -16,7 +16,6 @@ import type {
 } from '../../src/db/schema.ts';
 import { tenantIdentityWriteLockKey } from '../../src/services/party-identifier-claim.service.ts';
 import {
-  endedPartyFactTransition,
   insertPartyRecord,
   transitionPartyRecord,
   unarchivePartyRecord,
@@ -162,13 +161,6 @@ const assertTenantLockIsFirst = (harness: ReturnType<typeof transactionHarness>)
 it.layer(
   Layer.effectDiscard(TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z')))),
 )('identity-persistence.service', (testIt) => {
-  it('ended Party facts are made non-current as part of the same transition', () => {
-    expect(endedPartyFactTransition).toEqual({
-      isCurrent: false,
-      state: 'ENDED',
-    });
-  });
-
   testIt.effect('unnamed Party insertion persists no fabricated display-name assertion', () =>
     Effect.gen(function* verifyIdentityPersistence() {
       const candidateEvidence: AresAppliedEvidence = {

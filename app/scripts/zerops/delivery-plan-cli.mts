@@ -7,45 +7,50 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   buildEnvironment,
+  DELIVERY_ROOTS,
   DeliveryPlanSchema,
-  DeliveryAttemptSchema,
-  DeliveryReceiptSchema,
+  deliveryReads,
   isReferenceSource,
   planDelivery,
-  previousVerifiedBase,
   SERVICES,
   unitIdentity,
   unitInputDigest,
   unitInputGraph,
 } from './delivery-plan.mts';
-import type { GitEntry } from './delivery-plan.mts';
+import { readSources, readWorkspace } from '../ci/unit-inputs.mts';
 
-const Manifest = Schema.Struct({
-  dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  devDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  name: Schema.String,
-  optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+const PriorRunSchema = Schema.Struct({
+  conclusion: Schema.OptionFromNullOr(Schema.String),
+  head_branch: Schema.String,
+  head_sha: Schema.String,
+  id: Schema.Number,
+  path: Schema.String,
+  run_attempt: Schema.Number,
+  run_number: Schema.Number,
+  status: Schema.String,
 });
-const AppId = Schema.String.pipe(Schema.brand('DeliveryAppId'));
-const Intent = Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: AppId })) });
-const Topology = Schema.Struct({
-  shell: Schema.Struct({ path: Schema.String }),
-  verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
-});
-const Runs = Schema.Struct({
-  workflow_runs: Schema.Array(
+const Service = Schema.Literals(SERVICES);
+/**
+ * What scripts/zerops/read-delivery-history.sh read from GitHub. `runs` is null when the run list could not be read;
+ * each part that could not be read is null, and the plan then deploys every service.
+ */
+const History = Schema.Struct({
+  comparison: Schema.OptionFromNullOr(
     Schema.Struct({
-      conclusion: Schema.OptionFromNullOr(Schema.String),
-      head_branch: Schema.String,
-      head_sha: Schema.String,
-      id: Schema.Number,
-      path: Schema.String,
-      run_attempt: Schema.Number,
-      run_number: Schema.Number,
-      status: Schema.String,
+      ancestor: Schema.Boolean,
+      base: Schema.String,
+      changedPaths: Schema.Array(Schema.String),
+      truncated: Schema.Boolean,
     }),
   ),
+  mutations: Schema.Array(
+    Schema.Struct({
+      mutated: Schema.OptionFromNullOr(Schema.Boolean),
+      runId: Schema.Number,
+      services: Schema.OptionFromNullOr(Schema.Array(Service)),
+    }),
+  ),
+  runs: Schema.OptionFromNullOr(Schema.Array(PriorRunSchema)),
 });
 class DeliveryInputInvalid extends Schema.TaggedError<DeliveryInputInvalid>()('DeliveryInputInvalid', {
   reason: Schema.String,
@@ -64,103 +69,6 @@ const git = (args: readonly string[]) =>
     }
     return stdout;
   }).pipe(Effect.scoped);
-// A function expression, not a generic arrow: tests compile this module with SWC, which refuses `<A,>(…) =>` in .mts.
-const readCommitted = function readCommitted<A>(
-  repository: string,
-  revision: string,
-  filename: string,
-  schema: Schema.Codec<A>,
-) {
-  return git(['-C', repository, 'show', `${revision}:${filename}`]).pipe(
-    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
-  );
-};
-
-const workspaceNames = (dependencies: Readonly<Record<string, string>>) =>
-  Object.entries(dependencies)
-    .filter(([, range]) => range.startsWith('workspace:'))
-    .map(([name]) => name);
-const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => ({
-  directory,
-  name: manifest.name,
-  runtimeDependencies: workspaceNames({
-    ...manifest.dependencies,
-    ...manifest.optionalDependencies,
-    ...manifest.peerDependencies,
-  }),
-  workspaceDependencies: Object.entries({
-    ...manifest.dependencies,
-    ...manifest.devDependencies,
-    ...manifest.optionalDependencies,
-    ...manifest.peerDependencies,
-  })
-    .filter(([, range]) => range.startsWith('workspace:'))
-    .map(([name]) => name),
-});
-/** The committed workspace of one revision; `repository` is any directory inside the repository (default: here). */
-export const readWorkspace = (revision: string, repository = '.') =>
-  Effect.gen(function* readWorkspaceInputs() {
-    const listing = yield* git(['-C', repository, 'ls-tree', '-rz', '--full-tree', revision]);
-    const entries = listing
-      .split('\0')
-      .filter((value) => value.length > 0)
-      .map((row) => {
-        const separator = row.indexOf('\t');
-        return { identity: row.slice(0, separator), path: row.slice(separator + 1) };
-      });
-    const manifests = entries.filter((entry) =>
-      /^app\/(?:(?:apps|verticals|packages)\/[^/]+|akros-storefront|n1-storefront)\/package\.json$/u.test(entry.path),
-    );
-    const packages = [];
-    for (const entry of manifests) {
-      const manifest = yield* readCommitted(repository, revision, entry.path, Manifest);
-      packages.push(workspacePackage(path.posix.dirname(entry.path), manifest));
-    }
-    const intent = yield* readCommitted(repository, revision, 'app/topology/application-release-intent.json', Intent);
-    const topology = yield* readCommitted(repository, revision, 'app/topology/reference-topology.json', Topology);
-    const units = [{ directory: `app/${topology.shell.path}`, id: 'shell-super-app' }];
-    for (const module of intent.modules) {
-      const owner = topology.verticals.find((entry) => entry.id === module.appId);
-      if (owner === undefined) {
-        return yield* new DeliveryInputInvalid({ reason: `Missing topology owner ${module.appId}` });
-      }
-      units.push({ directory: `app/${owner.path}`, id: module.appId });
-    }
-    return { entries, packages, units };
-  });
-
-/** The committed text of every reference source, read in one `git cat-file --batch`. */
-export const readSources = (entries: readonly GitEntry[], repository = '.') =>
-  Effect.gen(function* readReferenceSources() {
-    const wanted = entries.filter((entry) => isReferenceSource(entry.path) && entry.identity.includes(' blob '));
-    const request = new TextEncoder().encode(wanted.map((entry) => `${entry.identity.split(' ')[2] ?? ''}\n`).join(''));
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const handle = yield* spawner.spawn(
-      ChildProcess.make('git', ['-C', repository, 'cat-file', '--batch'], { stdin: { stream: Stream.make(request) } }),
-    );
-    const [chunks, , code] = yield* Effect.all(
-      [Stream.runCollect(handle.stdout), Stream.runDrain(handle.stderr), handle.exitCode],
-      { concurrency: 'unbounded' },
-    );
-    if (Number(code) !== 0) {
-      return yield* new DeliveryInputInvalid({ reason: 'Git command failed: cat-file' });
-    }
-    const output = Buffer.concat([...chunks]);
-    const decoder = new TextDecoder();
-    const sources = new Map<string, string>();
-    let offset = 0;
-    for (const entry of wanted) {
-      const end = output.indexOf(0x0a, offset);
-      const size = Number(output.subarray(offset, end).toString('latin1').split(' ')[2]);
-      if (end === -1 || !Number.isSafeInteger(size)) {
-        return yield* new DeliveryInputInvalid({ reason: `Unreadable blob for ${entry.path}` });
-      }
-      sources.set(entry.path, decoder.decode(output.subarray(end + 1, end + 1 + size)));
-      offset = end + 1 + size + 1;
-    }
-    return sources;
-  }).pipe(Effect.scoped);
-
 /** The environment build children inherit, NUL-separated so values may hold newlines. */
 const inheritedEnvironment = Effect.gen(function* readEnvironment() {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -188,68 +96,46 @@ export const readUnitIdentities = (revision: string) =>
     return { graph, identities, units: workspace.units };
   });
 
-const optionalReceipt = (filename: string) =>
-  Effect.gen(function* readReceipt() {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(filename).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DeliveryReceiptSchema))),
-      Effect.orElseSucceed(() => null),
-    );
-  });
-const optionalAttempt = (filename: string) =>
-  Effect.gen(function* readAttempt() {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(filename).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DeliveryAttemptSchema))),
-      Effect.orElseSucceed(() => null),
-    );
-  });
+/** The committed text of a file, for the delivery roots the reference graph does not read as sources. */
+const committedText = (revision: string, filename: string) => git(['show', `${revision}:${filename}`]);
 
 const plan = Command.make('plan', { directory: Argument.String('directory') }, ({ directory }) =>
   Effect.gen(function* writePlan() {
     const fs = yield* FileSystem.FileSystem;
     const head = yield* Config.String('GITHUB_SHA');
-    const runId = yield* Config.Number('GITHUB_RUN_ID');
     const runAttempt = yield* Config.Number('GITHUB_RUN_ATTEMPT');
     const runNumber = yield* Config.Number('GITHUB_RUN_NUMBER');
     const event = yield* Config.String('GITHUB_EVENT_NAME');
     const workspace = yield* readWorkspace(head);
-    const previousReceipt = yield* optionalReceipt(path.join(directory, 'last-success', 'receipt.json'));
-    const previousAttempt = yield* optionalAttempt(path.join(directory, 'last-attempt', 'attempt.json'));
-    const previousRuns = yield* fs.readFileString(path.join(directory, 'prior-runs.json')).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Runs))),
-      Effect.map((runs) => runs.workflow_runs.map((run) => ({ ...run, conclusion: Option.getOrNull(run.conclusion) }))),
-      Effect.orElseSucceed(() => []),
+    const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
+    const texts = new Map<string, string>();
+    for (const root of DELIVERY_ROOTS.filter((entry) => !isReferenceSource(entry))) {
+      texts.set(root, yield* committedText(head, root));
+    }
+    // Unreadable or malformed history is no history: every service deploys.
+    const history = yield* fs.readFileString(path.join(directory, 'history.json')).pipe(
+      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(History))),
+      Effect.orElseSucceed(() => ({ comparison: Option.none(), mutations: [], runs: Option.none() })),
     );
-    const base = previousVerifiedBase(previousReceipt, previousRuns, runNumber);
-    const ancestor =
-      base === null
-        ? false
-        : yield* git(['merge-base', '--is-ancestor', base, head]).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-    const changedPaths =
-      ancestor && base !== null
-        ? (yield* git(['diff', '--name-only', '--no-renames', '-z', base, head]))
-            .split('\0')
-            .filter((value) => value.length > 0)
-        : [];
     const result = yield* planDelivery({
       ...workspace,
-      ancestor,
-      changedPaths,
+      comparison: Option.getOrNull(history.comparison),
+      deliveryReads: yield* deliveryReads(graph, workspace.units, texts),
       forceFull: event === 'workflow_dispatch',
       head,
-      previousAttempt,
-      previousReceipt,
-      previousRuns,
+      mutations: history.mutations.map((entry) => ({
+        mutated: Option.getOrNull(entry.mutated),
+        runId: entry.runId,
+        services: Option.getOrNull(entry.services),
+      })),
+      previousRuns: Option.getOrElse(history.runs, () => []).map((run) => ({
+        ...run,
+        conclusion: Option.getOrNull(run.conclusion),
+      })),
       runAttempt,
-      runId,
       runNumber,
     });
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(DeliveryPlanSchema))(result);
-    const encodedReceipt = yield* Schema.encodeEffect(Schema.fromJsonString(DeliveryReceiptSchema))(result.receipt);
     yield* fs.writeFileString(path.join(directory, 'plan.json'), `${encoded}\n`);
     const outputs = yield* Config.String('GITHUB_OUTPUT');
     yield* fs.writeFileString(
@@ -258,7 +144,6 @@ const plan = Command.make('plan', { directory: Argument.String('directory') }, (
         ...SERVICES.map((service) => `${service}=${result.services.includes(service)}`),
         `any=${result.services.length > 0}`,
         `full=${result.full}`,
-        `receipt=${encodedReceipt}`,
         '',
       ].join('\n'),
       { flag: 'a' },

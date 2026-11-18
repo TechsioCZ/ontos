@@ -27,6 +27,43 @@ const entry = {
   variantName: "Large",
 };
 describe("N1 scoped local cart", () => {
+  it.effect("rejects additions beyond stock, including the same variant already in the cart", () =>
+    Effect.gen(function* stockBoundaries() {
+      const selected = { ...entry, quantity: 1, stockQuantity: 2 };
+      const first = yield* addCartEntry([], selected);
+      const full = yield* addCartEntry(first, selected);
+      expect(full[0]?.quantity).toBe(2);
+      expect(yield* Effect.flip(addCartEntry(full, selected))).toBeInstanceOf(CartDraftInvalid);
+      expect(yield* Effect.flip(addCartEntry([], { ...selected, quantity: 3 }))).toBeInstanceOf(
+        CartDraftInvalid,
+      );
+      const other = yield* addCartEntry(full, { ...selected, variantId: "other" });
+      expect(other).toHaveLength(2);
+    }),
+  );
+  it.effect("uses fresh stock on edits without destroying an older overstock draft", () =>
+    Effect.gen(function* refreshStock() {
+      const selected = { ...entry, quantity: 5, stockQuantity: 10 };
+      const restored = yield* decodeStoredCart(
+        JSON.stringify({ entries: [selected], scope, version: 1 }),
+        scope,
+      );
+      const fresh = { ...selected, stockQuantity: 2 };
+      const { stockQuantity, ...legacy } = fresh;
+      void stockQuantity;
+      expect(
+        yield* Effect.flip(replaceCartQuantity([{ ...entry, stockQuantity: 2 }], legacy, 3)),
+      ).toBeInstanceOf(CartDraftInvalid);
+      expect(yield* Effect.flip(replaceCartQuantity(restored.entries, fresh, 3))).toBeInstanceOf(
+        CartDraftInvalid,
+      );
+      expect((yield* replaceCartQuantity(restored.entries, fresh, 2))[0]).toMatchObject({
+        quantity: 2,
+        stockQuantity: 2,
+      });
+      expect(restored.entries[0]?.quantity).toBe(5);
+    }),
+  );
   it.effect("clears a stale package only after a fresh owner absence snapshot", () =>
     Effect.gen(function* removedPackageRule() {
       const previous = { ...entry, packageQuantity: 2 };

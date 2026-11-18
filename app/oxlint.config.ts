@@ -260,6 +260,8 @@ export default defineConfig({
     denyWarnings: true,
     reportUnusedDisableDirectives: 'error',
     typeAware: true,
+    // The workspace typecheck builds only the referenced projects, which leave out most tests and the
+    // repository tooling scripts. Compiler diagnostics here cover every file this lint reads.
     typeCheck: true,
   },
   overrides: [
@@ -1552,7 +1554,7 @@ export default defineConfig({
     'perfectionist/sort-objects': [
       'error',
       {
-        // Core's staged reads infer `prepared` from the prepare/load/finish order (demo-only exception 3).
+        // Core's staged reads infer `prepared` from the prepare/load/finish order.
         type: 'unsorted',
         useConfigurationIf: {
           allNamesMatchPattern: '^(?:prepare|load|finish)$',

@@ -342,6 +342,7 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
       env: {
         DATABASE_ADMIN_URL: connections.admin.connectionString,
         DATABASE_URL: connections.runtime.connectionString,
+        NODE_COMPILE_CACHE: yield* Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
         ...urls,
       },
       extendEnv: false,
@@ -403,6 +404,7 @@ const describe = Effect.fn('PrivacyCompletionTest.describe')(function* describe(
 // Child configuration is an explicit capability; never inherit administrator/source database credentials.
 const childEnvironment = (
   transport: {
+    readonly NODE_COMPILE_CACHE?: string;
     readonly PATH: string;
     readonly SPICEDB_CA_CERT: string;
     readonly SPICEDB_ENDPOINT: string;
@@ -410,6 +412,7 @@ const childEnvironment = (
   },
   values: Readonly<Record<string, string>>,
 ) => ({
+  NODE_COMPILE_CACHE: transport.NODE_COMPILE_CACHE ?? '',
   PATH: transport.PATH,
   SPICEDB_CA_CERT: transport.SPICEDB_CA_CERT,
   SPICEDB_ENDPOINT: transport.SPICEDB_ENDPOINT,
@@ -690,6 +693,7 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   credentialHandover?: Uint8Array,
 ) {
   const transport = yield* Config.all({
+    NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
     PATH: Config.String('PATH'),
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
     SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
@@ -1042,9 +1046,10 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     },
   });
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
-    mode: 'empty',
+    mode: 'schema-only',
     purpose: 'stabilization-1258-privacy-drain',
   });
+  yield* isolated.restoreCoreMigrationJournal();
   yield* Effect.logInfo('Privacy fixture setup: owned database created');
   // Capture the actual creator result inside this private scope; no structural URL/executor API escapes.
   const adminAddress = new URL(isolated.connections.admin.connectionString);
@@ -1103,23 +1108,8 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     Effect.flatMap((valid) => (valid ? Effect.void : Effect.fail(failure('Native fixture identity was refused')))),
   );
   yield* verifyNativeIdentity;
-  yield* isolated.migrateCoreSchema();
-  yield* Effect.logInfo('Privacy fixture setup: Core migrated');
-  const databaseEnv = {
-    DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
-    DATABASE_URL: isolated.connections.runtime.connectionString,
-  };
-  for (const owner of ['@app/shell-super-app', '@app/party-registry', '@app/privacy']) {
-    yield* command(['--filter', owner, 'db:migrate'], databaseEnv);
-    if (owner === '@app/shell-super-app') {
-      yield* Effect.logInfo('Privacy fixture setup: Shell migrated');
-    } else if (owner === '@app/party-registry') {
-      yield* Effect.logInfo('Privacy fixture setup: Party migrated');
-    } else {
-      yield* Effect.logInfo('Privacy fixture setup: Privacy migrated');
-    }
-  }
-  yield* verifyNativeIdentity;
+  // This suite tests composition transitions, not deployment bootstrap. The job
+  // already migrated and verified these schemas; clone their empty structure.
   // Fixed current objects only. Core owns its pre-existing separate migration/grant policy.
   yield* Effect.tryPromise({
     catch: () => failure('The fixed owned fixture privilege bootstrap was refused'),
@@ -1152,6 +1142,16 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       await bootstrapAdmin.query('create schema privacy_completion_test');
       await bootstrapAdmin.query(
         'create table privacy_completion_test.redemptions (issuer text not null, audience text not null, jti text not null, primary key (issuer,audience,jti))',
+      );
+      // A schema clone carries deployment bootstrap grants, not this fixture's
+      // narrower owner policy. Replace only direct grants on these exact owned
+      // tables; inherited capabilities are still refused by the checks below.
+      await Promise.all(
+        inventory.flatMap((item) =>
+          item.tables.map((table) =>
+            bootstrapAdmin.query(`revoke all on table "${item.schema}"."${table}" from ${role}`),
+          ),
+        ),
       );
       await Promise.all(
         inventory
@@ -2174,7 +2174,7 @@ const coreDebtSettled = (f: Effect.Success<typeof fixture>) =>
     return receipt.value;
   });
 
-it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 seconds' })(
+it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, timeout: '30 seconds' })(
   'Privacy message-bound completion admission',
   (suite) => {
     suite.effect(

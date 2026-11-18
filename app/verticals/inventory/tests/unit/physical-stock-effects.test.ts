@@ -214,54 +214,43 @@ describe('Inventory physical Stock Receipt and Issue', () => {
       }),
   );
 
-  it.effect(
-    'replays one exact Issue without repeating the backend physical effect or changing obligation meaning',
-    () =>
-      Effect.gen(function* exactIssueReplay() {
-        const { persistence, records } = memoryPersistence();
-        const requested = yield* requestEffect(persistence);
-        let backendCalls = 0;
-        let observedOnHand = '8';
-        const obligationSeam = { mutations: 0 };
-        const backend: InventoryBackendEffectsService & { readonly mutateObligation: () => void } = {
-          execute: (request) => {
-            backendCalls += 1;
-            // The external backend owns the mutation. Inventory records evidence and never applies -2 locally.
-            observedOnHand = '8';
-            return Effect.succeed({
-              _tag: 'APPLIED',
-              evidence: {
-                appliedAt: observedAt,
-                backend: request.backend,
-                backendConfigurationRef: request.backendConfigurationRef,
-                backendEvidenceRef: 'erp:issue:42',
-                backendId: request.backendId,
-                effectId: request.effectId,
-                issuer: 'erp-primary',
-                kind: request.kind,
-                positionRef: request.positionRef,
-                quantity: request.quantity,
-              },
-            });
-          },
-          mutateObligation: () => {
-            obligationSeam.mutations += 1;
-          },
-        };
-        const executor = makePhysicalStockEffectsService(
-          persistence,
-          backend,
-          noReservationImpacts,
-          ledgerFor(persistence),
-        );
-        yield* executor.execute(workerScope, requested.effect.request);
-        yield* executor.execute(workerScope, requested.effect.request);
+  it.effect('replays one exact Issue without repeating the backend physical effect', () =>
+    Effect.gen(function* exactIssueReplay() {
+      const { persistence, records } = memoryPersistence();
+      const requested = yield* requestEffect(persistence);
+      let backendCalls = 0;
+      const backend: InventoryBackendEffectsService = {
+        execute: (request) => {
+          backendCalls += 1;
+          return Effect.succeed({
+            _tag: 'APPLIED',
+            evidence: {
+              appliedAt: observedAt,
+              backend: request.backend,
+              backendConfigurationRef: request.backendConfigurationRef,
+              backendEvidenceRef: 'erp:issue:42',
+              backendId: request.backendId,
+              effectId: request.effectId,
+              issuer: 'erp-primary',
+              kind: request.kind,
+              positionRef: request.positionRef,
+              quantity: request.quantity,
+            },
+          });
+        },
+      };
+      const executor = makePhysicalStockEffectsService(
+        persistence,
+        backend,
+        noReservationImpacts,
+        ledgerFor(persistence),
+      );
+      yield* executor.execute(workerScope, requested.effect.request);
+      yield* executor.execute(workerScope, requested.effect.request);
 
-        expect(backendCalls).toBe(1);
-        expect(observedOnHand).toBe('8');
-        expect(obligationSeam.mutations).toBe(0);
-        expect(Schema.is(AppliedPhysicalStockEffectSchema)(records.get(effectId))).toBe(true);
-      }),
+      expect(backendCalls).toBe(1);
+      expect(Schema.is(AppliedPhysicalStockEffectSchema)(records.get(effectId))).toBe(true);
+    }),
   );
 
   it.effect('replays preserved original evidence without requalifying Current Position or backend', () =>

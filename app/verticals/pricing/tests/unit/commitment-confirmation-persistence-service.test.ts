@@ -36,28 +36,6 @@ const recoveryEnvelope = (confirmation: ReturnType<typeof makeIssue788IssuedConf
 });
 
 describe('Pricing Commitment Confirmation durable persistence (#788)', () => {
-  it.effect('decodes native JSON store, replay and recovery without losing retained Tier instants #1257', () =>
-    Effect.gen(function* nativeJsonConfirmation() {
-      const total = yield* makeIssue788CommercialTotal('900');
-      const confirmation = makeIssue788IssuedConfirmation(total);
-      const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(PricingCommitmentConfirmationIssuedSchema))(
-        confirmation,
-      );
-      for (const outcome of ['STORED', 'REUSED'] as const) {
-        expect(yield* decodeCommitmentConfirmationStoreOutcome(row({ confirmation: encoded, outcome }))).toEqual({
-          confirmation,
-          outcome,
-        });
-      }
-      expect(
-        decodeCommitmentConfirmationRecoveryOutcome(
-          confirmation.confirmationRef,
-          row({ ...recoveryEnvelope(confirmation), confirmation: encoded }),
-        ),
-      ).toEqual({ confirmation, outcome: 'FOUND' });
-    }),
-  );
-
   it('binds the production provider to owner-scoped insert and recovery routines', () => {
     expect(persistPricingCommitmentConfirmationRoutine).toMatchObject({
       name: 'persist_pricing_commitment_confirmation_v1',

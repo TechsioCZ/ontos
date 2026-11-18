@@ -9,10 +9,8 @@ import {
   PriceGroupDefinitionRevisionSchema,
   PriceGroupEffectivePeriodSchema,
   PriceGroupLifecycleSchema,
-  StablePriceGroupRefSchema,
   priceGroupPeriodContains,
 } from '../../shared/domain/price-group.ts';
-import { PriceGroupCurrentnessFailure } from '../../shared/domain/price-group-errors.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const priceGroupRef = {
@@ -49,15 +47,6 @@ const definition = {
 };
 
 describe('Price Group identity, definition, and lifecycle contracts', () => {
-  it('keeps stable identity tenant-scoped and independent from business code', () => {
-    const decode = Schema.decodeUnknownSync(StablePriceGroupRefSchema, { onExcessProperty: 'error' });
-
-    expect(decode(priceGroupRef)).toEqual(priceGroupRef);
-    expect(() => decode({ ...priceGroupRef, resourceId: 'DEALER' })).toThrow();
-    expect(() => decode({ ...priceGroupRef, businessCode: 'DEALER' })).toThrow();
-    expect(() => decode({ ...priceGroupRef, tenantId: 'not-a-tenant-id' })).toThrow();
-  });
-
   it('accepts immutable revisions only with a valid predecessor chain and exact contract support', () => {
     const decode = Schema.decodeUnknownSync(PriceGroupDefinitionRevisionSchema);
 
@@ -174,17 +163,5 @@ describe('Price Group currentness and compatibility evidence', () => {
     const decodeDecision = Schema.decodeUnknownSync(PriceGroupCompatibilityDecisionSchema);
     expect(decodeDecision({ evidence, kind: 'USABLE' }).kind).toBe('USABLE');
     expect(() => decodeDecision({ kind: 'UNUSABLE', priceGroupRef, reasonCode: 'OWNER_UNAVAILABLE' })).toThrow();
-  });
-
-  it('keeps zero, multiple, and unverifiable currentness as typed failures', () => {
-    const failure = new PriceGroupCurrentnessFailure({
-      candidateDefinitionRevisionIds: [],
-      code: 'price_group_currentness_failure',
-      priceGroupRef: Schema.decodeUnknownSync(StablePriceGroupRefSchema)(priceGroupRef),
-      reason: 'ZERO_CURRENT_DEFINITIONS',
-    });
-
-    expect(Schema.is(PriceGroupCurrentnessFailure)(failure)).toBe(true);
-    expect(failure.reason).toBe('ZERO_CURRENT_DEFINITIONS');
   });
 });

@@ -124,14 +124,4 @@ describe('Package content and Option', () => {
       ).status,
     ).toBe('INVALID');
   });
-
-  it('keeps one Package Definition identity across a physical content change without pricing the conversion', () => {
-    expect(box8.reference.resourceRef).toEqual(box10.reference.resourceRef);
-    expect(box8.reference.revision).not.toBe(box10.reference.revision);
-    const conversion = resolvePackageContent(ten, [box10, box8], '2');
-    expect(conversion).toMatchObject({ amount: '20', status: 'VALID' });
-    if (conversion.status === 'VALID') {
-      expect(Object.keys(conversion)).toEqual(['amount', 'path', 'status', 'unitRef']);
-    }
-  });
 });

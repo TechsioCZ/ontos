@@ -95,6 +95,8 @@ import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-dupl
 import { SearchLabelsApi } from './shared/apis/search-labels.ts';
 import { SourceCounterpartyAdmissionApi } from './shared/apis/source-counterparty-admission.ts';
 import { sourceCounterpartyAdmissionRead } from './src/api/source-counterparty-admission.read.ts';
+import { SourcePartySearchApi } from './shared/apis/source-party-search.ts';
+import { sourcePartySearchRead } from './src/api/source-party-search.read.ts';
 import { SourcePersonAdmissionApi } from './shared/apis/source-person-admission.ts';
 import { sourcePersonAdmissionRead } from './src/api/source-person-admission.read.ts';
 import { SourceProfileExportApi } from './shared/apis/source-profile-export.ts';
@@ -252,6 +254,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'privacy-measure-execution': PrivacyMeasureExecutionApi,
       'search-labels': SearchLabelsApi,
       'source-counterparty-admission': SourceCounterpartyAdmissionApi,
+      'source-party-search': SourcePartySearchApi,
       'source-person-admission': SourcePersonAdmissionApi,
       'source-profile-export': SourceProfileExportApi,
       // </generated-module-manifest-apis>
@@ -353,6 +356,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         operationKey: 'sourceCounterpartyAdmission.execute',
         registration: sourceCounterpartyAdmissionRead,
       },
+      { apiKey: 'source-party-search', operationKey: 'sourcePartySearch.execute', registration: sourcePartySearchRead },
       {
         apiKey: 'source-person-admission',
         operationKey: 'sourcePersonAdmission.execute',
@@ -617,6 +621,21 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
           schemaVersion: '1',
         },
       },
+      {
+        condition: 'party.registry.condition.governed-organization-business-name-export',
+        entrypointKey: sourcePartySearchRead.descriptor.entrypoint.entrypointKey,
+        evidence: [
+          'party.registry.evidence.current-qualified-source',
+          'party.registry.evidence.current-organization-facts',
+          'party.registry.evidence.current-organization-business-policy',
+        ],
+        key: partyOrganizationPrivacyRequirementKey(sourcePartySearchRead.descriptor.entrypoint.entrypointKey),
+        provider: {
+          entrypointKey: 'privacy.core.api.organization-business-applicability',
+          moduleId: 'privacy.core',
+          schemaVersion: '1',
+        },
+      },
       ...[createPartyAction, matchPartyAction, counterpartyCustomerOnboardAction].map(({ descriptor }) => ({
         condition: 'party.registry.condition.governed-organization-source-processing',
         entrypointKey: descriptor.entrypoint.entrypointKey,
@@ -680,6 +699,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         partySourceEffectReceiptRead,
         sourcePersonAdmissionRead,
         sourceProfileExportRead,
+        sourcePartySearchRead,
         sourceCounterpartyAdmissionRead,
         duplicateCandidateDetailRead,
         partyMatchDecisionRead,
@@ -820,6 +840,7 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
     partyDetailRead,
     partySourceEffectReceiptRead,
     sourceCounterpartyAdmissionRead,
+    sourcePartySearchRead,
     sourcePersonAdmissionRead,
     sourceProfileExportRead,
     // </generated-module-registration-reads>

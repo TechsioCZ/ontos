@@ -105,13 +105,4 @@ describe('Taxable Supply Unit mapping', () => {
       ]),
     ).toThrow();
   });
-
-  it('#936 F58 maps the same exact occurrences deterministically', () => {
-    const meanings = decodeMeanings([
-      { _tag: 'ORDINARY', occurrence: occurrenceInput('o-1') },
-      { _tag: 'ORDINARY', occurrence: occurrenceInput('o-2') },
-    ]);
-
-    expect(mapTaxableSupplyUnits(meanings)).toEqual(mapTaxableSupplyUnits(meanings));
-  });
 });

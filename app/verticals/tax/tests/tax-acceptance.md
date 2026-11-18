@@ -1,6 +1,6 @@
 # TAX owner acceptance (#961-#963) and the activation gate (#964)
 
-The machine-checked source of truth for #961-#963 is `tests/unit/tax-acceptance-ledger.ts`. Its test checks that every coverage key is mapped, every named test exists verbatim, and that no gated row runs a test. This page explains the evidence classes and lists the #964 activation items.
+This page explains the #961-#963 evidence classes and lists the #964 activation items. The acceptance evidence itself is the TAX test suite under `tests/unit/` and `tests/integration/`.
 
 ## D6 evidence classes
 
@@ -12,7 +12,7 @@ The machine-checked source of truth for #961-#963 is `tests/unit/tax-acceptance-
 | `SUPERSEDED`         | Issue text patched by the PO-approved OWNERSHIP-FINAL or Unit 12 decisions; the replacement rows carry the proof.                                                                          |
 | `NOT_APPLICABLE`     | Nothing exists to exercise (no Tax TTL, no Outbox message, no external seller route); a guard test fails if that changes.                                                                  |
 
-Real TAX covers rules, declarations, finals and the Accepted Tax Terms derivation. Foreign owners are contract-conforming test doubles, listed with their owner contract in `TAX_FOREIGN_OWNER_DOUBLES` (`tests/unit/tax-evaluation-fixtures.ts`): Catalog `catalogEntry`, the provisional declared-source `eligibilityHandoff`, Pricing `pricingLine`, Delivery `places` and `shippingCharge`, the Selling Legal Entity place `sellerPlace`, Order `purchaseBindingInput`, and Billing `acceptedTaxTermsInput`. Every result built from them is labelled `CALLER_SUPPLIED_UNVERIFIED`.
+Real TAX covers rules, declarations, finals and the Accepted Tax Terms derivation. Foreign owners are contract-conforming test doubles in `tests/unit/tax-evaluation-fixtures.ts` and `tests/unit/tax-domain-fixtures.ts`: Catalog `catalogEntry`, the provisional declared-source `eligibilityHandoff`, Pricing `pricingLine`, Delivery `places` and `shippingCharge`, the Selling Legal Entity place, Order `purchaseBindingInput`, and the Billing accepted-terms input. Every result built from them is labelled `CALLER_SUPPLIED_UNVERIFIED`.
 
 ## Controlled doubles and limits
 

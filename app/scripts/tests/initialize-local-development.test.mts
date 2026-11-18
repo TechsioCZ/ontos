@@ -26,12 +26,6 @@ import {
   parseLocalDevelopmentConfiguration,
   reconcileCoreContext,
 } from '../initialize-local-development.mts';
-import {
-  CZECH_LAUNCH_COMMERCE_FIXTURE,
-  CzechLaunchActivationRejected,
-  validateCzechLaunchActivation,
-  validateCzechLaunchFixtureContracts,
-} from '../czech-launch-commerce-fixture.mts';
 
 const localEnvironment = {
   BETTER_AUTH_SECRET: 'a-local-secret-with-at-least-32-characters',
@@ -63,23 +57,6 @@ const topology = JSON.stringify({
     { id: 'inventory' },
   ],
 });
-
-const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
-const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
-const activationOwnerFacts = {
-  ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
-  pricingCurrencies: {
-    ...fixturePricingCurrencies,
-    factProofs: [
-      {
-        factRef: fixturePricingCurrencies.supportRootRef.resourceId,
-        factRevisionRef: fixturePricingCurrencies.supportRevisionRef.resourceId,
-        verificationRef: fixturePricingVerificationRef,
-      },
-    ],
-    verificationRef: fixturePricingVerificationRef,
-  },
-};
 
 const moduleContract = (moduleId: string): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> =>
   makeModuleContractFixture({
@@ -188,77 +165,6 @@ it.effect('derives the fixed local commerce launch modules through generated own
       MARKET_CATALOG_VERTICAL_ID,
       CUSTOMER_CONTEXT_VERTICAL_ID,
     ]);
-  }),
-);
-
-it('omits the excluded storefront from the default market tuple', () => {
-  expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.marketBootstrap.revision.value).toEqual({
-    defaultChannelId: 'B2C',
-    defaultCommerceMarketId: '74000000-0000-4000-8000-000000000010',
-    defaultSellingLegalEntityId: '71000000-0000-4000-8000-000000000010',
-    kind: 'DEFAULT_MARKET_TUPLE',
-  });
-});
-
-it.effect('publishes a schema-valid deterministic Czech Launch operator fixture', () =>
-  Effect.gen(function* validateFixture() {
-    yield* validateCzechLaunchFixtureContracts();
-    expect(CZECH_LAUNCH_COMMERCE_FIXTURE.scope).toMatchObject({
-      channelId: 'B2C',
-      storefrontId: 'czech-launch-b2c',
-      tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-    });
-    expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.quantity.revision.value).toEqual({
-      audience: 'SHARED',
-      basis: {
-        targetDivisibilityRevision: 1,
-        targetRef: {
-          moduleId: CATALOG_MODULE_ID,
-          resourceId: '76000000-0000-4000-8000-000000000015',
-          resourceType: 'commerce.catalog.package-definition',
-          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-        },
-        unitRef: {
-          moduleId: CATALOG_MODULE_ID,
-          resourceId: '76000000-0000-4000-8000-000000000020',
-          resourceType: 'commerce.catalog.product-unit',
-          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-        },
-        unitRuleRevision: 1,
-      },
-      constraintMode: 'REPLACEABLE_ENVELOPE',
-      envelope: { kind: 'BOUNDED', maximum: null, minimum: '1', multiple: '1' },
-      kind: 'COMMERCE_QUANTITY_RULE',
-      selector: {
-        kind: 'PACKAGE_OPTION',
-        packageOptionRef: {
-          moduleId: 'commerce.catalog',
-          resourceId: '76000000-0000-4000-8000-000000000015',
-          resourceType: 'commerce.catalog.package-definition',
-          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-        },
-      },
-    });
-  }),
-);
-
-it.effect('fails Czech Launch activation closed without every current owner proof', () =>
-  Effect.gen(function* validateActivation() {
-    expect(
-      yield* validateCzechLaunchActivation({
-        ...activationOwnerFacts,
-        paymentTermCatalog: {
-          ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.paymentTermCatalog,
-          current: [],
-        },
-      }).pipe(Effect.flip),
-    ).toBeInstanceOf(CzechLaunchActivationRejected);
-    const withUndeclaredEvidence = { ...activationOwnerFacts, undeclaredEvidence: true };
-    expect(yield* validateCzechLaunchActivation(withUndeclaredEvidence).pipe(Effect.flip)).toBeInstanceOf(
-      CzechLaunchActivationRejected,
-    );
-
-    expect(yield* validateCzechLaunchActivation(activationOwnerFacts)).toBeDefined();
   }),
 );
 

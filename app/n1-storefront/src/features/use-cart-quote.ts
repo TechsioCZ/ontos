@@ -17,6 +17,11 @@ const quoteClient = HttpApiClient.make(CartQuoteApi);
 /** Consumer chooses an explicit first check or automatic checks while its panel is open. */
 export const useCartQuote = (input: CartQuoteRequest | null, automatic = false) => {
   const key = input === null ? null : JSON.stringify(input);
+  const scopeKey = input === null ? null : JSON.stringify(input.scope);
+  const [stockSnapshot, setStockSnapshot] = useState<{
+    scopeKey: string;
+    stocks: NonNullable<CartQuote["stocks"]>;
+  } | null>(null);
   const [attempt, setAttempt] = useState(automatic ? 1 : 0);
   const [previousSelection, setPreviousSelection] = useState({ generation: 0, key });
   const selection = advanceQuoteSelection(previousSelection, key);
@@ -49,8 +54,15 @@ export const useCartQuote = (input: CartQuoteRequest | null, automatic = false) 
                   key,
                   result: null,
                 }),
-              onSuccess: (result) =>
-                setSnapshot({ attempt, failure: null, generation, key, result }),
+              onSuccess: (result) => {
+                setSnapshot({ attempt, failure: null, generation, key, result });
+                if (result.stocks !== undefined) {
+                  setStockSnapshot({
+                    scopeKey: JSON.stringify(result.scope),
+                    stocks: result.stocks,
+                  });
+                }
+              },
             }),
           );
     const fiber = clientRuntime.runFork(attempt === 0 ? Effect.void : program);
@@ -69,6 +81,7 @@ export const useCartQuote = (input: CartQuoteRequest | null, automatic = false) 
   return {
     result: current ? (snapshot?.result ?? null) : null,
     state,
+    stocks: stockSnapshot?.scopeKey === scopeKey ? stockSnapshot.stocks : [],
     verify: () => setAttempt((value) => value + 1),
   };
 };

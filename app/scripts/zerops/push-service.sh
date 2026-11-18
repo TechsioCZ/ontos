@@ -5,8 +5,9 @@
 #
 #   ZEROPS_TOKEN=… [PUSH_EXCLUDE=<path>] push-service.sh <service-id> <setup> <version-name>   (from the repository root)
 #
-# The `storefront` and `n1` setups ship only app/zerops.yaml and the storefront the runner built (zerops-stage.yml,
-# build_storefronts): app/.zerops-storefront.tar.gz and its manifest app/.zerops-storefront.json. Zerops unpacks it.
+# The `storefront` and `n1` setups ship only app/zerops.yaml and the storefront the runner built
+# (scripts/zerops/build-storefront.sh): app/.zerops-storefront.tar.gz and its manifest app/.zerops-storefront.json, run
+# from the directory that build staged. Zerops unpacks it.
 #
 # Diagnostics of the upload (no secret reaches the log):
 #   PUSH_PROJECT_HOSTS="<host> …"   the project's public hostnames; each attempt says whether the upload host resolves to
@@ -64,7 +65,7 @@ case "$setup" in
     # no Git history and no other service's files travel with it.
     for file in app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json; do
       if [ ! -f "$file" ]; then
-        log_error "the $setup push needs $file (the build_storefronts artifact)"
+        log_error "the $setup push needs $file (staged by scripts/zerops/build-storefront.sh)"
         exit 1
       fi
     done
@@ -281,6 +282,23 @@ for attempt in 1 2 3; do
   fi
 done
 
+# Where Zerops spent the process: every timestamp the finished process and its app version report, by field path,
+# oldest first. Only field names and times reach the log. A diagnostic: a failed read is logged and changes nothing.
+zerops_timeline() {
+  local version stamps
+  version="$(zerops_api GET "/app-version/$version_id" 2>/dev/null)" || version='{}'
+  stamps="$(jq -rn --argjson process "$1" --argjson version "$version" '
+    [{process: $process, version: $version} | paths(type == "string") as $path
+      | {path: ($path | map(tostring) | join(".")), value: getpath($path)}
+      | select(.value | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+"))]
+    | sort_by(.value) | .[] | "\(.value) \(.path)"' 2>/dev/null)" || stamps=''
+  if [ -z "$stamps" ]; then
+    log 'zerops timeline: no timestamps readable'
+    return 0
+  fi
+  while IFS= read -r line; do log "zerops timeline: $line"; done <<<"$stamps"
+}
+
 log "build and deploy request started"
 process="$(jq -n --rawfile yaml app/zerops.yaml --arg setup "$setup" '{zeropsYaml: $yaml, zeropsYamlSetup: $setup}' |
   zerops_api PUT "/app-version/$version_id/build-and-deploy" -H 'content-type: application/json' -d @-)"
@@ -300,7 +318,11 @@ while true; do
     previous_status="$status"
   fi
   case "$status" in
-    FINISHED) log "$setup deployed in $(($(date +%s) - started))s"; exit 0 ;;
+    FINISHED)
+      log "$setup deployed in $(($(date +%s) - started))s"
+      zerops_timeline "$state"
+      exit 0
+      ;;
     FAILED | CANCELED)
       log_error "$setup build and deploy $status"
       # The Actions log is public: print the failure fields and key names only, never the user who started it.

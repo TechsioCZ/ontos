@@ -62,6 +62,5 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-search>
     ],
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: privacyRegisteredWorkloadCalls,
 });

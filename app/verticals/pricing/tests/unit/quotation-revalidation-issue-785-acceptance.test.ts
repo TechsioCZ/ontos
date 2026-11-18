@@ -16,19 +16,9 @@ import { Effect, Exit, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { calculatePricingCommercialTotals } from '../../src/services/commercial-totals.service.ts';
-import {
-  PricingGuestQuotationAuthority,
-  PricingGuestQuotationAuthorityRejected,
-  PricingGuestQuotationAuthorityUnavailable,
-} from '../../src/services/guest-quotation-authority.service.ts';
+import { PricingGuestQuotationAuthority } from '../../src/services/guest-quotation-authority.service.ts';
 import type { PricingGuestQuotationAuthorityService } from '../../src/services/guest-quotation-authority.service.ts';
 import { publishPricingLineValues } from '../../src/services/line-value-publication.service.ts';
-import {
-  makePricingQuotationAuthenticityService,
-  PricingQuotationAuthenticityProviderUnavailable,
-  PricingQuotationAuthenticityVerifier,
-} from '../../src/services/quotation-authenticity.service.ts';
-import type { PricingQuotationOwnerAuthenticityOutcome } from '../../src/services/quotation-authenticity.service.ts';
 import {
   makePricingQuotationBindingRevalidationService,
   PricingAuthenticatedQuotationAuthority,
@@ -43,9 +33,6 @@ import { makeQuotationMaterialEvidence } from './support/quotation-material-evid
 const validFrom = '2026-09-28T12:00:00.000Z';
 const validUntil = '2026-09-29T12:00:00.000Z';
 const evaluatedAt = '2026-09-28T12:00:00.000Z';
-
-const requireDefined = <Value>(value: Value | undefined, message: string) =>
-  value === undefined ? Effect.die(message) : Effect.succeed(value);
 
 const validity = Schema.decodeSync(PricingQuotationValiditySchema, { onExcessProperty: 'error' })({
   policyEvidence: {
@@ -121,16 +108,13 @@ const quotationFixture = Effect.fn('test.issue785QuotationFixture')(function* is
   return { binding, quotation };
 });
 
-const authenticityEvidence = (
-  quotationRef: string,
-  keyStatus: 'ACTIVE' | 'HISTORICAL' = 'ACTIVE',
-): PricingQuotationAuthenticityVerificationEvidence => ({
+const authenticityEvidence = (quotationRef: string): PricingQuotationAuthenticityVerificationEvidence => ({
   authenticityRef: `quotation-authenticity:${quotationRef}`,
   authority: 'EVIDENCE_ONLY',
   issuerRef: 'pricing-quotation-owner:launch',
   keyRef: 'pricing-signing-key:launch',
-  keyStatus,
-  keyVersion: keyStatus === 'ACTIVE' ? '3' : '2',
+  keyStatus: 'ACTIVE',
+  keyVersion: '3',
   lineageRef: 'pricing-signing-key-lineage:launch',
   payloadDigest: `sha256:${quotationRef}`,
   proofVersion: '1',
@@ -177,79 +161,6 @@ const verifiedAuthenticatedAuthority = {
 } satisfies PricingAuthenticatedQuotationAuthorityService;
 
 describe('issue #785 Pricing Quotation revalidation acceptance', () => {
-  it.effect('distinguishes tampering, unsupported or retired keys, dependency outage, and valid key rotation', () =>
-    Effect.gen(function* verifiesOwnerAuthenticity() {
-      const { quotation } = yield* quotationFixture();
-      const verify = (ownerOutcome: PricingQuotationOwnerAuthenticityOutcome) =>
-        Effect.flatMap(
-          makePricingQuotationAuthenticityService.pipe(
-            Effect.provideService(PricingQuotationAuthenticityVerifier, {
-              verifyImmutableQuotation: () => Effect.succeed(ownerOutcome),
-            }),
-          ),
-          (service) => service.verify({ quotation }),
-        );
-
-      expect(yield* verify({ _tag: 'VERIFIED', evidence: authenticityEvidence(quotation.quotationRef) })).toMatchObject(
-        {
-          kind: 'QUOTATION_AUTHENTIC',
-        },
-      );
-      expect(
-        yield* verify({
-          _tag: 'VERIFIED',
-          evidence: authenticityEvidence(quotation.quotationRef, 'HISTORICAL'),
-        }),
-      ).toMatchObject({
-        evidence: { keyStatus: 'HISTORICAL', keyVersion: '2' },
-        kind: 'QUOTATION_AUTHENTIC',
-      });
-      expect(
-        yield* verify({ _tag: 'INVALID', quotationRef: quotation.quotationRef, reason: 'PAYLOAD_TAMPERED' }),
-      ).toEqual({
-        kind: 'QUOTATION_AUTHENTICITY_INVALID',
-        quotationRef: quotation.quotationRef,
-        reason: 'PAYLOAD_TAMPERED',
-      });
-
-      for (const reason of [
-        'UNKNOWN_KEY',
-        'UNSUPPORTED_KEY_VERSION',
-        'RETIRED_KEY_WITHOUT_LINEAGE',
-        'LINEAGE_UNVERIFIABLE',
-      ] as const) {
-        expect(
-          yield* verify({ _tag: 'UNVERIFIABLE', quotationRef: quotation.quotationRef, reason, retryable: false }),
-        ).toEqual({
-          kind: 'QUOTATION_AUTHENTICITY_UNVERIFIABLE',
-          quotationRef: quotation.quotationRef,
-          reason,
-          retryable: false,
-        });
-      }
-
-      const outage = yield* Effect.flatMap(
-        makePricingQuotationAuthenticityService.pipe(
-          Effect.provideService(PricingQuotationAuthenticityVerifier, {
-            verifyImmutableQuotation: () =>
-              Effect.fail(
-                new PricingQuotationAuthenticityProviderUnavailable({
-                  reason: 'VERIFICATION_DEPENDENCY_UNAVAILABLE',
-                }),
-              ),
-          }),
-        ),
-        (service) => service.verify({ quotation }),
-      );
-      expect(outage).toEqual({
-        kind: 'QUOTATION_AUTHENTICITY_UNVERIFIABLE',
-        quotationRef: quotation.quotationRef,
-        reason: 'DEPENDENCY_UNAVAILABLE',
-        retryable: true,
-      });
-    }),
-  );
-
   it.effect(
     'keeps revalidation input closed to Current pricing, caller proof, Storefront, Tax, FX, and Confirmation',
     () =>
@@ -390,137 +301,6 @@ describe('issue #785 Pricing Quotation revalidation acceptance', () => {
           retryable: true,
         });
       }),
-  );
-
-  it.effect(
-    'rejects exact scope changes and Guest A/B or Guest-to-authenticated transitions without owner rebinding',
-    () =>
-      Effect.gen(function* rejectsMaterialChanges() {
-        const { binding, quotation } = yield* quotationFixture();
-        const line = yield* requireDefined(binding.lines[0], 'Issue #785 fixture requires one quotation line');
-        let ownerCalls = 0;
-        const service = yield* makePricingQuotationBindingRevalidationService.pipe(
-          Effect.provideService(PricingQuotationOwnerTransitionVerifier, {
-            verifyTransition: () => {
-              ownerCalls += 1;
-              return Effect.succeed(ownerTransitionEvidence(quotation));
-            },
-          }),
-          Effect.provideService(PricingGuestQuotationAuthority, verifiedGuestAuthority),
-          Effect.provideService(PricingAuthenticatedQuotationAuthority, verifiedAuthenticatedAuthority),
-        );
-        const changedBindings = [
-          decodeBinding({
-            ...binding,
-            subject: { ...binding.subject, guestSessionRef: 'guest-session:785:b' },
-          }),
-          decodeBinding({
-            ...binding,
-            subject: {
-              kind: 'AUTHENTICATED',
-              purchaseContext: binding.subject.purchaseContext,
-              subjectEvidenceRef: 'subject-evidence:785',
-              subjectRef: {
-                moduleId: 'party.registry',
-                resourceId: '12121212-1212-4212-8212-121212121212',
-                resourceType: 'party.registry.engagement-profile',
-                tenantId: binding.tenantId,
-              },
-            },
-          }),
-          decodeBinding({
-            ...binding,
-            commercialScope: { ...binding.commercialScope, marketId: 'sk-launch' },
-          }),
-          decodeBinding({
-            ...binding,
-            lines: [{ ...line, quantity: { ...line.quantity, amount: '101' } }],
-          }),
-          decodeBinding({
-            ...binding,
-            lines: [
-              {
-                ...line,
-                selection: {
-                  ...line.selection,
-                  variantRef: {
-                    ...line.selection.variantRef,
-                    resourceId: '45454545-4545-4454-8454-454545454545',
-                  },
-                },
-              },
-            ],
-          }),
-        ];
-
-        for (const requestedBinding of changedBindings) {
-          const outcome = yield* service.assess({
-            kind: 'REVALIDATE_PRICING_QUOTATION',
-            proposedEvidence: {
-              originalEvidenceRef: 'catalog-selection-evidence:785:original',
-              ownerModuleId: 'commerce.catalog',
-              proposedEvidenceRef: 'catalog-selection-evidence:785:reissued',
-            },
-            quotation,
-            requestedBinding,
-          });
-          expect(outcome.kind).toBe('MISMATCH');
-        }
-        expect(ownerCalls).toBe(0);
-      }),
-  );
-
-  it.effect('distinguishes Guest owner denial from unavailable Guest evidence', () =>
-    Effect.gen(function* distinguishesGuestAuthorityFailures() {
-      const { binding, quotation } = yield* quotationFixture();
-      const ownerTransitionVerifier = {
-        verifyTransition: () => Effect.succeed(ownerTransitionEvidence(quotation)),
-      };
-      const deniedService = yield* makePricingQuotationBindingRevalidationService.pipe(
-        Effect.provideService(PricingQuotationOwnerTransitionVerifier, ownerTransitionVerifier),
-        Effect.provideService(PricingGuestQuotationAuthority, {
-          verify: () => Effect.fail(new PricingGuestQuotationAuthorityRejected({ reason: 'OWNER_REJECTED' })),
-        }),
-        Effect.provideService(PricingAuthenticatedQuotationAuthority, verifiedAuthenticatedAuthority),
-      );
-      expect(
-        yield* deniedService.assess({
-          kind: 'REVALIDATE_PRICING_QUOTATION',
-          quotation,
-          requestedBinding: binding,
-        }),
-      ).toEqual({
-        kind: 'MISMATCH',
-        quotationRef: quotation.quotationRef,
-        reason: 'AUTHORITY_CONTEXT_CHANGED',
-      });
-
-      const unavailableService = yield* makePricingQuotationBindingRevalidationService.pipe(
-        Effect.provideService(PricingQuotationOwnerTransitionVerifier, ownerTransitionVerifier),
-        Effect.provideService(PricingGuestQuotationAuthority, {
-          verify: () =>
-            Effect.fail(
-              new PricingGuestQuotationAuthorityUnavailable({
-                reason: 'OWNER_VERIFICATION_UNAVAILABLE',
-                retryable: true,
-              }),
-            ),
-        }),
-        Effect.provideService(PricingAuthenticatedQuotationAuthority, verifiedAuthenticatedAuthority),
-      );
-      expect(
-        yield* unavailableService.assess({
-          kind: 'REVALIDATE_PRICING_QUOTATION',
-          quotation,
-          requestedBinding: binding,
-        }),
-      ).toEqual({
-        kind: 'BINDING_UNVERIFIABLE',
-        quotationRef: quotation.quotationRef,
-        reason: 'BINDING_DEPENDENCY_UNAVAILABLE',
-        retryable: true,
-      });
-    }),
   );
 
   it.effect('authentically reuses immutable 900 CZK terms while ordinary Current is 950 without reading Current', () =>

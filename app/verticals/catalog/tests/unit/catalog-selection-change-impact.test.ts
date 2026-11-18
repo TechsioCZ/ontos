@@ -421,12 +421,6 @@ describe('Catalog open-selection population impact (#479 wiring)', () => {
       expect(yield* setImpact.verify(setImpactInput)).toBe(false);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
-
-  it('exposes the exact Cart owner port and Catalog evidence seam', () => {
-    const port: CartOpenSelectionPopulationPort = population([]);
-    expect(port).toHaveProperty('read');
-    expect(catalogSelectionOpenPopulationImpactForScope).toBeDefined();
-  });
 });
 
 describe('Catalog configuration change impact (#479 wiring)', () => {

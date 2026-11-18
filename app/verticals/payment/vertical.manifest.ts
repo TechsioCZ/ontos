@@ -220,7 +220,6 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
-  // Demo divergence exception 8: the Payment workers' A8 calls, declared by the caller (see the module).
   registeredWorkloadCalls: paymentRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],

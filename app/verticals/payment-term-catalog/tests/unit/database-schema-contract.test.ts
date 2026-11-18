@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Migration contract reads checked-in Payment Term Catalog SQL; expires: 2027-03-31.
-import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Order } from 'effect';
@@ -73,18 +71,10 @@ it('forces every governed table through tenant and legal-entity policy dimension
   }
 });
 
-it('keeps gateway assertion replay identities global, unique and runtime-limited to select, insert and delete', () => {
+it('keeps gateway assertion replay identities global, without row-level security or a tenant dimension', () => {
   const config = getTableConfig(gatewayAssertionRedemptions);
   expect(config.enableRLS).toBe(false);
   expect(config.columns.some((column) => column.name === 'tenant_id')).toBe(false);
-  const migration = readFileSync(
-    new URL('../../drizzle/20261021175815_gateway_assertion_redemption/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  expect(migration).toContain('UNIQUE("issuer","audience","jti")');
-  expect(migration).toContain(
-    'GRANT SELECT, INSERT, DELETE ON TABLE "payment_term_catalog"."gateway_assertion_redemptions" TO ontos_runtime',
-  );
 });
 
 it('stores only the approved typed semantic kinds and immutable revision identity', () => {

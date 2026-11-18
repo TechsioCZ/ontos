@@ -33,6 +33,7 @@ export default defineConfig({
       exclude: operatorTests,
       include: ['scripts/integration/**/*.test.mts'],
       name: 'integration',
+      setupFiles: ['./scripts/ci/integration-worker-setup.mts'],
     },
     {
       ...shared,

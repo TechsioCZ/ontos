@@ -94,6 +94,5 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
       // </generated-module-manifest-search>
     ],
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: partyRegistryRegisteredWorkloadCalls,
 });

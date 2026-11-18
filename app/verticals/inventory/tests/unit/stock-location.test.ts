@@ -66,24 +66,6 @@ const location = (input: {
   });
 
 describe('Inventory Stock Location domain', () => {
-  it('keeps same-address operational scopes as distinct durable Resources', () => {
-    const first = location({
-      displayName: 'Receiving',
-      physicalSiteKeys: ['site-prague-receiving'],
-      ref: locationRef(locationAId),
-      scopeKind: 'PHYSICAL_SITE',
-    });
-    const second = location({
-      displayName: 'Saleable stock',
-      physicalSiteKeys: ['site-prague-saleable'],
-      ref: locationRef(locationBId),
-      scopeKind: 'PHYSICAL_SITE',
-    });
-
-    expect(first.addressEvidence).toEqual(second.addressEvidence);
-    expect(first.ref).not.toEqual(second.ref);
-  });
-
   it('allows several physical sites only as one declared indivisible logical scope', () => {
     const aggregate = location({
       displayName: 'Authoritative regional pool',

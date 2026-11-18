@@ -3,9 +3,14 @@ import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { PriceGroupSourceAssociationsResponseSchema } from '../../shared/apis/price-group-source-associations.ts';
 import type { PriceGroupSourceAssociationsRequest } from '../../shared/apis/price-group-source-associations.ts';
+import { PriceGroupCatalogHeadResponseSchema } from '../../shared/apis/price-group-catalog-head.ts';
 import { PriceGroupResultLookupResponseSchema } from '../../shared/apis/price-group-result-lookup.ts';
 import type { PriceGroupResultLookupRequest } from '../../shared/apis/price-group-result-lookup.ts';
-import { readPriceGroupSourceAssociationsRoutine, readPriceGroupOperationReceiptRoutine } from './scoped-routine.ts';
+import {
+  readPriceGroupCatalogHeadRoutine,
+  readPriceGroupSourceAssociationsRoutine,
+  readPriceGroupOperationReceiptRoutine,
+} from './scoped-routine.ts';
 
 type Transaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
@@ -25,6 +30,16 @@ export const priceGroupSourcePersistenceForScope = (
   scope: OperationalScope,
 ) =>
   Effect.succeed({
+    /** The tenant ledger head, which is the exact `expectedCatalogRevision` the next create must send. */
+    head: Effect.fn('PriceGroupSourcePersistence.head')(function* readCatalogHead() {
+      const rows = yield* transaction.invoke(readPriceGroupCatalogHeadRoutine, []).pipe(Effect.mapError(unavailable));
+      if (rows.length !== 1) {
+        return yield* unavailable();
+      }
+      return yield* Schema.decodeUnknownEffect(PriceGroupCatalogHeadResponseSchema)(rows[0]?.payload).pipe(
+        Effect.mapError(unavailable),
+      );
+    }),
     list: Effect.fn('PriceGroupSourcePersistence.list')(function* listSourceAssociations(
       input: PriceGroupSourceAssociationsRequest,
     ) {

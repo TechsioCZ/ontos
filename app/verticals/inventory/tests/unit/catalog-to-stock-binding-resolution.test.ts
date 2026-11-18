@@ -148,7 +148,6 @@ describe('Catalog-to-Stock Binding typed resolution outcomes', () => {
         .pipe(Effect.catchTag('CatalogToStockBindingRejected', failCatalogToStockBindingResolution), Effect.flip);
 
       expect(failure).toMatchObject({ outcome: 'INCOMPATIBLE', reason: 'STOCK_UNIT_MISMATCH' });
-      expect(millimeterDemand.quantity).toBe('1000');
     }),
   );
 });

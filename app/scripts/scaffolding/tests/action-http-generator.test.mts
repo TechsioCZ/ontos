@@ -284,6 +284,8 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
   expect(contract).toContain("export { ChangeRatePayloadSchema } from '../actions/change-rate.ts'");
   expect(contract).not.toContain('export { ChangeRatePayloadSchema, ChangeRateResultSchema }');
   expect(contract).not.toContain('export const ChangeRateActionHeadersSchema');
+  expect(contract).toContain('reasons: Schema.optionalKey(Schema.Array(Schema.String))');
+  expect(problems).toContain('failure.reasons ?? []');
   expect(problems).not.toContain('jscpd:ignore-start');
   expect(problems).not.toContain('jscpd:ignore-end');
   expect(problems).toContain('Match.tags({');
@@ -329,6 +331,8 @@ it('keeps a custom domain Problem out of the identities a multi-code error maps 
     "interface DomainProblemIdentity { readonly code: 'manual_rate_conflict' | 'manual_rate_superseded'; readonly kind: 'conflict' }",
   );
   expect(problems).not.toContain("'manual_rate_not_implemented'; readonly kind");
+  expect(problems).toContain("Match.when({ kind: 'conflict' as const }");
+  expect(problems).not.toContain("Match.when({ kind: 'ineligible'");
   expect(problems).toContain('ManualRateNotImplemented: (failure) => mapManualRateNotImplementedProblem(failure),');
 });
 

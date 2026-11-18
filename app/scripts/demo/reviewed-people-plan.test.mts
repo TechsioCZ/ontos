@@ -8,7 +8,9 @@ import { stableUuid } from '@app/core-runtime/access/catalog';
 
 import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts';
 import { policyReleaseEntries } from './access-policy.mts';
-import { demoHumanAccounts, demoModuleIds } from './permissions.mts';
+import { demoHumanAccounts, demoModuleIds, taxAccountantKeys } from './permissions.mts';
+import { REVIEWED_ROLE_CELLS } from './reviewed-people-cells.mts';
+import { describeDiagnostics } from './stage-reviewed-people.mts';
 import {
   AccessAssignmentIdSchema,
   AccessCapabilityKeySchema,
@@ -19,6 +21,8 @@ import {
   AccessRoleIdSchema,
   AccessRoleRevisionIdSchema,
 } from '../../apps/shell-super-app/shared/access-admin-api.ts';
+import { CapabilityKeySchema } from '../../packages/core-runtime/src/access/ids.ts';
+import type { CatalogSnapshotEntry } from '../../packages/core-runtime/src/access/model.ts';
 import {
   AssignStep,
   AdmitMemberStep,
@@ -37,7 +41,6 @@ import {
   previewIssue,
   reviewedAdditions,
   slotOf,
-  reviewedExclusions,
   stepWithinAllowList,
   TENANT_ID,
   TENANT_SCOPE,
@@ -74,11 +77,11 @@ const human = (principalId: string) => AccessHumanIdSchema.make(principalId);
 const revision = (seed: string) => AccessRoleRevisionIdSchema.make(stableUuid(seed));
 const times = <A,>(count: number, value: A): readonly A[] => Array.from({ length: count }, () => value);
 
-const desired = Effect.gen(function* reviewedDesiredState() {
+const localRelease = Effect.gen(function* reviewedRelease() {
   const modules = yield* readAccessCatalogArtifact(fileURLToPath(new URL('../..', import.meta.url)));
-  const entries = yield* Effect.fromResult(policyReleaseEntries(modules, demoModuleIds));
-  return yield* Effect.fromResult(desiredState(entries));
+  return yield* Effect.fromResult(policyReleaseEntries(modules, demoModuleIds));
 }).pipe(Effect.provide(NodeServices.layer));
+const desired = localRelease.pipe(Effect.flatMap((entries) => Effect.fromResult(desiredState(entries))));
 
 /** A membership row somebody else recorded before the script ran; its id is no admission key's. */
 const member = (
@@ -268,6 +271,8 @@ const firstSave = (steps: readonly PlannedStep[]): SaveRole => {
 };
 const roleId = (key: string) =>
   stableUuid(['ontos.shell.access-roles.role', TENANT_ID, `ontos-demo-reviewed-role:v1:${key}`].join(':'));
+const bySlot = (left: string, right: string) => left.localeCompare(right);
+const cellOf = ({ roleKey, slot }: { readonly roleKey: string; readonly slot: string }) => `${roleKey} ${slot}`;
 const PEOPLE_STEPS = [...times(3, 'AdmitMember'), ...times(7, 'Assign')];
 
 it.effect('pins the reviewed roles, their dangerous cells and the seven assignments of the three people', () =>
@@ -279,33 +284,28 @@ it.effect('pins the reviewed roles, their dangerous cells and the seven assignme
       '3952547a-564f-5468-9038-8dce11185c44',
     ]);
     expect(demoHumanAccounts.slice(1).map(({ principalId }) => principalId)).toEqual(PRINCIPAL_IDS);
-    expect(
-      state.roles.map(({ cells, confirmations, key, roleId: id, scope }) => [
-        key,
-        cells.length,
-        confirmations.length,
-        id,
-        scope,
-      ]),
-    ).toEqual([
-      ['sales', 442, 398, roleId('sales'), COMPANY_SCOPE],
-      ['accounting', 162, 130, roleId('accounting'), COMPANY_SCOPE],
-      ['warehouse', 33, 23, roleId('warehouse'), COMPANY_SCOPE],
-      [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
+    expect(state.roles.map(({ key, roleId: id, scope }) => [key, id, scope])).toEqual([
+      ['sales', roleId('sales'), COMPANY_SCOPE],
+      ['accounting', roleId('accounting'), COMPANY_SCOPE],
+      ['warehouse', roleId('warehouse'), COMPANY_SCOPE],
+      [ROUTING, roleId(ROUTING), TENANT_SCOPE],
       // The company identity read is decided in the tenant context, so its two keys live in a tenant-scope role.
-      [COMPANY_IDENTITY, 2, 2, roleId(COMPANY_IDENTITY), TENANT_SCOPE],
+      [COMPANY_IDENTITY, roleId(COMPANY_IDENTITY), TENANT_SCOPE],
     ]);
-    // Capabilities the release declared after the review stay with full access: no reviewed role holds one.
-    const excluded = new Set<string>(Object.values(reviewedExclusions).flat());
-    expect([reviewedExclusions.sales.length, reviewedExclusions.accounting.length, excluded.size]).toEqual([
-      16, 10, 16,
-    ]);
-    expect([...excluded].filter((key) => !state.entries.has(key))).toEqual([]);
+    // A role holds only reviewed cells: every cell is pinned, and the pin is its cells plus what was withdrawn.
+    for (const role of state.roles) {
+      const pin: readonly string[] = REVIEWED_ROLE_CELLS[role.key];
+      expect(new Set(pin).size).toBe(pin.length);
+      expect(role.cells.map(slotOf).filter((slot) => !pin.includes(slot))).toEqual([]);
+      const withdrawn = state.diagnostics
+        .filter(({ kind, roleKey }) => kind === 'withdrawn' && roleKey === role.key)
+        .map(({ slot }) => slot);
+      expect([...role.cells.map(slotOf), ...withdrawn].toSorted(bySlot)).toEqual(pin.toSorted(bySlot));
+    }
+    const unreviewed = new Set(state.diagnostics.filter(({ kind }) => kind === 'unreviewed').map(cellOf));
     expect(
       state.roles.flatMap(({ cells, key }) =>
-        cells
-          .filter(({ capabilityKey }) => excluded.has(capabilityKey))
-          .map(({ capabilityKey }) => [key, capabilityKey]),
+        cells.map((cell) => `${key} ${slotOf(cell)}`).filter((cell) => unreviewed.has(cell)),
       ),
     ).toEqual([]);
     const [obchodnik, ucetni, sklad] = PRINCIPAL_IDS;
@@ -318,6 +318,125 @@ it.effect('pins the reviewed roles, their dangerous cells and the seven assignme
       [sklad, 'warehouse', COMPANY_SCOPE],
       [sklad, ROUTING, TENANT_SCOPE],
     ]);
+  }),
+);
+
+const ROLE_ACCOUNTS = ['sales', 'accounting', 'warehouse'];
+const desiredFrom = (entries: readonly CatalogSnapshotEntry[]): DesiredState => {
+  const result = desiredState(entries);
+  if (Result.isFailure(result)) {
+    throw new Error(`desired state failed: ${result.failure}`);
+  }
+  return result.success;
+};
+const diagnosticsFor = (state: DesiredState, capabilityKey: string) =>
+  state.diagnostics
+    .filter(({ slot }) => slot.startsWith(`${capabilityKey} `))
+    .map(({ kind, roleKey, slot }) => [kind, roleKey, slot]);
+const holdsSlot = (state: DesiredState, slot: string) =>
+  state.roles.filter(({ cells }) => cells.some((cell) => slotOf(cell) === slot)).map(({ key }) => key);
+
+// The three role accounts each reach every work.tasks capability (work.tasks: 'write', permissions.mts demoRoles).
+it.effect('a capability declared after the review stays out of every reviewed role and is only reported', () =>
+  Effect.gen(function* unreviewedProbe() {
+    const release = yield* localRelease;
+    const baseline = desiredFrom(release);
+    const template = release.find(({ moduleKey, parentKey }) => moduleKey === 'work.tasks' && parentKey === undefined);
+    if (template === undefined) {
+      throw new Error('no work.tasks entry');
+    }
+    const probeKey = 'work.tasks.review-probe.read';
+    const probe: CatalogSnapshotEntry = {
+      ...template,
+      key: CapabilityKeySchema.make(probeKey),
+      kind: 'read',
+      modes: ['run'],
+      risk: 'routine',
+      selectors: [],
+    };
+    const probed = desiredFrom([...release, probe]);
+    const slot = `${probeKey} run all`;
+    expect(diagnosticsFor(probed, probeKey)).toEqual(ROLE_ACCOUNTS.map((roleKey) => ['unreviewed', roleKey, slot]));
+    expect(holdsSlot(probed, slot)).toEqual([]);
+    expect(probed.roles.map(({ cells, saveKey }) => [cells.map(slotOf), saveKey])).toEqual(
+      baseline.roles.map(({ cells, saveKey }) => [cells.map(slotOf), saveKey]),
+    );
+    // Against a stage already applied, and whose release now declares the probe, nothing is written.
+    const observed = { ...applied(baseline), release: stageBefore(probed).release };
+    expect(stepsOf(plan(probed, observed, apply1))).toEqual([]);
+  }),
+);
+
+it.effect('a withdrawn or changed reviewed capability is reported and never sent', () =>
+  Effect.gen(function* withdrawnCells() {
+    const release = yield* localRelease;
+    const baseline = desiredFrom(release);
+    const sales = baseline.roles.find(({ key }) => key === 'sales');
+    const runCell = sales?.cells.find(
+      ({ capabilityKey, mode }) => capabilityKey.startsWith('work.tasks.') && mode === 'run',
+    );
+    if (sales === undefined || runCell === undefined) {
+      throw new Error('sales holds no work.tasks run cell');
+    }
+    // The release keys and the role cell keys carry different brands; compare them as the plain text they share.
+    const removedKey: string = runCell.capabilityKey;
+    const withdrawn = desiredFrom(release.filter(({ key }) => key !== removedKey));
+    expect(holdsSlot(baseline, slotOf(runCell))).toEqual(ROLE_ACCOUNTS);
+    const removedDiagnostics = diagnosticsFor(withdrawn, removedKey);
+    expect(new Set(removedDiagnostics.map(([kind]) => kind))).toEqual(new Set(['withdrawn']));
+    expect(removedDiagnostics).toEqual(
+      expect.arrayContaining(ROLE_ACCOUNTS.map((roleKey) => ['withdrawn', roleKey, slotOf(runCell)])),
+    );
+    expect(
+      withdrawn.roles.flatMap(({ cells }) => cells.filter(({ capabilityKey }) => capabilityKey === removedKey)),
+    ).toEqual([]);
+    const sent = stepsOf(plan(withdrawn, stageBefore(withdrawn), apply1)).flatMap((step) =>
+      Predicate.isTagged(step, 'SaveRole') ? step.cells.map(slotOf) : [],
+    );
+    expect(sent.filter((slot) => slot.startsWith(`${removedKey} `))).toEqual([]);
+    // A stage that saved the role before the withdrawal halts without a write, and the driver prints the slot first.
+    expect(haltOf(plan(withdrawn, applied(baseline), apply1))).toEqual({
+      kind: 'validation',
+      reason: 'the managed role sales holds other cells; this script never rewrites a saved role',
+    });
+    expect(describeDiagnostics(withdrawn)).toEqual(
+      expect.arrayContaining(ROLE_ACCOUNTS.map((roleKey) => `  withdrawn ${roleKey}: ${slotOf(runCell)} (not sent)`)),
+    );
+
+    // A capability that loses a mode withdraws only that mode's cell; its run cell stays.
+    const salesSlots = new Set(sales.cells.map(slotOf));
+    const narrowed = release.find(
+      ({ key }) =>
+        key.startsWith('work.tasks.') && salesSlots.has(`${key} run all`) && salesSlots.has(`${key} propose all`),
+    );
+    if (narrowed === undefined) {
+      throw new Error('sales holds no work.tasks capability in both run and propose');
+    }
+    const proposeSlot = `${narrowed.key} propose all`;
+    const holders = holdsSlot(baseline, proposeSlot);
+    const [firstMode, ...otherModes] = narrowed.modes.filter((mode) => mode !== 'propose');
+    if (firstMode === undefined) {
+      throw new Error(`${narrowed.key} declares no mode besides propose`);
+    }
+    const changed = desiredFrom(
+      release.map((entry) => (entry.key === narrowed.key ? { ...entry, modes: [firstMode, ...otherModes] } : entry)),
+    );
+    expect(holders).toContain('sales');
+    expect(diagnosticsFor(changed, narrowed.key)).toEqual(
+      holders.map((roleKey) => ['withdrawn', roleKey, proposeSlot]),
+    );
+    expect(holdsSlot(changed, proposeSlot)).toEqual([]);
+    expect(holdsSlot(changed, `${narrowed.key} run all`)).toEqual(holdsSlot(baseline, `${narrowed.key} run all`));
+  }),
+);
+
+it.effect('a removed named capability still fails the plan instead of becoming a diagnostic', () =>
+  Effect.gen(function* namedKeyRemoved() {
+    const release = yield* localRelease;
+    const [named] = taxAccountantKeys;
+    expect(release.some(({ key }) => key === named)).toBe(true);
+    // The accountant names this Tax key in capabilityKeys; without it the role policy no longer compiles.
+    expect(Result.isFailure(desiredState(release.filter(({ key }) => key !== named)))).toBe(true);
   }),
 );
 

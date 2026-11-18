@@ -1686,7 +1686,6 @@ export const validRuntimeDeclarationViews = (
       manifest,
       manifestName,
       ['activation', 'publicSurface'],
-      // `registeredWorkloadCalls` is demo divergence exception 8 (upstream main has no production source for them).
       ['originatorActions', 'registeredWorkloadCalls'],
     ),
     ownerObjectView(
@@ -1694,7 +1693,7 @@ export const validRuntimeDeclarationViews = (
       manifest,
       `${manifestName}.publicSurface`,
       ['components', 'events', 'reports', 'resourceTypes', 'search'],
-      // `mcp` is the demo-only agent tool contribution (no main concept); it stays on the full manifest view.
+      // `mcp` is the module's agent tool classification; it stays on the full manifest view.
       ['businessPermissions', 'mcp'],
     ),
     ownerObjectView(fullRegistration, registration, declarationName, ['entrypoints', 'manifest']),

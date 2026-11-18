@@ -9,7 +9,7 @@ import type { AppUserConfig } from '@modern-js/app-tools/cli-config';
 import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { isSuccess as isResultSuccess } from 'effect/Result';
-import { OptionFromUndefinedOr, Trim, check, decodeResult, isMinLength } from 'effect/Schema';
+import { Literal, OptionFromUndefinedOr, Struct, Trim, check, decodeResult, is, isMinLength } from 'effect/Schema';
 
 type BuildEnvironmentReader = (name: string) => string | undefined;
 
@@ -33,9 +33,13 @@ type DevelopmentMiddlewareSetup = Pick<
   'unshift'
 >;
 
+const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
+
+const isMissingFileError = is(Struct({ code: Literal('ENOENT') }));
+
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
-  '/.well-known/ontos-module-mcp-tools.json',
+  DEVELOPMENT_MCP_TOOL_CATALOG,
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
@@ -48,7 +52,20 @@ export const createDevelopmentContractMiddleware =
         next();
         return;
       }
-      const contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      let contract: Buffer;
+      try {
+        contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      } catch (error) {
+        // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
+        if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
+          response.statusCode = 404;
+          // A catalog prepared later at the same URL must not be shadowed by a cached absence.
+          response.setHeader('Cache-Control', 'no-cache');
+          response.end(Buffer.alloc(0));
+          return;
+        }
+        throw error;
+      }
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
@@ -77,12 +94,17 @@ export const createWorkspaceModernConfig = ({
     overrideBrowserslist: BROWSER_TARGETS,
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
     // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
-    // `pnpm typecheck` owns type diagnostics. A CI unit build that has already run its own TS-Go reference
-    // build (`ultramodern typecheck --build`, which fails on a transitive type error) sets
-    // ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1 instead of checking the same graph twice.
+    // `pnpm typecheck` owns type diagnostics. A build whose TS-Go check already ran elsewhere skips the
+    // second one: a unit build after its own `ultramodern typecheck --build` sets
+    // ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1, and a CI build under the required workspace typecheck job
+    // sets ONTOS_CI_TYPECHECK_SEPARATE=1, which also drops JavaScript source maps nobody reads there.
     disableTsChecker:
       readBuildEnvironmentValue('NODE_ENV') === 'development' ||
-      readBuildEnvironmentValue('ULTRAMODERN_DISABLE_BUILD_TS_CHECKER') === '1',
+      readBuildEnvironmentValue('ULTRAMODERN_DISABLE_BUILD_TS_CHECKER') === '1' ||
+      readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1',
+    ...(readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1'
+      ? { sourceMap: { js: false as const } }
+      : undefined),
   },
   server: {
     publicDir: ['./.dev-public'],
@@ -93,5 +115,7 @@ export const createWorkspaceModernConfig = ({
       ULTRAMODERN_SHELL_ORIGIN: readBuildEnvironmentValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
     },
   },
-  tools: browserTargetTools,
+  tools: {
+    ...browserTargetTools,
+  } satisfies AppUserConfig['tools'],
 });

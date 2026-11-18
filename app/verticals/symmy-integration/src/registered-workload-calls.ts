@@ -6,6 +6,7 @@ const commerceCatalogCreateVariant = 'commerce.catalog.create-variant';
 const commerceCatalogSetVariantLocalizedFacts = 'commerce.catalog.set-variant-localized-facts';
 const commerceCatalogSymmyProductImport = 'commerce.catalog.symmy-product-import';
 const commerceCatalogSymmyProductRead = 'commerce.catalog.symmy-product-read';
+const commerceCatalogUpdateProduct = 'commerce.catalog.update-product';
 const commerceCustomerContextAddSavedAddress = 'commerce.customer-context.add-saved-address';
 const commerceCustomerContextApiCustomerGroupDefinitionSource =
   'commerce.customer-context.api.customer-group-definition-source';
@@ -18,6 +19,10 @@ const commerceCustomerContextApplyCustomerGroupMembershipSource =
   'commerce.customer-context.apply-customer-group-membership-source';
 const commerceCustomerContextAssignCounterpartyPriceGroup = 'commerce.customer-context.assign-counterparty-price-group';
 const commerceCustomerContextAssignCustomerPriceGroup = 'commerce.customer-context.assign-customer-price-group';
+const commerceCustomerContextChangeOrganizationCustomerProfileIco =
+  'commerce.customer-context.change-organization-customer-profile-ico';
+const commerceCustomerContextCreateCounterpartyPurchasingProfile =
+  'commerce.customer-context.create-counterparty-purchasing-profile';
 const commerceCustomerContextCreateCustomerGroup = 'commerce.customer-context.create-customer-group';
 const commerceCustomerContextCustomerGroupDefinitionSourceRead =
   'commerce.customer-context.customer-group-definition-source.read';
@@ -46,7 +51,14 @@ const commercePricingSourceWrite = 'commerce.pricing.source-write';
 const integrationSymmyAdmitSymmySync = 'integration.symmy.admit-symmy-sync';
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
 const partyRegistry = 'party-registry';
+const partyRegistryAddContactPoint = 'party.registry.add-contact-point';
+const partyRegistryApiPartySourceEffectReceipt = 'party.registry.api.party-source-effect-receipt';
+const partyRegistryCounterpartyCustomerOnboard = 'party.registry.counterparty-customer-onboard';
+const partyRegistryCreateParty = 'party.registry.create-party';
+const partyRegistryPartySourceEffectReceiptRead = 'party.registry.party-source-effect-receipt.read';
+const partyRegistrySourceRead = 'party.registry.source-read';
 const partyRegistrySourceWrite = 'party.registry.source-write';
+const partyRegistryUpdateParty = 'party.registry.update-party';
 const priceGroupCatalog = 'price-group-catalog';
 const pricingPriceGroupCatalogApiPriceGroupResultLookup = 'pricing.price-group-catalog.api.price-group-result-lookup';
 const pricingPriceGroupCatalogCreatePriceGroup = 'pricing.price-group-catalog.create-price-group';
@@ -57,18 +69,16 @@ const pricingPriceGroupCatalogSourceRead = 'pricing.price-group-catalog.source-r
 const pricingPriceGroupCatalogSourceWrite = 'pricing.price-group-catalog.source-write';
 
 /**
- * The registered-workload calls this module's credential makes; its manifest declares them. Demo divergence
- * exception 8, to be offered upstream: upstream main has no production source for these rules
- * (`ONTOS_GATEWAY_MODULE_BINDINGS=[]` in `.env.example`), so each entry is verbatim from main's own fixture for its
- * flow. The Shell keeps an entry only while the installed receiver declares its workload and declaration, and a
- * tenant still needs an active registration of that workload.
+ * The registered-workload calls this module's credential makes; its manifest declares them. Each entry is verbatim
+ * from the fixture named on it. The Shell keeps an entry only while the installed receiver declares its workload and
+ * declaration, and a tenant still needs an active registration of that workload.
  */
 export const symmyIntegrationRegisteredWorkloadCalls = [
   // origin/main 5608aae1d: symmy-c14-customer-rules.mts — INTERNAL_C14 actual customer revisions and GET round-trip retain native targets under current Privacy; organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
     audience: partyRegistry,
     declarationKey: 'party.registry.party.create',
-    entrypointKey: 'party.registry.create-party',
+    entrypointKey: partyRegistryCreateParty,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'optional',
     schemaVersion: '1',
@@ -79,7 +89,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
   {
     audience: partyRegistry,
     declarationKey: 'party.registry.party.update',
-    entrypointKey: 'party.registry.update-party',
+    entrypointKey: partyRegistryUpdateParty,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'optional',
     schemaVersion: '1',
@@ -293,6 +303,30 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: commerceCustomerContextSourceRead,
   },
+  // origin/main 62c31ce2a: symmy-c14-saved-address-owner-conformance.test.mts — INTERNAL_C14 public customers save Commerce-only addresses on an existing and on a created profile, never without their customer
+  {
+    audience: partyRegistry,
+    declarationKey: 'party.registry.contact-point.add',
+    entrypointKey: partyRegistryAddContactPoint,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceWrite,
+  },
+  // origin/main 62c31ce2a: symmy-c14-saved-address-owner-conformance.test.mts — INTERNAL_C14 public customers save Commerce-only addresses on an existing and on a created profile, never without their customer
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryPartySourceEffectReceiptRead,
+    entrypointKey: partyRegistryApiPartySourceEffectReceipt,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryAddContactPoint, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceRead,
+  },
   // origin/main 5608aae1d: symmy-c14-sync-authority.mts — INTERNAL_C14 actual synchronous Group and Stock routes persist native effects and recover exact receipts without jobs
   {
     audience: commerceCustomerContext,
@@ -399,7 +433,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
   {
     audience: 'catalog',
     declarationKey: 'commerce.catalog.product.update',
-    entrypointKey: 'commerce.catalog.update-product',
+    entrypointKey: commerceCatalogUpdateProduct,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'forbidden',
     schemaVersion: '1',
@@ -422,6 +456,17 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     audience: 'catalog',
     declarationKey: 'commerce.catalog.catalog-source-products.read',
     entrypointKey: 'commerce.catalog.api.catalog-source-products',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCatalogSymmyProductRead,
+  },
+  // origin/main 2a7ebb965: symmy-c14-product-owner-conformance.test.mts — INTERNAL_C14 actual Shell and durable worker create one Catalog Product with two Variants and recover the original committed effect
+  {
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.catalog-source-product-page.read',
+    entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'forbidden',
     schemaVersion: '1',
@@ -528,6 +573,28 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: pricingPriceGroupCatalogSourceRead,
   },
+  // origin/main 682da68ad: symmy-c14-pricing-routes-runtime.mts — INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority
+  {
+    audience: 'pricing',
+    declarationKey: 'commerce.pricing.price.read-definition',
+    entrypointKey: 'commerce.pricing.api.price-definition',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commercePricingSourceRead,
+  },
+  // origin/main b0bc9604c: symmy-c14-pricing-routes-runtime.mts — INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority
+  {
+    audience: priceGroupCatalog,
+    declarationKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
+    entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: pricingPriceGroupCatalogSourceRead,
+  },
   // origin/main 5608aae1d: symmy-c14-pricing-routes-runtime.mts — INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority
   {
     audience: priceGroupCatalog,
@@ -587,7 +654,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
   {
     audience: commerceCustomerContext,
     declarationKey: 'commerce.customer-context.organization-customer-profile-ico.change',
-    entrypointKey: 'commerce.customer-context.change-organization-customer-profile-ico',
+    entrypointKey: commerceCustomerContextChangeOrganizationCustomerProfileIco,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'required',
     schemaVersion: '1',
@@ -598,7 +665,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
   {
     audience: partyRegistry,
     declarationKey: 'party.registry.counterparty.onboard',
-    entrypointKey: 'party.registry.counterparty-customer-onboard',
+    entrypointKey: partyRegistryCounterpartyCustomerOnboard,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'required',
     schemaVersion: '1',
@@ -609,7 +676,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
   {
     audience: commerceCustomerContext,
     declarationKey: 'commerce.customer-context.counterparty-purchasing-profile.create',
-    entrypointKey: 'commerce.customer-context.create-counterparty-purchasing-profile',
+    entrypointKey: commerceCustomerContextCreateCounterpartyPurchasingProfile,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'required',
     schemaVersion: '1',
@@ -648,6 +715,90 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     legalEntityScope: 'required',
     recoveryOf: {
       actionKey: commerceCustomerContextAssignCounterpartyPriceGroup,
+      jobKey: integrationSymmyExecuteSymmyJob,
+    },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCustomerContextSourceRead,
+  },
+  // symmy lost-response recovery: services/symmy-catalog-pricing-inventory-adapters.ts CatalogUpdateProduct recoveryEntrypointKey
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.update-product-recovery.read',
+    entrypointKey: 'commerce.catalog.api.update-product-recovery',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    recoveryOf: { actionKey: commerceCatalogUpdateProduct, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCatalogSymmyProductRead,
+  },
+  // symmy lost-response recovery: services/symmy-party-commerce-adapters.ts PartyCreate -> recoverParty
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryPartySourceEffectReceiptRead,
+    entrypointKey: partyRegistryApiPartySourceEffectReceipt,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryCreateParty, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy lost-response recovery: services/symmy-party-commerce-adapters.ts PartyUpdate -> recoverParty
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryPartySourceEffectReceiptRead,
+    entrypointKey: partyRegistryApiPartySourceEffectReceipt,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryUpdateParty, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy lost-response recovery: services/symmy-party-commerce-adapters.ts OnboardCounterpartyCustomer -> recoverParty
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryPartySourceEffectReceiptRead,
+    entrypointKey: partyRegistryApiPartySourceEffectReceipt,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryCounterpartyCustomerOnboard, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy lost-response recovery: services/symmy-party-commerce-adapters.ts CreateCounterpartyProfile -> recoverProfile
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: commerceCustomerContext,
+    declarationKey: commerceCustomerContextCustomerProfileSourceRead,
+    entrypointKey: commerceCustomerContextApiCustomerProfileSource,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    recoveryOf: {
+      actionKey: commerceCustomerContextCreateCounterpartyPurchasingProfile,
+      jobKey: integrationSymmyExecuteSymmyJob,
+    },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCustomerContextSourceRead,
+  },
+  // symmy lost-response recovery: services/symmy-party-commerce-adapters.ts OrganizationCustomerProfileIco -> recoverOrganizationIco
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: commerceCustomerContext,
+    declarationKey: 'commerce.customer-context.organization-customer-profile-ico.read',
+    entrypointKey: 'commerce.customer-context.api.organization-customer-profile-ico',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    recoveryOf: {
+      actionKey: commerceCustomerContextChangeOrganizationCustomerProfileIco,
       jobKey: integrationSymmyExecuteSymmyJob,
     },
     schemaVersion: '1',

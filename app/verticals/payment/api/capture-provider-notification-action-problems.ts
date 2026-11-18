@@ -61,10 +61,12 @@ export const captureProviderNotificationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CaptureProviderNotificationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CaptureProviderNotificationActionForbiddenProblem'> =>
     CaptureProviderNotificationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -163,7 +165,8 @@ const mapCoreProblem = (error: ActionCoreError): CaptureProviderNotificationActi
       ActionInvocationStateError: (failure) => captureProviderNotificationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: captureProviderNotificationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => captureProviderNotificationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => captureProviderNotificationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        captureProviderNotificationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => captureProviderNotificationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => captureProviderNotificationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => captureProviderNotificationActionProblem.conflict(failure.code),

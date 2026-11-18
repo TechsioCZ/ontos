@@ -8,11 +8,9 @@ const privacyCoreSourceProcessingCheck = 'privacy.core.source-processing-check';
 const privacyCoreSourceProcessingEligibilityRead = 'privacy.core.source-processing-eligibility.read';
 
 /**
- * The registered-workload calls this module's credential makes; its manifest declares them. Demo divergence
- * exception 8, to be offered upstream: upstream main has no production source for these rules
- * (`ONTOS_GATEWAY_MODULE_BINDINGS=[]` in `.env.example`), so each entry is verbatim from main's own fixture for its
- * flow. The Shell keeps an entry only while the installed receiver declares its workload and declaration, and a
- * tenant still needs an active registration of that workload.
+ * The registered-workload calls this module's credential makes; its manifest declares them. Each entry is verbatim
+ * from the fixture named on it. The Shell keeps an entry only while the installed receiver declares its workload and
+ * declaration, and a tenant still needs an active registration of that workload.
  */
 export const partyRegistryRegisteredWorkloadCalls = [
   // origin/main 5608aae1d: symmy-c14-customer-rules.mts — INTERNAL_C14 actual customer revisions and GET round-trip retain native targets under current Privacy

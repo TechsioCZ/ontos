@@ -18,9 +18,9 @@ const sourceActionKeySchema = nonEmpty.pipe(Schema.brand('GatewaySourceActionKey
 const workerKeySchema = nonEmpty.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
 
 /**
- * One registered-workload call the calling module makes: exactly the fields of upstream main's env-configured
- * binding rule. Upstream main has no production source for these rules (`ONTOS_GATEWAY_MODULE_BINDINGS=[]` in
- * `.env.example`); declaring them in the caller's manifest is demo divergence exception 8, to be offered upstream.
+ * One registered-workload call the calling module makes: exactly the fields of the Shell's gateway binding rule. The
+ * calling module's reviewed manifest is the only source of these rules; the Shell keeps a call only while the
+ * installed receiver declares it.
  */
 export const OntosRegisteredWorkloadCallSchema = Schema.Struct({
   allowHistoricalDeliveryRecovery: Schema.optionalKey(Schema.Boolean),
@@ -64,7 +64,12 @@ type CallSelectorFields = Pick<
 const callSelectors = (call: CallSelectorFields): readonly string[] => {
   const base = [call.audience, call.declarationKey];
   const selectors: (readonly (boolean | string)[])[] = [];
-  if (call.workerKey === undefined && call.sourceActionKey === undefined && call.sourceWorkloadKey !== undefined) {
+  if (
+    call.workerKey === undefined &&
+    call.sourceActionKey === undefined &&
+    call.recoveryOf === undefined &&
+    call.sourceWorkloadKey !== undefined
+  ) {
     selectors.push(['assertion', ...base, call.sourceWorkloadKey, call.allowRecoverySource === true]);
   }
   if (call.recoveryOf === undefined && call.allowRecoverySource !== true) {
@@ -120,10 +125,10 @@ export interface RegisteredWorkloadCallReceiver {
   readonly manifest: {
     readonly publicSurface: {
       readonly actions: readonly {
-        readonly accessActor?: { readonly subjectWorkloads?: readonly string[] } | undefined;
         readonly accessDeclaration?: { readonly key: string } | undefined;
         readonly accessWorkload?: { readonly workloads: readonly string[] } | undefined;
         readonly entrypoint: { readonly entrypointKey: string };
+        readonly legalEntityScope?: 'forbidden' | 'optional' | 'required' | undefined;
         readonly schemaVersion: string;
       }[];
       readonly operationContracts?:
@@ -141,11 +146,17 @@ export interface RegisteredWorkloadCallReceiver {
 
 /**
  * Whether the receiver publishes the call's exact operation version and, on it, the call's declaration and its
- * registered workload (as an `accessWorkload` workload or an `accessActor` subject workload). A call to anything else
- * is refused: an absent receiver, operation or version, another declaration, or a workload the receiver does not name.
+ * registered workload (a receiving action's own `accessWorkload` workload, as the Shell requires; a read's published
+ * workload carrier), and whether a receiving action runs in the call's legal-entity scope. A call to anything else is
+ * refused: an absent receiver, operation or version, another declaration, a workload the receiver does not name (an
+ * action's `accessActor` subject workload alone is not enough), or an action with another or no scope. A receiving
+ * read publishes no scope, so the Shell checks a read's scope only at runtime.
  */
 export const registeredWorkloadCallReceiverIssue = (
-  call: Pick<OntosRegisteredWorkloadCallInput, 'audience' | 'declarationKey' | 'entrypointKey' | 'schemaVersion'> & {
+  call: Pick<
+    OntosRegisteredWorkloadCallInput,
+    'audience' | 'declarationKey' | 'entrypointKey' | 'legalEntityScope' | 'schemaVersion'
+  > & {
     readonly workloadKey: string;
   },
   receiver: RegisteredWorkloadCallReceiver | undefined,
@@ -165,7 +176,7 @@ export const registeredWorkloadCallReceiverIssue = (
         ? [
             {
               declarationKey: action.accessDeclaration?.key,
-              workloads: [...(action.accessWorkload?.workloads ?? []), ...(action.accessActor?.subjectWorkloads ?? [])],
+              workloads: action.accessWorkload?.workloads ?? [],
             },
           ]
         : [],
@@ -184,9 +195,15 @@ export const registeredWorkloadCallReceiverIssue = (
   if (declared.length === 0) {
     return `${label}: the receiver publishes no such operation version`;
   }
-  return declared.every(
-    ({ declarationKey, workloads }) => declarationKey === call.declarationKey && workloads.includes(call.workloadKey),
-  )
+  if (
+    !declared.every(
+      ({ declarationKey, workloads }) => declarationKey === call.declarationKey && workloads.includes(call.workloadKey),
+    )
+  ) {
+    return `${label}: the receiver does not declare ${call.declarationKey} for workload ${call.workloadKey}`;
+  }
+  const otherScope = actions.find((action) => matches(action) && action.legalEntityScope !== call.legalEntityScope);
+  return otherScope === undefined
     ? undefined
-    : `${label}: the receiver does not declare ${call.declarationKey} for workload ${call.workloadKey}`;
+    : `${label}: the receiver runs ${call.declarationKey} with scope ${otherScope.legalEntityScope ?? 'none'}, not ${call.legalEntityScope}`;
 };

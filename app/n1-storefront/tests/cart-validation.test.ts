@@ -1,16 +1,19 @@
 import { describe, expect, it } from "@rstest/core";
 import {
   cartIssueText,
+  cartEntryWithStock,
   globalCartIssues,
   hasInvalidCartDraft,
   issuesForCartEntry,
+  invalidCartQuantityText,
   quantityDraftForEntry,
   reconcileQuantityDrafts,
   removeQuantityDraft,
   validCartQuantity,
 } from "../src/features/cart-validation";
 import type { QuantityDrafts } from "../src/features/cart-validation";
-import { cartLineKey, cartQuantityStep } from "../src/features/cart-state";
+import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "../src/features/cart-state";
+import { getDictionary } from "../src/i18n";
 
 const entry = {
   expectedUnitPriceMinor: 12_100,
@@ -29,6 +32,56 @@ const blankDraft = (): QuantityDrafts => ({
 });
 
 describe("cart quantity draft lifecycle", () => {
+  it.each(["cs", "en"])(
+    "does not blame minimum quantity for an overflow or malformed draft in %s",
+    (locale) => {
+      const d = getDictionary(locale);
+      const selected = { ...entry, minimumQuantity: 1 };
+      for (const quantity of [56, Number.NaN, 1.5]) {
+        expect(invalidCartQuantityText(quantity, selected, d)).toBe(d.shopping.invalidQuantity);
+      }
+      expect(invalidCartQuantityText(0, selected, d)).toContain(d.minimumQuantity);
+      expect(invalidCartQuantityText(0, entry, d)).toBe(d.shopping.invalidQuantity);
+    },
+  );
+  it("gates both saved overstock and manual overflow against current per-variant stock", () => {
+    const stocks = [{ productId: entry.productId, stockQuantity: 2, variantId: entry.variantId }];
+    const selected = cartEntryWithStock(entry, stocks);
+    expect(hasInvalidCartDraft({}, [selected])).toBe(false);
+    expect(hasInvalidCartDraft({}, [{ ...selected, quantity: 3 }])).toBe(true);
+    expect(
+      hasInvalidCartDraft({ [cartLineKey(entry)]: { quantity: 2, saveError: false, value: "9" } }, [
+        selected,
+      ]),
+    ).toBe(true);
+    expect(cartEntryWithStock({ ...entry, variantId: "other" }, stocks)).not.toHaveProperty(
+      "stockQuantity",
+    );
+    expect(
+      cartEntryWithStock({ ...entry, stockQuantity: 2 }, [{ ...stocks[0], stockQuantity: null }])
+        .stockQuantity,
+    ).toBeNull();
+  });
+  it("keeps stock bounds aligned to native packages without rounding the customer's quantity", () => {
+    expect(cartQuantityMaximum(10, 3)).toBe(9);
+    expect(cartQuantityMaximum(0.3, 0.1)).toBe(0.3);
+    expect(cartQuantityMaximum(2, 3)).toBe(0);
+    expect(cartQuantityMaximum(null)).toBe(1_000_000);
+    expect(validCartQuantity(11, 1, null, cartQuantityMaximum(10))).toBe(false);
+    expect(validCartQuantity(9, 1, 3, cartQuantityMaximum(10, 3))).toBe(true);
+  });
+  it("does not increase a fresher catalog bound from a retained pending quote", () => {
+    const selected = { ...entry, stockQuantity: 2 };
+    const previous = [
+      { productId: entry.productId, stockQuantity: 10, variantId: entry.variantId },
+    ];
+    expect(cartEntryWithStock(selected, previous, false).stockQuantity).toBe(2);
+    expect(cartEntryWithStock(selected, previous, true).stockQuantity).toBe(10);
+    expect(
+      cartEntryWithStock(selected, [{ ...previous[0], stockQuantity: null }], false).stockQuantity,
+    ).toBe(2);
+    expect(cartEntryWithStock(entry, previous, false).stockQuantity).toBe(10);
+  });
   it.each([undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
     "keeps steppers usable without a positive finite owner package: %s",
     (packageQuantity) => {

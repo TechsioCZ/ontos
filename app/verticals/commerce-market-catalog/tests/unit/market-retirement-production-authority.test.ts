@@ -7,10 +7,7 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 
-import {
-  makeMarketRetirementImpactAuthority,
-  makeMarketRetirementImpactAuthorityFromPublishedClient,
-} from '../../src/integrations/market-retirement-impact.ts';
+import { makeMarketRetirementImpactAuthority } from '../../src/integrations/market-retirement-impact.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketRef = {
@@ -367,10 +364,6 @@ describe('Market retirement production authority', () => {
         expect(Predicate.isTagged(transportFailure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
       }),
   );
-
-  it('exports the published-client authority factory used by the deployed Action composition', () => {
-    expect(makeMarketRetirementImpactAuthorityFromPublishedClient).toBeTypeOf('function');
-  });
 
   it.effect('refuses a parked reservation proposal instead of accepting or advancing reservation work', () =>
     Effect.gen(function* parkedReservationProposal() {

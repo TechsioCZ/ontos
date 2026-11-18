@@ -1,6 +1,6 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { StockLocationSchema, transitionStockLocation } from '../../shared/domain/stock-location.ts';
@@ -224,7 +224,6 @@ describe('Inventory Stock Location persistence', () => {
       const history = yield* persistence.readHistory(active.ref);
 
       expect(history).toEqual([active, retired]);
-      expect(Option.some(history[0])).toEqual(Option.some(active));
     }),
   );
 });

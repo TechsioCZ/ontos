@@ -32,6 +32,7 @@ const cli = Command.make(
       const permissions = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
       const inherited = yield* Config.all({
         HOME: Config.String('HOME'),
+        NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
         ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
           Config.withDefault(true),
           Config.map(String),

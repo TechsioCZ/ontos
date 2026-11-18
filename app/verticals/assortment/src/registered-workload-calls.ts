@@ -5,11 +5,9 @@ const commerceAssortmentSymmyFixtureRuleImport = 'commerce.assortment.symmy-fixt
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
 
 /**
- * The registered-workload calls this module's credential makes; its manifest declares them. Demo divergence
- * exception 8, to be offered upstream: upstream main has no production source for these rules
- * (`ONTOS_GATEWAY_MODULE_BINDINGS=[]` in `.env.example`), so each entry is verbatim from main's own fixture for its
- * flow. The Shell keeps an entry only while the installed receiver declares its workload and declaration, and a
- * tenant still needs an active registration of that workload.
+ * The registered-workload calls this module's credential makes; its manifest declares them. Each entry is verbatim
+ * from the fixture named on it. The Shell keeps an entry only while the installed receiver declares its workload and
+ * declaration, and a tenant still needs an active registration of that workload.
  */
 export const assortmentRegisteredWorkloadCalls = [
   // origin/main 5608aae1d: symmy-c14-policy-fixture.mts — requires Current owner facts and exact SQL enrollment before an internal Assortment import can persist

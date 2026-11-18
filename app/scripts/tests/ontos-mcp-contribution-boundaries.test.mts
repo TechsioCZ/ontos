@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -20,6 +21,7 @@ import {
   OntosMcpContributionDerivationError,
 } from '../ontos-mcp-contribution.mts';
 import type { DeriveOntosMcpContributionInput } from '../ontos-mcp-contribution.mts';
+import { focusedEntrypointValueExports } from '../materialize-outbox-worker.mjs';
 
 const title = { cs: 'Změnit rezervaci', en: 'Change booking' };
 const READ_PATH = '/reads/state';
@@ -201,6 +203,7 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
     },
   });
   const commandProperties = { note: { type: 'string' } };
+  const actionRevision = Schema.decodeUnknownSync(Schema.JsonObject)(Schema.toJsonSchemaDocument(Schema.Int).schema);
   const expectedCatalog = Schema.encodeSync(OntosMcpToolCatalogJsonSchema)({
     definitions: {},
     tools: [
@@ -226,6 +229,7 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
           properties: {
             ...commandProperties,
             expectedRevision: {
+              allOf: [actionRevision],
               description: 'Revize pro kontrolu souběžných změn; když chybí, OntOS ji načte sám. / Optional revision.',
               minimum: 0,
               type: 'integer',
@@ -278,9 +282,18 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
   });
 });
 
-it('takes the first duplicate read slug, ignores other routes and omits absent optional fields', () => {
+it('rejects one read slug with different payload schemas in two APIs of the module', () => {
+  expect(() =>
+    derive({
+      api: { first: readApi(readPayload), second: readApi(Schema.Struct({ different: Schema.Boolean })) },
+      authored: { ...authored, reads: { state: { title } } },
+    }),
+  ).toThrow('second /reads/state: read state has a different payload schema in another API of the module');
+});
+
+it('keeps one tool for an identical duplicate read, ignores other routes and omits absent optional fields', () => {
   const result = catalogOf({
-    api: { first: readApi(readPayload), second: readApi(Schema.Struct({ different: Schema.Boolean })) },
+    api: { first: readApi(readPayload), second: readApi(readPayload) },
     authored: { ...authored, ownProposalEngine: false, reads: { state: { title } } },
   });
   expect(result.catalog.tools).toHaveLength(1);
@@ -320,6 +333,16 @@ it('accepts an executable payload Schema but rejects missing and unknown contrib
   );
   const result = catalogOf({ actions, authored: { ...authored, actions: { 'assign-code': { title } } } });
   expect(result.catalog.tools[0]?.id).toBe('booking/action/assign-code');
+});
+
+it('does not count an inherited entry as the module classification', () => {
+  const inheritedReads: OntosMcpContributionInput['reads'] = {};
+  Object.setPrototypeOf(inheritedReads, { state: { title } });
+  expect(() =>
+    derive({ api: { BookingApi: readApi(readPayload) }, authored: { ...authored, reads: inheritedReads } }),
+  ).toThrow('booking: MCP reads not contributed or hidden: state');
+  const actions = [{ descriptor: { actionKey: 'booking.constructor', payloadSchema: readPayload } }];
+  expect(() => derive({ actions })).toThrow('booking: MCP actions not contributed or hidden: constructor');
 });
 
 it('merges identical definitions and rejects conflicting definitions without changing the error', () => {
@@ -365,4 +388,102 @@ it('keeps the normalization and hash suffix of long tool names', () => {
     `${full.slice(0, 55)}_${createHash('sha256').update(full).digest('hex').slice(0, 8)}`,
   );
   expect(mcpToolName(appId, suffix)).toHaveLength(64);
+});
+
+it('exports the contribution authoring vocabulary from the focused worker entrypoint `@app/core-runtime` resolves to', () => {
+  const entrypoint = focusedEntrypointValueExports(
+    readFileSync(new URL('../../packages/core-runtime/src/outbox/worker-entrypoint.ts', import.meta.url), 'utf-8'),
+  );
+  expect(entrypoint.has('defineOntosMcpContribution')).toBe(true);
+  expect(entrypoint.has('OntosMcpHidden')).toBe(true);
+});
+
+it.each(['inventory/commands', 'Příkazy skladu', 'InventoryCommands'])(
+  'resolves a command union whose definition identifier is %s',
+  (identifier) => {
+    const command = Schema.Union([
+      Schema.Struct({ _tag: Schema.Literal('CancelBooking') }),
+      Schema.Struct({ _tag: Schema.Literal('KeepBooking') }),
+    ]).annotate({ identifier });
+    const { catalog, contribution } = catalogOf({
+      actions: [commandAction('execute', command)],
+      authored: { ...authored, commands: { CancelBooking: { title }, KeepBooking: OntosMcpHidden } },
+    });
+    expect(catalog.tools.map((tool) => tool.id)).toEqual(['booking/command/CancelBooking']);
+    expect(contribution.commandActions).toEqual({ CancelBooking: ['execute'], KeepBooking: ['execute'] });
+  },
+);
+
+it('gives a command tool the Action revision constraint and keeps the revision optional', () => {
+  const action = {
+    descriptor: {
+      actionKey: 'booking.keep',
+      payloadSchema: Schema.Struct({
+        command: Schema.Struct({ _tag: Schema.Literal('KeepBooking') }),
+        expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      }),
+    },
+  };
+  const { catalog } = catalogOf({ actions: [action], authored: { ...authored, commands: { KeepBooking: { title } } } });
+  const [tool] = catalog.tools;
+  expect(tool?.inputSchema.required).toEqual([]);
+  expect(tool?.inputSchema.properties).toMatchObject({
+    expectedRevision: { allOf: [{ minimum: 1, type: 'integer' }], minimum: 0, type: 'integer' },
+  });
+});
+
+it('offers every JSON payload variant of a read, and a single payload as it is', () => {
+  const variants = [Schema.Struct({ search: Schema.String }), Schema.Struct({ phrase: Schema.String })];
+  const api = HttpApi.make('BookingApi').add(
+    HttpApiGroup.make('booking').add(
+      HttpApiEndpoint.post('state', READ_PATH, { payload: variants, success: Schema.Void }),
+    ),
+  );
+  const { catalog } = catalogOf({ api: { BookingApi: api }, authored: { ...authored, reads: { state: { title } } } });
+  expect(catalog.tools[0]?.inputSchema).toEqual(Schema.toJsonSchemaDocument(Schema.Union(variants)).schema);
+  const single = catalogOf({
+    api: { BookingApi: readApi(readPayload) },
+    authored: { ...authored, reads: { state: { title } } },
+  });
+  expect(single.catalog.tools[0]?.inputSchema).toEqual(Schema.toJsonSchemaDocument(readPayload).schema);
+});
+
+it('adds a definition named like an Object prototype member and still rejects its conflicting redefinition', () => {
+  const payloadSchema = Schema.Struct({ value: Schema.String }).annotate({ identifier: 'constructor' });
+  const contribution = { ...authored, actions: { alpha: { title }, beta: { title } } };
+  const first = { descriptor: { actionKey: 'booking.alpha', payloadSchema } };
+  expect(
+    catalogOf({
+      actions: [first, { descriptor: { actionKey: 'booking.beta', payloadSchema } }],
+      authored: contribution,
+    }).catalog.definitions,
+  ).toHaveProperty('constructor');
+  const incompatible = Schema.Struct({ value: Schema.Boolean }).annotate({ identifier: 'constructor' });
+  expect(() =>
+    derive({
+      actions: [first, { descriptor: { actionKey: 'booking.beta', payloadSchema: incompatible } }],
+      authored: contribution,
+    }),
+  ).toThrow('JSON Schema definition constructor differs between two schemas of the module');
+});
+
+it.each([
+  ['approvalReview', { approvalReview: { read: 'toString' } }],
+  ['revision', { revision: { read: 'toString' } }],
+])('rejects a %s read that is only an inherited name of the reads map', (_field, reference) => {
+  const contribution = { ...authored, ...reference, reads: { state: { title } } };
+  expect(() => defineOntosMcpContribution(contribution)).toThrow("read toString is not one of the module's reads");
+  expect(() => derive({ api: { BookingApi: readApi(readPayload) }, authored: contribution })).toThrow(
+    "booking: MCP read toString is not one of the module's reads",
+  );
+  const declared = {
+    ...authored,
+    approvalReview: { read: 'state' },
+    reads: { state: { title } },
+    revision: { read: 'state' },
+  };
+  expect(defineOntosMcpContribution(declared)).toBe(declared);
+  expect(derive({ api: { BookingApi: readApi(readPayload) }, authored: declared })?.contribution.revision?.path).toBe(
+    READ_PATH,
+  );
 });

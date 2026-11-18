@@ -29,19 +29,16 @@ const unavailable = (cause?: unknown) =>
   );
 const notAdmissible: SourcePersonAdmissionResponse = { outcome: 'NOT_ADMISSIBLE' };
 
-/** Exact correlation and direct lifecycle proof contain no name or contact values. */
-export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCorrelatedParty')(
-  function* correlatedParty(
+/**
+ * Exact correlation and direct lifecycle proof of the Party, after the caller has authorized the source reference.
+ * They contain no name or contact values.
+ */
+export const loadAuthorizedSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadAuthorizedCorrelatedParty')(
+  function* authorizedCorrelatedParty(
     transaction: Pick<PartyTransaction, 'select'>,
     scope: OperationalScope,
     input: SourcePersonAdmissionRequest,
   ) {
-    if (input.partyRef.tenantId !== scope.tenantId) {
-      return;
-    }
-    yield* authorizePartyClientSourceReference(input.sourceReference, scope, { operation: 'EVIDENCE_READ' }).pipe(
-      Effect.mapError(unavailable),
-    );
     const [party] = yield* transaction
       .select({
         partyId: parties.partyId,
@@ -118,6 +115,23 @@ export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCo
       }
     }
     return { party, decision };
+  },
+);
+
+/** Exact correlation and direct lifecycle proof contain no name or contact values. */
+export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCorrelatedParty')(
+  function* correlatedParty(
+    transaction: Pick<PartyTransaction, 'select'>,
+    scope: OperationalScope,
+    input: SourcePersonAdmissionRequest,
+  ) {
+    if (input.partyRef.tenantId !== scope.tenantId) {
+      return;
+    }
+    yield* authorizePartyClientSourceReference(input.sourceReference, scope, { operation: 'EVIDENCE_READ' }).pipe(
+      Effect.mapError(unavailable),
+    );
+    return yield* loadAuthorizedSourceCorrelatedParty(transaction, scope, input);
   },
 );
 

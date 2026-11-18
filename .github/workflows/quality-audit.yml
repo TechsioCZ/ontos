@@ -1,5 +1,12 @@
 name: Quality Audit
 
+# This stays a separate workflow. Do not fold it into Ultramodern Workspace Gates.
+# Wall clock, last 100 runs on main (80 successes): min 2.8, p50 5.0, p90 6.8, max 7.2 min, zero over 10.
+# It blocks nothing and duplicates no gates work: `lint:suppressions` and `quality:audit` appear in neither
+# ultramodern-workspace-gates.yml nor scripts/ci-matrices.json. Folding it in would spend its ~6 machine-minutes
+# on the same 20 concurrent hosted runners as the gates and would turn audit reports into findings of
+# "Workspace gates", a merge-policy change rather than a speed-up.
+#
 # Repository-root documentation is outside the audited app/ workspace.
 on:
   pull_request:
@@ -35,7 +42,7 @@ concurrency:
 jobs:
   quality-audit:
     name: Quality Audit Reports
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Harden Runner
@@ -61,9 +68,10 @@ jobs:
           install-args: --ignore-scripts
           mise-env: "false"
 
-      - name: Verify audit runner and gate behavior
-        run: mise exec -- pnpm quality:audit:test
-
+      # No self-test step (`pnpm quality:audit:test`, 32-51 s): every file it names is a
+      # `scripts/tests/*.test.mts`, which the gates' Repository Tooling Tests rows already run in full.
+      # A broken runner still cannot report clean: the integrity step below reads summary.json and
+      # fails closed on an absent, empty or truncated summary (quality-audit-gate.test.mts).
       - name: Report lint suppressions
         run: mise exec -- pnpm lint:suppressions
 

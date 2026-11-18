@@ -80,7 +80,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
     { contract: ownContract, marker: ownContract.deployment },
     { contract: party.contract, marker: party.marker },
   ]);
-  const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
+  const isolated = yield* makeQuantityProfileOwnedDatabase(snapshot);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
       access: 'allowed',

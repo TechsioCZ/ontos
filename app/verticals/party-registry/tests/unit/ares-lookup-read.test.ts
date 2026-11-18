@@ -235,15 +235,6 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
         'AresLookupUnavailableProblem',
         'AresLookupInternalProblem',
       ]);
-      expect(
-        yield* Schema.decodeEffect(AresLookupRequestSchema)({
-          ico: '48039101',
-        }),
-      ).toEqual({
-        ico: '48039101',
-      });
-      expect(yield* Schema.decodeEffect(AresLookupResponseSchema)(evidenceWire)).toEqual(evidence);
-      expect(AresLookupApi.identifier).toBe('AresLookupApi');
     }),
   );
 

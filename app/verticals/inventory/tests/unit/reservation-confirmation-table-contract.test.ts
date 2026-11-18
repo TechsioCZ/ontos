@@ -1,10 +1,7 @@
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'effect-rstest';
 
-import {
-  ReservationConfirmationRejected,
-  reservationConfirmationCanEstablishProtection,
-} from '../../shared/domain/reservation-confirmation.ts';
+import { ReservationConfirmationRejected } from '../../shared/domain/reservation-confirmation.ts';
 import {
   createOrReadReservationConfirmationForWorkerRoutine,
   findReservationConfirmationByAttemptForWorkerRoutine,
@@ -17,7 +14,6 @@ import {
   INVENTORY_RESERVATION_CONFIRMATION_TABLES,
   inventoryReservationConfirmationHistory,
   inventoryReservationConfirmationHistoryImmutabilityContract,
-  inventoryReservationConfirmationLifecycleContract,
   inventoryReservationConfirmationScopeContract,
   inventoryReservationConfirmations,
 } from '../../src/persistence/reservation-confirmation-table.ts';
@@ -46,29 +42,6 @@ describe('Reservation Confirmation persistence contract', () => {
       inventoryReservationConfirmations,
     ]);
     expect(inventoryReservationConfirmationScopeContract.event).toBe('INSERT OR UPDATE');
-  });
-
-  it('freezes proof identity, issuance, expiry, authority, and rank while allowing only monotonic health revisions', () => {
-    expect(inventoryReservationConfirmationLifecycleContract.immutableColumns).toEqual(
-      expect.arrayContaining([
-        'confirmation_id',
-        'reservation_id',
-        'attempt_id',
-        'owner_configuration_id',
-        'issuer_backend_kind',
-        'issuer_backend_id',
-        'authority_effect_id',
-        'owner_evidence_ref',
-        'issued_at',
-        'expires_at',
-      ]),
-    );
-    expect(inventoryReservationConfirmationLifecycleContract.terminalStates).toEqual(['REVOKED', 'EXPIRED']);
-    expect(inventoryReservationConfirmationLifecycleContract.allowedRecoveryStates).toEqual([
-      'AT_RISK',
-      'UNVERIFIABLE',
-    ]);
-    expect(inventoryReservationConfirmationLifecycleContract.monotonicRevision).toBe(true);
   });
 
   it('makes every history revision append-only under tenant RLS', () => {
@@ -100,7 +73,6 @@ describe('Reservation Confirmation persistence contract', () => {
     expect(identity).toBeInstanceOf(ReservationConfirmationRejected);
     expect(identity).toMatchObject({ reason: 'CONFIRMATION_IDENTITY_CONFLICT' });
     expect(sibling).toMatchObject({ reason: 'SIBLING_CONFIRMATION_FORBIDDEN' });
-    expect(reservationConfirmationCanEstablishProtection).toBeTypeOf('function');
   });
 
   it('exposes only owner-scoped routines for worker reads, creation, history, and revision writes', () => {

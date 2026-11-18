@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { Exit, Fiber } from "effect";
+import { Exit, Fiber, Schema } from "effect";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormInput } from "./form-controls";
 import { Select } from "@techsio/ui-kit/molecules/select";
@@ -27,7 +27,7 @@ import {
 import type { CheckoutPostalDraft } from "./checkout-saved-address";
 
 type Field = keyof typeof checkoutFieldAttributes;
-type FieldErrors = Partial<Record<Field, string | null>>;
+type FieldErrors = Partial<Record<Field | "country", string | null>>;
 interface CheckoutFieldState {
   readonly epoch: number;
   readonly errors: FieldErrors;
@@ -39,6 +39,7 @@ interface CheckoutFieldState {
 const clearPostalErrors = (errors: FieldErrors) => ({
   ...errors,
   city: null,
+  country: null,
   postalCode: null,
   street: null,
 });
@@ -206,6 +207,73 @@ export const CheckoutFields = ({
       </div>
     );
   };
+  const country = () => {
+    const countryError = errors.country ?? undefined;
+    return (
+      <div
+        className="min-w-0"
+        onInvalidCapture={(event) => {
+          if (Schema.is(Schema.instanceOf(HTMLSelectElement))(event.target)) {
+            event.preventDefault();
+            const message = checkoutFieldError("country", event.target.validity, d);
+            setFieldState((previous) => ({
+              ...previous,
+              errors: { ...previous.errors, country: message ?? null },
+            }));
+          }
+        }}
+      >
+        <Select
+          disabled={disabled}
+          id={`${id}-country`}
+          items={countries}
+          name="country"
+          onValueChange={({ value }) => {
+            setFieldState((previous) => ({
+              ...previous,
+              errors: { ...previous.errors, country: null },
+              postal: editCheckoutPostal(
+                previous.postal,
+                identity,
+                countryCodes,
+                "country",
+                value[0] ?? "",
+              ),
+            }));
+            onEdit();
+          }}
+          required
+          size="md"
+          validateStatus={countryError === undefined ? "default" : "error"}
+          value={
+            countryCodes.includes(currentPostal.fields.country)
+              ? [currentPostal.fields.country]
+              : []
+          }
+        >
+          <Select.Label>{d.checkout.country}</Select.Label>
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder={d.checkout.countryPlaceholder} />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {countries.map((item) => (
+                <Select.Item item={item} key={item.value}>
+                  <Select.ItemText />
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+          {countryError !== undefined && (
+            <Select.StatusText status="error">{countryError}</Select.StatusText>
+          )}
+        </Select>
+      </div>
+    );
+  };
   return (
     <section className="flex min-w-0 flex-col gap-4 rounded-xs border border-border-secondary bg-fill-surface p-4">
       <h2 className="text-lg font-semibold">{d.checkout.address}</h2>
@@ -279,51 +347,7 @@ export const CheckoutFields = ({
       {input("street")}
       <div className="grid min-w-0 grid-cols-2 gap-3">
         <div className="min-w-0">{input("city")}</div>
-        <div className="min-w-0">
-          <Select
-            disabled={disabled}
-            id={`${id}-country`}
-            items={countries}
-            name="country"
-            onValueChange={({ value }) => {
-              setFieldState((previous) => ({
-                ...previous,
-                postal: editCheckoutPostal(
-                  previous.postal,
-                  identity,
-                  countryCodes,
-                  "country",
-                  value[0] ?? "",
-                ),
-              }));
-              onEdit();
-            }}
-            required
-            size="md"
-            value={
-              countryCodes.includes(currentPostal.fields.country)
-                ? [currentPostal.fields.country]
-                : []
-            }
-          >
-            <Select.Label>{d.checkout.country}</Select.Label>
-            <Select.Control>
-              <Select.Trigger>
-                <Select.ValueText placeholder={d.checkout.countryPlaceholder} />
-              </Select.Trigger>
-            </Select.Control>
-            <Select.Positioner>
-              <Select.Content>
-                {countries.map((item) => (
-                  <Select.Item item={item} key={item.value}>
-                    <Select.ItemText />
-                    <Select.ItemIndicator />
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select.Positioner>
-          </Select>
-        </div>
+        {country()}
       </div>
       {input("postalCode")}
       {input("phone")}

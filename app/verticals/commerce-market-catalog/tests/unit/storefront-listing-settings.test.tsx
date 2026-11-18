@@ -116,6 +116,24 @@ it.effect('retains an unsaved draft on failure and allows retrying', () =>
   }),
 );
 
+it.effect('keeps an unsaved checkbox editable and shows saving only during the request', () =>
+  Effect.gen(function* dirtyIsNotSaving() {
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.never);
+    yield* mount();
+    yield* toggle();
+    expect(input().disabled).toBe(false);
+    expect(save().textContent).toBe('commerce-market-catalog.eshops.listing.save');
+    yield* toggle();
+    expect(input().checked).toBe(true);
+    expect(save().disabled).toBe(true);
+    yield* toggle();
+    yield* clickSave();
+    expect(input().disabled).toBe(true);
+    expect(save().textContent).toBe('commerce-market-catalog.eshops.listing.saving');
+    expect(executeManageCatalog).toHaveBeenCalledTimes(1);
+  }),
+);
+
 it.effect('reports an approval proposal without claiming the preference was saved', () =>
   Effect.gen(function* proposedSave() {
     rstest.mocked(executeManageCatalog).mockReturnValue(

@@ -9,7 +9,8 @@ import { Link } from "@/features/plain-link";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { LineItem } from "@techsio/ui-kit/organisms/line-item";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
-import { QuantityField } from "@techsio/ui-kit/molecules/quantity-field";
+import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { CartSummary } from "./cart-summary";
 import { EmptyCartView } from "./empty-cart-view";
 import type { Dictionary } from "@/i18n";
@@ -19,14 +20,16 @@ import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
 import { requestForCart } from "./cart-quote-request";
 import { verifiedCartQuote } from "./cart-quote-state";
-import { cartLineKey, cartQuantityStep } from "./cart-state";
+import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import { useCartQuote } from "./use-cart-quote";
 
 import {
   cartIssueText,
+  cartEntryWithStock,
   hasInvalidCartDraft,
   issuesForCartEntry,
+  invalidCartQuantityText,
   quantityDraftForEntry,
   reconcileQuantityDrafts,
   removeQuantityDraft,
@@ -36,7 +39,7 @@ import type { QuantityDraft, QuantityDrafts } from "./cart-validation";
 
 const issueText = (code: string, d: Dictionary) =>
   cartIssueText(code, d.shopping.issues, d.shopping.rejected);
-const money = (amount: number, locale: string, currency: string) =>
+const money = (amount: number, locale: string, currency = "CZK") =>
   new Intl.NumberFormat(locale, { currency, style: "currency" }).format(amount / 100);
 
 const EMPTY_CART_ENTRIES: readonly CartEntry[] = [];
@@ -50,10 +53,7 @@ const quantityErrorText = (
 ) => {
   let error: string | undefined;
   if (invalid) {
-    error =
-      entry.minimumQuantity === undefined
-        ? d.shopping.invalidQuantity
-        : `${d.shopping.invalidQuantity} ${d.minimumQuantity}: ${entry.minimumQuantity} ${entry.unit}`;
+    error = invalidCartQuantityText(Number(draft?.value ?? entry.quantity), entry, d);
   } else if (saveError || draft?.saveError === true) {
     error = d.shopping.addFailed;
   }
@@ -81,7 +81,13 @@ const CartRow = ({
   const [saveError, setSaveError] = useState(false);
   const value = draft?.value ?? String(entry.quantity);
   const quantity = Number(value);
-  const invalid = !validCartQuantity(quantity, entry.minimumQuantity, entry.packageQuantity);
+  const maximum = cartQuantityMaximum(entry.stockQuantity, entry.packageQuantity);
+  const invalid = !validCartQuantity(
+    quantity,
+    entry.minimumQuantity,
+    entry.packageQuantity,
+    maximum,
+  );
   const image = publicImage(entry.image ?? undefined, cart?.imageHosts ?? []);
   const changedPrice = issues.find(
     (issue) => issue.code === "PRICE_CHANGED",
@@ -92,6 +98,7 @@ const CartRow = ({
       ? pathname
       : `${pathname}?${new URLSearchParams({ variantId: entry.variantId })}`;
   const quantityError = quantityErrorText(invalid, saveError, draft, d, entry);
+  const feedbackId = `cart-${encodeURIComponent(cartLineKey(entry))}-feedback`;
   const uniqueIssues = [...new Map(issues.map((issue) => [issue.code, issue])).values()];
   return (
     <LineItem title={entry.name}>
@@ -109,11 +116,7 @@ const CartRow = ({
           </LineItem.Title>
           <LineItem.Price>
             <PriceBlock
-              amountLabel={money(
-                entry.expectedUnitPriceMinor,
-                locale,
-                cart?.scope?.currency ?? "CZK",
-              )}
+              amountLabel={money(entry.expectedUnitPriceMinor, locale, cart?.scope?.currency)}
               state="known"
             />
           </LineItem.Price>
@@ -124,12 +127,17 @@ const CartRow = ({
         </LineItem.Options>
         <LineItem.Controls>
           <LineItem.Quantity readOnlyLabel={`${entry.quantity} ${entry.unit}`}>
-            <div className="md:w-60">
-              <QuantityField
-                error={quantityError}
-                hideLabel
-                label={`${d.quantity}: ${entry.name}`}
-                max={1_000_000}
+            <div className="n1-product-quantity-desktop flex items-center gap-2">
+              <NumericInput
+                allowOverflow={false}
+                clampValueOnBlur
+                className="w-26 pointer-coarse:w-40"
+                density="compact"
+                disabled={cart === null}
+                formatOptions={{ maximumFractionDigits: 20, useGrouping: false }}
+                invalid={quantityError !== undefined}
+                locale={locale}
+                max={Math.max(entry.minimumQuantity ?? 0.001, maximum)}
                 min={entry.minimumQuantity ?? 0.001}
                 onValueChange={({ value: next }) => {
                   const parsed = Number(next);
@@ -137,6 +145,7 @@ const CartRow = ({
                     parsed,
                     entry.minimumQuantity,
                     entry.packageQuantity,
+                    maximum,
                   );
                   const saved = valid && (cart?.update(entry, parsed) ?? false);
                   onDraft({
@@ -148,13 +157,26 @@ const CartRow = ({
                 }}
                 size="md"
                 step={cartQuantityStep(entry.packageQuantity)}
-                translations={{
-                  decrementLabel: d.shopping.decreaseQuantity,
-                  incrementLabel: d.shopping.increaseQuantity,
-                }}
-                unitLabel={entry.unit}
                 value={value}
-              />
+              >
+                <NumericInput.Control>
+                  <NumericInput.DecrementTrigger
+                    aria-label={d.shopping.decreaseQuantity}
+                    icon="token-icon-minus"
+                    iconSize="sm"
+                  />
+                  <NumericInput.Input
+                    aria-describedby={feedbackId}
+                    aria-label={`${d.quantity}: ${entry.name}`}
+                  />
+                  <NumericInput.IncrementTrigger
+                    aria-label={d.shopping.increaseQuantity}
+                    icon="token-icon-plus"
+                    iconSize="sm"
+                  />
+                </NumericInput.Control>
+              </NumericInput>
+              <span>{entry.unit}</span>
             </div>
           </LineItem.Quantity>
           <LineItem.Actions>
@@ -167,6 +189,9 @@ const CartRow = ({
             />
           </LineItem.Actions>
         </LineItem.Controls>
+        <div id={feedbackId}>
+          {quantityError !== undefined && <StatusText status="error">{quantityError}</StatusText>}
+        </div>
         {uniqueIssues.map((issue) => (
           <p className="text-sm" key={issue.code}>
             {issueText(issue.code, d)}
@@ -182,7 +207,7 @@ const CartRow = ({
             theme="outlined"
             variant="secondary"
           >
-            {d.shopping.acceptPrice}: {money(changedPrice, locale, cart?.scope?.currency ?? "CZK")}
+            {d.shopping.acceptPrice}: {money(changedPrice, locale, cart?.scope?.currency)}
           </Button>
         )}
       </LineItem.Body>
@@ -255,7 +280,11 @@ const CartContent = ({
             <CartRow
               dictionary={d}
               draft={quantityDraftForEntry(drafts, entry)}
-              entry={entry}
+              entry={cartEntryWithStock(
+                entry,
+                quote.stocks,
+                quote.state === "ready" && quote.result?.stocks !== undefined,
+              )}
               issues={issuesForCartEntry(quote.result?.issues ?? [], entry)}
               key={cartLineKey(entry)}
               locale={locale}
@@ -284,12 +313,22 @@ export const CartView = ({ dictionary: d, locale }: { dictionary: Dictionary; lo
   const heading = useRef<HTMLHeadingElement>(null);
   const [removal, setRemoval] = useState(0);
   const entries = cart?.entries ?? EMPTY_CART_ENTRIES;
-  const invalid = hasInvalidCartDraft(drafts, entries);
   const reconciledDrafts = reconcileQuantityDrafts(drafts, entries);
   if (reconciledDrafts !== drafts) {
     setDrafts(reconciledDrafts);
   }
-  const quote = useCartQuote(requestForCart(cart, locale, invalid), true);
+  // Quote the saved selection; unfinished input is gated separately below.
+  const quote = useCartQuote(requestForCart(cart, locale, false), true);
+  const invalid = hasInvalidCartDraft(
+    drafts,
+    entries.map((entry) =>
+      cartEntryWithStock(
+        entry,
+        quote.stocks,
+        quote.state === "ready" && quote.result?.stocks !== undefined,
+      ),
+    ),
+  );
   useEffect(() => {
     if (removal > 0 && document.activeElement === document.body) {
       heading.current?.focus();

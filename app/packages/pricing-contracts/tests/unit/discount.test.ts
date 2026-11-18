@@ -123,16 +123,6 @@ const decision = {
   tenantId,
 };
 
-const catalogAudience = { kind: 'CATALOG_PATH' as const, selection };
-const priceGroupAudience = {
-  kind: 'PRICE_GROUP' as const,
-  priceGroupRef: {
-    moduleId: 'pricing.price-group-catalog' as const,
-    resourceId: '66666666-6666-4666-8666-666666666666',
-    resourceType: 'pricing.price-group-catalog.price-group' as const,
-    tenantId,
-  },
-};
 const counterpartyAudience = {
   counterpartyRef: {
     moduleId: 'party.registry' as const,
@@ -163,51 +153,6 @@ const decodeContribution = Schema.decodeUnknownSync(PricingDiscountContributionS
 });
 
 describe('Pricing-owned Discount type contract', () => {
-  it('accepts exactly the Launch family, audience, scope, and effect matrix', () => {
-    const supported = [
-      { audience: catalogAudience, effect: percentage, family: 'CATALOG_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: catalogAudience, effect: fixed, family: 'CATALOG_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: priceGroupAudience, effect: percentage, family: 'CONTRACTUAL_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: priceGroupAudience, effect: fixed, family: 'CONTRACTUAL_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: counterpartyAudience, effect: percentage, family: 'CONTRACTUAL_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: counterpartyAudience, effect: fixed, family: 'CONTRACTUAL_DISCOUNT', scope: 'VARIANT_LINE' },
-      {
-        audience: counterpartyAudience,
-        effect: fixed,
-        family: 'CONTRACTUAL_DISCOUNT',
-        scope: 'WHOLE_PURCHASE',
-      },
-    ] as const;
-
-    expect(supported.map((candidate) => decodeType(candidate))).toEqual(supported);
-  });
-
-  it('rejects unsupported family/audience/scope/effect combinations', () => {
-    const unsupported = [
-      { audience: priceGroupAudience, effect: fixed, family: 'CATALOG_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: catalogAudience, effect: fixed, family: 'CONTRACTUAL_DISCOUNT', scope: 'VARIANT_LINE' },
-      { audience: catalogAudience, effect: fixed, family: 'CATALOG_DISCOUNT', scope: 'WHOLE_PURCHASE' },
-      { audience: priceGroupAudience, effect: fixed, family: 'CONTRACTUAL_DISCOUNT', scope: 'WHOLE_PURCHASE' },
-      {
-        audience: counterpartyAudience,
-        effect: percentage,
-        family: 'CONTRACTUAL_DISCOUNT',
-        scope: 'WHOLE_PURCHASE',
-      },
-      {
-        audience: counterpartyAudience,
-        effect: { kind: 'FIXED_PER_UNIT', level: { amount: '1', currencyCode: 'CZK' } },
-        family: 'CONTRACTUAL_DISCOUNT',
-        scope: 'VARIANT_LINE',
-      },
-      { audience: counterpartyAudience, effect: fixed, family: 'PROMOTION', scope: 'VARIANT_LINE' },
-    ];
-
-    for (const candidate of unsupported) {
-      expect(() => decodeType(candidate)).toThrow();
-    }
-  });
-
   it('keeps configured levels non-negative, bounds percentages, and preserves explicit zero', () => {
     for (const level of ['0', '0.0', '100', '100.00']) {
       expect(

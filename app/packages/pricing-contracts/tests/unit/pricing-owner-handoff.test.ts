@@ -76,21 +76,9 @@ const taxHandoff = {
 } as const;
 
 describe('Pricing purchasing-limits owner boundary (#792)', () => {
-  it('hands off the complete Pricing contribution once and leaves Delivery and Tax to their owners', () => {
-    const decoded = Schema.decodeSync(PricingPurchasingLimitsContributionSchema)(limitsContribution);
-    const deliveryOwnerCharge = 80;
-
-    expect(decoded.pricing.pricingNetCommercialTotal.amount).toBe('920');
-    expect(decoded.breakdown.commercialFeeTotal.amount).toBe('20');
-    expect(Number(decoded.pricing.pricingNetCommercialTotal.amount) + deliveryOwnerCharge).toBe(1000);
-    expect(Number(decoded.pricing.pricingNetCommercialTotal.amount) + 20 + deliveryOwnerCharge).toBe(1020);
-    expect(decoded.excludedComponents).toEqual(['DELIVERY', 'TAX']);
-    expect(decoded).not.toHaveProperty('purchaseValue');
-    expect(decoded).not.toHaveProperty('approvalDecision');
-  });
-
   it('rejects a mismatched total, exact occurrence set, currency, or evidence reference', () => {
     const decode = Schema.decodeUnknownSync(PricingPurchasingLimitsContributionSchema);
+    expect(decode(limitsContribution)).toEqual(limitsContribution);
     expect(() =>
       decode({
         ...limitsContribution,

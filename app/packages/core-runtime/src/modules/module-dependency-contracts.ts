@@ -61,9 +61,9 @@ export const OntosModuleRequirementsSchema = Schema.Struct({
 
 /**
  * The registered workloads an operation admits (its `accessWorkload` workloads and its `accessActor`
- * `subjectWorkloads`) and the declaration they run under. Present only when the operation declares both. Demo
- * divergence exception 8 (upstream main has no such field): the Shell keeps a caller's declared registered-workload
- * call only while the installed receiver publishes exactly that workload and declaration.
+ * `subjectWorkloads`) and the declaration they run under. Present only when the operation declares both. The calling
+ * module's reviewed manifest is the only source of registered-workload rules; the Shell keeps a call only while the
+ * installed receiver declares it, and this carrier is how a receiving operation declares it.
  */
 export const OntosOperationWorkloadCarrierSchema = Schema.Struct({
   declarationKey: AccessKeySyntaxSchema,

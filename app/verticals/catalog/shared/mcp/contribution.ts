@@ -557,6 +557,8 @@ export const catalogMcpContribution = defineOntosMcpContribution({
       },
     },
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'catalog-source-product-page': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'catalog-source-products': OntosMcpHidden,
     'catalog-source-resolution': 'hidden',
     'change-local-override-recovery': 'hidden',

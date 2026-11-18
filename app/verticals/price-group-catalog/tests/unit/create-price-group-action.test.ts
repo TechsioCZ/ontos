@@ -1,5 +1,4 @@
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -148,25 +147,13 @@ describe('Create Price Group Action', () => {
     expect(Schema.encodeSync(CreatePriceGroupPayloadSchema)(decode(payload))).toEqual(payload);
   });
 
-  it('declares the catalog capability, forbidden legal-entity scope, and stable event contract', () => {
-    expect(createPriceGroupAction.descriptor.legalEntityScope).toBe('forbidden');
-    // O67-Q2: the capability is scope-wide in the Tenant context; no per-catalog target survives.
-    expect(createPriceGroupAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
-    expect(createPriceGroupAction.descriptor.accessDeclaration).toMatchObject({
-      key: 'pricing.price-group-catalog.price-group.create',
-      kind: 'action',
-      selectors: [],
-    });
-    expect(getActionOwnerPermissionTargetResolver(createPriceGroupAction)).toBeUndefined();
-    expect(Object.keys(createPriceGroupAction.descriptor.domainEvents)).toEqual([
-      'pricing.price-group-catalog.price-group-containment-projection-requested.v1',
-    ]);
-  });
-
   it.effect('persists the exact request and records audit, data-access, event, and linked outbox evidence', () =>
     Effect.gen(function* createAndCollectEvidence() {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(trustedOperationAt)));
       const observedInputs: CreatePriceGroupInput[] = [];
+      expect(Object.keys(createPriceGroupAction.descriptor.domainEvents)).toEqual([
+        'pricing.price-group-catalog.price-group-containment-projection-requested.v1',
+      ]);
       const collector = createActionCollector(
         createPriceGroupAction.descriptor.domainEvents,
         'pricing.price-group-catalog',

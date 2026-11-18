@@ -12,10 +12,11 @@ import { Effect, Match, Predicate, Schema, Struct } from "effect";
 import type { Cause } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { CartQuoteDiagnosticSchema, CartQuoteRequestSchema, CartQuoteSchema } from "./cart-quote";
-import type { CartQuoteRequest, CartScope } from "./cart-quote";
+import type { CartQuote, CartQuoteRequest, CartScope } from "./cart-quote";
+import { CatalogResponseSchema, projectCatalog } from "./catalog-model";
 import { readConfiguration } from "./config";
 import type { StorefrontConfiguration } from "./config";
-import { readOwner } from "./gateway";
+import { readOwner, StorefrontReadUnavailable } from "./gateway";
 import { selectMarket } from "./market";
 import { readCurrentMarketCatalog } from "./market-catalog-read";
 
@@ -97,6 +98,62 @@ const readQuoteContext = (config: StorefrontConfiguration, locale: string) =>
           }),
         ),
     }),
+  );
+
+/** Current stock hints bound the quantity controls; the native quote remains order authority. */
+const readCartStocks = (config: StorefrontConfiguration, request: CartQuoteRequest) =>
+  Effect.gen(function* readCartStocksProgram() {
+    const productIds = [...new Set(request.lines.map((line) => line.productId))];
+    const stocks: NonNullable<CartQuote["stocks"]>[number][] = [];
+    for (let offset = 0; offset < productIds.length; offset += 24) {
+      const chunk = productIds.slice(offset, offset + 24);
+      const requestedIds = new Set<string>(chunk);
+      const body = yield* readOwner(
+        config,
+        "merchandise",
+        "records",
+        {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              fields: "full",
+              includeCategories: false,
+              marketId: request.scope.marketId,
+              pageSize: chunk.length,
+              productIds: chunk,
+            },
+          },
+        },
+        CatalogResponseSchema,
+      );
+      if (
+        !body.market.configured ||
+        body.market.marketId !== request.scope.marketId ||
+        body.market.currency !== request.scope.currency ||
+        body.products.some((product) => !requestedIds.has(product.id)) ||
+        new Set(body.products.map((product) => product.id)).size !== body.products.length
+      ) {
+        return yield* new StorefrontReadUnavailable({ reason: "contract" });
+      }
+      const { details } = projectCatalog(body, []);
+      for (const line of request.lines.filter((entry) => requestedIds.has(entry.productId))) {
+        const product = details.find((entry) => entry.id === line.productId);
+        let stockQuantity = product?.stockQuantity ?? null;
+        if (line.variantId !== undefined) {
+          const variants =
+            product?.variants.filter((variant) => variant.id === line.variantId) ?? [];
+          stockQuantity = variants.length === 1 ? (variants[0]?.stockQuantity ?? null) : null;
+        }
+        stocks.push({
+          ...Struct.pick(line, ["productId", "variantId"]),
+          stockQuantity,
+        });
+      }
+    }
+    return yield* Schema.decodeUnknownEffect(CartQuoteSchema.fields.stocks)(stocks);
+  }).pipe(
+    Effect.timeout("2 seconds"),
+    Effect.match({ onFailure: () => null, onSuccess: (stocks) => stocks }),
   );
 
 /** Fresh server-only scope for SSR. No browser identity, catalog fallback or cached market is accepted. */
@@ -335,5 +392,7 @@ export const quoteCart = (input: CartQuoteRequest) =>
         state: "unavailable",
       });
     }
-    return yield* confirmCartQuote(snapshot.scope, result);
+    const quote = yield* confirmCartQuote(snapshot.scope, result);
+    const stocks = yield* readCartStocks(config, request);
+    return stocks === null || stocks === undefined ? quote : { ...quote, stocks };
   });

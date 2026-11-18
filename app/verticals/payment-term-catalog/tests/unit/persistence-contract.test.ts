@@ -11,7 +11,7 @@ import {
   retirePaymentTermRoutine,
 } from '../../src/persistence/scoped-routine.ts';
 
-it('fingerprints approved semantics deterministically without conflating contractual meaning', () => {
+it('fingerprints approved semantics deterministically, retains historical identity bytes and never conflates contractual meaning', () => {
   const immediate = paymentTermSemanticFingerprint(
     { calculationRuleVersion: 1, calendarRule: 'NOT_APPLICABLE', kind: 'IMMEDIATE' },
     'immediate.v1',
@@ -36,9 +36,20 @@ it('fingerprints approved semantics deterministically without conflating contrac
     },
     'net_days.invoice_issued_at.calendar_days_utc.v1',
   );
-  expect(immediate).toMatch(/^[0-9a-f]{64}$/u);
-  expect(net14).toMatch(/^[0-9a-f]{64}$/u);
+  // The retained v1 meaning keeps its persisted identity bytes exactly.
+  expect(net14).toBe('99d00e2980c5e984ab5e0722a3943822e91afba4b2db6fbce2dd5786c0dd4fbd');
   expect(new Set([immediate, net14, net30]).size).toBe(3);
+  const canonical = paymentTermSemanticFingerprint(
+    {
+      calculationRuleVersion: 2,
+      calendarRule: 'CALENDAR_DAYS',
+      days: 14,
+      dueDateAnchor: 'INVOICE_ISSUE_DATE',
+      kind: 'NET_DAYS',
+    },
+    'net_days.invoice_issue_date.calendar_days.v2',
+  );
+  expect(canonical).not.toBe(net14);
 });
 
 it('declares every catalog operation as an immutable scope-injected routine', () => {
@@ -68,29 +79,4 @@ it('declares every catalog operation as an immutable scope-injected routine', ()
     { source: 'input', type: 'integer' },
     { source: 'input', type: 'timestamptz' },
   ]);
-});
-
-it('retains historical fingerprints and assigns different identity bytes to canonical calendar-date meaning', () => {
-  const historical = paymentTermSemanticFingerprint(
-    {
-      calculationRuleVersion: 1,
-      calendarRule: 'CALENDAR_DAYS_UTC',
-      days: 14,
-      dueDateAnchor: 'INVOICE_ISSUED_AT',
-      kind: 'NET_DAYS',
-    },
-    'net_days.invoice_issued_at.calendar_days_utc.v1',
-  );
-  expect(historical).toBe('99d00e2980c5e984ab5e0722a3943822e91afba4b2db6fbce2dd5786c0dd4fbd');
-  const canonical = paymentTermSemanticFingerprint(
-    {
-      calculationRuleVersion: 2,
-      calendarRule: 'CALENDAR_DAYS',
-      days: 14,
-      dueDateAnchor: 'INVOICE_ISSUE_DATE',
-      kind: 'NET_DAYS',
-    },
-    'net_days.invoice_issue_date.calendar_days.v2',
-  );
-  expect(canonical).not.toBe(historical);
 });

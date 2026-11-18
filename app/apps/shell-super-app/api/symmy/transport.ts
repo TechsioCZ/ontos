@@ -7,7 +7,21 @@ import {
   SYMMY_ROUTES,
 } from '@app/shared-contracts/symmy';
 import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symmy';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import {
+  SymmyCustomerRowsSchema,
+  SymmyInternalExecutionPlanSchema,
+  SymmyPriceBatchSchema,
+  SymmyPriceListRowsSchema,
+  SymmyProductRowsSchema,
+  SymmyStockRowsSchema,
+} from '@app/symmy-integration/symmy-internal-contracts';
+import type {
+  SymmyCustomerRows,
+  SymmyPriceBatch,
+  SymmyPriceListRows,
+  SymmyProductRows,
+  SymmyStockRows,
+} from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { useEffectContext } from '@modern-js/bff-effect/context';
 import { HttpApiBuilder, HttpEffect } from '@modern-js/bff-effect/effect-edge';
@@ -21,18 +35,24 @@ import { ShellAuthenticationApi } from '../../shared/api.ts';
 
 import {
   symmyInvalidProblem,
+  isSymmyCustomerFieldName,
+  isSymmyProductFieldName,
+  isSymmyRegionFieldName,
   SymmyFixtureAdmissionSchema,
   SymmyFixtureItemResultsSchema,
   SymmyFixtureJobStatusSchema,
-  SymmyFixtureReadSchema,
   SymmyMethodNotAllowedProblemSchema,
   SymmySchemaError,
   symmyMethodNotAllowedProblem,
   symmyIdempotencyRequiredProblem,
+  symmyUnavailableProblem,
   SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
 } from './contract.ts';
 import type {
+  SymmyCustomerFieldName,
+  SymmyProductFieldName,
+  SymmyRegionFieldName,
   SymmyClientIdempotencyKeySchema,
   symmyFixtureIntentConflictProblem,
   symmyFixtureJobNotFoundProblem,
@@ -40,11 +60,31 @@ import type {
   SymmyIngressProblem,
   SymmyInternalWritePayloadSchema,
 } from './contract.ts';
-import { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import { mapSymmyCustomersBatchRequest } from './customers-batch-public-contract.ts';
+import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
+import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
+import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
+import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
+import { mapSymmyProductsBatchRequest } from './products-batch-public-contract.ts';
+import { mapSymmyCustomersProjection, SymmyCustomersResponseSchema } from './customers-public-contract.ts';
 import {
-  SymmyInternalProductsProjectionSchema,
-  SymmyInternalPriceListsProjectionSchema,
+  mapSymmyProductsProjection,
+  selectSymmyProductFields,
+  SymmyProductsResponseSchema,
+  SymmyProductsSuccessSchema,
+} from './products-public-contract.ts';
+import { mapSymmyPriceListsProjection, SymmyPriceListsResponseSchema } from './price-lists-public-contract.ts';
+import {
+  mapSymmyRegionsProjection,
+  selectSymmyRegionFields,
+  SymmyRegionsResponseSchema,
+  SymmyRegionsSuccessSchema,
+} from './regions-public-contract.ts';
+import type {
   SymmyInternalCustomersProjectionSchema,
+  SymmyInternalPriceListsProjectionSchema,
+  SymmyInternalProductsProjectionSchema,
 } from './read-projection-contracts.ts';
 
 import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
@@ -57,29 +97,87 @@ type RouteKeyWith<Fields> = {
   [Key in SymmyRouteKey]: (typeof SYMMY_ROUTES)[Key] extends Fields ? Key : never;
 }[SymmyRouteKey];
 type Reads = RouteKeyWith<{ readonly mode: 'business_read' }>;
-type ItemWrites = RouteKeyWith<{ readonly mode: 'item_results' }>;
 type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }> | keyof typeof SYMMY_FIXTURE_ROUTES;
 type SelectedWrites = RouteKeyWith<{ readonly selector: 'code' }>;
 
 interface FixtureRead {
-  readonly query?: typeof SymmyInternalReadQuerySchema.Type;
+  /**
+   * `q` is the free-text filter of the regions, products and customers reads only, and `fields` is the part
+   * selection of the customers read: the customers read must not call the owners of an unselected part.
+   * Every other read route rejects both at the decoder.
+   */
+  readonly query?: typeof SymmyInternalReadQuerySchema.Type & {
+    readonly fields?: readonly SymmyCustomerFieldName[] | undefined;
+    readonly q?: string;
+  };
   readonly route: Reads;
+}
+interface RegionsRead extends FixtureRead {
+  readonly fields: readonly SymmyRegionFieldName[] | undefined;
+  readonly query: NonNullable<FixtureRead['query']>;
+  readonly route: 'adminRegions';
+}
+interface ProductsRead extends FixtureRead {
+  readonly fields: readonly SymmyProductFieldName[] | undefined;
+  readonly query: NonNullable<FixtureRead['query']>;
+  readonly route: 'adminProducts';
 }
 interface FixturePoll {
   readonly id: typeof SymmyFixtureJobIdSchema.Type;
   readonly route: 'job';
 }
 type InternalWritePayload = typeof SymmyInternalWritePayloadSchema.Type;
-type FixtureApply = InternalWritePayload & {
+type GroupApply = InternalWritePayload & {
   readonly idempotencyKey?: typeof SymmyClientIdempotencyKeySchema.Type;
-  readonly route: ItemWrites;
+  readonly route: 'customerGroupsBatch';
 };
-type FixtureSubmit = InternalWritePayload & {
+/** The public stock rows. Every stock request is a real import, so its replay key is required (428). */
+interface StockApply {
+  readonly idempotencyKey?: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: 'inventoryStockBatch';
+  readonly stock: SymmyStockRows;
+}
+type FixtureApply = GroupApply | StockApply;
+/** The public price lists. The owner admission builds the plan; the dispatch reads the catalog head it fences on. */
+interface PriceListsSubmit {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
-} & (
-    | { readonly code: string; readonly route: SelectedWrites }
-    | { readonly route: Exclude<JobWrites, SelectedWrites> }
-  );
+  readonly priceLists: SymmyPriceListRows;
+  readonly route: 'priceListsBatchUpsert';
+}
+/** The public price batch. The owner admission builds the plan; the dispatch reads what it fences REVISE items on. */
+interface PriceBatchSubmit {
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly priceBatch: SymmyPriceBatch;
+  readonly route: 'priceListPricesBatch';
+}
+/** The public products. The owner admission builds the plan; the dispatch reads the price lists the codes name. */
+interface ProductsSubmit {
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly products: SymmyProductRows;
+  readonly route: 'productsBatch';
+}
+/** The public customers. The owner admission builds the plan from the route enrollment and its selling legal entity. */
+interface CustomersSubmit {
+  readonly customers: SymmyCustomerRows;
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: 'customersBatch';
+}
+type FixtureSubmit =
+  | (InternalWritePayload & {
+      readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+    } & (
+        | { readonly code: string; readonly route: SelectedWrites }
+        | {
+            readonly route: Exclude<
+              JobWrites,
+              SelectedWrites | 'customersBatch' | 'priceListsBatchUpsert' | 'priceListPricesBatch' | 'productsBatch'
+            >;
+          }
+      ))
+  | CustomersSubmit
+  | PriceBatchSubmit
+  | PriceListsSubmit
+  | ProductsSubmit;
 export type SymmyIngressRequest = FixtureRead | FixturePoll | FixtureApply | FixtureSubmit;
 
 export interface SymmyIngressAdmission {
@@ -223,7 +321,7 @@ const queryRepeatsCredential = Effect.fn('SymmyIngress.queryRepeatsCredential')(
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.toType(SymmyInternalReadQuerySchema)))(
     read.query ?? {},
   ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
-  return encoded.includes(raw);
+  return encoded.includes(raw) || (read.query?.q ?? '').includes(raw);
 });
 
 const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* credentialInRequest(
@@ -238,6 +336,36 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
     ('id' in request && request.id.includes(raw))
   ) {
     return true;
+  }
+  if ('stock' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyStockRowsSchema))(request.stock).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
+  if ('customers' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerRowsSchema))(request.customers).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
+  if ('products' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyProductRowsSchema))(request.products).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
+  if ('priceBatch' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyPriceBatchSchema))(request.priceBatch).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
+  if ('priceLists' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyPriceListRowsSchema))(
+      request.priceLists,
+    ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+    return encoded.includes(raw);
   }
   if (Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request)) {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyInternalExecutionPlanSchema))(
@@ -332,42 +460,104 @@ const projectItems = <Items extends readonly SymmyItemOutcome[]>(items: Items) =
     outcome: summarizeSymmyItemOutcome(item),
   }))(items);
 
-const makeReadHandler = <Result>(success: Schema.Codec<Result, unknown>) =>
-  handle(success, (ingress, input: FixtureInput<FixtureRead>) =>
-    ingress.dispatch.read(input).pipe(
+const validateCustomersBody = Schema.decodeUnknownEffect(Schema.toType(SymmyCustomersResponseSchema));
+/** The customers read answers only the public body. Anything but a customers projection is unavailable, never an empty list. */
+const handleCustomersRead = handle(SymmyCustomersResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
+  ingress.dispatch
+    .read(input)
+    .pipe(
       Effect.flatMap((result) =>
-        Schema.decodeUnknownEffect(Schema.toType(success))('projection' in result ? result : { references: result }),
+        'projection' in result && result.projection === 'customers'
+          ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
+              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy customers response')),
+            )
+          : Effect.fail(symmyUnavailableProblem),
       ),
-      Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy fixture response')),
     ),
-  );
-const handleCustomersRead = makeReadHandler(
-  Schema.Union([SymmyFixtureReadSchema, SymmyInternalCustomersProjectionSchema]),
 );
-const handleProductsRead = makeReadHandler(
-  Schema.Union([SymmyFixtureReadSchema, SymmyInternalProductsProjectionSchema]),
+const validateProductsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyProductsResponseSchema));
+/** The products read answers only the public body. Anything but a products projection is unavailable, never an empty list. */
+const handleProductsRead = handle(SymmyProductsSuccessSchema, (ingress, input: FixtureInput<ProductsRead>) =>
+  ingress.dispatch
+    .read({ admission: input.admission, request: { query: input.request.query, route: 'adminProducts' } })
+    .pipe(
+      Effect.flatMap((result) =>
+        'projection' in result && result.projection === 'products'
+          ? validateProductsBody(mapSymmyProductsProjection(result)).pipe(
+              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy products response')),
+            )
+          : Effect.fail(symmyUnavailableProblem),
+      ),
+      Effect.map((body) =>
+        input.request.fields === undefined ? body : selectSymmyProductFields(body, input.request.fields),
+      ),
+    ),
 );
-const handleRegionsRead = makeReadHandler(Schema.Union([SymmyFixtureReadSchema, SymmyInternalRegionsProjectionSchema]));
-const handlePriceListsRead = makeReadHandler(
-  Schema.Union([SymmyFixtureReadSchema, SymmyInternalPriceListsProjectionSchema]),
+const validateRegionsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyRegionsResponseSchema));
+/** The regions read answers only the public body. Anything but a regions projection is unavailable, never an empty list. */
+const handleRegionsRead = handle(SymmyRegionsSuccessSchema, (ingress, input: FixtureInput<RegionsRead>) =>
+  ingress.dispatch
+    .read({ admission: input.admission, request: { query: input.request.query, route: 'adminRegions' } })
+    .pipe(
+      Effect.flatMap((result) =>
+        'projection' in result && result.projection === 'regions'
+          ? validateRegionsBody(mapSymmyRegionsProjection(result)).pipe(
+              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy regions response')),
+            )
+          : Effect.fail(symmyUnavailableProblem),
+      ),
+      Effect.map((body) =>
+        input.request.fields === undefined ? body : selectSymmyRegionFields(body, input.request.fields),
+      ),
+    ),
 );
-const handleApply = handle(SymmyFixtureItemResultsSchema, (ingress, input: FixtureInput<FixtureApply>) =>
+/** The price lists read answers only the public body. Anything but a price list projection is unavailable. */
+const handlePriceListsRead = handle(SymmyPriceListsResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
+  ingress.dispatch
+    .read(input)
+    .pipe(
+      Effect.flatMap((result) =>
+        'projection' in result && result.projection === 'price_lists'
+          ? Effect.succeed(mapSymmyPriceListsProjection(result))
+          : Effect.fail(symmyUnavailableProblem),
+      ),
+    ),
+);
+const handleApply = handle(SymmyFixtureItemResultsSchema, (ingress, input: FixtureInput<GroupApply>) =>
   (Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(input.request) && input.request.idempotencyKey === undefined
     ? Effect.fail(symmyIdempotencyRequiredProblem)
     : ingress.dispatch.apply(input)
   ).pipe(Effect.map((items) => ({ items: projectItems(items) }))),
 );
+/** One result per submitted row, in request order, each carrying the keys of the row it answers. */
+const handleStockApply = handle(SymmyStockBatchResponseSchema, (ingress, input: FixtureInput<StockApply>) =>
+  (input.request.idempotencyKey === undefined
+    ? Effect.fail(symmyIdempotencyRequiredProblem)
+    : ingress.dispatch.apply(input)
+  ).pipe(
+    Effect.flatMap((items) =>
+      items.length === input.request.stock.length
+        ? Effect.succeed({
+            items: EffectArray.zipWith(projectItems(items), input.request.stock, (item, row) => ({
+              ...item,
+              itemKey: row.itemKey,
+              locationKey: row.locationKey,
+            })),
+          })
+        : Effect.die('Invalid Symmy stock response'),
+    ),
+  ),
+);
 const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: FixtureInput<FixtureSubmit>) =>
-  ingress.dispatch.submit(input).pipe(Effect.map((jobId) => ({ jobId, status: 'admitted' as const }))),
+  ingress.dispatch.submit(input).pipe(Effect.map((jobId) => ({ jobId, status: 'queued' as const }))),
 );
 const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureInput<FixturePoll>) =>
   ingress.dispatch.poll(input).pipe(
     Effect.map((state) => {
       const jobId = input.request.id;
       if (state.phase === 'admitted' || state.phase === 'running' || state.phase === 'blocked') {
-        return state.items === undefined
-          ? { jobId, status: state.phase }
-          : { items: projectItems(state.items), jobId, status: state.phase };
+        const status = state.phase === 'admitted' ? ('queued' as const) : state.phase;
+        return state.items === undefined ? { jobId, status } : { items: projectItems(state.items), jobId, status };
       }
       const items = projectItems(state.items);
       if (
@@ -386,21 +576,54 @@ const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureI
 );
 
 const syncRequest = (
-  route: ItemWrites,
+  route: GroupApply['route'],
   payload: InternalWritePayload,
   idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
-): FixtureApply => (idempotencyKey === undefined ? { ...payload, route } : { ...payload, idempotencyKey, route });
+): GroupApply => (idempotencyKey === undefined ? { ...payload, route } : { ...payload, idempotencyKey, route });
+
+const stockRequest = (
+  payload: SymmyStockBatchRequest,
+  idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
+): StockApply => {
+  const stock = mapSymmyStockBatchRequest(payload);
+  return idempotencyKey === undefined
+    ? { route: 'inventoryStockBatch', stock }
+    : { idempotencyKey, route: 'inventoryStockBatch', stock };
+};
 
 export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
   group
-    .handle('adminCustomers', ({ headers, query, request }) =>
-      handleCustomersRead(headers['x-api-key'], { query, route: 'adminCustomers' }, request),
+    .handle('adminCustomers', ({ headers, query: { fields, ...read }, request }) =>
+      handleCustomersRead(
+        headers['x-api-key'],
+        {
+          query: { ...read, contractVersion: 'INTERNAL_C14', fields: fields?.filter(isSymmyCustomerFieldName) },
+          route: 'adminCustomers',
+        },
+        request,
+      ),
     )
-    .handle('adminProducts', ({ headers, query, request }) =>
-      handleProductsRead(headers['x-api-key'], { query, route: 'adminProducts' }, request),
+    .handle('adminProducts', ({ headers, query: { fields, ...read }, request }) =>
+      handleProductsRead(
+        headers['x-api-key'],
+        {
+          fields: fields?.filter(isSymmyProductFieldName),
+          query: { ...read, contractVersion: 'INTERNAL_C14' },
+          route: 'adminProducts',
+        },
+        request,
+      ),
     )
-    .handle('adminRegions', ({ headers, query, request }) =>
-      handleRegionsRead(headers['x-api-key'], { query, route: 'adminRegions' }, request),
+    .handle('adminRegions', ({ headers, query: { fields, ...read }, request }) =>
+      handleRegionsRead(
+        headers['x-api-key'],
+        {
+          fields: fields?.filter(isSymmyRegionFieldName),
+          query: { ...read, contractVersion: 'INTERNAL_C14' },
+          route: 'adminRegions',
+        },
+        request,
+      ),
     )
     .handle('customerGroupCustomersBatch', ({ headers, params, payload, request }) =>
       handleSubmit(
@@ -424,39 +647,46 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('customersBatch', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'customersBatch' },
+        {
+          customers: mapSymmyCustomersBatchRequest(payload),
+          idempotencyKey: headers['idempotency-key'],
+          route: 'customersBatch',
+        },
         request,
       ),
     )
     .handle('inventoryStockBatch', ({ headers, payload, request }) =>
-      handleApply(
-        headers['x-api-key'],
-        syncRequest('inventoryStockBatch', payload, headers['idempotency-key']),
-        request,
-      ),
+      handleStockApply(headers['x-api-key'], stockRequest(payload, headers['idempotency-key']), request),
     )
     .handle('job', ({ headers, params, request }) =>
       handlePoll(headers['x-api-key'], { id: params.id, route: 'job' }, request),
     )
-    .handle('priceListPricesBatch', ({ headers, params, payload, request }) =>
+    .handle('priceListPricesBatch', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
         {
-          code: params.code,
-          ...payload,
           idempotencyKey: headers['idempotency-key'],
+          priceBatch: mapSymmyPriceListPricesBatchRequest(payload),
           route: 'priceListPricesBatch',
         },
         request,
       ),
     )
     .handle('priceLists', ({ headers, query, request }) =>
-      handlePriceListsRead(headers['x-api-key'], { query, route: 'priceLists' }, request),
+      handlePriceListsRead(
+        headers['x-api-key'],
+        { query: { ...query, contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
+        request,
+      ),
     )
     .handle('priceListsBatchUpsert', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'priceListsBatchUpsert' },
+        {
+          idempotencyKey: headers['idempotency-key'],
+          priceLists: mapSymmyPriceListsBatchRequest(payload),
+          route: 'priceListsBatchUpsert',
+        },
         request,
       ),
     )
@@ -477,7 +707,11 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('productsBatch', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'productsBatch' },
+        {
+          idempotencyKey: headers['idempotency-key'],
+          products: mapSymmyProductsBatchRequest(payload),
+          route: 'productsBatch',
+        },
         request,
       ),
     ),

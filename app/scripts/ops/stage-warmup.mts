@@ -6,7 +6,14 @@ import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 
 import { warmupAccounts } from '../demo/warmup-accounts.mts';
-import { StageWarmupIncompleteError } from './stage-warmup-coverage.mts';
+import {
+  declareMenu,
+  destinationCounts,
+  recordFailure,
+  recordVisit,
+  StageWarmupIncompleteError,
+  warmupGaps,
+} from './stage-warmup-coverage.mts';
 import type { WarmupCoverage } from './stage-warmup-coverage.mts';
 import { checkStageVisibleText, renderedPageText, StageVisibleIdentifierError } from './stage-visible-text.mts';
 
@@ -194,29 +201,41 @@ const warmPersona = Effect.fn('Stage.warmPersona')(function* warmPersona(
   // This persona's declared set: the menu it was served. It is recorded before the first visit, so an interrupted
   // sweep still reports what the gate was supposed to read.
   const declared = menu.filter((destination) => destination.startsWith('/cs') && !destination.includes('?'));
-  yield* Ref.update(coverage, (held) => ({
-    ...held,
-    declaredDestinations: held.declaredDestinations + declared.length,
-  }));
+  yield* Ref.update(coverage, (held) => declareMenu(held, email, declared));
   const destinations = yield* Effect.forEach(
     declared,
     // One page per persona, so this persona's clicks stay sequential; the personas themselves run side by side.
     (destination) =>
       visitDestination(page, destination).pipe(
-        Effect.tap(() =>
-          Ref.update(coverage, (held) => ({ ...held, visitedDestinations: held.visitedDestinations + 1 })),
-        ),
+        Effect.tap(() => Ref.update(coverage, (held) => recordVisit(held, email, destination))),
       ),
     { concurrency: 1 },
   );
   const durationMs = (yield* Clock.currentTimeMillis) - started;
-  yield* Ref.update(coverage, (held) => ({ ...held, coveredPersonas: [...held.coveredPersonas, email] }));
   yield* Console.log('stage.warmup.persona', { ...counts, destinations, durationMs, email, prefetchMs, rejected });
+  // A failed response on a page that still rendered and passed is noise the page itself absorbed (a retried read, a
+  // prefetch the menu did not need): every destination was read, so it stays a warning.
   if (counts.failures > 0) {
     yield* Console.warn(`::warning title=Stage warm-up::${email} observed ${counts.failures} failed responses`);
   }
   return yield* Effect.void;
 });
+
+/** One persona's sweep. A persona that stopped is recorded and the others go on; the coverage decides the verdict. */
+const sweepPersona = (
+  browser: Browser,
+  coverage: Ref.Ref<WarmupCoverage>,
+  email: string,
+  password: Redacted.Redacted,
+) =>
+  warmPersona(browser, coverage, email, password).pipe(
+    Effect.scoped,
+    Effect.catchTag('StageWarmupError', ({ phase }) =>
+      Ref.update(coverage, (held) => recordFailure(held, email, phase)).pipe(
+        Effect.andThen(Console.warn(`::warning title=Stage warm-up::${phase} did not finish`)),
+      ),
+    ),
+  );
 
 export const stageWarmup = Effect.gen(function* warmStage() {
   const enabled = yield* Config.Boolean('ONTOS_STAGE_WARMUP_ENABLED').pipe(Config.withDefault(true));
@@ -227,24 +246,12 @@ export const stageWarmup = Effect.gen(function* warmStage() {
   const password = yield* Config.Redacted('ONTOS_WARMUP_PASSWORD').pipe(
     Config.withDefault(Redacted.make('password1234')),
   );
-  const coverage = yield* Ref.make<WarmupCoverage>({
-    coveredPersonas: [],
-    declaredDestinations: 0,
-    visitedDestinations: 0,
-  });
+  const coverage = yield* Ref.make<WarmupCoverage>(new Map());
   const outcome = yield* browserEffect.pipe(
     Effect.flatMap((browser) =>
       Effect.forEach(
         warmupAccounts,
-        ({ email }) =>
-          warmPersona(browser, coverage, email, password).pipe(
-            Effect.scoped,
-            Effect.catchTag('StageWarmupError', (error) =>
-              Console.warn(
-                `::warning title=Stage warm-up::${error.phase} did not finish; native verification still runs`,
-              ),
-            ),
-          ),
+        ({ email }) => sweepPersona(browser, coverage, email, password),
         // Every persona owns its browser context on the one browser, so the sweep costs the slowest persona instead
         // of the sum of all five.
         { concurrency: warmupAccounts.length, discard: true },
@@ -254,55 +261,47 @@ export const stageWarmup = Effect.gen(function* warmStage() {
     Effect.scoped,
     Effect.as('swept' as const),
     Effect.catch((error) => {
-      // A visible identifier is a real page defect, so it still fails here. An unavailable destination for one persona
-      // keeps the warning it has always had. What is left is the budget, and the coverage below is its verdict.
+      // A visible identifier is a real page defect and fails at once. A browser that never launched and an expired
+      // budget end the sweep; the coverage below is their verdict.
       if (Schema.is(StageVisibleIdentifierError)(error)) {
         return Effect.fail(error);
       }
       if (Schema.is(StageWarmupError)(error)) {
-        return Console.warn(
-          `::warning title=Stage warm-up::${error.phase} unavailable; native verification still runs`,
-        ).pipe(Effect.as('swept' as const));
+        return Console.warn(`::warning title=Stage warm-up::${error.phase} failed`).pipe(Effect.as('swept' as const));
       }
       return Effect.succeed('budget-expired' as const);
     }),
   );
   const covered = yield* Ref.get(coverage);
   const durationMs = (yield* Clock.currentTimeMillis) - started;
-  const uncoveredPersonas = warmupAccounts
-    .map(({ email }) => email)
-    .filter((email) => !covered.coveredPersonas.includes(email));
-  const incomplete = uncoveredPersonas.length > 0 || covered.visitedDestinations < covered.declaredDestinations;
+  const gaps = warmupGaps(
+    warmupAccounts.map(({ email }) => email),
+    covered,
+  );
+  const counts = destinationCounts(covered);
   yield* Console.log('stage.warmup.complete', {
     budgetMs: WARMUP_BUDGET_MS,
-    declaredDestinations: covered.declaredDestinations,
+    ...counts,
     declaredPersonas: warmupAccounts.length,
     durationMs,
+    gaps,
     outcome,
-    uncoveredPersonas,
-    visitedDestinations: covered.visitedDestinations,
   });
-  if (outcome === 'budget-expired' && incomplete) {
-    // An exhausted budget used to warn and exit 0, so this gate had never once read every persona and destination.
-    // An incomplete sweep is now the step's verdict: either the stage got slower or the declared set grew.
+  if (gaps.length > 0) {
+    // Completion is judged by what was declared on every exit: a persona that failed fast leaves the same gap as one
+    // the budget cut off, and both mean the visible-identifier gate did not read its declared set.
+    const ending = outcome === 'budget-expired' ? `the ${WARMUP_BUDGET_MS} ms budget expired` : 'the sweep ended';
     yield* Console.error(
-      `::error title=Stage warm-up::The ${WARMUP_BUDGET_MS} ms budget expired after ${durationMs} ms with ${covered.coveredPersonas.length}/${warmupAccounts.length} personas and ${covered.visitedDestinations}/${covered.declaredDestinations} declared destinations read; the visible-identifier gate did not cover ${uncoveredPersonas.join(', ')}`,
+      `::error title=Stage warm-up::${ending} after ${durationMs} ms with ${counts.visitedDestinations}/${counts.declaredDestinations} declared destinations read; unverified: ${gaps.join('; ')}`,
     );
     return yield* new StageWarmupIncompleteError({
-      declaredDestinations: covered.declaredDestinations,
+      ...counts,
       declaredPersonas: warmupAccounts.length,
       durationMs,
-      uncoveredPersonas,
-      visitedDestinations: covered.visitedDestinations,
+      gaps,
     });
   }
-  // A persona that reported StageWarmupError keeps the warning it has always had: an unavailable destination is a
-  // deliberate per-persona condition, not a budget that ran out. The numbers above say which persona was skipped.
-  return yield* incomplete
-    ? Console.warn(
-        `::warning title=Stage warm-up::The visible-identifier gate did not cover ${uncoveredPersonas.length > 0 ? uncoveredPersonas.join(', ') : 'every declared destination'}`,
-      )
-    : Effect.void;
+  return yield* Effect.void;
 });
 
 if (import.meta.main) {

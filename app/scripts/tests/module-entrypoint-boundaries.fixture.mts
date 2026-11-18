@@ -36,7 +36,6 @@ export const CATALOG_SELECTION_CONTRACT_SUBPATH = 'catalog-selection-evidence';
 export const PRICING_SHARED_API_PATH = 'verticals/pricing/shared/api.ts';
 export const PRICING_HANDLER_PATH = 'verticals/pricing/api/index.ts';
 
-export const INVENTORY_OWNER_PATH = 'verticals/inventory-stock';
 export const BOUNDARY_FIXTURE_TOPOLOGY = 'topology/reference-topology.json';
 export const BOUNDARY_FIXTURE_SHELL_ID = 'shell-super-app';
 export const BOUNDARY_FIXTURE_SHELL_PATH = 'apps/shell-super-app';
@@ -172,7 +171,7 @@ export const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created'
 
 export const PARTY_PACKAGE_NAME = '@app/party-registry';
 
-export const INVENTORY_VERTICAL_PATH = INVENTORY_OWNER_PATH;
+export const INVENTORY_VERTICAL_PATH = 'verticals/inventory-stock';
 
 export const INVENTORY_REGISTRATION_PATH = `${INVENTORY_VERTICAL_PATH}/vertical.registration.ts`;
 
@@ -344,15 +343,11 @@ export const assertRejectedSources = Effect.fn(function* rejectGovernedSources(
   }
 });
 
-export const makeFixture = Effect.fn(function* mergedScenario1(
-  includeParty = false,
-  initialize: (root: string) => Effect.Effect<void, unknown> = () => Effect.void,
-) {
+export const makeFixture = Effect.fn(function* mergedScenario1(includeParty = false) {
   const root = yield* Effect.acquireRelease(
     Effect.promise(async () => await mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
     (directory) => Effect.promise(async () => await rm(directory, { force: true, recursive: true })),
   );
-  yield* initialize(root);
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -491,7 +486,7 @@ export const EngagementInventorySchema = Schema.fromJsonString(
 );
 
 export const writeGovernedModuleApi = Effect.fn(function* mergedScenario1(root: string) {
-  const vertical = INVENTORY_OWNER_PATH;
+  const vertical = INVENTORY_VERTICAL_PATH;
   const header = MODULE_API_HEADER;
   yield* write(
     root,
@@ -801,10 +796,6 @@ export const outboxProducerModuleKey = '${PARTY_MODULE_ID}' as const;
 
 export const UNMOUNTED_ISSUER_ENDPOINT = "post('unusedNeighbor'";
 export const UNRECOGNIZED_ISSUER_PATH = "'/auth/tampered'";
-
-export const EARLY_FAILURE = 'early failure';
-
-export const PARTIAL_FAILURE = 'partial failure';
 
 /** The sources of one workspace folder as `[relative path, text]` pairs, for byte-for-byte tree comparisons. */
 export const readPricingSourceTree = (root: string, folder: string) => {

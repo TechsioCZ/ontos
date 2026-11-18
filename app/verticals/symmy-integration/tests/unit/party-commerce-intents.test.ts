@@ -2,11 +2,17 @@ import { Result, Schema, Match, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
-import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-commerce-intents.ts';
+import type {
+  SymmyPartyCommerceIntent,
+  SymmyPartyCommerceOwnerReceipt,
+} from '../../shared/domain/symmy-party-commerce-intents.ts';
 import {
   materializeSymmyPartyCommerceIntent,
+  resolveSymmyCounterpartySavedAddressFromProfile,
+  resolveSymmyOrganizationProfileIco,
   resolveSymmyRetailProfileParty,
   resolveSymmyRetailSavedAddress,
+  resolveSymmyRetailSavedAddressFromProfile,
   SymmyPartyCommerceIntentSchema,
   SymmyPartyCommerceOwnerReceiptSchema,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
@@ -404,6 +410,194 @@ describe('saved address dependencies and source identity', () => {
   });
 });
 
+const addressRef = (moduleId: string, resourceType: string, resourceId: string, tenant = tenantId) => ({
+  moduleId,
+  resourceId,
+  resourceType,
+  tenantId: tenant,
+});
+const profileAddressPostal = { addressLine1: '17 Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' };
+const profileAddressPayload = {
+  label: 'Head office',
+  postalAddress: profileAddressPostal,
+  purposes: ['BILLING'],
+  reason: 'Source explicitly declares a billing address',
+  source: {
+    effectId: 'operator-placeholder',
+    identity: { ...source, occurrenceId: evidence.occurrenceId, recordId: evidence.recordId },
+    mappingRevision: 'mapping-1',
+    order: 1,
+    purposes: ['BILLING'],
+    revision: 'source-1',
+    routeRevision: 'route-1',
+  },
+};
+const profilePartyRef = addressRef('party.registry', 'party.registry.party', '10000000-0000-4000-8000-000000000091');
+const profileCounterpartyRef = addressRef(
+  'party.registry',
+  'party.registry.counterparty',
+  '10000000-0000-4000-8000-000000000092',
+);
+const retailProfileRef = addressRef(
+  'commerce.customer-context',
+  'commerce.customer-context.retail-customer-profile',
+  '10000000-0000-4000-8000-000000000093',
+);
+const counterpartyProfileRef = addressRef(
+  'commerce.customer-context',
+  'commerce.customer-context.counterparty-purchasing-profile',
+  '10000000-0000-4000-8000-000000000094',
+);
+const decodeReceipt = Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema);
+const retailPending = decodeIntent({
+  _tag: 'AddSavedRetailAddressFromProfileEffect',
+  fromProfileEffect: { effectKey: 'retail-profile', itemKey: 'customer-0' },
+  payload: profileAddressPayload,
+});
+const counterpartyPending = decodeIntent({
+  _tag: 'AddSavedCounterpartyAddressFromProfileEffect',
+  fromCounterpartyEffect: { effectKey: 'counterparty-onboard', itemKey: 'customer-0' },
+  fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
+  payload: profileAddressPayload,
+});
+const retailReceipt = (tenant = tenantId) =>
+  decodeReceipt({
+    _tag: 'RetailProfileEnsured',
+    partyRef: profilePartyRef,
+    profileRef: { ...retailProfileRef, tenantId: tenant },
+  });
+const counterpartyReceipts = (profileTenant = tenantId) => ({
+  counterparty: decodeReceipt({
+    _tag: 'CounterpartyCustomerOnboarded',
+    counterpartyRef: profileCounterpartyRef,
+    partyRef: profilePartyRef,
+  }),
+  profile: decodeReceipt({
+    _tag: 'CounterpartyProfileCreated',
+    counterpartyRef: { ...profileCounterpartyRef, tenantId: profileTenant },
+    profileRef: counterpartyProfileRef,
+  }),
+});
+const resolveRetail = (intent: SymmyPartyCommerceIntent, profile: SymmyPartyCommerceOwnerReceipt) =>
+  Match.value(intent).pipe(
+    Match.tag('AddSavedRetailAddressFromProfileEffect', (pending) =>
+      Match.value(profile).pipe(
+        Match.tag('RetailProfileEnsured', (ensured) => resolveSymmyRetailSavedAddressFromProfile(pending, ensured)),
+        Match.orElse(() => Option.none()),
+      ),
+    ),
+    Match.orElse(() => Option.none()),
+  );
+const resolveCounterparty = (
+  intent: SymmyPartyCommerceIntent,
+  receipts: { readonly counterparty: SymmyPartyCommerceOwnerReceipt; readonly profile: SymmyPartyCommerceOwnerReceipt },
+) =>
+  Match.value(intent).pipe(
+    Match.tag('AddSavedCounterpartyAddressFromProfileEffect', (pending) =>
+      Match.value(receipts.profile).pipe(
+        Match.tag('CounterpartyProfileCreated', (created) =>
+          Match.value(receipts.counterparty).pipe(
+            Match.tag('CounterpartyCustomerOnboarded', (onboarded) =>
+              resolveSymmyCounterpartySavedAddressFromProfile(pending, created, onboarded),
+            ),
+            Match.orElse(() => Option.none()),
+          ),
+        ),
+        Match.orElse(() => Option.none()),
+      ),
+    ),
+    Match.orElse(() => Option.none()),
+  );
+const tagOfResolved = (resolved: Option.Option<SymmyPartyCommerceIntent>) =>
+  Option.match(resolved, { onNone: () => 'none', onSome: (intent) => intent._tag });
+const payloadOfResolved = (resolved: Option.Option<SymmyPartyCommerceIntent>) =>
+  Option.match(resolved, { onNone: () => 'none', onSome: (intent) => intent.payload });
+
+describe('Commerce-only saved address from a profile effect', () => {
+  it('decodes only a payload that names its postal address and keeps unknown properties out', () => {
+    const decode = Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema, { onExcessProperty: 'error' });
+    const { postalAddress: _omitted, ...withoutAddress } = profileAddressPayload;
+    expect(
+      Result.isFailure(
+        decode({
+          _tag: 'AddSavedRetailAddressFromProfileEffect',
+          fromProfileEffect: { effectKey: 'retail-profile', itemKey: 'customer-0' },
+          payload: withoutAddress,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Result.isFailure(
+        decode({
+          _tag: 'AddSavedRetailAddressFromProfileEffect',
+          fromContactPointEffect: { effectKey: 'contact', itemKey: 'customer-0' },
+          fromProfileEffect: { effectKey: 'retail-profile', itemKey: 'customer-0' },
+          payload: profileAddressPayload,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('materializes only the owner effect identity of the saved address source', () => {
+    for (const pending of [retailPending, counterpartyPending]) {
+      const pinned = materializeSymmyPartyCommerceIntent(pending, effect.ref);
+      expect(pinned).toMatchObject({
+        payload: { postalAddress: profileAddressPostal, source: { effectId, mappingRevision: 'mapping-1' } },
+      });
+    }
+  });
+
+  it('resolves a Retail address to a Commerce-only AddSavedAddress on the profile the parent returned', () => {
+    const resolved = resolveRetail(retailPending, retailReceipt());
+    expect(tagOfResolved(resolved)).toBe('AddSavedAddress');
+    expect(payloadOfResolved(resolved)).toEqual({
+      label: 'Head office',
+      origin: { kind: 'COMMERCE_ONLY', postalAddress: profileAddressPostal },
+      profile: { kind: 'RETAIL', profileRef: retailProfileRef },
+      purposes: ['BILLING'],
+      reason: 'Source explicitly declares a billing address',
+      source: profileAddressPayload.source,
+    });
+    // The resolved command is the plain owner command: no field of the dependent intent leaks into it.
+    expect(JSON.stringify(resolved)).not.toContain('fromProfileEffect');
+    expect(
+      Result.isSuccess(
+        Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema, { onExcessProperty: 'error' })(
+          Option.getOrThrow(resolved),
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('resolves a Counterparty address to the counterparty and profile of one onboarding', () => {
+    const resolved = resolveCounterparty(counterpartyPending, counterpartyReceipts());
+    expect(tagOfResolved(resolved)).toBe('AddSavedAddress');
+    expect(payloadOfResolved(resolved)).toMatchObject({
+      origin: { kind: 'COMMERCE_ONLY', postalAddress: profileAddressPostal },
+      profile: { counterpartyRef: profileCounterpartyRef, kind: 'COUNTERPARTY', profileRef: counterpartyProfileRef },
+    });
+  });
+
+  it('refuses a profile or counterparty of another Tenant or another onboarding', () => {
+    const otherTenant = '10000000-0000-4000-8000-0000000000ff';
+    expect(Option.isNone(resolveRetail(retailPending, retailReceipt(otherTenant)))).toBe(true);
+    expect(Option.isNone(resolveCounterparty(counterpartyPending, counterpartyReceipts(otherTenant)))).toBe(true);
+    const { counterparty, profile } = counterpartyReceipts();
+    const other = decodeReceipt({
+      _tag: 'CounterpartyCustomerOnboarded',
+      counterpartyRef: { ...profileCounterpartyRef, resourceId: '10000000-0000-4000-8000-0000000000fe' },
+      partyRef: profilePartyRef,
+    });
+    expect(Option.isNone(resolveCounterparty(counterpartyPending, { counterparty: other, profile }))).toBe(true);
+    expect(Option.isSome(resolveCounterparty(counterpartyPending, { counterparty, profile }))).toBe(true);
+  });
+
+  it('never matches an effect directly: the owner command exists only after its parents settled', () => {
+    expect(match(retailPending)).toBe(false);
+    expect(match(counterpartyPending)).toBe(false);
+  });
+});
+
 describe('explicit organization ICO contract', () => {
   const profileRef = {
     moduleId: 'commerce.customer-context',
@@ -486,5 +680,92 @@ describe('explicit organization ICO contract', () => {
       payload: { ...payload, effectId: id },
       sourceReference: input.sourceReference,
     });
+  });
+});
+
+describe('company ICO resolved from a profile effect', () => {
+  const { profileRef: icoProfileRef } = { profileRef: counterpartyProfileRef };
+  const icoPayload = {
+    countryCode: 'CZ',
+    effectiveAt: '2026-11-07T00:00:00.000Z',
+    expectedRevision: 0,
+    identifier: { identifierType: 'ICO', value: '27074358' },
+    operation: 'SET',
+    originalInput: '27074358',
+  };
+  const pending = decodeIntent({
+    _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+    fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
+    payload: icoPayload,
+    sourceReference: { occurrenceId: 'occurrence-1', recordId: 'customer-1', source },
+  });
+  const resolve = (receipt: SymmyPartyCommerceOwnerReceipt, id: string) =>
+    Match.value(pending).pipe(
+      Match.tag('OrganizationCustomerProfileIcoFromProfileEffect', (value) =>
+        Match.value(receipt).pipe(
+          Match.tag('CounterpartyProfileCreated', (created) =>
+            Option.some(resolveSymmyOrganizationProfileIco(value, created, id)),
+          ),
+          Match.orElse(() => Option.none()),
+        ),
+      ),
+      Match.orElse(() => Option.none()),
+    );
+  const created = counterpartyReceipts().profile;
+
+  it('decodes only the first SET of one numeric ICO, without a profile or an effect id of its own', () => {
+    const decode = Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema, { onExcessProperty: 'error' });
+    const base = {
+      _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+      fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
+      payload: icoPayload,
+      sourceReference: { occurrenceId: 'occurrence-1', recordId: 'customer-1', source },
+    };
+    const { sourceReference: _omitted, ...withoutSource } = base;
+    expect(Result.isSuccess(decode(base))).toBe(true);
+    for (const invalid of [
+      { ...base, payload: { ...icoPayload, profileRef: icoProfileRef } },
+      { ...base, payload: { ...icoPayload, effectId } },
+      { ...base, payload: { ...icoPayload, operation: 'END' } },
+      { ...base, payload: { ...icoPayload, originalInput: '27074359' } },
+      { ...base, payload: { ...icoPayload, identifier: { identifierType: 'CZ_DIC', value: 'CZ27074358' } } },
+      withoutSource,
+    ]) {
+      expect(Result.isFailure(decode(invalid))).toBe(true);
+    }
+  });
+
+  it('pins nothing of its own: the effect id is assigned when the profile is known', () => {
+    expect(materializeSymmyPartyCommerceIntent(pending, effect.ref)).toEqual(pending);
+  });
+
+  it('resolves to the plain organization ICO change on the actual profile, under the id of this effect', () => {
+    const resolved = resolve(created, effectId);
+    expect(tagOfResolved(resolved)).toBe('OrganizationCustomerProfileIco');
+    expect(payloadOfResolved(resolved)).toEqual({ ...icoPayload, effectId, profileRef: counterpartyProfileRef });
+    expect(JSON.stringify(resolved)).not.toContain('fromProfileEffect');
+    expect(
+      Result.isSuccess(
+        Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema, { onExcessProperty: 'error' })(
+          Option.getOrThrow(resolved),
+        ),
+      ),
+    ).toBe(true);
+    // A Retail profile has no company ICO.
+    expect(Option.isNone(resolve(retailReceipt(), effectId))).toBe(true);
+  });
+
+  it('matches an effect only once resolved, and only for the profile it names as its original target', () => {
+    expect(match(pending)).toBe(false);
+    const resolved = Option.getOrThrow(resolve(created, effectId));
+    const operation = {
+      entrypointKey: 'commerce.customer-context.change-organization-customer-profile-ico',
+      moduleId: 'commerce.customer-context',
+      schemaVersion: '1',
+    };
+    const targeted = decodeEffect({ ...effect, ref: { ...effect.ref, operation, originalTarget: icoProfileRef } });
+    expect(symmyPartyCommerceIntentMatchesEffect({ effect: targeted }, resolved)).toBe(true);
+    const untargeted = decodeEffect({ ...effect, ref: { ...effect.ref, operation } });
+    expect(symmyPartyCommerceIntentMatchesEffect({ effect: untargeted }, resolved)).toBe(false);
   });
 });

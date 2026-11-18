@@ -624,10 +624,7 @@ export const renderActionHttpProblems = (
   timeout: (code: Extract<ProblemOf<'${type}ActionTimeoutProblem'>, { readonly code: string }>['code']): ProblemOf<'${type}ActionTimeoutProblem'> =>
     ${type}ActionTimeoutProblemSchema.make({ code, detail: 'A required upstream operation exceeded its deadline.', retryable: true, status: problemStatus.timeout, title: 'Action upstream timeout', type: 'https://ontos.dev/problems/action-timeout' }),`
   }`;
-  const domainMatchers = (
-    ['conflict', 'forbidden', 'ineligible', 'notFound', 'rateLimited', 'timeout', 'unavailable'] as const
-  )
-    .filter((kind) => errors.some((error) => error.kind === kind))
+  const domainMatchers = domainKinds
     .map(
       (kind) =>
         `    Match.when({ kind: '${kind}' as const }, (matched) => ${toCamelCase(action)}ActionProblem.${kind}(matched.code)),`,

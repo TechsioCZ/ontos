@@ -64,59 +64,93 @@ const admissionSet = { entries: [selector] };
 const decodeStrict = <SchemaType extends Schema.ConstraintDecoder<unknown>>(schema: SchemaType, value: Schema.Json) =>
   Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(value);
 
-it('emits exact owner-linked invalidation slices for Rule changes', () => {
-  const created = decodeStrict(RuleCreatedPayloadSchema, {
-    change: 'RULE_CREATED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: { decisionPurpose: 'VISIBILITY', ruleRevisionRef, selector, stableRuleRef },
-  });
-  expect(created.slice.stableRuleRef.resourceId).toBe('rule-1');
+it('accepts every exact invalidation slice and rejects cross-tenant, outcome or completeness claims', () => {
+  // Every positive decode below is strict (onExcessProperty: 'error'), so it is the one runtime proof
+  // that its generated payload schema accepts the exact slice an emitter encodes and tolerates no
+  // extra field. Reading a ref back out of the decoded value would only restate this fixture.
+  expect(() =>
+    decodeStrict(RuleCreatedPayloadSchema, {
+      change: 'RULE_CREATED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: { decisionPurpose: 'VISIBILITY', ruleRevisionRef, selector, stableRuleRef },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(RuleRevisionCreatedPayloadSchema, {
+      change: 'RULE_REVISION_CREATED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: { decisionPurpose: 'PURCHASE', ruleRevisionRef, selector, stableRuleRef },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(RuleRetiredPayloadSchema, {
+      change: 'RULE_RETIRED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: { stableRuleRef },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(BindingCreatedPayloadSchema, {
+      change: 'BINDING_CREATED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: { applicabilityBindingRef: bindingRef, audience, commercialScope, ruleRevisionRef },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(BindingEndedPayloadSchema, {
+      change: 'BINDING_ENDED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: { applicabilityBindingRef: bindingRef },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(BindingReplacedPayloadSchema, {
+      change: 'BINDING_REPLACED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: {
+        createdBindingRef: { ...bindingRef, resourceId: 'binding-2' },
+        endedBindingRef: bindingRef,
+        proposedAudience: audience,
+        proposedCommercialScope: commercialScope,
+        proposedRuleRevisionRef: ruleRevisionRef,
+      },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(BoundaryCreatedPayloadSchema, {
+      change: 'BOUNDARY_CREATED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: {
+        admissionSet,
+        boundaryRef,
+        commercialScope,
+        decisionPurpose: 'VISIBILITY',
+        subject: purchasingSubject,
+      },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(BoundaryEndedPayloadSchema, {
+      change: 'BOUNDARY_ENDED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: { boundaryRef },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    decodeStrict(BoundaryReplacedPayloadSchema, {
+      change: 'BOUNDARY_REPLACED',
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
+      slice: {
+        createdBoundaryRef: { ...boundaryRef, resourceId: 'boundary-2' },
+        endedBoundaryRef: boundaryRef,
+        proposedAdmissionSet: admissionSet,
+        proposedCommercialScope: commercialScope,
+        proposedDecisionPurpose: 'VISIBILITY',
+        proposedSubject: purchasingSubject,
+      },
+    }),
+  ).not.toThrow();
 
-  const revision = decodeStrict(RuleRevisionCreatedPayloadSchema, {
-    change: 'RULE_REVISION_CREATED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: { decisionPurpose: 'PURCHASE', ruleRevisionRef, selector, stableRuleRef },
-  });
-  expect(revision.slice.ruleRevisionRef.revision).toBe('revision-1');
-
-  const retired = decodeStrict(RuleRetiredPayloadSchema, {
-    change: 'RULE_RETIRED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: { stableRuleRef },
-  });
-  expect(retired.slice.stableRuleRef.resourceId).toBe('rule-1');
-});
-
-it('emits exact owner-linked invalidation slices for Binding changes', () => {
-  const created = decodeStrict(BindingCreatedPayloadSchema, {
-    change: 'BINDING_CREATED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: { applicabilityBindingRef: bindingRef, audience, commercialScope, ruleRevisionRef },
-  });
-  expect(created.slice.applicabilityBindingRef.resourceId).toBe('binding-1');
-
-  const ended = decodeStrict(BindingEndedPayloadSchema, {
-    change: 'BINDING_ENDED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: { applicabilityBindingRef: bindingRef },
-  });
-  expect(ended.slice.applicabilityBindingRef.resourceId).toBe('binding-1');
-
-  const replaced = decodeStrict(BindingReplacedPayloadSchema, {
-    change: 'BINDING_REPLACED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: {
-      createdBindingRef: { ...bindingRef, resourceId: 'binding-2' },
-      endedBindingRef: bindingRef,
-      proposedAudience: audience,
-      proposedCommercialScope: commercialScope,
-      proposedRuleRevisionRef: ruleRevisionRef,
-    },
-  });
-  expect(replaced.slice.createdBindingRef.resourceId).toBe('binding-2');
-});
-
-it('rejects cross-tenant slices and outcome or completeness claims', () => {
   expect(() =>
     decodeStrict(BindingCreatedPayloadSchema, {
       change: 'BINDING_CREATED',
@@ -149,40 +183,4 @@ it('rejects cross-tenant slices and outcome or completeness claims', () => {
       slice: { decisionPurpose: 'VISIBILITY', ruleRevisionRef, selector, stableRuleRef },
     }),
   ).toThrow();
-});
-
-it('emits exact owner-linked invalidation slices for Boundary changes', () => {
-  const created = decodeStrict(BoundaryCreatedPayloadSchema, {
-    change: 'BOUNDARY_CREATED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: {
-      admissionSet,
-      boundaryRef,
-      commercialScope,
-      decisionPurpose: 'VISIBILITY',
-      subject: purchasingSubject,
-    },
-  });
-  expect(created.slice.boundaryRef.resourceId).toBe('boundary-1');
-
-  const ended = decodeStrict(BoundaryEndedPayloadSchema, {
-    change: 'BOUNDARY_ENDED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: { boundaryRef },
-  });
-  expect(ended.slice.boundaryRef.resourceId).toBe('boundary-1');
-
-  const replaced = decodeStrict(BoundaryReplacedPayloadSchema, {
-    change: 'BOUNDARY_REPLACED',
-    kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION',
-    slice: {
-      createdBoundaryRef: { ...boundaryRef, resourceId: 'boundary-2' },
-      endedBoundaryRef: boundaryRef,
-      proposedAdmissionSet: admissionSet,
-      proposedCommercialScope: commercialScope,
-      proposedDecisionPurpose: 'VISIBILITY',
-      proposedSubject: purchasingSubject,
-    },
-  });
-  expect(replaced.slice.createdBoundaryRef.resourceId).toBe('boundary-2');
 });

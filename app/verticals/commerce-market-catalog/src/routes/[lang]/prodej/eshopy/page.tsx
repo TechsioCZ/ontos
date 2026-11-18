@@ -122,6 +122,7 @@ export const EshopCardView = ({
     },
     server: mainSourceProductsOnlyFor(settings.storefrontCatalogSettings ?? {}, card.appId),
   });
+  const saving = record.status === 'saving';
   const handleCheckedChange = record.setDraft;
   const handleSave = record.save;
   const handleReload = () => {
@@ -163,7 +164,7 @@ export const EshopCardView = ({
       <div className="flex flex-col items-start gap-150 border-border-primary border-t pt-200">
         <FormCheckbox
           checked={record.draft}
-          disabled={record.pending}
+          disabled={saving}
           helpText={text('eshops.listing.help')}
           label={text('eshops.listing.label')}
           name={`main-source-products-${card.appId}`}
@@ -172,7 +173,7 @@ export const EshopCardView = ({
         />
         {settings.canManageCatalog === true && (
           <Button disabled={!record.canSave} onClick={handleSave} size="sm" variant="primary">
-            {text(record.pending ? 'eshops.listing.saving' : 'eshops.listing.save')}
+            {text(saving ? 'eshops.listing.saving' : 'eshops.listing.save')}
           </Button>
         )}
         {failure !== null && <StatusText status="error">{failureText(text, failure)}</StatusText>}

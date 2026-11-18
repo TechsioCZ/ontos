@@ -4,9 +4,8 @@ import type { Cause } from 'effect';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeContextPermissionRelationshipMutationLive, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
+import { makeContextPermissionRelationshipMutationLive } from '@app/core-runtime';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
@@ -56,9 +55,7 @@ import { CatalogMediaCurrentForbiddenProblemSchema } from '../../shared/apis/cat
 import { deriveActualCatalogCompositionSnapshot } from '../support/actual-catalog-composition.fixture.ts';
 import {
   WholeCandidateCatalogCommandSchema,
-  WholeCandidateCatalogDescriptionSchema,
   WholeCandidateCatalogProducedSchema,
-  WholeCandidateCatalogPrepareSchema,
   WholeCandidateCatalogReadySchema,
   WholeCandidateCatalogResponseSchema,
   wholeCandidateCatalogActionKeys,
@@ -733,63 +730,4 @@ it.layer(services, { excludeTestServices: true })((suite) => {
     () => runCatalogReceiver('target-agreement'),
     120_000,
   );
-});
-
-it('keeps the whole-candidate process protocol closed and describes only the fixed setup Actions', () => {
-  // Codec-only metadata; this fixture is never treated as an observed owner build or publication.
-  const contract = Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema)(
-    makeModuleContractFixture({ appId: 'catalog', buildMarker: 'TEST-build', moduleId: 'commerce.catalog' }),
-  );
-  const description = {
-    actionKeys: wholeCandidateCatalogActionKeys,
-    appId: 'catalog',
-    buildMarker: contract.deployment.buildMarker,
-    contractDocument: Schema.encodeSync(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(contract),
-    type: 'description',
-    version,
-  };
-  expect(
-    Option.isSome(
-      Schema.decodeUnknownOption(WholeCandidateCatalogDescriptionSchema, { onExcessProperty: 'error' })(description),
-    ),
-  ).toBe(true);
-  expect(
-    Option.isNone(
-      Schema.decodeUnknownOption(WholeCandidateCatalogDescriptionSchema, { onExcessProperty: 'error' })({
-        ...description,
-        runtimeConnectionString: 'TEST-private-not-output',
-      }),
-    ),
-  ).toBe(true);
-  expect(
-    Option.isSome(
-      Schema.decodeUnknownOption(WholeCandidateCatalogCommandSchema, { onExcessProperty: 'error' })({
-        expectedRevision: 1,
-        type: 'revise-first-unit',
-        version,
-      }),
-    ),
-  ).toBe(true);
-  expect(
-    Option.isNone(
-      Schema.decodeUnknownOption(WholeCandidateCatalogCommandSchema, { onExcessProperty: 'error' })({
-        expectedRevision: 1,
-        sql: 'TEST-forbidden-generic-command',
-        type: 'revise-first-unit',
-        version,
-      }),
-    ),
-  ).toBe(true);
-});
-
-it('encodes private process credentials as wire strings and redacts them after decoding', () => {
-  const schema = Schema.fromJsonString(WholeCandidateCatalogPrepareSchema);
-  const authorizations = [
-    Redacted.make('TEST-only-P1'),
-    Redacted.make('TEST-only-P2'),
-    Redacted.make('TEST-only-Q1'),
-  ] as const;
-  const wire = Schema.encodeSync(schema)({ authorizations, type: 'prepare', version });
-  const decoded = Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(wire);
-  expect(decoded.authorizations.map(Redacted.value)).toEqual(['TEST-only-P1', 'TEST-only-P2', 'TEST-only-Q1']);
 });

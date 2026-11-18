@@ -8,7 +8,7 @@ import { Cause, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
-import { getHelpText, runScaffoldEffect } from '../cli.mts';
+import { runScaffoldEffect } from '../cli.mts';
 import { insertSortedSlot, readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
 import { snapshotTree, write } from './fixture-files.mts';
@@ -190,23 +190,6 @@ const retire = Effect.fn(function* scenario7(root: string, kind: 'action' | 'api
     { workspaceRoot: root },
   ).pipe(Effect.provide(NodeServices.layer));
 });
-
-it.live(
-  'retire-contribution help is write-free and documents the narrow kinds',
-  Effect.fn(function* scenario8() {
-    const result = yield* runScaffoldEffect(RETIRE_CONTRIBUTION_COMMAND, ['--help'], {
-      workspaceRoot: path.join(tmpdir(), 'retire-help-missing'),
-    }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({
-      help: getHelpText(RETIRE_CONTRIBUTION_COMMAND),
-      kind: 'help',
-    });
-    if (result.kind !== 'help') {
-      throw new Error('Expected help result');
-    }
-    expect(result.help).toMatch(/--kind <action\|api\|page>/u);
-  }),
-);
 
 it.live(
   'retires generated Actions, APIs, and page exposure while preserving page source',

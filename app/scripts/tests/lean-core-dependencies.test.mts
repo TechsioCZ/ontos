@@ -36,7 +36,12 @@ for (const [importer, suffixes] of [
   ],
   [
     'apps/shell-super-app/api/symmy/source-read-projections.ts',
-    ['customer-profile-ico/client', 'customer-profile-source/client', 'organization-customer-profile-ico/client'],
+    [
+      'customer-profile-ico/client',
+      'customer-profile-source-page/client',
+      'customer-profile-source-parties/client',
+      'organization-customer-profile-ico/client',
+    ],
   ],
   [
     'verticals/privacy/src/services/organization-profile-ico-applicability.service.ts',

@@ -105,11 +105,9 @@ it.effect('refuses an empty directory and anything that is not a unit output', (
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it('the deploy job packs the unit builds with this script before the push', () => {
-  const workflow = readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8');
-  expect(workflow).toContain(
-    'sh app/scripts/zerops/pack-prebuilt-units.sh "$RUNNER_TEMP/dists" app/.zerops-prebuilt.tar.zst',
-  );
+it('the delivery packs the unit builds with this script before the push', () => {
+  const workflow = readFileSync(new URL('../../../.github/actions/deliver-stage/action.yml', import.meta.url), 'utf-8');
+  expect(workflow).toContain('sh app/scripts/zerops/pack-prebuilt-units.sh "$DISTS" app/.zerops-prebuilt.tar.zst');
   // zerops.yaml decodes with no window flag, which is what the script checks against.
   const zerops = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
   expect(zerops).toContain('zstd -dc app/.zerops-prebuilt.tar.zst | tar -x -C app');

@@ -618,6 +618,12 @@ export const generateOntosModuleContract = (input: GenerateInput) =>
         .rename(temporaryPath, outputPath)
         .pipe(Effect.mapError((cause) => failure(`unable to publish the generated ${artifact.what}`, cause)));
     }
+    if (mcpToolCatalog === undefined) {
+      // A module that stopped offering tools must not keep serving the catalog of an earlier release.
+      yield* fileSystem
+        .remove(platformPath.join(publicDirectory, ONTOS_MODULE_MCP_TOOL_CATALOG_PATH.slice(1)), { force: true })
+        .pipe(Effect.mapError((cause) => failure('unable to remove the previous MCP tool catalog', cause)));
+    }
     const etag = `"${sha256(content)}"`;
     const headers = artifacts
       .map(

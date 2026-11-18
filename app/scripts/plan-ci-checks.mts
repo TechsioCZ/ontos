@@ -1,62 +1,17 @@
 import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Predicate, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
+import { parse } from 'yaml';
+
+import { loadCiMatrices } from './ci/ci-matrices.mts';
+import type { CiIntegrationEntry, CiScope, CiTemplates } from './ci/ci-matrices.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
-const CommandEntrySchema = Schema.Struct({
-  'artifact-units': Schema.optionalKey(Schema.String),
-  commands: Schema.String,
-  fetch_depth: Schema.optionalKey(Schema.Number),
-  name: Schema.String,
-  'node-artifacts': Schema.optionalKey(Schema.Boolean),
-  'typescript-build': Schema.optionalKey(Schema.Boolean),
-});
-const IntegrationEntrySchema = Schema.Struct({
-  'artifact-units': Schema.optionalKey(Schema.String),
-  name: Schema.String,
-  'native-composition': Schema.optionalKey(Schema.Boolean),
-  'native-preproposal': Schema.optionalKey(Schema.Boolean),
-  'package-filters': Schema.optionalKey(Schema.String),
-  'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
-  'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-  'root-suite': Schema.optionalKey(Schema.Boolean),
-  'rstest-shard': Schema.optionalKey(Schema.String),
-  /** Rstest file workers; integration rows share one job database and its composition authority, so they run 1. */
-  'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
-  /** skip: leave out, only: run just the files that must migrate their own database (rstest-weighted-shard.sh). */
-  'fresh-database-tests': Schema.optionalKey(Schema.Literals(['skip', 'only'])),
-  /** Rstest projects a weighted package row runs one after another; `integration` when absent. */
-  'rstest-projects': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-z-]+(?: [a-z-]+)*$/u))),
-  /** The row may restore the cached seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
-  seed: Schema.optionalKey(Schema.Boolean),
-  suite: Schema.Literals(['integration', 'browser']),
-}).check(
-  Schema.makeFilter((entry) =>
-    entry.suite === 'integration' &&
-    entry['root-suite'] !== true &&
-    entry['native-preproposal'] !== true &&
-    (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Integration templates must name package filters, run the root suite or run the native preproposal proof'
-      : undefined,
-  ),
-  Schema.makeFilter((entry) =>
-    entry['native-preproposal'] === true && (entry['proof-packages']?.length ?? 0) === 0
-      ? 'Native preproposal templates must name their runtime proof packages'
-      : undefined,
-  ),
-);
-export const CiTemplatesSchema = Schema.Struct({
-  /** Test files that must migrate or recover their job's database; the seed model refuses exactly these. */
-  'fresh-database-tests': Schema.optionalKey(Schema.Array(Schema.String)),
-  integration: Schema.Array(IntegrationEntrySchema),
-  source: Schema.Array(CommandEntrySchema),
-  /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */
-  'test-weights': Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
-  unit: Schema.Array(CommandEntrySchema),
-});
-type Templates = typeof CiTemplatesSchema.Type;
-type IntegrationEntry = typeof IntegrationEntrySchema.Type;
+export { CiTemplatesSchema } from './ci/ci-matrices.mts';
+export type { CiScope } from './ci/ci-matrices.mts';
+type Templates = CiTemplates;
+type IntegrationEntry = CiIntegrationEntry;
 
 export interface CiWorkspacePackage {
   readonly contractProducer?: string;
@@ -75,12 +30,11 @@ export interface CiWorkspacePackage {
 }
 
 /**
- * The pnpm workspace packages outside `apps`, `packages` and `verticals` (app/pnpm-workspace.yaml): the two Next.js
- * storefronts, each named after its directory. They are leaves — no workspace package depends on them — and they are
- * not OntOS modules, so `topology/ownership.json` does not name them. Their own gate is the source row
- * 'Storefront Typecheck (AKROS and N1)', which runs in every round.
+ * The root-level packages the matrices account for (`root-packages`). They are leaves no workspace package depends on,
+ * and not OntOS modules, so `topology/ownership.json` does not name them; their own gate is a source row of the
+ * matrices.
  */
-export const rootLevelPackageDirectories: readonly string[] = ['akros-storefront', 'n1-storefront'];
+const rootPackagesOf = (templates: Templates): readonly string[] => templates['root-packages'] ?? [];
 
 /**
  * Trees the workspace root package (`directory: '.'`) owns for selection. pnpm's root package has no directory
@@ -157,9 +111,9 @@ const rootDocumentation = (changedPath: string) =>
   changedPath.startsWith('docs/') || ['CONTEXT-MAP.md', 'README.md', 'AGENTS.md'].includes(changedPath);
 
 /** A path inside a tree some workspace package owns: a package directory, a root-level package or a root tree. */
-const ownedTree = (changedPath: string) =>
+const ownedTree = (changedPath: string, rootPackages: readonly string[]) =>
   /^app\/(?:apps|verticals|packages)\/[a-z0-9-]+\//u.test(changedPath) ||
-  rootLevelPackageDirectories.some((directory) => changedPath.startsWith(`app/${directory}/`)) ||
+  rootPackages.some((directory) => changedPath.startsWith(`app/${directory}/`)) ||
   rootOwnedTrees.some((tree) => changedPath.startsWith(`app/${tree}`));
 
 /** The packages a changed path belongs to; the root package owns its named trees, never the whole repository. */
@@ -170,33 +124,36 @@ const pathOwners = (changedPath: string, packages: readonly CiWorkspacePackage[]
       : changedPath.startsWith(`app/${directory}/`),
   );
 
-const broadPath = (changedPath: string) =>
-  !rootDocumentation(changedPath) &&
-  (!ownedTree(changedPath) ||
-    /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
-      changedPath,
-    ) ||
-    /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts)$/u.test(
-      changedPath,
-    ) ||
-    /\/[^/]*(?:auth|permission|policy|grant)[^/]*\.[cm]?[jt]sx?$/iu.test(changedPath) ||
-    /\/(?:drizzle[^/]*|database|db|auth|authorization|permissions|policies|migrations|shared|api)\//u.test(
-      changedPath,
-    ));
+/** A shared package, a manifest or configuration, or an authority or database file: no scope or owner narrows it. */
+const sensitivePath = (changedPath: string) =>
+  /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
+    changedPath,
+  ) ||
+  /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts)$/u.test(
+    changedPath,
+  ) ||
+  /\/[^/]*(?:auth|permission|policy|grant)[^/]*\.[cm]?[jt]sx?$/iu.test(changedPath) ||
+  /\/(?:drizzle[^/]*|database|db|auth|authorization|permissions|policies|migrations|shared|api)\//u.test(changedPath);
 
-const filterPaths = (filters: string) =>
+const broadPath = (changedPath: string, rootPackages: readonly string[]) =>
+  !rootDocumentation(changedPath) && (!ownedTree(changedPath, rootPackages) || sensitivePath(changedPath));
+
+/** Every literal workspace selector a `--filter` list names, with its exclusion sense. */
+export const filterPaths = (filters: string) =>
   [...filters.matchAll(/--filter\s+['"]?(?<exclude>!)?(?<path>\.\/[a-z0-9/-]+|\.)['"]?/gu)].map(({ groups }) => ({
     exclude: groups?.exclude === '!',
     path: groups?.path?.replace(/^\.\//u, ''),
   }));
 
-const unknownFilters = (command: string) =>
+/** True when a command carries a package selector this planner cannot resolve to a workspace directory. */
+export const unknownFilters = (command: string) =>
   command.includes('--filter=') ||
   [...command.matchAll(/--filter\s+(?<selector>\S+)/gu)].some(
     ({ groups }) => !/^['"]?!?(?:\.\/[a-z0-9/-]+|\.)['"]?$/u.test(groups?.selector ?? ''),
   );
 
-const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage[]) => {
+/** The workspace packages a `--filter` list selects, excluding the repository root. */
+export const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage[]) => {
   const selectors = filterPaths(filters);
   const included = selectors.filter(({ exclude }) => !exclude);
   const excluded = selectors.filter(({ exclude }) => exclude);
@@ -247,6 +204,9 @@ export const integrationSeedInputs: readonly string[] = [
   'app/scripts/audit-database-trust-boundaries.mts',
   'app/scripts/prove-zerops-migrator-artifact.sh',
   'app/scripts/ci/integration-seed*.mts',
+  // The fresh-database tests: a change to that list changes which rows may restore the seed.
+  'app/scripts/ci-matrices*.json',
+  'app/scripts/ci/ci-matrices.mts',
   'app/packages/core-runtime/spicedb/**',
   'app/packages/core-runtime/src/install/**',
   'app/packages/core-runtime/src/access/**',
@@ -285,28 +245,57 @@ const namesNewSeed = (changedPath: string) =>
   seedInputs.some((pattern) => pattern.test(changedPath)) &&
   !seedExclusions.some((pattern) => pattern.test(changedPath));
 
+/** Whether a path is one of the scope's paths: some glob matches it and no `!` glob does. */
+export const inScope = (scope: CiScope, changedPath: string) =>
+  scope.paths.some((glob) => !glob.startsWith('!') && seedInputMatcher(glob).test(changedPath)) &&
+  !scope.paths.some((glob) => glob.startsWith('!') && seedInputMatcher(glob.slice(1)).test(changedPath));
+
+/**
+ * The scopes a diff stays inside: every changed path that is not root documentation lies in one of them and none is
+ * sensitive. Empty when any path is outside every scope, when a scope names a source row the matrices do not have,
+ * or when nothing but documentation changed.
+ */
+const diffScopes = (changedPaths: readonly string[], templates: Templates): readonly CiScope[] => {
+  const scopes = templates.scopes ?? [];
+  const valid = scopes.every((scope) =>
+    scope.source.every((name) => templates.source.some((entry) => entry.name === name)),
+  );
+  const paths = changedPaths.filter((changedPath) => !rootDocumentation(changedPath));
+  if (!valid || paths.length === 0 || paths.some(sensitivePath)) {
+    return [];
+  }
+  const owners = paths.map((changedPath) => scopes.filter((scope) => inScope(scope, changedPath)));
+  return owners.some((matched) => matched.length === 0)
+    ? []
+    : scopes.filter((scope) => owners.some((matched) => matched.includes(scope)));
+};
+
 /**
  * Whether the workspace graph itself cannot be trusted: a package outside the directory and naming conventions, a
  * duplicate name, or a dependency or contract producer that is not in the workspace. Nothing is narrowed from a
  * graph with a hole in it.
  */
-const unaccountedWorkspace = (packages: readonly CiWorkspacePackage[]) =>
+const unaccountedWorkspace = (packages: readonly CiWorkspacePackage[], rootPackages: readonly string[]) =>
   new Set(packages.map(({ name }) => name)).size !== packages.length ||
   packages.some(
     (entry) =>
       entry.uncertain === true ||
       (entry.directory !== '.' &&
         !/^(?:apps|packages|verticals)\/[a-z0-9-]+$/u.test(entry.directory) &&
-        !rootLevelPackageDirectories.includes(entry.directory)) ||
-      (!/^(?:@app\/[a-z0-9-]+|app)$/u.test(entry.name) && !rootLevelPackageDirectories.includes(entry.name)) ||
+        !rootPackages.includes(entry.directory)) ||
+      (!/^(?:@app\/[a-z0-9-]+|app)$/u.test(entry.name) && !rootPackages.includes(entry.name)) ||
       entry.dependencies.some((dependency) => !packages.some(({ name }) => name === dependency)) ||
       (entry.contractProducer !== undefined && !packages.some(({ name }) => name === entry.contractProducer)),
   );
 
 /** Whether the changed paths themselves demand the complete suite: empty, shared, sensitive or owned by nobody. */
-const broadDiff = (changedPaths: readonly string[], packages: readonly CiWorkspacePackage[]) =>
+const broadDiff = (
+  changedPaths: readonly string[],
+  packages: readonly CiWorkspacePackage[],
+  rootPackages: readonly string[],
+) =>
   changedPaths.length === 0 ||
-  changedPaths.some(broadPath) ||
+  changedPaths.some((changedPath) => broadPath(changedPath, rootPackages)) ||
   changedPaths.some((changedPath) => !rootDocumentation(changedPath) && pathOwners(changedPath, packages).length === 0);
 
 /** Whether a matrix names a package selector or a proof dependency this planner cannot resolve to a package. */
@@ -318,13 +307,45 @@ const unprovenTemplates = (templates: Templates, packages: readonly CiWorkspaceP
       (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
   );
 
-export const planCiChecks = (input: {
+interface PlanInput {
   readonly applyAffected: boolean;
   readonly changedPaths: readonly string[];
   readonly forceFull?: boolean;
   readonly packages: readonly CiWorkspacePackage[];
   readonly templates: Templates;
-}) => {
+}
+/** How much of the suite a plan runs: everything, the changed owners and their consumers, or the rows of scopes. */
+const PlanModeSchema = Schema.Literals(['affected', 'full', 'scoped']);
+type PlanMode = typeof PlanModeSchema.Type;
+
+/**
+ * The scopes a narrowed diff stays inside. A diff inside them runs their source rows and the unit rows of the packages
+ * it changes; a unit row that reads build outputs needs the builds, so such a diff is not scoped.
+ */
+const selectedScopes = (input: PlanInput, narrowedUnit: readonly { readonly 'node-artifacts'?: boolean }[]) => {
+  const trusted =
+    input.applyAffected &&
+    input.forceFull !== true &&
+    !unaccountedWorkspace(input.packages, rootPackagesOf(input.templates)) &&
+    !unprovenTemplates(input.templates, input.packages);
+  return trusted && narrowedUnit.every((entry) => entry['node-artifacts'] !== true)
+    ? diffScopes(input.changedPaths, input.templates)
+    : [];
+};
+
+const planReason = (mode: PlanMode, input: PlanInput, broad: boolean, scopes: readonly CiScope[]) => {
+  if (mode === 'scoped') {
+    return `Every changed path is inside ${scopes.map(({ name }) => name).join(' and ')}: their rows, the static contracts, the lint of the changed files, the lint rule tests and the repository policy run; no unit is built and no service starts.`;
+  }
+  if (broad || (mode !== 'affected' && input.applyAffected)) {
+    return 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
+  }
+  return input.applyAffected
+    ? 'Required tests include the changed owners and their transitive consumers.'
+    : 'Affected selection is recorded in shadow mode; the complete suite remains required.';
+};
+
+export const planCiChecks = (input: PlanInput) => {
   const { packages, templates } = input;
   const owned = input.changedPaths.flatMap((changedPath) =>
     pathOwners(changedPath, packages).map((owner) => ({
@@ -344,9 +365,9 @@ export const planCiChecks = (input: {
   const affectedPackages = EffectArray.sort([...affectedNames], Order.String);
   const broad =
     input.forceFull === true ||
-    unaccountedWorkspace(packages) ||
+    unaccountedWorkspace(packages, rootPackagesOf(templates)) ||
     unprovenTemplates(templates, packages) ||
-    broadDiff(input.changedPaths, packages) ||
+    broadDiff(input.changedPaths, packages, rootPackagesOf(templates)) ||
     seeds.length === 0;
   const mode = !broad && input.applyAffected ? 'affected' : 'full';
   const freshDatabaseTests = new Set((templates['fresh-database-tests'] ?? []).map((file) => `app/${file}`));
@@ -390,21 +411,24 @@ export const planCiChecks = (input: {
     if (selected.length === matchingPackages(filters, packages).length) {
       return [entry];
     }
+    // Only the package list narrows: the row's own commands, scripts and worker flags run as authored.
     const selectedFilters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
-    return [
-      {
-        ...entry,
-        commands: ['test:unit', 'test:component']
-          .map((script) => `pnpm -r --no-sort --if-present ${selectedFilters} run ${script}`)
-          .join('\n'),
-      },
-    ];
+    return [{ ...entry, commands: entry.commands.replaceAll(/(?:--filter\s+\S+\s*)+/gu, `${selectedFilters} `) }];
   });
   const selectedUnit = rootOnly ? templates.unit : narrowedUnit;
+  const scopes = selectedScopes(input, narrowedUnit);
   // A malformed/empty unit mapping never becomes a green no-op.
-  const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
-  const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
-  const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
+  let effectiveMode: PlanMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
+  if (scopes.length > 0) {
+    effectiveMode = 'scoped';
+  }
+  const integration = { affected: selectedIntegration, full: templates.integration, scoped: [] }[effectiveMode];
+  const unit = { affected: selectedUnit, full: templates.unit, scoped: narrowedUnit }[effectiveMode];
+  const source =
+    effectiveMode === 'scoped'
+      ? templates.source.filter(({ name }) => scopes.some((scope) => scope.source.includes(name)))
+      : templates.source;
+  const built = effectiveMode === 'scoped' ? 0 : 1;
   // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
   // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
   // Eligible rows restore the cached seed when it exists and prepare their own database otherwise; the seed
@@ -415,27 +439,21 @@ export const planCiChecks = (input: {
     unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
     unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
   };
-  // Every gate names its row count; gates without a matrix always run one row. The seed producer runs whenever an
-  // integration row does.
+  // Every gate names its row count; gates without a matrix always run one row, except that a scoped plan builds no
+  // unit. The seed producer runs whenever an integration row does.
   const rows = {
     'browser-integration': jobs.browser.length,
     'format-and-lint': 3,
     'integration-seed-proof': jobs.services.length,
-    'node-artifact-build': 1,
-    'node-artifact-proof': 1,
+    'node-artifact-build': built,
+    'node-artifact-proof': built,
     'service-integration': jobs.services.length,
     'static-contracts': 1,
-    'workspace-gate': 1,
+    'workspace-gate': source.length,
     'workspace-unit': jobs.unitPlain.length,
     'workspace-unit-artifacts': jobs.unitArtifacts.length,
   } satisfies Readonly<Record<(typeof gateIds)[number], number>>;
   const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows[gate] === 0 ? 'skipped' : 'success']));
-  let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
-  if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
-    reason = input.applyAffected
-      ? 'Required tests include the changed owners and their transitive consumers.'
-      : 'Affected selection is recorded in shadow mode; the complete suite remains required.';
-  }
   return {
     affectedPackages,
     candidateIntegration: broad ? templates.integration : selectedIntegration,
@@ -443,8 +461,8 @@ export const planCiChecks = (input: {
     integration,
     jobs,
     mode: effectiveMode,
-    reason,
-    source: templates.source,
+    reason: planReason(effectiveMode, input, broad, scopes),
+    source,
     unit,
   };
 };
@@ -477,78 +495,97 @@ const exportTargets = (exports: ExportTarget | undefined): readonly string[] => 
   return (Array.isArray(exports) ? exports : Object.values(exports)).flatMap(exportTargets);
 };
 
-const readWorkspace = Effect.gen(function* readCiWorkspace() {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const app = yield* path.fromFileUrl(new URL('..', import.meta.url));
-  const directories = ['.'];
-  for (const area of ['apps', 'packages', 'verticals']) {
-    const entries = yield* fs.readDirectory(path.join(app, area));
-    for (const entry of entries) {
-      if (yield* fs.exists(path.join(app, area, entry, 'package.json'))) {
-        directories.push(`${area}/${entry}`);
+/** A dependency the planner cannot resolve to a workspace package by name. */
+const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version);
+const PnpmWorkspaceSchema = Schema.Struct({ packages: Schema.Array(Schema.String) });
+class WorkspaceUnreadable extends Schema.TaggedError<WorkspaceUnreadable>()('WorkspaceUnreadable', {
+  reason: Schema.String,
+}) {}
+
+/**
+ * The package directories app/pnpm-workspace.yaml declares: `<directory>/*` names every directory below it that holds a
+ * package.json, any other entry one package directory. Another form cannot be resolved and fails.
+ */
+const readWorkspace = (rootPackages: readonly string[]) =>
+  Effect.gen(function* readCiWorkspace() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const app = yield* path.fromFileUrl(new URL('..', import.meta.url));
+    const workspace = yield* Schema.decodeUnknownEffect(PnpmWorkspaceSchema)(
+      parse(yield* fs.readFileString(path.join(app, 'pnpm-workspace.yaml'))),
+    );
+    const directories = ['.'];
+    for (const declared of workspace.packages) {
+      const area = declared.endsWith('/*') ? declared.slice(0, -2) : undefined;
+      if (!/^[a-z0-9-]+$/u.test(area ?? declared)) {
+        return yield* new WorkspaceUnreadable({ reason: `unsupported pnpm-workspace.yaml package entry ${declared}` });
+      }
+      if (area === undefined) {
+        directories.push(declared);
+        continue;
+      }
+      for (const entry of yield* fs.readDirectory(path.join(app, area))) {
+        if (yield* fs.exists(path.join(app, area, entry, 'package.json'))) {
+          directories.push(`${area}/${entry}`);
+        }
       }
     }
-  }
-  directories.push(...rootLevelPackageDirectories);
-  const manifests = yield* Effect.forEach(
-    directories,
-    (directory) =>
-      fs.readFileString(path.join(app, directory, 'package.json')).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ManifestSchema))),
-        Effect.map((manifest) => ({ directory, manifest })),
-      ),
-    { concurrency: 4 },
-  );
-  const names = new Set(manifests.map(({ manifest }) => manifest.name));
-  const ownership = yield* fs.readFileString(path.join(app, 'topology/ownership.json')).pipe(
-    Effect.flatMap(
-      Schema.decodeUnknownEffect(
-        Schema.fromJsonString(
-          Schema.Struct({
-            owners: Schema.Array(Schema.Struct({ package: Schema.String, path: Schema.String })),
-          }),
+    const manifests = yield* Effect.forEach(
+      directories,
+      (directory) =>
+        fs.readFileString(path.join(app, directory, 'package.json')).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ManifestSchema))),
+          Effect.map((manifest) => ({ directory, manifest })),
+        ),
+      { concurrency: 4 },
+    );
+    const names = new Set(manifests.map(({ manifest }) => manifest.name));
+    const ownership = yield* fs.readFileString(path.join(app, 'topology/ownership.json')).pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              owners: Schema.Array(Schema.Struct({ package: Schema.String, path: Schema.String })),
+            }),
+          ),
         ),
       ),
-    ),
-  );
-  const topology = yield* fs
-    .readFileString(path.join(app, 'topology/reference-topology.json'))
-    .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(CiTopologySchema))));
-  return withCiTopologyDependencies(
-    manifests.map(({ directory, manifest }): CiWorkspacePackage => ({
-      contractProducer: manifest.ontosContractOwner?.packageName,
-      dependencies: [
-        ...new Set(
-          [manifest.dependencies, manifest.devDependencies, manifest.optionalDependencies, manifest.peerDependencies]
-            .flatMap((group) => Object.entries(group ?? {}))
-            .filter(
-              ([name, version]) => names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:'),
-            )
-            .map(([name]) => name),
-        ),
-      ],
-      directory,
-      exportTargets: exportTargets(manifest.exports),
-      integrationSuite: manifest.scripts?.['test:integration'] !== undefined,
-      name: manifest.name,
-      uncertain:
-        // `topology/ownership.json` is the OntOS module map: it names the root-level storefront packages nowhere.
-        (directory !== '.' &&
-          !rootLevelPackageDirectories.includes(directory) &&
-          !ownership.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
-        [
-          manifest.dependencies,
-          manifest.devDependencies,
-          manifest.optionalDependencies,
-          manifest.peerDependencies,
-        ].some((group) =>
-          Object.values(group ?? {}).some((version) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version)),
-        ),
-    })),
-    topology,
-  );
-});
+    );
+    const topology = yield* fs
+      .readFileString(path.join(app, 'topology/reference-topology.json'))
+      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(CiTopologySchema))));
+    return withCiTopologyDependencies(
+      manifests.map(({ directory, manifest }): CiWorkspacePackage => ({
+        contractProducer: manifest.ontosContractOwner?.packageName,
+        dependencies: [
+          ...new Set(
+            [manifest.dependencies, manifest.devDependencies, manifest.optionalDependencies, manifest.peerDependencies]
+              .flatMap((group) => Object.entries(group ?? {}))
+              .filter(
+                ([name, version]) => names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:'),
+              )
+              .map(([name]) => name),
+          ),
+        ],
+        directory,
+        exportTargets: exportTargets(manifest.exports),
+        integrationSuite: manifest.scripts?.['test:integration'] !== undefined,
+        name: manifest.name,
+        uncertain:
+          // `topology/ownership.json` is the OntOS module map: it names the root-level storefront packages nowhere.
+          (directory !== '.' &&
+            !rootPackages.includes(directory) &&
+            !ownership.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
+          [
+            manifest.dependencies,
+            manifest.devDependencies,
+            manifest.optionalDependencies,
+            manifest.peerDependencies,
+          ].some((group) => Object.values(group ?? {}).some(isLocalVersion)),
+      })),
+      topology,
+    );
+  });
 
 const cli = Command.make(
   'plan-ci-checks',
@@ -560,13 +597,9 @@ const cli = Command.make(
   ({ applyAffected, forceFull, pathsFile }) =>
     Effect.gen(function* writeCiPlan() {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const app = yield* path.fromFileUrl(new URL('..', import.meta.url));
-      const templates = yield* fs
-        .readFileString(path.join(app, 'scripts/ci-matrices.json'))
-        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(CiTemplatesSchema))));
+      const templates = yield* loadCiMatrices();
       const paths = yield* fs.readFileString(pathsFile);
-      const packages = yield* readWorkspace.pipe(
+      const packages = yield* readWorkspace(rootPackagesOf(templates)).pipe(
         Effect.tapError((error) =>
           Console.log(`Workspace impact is unavailable: ${String(error)}. Running the complete suite.`),
         ),
@@ -603,8 +636,8 @@ const cli = Command.make(
           `Required integration shards: ${plan.integration.length} of ${templates.integration.length}.`,
           `Affected-plan integration shards: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
           '',
-          'Node artifact proof, static policy, compiler diagnostics and lint enforcement remain blocking.',
-          'Only a candidate/* dispatch without force-ci-full applies affected selection; every other run is complete.',
+          `Mode: ${plan.mode}. Source rows: ${plan.source.map(({ name }) => name).join(', ')}.`,
+          'Only a candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates; every other run is complete.',
           '',
         ].join('\n'),
         { flag: 'a' },

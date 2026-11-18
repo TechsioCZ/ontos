@@ -411,7 +411,9 @@ const ReadyCheckout = ({
         method="post"
         onInvalidCapture={(event) => {
           event.preventDefault();
-          event.currentTarget.querySelector<HTMLInputElement>("input:invalid")?.focus();
+          event.currentTarget
+            .querySelector<HTMLInputElement | HTMLSelectElement>("input:invalid, select:invalid")
+            ?.focus();
         }}
         onSubmit={(event) => {
           event.preventDefault();

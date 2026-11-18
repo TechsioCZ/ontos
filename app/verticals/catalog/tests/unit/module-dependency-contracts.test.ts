@@ -12,8 +12,8 @@ import { updateProductRecoveryRead } from '../../src/api/update-product-recovery
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 
 /**
- * The workload carrier the manifest publishes for an operation that admits workloads (demo exception 8): its access
- * declaration and the workloads it admits, directly or as subject workloads.
+ * The workload carrier the manifest publishes for an operation that admits workloads: its access declaration and
+ * the workloads it admits, directly or as subject workloads.
  */
 const expectedWorkloadCarrier = (descriptor: {
   readonly accessActor?: { readonly subjectWorkloads?: readonly string[] | undefined } | undefined;
@@ -80,7 +80,7 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(19);
+    expect(safe.operationContracts).toHaveLength(20);
     for (const contract of safe.operationContracts) {
       expect(contract.entrypoint.moduleKey).toBe('commerce.catalog');
       expect(['1', '2']).toContain(contract.schemaVersion);

@@ -1,0 +1,28 @@
+diff --git a/dist/cjs/cli/generator.js b/dist/cjs/cli/generator.js
+index e8869ebd694b72f534ba89e30d48cb9ef513c3c5..25a277873a6eb5feaf280f2d807ee5ba45805ed8 100644
+--- a/dist/cjs/cli/generator.js
++++ b/dist/cjs/cli/generator.js
+@@ -61,7 +61,8 @@ const createBffGenerator = (api)=>{
+         const sourceDirs = [];
+         for (const directory of [
+             apiDir,
+-            sharedDir
++            sharedDir,
++            utils_namespaceObject.upath.resolve(appDirectory, 'server')
+         ])if (await utils_namespaceObject.fs.pathExists(directory)) sourceDirs.push(directory);
+         if (0 === sourceDirs.length) return;
+         const combinedAlias = [].concat(config.source.alias ?? []).concat(config.resolve.alias ?? []);
+diff --git a/dist/esm-node/cli/generator.mjs b/dist/esm-node/cli/generator.mjs
+index 0ef9b8d0e47621a3364219057a831d931b114fe8..52e8fb234583a4a202e0344a934b1228f6500f00 100644
+--- a/dist/esm-node/cli/generator.mjs
++++ b/dist/esm-node/cli/generator.mjs
+@@ -18,7 +18,8 @@ const createBffGenerator = (api)=>{
+         const sourceDirs = [];
+         for (const directory of [
+             apiDir,
+-            sharedDir
++            sharedDir,
++            upath.resolve(appDirectory, 'server')
+         ])if (await fs.pathExists(directory)) sourceDirs.push(directory);
+         if (0 === sourceDirs.length) return;
+         const combinedAlias = [].concat(config.source.alias ?? []).concat(config.resolve.alias ?? []);

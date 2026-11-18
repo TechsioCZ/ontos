@@ -1,8 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
 import { C14InventorySourceImportSetupSchema } from '@app/inventory/testing/c14-source-import-native';
-import { Schema } from 'effect';
+import { SymmyRouteExecutionConfigurationSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { Effect, Schema } from 'effect';
+
+import { internalSyncSource } from './symmy-c14-sync-plans.mts';
 
 const inventoryModule = 'commerce.inventory';
 
@@ -122,4 +125,74 @@ export const makeInternalStockSetup = (input: {
       },
     },
   });
+};
+
+type InternalStockSetup = Effect.Success<ReturnType<typeof makeInternalStockSetup>>;
+
+/**
+ * The route enrolls the stock position, never a quantity: the template carries the owner operation and one
+ * scope entry for the explicitly set up Item, Location and Position.
+ */
+export const makeInternalStockEnrollment = (input: {
+  readonly setup: InternalStockSetup;
+  readonly sourceRouteId: string;
+}) =>
+  Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+    inventoryBackendId: internalStockBackendId,
+    items: [
+      {
+        effects: [
+          {
+            effectKey: 'inventory-absolute-on-hand',
+            operation: {
+              entrypointKey: 'commerce.inventory.import-source-assertion',
+              moduleId: inventoryModule,
+              schemaVersion: '1',
+            },
+          },
+        ],
+        itemKey: 'stock',
+        source: {
+          entityKind: 'STOCK',
+          issuerId: internalSyncSource.issuerId,
+          sourceNamespace: internalSyncSource.namespace,
+          sourceRecordId: 'INTERNAL_C14_STOCK_ENROLLMENT',
+        },
+      },
+    ],
+    sourceRouteId: input.sourceRouteId,
+    stockScope: [
+      {
+        customerConfigurationId: input.setup.configuration.customerConfigurationId,
+        issuerBackendId: internalStockBackendId,
+        itemKey: input.setup.itemCorrelation.externalKey.externalValue,
+        locationKey: input.setup.locationCorrelation.externalKey.externalValue,
+        namespace: input.setup.itemCorrelation.externalKey.namespace,
+        positionRef: input.setup.stockPosition.ref,
+        scope: input.setup.itemCorrelation.externalKey.externalScope,
+      },
+    ],
+  }).pipe(Effect.flatMap(Schema.encodeEffect(SymmyRouteExecutionConfigurationSchema)));
+
+/** One public row of `POST /inventory/stock/batch` for the enrolled Item and Location. */
+export const makeInternalStockRow = (input: {
+  readonly amount: string;
+  readonly businessObservedAt: string;
+  readonly revision: string;
+  readonly setup: InternalStockSetup;
+  readonly sourceReference: string;
+  readonly unitRef: typeof ProductUnitRefSchema.Encoded;
+}) => ({
+  businessObservedAt: input.businessObservedAt,
+  itemKey: input.setup.itemCorrelation.externalKey.externalValue,
+  locationKey: input.setup.locationCorrelation.externalKey.externalValue,
+  quantity: { amount: input.amount, unitRef: input.unitRef },
+  revision: input.revision,
+  sourceReference: input.sourceReference,
+});
+
+/** The assertion identity the route derives from the Idempotency-Key and the row index. */
+export const deriveInternalStockAssertionId = (idempotencyKey: string, index: number) => {
+  const digest = createHash('sha256').update(`assertion\u0000${idempotencyKey}\u0000${index}`).digest('hex');
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${'89ab'.charAt(Number.parseInt(digest.charAt(16), 16) % 4)}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 };

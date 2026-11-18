@@ -9,7 +9,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { extendedObservationSeconds, scenario, services } from './purchase-approval-fresh-proof-postgres.fixture.ts';
 
-it.live(
+it.live.concurrent(
   'component consumption selects exact P2 once, retains P1 and rejects competing proof and Order claims',
   () =>
     Effect.scoped(
@@ -74,7 +74,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'rejects fresh proof after the registered hierarchy scheduled end without changing retained P1 or effects',
   () =>
     Effect.scoped(
@@ -112,7 +112,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component consumption rejects mismatched evidence without effects and still accepts exact P2',
   () =>
     Effect.scoped(
@@ -222,7 +222,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component reconciliation uses the exclusive stored P2 commitment interval after real expiry',
   () =>
     Effect.scoped(

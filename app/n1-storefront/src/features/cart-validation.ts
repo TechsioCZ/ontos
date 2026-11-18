@@ -1,8 +1,41 @@
 import type { CartQuote } from "@/ontos/cart-quote";
-import { cartLineKey, validCartQuantity } from "./cart-state";
+import { cartLineKey, cartQuantityMaximum, validCartQuantity } from "./cart-state";
 import type { CartEntry } from "./cart-state";
+import type { Dictionary } from "@/i18n";
 
 export { validCartQuantity } from "./cart-state";
+
+/** Minimum help only explains a real lower-bound failure, never an overflow/package draft. */
+export const invalidCartQuantityText = (
+  quantity: number,
+  entry: Pick<CartEntry, "minimumQuantity" | "unit">,
+  dictionary: Dictionary,
+) => {
+  const minimum = entry.minimumQuantity;
+  return minimum !== undefined && Number.isFinite(quantity) && quantity < minimum
+    ? `${dictionary.shopping.invalidQuantity} ${dictionary.minimumQuantity}: ${minimum} ${entry.unit}`
+    : dictionary.shopping.invalidQuantity;
+};
+
+/** Current scoped owner stock overrides a saved display hint, including an explicit unknown. */
+export const cartEntryWithStock = (
+  entry: CartEntry,
+  stocks: CartQuote["stocks"],
+  current = true,
+) => {
+  const stock = stocks?.find((item) => cartLineKey(item) === cartLineKey(entry));
+  if (stock === undefined || (!current && stock.stockQuantity === null)) {
+    return entry;
+  }
+  const stockQuantity =
+    !current &&
+    entry.stockQuantity !== undefined &&
+    entry.stockQuantity !== null &&
+    stock.stockQuantity !== null
+      ? Math.min(entry.stockQuantity, stock.stockQuantity)
+      : stock.stockQuantity;
+  return { ...entry, stockQuantity };
+};
 
 export interface QuantityDraft {
   quantity: number;
@@ -18,9 +51,13 @@ export const hasInvalidCartDraft = (drafts: QuantityDrafts, entries: readonly Ca
   entries.some((entry) => {
     const draft = quantityDraftForEntry(drafts, entry);
     return (
-      draft !== undefined &&
-      (draft.saveError ||
-        !validCartQuantity(Number(draft.value), entry.minimumQuantity, entry.packageQuantity))
+      draft?.saveError === true ||
+      !validCartQuantity(
+        draft === undefined ? entry.quantity : Number(draft.value),
+        entry.minimumQuantity,
+        entry.packageQuantity,
+        cartQuantityMaximum(entry.stockQuantity, entry.packageQuantity),
+      )
     );
   });
 export const removeQuantityDraft = (drafts: QuantityDrafts, entry: CartEntry): QuantityDrafts => {

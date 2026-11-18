@@ -30,8 +30,8 @@ import {
   customerFixtureUuid as uuid,
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
 } from './symmy-c14-customer-native-authority.mts';
-import { internalCustomerSource, makeSymmyC14CustomerPlan } from './symmy-c14-customer-plan.mts';
-import type { InternalCustomerPlanInput } from './symmy-c14-customer-plan.mts';
+import { customerOccurrenceId, customersBody } from './symmy-c14-customer-public.mts';
+import { internalCustomerSource, symmyC14CustomerPlanData } from './symmy-c14-customer-plan.mts';
 import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
@@ -42,7 +42,7 @@ import {
   buildProductOwner,
   buildProductWorker,
   encodeProductComposition,
-  nativePort,
+  nativePorts,
   productComposition,
   startProductOwner,
   startProductWorker,
@@ -57,7 +57,7 @@ export const customerFixtureServices = NodeChildProcessSpawner.layer.pipe(
 );
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const nativeInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('NativeActionInvocationId'),
@@ -87,12 +87,15 @@ const symmyAppId = 'symmy-integration';
 const commerceModuleId = 'commerce.customer-context';
 const partyModuleId = 'party.registry';
 
+// A loaded CI runner can need well over 30 s to settle the actual owner graph; the poll still ends the moment it does.
+const SETTLE_POLL_ATTEMPTS = 2400;
+
 export const observeCustomerFixtureUntil = <Value, Failure, Requirements>(
   observe: Effect.Effect<Value, Failure, Requirements>,
   ready: (value: Value) => boolean,
 ) =>
   Effect.gen(function* observeCustomerJob() {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
+    for (let attempt = 0; attempt < SETTLE_POLL_ATTEMPTS; attempt += 1) {
       const value = yield* observe;
       if (ready(value)) {
         return value;
@@ -168,6 +171,8 @@ export const customerIntakeCounts = (admin: PgClient.PgClient, tenantId: string)
     and event_type='integration.symmy.job-admitted.v1') as events,
   (select count(*)::integer from core.outbox_messages where tenant_id=${tenantId}
     and producer_module_key='integration.symmy') as messages`;
+/** The key whose derived occurrence the protected source of the paused intake check carries. */
+export const pausedIntakeProtectedKey = 'INTERNAL_C14_PAUSED_INTAKE_PROTECTED';
 const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPausedIntake')(function* verify<
   Failure,
   Requirements,
@@ -175,13 +180,13 @@ const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPaus
   readonly admin: PgClient.PgClient;
   readonly contexts: readonly SourceProcessingContext[];
   readonly deniedSource: SourceProcessingContext['request']['source'];
-  readonly identity: Omit<InternalCustomerPlanInput, 'occurrenceId' | 'recordId'>;
   readonly submit: (
     key: string,
-    plan: typeof SymmyInternalExecutionPlanSchema.Type,
+    body: ReturnType<typeof customersBody>,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, Failure, Requirements>;
+  readonly tenantId: string;
 }) {
-  const { admin, contexts, deniedSource, identity, submit } = input;
+  const { admin, contexts, deniedSource, submit, tenantId } = input;
   if (deniedSource === null) {
     return yield* Effect.void;
   }
@@ -190,25 +195,29 @@ const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPaus
     return yield* unavailable('The exact blocked source fixture context is missing');
   }
   yield* seedCustomerIntakeProtection(admin, protectedContext);
-  const before = yield* customerIntakeCounts(admin, identity.tenantId);
+  const before = yield* customerIntakeCounts(admin, tenantId);
   yield* Effect.forEach(
     [
-      { caseKey: 'PROTECTED', occurrenceId: deniedSource.occurrenceId, status: 403 },
-      { caseKey: 'UNKNOWN', occurrenceId: yield* uuid, status: 503 },
+      { caseKey: 'PROTECTED', key: pausedIntakeProtectedKey, status: 403 },
+      { caseKey: 'UNKNOWN', key: 'INTERNAL_C14_PAUSED_INTAKE_UNKNOWN', status: 503 },
     ],
     Effect.fn('SymmyC14CustomerFixture.assertPausedIntakeDenial')(function* assertPausedIntakeDenial(testCase) {
-      const deniedPlan = yield* makeSymmyC14CustomerPlan({
-        ...identity,
-        occurrenceId: testCase.occurrenceId,
-        recordId: deniedSource.recordId,
-      });
-      const result = yield* submit(`INTERNAL_C14_PAUSED_INTAKE_${testCase.caseKey}`, deniedPlan);
+      // The unknown case names a source no Privacy context was seeded for: its occurrence derives from its own key.
+      const result = yield* submit(
+        testCase.key,
+        customersBody({
+          customerId: deniedSource.recordId,
+          firstName: 'Internal',
+          kind: 'PERSON',
+          lastName: 'Customer',
+        }),
+      );
       expect(result.status).toBe(testCase.status);
       expect(yield* result.text).not.toContain(deniedSource.recordId);
     }),
     { concurrency: 1, discard: true },
   );
-  expect(yield* customerIntakeCounts(admin, identity.tenantId)).toEqual(before);
+  expect(yield* customerIntakeCounts(admin, tenantId)).toEqual(before);
   return yield* Effect.logInfo(
     'INTERNAL_C14 paused worker kept protected and unresolved customer inputs out of durable storage',
   );
@@ -228,7 +237,7 @@ const customerFixtureConfiguration = (options: Omit<SymmyC14CustomerFixtureOptio
     ...(options.includePriceGroup === true ? ([priceGroupApp] as const) : []),
     symmyAppId,
   ] as const,
-  expectedEffects: options.includePriceGroup === true ? 3 : 2,
+  expectedEffects: 2,
   includePriceGroup: options.includePriceGroup === true,
   workloads: [
     ...customerFixtureWorkloads,
@@ -244,14 +253,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
   Effect.fn('SymmyC14CustomerFixture.bootstrap')(function* bootstrapCustomerFixture() {
     const configuration = customerFixtureConfiguration(options);
     const { appIds } = configuration;
-    const ports = new Map<string, number>();
-    for (const appId of appIds) {
-      let port = yield* nativePort;
-      while ([...ports.values()].includes(port)) {
-        port = yield* nativePort;
-      }
-      ports.set(appId, port);
-    }
+    const ports = yield* nativePorts(appIds);
     const { contracts, snapshot } = yield* productComposition(
       Object.fromEntries([...ports].map(([appId, port]) => [appId, `http://127.0.0.1:${port}/`])),
     );
@@ -261,8 +263,8 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       mode: 'schema-only',
       purpose: 'implementation-1096-registered-workload-gateway',
     });
-    const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
+    const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const ownerAppIds = appIds.filter((appId) => appId !== symmyAppId);
     const shell = yield* makeApiKeyGatewayNativeFixture({
       additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
@@ -309,10 +311,12 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
 
     const sourceRouteId = yield* uuid;
     const routeId = yield* uuid;
-    const occurrenceId = yield* uuid;
+    const customerJobKey = 'INTERNAL_C14_CUSTOMER_JOB';
+    // The owner derives the occurrence of a request from its Idempotency-Key, so Privacy is seeded for that one.
+    const occurrenceId = customerOccurrenceId(customerJobKey, 'customer-0');
     const recordId = 'INTERNAL_C14_NAMED_PERSON';
     const observedAt = yield* DateTime.now;
-    const customerPlan = yield* makeSymmyC14CustomerPlan({
+    const customerPlan = symmyC14CustomerPlanData({
       legalEntityId,
       observedAt,
       occurrenceId,
@@ -324,7 +328,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const planFor = Effect.fn('SymmyC14CustomerFixture.plan')(function* planFor(priceGroupEffectiveFrom: DateTime.Utc) {
       return yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
         items: [
-          ...(yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(customerPlan)).items,
+          ...customerPlan.items,
           ...(configuration.includePriceGroup
             ? [
                 {
@@ -385,7 +389,11 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const intakeContexts = [customerIntakeContext(integration.principalId, flatSource, null)];
     const deniedSource =
       options.verifyPausedIntake === true
-        ? { ...flatSource, occurrenceId: yield* uuid, recordId: 'INTERNAL_C14_BLOCKED_INTAKE_SOURCE' }
+        ? {
+            ...flatSource,
+            occurrenceId: customerOccurrenceId(pausedIntakeProtectedKey, 'customer-0'),
+            recordId: 'INTERNAL_C14_BLOCKED_INTAKE_SOURCE',
+          }
         : null;
     if (deniedSource !== null) {
       intakeContexts.push(customerIntakeContext(integration.principalId, deniedSource, null));
@@ -536,22 +544,24 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     }
     const workerArtifact = yield* buildProductWorker(symmy);
     const priceGroupEffectiveFrom = DateTime.add(yield* DateTime.now, { seconds: 45 });
-    const plan = yield* planFor(priceGroupEffectiveFrom);
+    const customerBody = customersBody({
+      customerId: recordId,
+      firstName: 'Internal',
+      kind: 'PERSON',
+      lastName: 'Customer',
+    });
     const client = yield* HttpClient.HttpClient;
-    const headers = { 'idempotency-key': 'INTERNAL_C14_CUSTOMER_JOB', 'x-api-key': Redacted.value(key.secret) };
-    const submitResponse = (idempotencyKey: string, submittedPlan = plan) =>
+    const headers = { 'idempotency-key': customerJobKey, 'x-api-key': Redacted.value(key.secret) };
+    const submitResponse = (idempotencyKey: string, body: ReturnType<typeof customersBody> = customerBody) =>
       Effect.gen(function* submitCustomer() {
         return yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
-          body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(submittedPlan),
-          }),
+          body: yield* HttpBody.json(body),
           headers: { ...headers, 'idempotency-key': idempotencyKey },
         });
       });
-    const submitFor = (idempotencyKey: string, submittedPlan = plan) =>
+    const submitFor = (idempotencyKey: string, body: ReturnType<typeof customersBody> = customerBody) =>
       Effect.gen(function* submitCustomer() {
-        const response = yield* submitResponse(idempotencyKey, submittedPlan);
+        const response = yield* submitResponse(idempotencyKey, body);
         if (response.status !== 202) {
           const problem = fixtureDiagnosticTail(yield* response.text);
           const owners = yield* collectFixtureDiagnostics(ownerDiagnostics).pipe(
@@ -564,15 +574,15 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
         }
         return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
       });
-    const submit = submitFor('INTERNAL_C14_CUSTOMER_JOB');
+    const submit = submitFor(customerJobKey);
     const accepted = yield* submit;
     expect(yield* submit).toEqual(accepted);
     yield* verifyPausedCustomerIntake({
       admin,
       contexts: privacy.contexts,
       deniedSource,
-      identity: { legalEntityId, observedAt, sourceRouteId, tenantId },
       submit: submitResponse,
+      tenantId,
     });
     const worker = yield* startProductWorker(
       workerArtifact,

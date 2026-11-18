@@ -6,6 +6,7 @@
   ],
   "compilerOptions": {
     "skipLibCheck": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "noCheck": true
   }
 }

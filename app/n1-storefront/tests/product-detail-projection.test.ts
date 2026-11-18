@@ -49,6 +49,55 @@ const variant = {
 
 describe("owner-backed PDP amounts and stock", () => {
   it.each(["cs", "en"])(
+    "includes the actual selected SKU in the parameter table in %s",
+    (locale) => {
+      const product = detail({ ...leaf, sku: "PARENT-SKU", variantRecords: [variant] });
+      const html = renderToStaticMarkup(
+        createElement(ProductView, {
+          dictionary: getDictionary(locale),
+          locale,
+          product,
+          variantId: variant.id,
+        }),
+      );
+      const body = /<tbody[^>]*>(?<body>[\s\S]*?)<\/tbody>/u.exec(html)?.groups?.body;
+      expect(body).toContain(getDictionary(locale).productCode);
+      expect(body).toContain("OWNER-M");
+      expect(body).not.toContain("PARENT-SKU");
+    },
+  );
+  it.each(["cs", "en"])(
+    "preserves an owner's Czech product-code row without duplication in %s",
+    (locale) => {
+      const product = detail({
+        ...leaf,
+        parameters: [{ label: "Kód Produktu", unit: "", value: "SUPPLIER-CODE" }],
+        sku: "OWNER-SKU",
+      });
+      const html = renderToStaticMarkup(
+        createElement(ProductView, { dictionary: getDictionary(locale), locale, product }),
+      );
+      const body = /<tbody[^>]*>(?<body>[\s\S]*?)<\/tbody>/u.exec(html)?.groups?.body;
+      expect(body).toContain("SUPPLIER-CODE");
+      expect(body).not.toContain("OWNER-SKU");
+      expect(body?.match(/<tr\b/gu)).toHaveLength(1);
+    },
+  );
+  it("does not invent rows for unknown SKU, weight, material or description", () => {
+    const product = detail({
+      ...leaf,
+      parameters: [{ label: "Značka", unit: "", value: "Spyder" }],
+    });
+    const html = renderToStaticMarkup(
+      createElement(ProductView, { dictionary: getDictionary("cs"), locale: "cs", product }),
+    );
+    const body = /<tbody[^>]*>(?<body>[\s\S]*?)<\/tbody>/u.exec(html)?.groups?.body;
+    expect(body).toContain("Spyder");
+    expect(body).not.toContain("Kód produktu");
+    expect(body?.match(/<tr\b/gu)).toHaveLength(1);
+    expect(product.paragraphs).toEqual([]);
+  });
+  it.each(["cs", "en"])(
     "omits a generic duplicate title and chooser in %s while retaining the real inquiry variant",
     (locale) => {
       const product = detail({

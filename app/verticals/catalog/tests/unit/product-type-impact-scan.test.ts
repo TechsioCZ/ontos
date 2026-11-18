@@ -120,14 +120,6 @@ describe('Product Type impact scan basis', () => {
     }
   });
 
-  it('declares unknown #479 evidence as a typed incomplete outcome', () => {
-    const failure = new ProductTypeImpactScanIncomplete({
-      code: 'product_type_impact_scan_incomplete',
-      reason: 'Open Catalog Selection population is unknown',
-    });
-    expect(Schema.is(ProductTypeImpactScanIncomplete)(failure)).toBe(true);
-  });
-
   it.effect('fails closed when no owner-confirmed #479 open-selection evidence is injected', () =>
     Effect.gen(function* missingOpenSelectionEvidence() {
       const scope = { tenantId: catalogTenantId };

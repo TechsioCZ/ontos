@@ -54,7 +54,6 @@ const SourceAppIdSchema = decodedStringBrand(Schema.NonEmptyString, 'GatewayWork
 const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 const WorkerKeySchema = decodedStringBrand(Schema.NonEmptyString, 'OutboxWorkerKey');
 const WorkerModuleKeySchema = decodedStringBrand(Schema.NonEmptyString, 'OutboxWorkerModuleKey');
-// The carrier admits exactly the authentication methods the trusted-principal contract admits.
 const PrincipalContextProvenanceCarrierSchema = Schema.Struct({
   authMethod: TrustedPrincipalContextSchema.fields.authMethod,
   principalId: PrincipalIdSchema,

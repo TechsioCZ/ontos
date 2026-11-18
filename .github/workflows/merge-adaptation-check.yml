@@ -1,0 +1,97 @@
+name: Merge Adaptation Check
+
+# The preflight of a main -> demo merge candidate (app/scripts/merge/adaptation-check.mts). It runs the candidate's
+# own contract derivation, registered-workload, authorization catalog and reviewed-role checks and reports every gap
+# at once, by owner and key, where the gates stop at the first vertical. A module's MCP commands and actions gaps
+# appear only after its reads gap is fixed. Packaging gaps (an import that needs a new package export) need the node
+# build, so the gates stay their proof. A push to candidate/** starts it; a dispatch checks any commit against an
+# explicit base, using this workflow's own copy of the tool when that commit predates it.
+on:
+  push:
+    branches:
+      - "candidate/**"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The commit or branch to check.
+        type: string
+        required: true
+      base:
+        description: The 40-hex demo commit the candidate merges into.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: app
+
+concurrency:
+  group: merge-adaptation-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adaptation:
+    name: Merge Adaptation Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the base
+        id: base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BASE: ${{ inputs.base }}
+        run: |
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            if [[ ! "$INPUT_BASE" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$INPUT_BASE^{commit}"; then
+              echo "::error::base must be a 40-hex commit of this repository"
+              exit 1
+            fi
+            base="$INPUT_BASE"
+          else
+            base="$(git merge-base refs/remotes/origin/demo/sales-crm HEAD)"
+          fi
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Use this workflow's preflight and reviewed call inventory when the checked-out commit predates them
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TOOL_SHA: ${{ github.sha }}
+        run: |
+          for tool in scripts/merge/adaptation-check.mts scripts/scaffolding/registered-workload-calls.mts; do
+            if [[ ! -f "$tool" ]]; then
+              mkdir -p "$(dirname "$tool")"
+              git show "$TOOL_SHA:app/$tool" > "$tool"
+            fi
+          done
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Check the merge adaptation
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: mise exec -- node scripts/merge/adaptation-check.mts --base "$BASE" --json "$RUNNER_TEMP/adaptation.json"
+
+      - name: Upload the adaptation report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: merge-adaptation
+          path: ${{ runner.temp }}/adaptation.json
+          if-no-files-found: ignore

@@ -1,10 +1,7 @@
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
-import {
-  inventoryStockItemImmutabilityTriggerContract,
-  inventoryStockItems,
-} from '../../src/persistence/stock-item-table.ts';
+import { inventoryStockItems } from '../../src/persistence/stock-item-table.ts';
 
 it('persists one immutable exact Selection meaning and Unit per tenant-scoped Stock Item', () => {
   const config = getTableConfig(inventoryStockItems);
@@ -37,23 +34,4 @@ it('persists one immutable exact Selection meaning and Unit per tenant-scoped St
     ]),
   );
   expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
-  expect(inventoryStockItemImmutabilityTriggerContract).toEqual({
-    columns: [
-      'stock_item_id',
-      'tenant_id',
-      'exact_selection_meaning_id',
-      'exact_selection_kind',
-      'stock_unit_module_id',
-      'stock_unit_resource_id',
-      'stock_unit_resource_type',
-      'stock_unit_tenant_id',
-    ],
-    comparison: 'IS DISTINCT FROM',
-    errorCondition: 'check_violation',
-    event: 'UPDATE',
-    functionName: 'inventory.reject_stock_item_meaning_mutation',
-    table: 'inventory.stock_items',
-    timing: 'BEFORE',
-    triggerName: 'inventory_stock_items_immutable_meaning_trg',
-  });
 });

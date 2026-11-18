@@ -50,6 +50,11 @@ import { Array as EffectArray, Effect, Layer, Option, Order, Schema } from 'effe
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { symmyJobPrivacyExecutionRead } from '../../src/api/symmy-job-privacy-execution.read.ts';
+import { symmyJobStatusRead } from '../../src/api/symmy-job-status.read.ts';
+import { symmyRouteContextRead } from '../../src/api/symmy-route-context.read.ts';
+import { symmySourceOrganizationFactsRead } from '../../src/api/symmy-source-organization-facts.read.ts';
+import { symmySyncAdmissionRead } from '../../src/api/symmy-sync-admission.read.ts';
 import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
 
 const fixtureModuleId = 'integration.symmy';
@@ -209,7 +214,7 @@ export const makeNativeExecutionRegistration = (
       actions: [...symmyIntegrationManifest.publicSurface.actions, fixtureEffectAction],
       api: { ...symmyIntegrationManifest.publicSurface.api, 'fixture-original-effect': fixtureRecoveryApi },
       operationContracts: [
-        ...symmyIntegrationManifest.publicSurface.operationContracts,
+        ...(symmyIntegrationManifest.publicSurface.operationContracts ?? []),
         {
           apiKey: 'fixture-original-effect',
           operationKey: 'fixtureRecovery.execute',
@@ -222,7 +227,14 @@ export const makeNativeExecutionRegistration = (
     actions: [...manifest.publicSurface.actions],
     manifest,
     outboxWorkers: [...workers],
-    reads: manifest.publicSurface.operationContracts.map(({ registration: readRegistration }) => readRegistration),
+    reads: [
+      symmyJobPrivacyExecutionRead,
+      symmyJobStatusRead,
+      symmyRouteContextRead,
+      symmySourceOrganizationFactsRead,
+      symmySyncAdmissionRead,
+      fixtureRecoveryRead,
+    ],
   });
   return { manifest, registration };
 };

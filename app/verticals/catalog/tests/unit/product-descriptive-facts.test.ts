@@ -48,13 +48,4 @@ describe('Catalog Product descriptive facts', () => {
     expect(lookupProductLocalizedFacts(facts, 'cs-CZ')).toEqual({ facts: facts.localized[0], kind: 'PRESENT' });
     expect(hasCatalogTextMinimum(facts)).toBe(true);
   });
-
-  it('keeps same-name products distinct by their Product reference', () => {
-    const first = decode({ localized: [{ locale: 'cs-CZ', name: 'Montážní držák' }], productRef });
-    const second = decode({
-      localized: [{ locale: 'cs-CZ', name: 'Montážní držák' }],
-      productRef: { ...productRef, resourceId: '33333333-3333-4333-8333-333333333333' },
-    });
-    expect(first.productRef.resourceId).not.toBe(second.productRef.resourceId);
-  });
 });

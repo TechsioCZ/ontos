@@ -1,18 +1,60 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CiTemplatesSchema, planCiChecks, withCiTopologyDependencies } from '../plan-ci-checks.mts';
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
+import {
+  CiTemplatesSchema,
+  filterPaths,
+  matchingPackages,
+  planCiChecks,
+  unknownFilters,
+  withCiTopologyDependencies,
+} from '../plan-ci-checks.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 
-const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
-  readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+/** The demo trunk's matrices: the shared file with the overlay its gates workflow names. */
+const templates = Result.getOrThrow(
+  parseCiMatrices(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../ci-matrices.demo.json', import.meta.url), 'utf-8'),
+  ),
 );
+const rootLevelPackageDirectories = templates['root-packages'] ?? [];
+const appRoot = path.resolve(import.meta.dirname, '../..');
+const PACKAGE_MANIFEST = 'package.json';
+const ManifestFromJson = Schema.fromJsonString(
+  Schema.Struct({ name: Schema.String, scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)) }),
+);
+/** Every pnpm workspace member the planner can see, read from disk rather than restated here. */
+const workspacePackages = [
+  ...['apps', 'packages', 'verticals'].flatMap((area) =>
+    readdirSync(path.join(appRoot, area), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(path.join(appRoot, area, entry.name, PACKAGE_MANIFEST)))
+      .map((entry) => `${area}/${entry.name}`),
+  ),
+  ...rootLevelPackageDirectories,
+].map((directory) => {
+  const manifest = Schema.decodeUnknownSync(ManifestFromJson)(
+    readFileSync(path.join(appRoot, directory, PACKAGE_MANIFEST), 'utf-8'),
+  );
+  return { dependencies: [], directory, name: manifest.name, scripts: manifest.scripts ?? {} };
+});
+const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) => directory)]);
 const CATALOG = '@app/catalog';
 const PRICING = '@app/pricing';
 const CATALOG_SOURCE = 'app/verticals/catalog/src/service.ts';
@@ -53,6 +95,31 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
   );
+});
+
+it('narrows only the package list of a unit row and keeps its authored commands and flags', () => {
+  const row = {
+    commands: [
+      'pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./verticals/privacy run test:unit --pool.maxWorkers 2',
+      "pnpm -r --no-sort --if-present --filter './verticals/catalog' --filter './verticals/privacy' run test:component",
+      '',
+    ].join('\n'),
+    name: 'Unit and Component Tests (Catalog and Privacy)',
+  };
+  const plan = planCiChecks({
+    applyAffected: true,
+    changedPaths: ['app/verticals/privacy/src/internal.ts'],
+    packages,
+    templates: { ...templates, unit: [row] },
+  });
+  expect(plan.mode).toBe('affected');
+  expect(plan.unit.map(({ commands }) => commands)).toEqual([
+    [
+      'pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/privacy run test:unit --pool.maxWorkers 2',
+      'pnpm -r --no-sort --if-present --filter ./verticals/privacy run test:component',
+      '',
+    ].join('\n'),
+  ]);
 });
 
 const FINANCE_BILLING = '@app/finance-billing';
@@ -458,10 +525,10 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         });
         return readFileSync(output, 'utf-8');
       };
-      const documentationPlan = run('pull_request');
+      const documentationPlan = run('merge_group');
       expect(documentationPlan).toContain('mode=docs\n');
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
-      expect(run('merge_group')).toContain('mode=docs\n');
+      expect(run('push')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
       // A candidate dispatch with a resolved comparison point is classified like a pull request, unless forced full.
       expect(run('workflow_dispatch', base, 'false', 'true')).toContain('mode=docs\n');
@@ -469,11 +536,279 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       expect(run('workflow_dispatch', '0'.repeat(40), 'false', 'true')).toContain('mode=full\n');
       expect(run('pull_request', '0'.repeat(40))).toContain('mode=full\n');
       expect(run('pull_request', base, 'true')).toContain('mode=full\n');
+      // A pull request run that is not on GitHub's merge commit has no merge parent to compare with.
+      expect(run('pull_request')).toContain('mode=full\n');
       git('mv', 'README.md', 'runtime.ts');
       git('commit', '--quiet', '-m', 'rename into application input');
-      expect(run('pull_request')).toContain('mode=affected\n');
+      expect(run('merge_group')).toContain('mode=affected\n');
+      // The base moved on after the fork point. The pull request's merge commit compares with its first
+      // parent, so only the pull request's own documentation counts, never the base's newer changes.
+      const trunk = git('rev-parse', '--abbrev-ref', 'HEAD');
+      git('checkout', '--quiet', '-b', 'documentation', base);
+      mkdirSync(path.join(directory, 'docs'), { recursive: true });
+      writeFileSync(path.join(directory, 'docs/guide.md'), 'guide\n');
+      git('add', 'docs/guide.md');
+      git('commit', '--quiet', '-m', 'guide');
+      git('checkout', '--quiet', trunk);
+      git('merge', '--quiet', '--no-ff', '-m', 'Merge documentation', 'documentation');
+      expect(run('pull_request', base)).toContain('mode=docs\n');
+      expect(readFileSync(path.join(directory, 'paths'), 'utf-8')).toBe('docs/guide.md\0');
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
   }),
 );
+
+/** The workflow id and run id of the recorded push run that plans; the lookup reads only this workflow. */
+const PUSH_WORKFLOW_ID = 342_952_200;
+const PUSH_RUN_ID = 44_400_000_000;
+const PUSH_BRANCH = 'trunk';
+const RUN_LOOKUP = `api repos/TechsioCZ/ontos/actions/runs/${PUSH_RUN_ID} --jq .workflow_id`;
+const RUNS_LIST = `api repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs?branch=${PUSH_BRANCH}&event=push&per_page=100`;
+/** One recorded workflow run as the list endpoint returns it, newest first; only the fields the lookup reads. */
+interface RecordedRun {
+  readonly conclusion: string | null;
+  readonly event: string;
+  readonly head_branch: string;
+  readonly head_sha: string;
+  readonly status: string;
+  readonly workflow_id?: number;
+}
+const recordedRuns = (runs: readonly RecordedRun[]) =>
+  JSON.stringify({
+    total_count: runs.length,
+    workflow_runs: runs.map((run, index) => ({ id: PUSH_RUN_ID - index - 1, workflow_id: PUSH_WORKFLOW_ID, ...run })),
+  });
+const greenPush = (sha: string): RecordedRun => ({
+  conclusion: 'success',
+  event: 'push',
+  head_branch: PUSH_BRANCH,
+  head_sha: sha,
+  status: 'completed',
+});
+/** The recorded answers of a lookup that reads this run's workflow and then lists its push runs on the branch. */
+const listed = (runs: readonly RecordedRun[]) => ({
+  [RUN_LOOKUP]: { stdout: `${PUSH_WORKFLOW_ID}\n` },
+  [RUNS_LIST]: { stdout: recordedRuns(runs) },
+});
+
+it.live('compares a push without a merge queue with its newest green push, and runs everything without one', () =>
+  Effect.sync(() => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-push-base-'));
+    const repository = path.join(directory, 'repository');
+    const script = fileURLToPath(new URL('../plan-ci-changes.sh', import.meta.url));
+    mkdirSync(repository);
+    const git = (...args: string[]) =>
+      execFileSync('/usr/bin/git', ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
+        cwd: repository,
+        encoding: 'utf-8',
+      }).trim();
+    const commit = (file: string) => {
+      writeFileSync(path.join(repository, file), `${file}\n`);
+      git('add', file);
+      git('commit', '--quiet', '-m', file);
+      return git('rev-parse', 'HEAD');
+    };
+    /** Plans HEAD with a fake gh that answers each recorded invocation exactly and fails every other one. */
+    const plan = (
+      routes: Readonly<Record<string, { readonly exit?: number; readonly stderr?: string; readonly stdout?: string }>>,
+      environment: Readonly<Record<string, string>> = {},
+    ) => {
+      const bin = path.join(directory, 'bin');
+      rmSync(bin, { force: true, recursive: true });
+      mkdirSync(bin);
+      const calls = path.join(directory, 'calls');
+      const output = path.join(directory, 'outputs');
+      writeFileSync(calls, '');
+      writeFileSync(output, '');
+      const branches = Object.entries(routes).map(([args, { exit = 0, stderr = '', stdout = '' }], index) => {
+        writeFileSync(path.join(bin, `stdout-${index}`), stdout);
+        writeFileSync(path.join(bin, `stderr-${index}`), stderr);
+        return `  '${args}') cat '${bin}/stdout-${index}'; cat '${bin}/stderr-${index}' >&2; exit ${exit} ;;`;
+      });
+      writeFileSync(
+        path.join(bin, 'gh'),
+        [
+          '#!/bin/bash',
+          `printf '%s\\n' "$*" >> '${calls}'`,
+          'case "$*" in',
+          ...branches,
+          '  *) echo "unexpected gh $*" >&2; exit 97 ;;',
+          'esac',
+          '',
+        ].join('\n'),
+      );
+      chmodSync(path.join(bin, 'gh'), 0o755);
+      const log = execFileSync('/bin/bash', [script, path.join(directory, 'paths')], {
+        cwd: repository,
+        encoding: 'utf-8',
+        env: {
+          BASE_SHA: git('rev-parse', 'HEAD~1'),
+          GITHUB_EVENT_NAME: 'push',
+          GITHUB_OUTPUT: output,
+          GITHUB_REF_NAME: PUSH_BRANCH,
+          GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+          GITHUB_RUN_ID: String(PUSH_RUN_ID),
+          HEAD_SHA: git('rev-parse', 'HEAD'),
+          PATH: `${bin}:/usr/bin:/bin`,
+          QUEUE_PROOF: 'skipped',
+          ...environment,
+        },
+        stdio: 'pipe',
+      });
+      return {
+        calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean),
+        log,
+        mode: /^mode=(?<mode>\w+)$/mu.exec(readFileSync(output, 'utf-8'))?.groups?.mode,
+        paths: readFileSync(path.join(directory, 'paths'), 'utf-8').split('\0').filter(Boolean),
+      };
+    };
+    try {
+      git('init', '--quiet');
+      const green = commit('green.ts');
+      git('checkout', '--quiet', '-b', 'sibling');
+      const sibling = commit('sibling.ts');
+      git('checkout', '--quiet', '-');
+      const red = commit('red.ts');
+      const cancelled = commit('cancelled.ts');
+      commit('pushed.ts');
+      const head = git('rev-parse', 'HEAD');
+      const absent = 'f'.repeat(40);
+      const unproven = ['cancelled.ts', 'pushed.ts', 'red.ts'];
+
+      // (b) Only a completed, successful push run of this workflow on this branch proves a commit. Every newer run
+      // here is something else: a run of this very commit, live, red, cancelled, of another event, branch or
+      // workflow file. The diff therefore covers the red and cancelled pushes, not only this push's own commit.
+      const mixed = plan(
+        listed([
+          { ...greenPush(head), conclusion: null, status: 'in_progress' },
+          greenPush(head),
+          { ...greenPush(cancelled), conclusion: 'cancelled' },
+          { ...greenPush(cancelled), event: 'pull_request' },
+          { ...greenPush(cancelled), event: 'merge_group' },
+          { ...greenPush(cancelled), event: 'schedule' },
+          { ...greenPush(cancelled), event: 'workflow_dispatch' },
+          { ...greenPush(cancelled), head_branch: 'main' },
+          { ...greenPush(cancelled), workflow_id: PUSH_WORKFLOW_ID + 1 },
+          { ...greenPush(red), conclusion: 'failure' },
+          { ...greenPush(red), conclusion: null, status: 'queued' },
+          greenPush(green),
+        ]),
+      );
+      expect(mixed.calls).toEqual([RUN_LOOKUP, RUNS_LIST]);
+      expect(mixed.mode).toBe('affected');
+      expect(mixed.paths).toEqual(unproven);
+      expect(mixed.log).toContain(`Comparing with ${green},`);
+
+      // (c) A green commit that is no ancestor of this push, or absent from the checkout, is passed over.
+      const passedOver = plan(listed([greenPush(sibling), greenPush(absent), greenPush(green)]));
+      expect(passedOver.mode).toBe('affected');
+      expect(passedOver.paths).toEqual(unproven);
+      for (const runs of [[greenPush(sibling), greenPush(absent)], [{ ...greenPush(green), head_sha: 'abc' }]]) {
+        const unrelated = plan(listed(runs));
+        expect(unrelated.mode).toBe('full');
+        expect(unrelated.paths).toEqual([]);
+      }
+
+      // (d) Every failed lookup runs everything and never fails the planning step itself.
+      for (const routes of [
+        // The first push of a branch: no push run of it has succeeded yet.
+        listed([]),
+        // The run's own workflow is unreadable, so no list is requested.
+        { [RUN_LOOKUP]: { exit: 1, stderr: 'gh: Server Error (HTTP 502)\n' } },
+        { [RUN_LOOKUP]: { stdout: 'null\n' } },
+        {
+          ...listed([]),
+          [RUNS_LIST]: { exit: 1, stderr: 'gh: API rate limit exceeded for installation ID 1. (HTTP 403)\n' },
+        },
+        { ...listed([]), [RUNS_LIST]: { exit: 1, stderr: 'gh: Server Error (HTTP 500)\n' } },
+        { ...listed([]), [RUNS_LIST]: { stdout: '<html>unicorn</html>' } },
+        { ...listed([]), [RUNS_LIST]: { stdout: '{"message":"Not Found"}' } },
+      ]) {
+        const failed = plan(routes);
+        expect(failed.mode).toBe('full');
+        expect(failed.paths).toEqual([]);
+        expect(failed.log).toContain('::warning title=Complete suite::');
+      }
+
+      // A push the queue-proof job looked at (main, behind its merge queue) never enters the lookup: it compares
+      // with the commit before the push as it always did, whatever the proof found, and calls no API.
+      for (const result of ['success', 'failure']) {
+        const queued = plan(listed([greenPush(green)]), { QUEUE_PROOF: result });
+        expect(queued.calls, result).toEqual([]);
+        expect(queued.paths, result).toEqual(['pushed.ts']);
+      }
+      expect(plan({}, { QUEUE_PROOF: '' }).calls).toEqual([]);
+      // Nor does any other event without a queue proof.
+      for (const event of ['merge_group', 'pull_request', 'schedule', 'workflow_dispatch']) {
+        expect(plan({}, { GITHUB_EVENT_NAME: event }).calls, event).toEqual([]);
+      }
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }),
+);
+
+it('keeps every unit and integration template resolvable so one glob cannot disable affected selection', () => {
+  for (const command of [
+    ...templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean)),
+    ...templates.integration.map((entry) => entry['package-filters'] ?? ''),
+  ]) {
+    expect(unknownFilters(command)).toBe(false);
+    expect(filterPaths(command).filter(({ path: selected }) => !knownSelectors.has(selected ?? ''))).toEqual([]);
+  }
+});
+
+const WEIGHTED_SHARD_LINE =
+  /^pnpm --filter \.\/[a-z0-9/-]+ exec bash \S*rstest-weighted-shard\.sh"? (?<index>\d+)\/(?<count>\d+) (?<project>[a-z-]+)(?:\s|$)/u;
+const RECURSIVE_SCRIPT_LINE = / run (?<script>test:[a-z]+)(?:\s|$)/u;
+
+// Demo carries many verticals the engineered line does not have: a matrix that names packages one by one would
+// silently skip a new one, so the catch-all rows must keep every suite in exactly one place.
+it('runs every unit and component suite of every workspace package exactly once across the unit rows', () => {
+  const recursive: string[] = [];
+  const weighted = new Map<string, { readonly count: string; readonly indices: string[] }>();
+  for (const line of templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean))) {
+    const shard = WEIGHTED_SHARD_LINE.exec(line)?.groups;
+    const script = RECURSIVE_SCRIPT_LINE.exec(line)?.groups?.script;
+    const directories = matchingPackages(line, workspacePackages).map(({ directory }) => directory);
+    expect(shard !== undefined || script !== undefined).toBe(true);
+    for (const directory of directories) {
+      if (shard === undefined) {
+        recursive.push(`${directory} ${script ?? ''}`);
+      } else {
+        const key = `${directory} test:${shard.project ?? ''}`;
+        const family = weighted.get(key) ?? { count: shard.count ?? '', indices: [] };
+        expect(family.count).toBe(shard.count);
+        family.indices.push(shard.index ?? '');
+        weighted.set(key, family);
+      }
+    }
+  }
+  // A weighted family runs each of its shards exactly once, and together they run the whole project.
+  for (const { count, indices } of weighted.values()) {
+    expect(indices.toSorted()).toEqual(Array.from({ length: Number(count) }, (_, index) => String(index + 1)));
+  }
+  const runs = [...recursive, ...weighted.keys()];
+  expect(new Set(runs).size).toBe(runs.length);
+  const required = workspacePackages.flatMap(({ directory, scripts }) =>
+    ['test:unit', 'test:component']
+      .filter((script) => scripts[script] !== undefined)
+      .map((script) => `${directory} ${script}`),
+  );
+  expect(required.filter((run) => !runs.includes(run))).toEqual([]);
+});
+
+it('runs the integration suite of every workspace package that declares one in some integration row', () => {
+  const covered = new Set(
+    templates.integration.flatMap((entry) =>
+      matchingPackages(entry['package-filters'] ?? '', workspacePackages).map(({ directory }) => directory),
+    ),
+  );
+  expect(
+    workspacePackages
+      .filter(({ scripts }) => scripts['test:integration'] !== undefined)
+      .map(({ directory }) => directory)
+      .filter((directory) => !covered.has(directory)),
+  ).toEqual([]);
+});

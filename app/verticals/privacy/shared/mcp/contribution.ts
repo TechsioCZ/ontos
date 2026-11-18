@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime/modules/mcp-contribution';
 
 export const privacyMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -18,7 +18,8 @@ export const privacyMcpContribution = defineOntosMcpContribution({
       destructive: true,
       title: { cs: 'Spravovat vlastní souhlasy se zpracováním', en: 'Manage own processing consents' },
     },
-    'create-dsr-case': { title: { cs: 'Založit žádost subjektu údajů', en: 'Create a data subject request' } },
+    // Production installs no DSR intake receipt authority; every invocation fails until it is wired.
+    'create-dsr-case': OntosMcpHidden,
     'create-notice-version': {
       title: { cs: 'Vytvořit verzi informačního oznámení', en: 'Create a privacy notice version' },
     },
@@ -37,15 +38,10 @@ export const privacyMcpContribution = defineOntosMcpContribution({
     'evaluate-processing-eligibility': {
       title: { cs: 'Vyhodnotit přípustnost zpracování', en: 'Evaluate processing eligibility' },
     },
-    'issue-dsr-delivery-access': {
-      title: { cs: 'Vydat přístup k odpovědi na žádost subjektu údajů', en: 'Issue access to a data subject response' },
-    },
-    'record-anti-resurrection-protection': {
-      title: {
-        cs: 'Zaznamenat ochranu proti obnovení vymazaných údajů',
-        en: 'Record protection against erased data resurrection',
-      },
-    },
+    // Production installs no DSR delivery access authority; every invocation fails until it is wired.
+    'issue-dsr-delivery-access': OntosMcpHidden,
+    // Production installs no anti-resurrection enforcement authority; every invocation fails until it is wired.
+    'record-anti-resurrection-protection': OntosMcpHidden,
     'record-applicability-policy': {
       title: { cs: 'Zaznamenat pravidla použitelnosti ochrany údajů', en: 'Record a privacy applicability policy' },
     },
@@ -53,31 +49,18 @@ export const privacyMcpContribution = defineOntosMcpContribution({
       destructive: true,
       title: { cs: 'Zaznamenat rozhodnutí o souhlasu', en: 'Record a consent decision' },
     },
-    'record-disposition-decision': {
-      destructive: true,
-      title: { cs: 'Zaznamenat rozhodnutí o naložení s údaji', en: 'Record a data disposition decision' },
-    },
-    'record-dsr-deadline': {
-      title: { cs: 'Zaznamenat lhůtu žádosti subjektu údajů', en: 'Record a data subject request deadline' },
-    },
-    'record-dsr-delivery-evidence': {
-      title: {
-        cs: 'Zaznamenat doklad o doručení odpovědi subjektu údajů',
-        en: 'Record data subject response delivery evidence',
-      },
-    },
-    'record-dsr-response': {
-      title: { cs: 'Zaznamenat odpověď na žádost subjektu údajů', en: 'Record a data subject response' },
-    },
-    'record-dsr-substantive-decision': {
-      title: {
-        cs: 'Zaznamenat věcné rozhodnutí o žádosti subjektu údajů',
-        en: 'Record a substantive data subject request decision',
-      },
-    },
-    'record-dsr-verification': {
-      title: { cs: 'Zaznamenat ověření žádosti subjektu údajů', en: 'Record data subject request verification' },
-    },
+    // Production installs no retention disposition authority; every invocation fails until it is wired.
+    'record-disposition-decision': OntosMcpHidden,
+    // Production installs no DSR deadline authority; every invocation fails until it is wired.
+    'record-dsr-deadline': OntosMcpHidden,
+    // Production installs no DSR delivery authority; every invocation fails until it is wired.
+    'record-dsr-delivery-evidence': OntosMcpHidden,
+    // Production installs no DSR owner inventory authority; every invocation fails until it is wired.
+    'record-dsr-response': OntosMcpHidden,
+    // Production installs no DSR substantive decision authority; every invocation fails until it is wired.
+    'record-dsr-substantive-decision': OntosMcpHidden,
+    // Production installs no DSR verification authority; every invocation fails until it is wired.
+    'record-dsr-verification': OntosMcpHidden,
     'record-external-obligation': {
       title: { cs: 'Zaznamenat externí povinnost uchování údajů', en: 'Record an external data retention obligation' },
     },
@@ -97,10 +80,8 @@ export const privacyMcpContribution = defineOntosMcpContribution({
       destructive: false,
       title: { cs: 'Zaznamenat zastoupení subjektu údajů', en: 'Record data subject representation' },
     },
-    'record-processing-intervention': {
-      destructive: true,
-      title: { cs: 'Zaznamenat zásah do zpracování údajů', en: 'Record a processing intervention' },
-    },
+    // Production installs no processing intervention authority; every invocation fails until it is wired.
+    'record-processing-intervention': OntosMcpHidden,
     'record-retention-exception': {
       title: { cs: 'Zaznamenat výjimku z doby uchování údajů', en: 'Record a retention exception' },
     },
@@ -108,10 +89,10 @@ export const privacyMcpContribution = defineOntosMcpContribution({
       title: { cs: 'Změnit stav činnosti zpracování', en: 'Change a processing activity state' },
     },
     'update-dsr-case': { title: { cs: 'Upravit žádost subjektu údajů', en: 'Update a data subject request' } },
-    'upsert-dsr-owner-task': {
-      title: { cs: 'Uložit úkol vlastníka údajů k žádosti', en: 'Save a data owner request task' },
-    },
-    'upsert-retention-rule': { title: { cs: 'Uložit pravidlo uchování údajů', en: 'Save a retention rule' } },
+    // Production installs no DSR owner task authority; every invocation fails until it is wired.
+    'upsert-dsr-owner-task': OntosMcpHidden,
+    // Production installs no retention rule governance authority; every invocation fails until it is wired.
+    'upsert-retention-rule': OntosMcpHidden,
     'upsert-temporary-dsr-export': {
       title: { cs: 'Uložit dočasný export pro subjekt údajů', en: 'Save a temporary data subject export' },
     },

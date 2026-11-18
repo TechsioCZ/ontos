@@ -15,7 +15,7 @@ import {
 } from './purchase-approval-fresh-proof-postgres.fixture.ts';
 
 for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
-  it.live(
+  it.live.concurrent(
     state === 'OLD_CLOCK'
       ? 'OLD clock accepts an exact genuine P1 component replay after forced expiry with fresh incoming evidence'
       : 'CURRENT clock refuses an exact genuine P1 component replay after forced expiry with fresh incoming evidence',
@@ -71,7 +71,7 @@ for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
   );
 }
 
-it.live(
+it.live.concurrent(
   'rejects fresh proof after actual buyer revocation and retains committed P1 history',
   () =>
     Effect.scoped(
@@ -100,7 +100,7 @@ it.live(
 );
 
 for (const change of ['POLICY', 'PROFILE'] as const) {
-  it.live(`rejects fresh proof after actual ${change} change without rewriting P1 or request history`, () =>
+  it.live.concurrent(`rejects fresh proof after actual ${change} change without rewriting P1 or request history`, () =>
     Effect.scoped(
       Effect.gen(function* changedOwnerStateBetweenProofs() {
         const test = yield* scenario();

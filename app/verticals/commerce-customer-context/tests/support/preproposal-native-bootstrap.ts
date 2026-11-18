@@ -3,23 +3,24 @@ import { testDatabaseIdentityConnection } from '../../../../packages/core-runtim
 import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { readAllocatedPermissionEnvironment } from './preproposal-basis-native.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { Config, Effect, FileSystem, Path, Schema, Stream } from 'effect';
+import { Config, Effect, FileSystem, Path, Schema } from 'effect';
 import { ChildProcess } from 'effect/process';
 
+const sourcePreparation = 'schema-only';
 const applicationRoot = new URL('../../../../', import.meta.url).pathname;
 
 class PreproposalBootstrapError extends Schema.TaggedError<PreproposalBootstrapError>()('PreproposalBootstrapError', {
   stage: Schema.String,
 }) {}
 
-/** Test infrastructure only. Migrate a fresh empty allocation, never the configured source. */
+/** Test infrastructure only. Clone the verified schema without source data or authority. */
 export const bootstrapPreproposalNativeSource = Effect.fn('PreproposalNative.bootstrapSource')(
   function* bootstrapPreproposalNativeSource() {
     const identities = yield* loadDatabaseIdentityConnections({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT });
     const sourceConnections = yield* loadDatabaseConnectionPair();
     const source = yield* makeIsolatedNativeDatabaseFixture({
-      mode: 'empty',
-      purpose: 'stabilization-1257-approval-fresh-proof',
+      mode: sourcePreparation,
+      purpose: 'implementation-1290-preproposal-native-source',
       sourceConnections,
     });
     const target = source.connections.admin.database;
@@ -38,60 +39,26 @@ export const bootstrapPreproposalNativeSource = Effect.fn('PreproposalNative.boo
         ]),
       ),
     };
-    // Explicit environment wins over dotenv in every migrator/verifier. Validate all
-    // derived identities before any process can mutate the disposable allocation.
+    // Explicit environment wins over dotenv. Validate all derived identities
+    // before any owner process can mutate the disposable allocation.
     yield* loadDatabaseIdentityConnections({
       enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       environment,
       envPath: '/dev/null',
     });
-    const inherited = yield* Config.all({
-      HOME: Config.String('HOME'),
-      ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
-        Config.withDefault(true),
-        Config.map(String),
-      ),
-      PATH: Config.String('PATH'),
-      TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
-    });
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const taskRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-1257-native-' });
-    const commands = ['db:migrate', 'db:verify'] as const;
-    yield* Effect.forEach(
-      commands,
-      Effect.fn('PreproposalNative.bootstrapCommand')(function* bootstrapCommand(command) {
-        yield* Effect.logInfo(`Preproposal standalone: ${command} on empty disposable source`);
-        const child = yield* ChildProcess.make('pnpm', [command], {
-          cwd: applicationRoot,
-          env: { ...inherited, ...environment, APP_ENV_PATH: '/dev/null' },
-          extendEnv: false,
-          stderr: 'pipe',
-          stdout: 'pipe',
-        });
-        // Raw tool output can contain connection configuration. Keep it private and
-        // report only the command and exit status; receipts contain no credentials.
-        const [exitCode] = yield* Effect.all(
-          [child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)],
-          { concurrency: 3 },
-        );
-        if (exitCode !== 0) {
-          yield* new PreproposalBootstrapError({ stage: command });
-        }
-        yield* Effect.logInfo(`Preproposal standalone: ${command} passed`);
-      }),
-      { concurrency: 1, discard: true },
-    );
     const receipt = yield* Schema.encodeEffect(
       Schema.fromJsonString(
         Schema.Struct({
-          commands: Schema.Array(Schema.String),
           database: Schema.String,
+          preparation: Schema.Literal(sourcePreparation),
           status: Schema.Literal('completed'),
           version: Schema.Literal(1),
         }),
       ),
-    )({ commands, database: target, status: 'completed', version: 1 });
+    )({ database: target, preparation: sourcePreparation, status: 'completed', version: 1 });
     yield* fileSystem.writeFileString(path.join(taskRoot, 'source-bootstrap-completed.json'), receipt, {
       flag: 'wx',
       mode: 0o600,
@@ -111,6 +78,7 @@ export const runStandalonePreproposalNativeTest = Effect.fn('PreproposalNative.s
     const environment = yield* bootstrapPreproposalNativeSource();
     const inherited = yield* Config.all({
       HOME: Config.String('HOME'),
+      NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
       ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.Boolean('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
         Config.withDefault(true),
         Config.map(String),

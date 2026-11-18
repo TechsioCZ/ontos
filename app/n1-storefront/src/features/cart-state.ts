@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Struct } from "effect";
 import { CartQuoteLineSchema, CartScopeSchema } from "@/ontos/cart-quote";
 import type { CartScope } from "@/ontos/cart-quote";
 
@@ -16,16 +16,28 @@ export const validCartQuantity = (
   quantity: number,
   minimum = 0.001,
   packageQuantity?: number | null,
+  maximum = 1_000_000,
 ) =>
   Number.isFinite(quantity) &&
   quantity >= Math.max(0.001, minimum) &&
-  quantity <= 1_000_000 &&
+  quantity <= Math.min(1_000_000, maximum) &&
   (packageQuantity === undefined ||
     packageQuantity === null ||
     (Number.isFinite(packageQuantity) &&
       (packageQuantity <= 0 ||
         Math.abs(quantity / packageQuantity - Math.round(quantity / packageQuantity)) <=
           0.000001)));
+
+/** Catalog stock is a UX bound only; the owner still validates every quote/order. */
+export const cartQuantityMaximum = (
+  stockQuantity?: number | null,
+  packageQuantity?: number | null,
+) => {
+  const maximum = Math.min(1_000_000, stockQuantity ?? 1_000_000);
+  return packageQuantity !== undefined && packageQuantity !== null && packageQuantity > 0
+    ? Number((Math.floor((maximum + 0.000000001) / packageQuantity) * packageQuantity).toFixed(12))
+    : maximum;
+};
 
 /** Display values are an unverified draft, never monetary or inventory authority. */
 const CartEntrySchema = Schema.Struct({
@@ -40,6 +52,9 @@ const CartEntrySchema = Schema.Struct({
   quantity: Schema.Finite.check(Schema.isBetween({ maximum: 1_000_000, minimum: 0.001 })),
   sku: Schema.String.check(Schema.isMaxLength(300)),
   slug: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  stockQuantity: Schema.optionalKey(
+    Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  ),
   unit: Schema.String.check(Schema.isMaxLength(100)),
   variantName: Schema.String.check(Schema.isMaxLength(300)),
 }).check(
@@ -88,7 +103,22 @@ export const addCartEntry = (entries: readonly CartEntry[], entry: CartEntry) =>
                 ? { ...latest, quantity: line.quantity + incoming.quantity }
                 : line,
             );
-      return Schema.decodeUnknownEffect(EntriesSchema)(updated);
+      return Schema.decodeUnknownEffect(EntriesSchema)(updated).pipe(
+        Effect.filterOrFail(
+          (decoded) =>
+            decoded.every(
+              (line) =>
+                cartLineKey(line) !== key ||
+                validCartQuantity(
+                  line.quantity,
+                  line.minimumQuantity,
+                  line.packageQuantity,
+                  cartQuantityMaximum(line.stockQuantity, line.packageQuantity),
+                ),
+            ),
+          () => new CartDraftInvalid(),
+        ),
+      );
     }),
     Effect.mapError(() => new CartDraftInvalid()),
   );
@@ -99,6 +129,28 @@ export const replaceCartQuantity = (
 ) =>
   Schema.decodeUnknownEffect(EntriesSchema)(
     entries.map((line) =>
-      cartLineKey(line) === cartLineKey(entry) ? { ...line, quantity } : line,
+      cartLineKey(line) === cartLineKey(entry)
+        ? {
+            ...line,
+            ...Struct.pick(entry, ["stockQuantity"]),
+            quantity,
+          }
+        : line,
     ),
-  ).pipe(Effect.mapError(() => new CartDraftInvalid()));
+  ).pipe(
+    Effect.filterOrFail(
+      (updated) =>
+        updated.every(
+          (line) =>
+            cartLineKey(line) !== cartLineKey(entry) ||
+            validCartQuantity(
+              line.quantity,
+              line.minimumQuantity,
+              line.packageQuantity,
+              cartQuantityMaximum(line.stockQuantity, line.packageQuantity),
+            ),
+        ),
+      () => new CartDraftInvalid(),
+    ),
+    Effect.mapError(() => new CartDraftInvalid()),
+  );

@@ -32,6 +32,7 @@ import { BrandCurrentApi } from './apis/brand-current.ts';
 import { BrandHistoryApi } from './apis/brand-history.ts';
 import { CatalogDocumentCurrentApi } from './apis/catalog-document-current.ts';
 import { CatalogMediaCurrentApi } from './apis/catalog-media-current.ts';
+import { CatalogSourceProductPageApi } from './apis/catalog-source-product-page.ts';
 import { CatalogSourceProductsApi } from './apis/catalog-source-products.ts';
 import { CatalogSourceResolutionApi } from './apis/catalog-source-resolution.ts';
 import { ChangeLocalOverrideActionApi } from './apis/change-local-override-action.ts';
@@ -267,6 +268,7 @@ type CatalogApiGroups = GroupsOf<
   | typeof BrandHistoryApi
   | typeof CatalogDocumentCurrentApi
   | typeof CatalogMediaCurrentApi
+  | typeof CatalogSourceProductPageApi
   | typeof CatalogSourceResolutionApi
   | typeof ChangeLocalOverrideActionApi
   | typeof ChangeLocalOverrideRecoveryApi
@@ -479,6 +481,7 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(BrandHistoryApi)
   .addHttpApi(CatalogDocumentCurrentApi)
   .addHttpApi(CatalogMediaCurrentApi)
+  .addHttpApi(CatalogSourceProductPageApi)
   .addHttpApi(CatalogSourceProductsApi)
   .addHttpApi(CatalogSourceResolutionApi)
   .addHttpApi(ChangeLocalOverrideActionApi)
@@ -856,6 +859,14 @@ export const catalogPublicOperationContracts = {
     authorityBundle: 'CATALOG_READER',
     businessTarget: 'catalog-media',
     permission: 'commerce.catalog.read.media',
+    scope: 'tenant',
+    version: '1',
+  },
+  'commerce.catalog.api.catalog-source-product-page': {
+    accessKind: 'read',
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: catalogSourceBusinessTarget,
+    permission: 'commerce.catalog.read.catalog-source-product-page',
     scope: 'tenant',
     version: '1',
   },
@@ -2391,6 +2402,7 @@ export const catalogAuthorityBundles = {
   CATALOG_READER: [
     'commerce.catalog.read.bind-initial-variant-source-recovery',
     'commerce.catalog.read.catalog-source-products',
+    'commerce.catalog.read.catalog-source-product-page',
     'commerce.catalog.read.activate-local-override-recovery',
     'commerce.catalog.read.change-local-override-recovery',
     'commerce.catalog.read.import-source-assertion-recovery',

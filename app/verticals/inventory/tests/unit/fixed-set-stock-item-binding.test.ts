@@ -126,11 +126,9 @@ describe('fixed Set Stock Item binding', () => {
       const stockItem = stockItemAt(1);
       const binding = bindingAt(1, stockItem);
       const demand = demandAt(1);
-      const catalogComponentEvidence = ['component-A', 'component-B'] as const;
 
       const requirement = yield* resolverFor([[binding, stockItem]]).resolve(demand);
 
-      expect(catalogComponentEvidence).toHaveLength(2);
       expect(requirement.stockItem).toEqual(stockItem);
       expect(requirement.quantity).toBe('3');
       expect(requirement.unitRef).toEqual(unitRef);
@@ -139,8 +137,6 @@ describe('fixed Set Stock Item binding', () => {
       expect(requirement.stockRepresentation).toBe('ONE_EXACT_SET_STOCK_ITEM');
       expect(requirement.componentDecomposition).toBe('PROHIBITED');
       expect(requirement).not.toHaveProperty('componentStockRequirements');
-      expect(JSON.stringify(requirement)).not.toContain('component-A');
-      expect(JSON.stringify(requirement)).not.toContain('component-B');
     }),
   );
 

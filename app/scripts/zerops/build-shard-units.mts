@@ -12,6 +12,7 @@
  * shard's cache entry is named by its own units' identities.
  *
  *   node scripts/zerops/build-shard-units.mts <shard> <shards>
+ *   node scripts/zerops/build-shard-units.mts all <shards>      every shard, one `<shard>\t<units>` line each
  */
 import path from 'node:path';
 
@@ -110,16 +111,21 @@ export const readReleaseModules = Effect.gen(function* readReleaseModules() {
   return intent.modules.map(({ appId }): string => appId);
 });
 
+/** `all` prints every shard of the deal in one process (the delivery job's shard table), a number prints one shard. */
 const command = Command.make(
   'build-shard-units',
-  { shard: Argument.Int('shard'), shards: Argument.Int('shards') },
+  { shard: Argument.String('shard'), shards: Argument.Int('shards') },
   ({ shard, shards }) =>
     Effect.gen(function* printShardUnits() {
-      if (shards < 2 || shard < 0 || shard >= shards) {
-        return yield* new BuildShardError({ message: `No shard ${String(shard)} of ${String(shards)}` });
+      const index = shard === 'all' ? 0 : Number(shard);
+      if (shards < 2 || !Number.isInteger(index) || index < 0 || index >= shards || !/^(?:all|\d+)$/u.test(shard)) {
+        return yield* new BuildShardError({ message: `No shard ${shard} of ${String(shards)}` });
       }
-      const units = buildShardUnits(yield* readReleaseModules, shards)[shard] ?? [];
-      return yield* Console.log(units.join(' '));
+      const dealt = buildShardUnits(yield* readReleaseModules, shards);
+      if (shard === 'all') {
+        return yield* Console.log(dealt.map((units, number) => `${String(number)}\t${units.join(' ')}`).join('\n'));
+      }
+      return yield* Console.log((dealt[index] ?? []).join(' '));
     }),
 );
 

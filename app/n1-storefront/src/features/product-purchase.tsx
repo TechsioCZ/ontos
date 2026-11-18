@@ -8,7 +8,12 @@ import type { Dictionary } from "@/i18n";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
 import type { selectProductDetail } from "./product-selection";
 import { useCart } from "./cart-provider";
-import { cartQuantityStep, validCartQuantity } from "./cart-state";
+import {
+  cartLineKey,
+  cartQuantityMaximum,
+  cartQuantityStep,
+  validCartQuantity,
+} from "./cart-state";
 
 const purchaseGuidance = (d: Dictionary, purchasable: boolean, soldOut: boolean) =>
   purchasable || soldOut ? null : d.commerceUnavailable;
@@ -42,13 +47,21 @@ export const ProductPurchase = ({
   const [draft, setDraft] = useState({ key: selectionKey, value: String(current.minimumQuantity) });
   const quantity = draft.key === selectionKey ? draft.value : String(current.minimumQuantity);
   const parsedQuantity = Number(quantity);
+  const existingQuantity =
+    cart?.entries.find((entry) => cartLineKey(entry) === selectionKey)?.quantity ?? 0;
+  const maximum = cartQuantityMaximum(
+    current.stockQuantity === null ? null : Math.max(0, current.stockQuantity - existingQuantity),
+    current.packageQuantity,
+  );
+  const exhausted = maximum < current.minimumQuantity;
   const invalidQuantity = !validCartQuantity(
     parsedQuantity,
     current.minimumQuantity,
     current.packageQuantity,
+    maximum,
   );
   const purchasable = canPurchaseSelection(selection, cart);
-  const showQuantityError = purchasable && invalidQuantity;
+  const showQuantityError = purchasable && !exhausted && invalidQuantity;
   const purchaseDisabled = !purchasable || invalidQuantity;
   const guidance = purchaseGuidance(d, purchasable, current.stock === "unavailable");
   const guidanceId = guidance === null ? undefined : "purchase-unavailable";
@@ -66,6 +79,7 @@ export const ProductPurchase = ({
       quantity: parsedQuantity,
       sku: current.sku,
       slug: product.slug,
+      stockQuantity: current.stockQuantity,
       unit: current.unit,
       variantName: variant?.name ?? "",
     };
@@ -94,13 +108,13 @@ export const ProductPurchase = ({
         <div className="w-26 shrink-0 pointer-coarse:w-40">
           <NumericInput
             allowOverflow={false}
-            clampValueOnBlur={false}
+            clampValueOnBlur
             density="compact"
-            disabled={!purchasable}
+            disabled={!purchasable || exhausted}
             formatOptions={{ maximumFractionDigits: 20, useGrouping: false }}
             invalid={showQuantityError}
             locale={locale}
-            max={1_000_000}
+            max={Math.max(current.minimumQuantity, maximum)}
             min={current.minimumQuantity}
             onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
             size="md"

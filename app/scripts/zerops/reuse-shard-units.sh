@@ -4,22 +4,25 @@
 #   reuse-shard-units.sh reuse <identities-dir> <shard> <unit-cache-dir> <archive>
 #   reuse-shard-units.sh pack <archive> <unit>...
 #   reuse-shard-units.sh earlier <branch> <this-run-id>            (prints run_id=<id> for $GITHUB_OUTPUT, or nothing)
-#   reuse-shard-units.sh prove-archives <identities-dir> <archives-dir>
+#   reuse-shard-units.sh take-units <identities-dir> <archives-dir> <dists-dir> <missing-file>
 #
 # `reuse` takes the shard's units from its restored unit cache only when every one of them is proven unchanged: the
 # cached build's recorded identity (.zerops-build-digest, written when it was built) equals the identity this commit
-# gives the unit (<identities-dir>/digests.tsv, written by `build-app.sh --digests-only` in the unit_identities job),
+# gives the unit (<identities-dir>/digests.tsv, written by `build-app.sh --digests-only` in the delivery job),
 # and the cached build has its entry. Then it lays the builds out as dist/ and packs them as a build would, so the job
 # needs no install and builds nothing. Any doubt (no unit list, no identity, a missing or different cached build)
 # exits 3: the job installs and builds as before, and build-app.sh proves every kept unit again. The Zerops build
 # proves them a third time before it keeps them.
 #
-# `earlier` names the newest other run of <branch> that still holds unit builds (artifact zerops-units-0), from the
-# Actions API (GH_TOKEN with `actions: read`). No such run, or any API failure, prints nothing: the matrix builds.
+# `earlier` names the newest other push or dispatch run of this workflow on <branch>, in this repository, that still
+# holds unit builds (artifact zerops-units-0), from the Actions API (GH_TOKEN with `actions: read`). No such run, or any
+# API failure, prints nothing: the matrix builds.
 #
-# `prove-archives` is the unit_identities job's front path: it succeeds only when the unit archives under
-# <archives-dir> (an earlier run's zerops-units-* artifacts) hold every unit of this commit's identity table exactly
-# once, each with its entry and the recorded identity this commit gives it. Anything else exits 3.
+# `take-units` is the delivery job's front path, unit by unit. Every unit of this commit's identity table that the
+# archives under <archives-dir> (an earlier run's unit builds, at any depth) hold exactly once, with its entry and the
+# recorded identity this commit gives it, is laid out under <dists-dir> as <unit dir>/dist. Every other unit is written
+# to <missing-file>, one per line: the Zerops build or the build matrix builds it. No archive, or an unreadable one,
+# takes nothing.
 #
 # `pack` is the one packing step of both paths: the units' dist/ without source maps, type bundles or precompressed
 # copies, which never serve at runtime.
@@ -86,11 +89,20 @@ reuse() {
 }
 
 earlier() {
-  local branch="$1" run_id="$2" found
-  found="$(BRANCH="$branch" RUN_ID="$run_id" gh api \
-    "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}/actions/artifacts?name=zerops-units-0&per_page=30" \
-    --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == env.BRANCH and
-      (.workflow_run.id | tostring) != env.RUN_ID)] | sort_by(.created_at) | last | .workflow_run.id // empty' \
+  local branch="$1" run_id="$2" repository trusted found
+  repository="repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+  # Only this workflow's own push and dispatch runs in this repository can lend units: a pull request from a fork can
+  # name its branch <branch> and upload an artifact called zerops-units-0 from a workflow of its own, and both push
+  # and dispatch need write access to this repository.
+  trusted="$(BRANCH="$branch" RUN_ID="$run_id" gh api --method GET "$repository/actions/workflows/zerops-stage.yml/runs" \
+    -f branch="$branch" -f per_page=50 \
+    --jq '[.workflow_runs[] | select((.event == "push" or .event == "workflow_dispatch") and
+      .head_repository.id == .repository.id and .head_branch == env.BRANCH and
+      .path == ".github/workflows/zerops-stage.yml" and (.id | tostring) != env.RUN_ID) | .id]' \
+    2>/dev/null)" || trusted='[]'
+  found="$(TRUSTED="$trusted" gh api "$repository/actions/artifacts?name=zerops-units-0&per_page=100" \
+    --jq '(env.TRUSTED | fromjson) as $trusted | [.artifacts[] | select(.expired == false and
+      (.workflow_run.id | IN($trusted[])))] | sort_by(.created_at) | last | .workflow_run.id // empty' \
     2>/dev/null)" || found=''
   if [[ "$found" =~ ^[0-9]+$ ]]; then
     echo "earlier unit builds: run $found" >&2
@@ -100,45 +112,56 @@ earlier() {
   fi
 }
 
-prove_archives() {
-  local identities="$1" archives="$2" scratch archive index=0 unit expected dir copies
-  local -a found
-  mapfile -t found < <(find "$archives" -type f -name units.tar.zst | LC_ALL=C sort)
-  if [ "${#found[@]}" -eq 0 ]; then
-    echo 'no earlier unit archives'
-    return "$NEEDS_BUILD"
+take_units() {
+  local identities="$1" archives="$2" dists="$3" missing="$4" scratch archive index=0 unit expected dir copies source
+  local taken=0 total=0
+  local -a found=()
+  : >"$missing"
+  mkdir -p "$dists"
+  if [ -d "$archives" ]; then
+    mapfile -t found < <(find "$archives" -type f -name units.tar.zst | LC_ALL=C sort)
   fi
   scratch="$(mktemp -d)"
   # shellcheck disable=SC2064 # the scratch path is fixed now.
   trap "rm -rf '$scratch'" RETURN
-  # GNU tar (the runner) reads member patterns literally unless told; bsdtar always globs.
-  local -a glob=()
-  if tar --version 2>/dev/null | grep -q 'GNU tar'; then glob=(--wildcards --wildcards-match-slash); fi
+  # Each archive is decompressed once, whole: extracting unit by unit decompressed it again for every unit (28 passes
+  # over the 30 MB pushed archive took 17 s of the delivery's critical path, run 44144418654).
   for archive in "${found[@]}"; do
     mkdir -p "$scratch/$index"
-    # Only each unit's recorded identity and entry; an unreadable archive is a doubt like any other.
-    if ! tar --extract --zstd --file "$archive" -C "$scratch/$index" "${glob[@]}" \
-      '*/dist/.zerops-build-digest' '*/dist/zerops-entry.mjs' 2>/dev/null; then
-      echo "earlier unit archive $archive is unreadable"
-      return "$NEEDS_BUILD"
+    # An unreadable archive is a doubt like any other.
+    if ! tar --extract --zstd --file "$archive" -C "$scratch/$index" 2>/dev/null; then
+      echo "earlier unit archive $archive is unreadable; no unit is taken from the earlier builds"
+      found=()
+      rm -rf "${scratch:?}"/*
+      break
     fi
     index=$((index + 1))
   done
   while IFS=$'\t' read -r unit expected _; do
     [ -n "$unit" ] || continue
+    total=$((total + 1))
     dir="$(unit_dir "$unit")"
     copies="$(compgen -G "$scratch/*/$dir/dist/.zerops-build-digest" | grep -c . || true)"
     if [ "$copies" -ne 1 ]; then
-      echo "$unit is in $copies earlier unit archives, not one"
-      return "$NEEDS_BUILD"
+      echo "$unit: in $copies earlier unit archives, not one; it must build"
+      echo "$unit" >>"$missing"
+      continue
     fi
-    if [ "$(cat "$scratch"/*/"$dir"/dist/.zerops-build-digest)" != "$expected" ] ||
-      ! compgen -G "$scratch/*/$dir/dist/zerops-entry.mjs" >/dev/null; then
-      echo "$unit's earlier build is for other inputs"
-      return "$NEEDS_BUILD"
+    source="$(compgen -G "$scratch/*/$dir/dist/.zerops-build-digest")"
+    source="${source#"$scratch"/}"
+    source="${source%%/*}"
+    if [ "$(cat "$scratch/$source/$dir/dist/.zerops-build-digest")" != "$expected" ] ||
+      [ ! -f "$scratch/$source/$dir/dist/zerops-entry.mjs" ]; then
+      echo "$unit: its earlier build is for other inputs; it must build"
+      echo "$unit" >>"$missing"
+      continue
     fi
+    rm -rf "${dists:?}/$dir/dist"
+    mkdir -p "$dists/$dir"
+    mv "$scratch/$source/$dir/dist" "$dists/$dir/dist"
+    taken=$((taken + 1))
   done <"$identities/digests.tsv"
-  echo "every unit of this commit is in the earlier unit builds, by identity"
+  echo "took $taken of $total units from the earlier builds by identity; $((total - taken)) must build: $(tr '\n' ' ' <"$missing")"
 }
 
 case "${1:-}" in
@@ -146,9 +169,9 @@ case "${1:-}" in
     [ "$#" -eq 3 ] || { echo 'usage: reuse-shard-units.sh earlier <branch> <this-run-id>' >&2; exit 2; }
     earlier "$2" "$3"
     ;;
-  prove-archives)
-    [ "$#" -eq 3 ] || { echo 'usage: reuse-shard-units.sh prove-archives <identities-dir> <archives-dir>' >&2; exit 2; }
-    prove_archives "$2" "$3"
+  take-units)
+    [ "$#" -eq 5 ] || { echo 'usage: reuse-shard-units.sh take-units <identities-dir> <archives-dir> <dists-dir> <missing-file>' >&2; exit 2; }
+    take_units "$2" "$3" "$4" "$5"
     ;;
   reuse)
     [ "$#" -eq 5 ] || { echo 'usage: reuse-shard-units.sh reuse <identities-dir> <shard> <unit-cache-dir> <archive>' >&2; exit 2; }

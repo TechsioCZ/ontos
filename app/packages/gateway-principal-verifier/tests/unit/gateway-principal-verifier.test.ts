@@ -46,7 +46,28 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 
 const GATEWAY_FIXTURE_BUILD_MARKER = 'gateway-test-release';
 const fixtureAppIds = ['billing', 'commerce-customer-context', 'external-operation', 'party-registry'];
-const gatewayComposition = makeApplicationCompositionSnapshotFixture(fixtureAppIds, GATEWAY_FIXTURE_BUILD_MARKER);
+const buildGatewayComposition = makeApplicationCompositionSnapshotFixture(fixtureAppIds, GATEWAY_FIXTURE_BUILD_MARKER);
+
+// The verifier reloads and revalidates the composition authority on every verify call, so the
+// uncached fixture re-decoded, re-hashed and revalidated all four deployment contracts on each of
+// them. A built snapshot is handed to every later load while its one-hour lease covers the test
+// clock; the reference forwarding tests move the clock past it, so a load there builds and keeps a
+// fresh snapshot. The deliberately distinct snapshots below stay unmemoized.
+let memoizedGatewayComposition: Effect.Success<typeof buildGatewayComposition> | undefined;
+const gatewayComposition = Effect.gen(function* loadGatewayComposition() {
+  const now = yield* Clock.currentTimeMillis;
+  const memoized = memoizedGatewayComposition;
+  if (
+    memoized !== undefined &&
+    DateTime.toEpochMillis(memoized.observedAt) <= now &&
+    now < DateTime.toEpochMillis(memoized.validUntil)
+  ) {
+    return memoized;
+  }
+  const built = yield* buildGatewayComposition;
+  memoizedGatewayComposition = built;
+  return built;
+});
 
 const currentTimeSeconds = 1_700_000_001;
 const issuer = 'https://shell.ontos.test';

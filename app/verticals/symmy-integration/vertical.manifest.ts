@@ -3,6 +3,7 @@
 // @ontos-module-id integration.symmy
 import { symmyOwnerOperationRequirementKey } from './shared/domain/symmy-owner-operation-requirements.ts';
 import { defineOntosModuleManifest } from '@app/core-runtime';
+import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { admitSymmyJobAction } from './src/actions/admit-symmy-job.action.ts';
 import { admitSymmySyncAction } from './src/actions/admit-symmy-sync.action.ts';
@@ -66,6 +67,7 @@ const ownerOperationProviders = [
       { entrypointKey: 'pricing.price-group-catalog.create-price-group-definition-revision', schemaVersion: '1' },
       { entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup', schemaVersion: '1' },
       { entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations', schemaVersion: '1' },
+      { entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head', schemaVersion: '1' },
     ],
   },
   {
@@ -158,7 +160,7 @@ const ownerOperationRequirements = ownerOperationProviders.flatMap(({ moduleId, 
   }),
 );
 
-export const symmyIntegrationManifest = defineOntosModuleManifest({
+export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
     preservesHistoryWhenInactive: true,
@@ -260,7 +262,6 @@ export const symmyIntegrationManifest = defineOntosModuleManifest({
       timelines: [],
     },
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: symmyIntegrationRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [],

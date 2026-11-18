@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseSync } from 'oxc-parser';
@@ -10,7 +11,7 @@ import { expect, it } from 'effect-rstest';
 
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
-import { getHelpText, runScaffoldEffect } from '../cli.mts';
+import { runScaffoldEffect } from '../cli.mts';
 import { asJsonObject, bindSharedRuntimeWorkerEntry, readModuleRuntimeDeclarationEffect } from '../shared.mts';
 import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
@@ -862,24 +863,6 @@ it.live(
 );
 
 it.live(
-  'module-contract help is exact and write-free',
-  Effect.fn(function* scenario5() {
-    const missingRoot = path.join(tmpdir(), 'module-contract-help-does-not-exist');
-    const result = yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, ['--help'], {
-      workspaceRoot: missingRoot,
-    }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({
-      help: getHelpText(MODULE_CONTRACT_COMMAND),
-      kind: 'help',
-    });
-    if (result.kind !== 'help') {
-      throw new Error('Expected help result');
-    }
-    expect(result.help).toMatch(/--vertical <vertical> --module <dotted\.module-id>/u);
-  }),
-);
-
-it.live(
   'business generators fail closed before the mandatory module contract exists',
   Effect.fn(function* scenario6() {
     yield* withFixture(
@@ -1046,12 +1029,20 @@ it.live(
             'utf-8',
           ),
         );
+        // A catalog left by an earlier release that offered MCP tools is not served by one that offers none.
+        const staleToolCatalog = path.join(
+          root,
+          'verticals/property-registry/dist/public/.well-known/ontos-module-mcp-tools.json',
+        );
+        yield* Effect.promise(() => mkdir(path.dirname(staleToolCatalog), { recursive: true }));
+        yield* Effect.promise(() => writeFile(staleToolCatalog, '{"tools":[]}', 'utf-8'));
         const first = yield* generateOntosModuleContract({
           target: 'dist',
           vertical: APP_ID,
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         const firstContent = yield* Effect.promise(() => readFile(first.path, 'utf-8'));
+        expect(existsSync(staleToolCatalog)).toBe(false);
         const packagePath = path.join(root, PROPERTY_PACKAGE_PATH);
         const packageContent = yield* Effect.promise(() => readFile(packagePath, 'utf-8'));
         const decodedPackage = yield* decodeModulePackage(packageContent);
@@ -1213,6 +1204,19 @@ it.live(
           /verticals\/property-registry\/dist\/public\/\.well-known\/ontos-module-manifest\.json$/u,
         );
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
+        // A catalog the contract does not pin, e.g. restored from an earlier release, must not pass as served output.
+        const unpinnedToolCatalog = path.join(
+          root,
+          'verticals/property-registry/dist/public/.well-known/ontos-module-mcp-tools.json',
+        );
+        yield* Effect.promise(() => writeFile(unpinnedToolCatalog, '{"definitions":{},"tools":[]}', 'utf-8'));
+        yield* expectFailure(checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer)), (error) => {
+          if (Schema.is(OntosModuleContractCheckError)(error)) {
+            expect(error.reason).toMatch(/serves \/\.well-known\/ontos-module-mcp-tools\.json that its contract/u);
+          } else {
+            throw new Error(EXPECTED_CHECKER_ERROR);
+          }
+        });
       }),
     );
   }),

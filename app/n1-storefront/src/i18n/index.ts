@@ -244,6 +244,8 @@ const cs = {
     fullName: "Jméno a příjmení",
     invalid: "Zkontrolujte prosím jméno, e-mail a zprávu.",
     message: "Zpráva",
+    messageInvalid: "Napište zprávu.",
+    nameInvalid: "Vyplňte jméno a příjmení.",
     office: "Kancelář",
     phone: "Telefon",
     premises: "Provozovna",
@@ -414,6 +416,7 @@ const cs = {
     remove: "Odebrat",
     scopeUnavailable: "Košík nyní nelze načíst. Zkuste to prosím později.",
     shipping: "Doprava",
+    stockRemaining: "Zbývá pouze {quantity} {unit}",
     storageError:
       "Uložený košík nelze načíst. Pro pokračování ho můžete vymazat pouze v tomto trhu.",
     subtotal: "Zboží včetně DPH",
@@ -440,6 +443,7 @@ const cs = {
   terms: "Obchodní podmínky",
   unavailable: "Katalog je dočasně nedostupný",
   unavailableDescription: "Nabídku nyní nelze načíst. Zkuste to prosím později.",
+  variantsUnavailable: "Další varianty se nepodařilo načíst. Zkuste to prosím znovu.",
   watchProduct: "Hlídat produkt",
 };
 
@@ -690,6 +694,8 @@ const en: typeof cs = {
     fullName: "Full name",
     invalid: "Please check your name, email and message.",
     message: "Message",
+    messageInvalid: "Enter your message.",
+    nameInvalid: "Enter your full name.",
     office: "Office",
     phone: "Phone",
     premises: "Shop address",
@@ -860,6 +866,7 @@ const en: typeof cs = {
     remove: "Remove",
     scopeUnavailable: "Your cart cannot be loaded right now. Please try again later.",
     shipping: "Shipping",
+    stockRemaining: "Only {quantity} {unit} left",
     storageError:
       "The saved cart could not be loaded. You can clear it for this market to continue.",
     subtotal: "Goods including VAT",
@@ -886,6 +893,7 @@ const en: typeof cs = {
   terms: "Terms and conditions",
   unavailable: "The catalogue is temporarily unavailable",
   unavailableDescription: "We cannot load the catalogue right now. Please try again later.",
+  variantsUnavailable: "More variants could not be loaded. Please try again.",
   watchProduct: "Watch this product",
 };
 

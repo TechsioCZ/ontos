@@ -1,20 +1,9 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import {
-  CurrentPaymentTermsRequestSchema as PublicCurrentPaymentTermsRequestSchema,
-  PaymentTermDefinitionSchema as PublicPaymentTermDefinitionSchema,
-  PaymentTermRefSchema as PublicPaymentTermRefSchema,
-  executeCurrentPaymentTerms,
-  executeCurrentPaymentTermsWithAuthorization,
-} from '../../src/index.ts';
-import {
   CurrentPaymentTermsRequestSchema,
   CurrentPaymentTermsResponseSchema,
 } from '../../src/apis/current-payment-terms.ts';
-import {
-  executeCurrentPaymentTerms as directExecuteCurrentPaymentTerms,
-  executeCurrentPaymentTermsWithAuthorization as directExecuteCurrentPaymentTermsWithAuthorization,
-} from '../../src/api/current-payment-terms-client.ts';
 import {
   PaymentTermCanonicalSemanticsSchema,
   PaymentTermDefinitionSchema,
@@ -70,14 +59,6 @@ const definition = {
 };
 
 describe('canonical Payment Term package surface', () => {
-  it('publishes the canonical schemas and generated client functions from one package entrypoint', () => {
-    expect(PublicPaymentTermRefSchema).toBe(PaymentTermRefSchema);
-    expect(PublicPaymentTermDefinitionSchema).toBe(PaymentTermDefinitionSchema);
-    expect(PublicCurrentPaymentTermsRequestSchema).toBe(CurrentPaymentTermsRequestSchema);
-    expect(executeCurrentPaymentTerms).toBe(directExecuteCurrentPaymentTerms);
-    expect(executeCurrentPaymentTermsWithAuthorization).toBe(directExecuteCurrentPaymentTermsWithAuthorization);
-  });
-
   it('owns the exact stable ResourceRef identity and rejects boundary expansion', () => {
     const decode = Schema.decodeUnknownSync(PaymentTermRefSchema, {
       onExcessProperty: 'error',

@@ -373,6 +373,8 @@ export {
   tenantRlsPolicies,
 } from './db/scoped-transaction.ts';
 export type { ScopedTransactionExecutor } from './db/scoped-transaction.ts';
+export { IoInsideDatabaseTransaction, declaredEvidenceCallInsideTransaction } from './db/transaction-io-guard.ts';
+export type { DeclaredEvidenceCall, TransactionIo } from './db/transaction-io-guard.ts';
 export {
   SCOPED_ROUTINE_INVOCATION_ERROR_CODES,
   SCOPED_ROUTINE_PARAMETER_TYPES,
@@ -716,8 +718,6 @@ export type {
   ReadOwnerTransaction,
   ReadPrepareContext,
 } from './reads/context.ts';
-export { IoInsideDatabaseTransaction, declaredEvidenceCallInsideTransaction } from './db/transaction-io-guard.ts';
-export type { DeclaredEvidenceCall, TransactionIo } from './db/transaction-io-guard.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {

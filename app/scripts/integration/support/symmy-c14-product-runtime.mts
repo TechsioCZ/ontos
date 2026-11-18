@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -17,9 +18,23 @@ import type {
 } from '@app/core-runtime';
 import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeHttpServer } from '@effect/platform-node';
-import { Context, Duration, Effect, FileSystem, Layer, Option, Path, Queue, Ref, Schema, Stream } from 'effect';
+import {
+  Array as EffectArray,
+  Config,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Order,
+  Path,
+  Queue,
+  Ref,
+  Schema,
+  Stream,
+} from 'effect';
+import type { PlatformError } from 'effect/PlatformError';
 import type { Redacted } from 'effect';
-import { HttpServer } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 
 import {
@@ -56,18 +71,56 @@ const compositionFailure = (error: ActiveApplicationCompositionUnavailableError)
   return unavailable(`Genuine composition: ${error.reason}; ${Option.isSome(message) ? message.value.message : ''}`);
 };
 
-export const nativePort = Effect.scoped(
-  Effect.gen(function* nativePort() {
-    const server = Context.get(
-      yield* Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: 0 })),
-      HttpServer.HttpServer,
-    );
-    if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
-      return yield* unavailable('The native receiver requires a loopback TCP port');
-    }
-    return server.address.port;
-  }),
-);
+/**
+ * Fixture ports come from a block below the kernel's ephemeral range (32768-60999 on Linux, 49152-65535
+ * on macOS), one block per scheduler lane, or block 0 outside the scheduler. A port taken from the
+ * ephemeral range and released before an owner child binds it can meanwhile become the local port of
+ * any outgoing connection on the runner, and the other lane opens many. Inside its block a lane runs one
+ * test process at a time, and that process never hands out a port twice.
+ */
+const fixturePortBase = 20_000;
+const fixturePortBlock = 2000;
+const FixturePortLane = Config.Int('ONTOS_CI_WORKER_SLOT').pipe(Config.withDefault(0));
+const handedOutPorts = new Set<number>();
+
+const bindFixturePort = (port: number) =>
+  Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })).pipe(Effect.as(port), Effect.option);
+
+/**
+ * Allocates `count` loopback ports with every listener held open at once, so no two of them, and no
+ * other fixture of this lane, can receive the same port. The listeners are released together when this
+ * effect completes, immediately before the owner children bind the ports.
+ */
+export const nativePortList = (count: number) =>
+  Effect.scoped(
+    Effect.gen(function* allocateFixturePorts() {
+      const start = fixturePortBase + (yield* FixturePortLane) * fixturePortBlock;
+      const candidates = Array.from({ length: fixturePortBlock }, (_, index) => start + index).filter(
+        (port) => !handedOutPorts.has(port),
+      );
+      const ports = yield* Effect.reduce(
+        candidates,
+        (): readonly number[] => [],
+        (bound, port) =>
+          bound.length === count
+            ? Effect.succeed(bound)
+            : bindFixturePort(port).pipe(
+                Effect.map(Option.match({ onNone: () => bound, onSome: (free) => [...bound, free] })),
+              ),
+      );
+      if (ports.length < count) {
+        return yield* unavailable(`Fixture port block ${start} has fewer than ${count} free ports`);
+      }
+      for (const port of ports) {
+        handedOutPorts.add(port);
+      }
+      return ports;
+    }),
+  );
+
+/** `nativePortList` for the fixtures that address their ports by owner appId. */
+export const nativePorts = (keys: readonly string[]) =>
+  nativePortList(keys.length).pipe(Effect.map((ports) => new Map(EffectArray.zip(keys, ports))));
 
 const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContract')(function* publishedContract(
   vertical: string,
@@ -174,6 +227,91 @@ const command = Effect.fn('SymmyC14ProductFixture.command')(function* command(ar
   return yield* Effect.void;
 });
 
+const receiverChild = `${c14AppRoot}/scripts/integration/support/symmy-c14-product-owner-child.mts`;
+const SourceListSchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const MetafileSchema = Schema.fromJsonString(Schema.Struct({ inputs: Schema.Record(Schema.String, Schema.Unknown) }));
+
+const sourceDigest = Effect.fn('SymmyC14ProductFixture.sourceDigest')(function* sourceDigest(input: {
+  readonly directory: string;
+  readonly key: string;
+  readonly sources: readonly string[];
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const hash = createHash('sha256').update(input.key);
+  for (const source of input.sources) {
+    hash
+      .update('\u0000')
+      .update(source)
+      .update('\u0000')
+      .update(yield* fs.readFile(path.resolve(input.directory, source)));
+  }
+  return hash.digest('hex').slice(0, 32);
+});
+
+/**
+ * The owner and receiver bundles use `--packages=external`, so each is a function of its key and of the
+ * local sources esbuild read for it, which its metafile lists. An artifact is named after the key and
+ * the bytes of those sources, so an edited source names a new artifact even while the published build
+ * marker stays the same. The source list is kept per key, and a source edit that adds an import changes
+ * a listed file, so a stale list always misses. Artifacts live in the owning package's build cache,
+ * are immutable once named and outlive the per-call scope; test processes that miss together publish
+ * identical bytes, and every rename is atomic, so a reader always sees a whole artifact.
+ */
+const cachedBundle = Effect.fn('SymmyC14ProductFixture.cachedBundle')(function* cachedBundle(input: {
+  readonly arguments: (staging: string) => Effect.Effect<readonly string[], PlatformError | Schema.SchemaError>;
+  readonly cache: string;
+  readonly directory: string;
+  readonly key: string;
+  readonly name: 'owner' | 'receiver';
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const list = path.join(
+    input.cache,
+    `${input.name}-${createHash('sha256').update(input.key).digest('hex').slice(0, 32)}.sources.json`,
+  );
+  const current = yield* fs.readFileString(list).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(SourceListSchema)),
+    Effect.flatMap((sources) => sourceDigest({ directory: input.directory, key: input.key, sources })),
+    Effect.option,
+  );
+  if (Option.isSome(current)) {
+    const cached = path.join(input.cache, `${input.name}-${current.value}.mjs`);
+    if (yield* fs.exists(cached)) {
+      return cached;
+    }
+  }
+  const staging = yield* fs.makeTempDirectoryScoped({ directory: input.cache, prefix: `${input.name}-pending-` });
+  const pending = path.join(staging, `${input.name}.mjs`);
+  const metafile = path.join(staging, 'metafile.json');
+  yield* command(
+    [
+      'esbuild',
+      ...(yield* input.arguments(staging)),
+      ...bundleArguments,
+      `--metafile=${metafile}`,
+      `--outfile=${pending}`,
+    ],
+    input.directory,
+  );
+  const { inputs } = yield* Schema.decodeUnknownEffect(MetafileSchema)(yield* fs.readFileString(metafile));
+  // The generated owner entry lives in the staging directory and is a pure function of the key.
+  const sources = EffectArray.sort(
+    Object.keys(inputs).filter((source) => !path.resolve(input.directory, source).startsWith(`${staging}${path.sep}`)),
+    Order.String,
+  );
+  const artifact = path.join(
+    input.cache,
+    `${input.name}-${yield* sourceDigest({ directory: input.directory, key: input.key, sources })}.mjs`,
+  );
+  const pendingList = path.join(staging, 'sources.json');
+  yield* fs.writeFileString(pendingList, yield* Schema.encodeEffect(SourceListSchema)(sources));
+  yield* fs.rename(pending, artifact);
+  yield* fs.rename(pendingList, list);
+  return artifact;
+});
+
 export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(function* buildOwner(
   contract: OntosModuleDeploymentContract,
 ) {
@@ -184,36 +322,33 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
   // a kept unit's outputs are never written.
   const cache = `${directory}/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
-  const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'owner-' });
-  const ownerArtifact = path.join(temporary, 'owner.mjs');
-  const receiverArtifact = path.join(temporary, 'receiver.mjs');
-  const entry = path.join(temporary, 'owner-entry.ts');
-  const api = path.relative(temporary, path.join(directory, 'api/index.ts'));
-  const marker = path.relative(temporary, path.join(directory, 'shared/ultramodern-build.ts'));
-  // Bundled inside its own package: only the actual owner's public server entry runs in this child.
-  yield* fs.writeFileString(
-    entry,
-    `export { default as assembly } from ${yield* sourceLiteral(api)};\nexport { ultramodernApiMarker as marker } from ${yield* sourceLiteral(marker)};\n`,
-  );
-  yield* command(
-    [
-      'esbuild',
-      entry,
-      ...bundleArguments,
-      `--define:ULTRAMODERN_BUILD_MARKER=${yield* sourceLiteral(contract.deployment.buildMarker)}`,
-      `--outfile=${ownerArtifact}`,
-    ],
+  // The owner's build marker joins both keys: the cwd of each bundle is the owning package, so its
+  // resolved esbuild belongs to that package's installed build, and the owner bundle embeds the marker.
+  const { buildMarker } = contract.deployment;
+  const receiverArtifact = yield* cachedBundle({
+    arguments: () => Effect.succeed([receiverChild]),
+    cache,
     directory,
-  );
-  yield* command(
-    [
-      'esbuild',
-      `${c14AppRoot}/scripts/integration/support/symmy-c14-product-owner-child.mts`,
-      ...bundleArguments,
-      `--outfile=${receiverArtifact}`,
-    ],
+    key: buildMarker,
+    name: 'receiver',
+  });
+  const ownerArtifact = yield* cachedBundle({
+    arguments: Effect.fnUntraced(function* ownerEntry(staging: string) {
+      const entry = path.join(staging, 'owner-entry.ts');
+      const api = path.relative(staging, path.join(directory, 'api/index.ts'));
+      const marker = path.relative(staging, path.join(directory, 'shared/ultramodern-build.ts'));
+      // Bundled inside its own package: only the actual owner's public server entry runs in this child.
+      yield* fs.writeFileString(
+        entry,
+        `export { default as assembly } from ${yield* sourceLiteral(api)};\nexport { ultramodernApiMarker as marker } from ${yield* sourceLiteral(marker)};\n`,
+      );
+      return [entry, `--define:ULTRAMODERN_BUILD_MARKER=${yield* sourceLiteral(buildMarker)}`];
+    }),
+    cache,
     directory,
-  );
+    key: buildMarker,
+    name: 'owner',
+  });
   return { ownerArtifact, receiverArtifact };
 });
 
@@ -338,27 +473,41 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
 export const encodeProductComposition = (snapshot: ActiveApplicationCompositionSnapshot) =>
   Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot);
 
+const workerChild = `${c14AppRoot}/scripts/integration/support/symmy-c14-product-worker-child.mts`;
+
 export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker')(function* buildWorker(
   contract: OntosModuleDeploymentContract,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const cache = `${c14AppRoot}/verticals/symmy-integration/node_modules/.cache/INTERNAL_C14_PRODUCT`;
+  const path = yield* Path.Path;
+  const directory = `${c14AppRoot}/verticals/symmy-integration`;
+  const cache = `${directory}/node_modules/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
-  const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-' });
-  const artifact = `${temporary}/worker.mjs`;
   const workerHost = createRequire(`${c14AppRoot}/package.json`).resolve('@app/symmy-integration/outbox-worker-host');
+  const identity = createHash('sha256')
+    .update(yield* fs.readFileString(workerChild))
+    .update(contract.deployment.buildMarker)
+    .digest('hex')
+    .slice(0, 32);
+  const publishedWorker = path.join(cache, `worker-${identity}.mjs`);
+  if (yield* fs.exists(publishedWorker)) {
+    return publishedWorker;
+  }
+  const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-' });
+  const artifact = path.join(temporary, 'worker.mjs');
   yield* command(
     [
       'esbuild',
-      `${c14AppRoot}/scripts/integration/support/symmy-c14-product-worker-child.mts`,
+      workerChild,
       ...bundleArguments,
       `--alias:@app/symmy-integration/outbox-worker-host=${workerHost}`,
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* sourceLiteral(contract.deployment.buildMarker)}`,
       `--outfile=${artifact}`,
     ],
-    `${c14AppRoot}/verticals/symmy-integration`,
+    directory,
   );
-  return artifact;
+  yield* fs.rename(artifact, publishedWorker);
+  return publishedWorker;
 });
 
 /** The Symmy Outbox Worker child; its module key, if any, is handed over on its private channel. */

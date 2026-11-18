@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 
+import { loadCiMatrices } from './ci-matrices.mts';
+
 export class IntegrationSeedError extends Schema.TaggedError<IntegrationSeedError>()('IntegrationSeedError', {
   reason: Schema.String,
 }) {
@@ -42,35 +44,22 @@ export const buildDependentStateRefusal = (counts: readonly (readonly [string, n
 };
 export const FRESH_JOB = 'Database, Migration, RLS, Authorization, and Outbox Integration';
 
-/** These tests must retain their own empty/historical database and migration/recovery path. */
-export const MUST_MIGRATE_TESTS = [
-  'scripts/integration/migration-equivalence.test.mts',
-  'scripts/integration/migrator-runtime-owner-access.test.mts',
-  'scripts/integration/stage-recovery-lifecycle.test.mts',
-  'scripts/integration/vat-deploy-sequence.test.mts',
-  'packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts',
-  'packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts',
-  'packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts',
-  'packages/core-runtime/tests/integration/auth-namespace-migration.test.ts',
-  'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
-  'packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts',
-  'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
-  'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
-  'verticals/work-tasks/tests/integration/assignment-migration.test.mts',
-  'verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts',
-  'verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts',
-  'verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts',
-  'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
-  'verticals/party-registry/tests/integration/organization-migration-fixture.test.ts',
-  'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
-];
+/**
+ * The test files that must keep their own empty or historical database and its migration or recovery path:
+ * "fresh-database-tests" of the gate matrices (scripts/ci/ci-matrices.mts), which also leave them out of every seeded row.
+ */
+export const readFreshDatabaseTests = (overlay?: string) =>
+  loadCiMatrices(overlay).pipe(
+    Effect.map((matrices) => matrices['fresh-database-tests']),
+    Effect.mapError((cause) => seedFailure(`The fresh-database tests are unreadable: ${cause.message}`)),
+  );
 
 /** Rows that run the files above, from their own fresh database preparation; they never restore a seed. */
 export const FRESH_DATABASE_JOB = /^Fresh Database Integration\b/u;
 
 /**
  * A test file must keep the job's own fresh preparation only when it migrates or recovers that database itself
- * (MUST_MIGRATE_TESTS and the name rule below). Every other integration test either uses the job database as it is
+ * (readFreshDatabaseTests and the name rule below). Every other integration test either uses the job database as it is
  * or derives its own databases from it: a schema-only clone (makeIsolatedNativeDatabaseFixture) or an empty
  * database it migrates itself. For those the restored seed is the same database: its roles, grants, owners,
  * schema fingerprints and journals are checked on restore. So the refusal is by file, never by job: a job that runs
@@ -81,21 +70,26 @@ export const assertSeedConsumer = (input: {
   readonly purpose: string;
   readonly rootSuite: boolean;
   readonly testFiles: readonly string[];
-}) => {
-  const forbidden = input.testFiles.find((file) => {
-    const relative = file
-      .replaceAll('\\', '/')
-      .replace(/^.*\/app\//u, '')
-      .replace(/^app\//u, '');
-    return MUST_MIGRATE_TESTS.includes(relative) || /(?:migration|stage-recovery|fresh-database)/u.test(relative);
+}) =>
+  Effect.gen(function* checkSeedConsumer() {
+    const fresh = yield* readFreshDatabaseTests();
+    const forbidden = input.testFiles.find((file) => {
+      const relative = file
+        .replaceAll('\\', '/')
+        .replace(/^.*\/app\//u, '')
+        .replace(/^app\//u, '');
+      return fresh.includes(relative) || /(?:migration|stage-recovery|fresh-database)/u.test(relative);
+    });
+    // A root-suite job must name its files: the root suite carries migration-equivalence and recovery tests.
+    const unnamedRootSuite = input.rootSuite && input.testFiles.length === 0;
+    const excludedJob = input.jobName === FRESH_JOB || FRESH_DATABASE_JOB.test(input.jobName);
+    if (input.purpose !== 'ordinary-tests' || unnamedRootSuite || excludedJob || forbidden !== undefined) {
+      return yield* seedFailure(
+        `Seed restore forbidden for migration/recovery coverage: ${forbidden ?? input.jobName}`,
+      );
+    }
+    return yield* Effect.void;
   });
-  // A root-suite job must name its files: the root suite carries migration-equivalence and recovery tests.
-  const unnamedRootSuite = input.rootSuite && input.testFiles.length === 0;
-  const excludedJob = input.jobName === FRESH_JOB || FRESH_DATABASE_JOB.test(input.jobName);
-  return input.purpose !== 'ordinary-tests' || unnamedRootSuite || excludedJob || forbidden !== undefined
-    ? Effect.fail(seedFailure(`Seed restore forbidden for migration/recovery coverage: ${forbidden ?? input.jobName}`))
-    : Effect.void;
-};
 
 export const SeedRoleSchema = Schema.Struct({
   bypassRls: Schema.Boolean,

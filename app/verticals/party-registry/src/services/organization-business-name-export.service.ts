@@ -61,6 +61,28 @@ const qualifiedMetadata = Effect.fn('OrganizationBusinessNameExport.qualifiedMet
   return { ...current, sourceCitation: current.sourceCitation };
 });
 
+/**
+ * Whether the export of this organization's business name is allowed right now: the current organization facts
+ * match the exact source citation and Privacy approves the corporate projection. A refusal is `false`; only an
+ * unavailable Privacy or owner fails, so a caller never mistakes an outage for a refusal.
+ */
+export const isOrganizationBusinessNameExportAllowed = Effect.fn('OrganizationBusinessNameExport.isAllowed')(
+  function* isAllowed(
+    transaction: Pick<PartyTransaction, 'select'>,
+    scope: OperationalScope,
+    input: OrganizationBusinessNameExportRequest,
+  ): Effect.fn.Return<boolean, PartyPersistenceUnavailableError> {
+    const current = yield* qualifiedMetadata(transaction, scope, input);
+    if (current === undefined) {
+      return false;
+    }
+    return yield* authorizePartyClientSourceReferenceWithProjection(input.sourceReference, scope, {
+      operation: 'ORGANIZATION_BUSINESS_NAME_EXPORT',
+      target: { kind: 'PARTY', partyId: input.partyRef.resourceId },
+    }).pipe(Effect.catchTag('PartyEvidenceInsufficient', () => Effect.succeed(false)));
+  },
+);
+
 /** Privacy must approve the exact corporate projection before any native name assertion is read. */
 export const readOrganizationBusinessNameExport = Effect.fn('OrganizationBusinessNameExport.read')(function* readName(
   transaction: Pick<PartyTransaction, 'select'>,

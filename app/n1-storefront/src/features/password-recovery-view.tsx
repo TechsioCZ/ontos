@@ -59,6 +59,7 @@ const useRecoveryForm = (mode: RecoveryMode, dictionary: Dictionary) => {
   const toaster = useToast();
   const form = useRef<HTMLFormElement>(null);
   const active = useRef<Fiber.Fiber<PasswordRecoveryOutcome> | null>(null);
+  const localInvalid = useRef(false);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<PasswordRecoveryOutcome | null>(null);
   useEffect(
@@ -85,8 +86,14 @@ const useRecoveryForm = (mode: RecoveryMode, dictionary: Dictionary) => {
     const fiber = portalRuntime.runFork(
       program.pipe(
         Effect.match({
-          onFailure: (): PasswordRecoveryOutcome => ({ state: "invalid" }),
-          onSuccess: (value) => value,
+          onFailure: (): PasswordRecoveryOutcome => {
+            localInvalid.current = true;
+            return { state: "invalid" };
+          },
+          onSuccess: (value) => {
+            localInvalid.current = false;
+            return value;
+          },
         }),
       ),
     );
@@ -108,7 +115,18 @@ const useRecoveryForm = (mode: RecoveryMode, dictionary: Dictionary) => {
       }
     });
   };
-  return { form, pending, result, submit };
+  return {
+    edit: () => {
+      if (localInvalid.current) {
+        localInvalid.current = false;
+        setResult(null);
+      }
+    },
+    form,
+    pending,
+    result,
+    submit,
+  };
 };
 
 /** Reuses the Figma333:4671 auth composition; there is no dedicated reset frame. */
@@ -125,7 +143,8 @@ export const PasswordRecoveryView = ({
 }) => {
   const fieldId = useId();
   const [emailInvalid, setEmailInvalid] = useState(false);
-  const { form, pending, result, submit } = useRecoveryForm(mode, d);
+  const [confirmationInvalid, setConfirmationInvalid] = useState(false);
+  const { edit, form, pending, result, submit } = useRecoveryForm(mode, d);
   const text = d.passwordRecovery;
   const blocked = result !== null && terminalStates.has(result.state);
   const missingToken = mode === "reset" && !tokenPresent;
@@ -148,7 +167,21 @@ export const PasswordRecoveryView = ({
                 method="post"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  submit(new FormData(event.currentTarget));
+                  if (pending || blocked) {
+                    return;
+                  }
+                  const fields = new FormData(event.currentTarget);
+                  if (
+                    mode === "reset" &&
+                    fields.get("newPassword") !== fields.get("passwordConfirmation")
+                  ) {
+                    setConfirmationInvalid(true);
+                    event.currentTarget
+                      .querySelector<HTMLInputElement>('input[name="passwordConfirmation"]')
+                      ?.focus();
+                    return;
+                  }
+                  submit(fields);
                 }}
                 ref={form}
               >
@@ -161,7 +194,10 @@ export const PasswordRecoveryView = ({
                     label={d.auth.fields.email}
                     maxLength={320}
                     name="email"
-                    onChange={() => setEmailInvalid(false)}
+                    onChange={() => {
+                      setEmailInvalid(false);
+                      edit();
+                    }}
                     onInvalid={(event) => {
                       event.preventDefault();
                       setEmailInvalid(true);
@@ -184,6 +220,10 @@ export const PasswordRecoveryView = ({
                       maxLength={128}
                       minLength={12}
                       name="newPassword"
+                      onChange={() => {
+                        setConfirmationInvalid(false);
+                        edit();
+                      }}
                       required
                       size="md"
                       type="password"
@@ -192,15 +232,22 @@ export const PasswordRecoveryView = ({
                     <FormInput
                       autoComplete="new-password"
                       disabled={pending}
+                      helpText={
+                        confirmationInvalid ? d.auth.errors.passwordConfirmation : undefined
+                      }
                       id={`${fieldId}-confirmation`}
                       label={d.auth.fields.passwordConfirmation}
                       maxLength={128}
                       minLength={12}
                       name="passwordConfirmation"
+                      onChange={() => {
+                        setConfirmationInvalid(false);
+                        edit();
+                      }}
                       required
                       size="md"
                       type="password"
-                      validateStatus={invalid ? "error" : "default"}
+                      validateStatus={invalid || confirmationInvalid ? "error" : "default"}
                     />
                   </>
                 )}

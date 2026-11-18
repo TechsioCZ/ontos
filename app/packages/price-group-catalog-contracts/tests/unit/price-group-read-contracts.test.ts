@@ -7,19 +7,9 @@ import {
   PriceGroupDefinitionRequestSchema,
   PriceGroupDefinitionResponseSchema,
   PriceGroupCurrentEvidenceSchema,
-  executePriceGroupDefinition,
   executePriceGroupDefinitionWithAuthorization,
-  executeValidatePriceGroupCompatibility,
   executeValidatePriceGroupCompatibilityWithAuthorization,
 } from '../../src/index.ts';
-import {
-  executePriceGroupDefinition as directExecutePriceGroupDefinition,
-  executePriceGroupDefinitionWithAuthorization as directExecutePriceGroupDefinitionWithAuthorization,
-} from '../../src/api/price-group-definition-client.ts';
-import {
-  executeValidatePriceGroupCompatibility as directExecuteValidatePriceGroupCompatibility,
-  executeValidatePriceGroupCompatibilityWithAuthorization as directExecuteValidatePriceGroupCompatibilityWithAuthorization,
-} from '../../src/api/validate-price-group-compatibility-client.ts';
 import { makeOperationGateway } from '../../src/api/action-gateway.ts';
 import {
   ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema,
@@ -144,15 +134,6 @@ const compatibilityResponse = {
 };
 
 describe('public Price Group governed read contracts', () => {
-  it('publishes one canonical API and client implementation from the package root', () => {
-    expect(executePriceGroupDefinition).toBe(directExecutePriceGroupDefinition);
-    expect(executePriceGroupDefinitionWithAuthorization).toBe(directExecutePriceGroupDefinitionWithAuthorization);
-    expect(executeValidatePriceGroupCompatibility).toBe(directExecuteValidatePriceGroupCompatibility);
-    expect(executeValidatePriceGroupCompatibilityWithAuthorization).toBe(
-      directExecuteValidatePriceGroupCompatibilityWithAuthorization,
-    );
-  });
-
   it('decodes bounded current and exact historical definition requests and responses', () => {
     expect(Schema.decodeSync(PriceGroupDefinitionRequestSchema)(definitionRequest)).toEqual(definitionRequest);
     expect(Schema.decodeSync(PriceGroupDefinitionResponseSchema)(definitionResponse)).toMatchObject({

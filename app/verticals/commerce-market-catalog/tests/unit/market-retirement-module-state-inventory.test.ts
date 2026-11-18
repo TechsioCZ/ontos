@@ -63,31 +63,6 @@ const verified: Extract<MarketAffectedUseAssessmentResponse, { readonly outcome:
   tenantId,
 };
 
-it.effect('delegates installed-owner completeness to the Customer Context authoritative assessment', () =>
-  Effect.gen(function* delegatesOwnerInventory() {
-    const calls: unknown[] = [];
-    const authority = makeMarketRetirementImpactAuthority((payload, context) => {
-      calls.push({ context, payload });
-      return Effect.succeed(verified);
-    });
-
-    const result = yield* authority.assessRetirementImpact(input);
-
-    expect(calls).toEqual([
-      {
-        context: {
-          compositionRevision: input.compositionRevision,
-          legalEntityId: input.legalEntityId,
-          requestCorrelation: input.actionInvocationId,
-        },
-        payload: request,
-      },
-    ]);
-    expect(result.assessmentDigest).toBe(verified.assessmentDigest);
-    expect(result.requiredProviderModuleKeys).toEqual(['commerce.customer-context']);
-  }),
-);
-
 it.effect('does not require magic UNIMPLEMENTED source IDs from authoritative composition evidence', () =>
   Effect.gen(function* acceptsContractEvidence() {
     const result = yield* makeMarketRetirementImpactAuthority(() => Effect.succeed(verified)).assessRetirementImpact(

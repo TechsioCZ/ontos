@@ -983,3 +983,52 @@ dva další ověřují zachování minima, jednotky a readiness guardu u listing
 prezentace. Živě ověřeno na touch viewports 320/390: navigace bez implicitní
 varianty, přidání skutečného jednoduchého produktu, toast, badge, minikošík,
 platný owner quote a odebrání lokálního draftu. Nevytváří se objednávka.
+
+### Stock-bounded quantities — 17 November 2026
+
+The original N1 reference and Figma mini-cart311:2164 use separate outlined
+stepper buttons and a plain quantity between them. The mini-cart now keeps all
+three native NumericInput parts inside one Control; scoped public tokens remove
+the enclosing field border and preserve one accessible focus owner. Compact
+desktop controls are32px, touch controls44px so triggers are not clipped.
+The public Input slot uses text-center for inline alignment; the installed
+NumericInput has no alignment prop/token. Colours, borders and sizes use its
+existing tokens. The main cart uses native NumericInput as well, because the
+published QuantityField intentionally forces clampValueOnBlur=false. N1 requires
+native clamping after a manual stock overflow, matching PDP and mini-cart.
+
+PDP, card shortcuts and both cart views use actual selected-variant stock for
+their quantity maximum, including quantities already in the same cart line.
+The local reducer rejects overflow as well; a rejected change cannot produce
+a success toast. Below five available units the mini-cart shows the original
+localized remaining-stock notice. Unknown stock stays unknown.
+
+The existing N1 quote response optionally carries scoped stock hints from bounded
+public catalog reads, allowing legacy carts to acquire limits. A pending quote
+cannot loosen a newer catalog bound. Native owner quote/order validation remains
+authoritative; stock hints never enter the order request. Failed optional reads
+do not invalidate an otherwise valid quote. Product descriptions and parameters
+remain owner data: the original Spyder demo records are sparse, while imported
+Fox records render their actual description and parameters.
+
+### Quantity affordance and parameter-table follow-up — 17 November 2026
+
+The user confirmed stock clamping on blur and requested a visibly editable
+central field. Mini-cart Control now surrounds only Input, with one1px native
+border using the existing secondary foreground role. Native outlined triggers
+remain siblings inside the same NumericInput; there is no second enclosing
+frame. Desktop field36×32px, touch40×44px; quantity stays centered and native
+clamping/disabled/ARIA behavior is unchanged.
+
+The original Fox PDP was measured live: table-layout:auto,6px/8px cell padding,
+36.5/37px rows. The former fixed55/45 colgroup was not a proved source contract
+and is removed. Native Table now lays out actual content automatically. Public
+cell slots use wrap-anywhere, and headers keep a96px minimum layout width so
+long SKUs do not collapse labels or overflow320px. A temporary isolated Table
+fixture using actual app CSS proved254-character SKU and520-character value fit;
+the fixture was removed after verification.
+
+Actual selected SKU is added as a localized parameter row unless an owner row
+already names the product code in either supported language. Owner-provided
+rows remain authoritative and are not replaced. Empty code/weight/material
+rows and unsourced descriptions are not fabricated. Gallery is unchanged.

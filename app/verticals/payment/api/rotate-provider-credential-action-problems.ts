@@ -84,10 +84,12 @@ export const rotateProviderCredentialActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RotateProviderCredentialActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RotateProviderCredentialActionForbiddenProblem'> =>
     RotateProviderCredentialActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -203,7 +205,8 @@ const mapCoreProblem = (error: ActionCoreError): RotateProviderCredentialActionP
       ActionInvocationStateError: (failure) => rotateProviderCredentialActionProblem.conflict(failure.code),
       ActionPayloadValidationError: rotateProviderCredentialActionProblem.invalid,
       ActionPermissionCheckError: (failure) => rotateProviderCredentialActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => rotateProviderCredentialActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        rotateProviderCredentialActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => rotateProviderCredentialActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => rotateProviderCredentialActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => rotateProviderCredentialActionProblem.conflict(failure.code),

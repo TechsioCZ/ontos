@@ -169,45 +169,6 @@ const currentInput = Schema.decodeUnknownSync(CurrentMarketCatalogRequestSchema)
 const historyInput = Schema.decodeUnknownSync(MarketHistoryRequestSchema)({ marketRef });
 
 describe('Commerce Market Catalog owner reads', () => {
-  it.effect('decodes the governed Current owner snapshot with generation-backed completeness', () =>
-    Effect.gen(function* currentOwnerFacts() {
-      const persistence = yield* persistenceFor();
-      const result = yield* persistence.current(currentInput);
-
-      expect(result.markets).toHaveLength(1);
-      expect(result.markets[0]).toMatchObject({
-        definitionRevisionRef: { resourceId: definitionRevisionTwoId },
-        lifecycle: 'ACTIVE',
-        previousDefinitionRevisionRef: { resourceId: definitionRevisionOneId },
-        revision: 2,
-      });
-      expect(result.associations[0]).toMatchObject({
-        channel: 'B2B',
-        marketDefinitionRevisionRef: { resourceId: definitionRevisionTwoId },
-        previousAssociationRevision: 1,
-        revision: 2,
-      });
-      expect(result.completenessEvidence.ownerRevision).toBe('commerce.market-catalog.current:v1:generation:7');
-      expect(result.completenessEvidence.scope.predicateRef).toContain(sellerId);
-    }),
-  );
-
-  it.effect('decodes immutable definition and association revisions from the governed history routine', () =>
-    Effect.gen(function* retainedHistory() {
-      const persistence = yield* persistenceFor();
-      const result = yield* persistence.history(marketId);
-
-      expect(Option.isSome(result)).toBe(true);
-      if (Option.isNone(result)) {
-        return;
-      }
-      expect(result.value.definitions.map(({ revision }) => revision)).toEqual([1, 2]);
-      expect(result.value.definitions[1]?.previousDefinitionRevisionRef?.resourceId).toBe(definitionRevisionOneId);
-      expect(result.value.associations.map(({ revision }) => revision)).toEqual([1, 2]);
-      expect(result.value.marketRef.resourceId).toBe(marketId);
-    }),
-  );
-
   it.effect('fails closed for malformed routine payloads and invocation failures', () =>
     Effect.gen(function* failClosed() {
       const malformed = yield* persistenceFor({ malformedCurrent: true });

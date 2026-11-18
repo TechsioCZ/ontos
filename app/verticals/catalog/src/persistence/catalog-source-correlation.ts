@@ -1,7 +1,7 @@
 import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, ilike, or } from 'drizzle-orm';
 import { Effect, Schema, Struct } from 'effect';
 import { encode as encodeHex } from 'effect/encoding/Hex';
 
@@ -14,8 +14,9 @@ import type { BindInitialVariantSourcePayload } from '../../shared/actions/bind-
 import { BindInitialVariantSourceResultSchema } from '../../shared/actions/bind-initial-variant-source.ts';
 import { recoverCatalogActionResult } from '../api/catalog-action-result-recovery.ts';
 import { ProductPersistenceConflict } from '../../shared/domain/product-errors.ts';
-import { catalogResultSnapshots, catalogSourceCorrelations } from '../database/schema.ts';
+import { catalogResultSnapshots, catalogSourceCorrelations, products } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
+import type { CatalogSourceProductPageRequest } from '../../shared/apis/catalog-source-product-page.ts';
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
 import { catalogPersistenceWithCurrentSelectionEvidenceForScope } from './catalog-persistence.ts';
 
@@ -263,6 +264,8 @@ const sourceRecordPredicate = (input: CatalogSourceProductsRequest) => {
   return input.afterRecordId === undefined ? undefined : gt(catalogSourceCorrelations.recordId, input.afterRecordId);
 };
 
+type SourceQualifier = Pick<CatalogSourceProductsRequest, 'issuerId' | 'recordNamespace' | 'routeScope'>;
+
 export const catalogSourceProductsForScope = (
   transaction: Parameters<ReadServiceFactory<void>>[0],
   scope: Parameters<ReadServiceFactory<void>>[1],
@@ -287,7 +290,7 @@ export const catalogSourceProductsForScope = (
           .orderBy(asc(catalogSourceCorrelations.recordId))
           .limit(input.operation === 'LIST' ? input.limit + 1 : 1)
           .pipe(Effect.mapError(unavailable)),
-      variants: (input: CatalogSourceProductsRequest, productId: string) =>
+      variants: (input: SourceQualifier, productId: string) =>
         transaction
           .select()
           .from(catalogSourceCorrelations)
@@ -303,6 +306,65 @@ export const catalogSourceProductsForScope = (
           )
           .orderBy(asc(catalogSourceCorrelations.recordId))
           .pipe(Effect.mapError(unavailable)),
+    })),
+  );
+
+/** `%`, `_` and the escape character itself match literally inside a LIKE pattern. */
+const containsPattern = (text: string) => {
+  const literal = text.replaceAll(/[\\%_]/gu, String.raw`\$&`);
+  return `%${literal}%`;
+};
+
+const sourceProductsMatching = (tenantId: string, input: CatalogSourceProductPageRequest) =>
+  and(
+    eq(catalogSourceCorrelations.tenantId, tenantId),
+    eq(catalogSourceCorrelations.issuerId, input.issuerId),
+    eq(catalogSourceCorrelations.routeScope, input.routeScope),
+    eq(catalogSourceCorrelations.recordNamespace, input.recordNamespace),
+    eq(catalogSourceCorrelations.entityKind, 'PRODUCT'),
+    input.search === undefined
+      ? undefined
+      : or(
+          ilike(products.name, containsPattern(input.search)),
+          ilike(products.description, containsPattern(input.search)),
+        ),
+  );
+const onlyTotal = (rows: readonly { readonly total: number }[]) =>
+  rows.length === 1 && rows[0] !== undefined ? Effect.succeed(rows[0].total) : Effect.fail(unavailable());
+const sourceProductOf = and(
+  eq(products.tenantId, catalogSourceCorrelations.tenantId),
+  eq(products.productId, catalogSourceCorrelations.productId),
+);
+
+/**
+ * A page of the source products of one qualified scope, ordered by source record id, with the total of the
+ * same predicate. `search` keeps the products whose name or description contains the text, ignoring case.
+ */
+export const catalogSourceProductPageForScope = (
+  transaction: Parameters<ReadServiceFactory<void>>[0],
+  scope: Parameters<ReadServiceFactory<void>>[1],
+) =>
+  catalogSourceProductsForScope(transaction, scope).pipe(
+    Effect.map(({ getCurrent, variants }) => ({
+      count: (input: CatalogSourceProductPageRequest) =>
+        transaction
+          .select({ total: count() })
+          .from(catalogSourceCorrelations)
+          .innerJoin(products, sourceProductOf)
+          .where(sourceProductsMatching(scope.tenantId, input))
+          .pipe(Effect.mapError(unavailable), Effect.flatMap(onlyTotal)),
+      getCurrent,
+      rows: (input: CatalogSourceProductPageRequest) =>
+        transaction
+          .select(getTableColumns(catalogSourceCorrelations))
+          .from(catalogSourceCorrelations)
+          .innerJoin(products, sourceProductOf)
+          .where(sourceProductsMatching(scope.tenantId, input))
+          .orderBy(asc(catalogSourceCorrelations.recordId))
+          .limit(input.limit)
+          .offset(input.offset)
+          .pipe(Effect.mapError(unavailable)),
+      variants,
     })),
   );
 

@@ -10,6 +10,7 @@ import {
   materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
 } from '../materialize-zerops-environment.mts';
+import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 /** The whole stage deployment: the SpiceDB data plane, the storefront, and the one application container. */
@@ -17,6 +18,8 @@ const SETUPS = ['spicedb', 'storefront', 'n1', 'app'];
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const zeropsImportPath = new URL('../../zerops-import.yaml', import.meta.url);
 const stageWorkflowPath = new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url);
+const deliverStageActionPath = new URL('../../../.github/actions/deliver-stage/action.yml', import.meta.url);
+const stagePushPath = new URL('../zerops/stage-push.sh', import.meta.url);
 
 const ZeropsYamlSchema = Schema.Struct({
   zerops: Schema.Array(Schema.Struct({ run: Schema.Struct({ base: Schema.String }), setup: Schema.String })),
@@ -193,13 +196,21 @@ it('runs the whole application in the app container through native Node, from th
   // before that unchanged start command, on every container start (scripts/zerops/unpack-app-release.sh).
   expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['.zerops-release']);
   const buildCommands = serviceStrings(app, ['build', 'buildCommands']);
+  // One unit identity table per build, outside the checkout; the unit build and the host build both read it.
+  const digests = 'ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv';
+  const identities = buildCommands.indexOf(
+    'cd app && sh scripts/zerops/build-app.sh --digests-only /tmp/zerops-unit-digests.tsv',
+  );
   // The Outbox Worker host builds beside the pack (build-app.sh --outbox-host); app-release.test.mts runs both.
   expect(buildCommands.at(-1)).toBe(
-    "sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'",
+    `sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && ${digests} sh scripts/zerops/build-app.sh --outbox-host'`,
   );
   // The tree without its left-out packages is proven before the pack (prove-app-runtime.test.mts runs the proof).
   expect(buildCommands.at(-2)).toBe('cd app && node scripts/zerops/prove-app-runtime.mts');
-  expect(buildCommands.indexOf('cd app && sh scripts/zerops/build-app.sh')).toBeLessThan(buildCommands.length - 2);
+  const units = buildCommands.indexOf(`cd app && ${digests} sh scripts/zerops/build-app.sh`);
+  expect(identities).toBeGreaterThan(-1);
+  expect(units).toBeGreaterThan(identities);
+  expect(units).toBeLessThan(buildCommands.length - 2);
   expect(serviceStrings(app, ['build', 'prepareCommands'])[0]).toBe('sudo apk add --no-cache curl tar unzip zstd');
   expect(serviceStrings(app, ['run', 'prepareCommands'])).toStrictEqual([APP_RELEASE_TOOLS]);
   expect(serviceStrings(app, ['run', 'initCommands'])).toStrictEqual([APP_RELEASE_UNPACK]);
@@ -335,7 +346,7 @@ it('uses native Alpine Node 26 for every Node build and runtime without a custom
     const block = serviceBlock(zeropsYaml, setup);
     expect(service.getIn(['build', 'base'])).toBe('alpine/nodejs@26');
     expect(service.getIn(['run', 'base'])).toBe('alpine/nodejs@26');
-    // Only the app installs on Zerops; the storefronts arrive built from the runner (build_storefronts).
+    // Only the app installs on Zerops; the storefronts arrive built from the runner (scripts/zerops/build-storefront.sh).
     const installsPnpm = serviceStrings(service, ['build', 'prepareCommands']).includes(
       `sudo npm install --global pnpm@${pnpm}`,
     );
@@ -521,12 +532,13 @@ it('runs the pseudonymous demo e-shop on shared CPU and pushes it from the store
   expect(shop.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
   expect(shop.getIn(['verticalAutoscaling', 'maxRam'])).toBe(1);
   expect(shop.get('maxContainers')).toBe(1);
-  expect(workflow).toContain('bash app/scripts/zerops/push-delivery.sh');
-  const pushDelivery = readFileSync(new URL('../zerops/push-delivery.sh', import.meta.url), 'utf-8');
-  expect(pushDelivery).toContain(
-    `shop) id="\${ZEROPS_SHOP_STOREFRONT_SERVICE_ID:?shop service id is required}"; setup=storefront`,
+  expect(workflow).toContain('uses: ./.github/actions/deliver-stage');
+  expect(readFileSync(deliverStageActionPath, 'utf-8')).toContain('bash app/scripts/zerops/stage-push.sh start shop');
+  const stagePush = readFileSync(stagePushPath, 'utf-8');
+  expect(stagePush).toContain(
+    `shop) printf '%s storefront' "\${ZEROPS_SHOP_STOREFRONT_SERVICE_ID:?shop service id is required}"`,
   );
-  expect(pushDelivery).toContain('push-service.sh" "$id" "$setup" "$GITHUB_SHA"');
+  expect(stagePush).toContain('push-service.sh" "$id" "$setup" "$GITHUB_SHA"');
 });
 
 it('runs the N1 e-shop on one minimal service of its own, from the n1 setup, with no AKROS or shop identity', () => {
@@ -538,7 +550,8 @@ it('runs the N1 e-shop on one minimal service of its own, from the n1 setup, wit
   );
   const block = serviceBlock(readZeropsDeploymentYaml(), 'n1');
   const workflow = readFileSync(stageWorkflowPath, 'utf-8');
-  const pushDelivery = readFileSync(new URL('../zerops/push-delivery.sh', import.meta.url), 'utf-8');
+  const delivery = readFileSync(deliverStageActionPath, 'utf-8');
+  const stagePush = readFileSync(stagePushPath, 'utf-8');
 
   expect(n1.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
   expect(n1.getIn(['verticalAutoscaling', 'maxRam'])).toBe(1);
@@ -547,9 +560,10 @@ it('runs the N1 e-shop on one minimal service of its own, from the n1 setup, wit
   expect(block).not.toMatch(/akros-storefront|ONTOS_AKROS_STOREFRONT_API_KEY|DATABASE_URL|SMTP_|PAYMENT_|SHIPPING_/u);
   expect(block).toContain('ONTOS_SHELL_URL: http://app:3000');
   expect(block).toContain('test -n "$ONTOS_N1_STOREFRONT_API_KEY"');
-  expect(pushDelivery).toContain(`n1) id="\${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1`);
-  expect(workflow).toContain(`ONTOS_N1_STOREFRONT_API_KEY: \${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}`);
-  expect(workflow).toContain('route-stage-domains.sh ontos-stage-n1.web-revolution.cz');
+  expect(stagePush).toContain(`n1) printf '%s n1' "\${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"`);
+  expect(workflow).toContain(`n1-storefront-api-key: \${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}`);
+  expect(delivery).toContain(`ONTOS_N1_STOREFRONT_API_KEY: \${{ inputs.n1-storefront-api-key }}`);
+  expect(delivery).toContain('route-stage-domains.sh ontos-stage-n1.web-revolution.cz');
 });
 
 it('declares no project-level variable that could carry a database credential', () => {
@@ -566,98 +580,93 @@ it('declares no project-level variable that could carry a database credential', 
   expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);
 });
 
-it('installs Chromium for the warm-up client before running its bounded browser pass', () => {
-  const workflow = Schema.decodeUnknownSync(
+const DeliveryStepSchema = Schema.Struct({
+  'continue-on-error': Schema.optional(Schema.Boolean),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  id: Schema.optional(Schema.String),
+  if: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+type DeliveryStep = typeof DeliveryStepSchema.Type;
+const stageProofsPath = new URL('../zerops/stage-proofs.sh', import.meta.url);
+const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
+/** The delivery every run shares (.github/actions/deliver-stage), from its secret syncs to its last proof. */
+const deliverySteps = (): readonly DeliveryStep[] =>
+  Schema.decodeUnknownSync(Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }) }))(
+    parse(readFileSync(deliverStageActionPath, 'utf-8')),
+  ).runs.steps;
+const stageJobs = () =>
+  Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Struct({
-        verify: Schema.Struct({
-          steps: Schema.Array(Schema.Struct({ name: Schema.String, run: Schema.optional(Schema.String) })),
-        }),
+        deliver: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
+        deliver_app: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
       }),
     }),
-  )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
-  const { steps } = workflow.jobs.verify;
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs;
+
+it('installs Chromium for the warm-up client before running its bounded browser pass', () => {
+  const steps = deliverySteps();
   const install = steps.findIndex(
     ({ run }) =>
       run?.includes('pnpm --config.verify-deps-before-run=false exec playwright-core install chromium') === true,
   );
-  const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);
+  // The proofs start from stage-proofs.sh, which runs the warm-up.
+  const starts = steps.flatMap(({ run }, index) => (run === PROOFS_START ? [index] : []));
   expect(install).toBeGreaterThanOrEqual(0);
-  expect(warmup).toBeGreaterThan(install);
+  expect(starts).toHaveLength(2);
+  for (const start of starts) {
+    expect(start).toBeGreaterThan(install);
+  }
+  expect(readFileSync(stageProofsPath, 'utf-8')).toContain('mise exec -- node scripts/ops/stage-warmup.mts');
 });
 
-it('binds the attempted delivery to the current run and persists it before any remote mutation', () => {
-  const source = readFileSync(stageWorkflowPath, 'utf-8');
-  const StepSchema = Schema.Struct({
-    'continue-on-error': Schema.optional(Schema.Boolean),
-    id: Schema.optional(Schema.String),
-    if: Schema.optional(Schema.String),
-    name: Schema.optional(Schema.String),
-    run: Schema.optional(Schema.String),
-    uses: Schema.optional(Schema.String),
-    with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  });
-  const workflow = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Struct({
-        deploy: Schema.Struct({ steps: Schema.Array(StepSchema) }),
-        plan: Schema.Struct({ steps: Schema.Array(StepSchema) }),
-        record: Schema.Struct({ steps: Schema.Array(StepSchema) }),
-        verify: Schema.Struct({ steps: Schema.Array(StepSchema) }),
-      }),
-    }),
-  )(parse(source));
-  const { steps } = workflow.jobs.deploy;
-  // The attempt names this run and the exact planned revision, and refuses a remote head that moved on.
-  const mark = steps.find(({ name }) => name === 'Mark the actual deployment attempt');
-  expect(mark?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
-  expect(mark?.run).toContain('.runId==$runId and .validatedHead==$sourceRevision');
-  expect(mark?.run).toContain('{runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}');
-  // Persisting the attempt is best-effort and keyed to this run, so a cache service can never gate a deploy.
-  const persist = steps.find(({ name }) => name === 'Persist the attempted delivery before any remote mutation');
-  expect(persist?.uses?.startsWith('actions/cache/save@')).toBe(true);
-  expect(persist?.['continue-on-error']).toBe(true);
-  expect(persist?.with?.key).toContain(`\${{ github.run_id }}-\${{ github.run_attempt }}`);
-  expect(persist?.with?.path).toContain('last-attempt');
-  // The attempt is written after it is marked and before the first remote mutation: every secret sync and
-  // the delivery push itself. Nothing in the deploy reads the attempt cache or demands a hit.
-  const markIndex = steps.findIndex(({ name }) => name === 'Mark the actual deployment attempt');
-  const persistIndex = steps.findIndex(
-    ({ name }) => name === 'Persist the attempted delivery before any remote mutation',
-  );
-  const firstMutation = steps.findIndex(
-    ({ run }) => run?.includes('push-delivery.sh') === true || run?.includes('sync-service-secret.sh') === true,
-  );
-  expect(markIndex).toBeGreaterThanOrEqual(0);
-  expect(persistIndex).toBeGreaterThan(markIndex);
-  expect(firstMutation).toBeGreaterThan(persistIndex);
-  expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache/restore') === true)).toEqual([]);
-  for (const step of steps) {
-    expect(step.if ?? '', step.name ?? 'unnamed deploy step').not.toContain('cache-hit');
+it('marks the attempt after the plan is retained and before any remote mutation, in both delivering jobs', () => {
+  const jobs = stageJobs();
+  for (const job of [jobs.deliver, jobs.deliver_app]) {
+    const index = (name: string) => job.steps.findIndex((step) => step.name === name);
+    const mark = job.steps[index(MUTATION_MARKER)];
+    // The mark refuses a remote head that moved on: a run never deploys an older branch head.
+    expect(mark?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
+    const deliver = job.steps.findIndex(({ uses }) => uses === './.github/actions/deliver-stage');
+    expect(deliver).toBeGreaterThan(index(MUTATION_MARKER));
+    expect(mark?.if).toBe(job.steps[deliver]?.if);
+    // Nothing before the mark syncs a secret or pushes.
+    for (const step of job.steps.slice(0, index(MUTATION_MARKER))) {
+      expect(step.run ?? '', step.name).not.toMatch(/sync-service-secret|stage-push|push-service/u);
+    }
   }
-  const assertRequiredLiveProofs = () => {
-    for (const job of ['plan', 'deploy', 'record'] as const) {
-      for (const step of workflow.jobs[job].steps) {
-        expect(step.with?.['fail-on-cache-miss'], step.name ?? step.uses ?? job).not.toBe(true);
-      }
-    }
-    expect(source).not.toContain('actions/caches?key=');
-    // The verified ledger is written only for this run and this source revision, and the live proofs that
-    // admit it stay mandatory instead of being skipped by a cache hit.
-    const ledger = workflow.jobs.record.steps.find(({ run }) => run?.includes('last-success/receipt.json') === true);
-    expect(ledger?.run).toContain('.runId==$runId and .validatedHead==$sourceRevision');
-    expect(ledger?.run).toContain('.runAttempt=$runAttempt');
-    for (const proof of [
-      'scripts/ops/stage-warmup.mts',
-      'scripts/zerops/verify-service.mjs app',
-      'scripts/demo/prove-mcp-oauth.mts',
-    ]) {
-      const step = workflow.jobs.verify.steps.find(({ run }) => run?.includes(proof) === true);
-      expect(step, proof).toBeDefined();
-      expect(step?.if ?? '', proof).not.toContain('cache-hit');
-    }
-  };
-  assertRequiredLiveProofs();
+  const { deliver } = jobs;
+  const plan = deliver.steps.findIndex(({ name }) => name === 'Retain the delivery decision');
+  expect(plan).toBeGreaterThan(-1);
+  expect(plan).toBeLessThan(deliver.steps.findIndex(({ name }) => name === MUTATION_MARKER));
+  // The delivery syncs every secret before its first push, and every push checks the branch head itself.
+  const steps = deliverySteps();
+  const sync = steps.findIndex(({ run }) => run?.includes('sync-service-secret.sh') === true);
+  const firstPush = steps.findIndex(({ run }) => run?.includes('stage-push.sh start') === true);
+  expect(sync).toBe(0);
+  expect(firstPush).toBeGreaterThan(sync);
+  expect(readFileSync(stagePushPath, 'utf-8')).toContain('if [ "$head" != "$GITHUB_SHA" ]; then');
+  // The live proofs stay mandatory: their verdict has no condition, and fails when they never started.
+  const finish = steps.find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
+  expect(finish).toBeDefined();
+  expect(finish?.if).toBeUndefined();
+  expect(finish?.['continue-on-error']).toBeUndefined();
+  const proofs = readFileSync(stageProofsPath, 'utf-8');
+  for (const proof of [
+    'scripts/ops/stage-warmup.mts',
+    'scripts/zerops/verify-service.mjs app',
+    'scripts/demo/prove-mcp-oauth.mts',
+  ]) {
+    expect(proofs, proof).toContain(`mise exec -- node ${proof}`);
+  }
+  for (const step of steps) {
+    expect(step.with?.['fail-on-cache-miss'], step.name ?? step.uses).not.toBe(true);
+  }
+  expect(readFileSync(stageWorkflowPath, 'utf-8')).not.toContain('actions/caches?key=');
 });
 
 it('keeps the worker only with its closure, all hosted identities, materializer inputs and flags proved', () => {
@@ -674,58 +683,65 @@ it('keeps the worker only with its closure, all hosted identities, materializer 
   expect(digest).toContain('pnpm-lock.yaml');
 });
 
-it('plans with only the root dependencies and complete HEAD ancestry, not every ref', () => {
-  const workflow = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Struct({
-        plan: Schema.Struct({
-          steps: Schema.Array(
-            Schema.Struct({
-              run: Schema.optional(Schema.String),
-              uses: Schema.optional(Schema.String),
-              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-            }),
-          ),
-        }),
-      }),
-    }),
-  )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
-  const { steps } = workflow.jobs.plan;
+it('keeps every unit of an app push for the next one, building those the Zerops build builds while the app deploys', () => {
+  const steps = deliverySteps();
+  const at = (predicate: (step: DeliveryStep) => boolean) => steps.findIndex(predicate);
+  const appPush = at(({ id }) => id === 'push-app');
+  const aside = at(({ name }) => name === 'Set the pushed unit builds aside');
+  const install = at(({ name }) => name === 'Install the app workspace');
+  const build = at(({ name }) => name === 'Build the units the Zerops build builds, for the next push');
+  const kept = at(({ with: options }) => options?.name === 'zerops-units-0');
+  const storefront = at(({ run }) => run?.includes('build-storefront.sh') === true);
+  const appWait = at(({ run }) => run === 'bash app/scripts/zerops/stage-push.sh wait app');
+  // After the app upload and before the wait for it, so off the delivery's critical path; on a clean checkout (the
+  // pushed archive set aside, no storefront build yet); kept only after the build.
+  expect(appPush).toBeGreaterThanOrEqual(0);
+  expect(aside).toBeGreaterThan(appPush);
+  expect(steps[aside]?.run).toContain('mv app/.zerops-prebuilt.tar.zst "$RUNNER_TEMP/units-keep/units.tar.zst"');
+  expect(install).toBeGreaterThan(aside);
+  expect(build).toBeGreaterThan(install);
+  expect(storefront).toBeGreaterThan(build);
+  expect(kept).toBeGreaterThan(build);
+  expect(appWait).toBeGreaterThan(kept);
+  expect(steps[build]?.run).toContain('git status --porcelain --untracked-files=all');
+  expect(steps[build]?.run).toContain('pack-prebuilt-units.sh "$DISTS" "$RUNNER_TEMP/units-keep/units.tar.zst"');
+  // The same declared build environment as the identity step, so each build carries this commit's identity.
+  const { deliver } = stageJobs();
+  const identities = deliver.steps.find(({ name }) => name === 'Write the unit identities and shard lists');
+  expect(Object.keys(identities?.env ?? {}).length).toBeGreaterThan(0);
+  for (const [variable, value] of Object.entries(identities?.env ?? {})) {
+    expect(steps[build]?.env?.[variable], variable).toBe(value);
+  }
+  expect(steps[build]?.run).toContain('zerops-unit-identities/digests.tsv');
+  // The units it builds are the ones the front path could not lend.
+  const delivery = deliver.steps.find(({ uses }) => uses === './.github/actions/deliver-stage');
+  expect(delivery?.with?.['build-units']).toBe(`\${{ steps.taken.outputs.missing }}`);
+});
+
+it('plans from the run history with only the root importer and a depth-1 checkout', () => {
+  const { steps } = stageJobs().deliver;
   expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
-  // The install command lives in its own script, which the planner cache key hashes (zerops-plan-setup.test.mts).
-  expect(steps.some(({ run }) => run === 'bash scripts/zerops/install-planner-dependencies.sh')).toBe(true);
-  expect(readFileSync(new URL('../zerops/install-planner-dependencies.sh', import.meta.url), 'utf-8')).toContain(
-    'exec mise exec -- pnpm --config.verify-deps-before-run=false install --frozen-lockfile --trust-lockfile --filter app',
+  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
+    '--trust-lockfile --filter app',
   );
-  const history = steps.findIndex(({ run }) => run === 'git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
+  // The changes come from GitHub's compare API: the checkout the app push ships stays shallow.
+  const source = readFileSync(stageWorkflowPath, 'utf-8');
+  expect(source).not.toContain('--unshallow');
+  // No delivery state lives in the Actions cache, which evicts at will.
+  expect(source).not.toMatch(/zerops-stage-(?:delivery|attempt)-|zerops-planner-modules-/u);
+  const history = steps.findIndex(({ run }) => run?.includes('read-delivery-history.sh') === true);
   const plan = steps.findIndex(({ run }) => run?.includes('delivery-plan-cli.mts plan') === true);
   expect(history).toBeGreaterThanOrEqual(0);
   expect(plan).toBeGreaterThan(history);
 });
 
-const verificationSteps = () =>
-  Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Struct({
-        verify: Schema.Struct({
-          steps: Schema.Array(
-            Schema.Struct({
-              id: Schema.optional(Schema.String),
-              if: Schema.optional(Schema.String),
-              run: Schema.optional(Schema.String),
-              uses: Schema.optional(Schema.String),
-              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-            }),
-          ),
-        }),
-      }),
-    }),
-  )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs.verify.steps;
+const verificationSteps = deliverySteps;
 
 it('installs the full verification workspace and caches the frozen browser graph plus image-specific apt archives', () => {
   const steps = verificationSteps();
-  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
-    '--trust-lockfile',
+  // The whole workspace, once the app upload is done; the caller installed the root importer first.
+  expect(steps.find(({ name }) => name === 'Install the app workspace')?.run).toBe(
+    'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
   );
   const versions = steps.find(({ id }) => id === 'verification-browser-versions');
   expect(versions?.run).toContain(

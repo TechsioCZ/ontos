@@ -64,6 +64,8 @@ it('refuses repeated and ambiguous calls, fields main never had and malformed va
   expect(decodes([{ ...worker, jobKey: '' }])).toBe(false);
   const { workerKey: _unused, ...modeless } = worker;
   expect(decodes([modeless])).toBe(false);
+  // No Shell consumer takes a nested assertion that names a recovered action.
+  expect(decodes([{ ...nested, recoveryOf: recovery.recoveryOf }])).toBe(false);
 });
 
 it('records validated calls in the defined manifest and rejects invalid ones at definition', () => {
@@ -113,6 +115,7 @@ const receiver = (
     readonly accessActor?: { readonly subjectWorkloads?: readonly string[] };
     readonly accessDeclaration?: { readonly key: string };
     readonly accessWorkload?: { readonly workloads: readonly string[] };
+    readonly legalEntityScope?: 'forbidden' | 'optional' | 'required';
   },
   appId = 'party-registry',
 ) => ({
@@ -126,19 +129,22 @@ const receiver = (
 const declared = {
   accessDeclaration: { key: worker.declarationKey },
   accessWorkload: { workloads: [worker.workloadKey] },
+  legalEntityScope: worker.legalEntityScope,
 };
 
 it('takes a call only where the installed receiver declares its declaration and workload', () => {
   expect(registeredWorkloadCallReceiverIssue(worker, receiver(declared))).toBeUndefined();
+  // The Shell runs an action call only for the action's own workloads, never for an actor subject workload alone.
   expect(
     registeredWorkloadCallReceiverIssue(
       worker,
       receiver({
         accessActor: { subjectWorkloads: [worker.workloadKey] },
         accessDeclaration: declared.accessDeclaration,
+        legalEntityScope: worker.legalEntityScope,
       }),
     ),
-  ).toBeUndefined();
+  ).toMatch(/does not declare/u);
   expect(registeredWorkloadCallReceiverIssue(worker, receiver(declared, 'privacy'))).toMatch(/not installed/u);
   expect(registeredWorkloadCallReceiverIssue({ ...worker, schemaVersion: '2' }, receiver(declared))).toMatch(
     /no such operation version/u,
@@ -155,6 +161,15 @@ it('takes a call only where the installed receiver declares its declaration and 
   expect(registeredWorkloadCallReceiverIssue(worker, receiver({ accessWorkload: declared.accessWorkload }))).toMatch(
     /does not declare/u,
   );
+});
+
+it('refuses a call whose legal-entity scope is not the receiving action scope', () => {
+  expect(registeredWorkloadCallReceiverIssue(worker, receiver({ ...declared, legalEntityScope: 'required' }))).toBe(
+    'registered-workload call party.registry.create-party@1 to party-registry: the receiver runs ' +
+      'party.registry.party.create with scope required, not optional',
+  );
+  const { legalEntityScope: _unscoped, ...noScope } = declared;
+  expect(registeredWorkloadCallReceiverIssue(worker, receiver(noScope))).toMatch(/with scope none, not optional/u);
 });
 
 it('reads a receiving read from its published workload carrier', () => {

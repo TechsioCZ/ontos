@@ -1,65 +1,20 @@
 #!/usr/bin/env node
 /**
- * Gates-only cache v1. Archive the unit directories' dist/ and .output/ verbatim, including
- * dist/.gates-output-cache.json (digest + original identity + complete byte/mode inventory).
- * Never share zerops-units archives: stage origins, missing packaged outputs, different flags.
+ * The gates' per-unit output cache. A build shard restores the dist/ and .output/ of its units from an earlier run,
+ * keeps a unit only when its receipt (dist/.gates-output-cache.json: the input digest, the original build identity and
+ * a complete byte and mode inventory) matches this checkout, builds the rest (scripts/ci/build-units.sh, which stamps a
+ * receipt on each fresh build) and verifies the complete shard before anything is saved or packed. The Actions key only
+ * locates a candidate archive; it is never evidence.
  *
- * Actions key: gates-units-v1-${runner.os}-${runner.arch}-${shard}-${github.sha}-${github.run_id}-${github.run_attempt}
- * restore-keys: gates-units-v1-${runner.os}-${runner.arch}-${shard}-
- * Use exactly the same ordered path list for restore/save; bump v1 when changing that list.
- * Main push runs must populate this cache even when queue-proof skips other gates. A candidate/*
- * PR can restore its base/default main cache; a candidate push can restore default main, NOT an
- * unrelated feature branch. Save only after verify, never on failure. The key is a locator, NOT
- * evidence: every unit is validated independently after fallback restoration.
- *
- * USAGE (bash; app/ cwd; SHARD_UNITS = matrix.units, the existing space-separated paths):
- * job env: MODERN_PUBLIC_SITE_URL=http://localhost:8080, ULTRAMODERN_SOURCE_REVISION=${github.sha}
- * 1. actions/cache/restore@v6, id: unit-cache, with:
- *      path: |  # expand matrix.units to explicit paths, EACH with BOTH suffixes
- *        app/apps/shell-super-app/dist
- *        app/apps/shell-super-app/.output
- *        app/verticals/<each-shard-unit>/dist
- *        app/verticals/<each-shard-unit>/.output
- *      key: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
- *      restore-keys: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
- * 2. id: cached-plan; run:
- *      mise exec -- node scripts/ci/unit-output-cache.mts plan --units "$SHARD_UNITS" >> "$GITHUB_OUTPUT"
- *    # prints keep=<space-separated appIds> and build=<space-separated appIds>.
- *    # A bad restore goes to build, not to verify; verify the final complete shard below.
- * 3. env BUILD_UNITS: ${{ steps.cached-plan.outputs.build }}; run:
- *      if [[ -n "$BUILD_UNITS" ]]; then
- *        mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
- *        mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
- *        for id in $BUILD_UNITS; do
- *          dir="verticals/$id"; [[ "$id" != shell-super-app ]] || dir=apps/shell-super-app
- *          rm -rf -- "$dir/dist" "$dir/.output" # clean ONLY selected rebuild outputs
- *          mise exec -- pnpm --filter "./$dir" run build
- *          # Keep the existing served-unit selection: generate owner-entry ONLY for released units.
- *          if [[ "$id" == shell-super-app ]] || jq -e --arg id "$id" '.modules | any(.appId == $id)' topology/application-release-intent.json >/dev/null; then
- *            mise exec -- node scripts/zerops/owner-entry.mts "$dir"
- *          fi
- *          mise exec -- node scripts/ci/unit-output-cache.mts stamp --unit "$id"
- *        done
- *      fi
- * 4. mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
- * 5. actions/cache/save@v6: same path list; key: ${{ steps.unit-cache.outputs.cache-primary-key }}
- * 6. Keep existing tar/upload/unpack/proof steps. No identity rewriting, including on keep.
- *
- * Digest inputs, exactly: the stage unit identity (unitInputs in delivery-plan.mts: committed Git
- * paths/modes/blob IDs of the runtime workspace closure, everything the build reaches, the scripts it
- * runs and the root build configuration) with the three public origins; Node target, package build command,
- * production/default build mode, map/type-bundle policy and owner-entry policy; effective public
- * build environment (MODERN_*, ULTRAMODERN_*, PUBLIC_*, ONTOS_*ORIGIN*, NODE_ENV, NODE_OPTIONS,
- * NODE_PATH, BABEL_ENV, RSPACK_*, RSBUILD_*, BROWSERSLIST*, TZ, LANG, LC_*, SOURCE_DATE_EPOCH
- * and CI); actual Node/component versions, pnpm, platform and architecture.
- * Lockfile, mise pins, scripts and workflow are already common committed deploy inputs. Actual
- * versions additionally prevent a runner/toolchain mismatch despite unchanged pins. Source SHA
- * and build-marker overrides are NOT digest inputs: unchanged units keep their OLD source/build
- * identity, and the receipt records the unit's committed-inputs digest. Native integration fixtures
- * that bundle checkout sources against a composition built from these outputs take a kept unit's
- * identity from scripts/ci/kept-unit-identity.mts, which proves with that digest that the sources
- * are the ones the unit was built from. Stamp requires freshly built metadata naming HEAD; never
- * restamp a keep.
+ * The digest is the unit identity of scripts/ci/unit-inputs.mts with build-units.sh as the build driver (its post-build
+ * script, --post-build, included) and the trunk's public origins (`build-origin-variables` of the gate matrices),
+ * salted with the receipt format and the build profile: Node target, package build command, build mode, output policy
+ * (with the served entry, --served-entry), the public build environment and the actual Node, component and pnpm
+ * versions, platform and architecture. Source revision and build-marker overrides are NOT digest inputs: a kept unit
+ * keeps its OLD build identity, and the receipt records the unit's committed-inputs digest. Native integration fixtures
+ * that bundle checkout sources against a composition built from these outputs take a kept unit's identity from
+ * scripts/ci/kept-unit-identity.mts, which proves with that digest that the sources are the ones the unit was built
+ * from. Stamp requires freshly built metadata naming HEAD; never restamp a keep.
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -84,9 +39,9 @@ import {
   REVISION,
 } from './unit-output-receipt.mts';
 import type { CacheIdentity, CacheReceipt, OutputFile } from './unit-output-receipt.mts';
-import { readSources, readWorkspace } from '../zerops/delivery-plan-cli.mts';
-import { unitIdentity, unitInputDigest, unitInputGraph } from '../zerops/delivery-plan.mts';
-import type { UnitInputGraph } from '../zerops/delivery-plan.mts';
+import { loadCiMatrices } from './ci-matrices.mts';
+import { readSources, readWorkspace, unitIdentity, unitInputDigest, unitInputGraph } from './unit-inputs.mts';
+import type { BuildDriver, UnitInputGraph } from './unit-inputs.mts';
 
 const APP_ROOT = path.resolve(import.meta.dirname, '../..');
 const BUILD_METADATA = 'ultramodern-build.json';
@@ -185,20 +140,32 @@ const readJson = <A,>(filename: string, schema: Schema.Codec<A>) =>
     return yield* fs.readFileString(filename).pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))));
   });
 
+/** Scripts build-units.sh names that write nothing into a unit's output, and why. */
+const DRIVER_TOOLS = new Map([
+  ['scripts/ci/unit-output-cache.mts', 'stamps the receipt after the build and computes these identities'],
+]);
+/** The gates' build driver; `postBuild` is the script it runs after a served unit's build (UNIT_POST_BUILD). */
+export const gatesBuildDriver = (postBuild: string): BuildDriver => ({
+  extraInputs: postBuild === '' ? [] : [path.posix.join('app', postBuild)],
+  path: 'app/scripts/ci/build-units.sh',
+  tools: DRIVER_TOOLS,
+});
 interface DigestInput {
   readonly directory: string;
+  readonly driver: BuildDriver;
   readonly graph: UnitInputGraph;
+  /** The values of `originVariables`, in their order. */
   readonly origins: readonly string[];
+  readonly originVariables: readonly string[];
   readonly profile: CacheProfile;
 }
-const ORIGIN_VARIABLES = ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'];
 /** Derived from the receipt format, never a second hand-kept version (see RECEIPT_SCHEMA_VERSION). */
 export const gatesDigestSalt = `gates-output-receipt-v${CacheReceiptSchema.fields.schemaVersion.literal}`;
 export const gatesInputDigest = (input: DigestInput) =>
   Effect.gen(function* computeGatesDigest() {
     // The profile carries the rest of the build environment; the origins are named so an unset one still counts.
-    const environment = ORIGIN_VARIABLES.map((name, index) => [name, input.origins[index] ?? ''] as const);
-    const base = yield* unitInputDigest(input.directory, { environment, graph: input.graph });
+    const environment = input.originVariables.map((name, index) => [name, input.origins[index] ?? ''] as const);
+    const base = yield* unitInputDigest(input.directory, { driver: input.driver, environment, graph: input.graph });
     const profile = yield* encode(CacheProfileSchema, input.profile);
     return yield* Effect.succeed(hash(`${gatesDigestSalt}\n${base}\n${profile}`));
   });
@@ -222,8 +189,9 @@ const run = (executable: string, args: readonly string[], cwd: string) =>
   }).pipe(Effect.scoped);
 const git = (args: readonly string[], root: string) => run('git', args, root);
 const identityOverride = /^(?:ULTRAMODERN_SOURCE_REVISION|ULTRAMODERN_BUILD_MARKER)$/u;
+// ONTOS_CI_TYPECHECK_SEPARATE drops the JavaScript source maps and server declarations (shared-contracts modern-config.ts).
 const buildVariable =
-  /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
+  /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|ONTOS_CI_TYPECHECK_SEPARATE$|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
 /** `name=value` pairs of the environment every build child inherits, NUL-separated so values may hold newlines. */
 const inheritedEnvironment = (root: string) =>
   run('env', ['-0'], root).pipe(
@@ -234,7 +202,7 @@ const inheritedEnvironment = (root: string) =>
       }),
     ),
   );
-const readProfile = Effect.fn('UnitOutputCache.profile')(function* readBuildProfile(root: string) {
+const readProfile = Effect.fn('UnitOutputCache.profile')(function* readBuildProfile(root: string, servedEntry: string) {
   const environment = (yield* inheritedEnvironment(root))
     .filter(([name]) => buildVariable.test(name) && !identityOverride.test(name))
     .toSorted(([left], [right]) => left.localeCompare(right));
@@ -246,13 +214,22 @@ const readProfile = Effect.fn('UnitOutputCache.profile')(function* readBuildProf
     node: process.version,
     platform: process.platform,
     pnpm: yield* run('pnpm', ['--version'], root),
-    policy: 'full dist + packaged .output; preserve maps/types; owner-entry for released units; v1',
+    policy: `full dist + packaged .output; preserve maps/types; served entry ${servedEntry || 'none'} for released units; v1`,
     target: 'node',
     versions: process.versions,
   });
 });
+/** How the trunk builds its units: the origins it bakes in, its post-build script and the entry that script writes. */
+export interface BuildPolicy {
+  readonly originVariables: readonly string[];
+  readonly postBuild: string;
+  readonly servedEntry: string;
+}
 /** Everything the plan, stamp and verify read about one committed workspace; `root` is its app directory. */
-export const loadCacheContext = Effect.fn('UnitOutputCache.context')(function* readCacheContext(root: string) {
+export const loadCacheContext = Effect.fn('UnitOutputCache.context')(function* readCacheContext(
+  root: string,
+  policy: BuildPolicy,
+) {
   const dirty = yield* git(['status', '--porcelain', '--untracked-files=normal'], root);
   if (dirty.length > 0) {
     return yield* invalid(WORKSPACE, 'committed inputs required; checkout has uncommitted changes');
@@ -263,16 +240,21 @@ export const loadCacheContext = Effect.fn('UnitOutputCache.context')(function* r
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))),
   );
   const units = [topology.shell, ...topology.verticals];
-  const origins = yield* Effect.forEach(ORIGIN_VARIABLES, (name) => Config.String(name).pipe(Config.withDefault('')), {
-    concurrency: 1,
-  });
+  const origins = yield* Effect.forEach(
+    policy.originVariables,
+    (name) => Config.String(name).pipe(Config.withDefault('')),
+    { concurrency: 1 },
+  );
   return yield* Effect.succeed({
+    driver: gatesBuildDriver(policy.postBuild),
     graph: unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries, root) }),
     head,
     origins,
-    profile: yield* readProfile(root),
+    originVariables: policy.originVariables,
+    profile: yield* readProfile(root, policy.servedEntry),
     root,
     served: workspace.units.map((unit) => unit.id),
+    servedEntry: policy.servedEntry,
     units,
   });
 });
@@ -446,14 +428,14 @@ const validateStructure = (context: Context, unit: CacheUnit, files: readonly Ou
   Effect.gen(function* validateRequiredOutputs() {
     const fs = yield* FileSystem.FileSystem;
     const root = path.join(context.root, unit.path);
-    // Unpack consumes .output; hosted-owner fixtures consume dist/zerops-entry.mjs and both
-    // build identities; derive-built-application-composition consumes the public contracts + MF manifest.
+    // Unpack consumes .output; hosted-owner fixtures consume the served entry and both build identities;
+    // derive-built-application-composition consumes the public contracts + MF manifest.
     const remote = isBackendRemote(unit.id);
     for (const filename of requiredOutputs(unit.id)) {
       yield* requireFile(files, filename, unit.id);
     }
-    if (context.served.includes(unit.id)) {
-      yield* requireFile(files, `${DIST}/zerops-entry.mjs`, unit.id);
+    if (context.servedEntry !== '' && context.served.includes(unit.id)) {
+      yield* requireFile(files, context.servedEntry, unit.id);
     }
     yield* readJson(path.join(root, OUTPUT, PACKAGE_JSON), PackageManifest);
     const [built, packaged] = yield* Effect.all([readMetadata(root, DIST), readMetadata(root, OUTPUT)], {
@@ -537,9 +519,18 @@ const listNames = (value: string) =>
     .trim()
     .split(/\s+/u)
     .filter((name) => name.length > 0);
-const withUnits = (value: string) =>
+/** The trunk's build policy: its origins from the gate matrices, the rest from the flags every command takes. */
+const policyFlags = {
+  postBuild: Flag.String('post-build').pipe(Flag.withDefault('')),
+  servedEntry: Flag.String('served-entry').pipe(Flag.withDefault('')),
+};
+const withUnits = (value: string, flags: { readonly postBuild: string; readonly servedEntry: string }) =>
   Effect.gen(function* loadSelectedUnits() {
-    const context = yield* loadCacheContext(APP_ROOT);
+    const matrices = yield* loadCiMatrices();
+    const context = yield* loadCacheContext(APP_ROOT, {
+      ...flags,
+      originVariables: matrices['build-origin-variables'],
+    });
     const names = listNames(value);
     if (names.length === 0 || new Set(names).size !== names.length) {
       return yield* invalid('selection', 'nonempty, unique units required');
@@ -559,17 +550,20 @@ const inspectUnit = (context: Context, unit: CacheUnit) =>
       onSuccess: () => ({ unit: unit.id }),
     }),
   );
-const digestCommand = Command.make('digest', { unit: Flag.String('unit').pipe(Flag.atLeast(1)) }, ({ unit }) =>
-  Effect.gen(function* printDigests() {
-    const { context, units } = yield* withUnits(unit.join(' '));
-    return yield* Effect.forEach(units, (entry) => printUnitDigest(context, entry), { concurrency: 1 }).pipe(
-      Effect.asVoid,
-    );
-  }),
+const digestCommand = Command.make(
+  'digest',
+  { ...policyFlags, unit: Flag.String('unit').pipe(Flag.atLeast(1)) },
+  ({ unit, ...flags }) =>
+    Effect.gen(function* printDigests() {
+      const { context, units } = yield* withUnits(unit.join(' '), flags);
+      return yield* Effect.forEach(units, (entry) => printUnitDigest(context, entry), { concurrency: 1 }).pipe(
+        Effect.asVoid,
+      );
+    }),
 );
 /** A unit's committed-inputs digest, as receipts and keep proofs record it (unitIdentity without build variables). */
-export const committedInputs = (graph: UnitInputGraph, unitPath: string) =>
-  unitIdentity(`app/${unitPath}`, { environment: [], graph }).pipe(Effect.map(({ files }) => files));
+export const committedInputs = (graph: UnitInputGraph, driver: BuildDriver, unitPath: string) =>
+  unitIdentity(`app/${unitPath}`, { driver, environment: [], graph }).pipe(Effect.map(({ files }) => files));
 /** The keep proof the plan writes for a unit it keeps (see KeepProofSchema). */
 export const keepProof = (input: { readonly head: string; readonly inputs: string; readonly unit: string }) =>
   Schema.decodeUnknownEffect(KeepProofSchema)({
@@ -584,7 +578,7 @@ const writeKeepProof = (context: Context, unit: CacheUnit) =>
     const root = path.join(context.root, unit.path);
     const proof = yield* keepProof({
       head: context.head,
-      inputs: yield* committedInputs(context.graph, unit.path),
+      inputs: yield* committedInputs(context.graph, context.driver, unit.path),
       unit: unit.id,
     });
     const temporary = path.join(root, `${KEEP_PROOF}.tmp`);
@@ -612,16 +606,19 @@ export const planUnits = Effect.fn('UnitOutputCache.plan')(function* planUnits(
   }
   return yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
 });
-const planCommand = Command.make('plan', { units: Flag.String('units') }, ({ units: value }) =>
-  Effect.gen(function* printPlan() {
-    const { context, units } = yield* withUnits(value);
-    const plan = yield* planUnits(context, units);
-    return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
-  }),
+const planCommand = Command.make(
+  'plan',
+  { ...policyFlags, units: Flag.String('units') },
+  ({ units: value, ...flags }) =>
+    Effect.gen(function* printPlan() {
+      const { context, units } = yield* withUnits(value, flags);
+      const plan = yield* planUnits(context, units);
+      return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
+    }),
 );
-const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ unit: value }) =>
+const stampCommand = Command.make('stamp', { ...policyFlags, unit: Flag.String('unit') }, ({ unit: value, ...flags }) =>
   Effect.gen(function* stampFreshOutput() {
-    const { context, units } = yield* withUnits(value);
+    const { context, units } = yield* withUnits(value, flags);
     const fs = yield* FileSystem.FileSystem;
     for (const unit of units) {
       const root = path.join(context.root, unit.path);
@@ -637,7 +634,7 @@ const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ uni
         digest: yield* expectedDigest(context, unit),
         files,
         identity,
-        inputs: yield* committedInputs(context.graph, unit.path),
+        inputs: yield* committedInputs(context.graph, context.driver, unit.path),
         schemaVersion: RECEIPT_SCHEMA_VERSION,
         unit: unit.id,
       };
@@ -648,11 +645,14 @@ const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ uni
     return yield* Effect.void;
   }),
 );
-const verifyCommand = Command.make('verify', { units: Flag.String('units') }, ({ units: value }) =>
-  Effect.gen(function* verifyOutputs() {
-    const { context, units } = yield* withUnits(value);
-    return yield* Effect.forEach(units, (unit) => checkUnit(context, unit), { concurrency: 1 }).pipe(Effect.asVoid);
-  }),
+const verifyCommand = Command.make(
+  'verify',
+  { ...policyFlags, units: Flag.String('units') },
+  ({ units: value, ...flags }) =>
+    Effect.gen(function* verifyOutputs() {
+      const { context, units } = yield* withUnits(value, flags);
+      return yield* Effect.forEach(units, (unit) => checkUnit(context, unit), { concurrency: 1 }).pipe(Effect.asVoid);
+    }),
 );
 export const unitOutputCacheCommand = Command.make('unit-output-cache').pipe(
   Command.withSubcommands([digestCommand, planCommand, stampCommand, verifyCommand]),

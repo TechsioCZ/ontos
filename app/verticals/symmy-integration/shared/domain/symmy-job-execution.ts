@@ -21,6 +21,8 @@ import {
 } from './symmy-party-commerce-intents.ts';
 
 import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
+import { SymmyPriceSourceSchema } from './symmy-price-list-batch.ts';
+import { SymmyStockScopeSchema } from './symmy-stock-batch.ts';
 
 export const SymmyOwnerIntentSchema = Schema.Union([
   SymmyCatalogPricingInventoryIntentSchema,
@@ -58,6 +60,10 @@ const unsupportedBranchSchema = Schema.Struct({
     'AttributeHint',
     'MediaHint',
     'VariantUpdateHint',
+    'DescriptiveHint',
+    'ClassificationHint',
+    'PriceHint',
+    'IdentifierHint',
   ]),
 });
 const unsupportedBranches = Schema.optionalKey(
@@ -189,6 +195,10 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
       ).check(Schema.isMaxLength(32)),
     }),
   ).check(Schema.isMaxLength(16)),
+  /** Only the price list routes: the grant refs a price assertion names. Prices are never enrolled themselves. */
+  priceSource: Schema.optionalKey(SymmyPriceSourceSchema),
+  /** Only the stock route: the positions it is enrolled for. The row values are never enrolled. */
+  stockScope: Schema.optionalKey(SymmyStockScopeSchema),
 }).check(validPlanGraph);
 
 /** Explicit normalized internal business inputs; real Symmy wire acceptance is separate. */
@@ -336,7 +346,11 @@ const unsupportedBranchOutcomes = {
   AssortmentHint: { owner: 'commerce.assortment', reason: 'owner_not_activated' },
   AttributeHint: { ...unsupportedCatalogMeaning, branchKind: 'AttributeHint' },
   CategoryHint: { ...unsupportedCatalogMeaning, branchKind: 'CategoryHint' },
+  ClassificationHint: { ...unsupportedCatalogMeaning, branchKind: 'ClassificationHint' },
+  DescriptiveHint: { ...unsupportedCatalogMeaning, branchKind: 'DescriptiveHint' },
+  IdentifierHint: { branchKind: 'IdentifierHint', owner: 'party.registry', reason: 'owner_not_activated' },
   MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },
+  PriceHint: { branchKind: 'PriceHint', owner: 'commerce.pricing', reason: 'missing_context' },
   ReservedQuantityHint: { owner: 'commerce.inventory', reason: 'unsupported_meaning' },
   TaxHint: { owner: 'commerce.tax', reason: 'owner_not_activated' },
   VariantUpdateHint: { ...unsupportedCatalogMeaning, branchKind: 'VariantUpdateHint', reason: 'missing_context' },

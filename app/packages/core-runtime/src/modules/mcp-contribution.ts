@@ -82,11 +82,11 @@ const shellPagePath = Schema.String.check(Schema.isPattern(/^\/[a-z0-9/-]*$/u));
 
 /**
  * Shell page where people review the module's own AI changes (its `ownProposalEngine` batches). The approval queue
- * („Ke schválení“) links each such batch there with `label`, e.g. „Otevřít v CRM“.
+ * („Ke schválení“) links each such batch there with `label`, e.g. „Otevřít v modulu“.
  */
 export const OntosMcpApprovalsPageSchema = Schema.Struct({
   label: OntosMcpTextSchema,
-  /** Shell page below `/<lang>`, e.g. `/ukoly/schvalovani-ai`. */
+  /** Shell page below `/<lang>`, e.g. `/<page>/schvalovani-ai`. */
   path: shellPagePath,
 });
 export type OntosMcpApprovalsPage = typeof OntosMcpApprovalsPageSchema.Type;
@@ -247,7 +247,7 @@ export const OntosMcpContributionSchema = Schema.Struct({
   ),
   /** The module keeps its own AI change engine (`aiChanges`, AiDecideChanges, AiRevertBatch) the queue also shows. */
   ownProposalEngine: Schema.optionalKey(Schema.Boolean),
-  /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
+  /** Shell page of the module below `/<lang>`, e.g. `/<page>`. */
   page: Schema.optionalKey(shellPagePath),
   recordLinks: Schema.optionalKey(Schema.Array(OntosMcpRecordLinkSchema)),
   revision: Schema.optionalKey(OntosMcpRevisionSchema),
@@ -280,7 +280,7 @@ export interface OntosMcpCommandInput extends OntosMcpWriteInput {
   readonly actionSlug?: string;
 }
 
-/** Explicitly not offered to agents (approval plumbing, demo maintenance, internal recovery). */
+/** Explicitly not offered to agents (approval plumbing, maintenance, internal recovery). */
 export const OntosMcpHidden = 'hidden' as const;
 
 /**
@@ -359,7 +359,7 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
     fail('MCP contribution needs Czech and English label and description');
   }
   validateToolTexts(input);
-  if (input.approvalReview !== undefined && !(input.approvalReview.read in input.reads)) {
+  if (input.approvalReview !== undefined && !Object.hasOwn(input.reads, input.approvalReview.read)) {
     fail(`MCP approval review read ${input.approvalReview.read} is not one of the module's reads`);
   }
   if (input.approvalsPage !== undefined && input.ownProposalEngine !== true) {
@@ -371,7 +371,7 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
   if (input.commandFieldLabels !== undefined && !input.approvals) {
     fail('MCP command field labels need approvals');
   }
-  if (input.revision !== undefined && !(input.revision.read in input.reads)) {
+  if (input.revision !== undefined && !Object.hasOwn(input.reads, input.revision.read)) {
     fail(`MCP revision read ${input.revision.read} is not one of the module's reads`);
   }
   if (input.recordLinks !== undefined) {

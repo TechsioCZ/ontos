@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 const { assertRegisteredWorkloadCallers, assertRegisteredWorkloadCallsReceived, REVIEWED_REGISTERED_WORKLOAD_CALLERS } =
@@ -13,17 +13,12 @@ const { deriveOntosModuleDeploymentContract, registeredWorkloadCallTopologyIssue
   /* webpackIgnore: true */
   '../../generate-ontos-module-contract.mts'
 );
+const { registeredWorkloadCallDrift, REVIEWED_REGISTERED_WORKLOAD_CALLS } = await import(
+  /* webpackIgnore: true */
+  '../registered-workload-calls.mts'
+);
 
 const workspaceRoot = path.resolve(import.meta.dirname, '../../..');
-/** The calling modules (demo divergence exception 8) and the number of calls each declares. */
-const callers = {
-  assortment: 4,
-  'commerce-customer-context': 14,
-  'party-registry': 4,
-  pricing: 2,
-  privacy: 9,
-  'symmy-integration': 50,
-} as const;
 const receivers = [
   'catalog',
   'commerce-market-catalog',
@@ -32,6 +27,9 @@ const receivers = [
   'storefront-registry',
   'tax',
 ];
+const TopologySchema = Schema.fromJsonString(
+  Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })) }),
+);
 type Contract = Parameters<typeof assertRegisteredWorkloadCallsReceived>[0][number];
 type Call = NonNullable<Contract['manifest']['registeredWorkloadCalls']>[number];
 
@@ -86,6 +84,51 @@ it.effect('admits each registered workload only from its reviewed callers', () =
   }),
 );
 
+it.effect('reviews the calls of every topology vertical whose manifest declares registered-workload calls', () =>
+  Effect.gen(function* everyDeclaringCaller() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
+      yield* fileSystem.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json')),
+    );
+    const manifests = yield* Effect.all(
+      topology.verticals.map(({ id, path: verticalPath }) =>
+        fileSystem
+          .readFileString(path.join(workspaceRoot, verticalPath, 'vertical.manifest.ts'))
+          .pipe(Effect.map((manifest) => ({ id, manifest }))),
+      ),
+    );
+    const callers = manifests
+      .filter(({ manifest }) => /^\s*registeredWorkloadCalls\b/mu.test(manifest))
+      .map(({ id }) => id);
+    expect(callers.toSorted()).toEqual(Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS).toSorted());
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it('reports a reviewed call a caller lost and a call nobody reviewed', () => {
+  const read = {
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.selection-evidence.read',
+    schemaVersion: '1',
+    workloadKey: 'commerce.catalog.symmy-product-read',
+  };
+  const market = {
+    audience: 'commerce-market-catalog',
+    declarationKey: 'commerce.market-catalog.market-catalog.read',
+    schemaVersion: '1',
+    workloadKey: 'commerce.market-catalog.source-read',
+  };
+  expect(registeredWorkloadCallDrift('pricing', [read, market])).toEqual([]);
+  expect(registeredWorkloadCallDrift('pricing', [read])).toEqual([
+    { built: 0, call: `${market.workloadKey} ${market.audience} ${market.declarationKey} 1`, reviewed: 1 },
+  ]);
+  expect(registeredWorkloadCallDrift('pricing', [read, market, { ...read, schemaVersion: '2' }])).toEqual([
+    { built: 1, call: `${read.workloadKey} ${read.audience} ${read.declarationKey} 2`, reviewed: 0 },
+  ]);
+  expect(registeredWorkloadCallDrift('tax', [read])).toEqual([
+    { built: 1, call: `${read.workloadKey} ${read.audience} ${read.declarationKey} 1`, reviewed: 0 },
+  ]);
+});
+
 it('refuses at generation a call to a deployment the topology does not have', () => {
   expect(registeredWorkloadCallTopologyIssue([{ audience: 'privacy' }], ['privacy', 'party-registry'])).toBeUndefined();
   expect(registeredWorkloadCallTopologyIssue([{ audience: 'privacy-next' }], ['privacy'])).toMatch(
@@ -98,13 +141,14 @@ it.live(
   () =>
     Effect.gen(function* builtCalls() {
       const contracts: readonly Contract[] = yield* Effect.forEach(
-        [...Object.keys(callers), ...receivers],
+        [...Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS), ...receivers],
         (vertical) => deriveOntosModuleDeploymentContract({ vertical, workspaceRoot }),
         { concurrency: 2 },
       ).pipe(Effect.provide(NodeServices.layer));
-      for (const [appId, count] of Object.entries(callers)) {
-        const contract = contracts.find((candidate) => candidate.deployment.appId === appId);
-        expect(contract?.manifest.registeredWorkloadCalls).toHaveLength(count);
+      for (const appId of Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS)) {
+        const calls =
+          contracts.find((candidate) => candidate.deployment.appId === appId)?.manifest.registeredWorkloadCalls ?? [];
+        expect(registeredWorkloadCallDrift(appId, calls)).toEqual([]);
       }
       for (const appId of receivers) {
         const contract = contracts.find((candidate) => candidate.deployment.appId === appId);

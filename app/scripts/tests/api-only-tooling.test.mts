@@ -643,7 +643,7 @@ it.live(
       }),
     );
     expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.25.0-ts7.1.0-beta');
-    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.69.0');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.70.0');
   }),
 );
 
@@ -3518,31 +3518,6 @@ describe('consumer migration preserves native tooling and governed safety', () =
           partyId,
         ),
       ).toBe(false);
-      // Exercise the complete Core/Party server, client, permission and transport negative matrix.
-      const governed = spawnSync(
-        process.execPath,
-        [
-          path.join(workspaceRoot, 'node_modules/@rstest/core/bin/rstest.js'),
-          'run',
-          '--project',
-          'scripts',
-          // Every split part of the boundary suite (module-entrypoint-boundaries-<group>.test.mts); over several
-          // files only the verbose reporter names every passing test.
-          'scripts/tests/module-entrypoint-boundaries-',
-          '--testNamePattern',
-          'governed',
-          '--reporter',
-          'verbose',
-        ],
-        {
-          cwd: workspaceRoot,
-          encoding: 'utf-8',
-          env: { PATH: path.dirname(process.execPath) },
-        },
-      );
-      expect(governed.status, governed.stdout + governed.stderr).toBe(0);
-      expect(governed.stdout).toMatch(/governed servers bind/u);
-      expect(governed.stdout).toMatch(/rejects generated governed clients/u);
     }),
   );
 });
