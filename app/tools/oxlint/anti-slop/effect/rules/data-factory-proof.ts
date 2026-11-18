@@ -3375,8 +3375,11 @@ class DataFactoryProof {
     if (operation === 'Literal' && args.length === 1 && isData(args[0])) return { ...schema(args[0]), ...(this.strictSchemaExports ? { astTag: 'Literal' } : {}),
       ...(this.defaultStructEquivalence && typeof args[0].literal === 'string' ? {defaultEquivalenceKind: 'literal'} : {}) };
     if (operation === 'Literals' && args.every(isData)) {
-      if (!this.strictSchemaExports) return schema(DATA);
       const values = args.length === 1 && args[0].kind === 'array' && args[0].fields !== undefined ? [...args[0].fields.values()] : null;
+      // An explicit list of string literals decodes and encodes only those strings, so it is a closed string schema.
+      if (!this.strictSchemaExports)
+        return schema(values !== null && values.length > 0 && values.every((value) => typeof value.literal === 'string' && isClosedString(value))
+          ? { kind: 'data', stringData: true } : DATA);
       if (values === null) return { ...schema(DATA), astOpaque: true };
       const members = values.map((value): Value => ({ ...schema(value), astTag: 'Literal' }));
       return { ...schema(DATA), astTag: 'Union', astMembers: members };
