@@ -3,7 +3,7 @@ import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-mar
 import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
 import type { Crypto } from 'effect';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
 import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
@@ -51,11 +51,12 @@ const unavailable = (cause: unknown): MarketSubjectRestrictionsUnavailable => {
   return failure;
 };
 
-const toSnapshot = (
+/** The owner's answer as the snapshot Market resolution uses: only a current restriction set is one. */
+export const currentSubjectRestrictionSnapshot = (
   response: MarketSubjectRestrictionsCurrentResponse,
-): Effect.Effect<MarketSubjectRestrictionSnapshot, MarketSubjectRestrictionsUnavailable> => {
+): Option.Option<MarketSubjectRestrictionSnapshot> => {
   if (response.outcome !== 'SUBJECT_RESTRICTIONS_CURRENT') {
-    return Effect.fail(unavailable(response));
+    return Option.none();
   }
   const base = {
     allowedChannels: response.channelConstraint.allowedChannels,
@@ -71,7 +72,7 @@ const toSnapshot = (
     subjectIdentityRef: response.subject.profileRef.resourceId,
     subjectKind: response.subject.kind,
   } satisfies Omit<MarketSubjectRestrictionSnapshot, 'allowedMarketIds'>;
-  return Effect.succeed(
+  return Option.some(
     response.marketConstraint.kind === 'ALLOWED_MARKETS'
       ? {
           ...base,
@@ -80,6 +81,14 @@ const toSnapshot = (
       : base,
   );
 };
+
+const toSnapshot = (
+  response: MarketSubjectRestrictionsCurrentResponse,
+): Effect.Effect<MarketSubjectRestrictionSnapshot, MarketSubjectRestrictionsUnavailable> =>
+  Option.match(currentSubjectRestrictionSnapshot(response), {
+    onNone: () => Effect.fail(unavailable(response)),
+    onSome: Effect.succeed,
+  });
 
 /**
  * Reads the purchasing subject's restrictions from Customer Context for the requester this scope
