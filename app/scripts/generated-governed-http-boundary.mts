@@ -3310,7 +3310,7 @@ const LOAD_WORK_EFFECT_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new M
       'zipWith',
     ]),
   ],
-  ['DateTime', new Set(['formatIso', 'toEpochMillis'])],
+  ['DateTime', new Set(['formatIso', 'make', 'makeUnsafe', 'toDateUtc', 'toEpochMillis'])],
   [
     'Option',
     new Set([
@@ -3333,19 +3333,47 @@ const LOAD_WORK_EFFECT_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new M
     new Set([
       'Array',
       'Boolean',
+      'Date',
+      'DateFromString',
+      'DateTimeUtc',
+      'DateTimeUtcFromString',
+      'Finite',
+      'Int',
       'Literal',
       'Literals',
       'NullOr',
       'Number',
+      'OptionFromNullOr',
       'String',
       'Struct',
+      'TaggedError',
+      'Trim',
+      'Union',
       'Unknown',
+      'brand',
+      'decodeEffect',
+      'decodeTo',
       'decodeUnknownEffect',
       'decodeUnknownOption',
       'encodeUnknownOption',
       'fromJsonString',
+      'is',
+      'isBetween',
+      'isGreaterThanOrEqualTo',
+      'isInt',
+      'isMaxLength',
+      'isMinLength',
+      'isPattern',
+      'isTrimmed',
+      'isUUID',
+      'makeFilter',
+      'optionalKey',
+      'toEncoded',
+      'toType',
     ]),
   ],
+  ['Equal', new Set(['equals'])],
+  ['SchemaGetter', new Set(['transform'])],
 ]);
 /**
  * The one ambient read proven load work may make, named as the exception it is: `DateTime.now` reads the
@@ -3364,23 +3392,60 @@ const loadWorkByName = (...names: readonly string[]): ReadonlyMap<string, LoadWo
   new Map(names.map((name) => [name, { byName: true, members: new Set<string>() }]));
 /**
  * The library exports proven load work may read besides `effect`, by exact module path and export name:
- * the hash and encoding functions of their arguments the real staged reads use. Each export lists whether
- * it may be read by its own name and the members it may be read through, so a namespace such as `Hex` is
- * never handed out whole. Nothing else from these packages passes, so `randomBytes`, which reads
+ * hash and encoding functions of their arguments, and the Drizzle builders of table, column and SQL
+ * descriptors a service factory's owner queries use, which build values and run nothing. Each export lists
+ * whether it may be read by its own name and the members it may be read through, so a namespace such as
+ * `Hex` is never handed out whole. Nothing else from these packages passes, so `randomBytes`, which reads
  * `globalThis.crypto`, refuses.
  */
 const LOAD_WORK_PURE_IMPORTS: ReadonlyMap<string, ReadonlyMap<string, LoadWorkExportUse>> = new Map([
   ['@noble/hashes/sha2.js', loadWorkByName('sha256')],
   ['@noble/hashes/utils.js', loadWorkByName('utf8ToBytes')],
+  [
+    'drizzle-orm',
+    new Map([
+      ...loadWorkByName('and', 'eq', 'exists', 'getTableColumns', 'inArray', 'or'),
+      ['sql', { byName: true, members: new Set(['join']) }],
+    ]),
+  ],
+  [
+    'drizzle-orm/pg-core',
+    loadWorkByName(
+      'bigint',
+      'boolean',
+      'check',
+      'foreignKey',
+      'index',
+      'integer',
+      'jsonb',
+      'numeric',
+      'pgSchema',
+      'primaryKey',
+      'text',
+      'timestamp',
+      'unique',
+      'uniqueIndex',
+      'uuid',
+    ),
+  ],
+  ['drizzle-orm/effect-schema', loadWorkByName('createSelectSchema')],
   ['effect/encoding', new Map([['Hex', { byName: false, members: new Set(['encode']) }]])],
 ]);
 /** `effect` functions proven load work may read as values. */
 const LOAD_WORK_EFFECT_FUNCTIONS: ReadonlySet<string> = new Set(['flow', 'identity', 'pipe']);
+/**
+ * The core exports proven load work may read: read and operation-context error classes, and the owner
+ * database declarations (a scoped routine, a table's tenant RLS policies), which build descriptors the
+ * transaction executes and run nothing themselves.
+ */
 const LOAD_WORK_CORE_RUNTIME_EXPORTS: ReadonlySet<string> = new Set([
+  'OperationContextUnavailable',
   'ReadHandlerExecutionError',
   'ReadHandlerNotFound',
   'ReadHandlerUnavailable',
   'ReadPermissionDenied',
+  'defineScopedRoutine',
+  'tenantRlsPolicies',
 ]);
 const LOAD_WORK_FORBIDDEN_PROPERTIES: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -4418,12 +4483,18 @@ const hasReadCallbacks = (
     );
   // The load step runs inside the read transaction. A staged read, which declares `prepare` or `finish` for
   // its remote work, has every load step proven local; a same-module helper call is proven in every read.
+  // What a staged load reaches through its parameters is proven by construction: `context.services` is
+  // what the read's service factory built, inside the same transaction, and a staged read's factory is
+  // proven by these same rules, so it builds only from the transaction and scope it is given and from
+  // proven code, never from an imported client, port or integration. `input` is decoded by the read's
+  // schema and `context.scope` is Core's.
   const isReadLoadStep = (candidate: string | undefined, staged: boolean): boolean =>
     ((isReadHandlerCallback(candidate, source) || isOwnerLocalImportedFactoryResult(candidate)) &&
       (!staged || provesLoadWork(candidate))) ||
     (isOwnerEffectFnLoadCall(candidate, source) && provesLoadWork(candidate));
   // The owner work: a bare read handler, or a pipeline object of unique `prepare`, `load` and `finish`
-  // steps that always has `load`. Every step is an executable owner callback.
+  // steps that always has `load`. Every step is an executable owner callback, and a staged pipeline's
+  // service factory is proven like its load step.
   const isReadOwnerPipeline = (candidate: string | undefined): boolean => {
     const entries = candidate === undefined ? undefined : topLevelObjectEntries(candidate);
     if (candidate === undefined || entries === undefined) {
@@ -4436,6 +4507,7 @@ const hasReadCallbacks = (
       new Set(declared).size === declared.length &&
       declared.includes('load') &&
       isReadLoadStep(objectPropertyValue(candidate, 'load'), declared.length > 1) &&
+      (declared.length === 1 || provesLoadWork(callArgument(readExpression, /^defineRead\(/u, 2))) &&
       declared
         .filter((step) => step !== 'load')
         .every((step) => {

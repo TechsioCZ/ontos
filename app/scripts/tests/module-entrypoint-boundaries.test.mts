@@ -1458,6 +1458,8 @@ const STOCK_REVISION_FILE = 'verticals/inventory-stock/src/stock-revision.ts';
 const REMOTE_STOCK_IMPORT = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
 const READ_CORE_IMPORT = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
 const LAYER_ARGUMENT = ', () => Layer.empty);';
+/** A staged read's service factory is proven like its load step: this one builds only from its own code. */
+const PROVEN_FACTORY_ARGUMENT = ', () => Effect.succeed({}));';
 const HELPER_LOAD =
   '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
 /** A staged owner pipeline around `load`: its load step is proven local. */
@@ -1477,7 +1479,7 @@ it.live(
     const withOwnerWork = (ownerWork: string): string =>
       bareRead
         .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n`)
-        .replace(bareHandler, `${ownerWork}, () => Layer.empty);`);
+        .replace(bareHandler, ownerWork + PROVEN_FACTORY_ARGUMENT);
     for (const accepted of [
       bareRead,
       withOwnerWork('{ load: () => Effect.succeed({}) }'),
@@ -1702,7 +1704,7 @@ it.live(
       [
         bareRead
           .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Struct } from 'effect';\n${imports}`)
-          .replace(bareHandler, ownerWork + LAYER_ARGUMENT),
+          .replace(bareHandler, ownerWork + PROVEN_FACTORY_ARGUMENT),
         declarations,
       ].join('\n');
     const withHelper = (body: string): string => withOwnerWork(HELPER_LOAD, stockLoadHelper(body));
@@ -1953,5 +1955,64 @@ it.live(
       withHelper('  return yield* Clock.currentTimeMillis;', "import { Clock } from 'effect';\n"),
     ];
     expect(yield* acceptedReadSources(root, refused), 'ambient or unlisted imports the gate accepted').toEqual([]);
+  }),
+);
+
+it.live(
+  "proves a staged read's service factory like its load step, so what load receives in context.services is local by construction",
+  Effect.fn(function* stagedReadServiceFactory() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    yield* write(root, REMOTE_STOCK_FILE, REMOTE_STOCK_SOURCE);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
+    const servicesLoad =
+      '(input: unknown, context: ReadLoadContext<{ find: (input: unknown) => Effect.Effect<object> }, string>) => context.services.find(input).pipe(Effect.map((found) => ({ found })))';
+    const withFactory = (factory: string, declarations = '', imports = '', load = servicesLoad): string =>
+      [
+        bareRead
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n${imports}`)
+          .replace(bareHandler, `${stagedPipeline(load)}, ${factory});`),
+        declarations,
+      ].join('\n');
+    const remoteImport = REMOTE_STOCK_IMPORT;
+    const factoryFile = 'verticals/inventory-stock/src/api/stock-services.ts';
+    const factoryImport = "import { stockServices } from './stock-services.ts';\n";
+    const provenFactory =
+      '(transaction: unknown) => Effect.succeed({ find: (input: unknown) => Effect.succeed({ input, transaction }) })';
+    // A factory that builds its services from the transaction it is given and proven local code passes, inline,
+    // as a const of the Read module, or exported by a same-owner module.
+    yield* write(
+      root,
+      factoryFile,
+      `import { Effect } from 'effect';\nexport const stockServices = ${provenFactory};\n`,
+    );
+    const accepted = [
+      withFactory(provenFactory),
+      withFactory('stockServices', `const stockServices = ${provenFactory};\n`),
+      withFactory('stockServices', '', factoryImport),
+    ];
+    expect(yield* acceptedReadSources(root, accepted), 'proven service factories the gate refused').toEqual([0, 1, 2]);
+    // A factory that hands load an imported remote client, port or integration refuses, wherever it is built,
+    // as does one the proof cannot read; the load step only ever calls what the factory built.
+    const remoteFactory =
+      "(transaction: unknown) => Effect.succeed({ find: (input: unknown) => fetchRemoteStock({ input, transaction }, 'tenant') })";
+    yield* write(
+      root,
+      factoryFile,
+      `import { Effect } from 'effect';\n${remoteImport}export const stockServices = ${remoteFactory};\n`,
+    );
+    const refused = [
+      withFactory(remoteFactory, '', remoteImport),
+      withFactory(
+        '(transaction: unknown) => Effect.succeed({ find: fetchRemoteStock, transaction })',
+        '',
+        remoteImport,
+      ),
+      withFactory('stockServices', `const stockServices = ${remoteFactory};\n`, remoteImport),
+      withFactory('stockServices', '', factoryImport),
+      withFactory('() => Layer.empty'),
+    ];
+    expect(yield* acceptedReadSources(root, refused), 'unproven service factories the gate accepted').toEqual([]);
   }),
 );
