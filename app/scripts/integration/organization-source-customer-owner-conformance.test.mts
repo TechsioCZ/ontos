@@ -43,6 +43,7 @@ import {
 } from '@app/commerce-customer-context/api/customer-profile-organization-ico-facts';
 import { randomUUID } from 'node:crypto';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { observeAcceptedEffectIdNativeFixture } from '@app/symmy-integration/testing/accepted-effect-native';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { executeCustomerProfileOrganizationIcoFactsWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-organization-ico-facts/client';
@@ -1181,6 +1182,80 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
     return yield* Effect.void;
   },
 );
+const PARTY_RECEIPT_READ = 'party.registry.party-source-effect-receipt.read';
+const PROFILE_SOURCE_READ = 'commerce.customer-context.customer-profile-source.read';
+const PROFILE_ICO_READ = 'commerce.customer-context.organization-customer-profile-ico.read';
+const PROFILE_CREATE_ACTION = 'commerce.customer-context.create-counterparty-purchasing-profile';
+const ICO_CHANGE_ACTION = 'commerce.customer-context.change-organization-customer-profile-ico';
+const originalInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('LostResponseOriginalInvocationId'),
+  Schema.decodeTo(Schema.String),
+);
+const lostResponseRecoveries = [
+  { actionKey: 'party.registry.create-party', audience: PARTY_APP, declarationKey: PARTY_RECEIPT_READ },
+  { actionKey: 'party.registry.update-party', audience: PARTY_APP, declarationKey: PARTY_RECEIPT_READ },
+  {
+    actionKey: 'party.registry.counterparty-customer-onboard',
+    audience: PARTY_APP,
+    declarationKey: PARTY_RECEIPT_READ,
+  },
+  { actionKey: PROFILE_CREATE_ACTION, audience: COMMERCE_APP, declarationKey: PROFILE_SOURCE_READ },
+  { actionKey: ICO_CHANGE_ACTION, audience: COMMERCE_APP, declarationKey: PROFILE_ICO_READ },
+] as const;
+const readKeyOf = {
+  [PARTY_RECEIPT_READ]: 'party.registry.api.party-source-effect-receipt',
+  [PROFILE_ICO_READ]: 'commerce.customer-context.api.organization-customer-profile-ico',
+  [PROFILE_SOURCE_READ]: 'commerce.customer-context.api.customer-profile-source',
+} as const;
+
+/**
+ * Each Organization write the Symmy worker delivered can lose its response; the worker then reads its receipt under a
+ * recovery assertion. The real Shell seals that exact original invocation for the read Symmy declares for the write,
+ * and refuses a read Symmy does not declare for it.
+ */
+const verifyLostResponseRecoveryAuthority = Effect.fn('OrganizationSourceCustomer.lostResponseRecovery')(
+  function* lostResponseRecovery(fixture: OrganizationFixture) {
+    const invocations = new Map<string, string>();
+    for (const recovery of lostResponseRecoveries) {
+      const [original] =
+        yield* fixture.admin`select a.action_invocation_id::text as "actionInvocationId" from core.action_invocations a join symmy_integration.job_effects e on e.owner_invocation_id=a.action_invocation_id and e.tenant_id=a.tenant_id where a.tenant_id=${fixture.tenantId} and a.action_key=${recovery.actionKey} and a.status='succeeded'`.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Tuple([Schema.Struct({ actionInvocationId: originalInvocationIdSchema })]),
+            ),
+          ),
+        );
+      invocations.set(recovery.actionKey, original.actionInvocationId);
+      const issued = yield* fixture.issueOriginalRecovery({
+        ...recovery,
+        actionInvocationId: original.actionInvocationId,
+        readKey: readKeyOf[recovery.declarationKey],
+        requestHash: computeCanonicalValueHash({ actionInvocationId: original.actionInvocationId }),
+      });
+      expect(issued.recovery?.originalActionInvocationId, recovery.actionKey).toBe(original.actionInvocationId);
+    }
+    // A read Symmy declares for another write recovers nothing.
+    for (const [actionKey, declarationKey, audience] of [
+      [PROFILE_CREATE_ACTION, PROFILE_ICO_READ, COMMERCE_APP],
+      [ICO_CHANGE_ACTION, PROFILE_SOURCE_READ, COMMERCE_APP],
+      [PROFILE_CREATE_ACTION, PARTY_RECEIPT_READ, PARTY_APP],
+    ] as const) {
+      const actionInvocationId = invocations.get(actionKey) ?? '';
+      const refused = yield* fixture
+        .issueOriginalRecovery({
+          actionInvocationId,
+          actionKey,
+          audience,
+          declarationKey,
+          readKey: readKeyOf[declarationKey],
+          requestHash: computeCanonicalValueHash({ actionInvocationId }),
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(GatewayForbiddenProblemSchema)(refused), `${actionKey} by ${declarationKey}`).toBe(true);
+    }
+  },
+);
+
 it.live(
   'actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds',
   () =>
@@ -1270,6 +1345,7 @@ it.live(
         yield* verifyOrganizationBusinessNameUpdate(fixture, targets, known, ico).pipe(
           Effect.tapCause(() => fixture.writeDiagnostics()),
         );
+        yield* verifyLostResponseRecoveryAuthority(fixture).pipe(Effect.tapCause(() => fixture.writeDiagnostics()));
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
