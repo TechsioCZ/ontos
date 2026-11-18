@@ -387,7 +387,7 @@ const selectedScopes = (input: PlanInput, narrowedUnit: readonly { readonly 'nod
 
 const planReason = (mode: PlanMode, input: PlanInput, broad: boolean, scopes: readonly CiScope[]) => {
   if (mode === 'scoped') {
-    return `Every changed path is inside ${scopes.map(({ name }) => name).join(' and ')}: their rows, the static contracts and the lint of the changed files run; no unit is built and no service starts.`;
+    return `Every changed path is inside ${scopes.map(({ name }) => name).join(' and ')}: their rows, the static contracts, the lint of the changed files, the lint rule tests and the repository policy run; no unit is built and no service starts.`;
   }
   if (broad || (mode !== 'affected' && input.applyAffected)) {
     return 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';

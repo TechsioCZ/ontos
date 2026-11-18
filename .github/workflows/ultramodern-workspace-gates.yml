@@ -257,11 +257,13 @@ jobs:
   # built outputs wait for the build shards, never for the proof, and node-artifact-proof proves the whole topology
   # on its own runner. A new unit joins one shard (a test checks).
   #
-  # The build mode is the stage deploy's (scripts/zerops/build-app.sh): two unit builds per runner, no build-time
-  # TS checker and no server typecheck or server declaration pass, because the typecheck gate proves the types of the
-  # whole workspace with TS-Go. The `.output` contract is unchanged: the same `build` script of every unit runs and
-  # owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in and no JavaScript source
-  # map is written.
+  # The build mode is main's CI build, not the stage deploy's (scripts/zerops/build-app.sh): two unit builds per
+  # runner, no build-time TS checker and no server typecheck or server declaration pass, because the typecheck gate
+  # proves the types of the whole workspace with TS-Go. The `.output` contract is unchanged: the same `build` script of
+  # every unit runs and owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in and
+  # no JavaScript source map is written, so these artifacts are never the ones shipped. A failure only the deploy's
+  # build can hit (writing maps or origins) fails the stage deploy's own build: the runner build matrix, which runs
+  # before deliver_app marks a deployment attempt, or the Zerops build, which deploys nothing when it fails.
   # The Shell builds alone in shard 1; the verticals are balanced by their measured build seconds (about 580 s of
   # one-at-a-time work per shard) and listed heaviest first, so two build lanes finish together.
   # Listed first among the jobs that start after planning, so on a full run the build shards take free runners
@@ -783,6 +785,10 @@ jobs:
   # outside its project graph (`pnpm lint:effect-diagnostics`).
   # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
   # candidate check, over every file.
+  # The first shard (0 on a narrowed run, 1 otherwise) also typechecks and tests the Effect lint rules and runs the
+  # repository policy, as main's lint job does. The policy lints the whole app tree, the storefronts and every script
+  # included, which the hook's lint globs leave out or check with milder rules, and the rule tests lint real storefront
+  # files, so they belong to this row that every plan runs: a scoped plan skips the Typecheck row.
   format-and-lint:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
     # Lint needs source only; it never holds a runner waiting for build jobs.
@@ -808,6 +814,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the app workspace
+        id: install
         uses: ./.github/actions/install-app
 
       - name: Format and Lint the shard's files through the pre-commit hook
@@ -859,6 +866,22 @@ jobs:
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$RUNNER_TEMP/changed-files"
           git diff --exit-code HEAD
+
+      # Once per run, whatever the hook found.
+      - name: Typecheck the Effect lint rules
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
+        working-directory: app
+        run: mise exec -- pnpm typecheck:lint-rules
+
+      - name: Test the Effect lint rules
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
+        working-directory: app
+        run: mise exec -- pnpm test:lint-rules
+
+      - name: Repository policy over the whole app tree
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}
+        working-directory: app
+        run: mise exec -- pnpm lint:repository-policy
 
   # Suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host artifacts
   # followed by the integration tests. The authenticated browser tests run in browser-integration on their own

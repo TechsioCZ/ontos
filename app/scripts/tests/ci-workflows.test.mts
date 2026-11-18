@@ -723,7 +723,7 @@ const gateCommands = () => {
   );
 };
 
-it('builds in the stage deploy mode because the typecheck gate proves the types', () => {
+it("builds in main's CI mode, not the stage deploy's, because the typecheck gate proves the types", () => {
   const job = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   expect(job['timeout-minutes']).toBe(30);
   // As on main: no build-time checker, no server typecheck or declarations, and no JavaScript source maps, which made
@@ -743,9 +743,6 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   const commands = gateCommands().flat();
   for (const check of [
     'pnpm typecheck',
-    'pnpm typecheck:lint-rules',
-    'pnpm test:lint-rules',
-    'pnpm lint:repository-policy',
     'pnpm api:check:ontos',
     'pnpm handler-services:check',
     'pnpm shell:ui-candidates:check',
@@ -1765,6 +1762,30 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
   expect(lint.find(({ name }) => name === "Format and Lint the shard's files through the pre-commit hook")?.if).toBe(
     'matrix.shard != 0',
   );
+});
+
+it('runs the lint rules and the whole-tree repository policy once in every plan, beside the lint', () => {
+  const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
+  // The row every plan runs: shard 0 of a narrowed run, shard 1 of a whole-tree sweep. A scoped plan skips the
+  // Typecheck row, and the policy lints the whole app tree, so it runs here whatever the hook found.
+  const once = expression("!cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1");
+  expect(lint.filter((step) => step.if === once).map(({ run }) => run)).toEqual([
+    'mise exec -- pnpm typecheck:lint-rules',
+    'mise exec -- pnpm test:lint-rules',
+    'mise exec -- pnpm lint:repository-policy',
+  ]);
+  for (const shards of [[0], [1, 2, 3]]) {
+    expect(
+      shards.filter((shard) => shard <= 1),
+      String(shards),
+    ).toHaveLength(1);
+  }
+  expect(WHOLE_TREE_LINT_SHARDS).toBe('shards=[1,2,3]');
+  expect(
+    readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include.filter(({ commands }) =>
+      /lint-rules|lint:repository-policy/u.test(commands),
+    ),
+  ).toEqual([]);
 });
 
 it('logs the wall time of every gate command', () => {

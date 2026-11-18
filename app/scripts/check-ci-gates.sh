@@ -35,7 +35,7 @@ jq -e '
       all($expected | to_entries[] | select(.key as $key | $optional | index($key) | not); .value == "success") and
       any($expected | to_entries[] | select(.key == "workspace-unit" or .key == "workspace-unit-artifacts"); .value == "success")
     # A diff inside the scopes of scripts/ci-matrices.json builds no unit: its source rows, the static contracts and
-    # the lint of the changed files always run.
+    # the lint row (the changed files, the lint rule tests and the whole-tree repository policy) always run.
     elif $plan.outputs.mode == "scoped" then
       $proof.outputs.proven != "true" and
       all(["workspace-gate", "static-contracts", "format-and-lint"][]; $expected[.] == "success")
