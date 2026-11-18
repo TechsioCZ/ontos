@@ -1783,7 +1783,7 @@ const NATIVE_TOPOLOGY_PROOFS = [
   'whole:organization-identity',
   'whole:customer-readback',
   'whole:customer-roundtrip',
-  'whole:pricing-recovery',
+  'whole:pricing-routes',
   'whole:privacy',
   'whole:privacy-recovery',
   'whole:pricing',

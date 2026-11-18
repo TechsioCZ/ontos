@@ -39,7 +39,7 @@ if [[ "${1:-}" == --execute ]]; then
     whole:customer-roundtrip)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --pool.maxWorkers 1 ;;
-    whole:pricing-recovery)
+    whole:pricing-routes)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --pool.maxWorkers 1 ;;
     whole:privacy)

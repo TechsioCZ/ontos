@@ -255,7 +255,7 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
 });
 
 it('selects extracted root conformance tasks only with root impact, on their original runners', () => {
-  const rootConformance = ['whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-recovery'];
+  const rootConformance = ['whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-routes'];
   const assignments = (entries: typeof templates.integration) =>
     entries.flatMap((entry) =>
       (entry.tasks ?? []).filter((task) => rootConformance.includes(task)).map((task) => ({ name: entry.name, task })),

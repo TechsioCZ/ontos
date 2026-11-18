@@ -991,7 +991,17 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       },
       scenario === 'readback',
     );
+    const tenantRows = admin<{ parties: number; profiles: number }>`select
+          (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
+          (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`;
+    const ownerWrites = admin<{ party: number; profile: number }>`select
+          count(*) filter(where action_key='party.registry.create-party' and status='succeeded')::integer as party,
+          count(*) filter(where action_key='commerce.customer-context.ensure-retail-customer-profile' and status='succeeded')::integer as profile
+          from core.action_invocations where tenant_id=${tenantId}`;
     if (scenario === 'readback') {
+      // The refused reads and wrong-route controls above created nothing and ran no further owner action.
+      expect((yield* tenantRows)[0]).toEqual({ parties: 1, profiles: 1 });
+      expect((yield* ownerWrites)[0]).toEqual({ party: 1, profile: 1 });
       return yield* Effect.void;
     }
     const sourceBinding = admin`select source_occurrence_id,source_order
@@ -1045,19 +1055,14 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     });
     expect(roundTripStatusResponse.status).toBe(200);
     expect(yield* roundTripStatusResponse.json).toMatchObject({ status: 'completed_all' });
-    const [matched] = yield* admin<{ parties: number; profiles: number }>`select
-          (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
-          (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`;
+    const [matched] = yield* tenantRows;
     // The same customer sent again matched its Party and profile: nothing was created a second time.
     expect(matched).toEqual({ parties: 1, profiles: 1 });
     const retainedNativeIds = [...completed, ...roundTripEffects].map((effect) =>
       Option.getOrThrow(effect.owner_invocation_id),
     );
     expect(new Set(retainedNativeIds).size).toBe(4);
-    const [allWrites] = yield* admin<{ party: number; profile: number }>`select
-          count(*) filter(where action_key='party.registry.create-party' and status='succeeded')::integer as party,
-          count(*) filter(where action_key='commerce.customer-context.ensure-retail-customer-profile' and status='succeeded')::integer as profile
-          from core.action_invocations where tenant_id=${tenantId}`;
+    const [allWrites] = yield* ownerWrites;
     expect(allWrites).toEqual({ party: 2, profile: 2 });
     const [binding] = yield* sourceBinding;
     // The source binding of the record moved to the newest observation, with a later order.
