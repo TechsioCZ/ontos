@@ -116,8 +116,8 @@ interface Value {
   /**
    * `true`: data a native String/Trim/NonEmptyString schema or a closed template literal decodes to, and combinators
    * that keep the decoded value (brand, filters, decodeTo onto such a target, a one-member Union, fromJsonString)
-   * carry it unchanged. `false`: a nullable or optional wrapper may yield null or undefined, which vetoes any string
-   * evidence, a string literal included. Only `isClosedString` reads it.
+   * carry it unchanged. `false`: a nullable or optional wrapper, or a record key that may be absent, may yield null or
+   * undefined, which vetoes any string evidence, a string literal included. Only `isClosedString` reads it.
    */
   readonly stringData?: boolean;
 }
@@ -126,9 +126,15 @@ type Completion = 'bad' | 'falls' | 'returns';
 const isClosedString = (value: Value): boolean =>
   !metadataOnly(value) && value.kind === 'data' && value.stringData !== false &&
   (value.stringData === true || ('literal' in value && typeof value.literal === 'string'));
-/** The same data without string evidence: a nullable or optional wrapper may yield null or undefined instead. */
-const possiblyAbsentString = (value: Value | undefined): Value | undefined =>
-  value !== undefined && isClosedString(value) ? { ...value, stringData: false } : value;
+/**
+ * The same data without string or exact literal evidence: a nullable or optional wrapper, or a record key that may be
+ * absent, may yield null or undefined instead, so neither `entry === "ok"` nor a template part may rely on its value.
+ */
+const possiblyAbsent = (value: Value | undefined): Value | undefined => {
+  if (value?.kind !== 'data' || (value.stringData !== true && !('literal' in value))) return value;
+  const { literal: _exact, ...widened } = value;
+  return { ...widened, stringData: false };
+};
 /** A schema whose decoded and encoded values are both closed strings. */
 const isClosedStringSchema = (value: Value): boolean =>
   value.kind === 'schema' && isClosedString(value.payload ?? BAD) && isClosedString(value.encoded ?? value.payload ?? BAD);
@@ -2467,8 +2473,9 @@ class DataFactoryProof {
     if (value.kind === 'record') {
       if (value.omittedFields?.has(name)) return { kind: 'data', literal: undefined };
       // A record's element only stands for its own keys. An inherited Object member (`toString`,
-      // `constructor`, `__proto__`, ...) is not one of them, so it falls through to the guard below.
-      const field = value.fields?.get(name) ?? (name in Object.prototype ? undefined : value.element);
+      // `constructor`, `__proto__`, ...) is not one of them, so it falls through to the guard below. Nothing proves
+      // the key present, so the read may be undefined and keeps no exact literal of the element.
+      const field = value.fields?.get(name) ?? (name in Object.prototype ? undefined : possiblyAbsent(value.element));
       if (field !== undefined) return field;
       // A closed plain-data record has no other own field. Inherited Object members and the members
       // of a native object behind a record stay unmodeled.
@@ -3369,8 +3376,8 @@ class DataFactoryProof {
       args.length === 1 &&
       args[0]?.kind === 'schema'
     ) {
-      const payload = possiblyAbsentString(args[0].payload);
-      const encoded = possiblyAbsentString(args[0].encoded);
+      const payload = possiblyAbsent(args[0].payload);
+      const encoded = possiblyAbsent(args[0].encoded);
       return payload === args[0].payload && encoded === args[0].encoded ? args[0] : { ...args[0], payload, encoded };
     }
     if (this.coreHashDepth > 0 && operation === 'fromJsonString' && args.length === 1 && args[0].native === 'encoder-only-schema') return args[0];
