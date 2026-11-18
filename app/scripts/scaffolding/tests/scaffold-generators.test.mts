@@ -6730,8 +6730,16 @@ it.live(
     const actual = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
     const binding =
       "import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';";
-    // The fixture binds the backend-only registration whether or not this Privacy source has moved to it yet.
-    const handler = actual.replace("import { privacyRegistration } from '../vertical.registration.ts';", binding);
+    const declared = yield* Effect.promise(() =>
+      stat(path.join(appRoot, 'verticals/privacy/vertical.runtime-declaration.ts')).then(
+        () => true,
+        () => false,
+      ),
+    );
+    // Only a Privacy without its runtime declaration gets a synthesized binding; a declared Privacy is checked as is.
+    const handler = declared
+      ? actual
+      : actual.replace("import { privacyRegistration } from '../vertical.registration.ts';", binding);
     expect(handler).toContain(binding);
     expect(accepts(shared, handler)).toBe(true);
     for (const forged of [
