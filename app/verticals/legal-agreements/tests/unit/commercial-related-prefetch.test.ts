@@ -226,191 +226,197 @@ const Detail = () => {
   const value = useAgreementCustomer(context, contract, 7);
   return createElement('p', null, value.customerName ?? value.customerNameFeedback);
 };
-it.live('warms the real name and the first selected render makes no extra request', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    yield* preloadAgreementCustomers(context, [contract], 7);
-    expect(customerReads).toHaveLength(1);
-    yield* mountInRoute(createElement(Detail));
-    expect(text()).toContain('Authorized customer');
-    yield* agreementCustomerData.read(input);
-    expect(customerReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-it.live('preloads the exact cold deep link, then another selection reuses base records without rereading them', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    yield* Effect.promise(() => preloadPage(props));
-    expect(recordsReads).toHaveLength(1);
-    expect(customerReads).toHaveLength(1);
-    expect(customerReads[0]).toEqual({ counterpartyRef: contract.counterpartyRef });
-    const selected = agreementCustomerData.snapshot(input);
-    expect(selected.state).toBe('ready');
-    const next = { ...props, search: `?resourceId=${otherId}` };
-    yield* Effect.promise(() => preloadPage(next));
-    expect(recordsReads).toHaveLength(1);
-    expect(customerReads).toHaveLength(2);
-    expect(agreements.key(agreementsInputOf(props, ''))).toBe(agreements.key(agreementsInputOf(next, '')));
-  }).pipe(Effect.provide(network)),
-);
-it.live('never translates a missing or invalid contract identity into a customer lookup', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    yield* Effect.promise(() => preloadPage({ ...props, search: '?resourceId=10000000-0000-4000-8000-000000000099' }));
-    yield* Effect.promise(() => preloadPage({ ...props, search: '?resourceId=invalid' }));
-    expect(customerReads).toHaveLength(0);
-    expect(recordsReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-it.live('separates every scope field, revision, module and reference tenant', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    yield* preloadAgreementCustomers(context, [contract], 7);
-    for (const next of [
-      { ...context, tenantId: 'other' },
-      { ...context, principalId: 'other' },
-      { ...context, legalEntityId: 'other' },
-    ]) {
-      yield* preloadAgreementCustomers(next, [contract], 7);
-      expect(agreements.key({ context: next, legalEntityId: next.legalEntityId, resourceId: id })).not.toBe(
-        agreements.key(agreementsInputOf(props, '')),
+it.layer(network, { excludeTestServices: true })('commercial related prefetch', (suite) => {
+  suite.effect('warms the real name and the first selected render makes no extra request', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      yield* preloadAgreementCustomers(context, [contract], 7);
+      expect(customerReads).toHaveLength(1);
+      yield* mountInRoute(createElement(Detail));
+      expect(text()).toContain('Authorized customer');
+      yield* agreementCustomerData.read(input);
+      expect(customerReads).toHaveLength(1);
+    }),
+  );
+  suite.effect(
+    'preloads the exact cold deep link, then another selection reuses base records without rereading them',
+    () =>
+      Effect.gen(function* test() {
+        yield* pinTestDocument;
+        yield* Effect.promise(() => preloadPage(props));
+        expect(recordsReads).toHaveLength(1);
+        expect(customerReads).toHaveLength(1);
+        expect(customerReads[0]).toEqual({ counterpartyRef: contract.counterpartyRef });
+        const selected = agreementCustomerData.snapshot(input);
+        expect(selected.state).toBe('ready');
+        const next = { ...props, search: `?resourceId=${otherId}` };
+        yield* Effect.promise(() => preloadPage(next));
+        expect(recordsReads).toHaveLength(1);
+        expect(customerReads).toHaveLength(2);
+        expect(agreements.key(agreementsInputOf(props, ''))).toBe(agreements.key(agreementsInputOf(next, '')));
+      }),
+  );
+  suite.effect('never translates a missing or invalid contract identity into a customer lookup', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      yield* Effect.promise(() =>
+        preloadPage({ ...props, search: '?resourceId=10000000-0000-4000-8000-000000000099' }),
       );
-    }
-    yield* agreementCustomerData.read({ ...input, revision: 8 });
-    yield* agreementCustomerData.read({ ...input, scope: pageDataScopeKey(context, 'other.module') ?? '' });
-    yield* agreementCustomerData.read({
-      ...input,
-      contract: {
-        ...contract,
-        counterpartyRef: { ...contract.counterpartyRef, tenantId: '10000000-0000-4000-8000-000000000004' },
-      },
-    });
-    expect(customerReads).toHaveLength(7);
-  }).pipe(Effect.provide(network)),
-);
-it.live('skips speculative reads without full identity and never caches a denied name as success', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    yield* preloadAgreementCustomers(undefined, [contract], 7);
-    yield* preloadAgreementCustomers({ ...context, tenantId: '' }, [contract], 7);
-    expect(customerReads).toHaveLength(0);
-    customerAnswer = Effect.fail(customerForbidden);
-    yield* preloadAgreementCustomers(context, [contract], 7);
-    expect(agreementCustomerData.snapshot(input).state).toBe('failed');
-    customerAnswer = Effect.succeed(customer('Now allowed'));
-    expect(yield* agreementCustomerData.read(input)).toBe('Now allowed');
-    expect(customerReads).toHaveLength(2);
-  }).pipe(Effect.provide(network)),
-);
-it.live('preserves the base contract when name lookup fails and drops it after a primary denial', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    const query = agreementsInputOf(props, '');
-    yield* agreements.read(query);
-    customerAnswer = Effect.fail(customerUnavailable);
-    yield* preloadAgreementCustomers(context, [contract], 7);
-    const base = agreements.snapshot(query);
-    expect(base.state).toBe('ready');
-    if (base.state === 'ready') {
-      expect(Option.getOrUndefined(base.value)?.records.contracts[0]?.contractRef.resourceId).toBe(id);
-    }
-    recordsAnswer = Effect.fail(recordsForbidden);
-    yield* agreements.refresh(query);
-    expect(agreements.snapshot(query).state).toBe('failed');
-  }).pipe(Effect.provide(network)),
-);
-it.live('starts at most two visible rows and aborts active/queued prefetch on page change', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const stopped = yield* Deferred.make<boolean>();
-    let active = 0;
-    let aborted = 0;
-    customerAnswer = Effect.gen(function* blocked() {
-      active += 1;
-      if (active === 2) {
-        yield* Deferred.succeed(started, true);
+      yield* Effect.promise(() => preloadPage({ ...props, search: '?resourceId=invalid' }));
+      expect(customerReads).toHaveLength(0);
+      expect(recordsReads).toHaveLength(1);
+    }),
+  );
+  suite.effect('separates every scope field, revision, module and reference tenant', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      yield* preloadAgreementCustomers(context, [contract], 7);
+      for (const next of [
+        { ...context, tenantId: 'other' },
+        { ...context, principalId: 'other' },
+        { ...context, legalEntityId: 'other' },
+      ]) {
+        yield* preloadAgreementCustomers(next, [contract], 7);
+        expect(agreements.key({ context: next, legalEntityId: next.legalEntityId, resourceId: id })).not.toBe(
+          agreements.key(agreementsInputOf(props, '')),
+        );
       }
-      return yield* Effect.never;
-    }).pipe(
-      Effect.onInterrupt(() =>
-        Effect.gen(function* recordAbort() {
-          aborted += 1;
-          if (aborted === 2) {
-            yield* Deferred.succeed(stopped, true);
-          }
-        }),
-      ),
-    );
-    const third = {
-      ...contract,
-      contractRef: { ...contract.contractRef, resourceId: '10000000-0000-4000-8000-000000000005' },
-    };
-    const fiber = yield* Effect.forkChild(preloadAgreementCustomers(context, [...records.contracts, third], 7));
-    yield* Deferred.await(started);
-    expect(active).toBe(2);
-    yield* Fiber.interrupt(fiber);
-    yield* Deferred.await(stopped);
-    expect(aborted).toBe(2);
-    expect(customerReads).toHaveLength(2);
-  }).pipe(Effect.provide(network)),
-);
-it.live('never returns an old name after live invalidation, including a newly denied owner read', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    yield* preloadAgreementCustomers(context, [contract], 7);
-    window.dispatchEvent(new Event(moduleChangeEvent));
-    expect(agreementCustomerData.snapshot(input).state).toBe('pending');
-    customerAnswer = Effect.fail(customerForbidden);
-    yield* agreementCustomerData.read(input).pipe(Effect.ignore);
-    expect(agreementCustomerData.snapshot(input).state).toBe('failed');
-    yield* mountInRoute(createElement(Detail));
-    expect(text()).not.toContain('Authorized customer');
-    unmountAll();
-    window.dispatchEvent(new Event(moduleWriteEvent));
-    expect(agreementCustomerData.snapshot(input).state).toBe('pending');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a foreground name read shares prefetch and survives cancellation of the old visible page', () =>
-  Effect.gen(function* sharedForeground() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    customerAnswer = Deferred.succeed(started, true).pipe(
-      Effect.andThen(Deferred.await(release)),
-      Effect.as(customer('Joined customer')),
-    );
-    const background = yield* Effect.forkChild(preloadAgreementCustomers(context, [contract], 7));
-    yield* Deferred.await(started);
-    const foreground = yield* Effect.forkChild(agreementCustomerData.read(input));
-    yield* Effect.yieldNow;
-    yield* Fiber.interrupt(background);
-    yield* Deferred.succeed(release, true);
-    expect(yield* Fiber.join(foreground)).toBe('Joined customer');
-    expect(customerReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('keeps independently denied customer-list feedback alongside the authorized base contract', () =>
-  Effect.gen(function* independentCustomerList() {
-    yield* pinTestDocument;
-    customerListAnswer = Effect.fail(customerListForbidden);
-    yield* agreements.read(agreementsInputOf(props, '')).pipe(Effect.ignore);
-    const partial = agreements.snapshot(agreementsInputOf(props, ''));
-    expect(partial.state).toBe('failed');
-    if (partial.state === 'failed') {
-      const summary = Match.value(partial.error).pipe(
-        Match.tag('AgreementsSectionsIncomplete', ({ value }) => Option.some(value)),
-        Match.orElse(() => Option.none()),
+      yield* agreementCustomerData.read({ ...input, revision: 8 });
+      yield* agreementCustomerData.read({ ...input, scope: pageDataScopeKey(context, 'other.module') ?? '' });
+      yield* agreementCustomerData.read({
+        ...input,
+        contract: {
+          ...contract,
+          counterpartyRef: { ...contract.counterpartyRef, tenantId: '10000000-0000-4000-8000-000000000004' },
+        },
+      });
+      expect(customerReads).toHaveLength(7);
+    }),
+  );
+  suite.effect('skips speculative reads without full identity and never caches a denied name as success', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      yield* preloadAgreementCustomers(undefined, [contract], 7);
+      yield* preloadAgreementCustomers({ ...context, tenantId: '' }, [contract], 7);
+      expect(customerReads).toHaveLength(0);
+      customerAnswer = Effect.fail(customerForbidden);
+      yield* preloadAgreementCustomers(context, [contract], 7);
+      expect(agreementCustomerData.snapshot(input).state).toBe('failed');
+      customerAnswer = Effect.succeed(customer('Now allowed'));
+      expect(yield* agreementCustomerData.read(input)).toBe('Now allowed');
+      expect(customerReads).toHaveLength(2);
+    }),
+  );
+  suite.effect('preserves the base contract when name lookup fails and drops it after a primary denial', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      const query = agreementsInputOf(props, '');
+      yield* agreements.read(query);
+      customerAnswer = Effect.fail(customerUnavailable);
+      yield* preloadAgreementCustomers(context, [contract], 7);
+      const base = agreements.snapshot(query);
+      expect(base.state).toBe('ready');
+      if (base.state === 'ready') {
+        expect(Option.getOrUndefined(base.value)?.records.contracts[0]?.contractRef.resourceId).toBe(id);
+      }
+      recordsAnswer = Effect.fail(recordsForbidden);
+      yield* agreements.refresh(query);
+      expect(agreements.snapshot(query).state).toBe('failed');
+    }),
+  );
+  suite.effect('starts at most two visible rows and aborts active/queued prefetch on page change', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const stopped = yield* Deferred.make<boolean>();
+      let active = 0;
+      let aborted = 0;
+      customerAnswer = Effect.gen(function* blocked() {
+        active += 1;
+        if (active === 2) {
+          yield* Deferred.succeed(started, true);
+        }
+        return yield* Effect.never;
+      }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.gen(function* recordAbort() {
+            aborted += 1;
+            if (aborted === 2) {
+              yield* Deferred.succeed(stopped, true);
+            }
+          }),
+        ),
       );
-      expect(Option.getOrUndefined(summary)?.records.contracts[0]?.contractRef.resourceId).toBe(id);
-      expect(Option.getOrUndefined(summary)?.customers.pipe(Result.getFailure, Option.getOrUndefined)).toBe(
-        'forbidden',
+      const third = {
+        ...contract,
+        contractRef: { ...contract.contractRef, resourceId: '10000000-0000-4000-8000-000000000005' },
+      };
+      const fiber = yield* Effect.forkChild(preloadAgreementCustomers(context, [...records.contracts, third], 7));
+      yield* Deferred.await(started);
+      expect(active).toBe(2);
+      yield* Fiber.interrupt(fiber);
+      yield* Deferred.await(stopped);
+      expect(aborted).toBe(2);
+      expect(customerReads).toHaveLength(2);
+    }),
+  );
+  suite.effect('never returns an old name after live invalidation, including a newly denied owner read', () =>
+    Effect.gen(function* test() {
+      yield* pinTestDocument;
+      yield* preloadAgreementCustomers(context, [contract], 7);
+      window.dispatchEvent(new Event(moduleChangeEvent));
+      expect(agreementCustomerData.snapshot(input).state).toBe('pending');
+      customerAnswer = Effect.fail(customerForbidden);
+      yield* agreementCustomerData.read(input).pipe(Effect.ignore);
+      expect(agreementCustomerData.snapshot(input).state).toBe('failed');
+      yield* mountInRoute(createElement(Detail));
+      expect(text()).not.toContain('Authorized customer');
+      unmountAll();
+      window.dispatchEvent(new Event(moduleWriteEvent));
+      expect(agreementCustomerData.snapshot(input).state).toBe('pending');
+    }),
+  );
+
+  suite.effect('a foreground name read shares prefetch and survives cancellation of the old visible page', () =>
+    Effect.gen(function* sharedForeground() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      customerAnswer = Deferred.succeed(started, true).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.as(customer('Joined customer')),
       );
-    }
-    // The selected counterparty has its own governed read, not the customer-list authorization.
-    yield* preloadAgreementCustomers(context, [contract], 7);
-    expect(yield* agreementCustomerData.read(input)).toBe('Authorized customer');
-  }).pipe(Effect.provide(network)),
-);
+      const background = yield* Effect.forkChild(preloadAgreementCustomers(context, [contract], 7));
+      yield* Deferred.await(started);
+      const foreground = yield* Effect.forkChild(agreementCustomerData.read(input));
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(background);
+      yield* Deferred.succeed(release, true);
+      expect(yield* Fiber.join(foreground)).toBe('Joined customer');
+      expect(customerReads).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('keeps independently denied customer-list feedback alongside the authorized base contract', () =>
+    Effect.gen(function* independentCustomerList() {
+      yield* pinTestDocument;
+      customerListAnswer = Effect.fail(customerListForbidden);
+      yield* agreements.read(agreementsInputOf(props, '')).pipe(Effect.ignore);
+      const partial = agreements.snapshot(agreementsInputOf(props, ''));
+      expect(partial.state).toBe('failed');
+      if (partial.state === 'failed') {
+        const summary = Match.value(partial.error).pipe(
+          Match.tag('AgreementsSectionsIncomplete', ({ value }) => Option.some(value)),
+          Match.orElse(() => Option.none()),
+        );
+        expect(Option.getOrUndefined(summary)?.records.contracts[0]?.contractRef.resourceId).toBe(id);
+        expect(Option.getOrUndefined(summary)?.customers.pipe(Result.getFailure, Option.getOrUndefined)).toBe(
+          'forbidden',
+        );
+      }
+      // The selected counterparty has its own governed read, not the customer-list authorization.
+      yield* preloadAgreementCustomers(context, [contract], 7);
+      expect(yield* agreementCustomerData.read(input)).toBe('Authorized customer');
+    }),
+  );
+});

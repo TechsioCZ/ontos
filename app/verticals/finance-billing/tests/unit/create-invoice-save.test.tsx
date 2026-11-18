@@ -11,7 +11,7 @@ import {
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { ToastProvider } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Option } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import type { ReactElement } from 'react';
 import { VatChoicesApi } from '../../shared/apis/vat-choices.ts';
 import { CreateInvoiceDialog } from '../../src/routes/[lang]/finance/create-invoice-dialog.tsx';
@@ -129,8 +129,8 @@ afterEach(() => {
   unmountAll();
 });
 
-describe('new invoice safeguards', () => {
-  it.live('reads the required text of a required field in Czech', () =>
+it.layer(network, { excludeTestServices: true })('new invoice safeguards', (suite) => {
+  suite.effect('reads the required text of a required field in Czech', () =>
     Effect.gen(function* requiredText() {
       const drafts: DraftInvoiceInput[] = [];
       yield* mount(
@@ -142,10 +142,10 @@ describe('new invoice safeguards', () => {
         label.textContent?.includes(czech('finance-billing.faktury.form.issueDate')),
       );
       expect(issueDateLabel?.textContent ?? '').toContain(requiredLabelFor('cs'));
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again', () =>
+  suite.effect('a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again', () =>
     Effect.gen(function* zeroPrice() {
       const drafts: DraftInvoiceInput[] = [];
       yield* mount(
@@ -164,10 +164,10 @@ describe('new invoice safeguards', () => {
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(drafts).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a failed create keeps the form and its input and shows the error toast', () =>
+  suite.effect('a failed create keeps the form and its input and shows the error toast', () =>
     Effect.gen(function* failed() {
       const drafts: DraftInvoiceInput[] = [];
       yield* mount(
@@ -185,10 +185,10 @@ describe('new invoice safeguards', () => {
       expect(drafts).toHaveLength(1);
       yield* clickCancel;
       expect(leaveQuestion()).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a draft sent for approval announces it and closes the panel', () =>
+  suite.effect('a draft sent for approval announces it and closes the panel', () =>
     Effect.gen(function* proposed() {
       const drafts: DraftInvoiceInput[] = [];
       yield* mount(
@@ -204,6 +204,6 @@ describe('new invoice safeguards', () => {
       expect(closes).toEqual([false]);
       expect(visibleToasts()).toEqual([{ title: PENDING_APPROVAL, type: 'info' }]);
       expect(drafts).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

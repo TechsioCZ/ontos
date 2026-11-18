@@ -326,176 +326,178 @@ afterEach(() => {
 });
 const seed = leaseRecords.read(input).pipe(Effect.asVoid);
 
-it.live('a real mounted consumer collects every exact page and never touches the broad ledger', () =>
-  Effect.gen(function* mountedCollection() {
-    yield* pinTestDocument;
-    answers.push(
-      Effect.succeed(page(1, 200, 'cursor-200')),
-      Effect.succeed(page(201, 200, 'cursor-400')),
-      Effect.succeed(page(401, 50)),
-    );
-    const view = yield* mount();
-    yield* waitUntil(() => view.text() === '450');
-    expect(reads.leaseInvoices).toEqual([
-      { counterpartyRef: customerCounterpartyRef, limit: 200, occupancyRef, unitRef },
-      { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-200', limit: 200, occupancyRef, unitRef },
-      { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-400', limit: 200, occupancyRef, unitRef },
-    ]);
-    expect(reads.finance).toHaveLength(0);
-    const collected = yield* leaseInvoicesExact.read(detail());
-    expect(collected.invoices).toHaveLength(450);
-    expect(new Set(collected.invoices.map((entry) => entry.ref.resourceId)).size).toBe(450);
-    expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('lease invoices preload', (suite) => {
+  suite.effect('a real mounted consumer collects every exact page and never touches the broad ledger', () =>
+    Effect.gen(function* mountedCollection() {
+      yield* pinTestDocument;
+      answers.push(
+        Effect.succeed(page(1, 200, 'cursor-200')),
+        Effect.succeed(page(201, 200, 'cursor-400')),
+        Effect.succeed(page(401, 50)),
+      );
+      const view = yield* mount();
+      yield* waitUntil(() => view.text() === '450');
+      expect(reads.leaseInvoices).toEqual([
+        { counterpartyRef: customerCounterpartyRef, limit: 200, occupancyRef, unitRef },
+        { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-200', limit: 200, occupancyRef, unitRef },
+        { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-400', limit: 200, occupancyRef, unitRef },
+      ]);
+      expect(reads.finance).toHaveLength(0);
+      const collected = yield* leaseInvoicesExact.read(detail());
+      expect(collected.invoices).toHaveLength(450);
+      expect(new Set(collected.invoices.map((entry) => entry.ref.resourceId)).size).toBe(450);
+      expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
+    }),
+  );
 
-it.live('a denied or unavailable revalidation clears ready rows in the mounted consumer', () =>
-  Effect.gen(function* mountedDenial() {
-    yield* pinTestDocument;
-    answers.push(Effect.succeed(page(1, 2)));
-    const view = yield* mount();
-    yield* waitUntil(() => view.text() === '2');
-    answer = Effect.fail(
-      Schema.decodeUnknownSync(LeaseInvoicesForbiddenProblemSchema)({
-        _tag: 'LeaseInvoicesForbiddenProblem',
-        detail: 'Lease invoices are denied',
-        status: 403,
-        title: 'Forbidden',
-        type: 'urn:test:lease-invoices-forbidden',
-      }),
-    );
-    yield* dispatch(moduleChangeEvent);
-    yield* waitUntil(() => view.text() === 'unavailable');
-    expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
-    answer = Effect.fail(
-      Schema.decodeUnknownSync(LeaseInvoicesUnavailableProblemSchema)({
-        _tag: 'LeaseInvoicesUnavailableProblem',
-        detail: 'Lease invoices are unavailable',
-        retryable: true,
-        status: 503,
-        title: 'Unavailable',
-        type: 'urn:test:lease-invoices-unavailable',
-      }),
-    );
-    yield* dispatch(moduleWriteEvent);
-    yield* waitUntil(() => view.text() === 'unavailable');
-    expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
-    expect(reads.finance).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a denied or unavailable revalidation clears ready rows in the mounted consumer', () =>
+    Effect.gen(function* mountedDenial() {
+      yield* pinTestDocument;
+      answers.push(Effect.succeed(page(1, 2)));
+      const view = yield* mount();
+      yield* waitUntil(() => view.text() === '2');
+      answer = Effect.fail(
+        yield* Schema.decodeUnknownEffect(LeaseInvoicesForbiddenProblemSchema)({
+          _tag: 'LeaseInvoicesForbiddenProblem',
+          detail: 'Lease invoices are denied',
+          status: 403,
+          title: 'Forbidden',
+          type: 'urn:test:lease-invoices-forbidden',
+        }),
+      );
+      yield* dispatch(moduleChangeEvent);
+      yield* waitUntil(() => view.text() === 'unavailable');
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      answer = Effect.fail(
+        yield* Schema.decodeUnknownEffect(LeaseInvoicesUnavailableProblemSchema)({
+          _tag: 'LeaseInvoicesUnavailableProblem',
+          detail: 'Lease invoices are unavailable',
+          retryable: true,
+          status: 503,
+          title: 'Unavailable',
+          type: 'urn:test:lease-invoices-unavailable',
+        }),
+      );
+      yield* dispatch(moduleWriteEvent);
+      yield* waitUntil(() => view.text() === 'unavailable');
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      expect(reads.finance).toHaveLength(0);
+    }),
+  );
 
-it.live('revision drift and a stalled cursor render unavailable, then a later event recovers', () =>
-  Effect.gen(function* mountedDrift() {
-    yield* pinTestDocument;
-    answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed({ ...page(2, 1), revision: 24 }));
-    const view = yield* mount();
-    yield* waitUntil(() => view.text() === 'unavailable');
-    expect(reads.leaseInvoices).toHaveLength(2);
-    expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
-    answer = Effect.succeed(page(1, 1));
-    yield* dispatch(moduleChangeEvent);
-    yield* waitUntil(() => view.text() === '1');
-    expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
-    answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed(page(1, 1, 'cursor-1')));
-    yield* dispatch(moduleChangeEvent);
-    yield* waitUntil(() => view.text() === 'unavailable');
-    expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
-    expect(reads.finance).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('revision drift and a stalled cursor render unavailable, then a later event recovers', () =>
+    Effect.gen(function* mountedDrift() {
+      yield* pinTestDocument;
+      answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed({ ...page(2, 1), revision: 24 }));
+      const view = yield* mount();
+      yield* waitUntil(() => view.text() === 'unavailable');
+      expect(reads.leaseInvoices).toHaveLength(2);
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      answer = Effect.succeed(page(1, 1));
+      yield* dispatch(moduleChangeEvent);
+      yield* waitUntil(() => view.text() === '1');
+      expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
+      answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed(page(1, 1, 'cursor-1')));
+      yield* dispatch(moduleChangeEvent);
+      yield* waitUntil(() => view.text() === 'unavailable');
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      expect(reads.finance).toHaveLength(0);
+    }),
+  );
 
-it.live('unmounting cancels the in-flight page without settling a partial or empty success', () =>
-  Effect.gen(function* mountedCancel() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    answers.push(
-      Effect.succeed(page(1, 1, 'cursor-1')),
-      Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never)),
-    );
-    const view = yield* mount();
-    yield* Deferred.await(started);
-    expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
-    expect(view.text()).toBe('loading');
-    view.unmount();
-    yield* settle;
-    expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
-    expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
-    expect(reads.finance).toHaveLength(0);
-    answer = Effect.succeed(page(1, 1));
-    const remount = yield* mount();
-    yield* waitUntil(() => remount.text() === '1');
-    expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('unmounting cancels the in-flight page without settling a partial or empty success', () =>
+    Effect.gen(function* mountedCancel() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      answers.push(
+        Effect.succeed(page(1, 1, 'cursor-1')),
+        Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never)),
+      );
+      const view = yield* mount();
+      yield* Deferred.await(started);
+      expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
+      expect(view.text()).toBe('loading');
+      view.unmount();
+      yield* settle;
+      expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      expect(reads.finance).toHaveLength(0);
+      answer = Effect.succeed(page(1, 1));
+      const remount = yield* mount();
+      yield* waitUntil(() => remount.text() === '1');
+      expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
+    }),
+  );
 
-it.live('a settled module write clears ready rows before the next exact collection settles', () =>
-  Effect.gen(function* mountedStaleClear() {
-    yield* pinTestDocument;
-    const revalidated = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    answers.push(
-      Effect.succeed(page(1, 1)),
-      Deferred.succeed(revalidated, true).pipe(Effect.andThen(Deferred.await(release)), Effect.as(page(501, 1))),
-    );
-    const view = yield* mount();
-    yield* waitUntil(() => view.text() === '1');
-    expect(invoiceIds()[0]).toBe('invoice-0001');
-    yield* dispatch(moduleWriteEvent);
-    yield* Deferred.await(revalidated);
-    yield* settle;
-    expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
-    expect(view.text()).toBe('loading');
-    expect(invoiceIds()).toEqual([]);
-    yield* Deferred.succeed(release, true);
-    yield* settle;
-    yield* waitUntil(() => view.text() === '1');
-    expect(invoiceIds()[0]).toBe('invoice-0501');
-    expect(reads.finance).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a settled module write clears ready rows before the next exact collection settles', () =>
+    Effect.gen(function* mountedStaleClear() {
+      yield* pinTestDocument;
+      const revalidated = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      answers.push(
+        Effect.succeed(page(1, 1)),
+        Deferred.succeed(revalidated, true).pipe(Effect.andThen(Deferred.await(release)), Effect.as(page(501, 1))),
+      );
+      const view = yield* mount();
+      yield* waitUntil(() => view.text() === '1');
+      expect(invoiceIds()[0]).toBe('invoice-0001');
+      yield* dispatch(moduleWriteEvent);
+      yield* Deferred.await(revalidated);
+      yield* settle;
+      expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
+      expect(view.text()).toBe('loading');
+      expect(invoiceIds()).toEqual([]);
+      yield* Deferred.succeed(release, true);
+      yield* settle;
+      yield* waitUntil(() => view.text() === '1');
+      expect(invoiceIds()[0]).toBe('invoice-0501');
+      expect(reads.finance).toHaveLength(0);
+    }),
+  );
 
-it.live('preloads every exact page for a validated row and leaves the broad ledger read untouched', () =>
-  Effect.gen(function* boundedPrewarm() {
-    yield* pinTestDocument;
-    answers.push(
-      Effect.succeed(page(1, 200, 'cursor-200')),
-      Effect.succeed(page(201, 200, 'cursor-400')),
-      Effect.succeed(page(401, 50)),
-    );
-    yield* seed;
-    yield* preloadLeaseRelated(detail());
-    expect(reads.leaseInvoices).toEqual([
-      { counterpartyRef: customerCounterpartyRef, limit: 200, occupancyRef, unitRef },
-      { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-200', limit: 200, occupancyRef, unitRef },
-      { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-400', limit: 200, occupancyRef, unitRef },
-    ]);
-    const snapshot = leaseInvoicesExact.snapshot(detail());
-    expect(snapshot.state).toBe('ready');
-    if (snapshot.state === 'ready') {
-      expect(snapshot.value.invoices).toHaveLength(450);
-      expect(snapshot.value.revision).toBe(23);
-      expect(new Set(snapshot.value.invoices.map((entry) => entry.ref.resourceId)).size).toBe(450);
-    }
-    expect(reads.finance).toHaveLength(0);
-    expect(reads.work).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('preloads every exact page for a validated row and leaves the broad ledger read untouched', () =>
+    Effect.gen(function* boundedPrewarm() {
+      yield* pinTestDocument;
+      answers.push(
+        Effect.succeed(page(1, 200, 'cursor-200')),
+        Effect.succeed(page(201, 200, 'cursor-400')),
+        Effect.succeed(page(401, 50)),
+      );
+      yield* seed;
+      yield* preloadLeaseRelated(detail());
+      expect(reads.leaseInvoices).toEqual([
+        { counterpartyRef: customerCounterpartyRef, limit: 200, occupancyRef, unitRef },
+        { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-200', limit: 200, occupancyRef, unitRef },
+        { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-400', limit: 200, occupancyRef, unitRef },
+      ]);
+      const snapshot = leaseInvoicesExact.snapshot(detail());
+      expect(snapshot.state).toBe('ready');
+      if (snapshot.state === 'ready') {
+        expect(snapshot.value.invoices).toHaveLength(450);
+        expect(snapshot.value.revision).toBe(23);
+        expect(new Set(snapshot.value.invoices.map((entry) => entry.ref.resourceId)).size).toBe(450);
+      }
+      expect(reads.finance).toHaveLength(0);
+      expect(reads.work).toHaveLength(1);
+    }),
+  );
 
-it.live('foreign-tenant, unseeded and guest rows never reach the exact read with the wrong request', () =>
-  Effect.gen(function* scopeFence() {
-    yield* pinTestDocument;
-    yield* preloadLeaseRelated(detail());
-    expect(reads.leaseInvoices).toHaveLength(0);
-    yield* seed;
-    const foreign = detail({ ...(records.occupancies[0] ?? row), unitRef: { ...unitRef, tenantId: id(99) } });
-    yield* preloadLeaseRelated(foreign);
-    expect(reads.leaseInvoices).toHaveLength(0);
-    expect(Exit.isFailure(yield* Effect.exit(leaseInvoicesExact.read(foreign)))).toBe(true);
-    yield* preloadLeaseRelated(guestDetail());
-    expect(reads.leaseInvoices[0]).toEqual({
-      limit: 200,
-      occupancyRef: guestRow.occupancyRef,
-      unitRef: guestRow.unitRef,
-    });
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('foreign-tenant, unseeded and guest rows never reach the exact read with the wrong request', () =>
+    Effect.gen(function* scopeFence() {
+      yield* pinTestDocument;
+      yield* preloadLeaseRelated(detail());
+      expect(reads.leaseInvoices).toHaveLength(0);
+      yield* seed;
+      const foreign = detail({ ...(records.occupancies[0] ?? row), unitRef: { ...unitRef, tenantId: id(99) } });
+      yield* preloadLeaseRelated(foreign);
+      expect(reads.leaseInvoices).toHaveLength(0);
+      expect(Exit.isFailure(yield* Effect.exit(leaseInvoicesExact.read(foreign)))).toBe(true);
+      yield* preloadLeaseRelated(guestDetail());
+      expect(reads.leaseInvoices[0]).toEqual({
+        limit: 200,
+        occupancyRef: guestRow.occupancyRef,
+        unitRef: guestRow.unitRef,
+      });
+    }),
+  );
+});

@@ -10,7 +10,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { useEffect } from 'react';
 import type { ReactElement } from 'react';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
@@ -71,6 +71,7 @@ const recordsAt = (product: string) =>
     },
   });
 let records = recordsAt('POHODA');
+const committed = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ changed: true, revision: 2 });
 const ActionApi = ApplyCommandActionApi.prefix('/finance-billing-api');
 const LedgerApi = RecordsApi.prefix('/finance-billing-api');
 const network = browserNetwork(
@@ -86,7 +87,7 @@ const network = browserNetwork(
       group.handle('execute', ({ payload }) =>
         Effect.sync(() => {
           sent.push(payload.command);
-          return Schema.decodeUnknownSync(ApplyCommandResultSchema)({ changed: true, revision: 2 });
+          return committed;
         }),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
@@ -156,169 +157,174 @@ beforeEach(() => {
 });
 afterEach(unmountAll);
 
-describe('invoice extras and accounting setup save from Uložit only', () => {
-  it.live(
-    'Uložit opens the payment review; only its confirmation records the payment once, then the dialog closes',
-    () =>
-      Effect.gen(function* step1() {
-        yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
-        expect(saveButton().disabled).toBe(true);
-        expect(lastFooterButton()).toBe(saveButton());
+it.layer(network, { excludeTestServices: true })(
+  'invoice extras and accounting setup save from Uložit only',
+  (suite) => {
+    suite.effect(
+      'Uložit opens the payment review; only its confirmation records the payment once, then the dialog closes',
+      () =>
+        Effect.gen(function* step1() {
+          yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
+          expect(saveButton().disabled).toBe(true);
+          expect(lastFooterButton()).toBe(saveButton());
 
-        yield* typeInto('payment-amount', '400');
-        yield* typeInto('payment-note', 'Platba převodem');
-        expect(sent).toEqual([]);
-        yield* clickSave;
+          yield* typeInto('payment-amount', '400');
+          yield* typeInto('payment-note', 'Platba převodem');
+          expect(sent).toEqual([]);
+          yield* clickSave;
+          expect(paymentReview()).toBe(true);
+          expect(sent).toEqual([]);
+          yield* clickNamed(REVIEW_BACK);
+          expect(paymentReview()).toBe(false);
+          expect(sent).toEqual([]);
+
+          yield* clickSave;
+          yield* clickNamed(REVIEW_CONFIRM);
+          yield* waitUntil(() => closes.length === 1);
+          expect(sent).toEqual([
+            {
+              _tag: 'RecordManualPayment',
+              actorLabel: 'Jana Nováková',
+              amountMinor: 40_000,
+              invoiceRef: invoice.ref,
+              note: 'Platba převodem',
+              paidOn: '2026-10-20',
+            },
+          ]);
+        }),
+    );
+
+    suite.effect('Uložit in the leave question opens the review too; nothing is recorded before it is confirmed', () =>
+      Effect.gen(function* reviewOnLeave() {
+        yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
+        yield* typeInto('payment-amount', '250');
+        yield* clickCancel;
+        expect(leaveQuestion()).toBe(true);
+        yield* clickNamed(labels.save);
+        expect(leaveQuestion()).toBe(false);
         expect(paymentReview()).toBe(true);
         expect(sent).toEqual([]);
-        yield* clickNamed(REVIEW_BACK);
-        expect(paymentReview()).toBe(false);
-        expect(sent).toEqual([]);
-
-        yield* clickSave;
         yield* clickNamed(REVIEW_CONFIRM);
+        yield* waitUntil(() => closes.length === 1);
+        expect(sent).toHaveLength(1);
+        expect(Predicate.isTagged(sent[0], 'RecordManualPayment')).toBe(true);
+        expect(sent[0]).toMatchObject({ amountMinor: 25_000 });
+      }),
+    );
+
+    suite.effect('a payment over the remaining amount is never sent', () =>
+      Effect.gen(function* step2() {
+        yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
+        yield* typeInto('payment-amount', '5000');
+        expect(saveButton().disabled).toBe(true);
+        yield* clickSave;
+        expect(sent).toEqual([]);
+      }),
+    );
+
+    suite.effect('the suggested reminder text closes untouched; a typed recipient asks before leaving', () =>
+      Effect.gen(function* step3() {
+        const props = { counterpartyName: 'Kavárna Dolce', invoice, issuerName: 'OntOS Demo s.r.o.', provider: smtp };
+        yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
+        yield* clickCancel;
+        expect(closes).toEqual(['closed']);
+        expect(leaveQuestion()).toBe(false);
+
+        unmountAll();
+        closes.length = 0;
+        yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
+        yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
+        yield* clickCancel;
+        expect(leaveQuestion()).toBe(true);
+        yield* clickDiscard;
+        expect(closes).toEqual(['closed']);
+        expect(sent).toEqual([]);
+      }),
+    );
+
+    suite.effect(
+      'Uložit opens a review naming the recipient; only its confirmation sends the reminder e-mail once',
+      () =>
+        Effect.gen(function* step4() {
+          yield* mount((vm) => (
+            <InvoiceReminderForm
+              counterpartyName="Kavárna Dolce"
+              invoice={invoice}
+              issuerName="OntOS Demo s.r.o."
+              onClose={onClose}
+              provider={smtp}
+              vm={vm}
+            />
+          ));
+          yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
+          expect(lastFooterButton()).toBe(saveButton());
+          yield* clickSave;
+          expect(reminderReview()).toContain('fakturace@kavarna.cz');
+          expect(sent).toEqual([]);
+          yield* clickNamed(REMINDER_BACK);
+          expect(reminderReview()).toBeUndefined();
+          expect(sent).toEqual([]);
+
+          yield* clickSave;
+          yield* clickNamed(REMINDER_CONFIRM);
+          yield* waitUntil(() => closes.length === 1);
+          expect(sent).toHaveLength(1);
+          expect(Predicate.isTagged(sent[0], 'RecordReminder')).toBe(true);
+          expect(sent[0]).toMatchObject({ invoiceRef: invoice.ref, recipient: 'fakturace@kavarna.cz' });
+        }),
+    );
+
+    suite.effect('Uložit in the leave question opens the reminder review; it never sends the e-mail by itself', () =>
+      Effect.gen(function* reminderOnLeave() {
+        const props = { counterpartyName: 'Kavárna Dolce', invoice, issuerName: 'OntOS Demo s.r.o.', provider: smtp };
+        yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
+        yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
+        yield* clickCancel;
+        expect(leaveQuestion()).toBe(true);
+        yield* clickNamed(labels.save);
+        expect(leaveQuestion()).toBe(false);
+        expect(reminderReview()).toContain('fakturace@kavarna.cz');
+        expect(sent).toEqual([]);
+        expect(closes).toEqual([]);
+        yield* clickNamed(REMINDER_CONFIRM);
+        yield* waitUntil(() => closes.length === 1);
+        expect(sent).toHaveLength(1);
+      }),
+    );
+
+    suite.effect('the accounting setup is saved once by Uložit and the form closes', () =>
+      Effect.gen(function* step5() {
+        yield* mount((vm) => <AccountingSetupForm onClose={onClose} vm={vm} />);
+        expect(saveButton().disabled).toBe(true);
+        yield* typeInto('setup-issuerIco', '12345678');
+        yield* typeInto('setup-accountant', 'Eva Malá');
+        yield* clickSave;
         yield* waitUntil(() => closes.length === 1);
         expect(sent).toEqual([
           {
-            _tag: 'RecordManualPayment',
+            _tag: 'UpdateAccountingSetup',
+            accountant: 'Eva Malá',
             actorLabel: 'Jana Nováková',
-            amountMinor: 40_000,
-            invoiceRef: invoice.ref,
-            note: 'Platba převodem',
-            paidOn: '2026-10-20',
+            issuerIco: '12345678',
+            product: 'POHODA',
           },
         ]);
-      }).pipe(Effect.provide(network)),
-  );
+      }),
+    );
 
-  it.live('Uložit in the leave question opens the review too; nothing is recorded before it is confirmed', () =>
-    Effect.gen(function* reviewOnLeave() {
-      yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
-      yield* typeInto('payment-amount', '250');
-      yield* clickCancel;
-      expect(leaveQuestion()).toBe(true);
-      yield* clickNamed(labels.save);
-      expect(leaveQuestion()).toBe(false);
-      expect(paymentReview()).toBe(true);
-      expect(sent).toEqual([]);
-      yield* clickNamed(REVIEW_CONFIRM);
-      yield* waitUntil(() => closes.length === 1);
-      expect(sent).toHaveLength(1);
-      expect(Predicate.isTagged(sent[0], 'RecordManualPayment')).toBe(true);
-      expect(sent[0]).toMatchObject({ amountMinor: 25_000 });
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a payment over the remaining amount is never sent', () =>
-    Effect.gen(function* step2() {
-      yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
-      yield* typeInto('payment-amount', '5000');
-      expect(saveButton().disabled).toBe(true);
-      yield* clickSave;
-      expect(sent).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('the suggested reminder text closes untouched; a typed recipient asks before leaving', () =>
-    Effect.gen(function* step3() {
-      const props = { counterpartyName: 'Kavárna Dolce', invoice, issuerName: 'OntOS Demo s.r.o.', provider: smtp };
-      yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
-      yield* clickCancel;
-      expect(closes).toEqual(['closed']);
-      expect(leaveQuestion()).toBe(false);
-
-      unmountAll();
-      closes.length = 0;
-      yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
-      yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
-      yield* clickCancel;
-      expect(leaveQuestion()).toBe(true);
-      yield* clickDiscard;
-      expect(closes).toEqual(['closed']);
-      expect(sent).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('Uložit opens a review naming the recipient; only its confirmation sends the reminder e-mail once', () =>
-    Effect.gen(function* step4() {
-      yield* mount((vm) => (
-        <InvoiceReminderForm
-          counterpartyName="Kavárna Dolce"
-          invoice={invoice}
-          issuerName="OntOS Demo s.r.o."
-          onClose={onClose}
-          provider={smtp}
-          vm={vm}
-        />
-      ));
-      yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
-      expect(lastFooterButton()).toBe(saveButton());
-      yield* clickSave;
-      expect(reminderReview()).toContain('fakturace@kavarna.cz');
-      expect(sent).toEqual([]);
-      yield* clickNamed(REMINDER_BACK);
-      expect(reminderReview()).toBeUndefined();
-      expect(sent).toEqual([]);
-
-      yield* clickSave;
-      yield* clickNamed(REMINDER_CONFIRM);
-      yield* waitUntil(() => closes.length === 1);
-      expect(sent).toHaveLength(1);
-      expect(Predicate.isTagged(sent[0], 'RecordReminder')).toBe(true);
-      expect(sent[0]).toMatchObject({ invoiceRef: invoice.ref, recipient: 'fakturace@kavarna.cz' });
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('Uložit in the leave question opens the reminder review; it never sends the e-mail by itself', () =>
-    Effect.gen(function* reminderOnLeave() {
-      const props = { counterpartyName: 'Kavárna Dolce', invoice, issuerName: 'OntOS Demo s.r.o.', provider: smtp };
-      yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
-      yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
-      yield* clickCancel;
-      expect(leaveQuestion()).toBe(true);
-      yield* clickNamed(labels.save);
-      expect(leaveQuestion()).toBe(false);
-      expect(reminderReview()).toContain('fakturace@kavarna.cz');
-      expect(sent).toEqual([]);
-      expect(closes).toEqual([]);
-      yield* clickNamed(REMINDER_CONFIRM);
-      yield* waitUntil(() => closes.length === 1);
-      expect(sent).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('the accounting setup is saved once by Uložit and the form closes', () =>
-    Effect.gen(function* step5() {
-      yield* mount((vm) => <AccountingSetupForm onClose={onClose} vm={vm} />);
-      expect(saveButton().disabled).toBe(true);
-      yield* typeInto('setup-issuerIco', '12345678');
-      yield* typeInto('setup-accountant', 'Eva Malá');
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      expect(sent).toEqual([
-        {
-          _tag: 'UpdateAccountingSetup',
-          accountant: 'Eva Malá',
-          actorLabel: 'Jana Nováková',
-          issuerIco: '12345678',
-          product: 'POHODA',
-        },
-      ]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an accounting setup someone else changed meanwhile is refused as a conflict', () =>
-    Effect.gen(function* step6() {
-      yield* mount((vm) => <AccountingSetupForm onClose={onClose} vm={vm} />);
-      yield* typeInto('setup-accountant', 'Eva Malá');
-      // Someone else saved another accounting system; the page data now shows it.
-      records = recordsAt('Money S3');
-      yield* acted(() => current().reload());
-      yield* waitUntil(() => current().snapshot?.state.accountingSetup?.product === 'Money S3');
-      yield* clickSave;
-      yield* waitUntil(() => document.querySelector('[data-save-state="conflict"]') !== null);
-      expect(sent).toEqual([]);
-      expect(closes).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
-});
+    suite.effect('an accounting setup someone else changed meanwhile is refused as a conflict', () =>
+      Effect.gen(function* step6() {
+        yield* mount((vm) => <AccountingSetupForm onClose={onClose} vm={vm} />);
+        yield* typeInto('setup-accountant', 'Eva Malá');
+        // Someone else saved another accounting system; the page data now shows it.
+        records = recordsAt('Money S3');
+        yield* acted(() => current().reload());
+        yield* waitUntil(() => current().snapshot?.state.accountingSetup?.product === 'Money S3');
+        yield* clickSave;
+        yield* waitUntil(() => document.querySelector('[data-save-state="conflict"]') !== null);
+        expect(sent).toEqual([]);
+        expect(closes).toEqual([]);
+      }),
+    );
+  },
+);

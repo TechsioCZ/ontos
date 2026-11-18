@@ -173,19 +173,10 @@ const network = browserNetwork(
  * every read the passing time started has reached the owner before the test looks.
  */
 const pass = (millis: number): Effect.Effect<void> =>
-  Effect.promise(() =>
-    act(async () => {
-      await rstest.advanceTimersByTimeAsync(millis);
-    }),
-  ).pipe(
+  Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(millis))).pipe(
     Effect.andThen(networkIdle),
-    Effect.andThen(
-      Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(0);
-        }),
-      ),
-    ),
+    Effect.andThen(Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(0)))),
+    Effect.asVoid,
   );
 
 /** Lets fake time pass in one-second steps, so every timer and every read it causes runs in between. */
@@ -207,77 +198,79 @@ afterEach(() => {
   rstest.useRealTimers();
 });
 
-it.live('opening a 30-row customers page warms the details of its first rows only', () =>
-  Effect.gen(function* openList() {
-    yield* pinTestDocument;
-    const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
-    yield* idle(5);
-    expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
-    yield* idle(60);
-    // The warmed rows are not warmed again when their freshness window passes.
-    expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
-    unmount();
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customers list warm requests', (suite) => {
+  suite.effect('opening a 30-row customers page warms the details of its first rows only', () =>
+    Effect.gen(function* openList() {
+      yield* pinTestDocument;
+      const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+      yield* idle(5);
+      expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
+      yield* idle(60);
+      // The warmed rows are not warmed again when their freshness window passes.
+      expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
+      unmount();
+    }),
+  );
 
-it.live('an opened customers page warms its rows only once the browser is idle', () =>
-  Effect.gen(function* warmWhenIdle() {
-    yield* pinTestDocument;
-    const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
-    // No time has passed: a read the render itself started would have reached the owner by now.
-    yield* pass(0);
-    expect(reads()).toBe(0);
-    // Within a second of an idle browser every warm read has been sent.
-    yield* idle(1);
-    expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
-    unmount();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('an opened customers page warms its rows only once the browser is idle', () =>
+    Effect.gen(function* warmWhenIdle() {
+      yield* pinTestDocument;
+      const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+      // No time has passed: a read the render itself started would have reached the owner by now.
+      yield* pass(0);
+      expect(reads()).toBe(0);
+      // Within a second of an idle browser every warm read has been sent.
+      yield* idle(1);
+      expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
+      unmount();
+    }),
+  );
 
-it.live('a customers page left before the browser is idle sends no detail read', () =>
-  Effect.gen(function* leaveBeforeIdle() {
-    yield* pinTestDocument;
-    const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
-    unmount();
-    yield* idle(5);
-    expect(reads()).toBe(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a customers page left before the browser is idle sends no detail read', () =>
+    Effect.gen(function* leaveBeforeIdle() {
+      yield* pinTestDocument;
+      const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+      unmount();
+      yield* idle(5);
+      expect(reads()).toBe(0);
+    }),
+  );
 
-it.live('pointing at a row further down reads that customer once', () =>
-  Effect.gen(function* pointAtColdRow() {
-    yield* pinTestDocument;
-    const last = rows.at(-1);
-    expect(last).toBeDefined();
-    if (last !== undefined) {
-      prefetchCustomerDetail(context, last);
-      prefetchCustomerDetail(context, last);
-    }
-    yield* idle(1);
-    expect(reads()).toBe(DETAIL_READS);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('pointing at a row further down reads that customer once', () =>
+    Effect.gen(function* pointAtColdRow() {
+      yield* pinTestDocument;
+      const last = rows.at(-1);
+      expect(last).toBeDefined();
+      if (last !== undefined) {
+        prefetchCustomerDetail(context, last);
+        prefetchCustomerDetail(context, last);
+      }
+      yield* idle(1);
+      expect(reads()).toBe(DETAIL_READS);
+    }),
+  );
 
-it.live('a fast sweep over many rows reads at most two customers at once and then only the last row', () =>
-  Effect.gen(function* fastSweep() {
-    yield* pinTestDocument;
-    const release = yield* Deferred.make<boolean>();
-    const started = yield* Deferred.make<boolean>();
-    gate = release;
-    startedSignal = { count: INTENT_READ_CONCURRENCY, started };
-    for (const customer of rows.slice(LIST_WARM_ROWS)) {
-      prefetchCustomerDetail(context, customer);
-    }
-    yield* Deferred.await(started);
-    expect(detailsStarted()).toBe(INTENT_READ_CONCURRENCY);
-    yield* Deferred.succeed(release, true);
-    yield* idle(5);
-    expect(reads()).toBe((INTENT_READ_CONCURRENCY + 1) * DETAIL_READS);
-    // Every detail ever started, in order: the two the limiter admitted while held, then only the last row.
-    expect(counterpartyReads.map((input) => input.counterpartyRef)).toEqual([
-      counterpartyRefOf(LIST_WARM_ROWS),
-      counterpartyRefOf(LIST_WARM_ROWS + 1),
-      counterpartyRefOf(ROWS - 1),
-    ]);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a fast sweep over many rows reads at most two customers at once and then only the last row', () =>
+    Effect.gen(function* fastSweep() {
+      yield* pinTestDocument;
+      const release = yield* Deferred.make<boolean>();
+      const started = yield* Deferred.make<boolean>();
+      gate = release;
+      startedSignal = { count: INTENT_READ_CONCURRENCY, started };
+      for (const customer of rows.slice(LIST_WARM_ROWS)) {
+        prefetchCustomerDetail(context, customer);
+      }
+      yield* Deferred.await(started);
+      expect(detailsStarted()).toBe(INTENT_READ_CONCURRENCY);
+      yield* Deferred.succeed(release, true);
+      yield* idle(5);
+      expect(reads()).toBe((INTENT_READ_CONCURRENCY + 1) * DETAIL_READS);
+      // Every detail ever started, in order: the two the limiter admitted while held, then only the last row.
+      expect(counterpartyReads.map((input) => input.counterpartyRef)).toEqual([
+        counterpartyRefOf(LIST_WARM_ROWS),
+        counterpartyRefOf(LIST_WARM_ROWS + 1),
+        counterpartyRefOf(ROWS - 1),
+      ]);
+    }),
+  );
+});

@@ -226,216 +226,218 @@ beforeEach(() => {
   window.dispatchEvent(new Event(moduleChangeEvent));
 });
 
-it.live('base records settle without a full-table guest-identity burst', () =>
-  Effect.gen(function* usefulBase() {
-    yield* pinTestDocument;
-    const current = yield* leaseRecords.read(input);
-    expect(current.records.occupancies).toHaveLength(3);
-    expect(reads.guest).toHaveLength(0);
-    expect(reads.counterparty).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('warms only the current supplied rows through independently governed tenant and guest reads', () =>
-  Effect.gen(function* warmsRows() {
-    yield* pinTestDocument;
-    yield* preloadLeaseOccupants(input, [row(2, true), row(1)], 7);
-    expect(reads.guest).toContainEqual({
-      correlation: expect.any(String),
-      payload: { partyRef: row(2, true).guestPartyRef },
-    });
-    expect(reads.counterparty).toContainEqual({
-      correlation: expect.any(String),
-      payload: { counterpartyRef: row(1).customerCounterpartyRef },
-    });
-    expect(reads.guest).toHaveLength(1);
-    expect(leaseOccupant.snapshot(detail(3, 7, true)).state).toBe('pending');
-    expect(yield* leaseOccupant.read(detail(2, 7, true))).toBe('Guest');
-    expect(reads.guest).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it('keys actual revision, occupant reference and full tenant/principal/company/module identity', () => {
-  const original = occupantKey(detail(1));
-  for (const field of ['tenantId', 'principalId', 'legalEntityId'] as const) {
-    const changed = leaseInputOf({ ...context, [field]: id(99) });
-    expect(leaseRecords.key(changed)).not.toBe(leaseRecords.key(input));
-    expect(occupantKey({ ...detail(1), ...changed })).not.toBe(original);
-  }
-  expect(occupantKey(detail(1, 8))).not.toBe(original);
-  expect(occupantKey(detail(1, 7, true))).not.toBe(original);
-  expect(original).toContain('property.leasing');
-});
-
-it.live('missing context and cross-tenant rows never enter the reusable background cache', () =>
-  Effect.gen(function* noScopeReuse() {
-    yield* pinTestDocument;
-    yield* preloadLeaseOccupants(leaseInputOf(), [row(1)], 7);
-    yield* preloadLeaseOccupants(leaseInputOf({ ...context, principalId: '' }), [row(1)], 7);
-    yield* preloadLeaseOccupants(leaseInputOf({ ...context, tenantId: id(99) }), [row(1)], 7);
-    expect(reads.counterparty).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('denied tenant access remains failed and retries without consulting the customer list', () =>
-  Effect.gen(function* retriesDenied() {
-    yield* pinTestDocument;
-    counterpartyAnswer = (payload) =>
-      reads.counterparty.length === 1
-        ? Effect.fail(
-            CounterpartyReadForbiddenProblemSchema.make({
-              detail: 'Denied',
-              status: 403,
-              title: 'Forbidden',
-              type: 'https://ontos.dev/problems/counterparty-read-forbidden',
-            }),
-          )
-        : Effect.succeed(tenantAnswer(payload));
-    yield* preloadLeaseOccupants(input, [row(1)], 7);
-    expect(leaseOccupant.snapshot(detail(1)).state).toBe('failed');
-    expect(yield* leaseOccupant.read(detail(1))).toBe('Tenant');
-    expect(reads.counterparty).toHaveLength(2);
-    expect(reads.directory).toHaveLength(0);
-    expect(reads.guest).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('two background rows dedupe a foreground join and cancel queued rows without cancelling that join', () =>
-  Effect.gen(function* cancelsRows() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    const stopped = yield* Deferred.make<boolean>();
-    let active = 0;
-    let total = 0;
-    // PageDataWork tracks the client load lifetime. Cancelling a fetch need not stop its server handler.
-    const onWork = (event: CustomEvent<PageDataWork>) => {
-      active += 1;
-      event.detail.onSettled(() => {
-        active -= 1;
-        if (active === 1) {
-          Deferred.doneUnsafe(stopped, Effect.succeed(true));
-        }
-      });
-    };
-    yield* Effect.acquireRelease(
-      Effect.sync(() => window.addEventListener(pageDataWorkEvent, onWork)),
-      () => Effect.sync(() => window.removeEventListener(pageDataWorkEvent, onWork)),
-    );
-    counterpartyAnswer = (payload) =>
-      Effect.gen(function* blockedTenant() {
-        total += 1;
-        if (total === 2) {
-          yield* Deferred.succeed(started, true);
-        }
-        return yield* Deferred.await(release).pipe(Effect.as(tenantAnswer(payload)));
-      });
-    const background = yield* Effect.forkChild(preloadLeaseOccupants(input, [row(1), row(2), row(3)], 7));
-    yield* Deferred.await(started);
-    window.removeEventListener(pageDataWorkEvent, onWork);
-    expect(active).toBe(2);
-    const foreground = yield* Effect.forkChild(leaseOccupant.read(detail(1)));
-    yield* Effect.yieldNow;
-    yield* Fiber.interrupt(background);
-    yield* Deferred.await(stopped);
-    expect(active).toBe(1);
-    expect(total).toBe(2);
-    yield* Deferred.succeed(release, true);
-    expect(yield* Fiber.join(foreground)).toBe('Tenant');
-    expect(total).toBe(2);
-  }).pipe(Effect.scoped, Effect.provide(network)),
-);
-
-it.live('live and settled-write invalidation discard the previous occupant with unchanged row revision', () =>
-  Effect.gen(function* invalidates() {
-    yield* pinTestDocument;
-    yield* leaseOccupant.read(detail(1));
-    for (const event of [moduleChangeEvent, moduleWriteEvent]) {
-      window.dispatchEvent(new Event(event));
-      expect(leaseOccupant.snapshot(detail(1)).state).toBe('pending');
-      yield* leaseOccupant.read(detail(1));
-    }
-    expect(reads.counterparty).toHaveLength(3);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('cold direct URLs prepare the exact authorized row and do not read unknown occupants', () =>
-  Effect.gen(function* directPreload() {
-    yield* pinTestDocument;
-    yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
-    expect(leaseOccupant.snapshot(detail(2, 7, true)).state).toBe('ready');
-    expect(reads.guest).toHaveLength(1);
-    yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }));
-    expect(reads.guest).toHaveLength(1);
-    expect(reads.counterparty).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a denied primary refresh removes stale records and their write flag', () =>
-  Effect.gen(function* deniedBase() {
-    yield* pinTestDocument;
-    yield* leaseRecords.read(input);
-    recordsAnswer = Effect.fail(
-      RecordsForbiddenProblemSchema.make({
-        detail: 'Denied',
-        status: 403,
-        title: 'Forbidden',
-        type: 'https://ontos.dev/problems/records-forbidden',
-      }),
-    );
-    yield* leaseRecords.refresh(input);
-    expect(leaseRecords.snapshot(input).state).toBe('failed');
-    expect(leaseRecords.snapshot(input)).not.toHaveProperty('value');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('caps speculative work at 200 rendered rows', () =>
-  Effect.gen(function* boundsRows() {
-    yield* pinTestDocument;
-    yield* preloadLeaseOccupants(
-      input,
-      Array.from({ length: 202 }, (_, index) => row(index + 1)),
-      9,
-    );
-    expect(reads.counterparty).toHaveLength(200);
-    expect(leaseOccupant.snapshot(detail(201, 9)).state).toBe('pending');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('an unrelated foreground row starts outside the two occupied background slots', () =>
-  Effect.gen(function* foregroundPriority() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    const foregroundStarted = yield* Deferred.make<boolean>();
-    let total = 0;
-    counterpartyAnswer = (payload) =>
-      Effect.gen(function* blockedTenant() {
-        total += 1;
-        if (total === 2) {
-          yield* Deferred.succeed(started, true);
-        }
-        if (total === 3) {
-          yield* Deferred.succeed(foregroundStarted, true);
-        }
-        return yield* Deferred.await(release).pipe(Effect.as(tenantAnswer(payload)));
-      });
-    const background = yield* Effect.forkChild(preloadLeaseOccupants(input, [row(1), row(2), row(3)], 7));
-    yield* Deferred.await(started);
-    const foreground = yield* Effect.forkChild(leaseOccupant.read(detail(4)));
-    yield* Deferred.await(foregroundStarted);
-    expect(total).toBe(3);
-    yield* Fiber.interrupt(background);
-    yield* Deferred.succeed(release, true);
-    expect(yield* Fiber.join(foreground)).toBe('Tenant');
-    expect(total).toBe(3);
-  }).pipe(Effect.provide(network)),
-);
-
-it('does not reuse incomplete context across mounts or partial identity changes', () => {
-  const missing = leaseInputOf(undefined, 'mount-a');
-  expect(leaseRecords.key(leaseInputOf(undefined, 'mount-b'))).not.toBe(leaseRecords.key(missing));
-  expect(leaseRecords.key(leaseInputOf({ ...context, principalId: '' }, 'mount-a'))).not.toBe(
-    leaseRecords.key(missing),
+it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (suite) => {
+  suite.effect('base records settle without a full-table guest-identity burst', () =>
+    Effect.gen(function* usefulBase() {
+      yield* pinTestDocument;
+      const current = yield* leaseRecords.read(input);
+      expect(current.records.occupancies).toHaveLength(3);
+      expect(reads.guest).toHaveLength(0);
+      expect(reads.counterparty).toHaveLength(0);
+    }),
   );
+
+  suite.effect('warms only the current supplied rows through independently governed tenant and guest reads', () =>
+    Effect.gen(function* warmsRows() {
+      yield* pinTestDocument;
+      yield* preloadLeaseOccupants(input, [row(2, true), row(1)], 7);
+      expect(reads.guest).toContainEqual({
+        correlation: expect.any(String),
+        payload: { partyRef: row(2, true).guestPartyRef },
+      });
+      expect(reads.counterparty).toContainEqual({
+        correlation: expect.any(String),
+        payload: { counterpartyRef: row(1).customerCounterpartyRef },
+      });
+      expect(reads.guest).toHaveLength(1);
+      expect(leaseOccupant.snapshot(detail(3, 7, true)).state).toBe('pending');
+      expect(yield* leaseOccupant.read(detail(2, 7, true))).toBe('Guest');
+      expect(reads.guest).toHaveLength(1);
+    }),
+  );
+
+  it('keys actual revision, occupant reference and full tenant/principal/company/module identity', () => {
+    const original = occupantKey(detail(1));
+    for (const field of ['tenantId', 'principalId', 'legalEntityId'] as const) {
+      const changed = leaseInputOf({ ...context, [field]: id(99) });
+      expect(leaseRecords.key(changed)).not.toBe(leaseRecords.key(input));
+      expect(occupantKey({ ...detail(1), ...changed })).not.toBe(original);
+    }
+    expect(occupantKey(detail(1, 8))).not.toBe(original);
+    expect(occupantKey(detail(1, 7, true))).not.toBe(original);
+    expect(original).toContain('property.leasing');
+  });
+
+  suite.effect('missing context and cross-tenant rows never enter the reusable background cache', () =>
+    Effect.gen(function* noScopeReuse() {
+      yield* pinTestDocument;
+      yield* preloadLeaseOccupants(leaseInputOf(), [row(1)], 7);
+      yield* preloadLeaseOccupants(leaseInputOf({ ...context, principalId: '' }), [row(1)], 7);
+      yield* preloadLeaseOccupants(leaseInputOf({ ...context, tenantId: id(99) }), [row(1)], 7);
+      expect(reads.counterparty).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('denied tenant access remains failed and retries without consulting the customer list', () =>
+    Effect.gen(function* retriesDenied() {
+      yield* pinTestDocument;
+      counterpartyAnswer = (payload) =>
+        reads.counterparty.length === 1
+          ? Effect.fail(
+              CounterpartyReadForbiddenProblemSchema.make({
+                detail: 'Denied',
+                status: 403,
+                title: 'Forbidden',
+                type: 'https://ontos.dev/problems/counterparty-read-forbidden',
+              }),
+            )
+          : Effect.succeed(tenantAnswer(payload));
+      yield* preloadLeaseOccupants(input, [row(1)], 7);
+      expect(leaseOccupant.snapshot(detail(1)).state).toBe('failed');
+      expect(yield* leaseOccupant.read(detail(1))).toBe('Tenant');
+      expect(reads.counterparty).toHaveLength(2);
+      expect(reads.directory).toHaveLength(0);
+      expect(reads.guest).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('two background rows dedupe a foreground join and cancel queued rows without cancelling that join', () =>
+    Effect.gen(function* cancelsRows() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      const stopped = yield* Deferred.make<boolean>();
+      let active = 0;
+      let total = 0;
+      // PageDataWork tracks the client load lifetime. Cancelling a fetch need not stop its server handler.
+      const onWork = (event: CustomEvent<PageDataWork>) => {
+        active += 1;
+        event.detail.onSettled(() => {
+          active -= 1;
+          if (active === 1) {
+            Deferred.doneUnsafe(stopped, Effect.succeed(true));
+          }
+        });
+      };
+      yield* Effect.acquireRelease(
+        Effect.sync(() => window.addEventListener(pageDataWorkEvent, onWork)),
+        () => Effect.sync(() => window.removeEventListener(pageDataWorkEvent, onWork)),
+      );
+      counterpartyAnswer = (payload) =>
+        Effect.gen(function* blockedTenant() {
+          total += 1;
+          if (total === 2) {
+            yield* Deferred.succeed(started, true);
+          }
+          return yield* Deferred.await(release).pipe(Effect.as(tenantAnswer(payload)));
+        });
+      const background = yield* Effect.forkChild(preloadLeaseOccupants(input, [row(1), row(2), row(3)], 7));
+      yield* Deferred.await(started);
+      window.removeEventListener(pageDataWorkEvent, onWork);
+      expect(active).toBe(2);
+      const foreground = yield* Effect.forkChild(leaseOccupant.read(detail(1)));
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(background);
+      yield* Deferred.await(stopped);
+      expect(active).toBe(1);
+      expect(total).toBe(2);
+      yield* Deferred.succeed(release, true);
+      expect(yield* Fiber.join(foreground)).toBe('Tenant');
+      expect(total).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('live and settled-write invalidation discard the previous occupant with unchanged row revision', () =>
+    Effect.gen(function* invalidates() {
+      yield* pinTestDocument;
+      yield* leaseOccupant.read(detail(1));
+      for (const event of [moduleChangeEvent, moduleWriteEvent]) {
+        window.dispatchEvent(new Event(event));
+        expect(leaseOccupant.snapshot(detail(1)).state).toBe('pending');
+        yield* leaseOccupant.read(detail(1));
+      }
+      expect(reads.counterparty).toHaveLength(3);
+    }),
+  );
+
+  suite.effect('cold direct URLs prepare the exact authorized row and do not read unknown occupants', () =>
+    Effect.gen(function* directPreload() {
+      yield* pinTestDocument;
+      yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
+      expect(leaseOccupant.snapshot(detail(2, 7, true)).state).toBe('ready');
+      expect(reads.guest).toHaveLength(1);
+      yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }));
+      expect(reads.guest).toHaveLength(1);
+      expect(reads.counterparty).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('a denied primary refresh removes stale records and their write flag', () =>
+    Effect.gen(function* deniedBase() {
+      yield* pinTestDocument;
+      yield* leaseRecords.read(input);
+      recordsAnswer = Effect.fail(
+        RecordsForbiddenProblemSchema.make({
+          detail: 'Denied',
+          status: 403,
+          title: 'Forbidden',
+          type: 'https://ontos.dev/problems/records-forbidden',
+        }),
+      );
+      yield* leaseRecords.refresh(input);
+      expect(leaseRecords.snapshot(input).state).toBe('failed');
+      expect(leaseRecords.snapshot(input)).not.toHaveProperty('value');
+    }),
+  );
+
+  suite.effect('caps speculative work at 200 rendered rows', () =>
+    Effect.gen(function* boundsRows() {
+      yield* pinTestDocument;
+      yield* preloadLeaseOccupants(
+        input,
+        Array.from({ length: 202 }, (_, index) => row(index + 1)),
+        9,
+      );
+      expect(reads.counterparty).toHaveLength(200);
+      expect(leaseOccupant.snapshot(detail(201, 9)).state).toBe('pending');
+    }),
+  );
+
+  suite.effect('an unrelated foreground row starts outside the two occupied background slots', () =>
+    Effect.gen(function* foregroundPriority() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      const foregroundStarted = yield* Deferred.make<boolean>();
+      let total = 0;
+      counterpartyAnswer = (payload) =>
+        Effect.gen(function* blockedTenant() {
+          total += 1;
+          if (total === 2) {
+            yield* Deferred.succeed(started, true);
+          }
+          if (total === 3) {
+            yield* Deferred.succeed(foregroundStarted, true);
+          }
+          return yield* Deferred.await(release).pipe(Effect.as(tenantAnswer(payload)));
+        });
+      const background = yield* Effect.forkChild(preloadLeaseOccupants(input, [row(1), row(2), row(3)], 7));
+      yield* Deferred.await(started);
+      const foreground = yield* Effect.forkChild(leaseOccupant.read(detail(4)));
+      yield* Deferred.await(foregroundStarted);
+      expect(total).toBe(3);
+      yield* Fiber.interrupt(background);
+      yield* Deferred.succeed(release, true);
+      expect(yield* Fiber.join(foreground)).toBe('Tenant');
+      expect(total).toBe(3);
+    }),
+  );
+
+  it('does not reuse incomplete context across mounts or partial identity changes', () => {
+    const missing = leaseInputOf(undefined, 'mount-a');
+    expect(leaseRecords.key(leaseInputOf(undefined, 'mount-b'))).not.toBe(leaseRecords.key(missing));
+    expect(leaseRecords.key(leaseInputOf({ ...context, principalId: '' }, 'mount-a'))).not.toBe(
+      leaseRecords.key(missing),
+    );
+  });
 });

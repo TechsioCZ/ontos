@@ -12,7 +12,7 @@ import {
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Match, Option, Schema } from 'effect';
 import { useEffect } from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import type { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
@@ -209,8 +209,8 @@ beforeEach(() => {
 });
 afterEach(unmountAll);
 
-describe('invoice workflow forms save from Uložit only', () => {
-  it.live(
+it.layer(network, { excludeTestServices: true })('invoice workflow forms save from Uložit only', (suite) => {
+  suite.effect(
     'earlier documents: typing and Enter send nothing; checked amounts are saved once and the dialog closes',
     () =>
       Effect.gen(function* settlement() {
@@ -235,10 +235,10 @@ describe('invoice workflow forms save from Uložit only', () => {
             note: 'DDP 2026-01',
           },
         ]);
-      }).pipe(Effect.provide(network)),
+      }),
   );
 
-  it.live('earlier documents: someone else saved meanwhile, so Uložit is refused as a conflict', () =>
+  suite.effect('earlier documents: someone else saved meanwhile, so Uložit is refused as a conflict', () =>
     Effect.gen(function* settlementConflict() {
       yield* mountForm('settlement');
       yield* typeInto(`prior-${advance.ref.resourceId}`, '200');
@@ -257,10 +257,10 @@ describe('invoice workflow forms save from Uložit only', () => {
       yield* waitUntil(() => (document.body.textContent ?? '').includes(labels.conflict));
       expect(sent).toEqual([]);
       expect(closes).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a failed package: the reason is saved once by Uložit; typed input asks before leaving', () =>
+  suite.effect('a failed package: the reason is saved once by Uložit; typed input asks before leaving', () =>
     Effect.gen(function* failure() {
       yield* mountForm('failure');
       yield* typeInto('export-failure', 'POHODA odmítla import');
@@ -279,10 +279,10 @@ describe('invoice workflow forms save from Uložit only', () => {
           reason: 'POHODA odmítla import',
         },
       ]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('the accountant accepted a package: the proof is saved once; an untouched dialog closes at once', () =>
+  suite.effect('the accountant accepted a package: the proof is saved once; an untouched dialog closes at once', () =>
     Effect.gen(function* confirmation() {
       yield* mountForm('confirmation');
       yield* clickCancel;
@@ -297,10 +297,10 @@ describe('invoice workflow forms save from Uložit only', () => {
       yield* clickDiscard;
       expect(closes).toEqual(['closed']);
       expect(sent).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('picking a document kind writes nothing until its confirmation', () =>
+  suite.effect('picking a document kind writes nothing until its confirmation', () =>
     Effect.gen(function* documentKind() {
       yield* mountForm('kind');
       yield* pick(KIND_PICKER, 'ADVANCE');
@@ -309,6 +309,6 @@ describe('invoice workflow forms save from Uložit only', () => {
       yield* clickNamed(KIND_CONFIRM);
       yield* waitUntil(() => sent.length === 1);
       expect(sent).toEqual([{ _tag: 'SetInvoiceDetails', documentKind: 'ADVANCE', invoiceRef: target.ref }]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

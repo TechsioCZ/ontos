@@ -1,6 +1,5 @@
 // Command reference validators are built per request from that request's scope. Two companies' requests in one
 // process, interleaved, each get their own validators, their own reference credentials and their own lookups.
-import { randomUUID } from 'node:crypto';
 import { ActiveApplicationCompositionService } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -11,6 +10,7 @@ import {
   ReferenceGatewayCredentialsSchema,
 } from '@app/shared-contracts';
 import { inProcessFetch, serveApi } from '@app/shared-contracts/testing/http-double';
+import { NodeCrypto } from '@effect/platform-node';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import {
   RecordsApi as LeasingRecordsApi,
@@ -22,7 +22,8 @@ import {
 } from '@app/property-portfolio/contracts/records';
 import { UnitRefSchema } from '@app/property-portfolio/resources/unit';
 import { OccupancyRefSchema } from '@app/property-leasing/resources/occupancy';
-import { Clock, ConfigProvider, Effect, Predicate, Redacted, Schema, Tracer } from 'effect';
+import { Clock, ConfigProvider, Crypto, Effect, Layer, Predicate, Redacted, Schema, Tracer } from 'effect';
+import type { PlatformError } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -145,25 +146,33 @@ const signedCredential = (input: {
   readonly scope: OperationalScope;
 }) => {
   const { authBindingId, authContextRef, authMethod, legalEntityId, principalId } = input.scope;
-  return Effect.promise(() =>
-    new SignJWT({
-      compositionRevision: input.compositionRevision,
-      principal: { authBindingId, authContextRef, authMethod, legalEntityId, principalId, tenantId },
-      targetBuildMarker: buildMarker,
-      ver: GATEWAY_ASSERTION_VERSION,
-    })
-      .setProtectedHeader({ alg: 'EdDSA', kid: 'reference-validator-key', typ: 'JWT' })
-      .setIssuer(issuer)
-      .setAudience(input.audience)
-      .setSubject(principalId)
-      .setIssuedAt(input.now)
-      .setExpirationTime(input.now + 300)
-      .setJti(randomUUID())
-      .sign(input.privateKey),
-  ).pipe(Effect.map((token) => `Bearer ${token}`));
+  return Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
+    Effect.flatMap((jti) =>
+      Effect.promise(() =>
+        new SignJWT({
+          compositionRevision: input.compositionRevision,
+          principal: { authBindingId, authContextRef, authMethod, legalEntityId, principalId, tenantId },
+          targetBuildMarker: buildMarker,
+          ver: GATEWAY_ASSERTION_VERSION,
+        })
+          .setProtectedHeader({ alg: 'EdDSA', kid: 'reference-validator-key', typ: 'JWT' })
+          .setIssuer(issuer)
+          .setAudience(input.audience)
+          .setSubject(principalId)
+          .setIssuedAt(input.now)
+          .setExpirationTime(input.now + 300)
+          .setJti(jti)
+          .sign(input.privateKey),
+      ),
+    ),
+    Effect.map((token) => `Bearer ${token}`),
+  );
 };
 
-const requestFor = (scope: OperationalScope, credentialFor: (audience: string) => Effect.Effect<string>) =>
+const requestFor = (
+  scope: OperationalScope,
+  credentialFor: (audience: string) => Effect.Effect<string, PlatformError.PlatformError, Crypto.Crypto>,
+) =>
   Effect.gen(function* signRequestCredentials() {
     const property = yield* Effect.forEach([0, 1, 2, 3], () => credentialFor('property-portfolio'));
     const leasing = yield* credentialFor('property-leasing');
@@ -185,121 +194,147 @@ const requestFor = (scope: OperationalScope, credentialFor: (audience: string) =
     return { leasing, property, request };
   });
 
-it.live('two companies interleaved never share validators, credentials or lookups', () =>
-  Effect.gen(function* interleavedCompanies() {
-    const calls: ReferenceCalls = {
-      leasing: [],
-      property: [],
-      sources: [],
-    };
-    const snapshot = yield* makeApplicationCompositionSnapshotFixture(
-      ['property-leasing', 'property-portfolio'],
-      buildMarker,
-    );
-    const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
-    const publicJwk = {
-      ...(yield* Effect.promise(() => exportJWK(publicKey))),
-      alg: 'EdDSA',
-      kid: 'reference-validator-key',
-      use: 'sig',
-    };
-    const verifier = makeGatewayPrincipalVerifierLayer(
-      ConfigProvider.fromUnknown({
-        ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
-      }),
-    );
-    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-    const scopeA = scopeOf(companyA, 'request-a');
-    const scopeB = scopeOf(companyB, 'request-b');
-    const credentialsFor = (scope: OperationalScope) =>
-      requestFor(scope, (audience) =>
-        signedCredential({ audience, compositionRevision: snapshot.composition.revision, now, privateKey, scope }),
-      );
-    const credentialsA = yield* credentialsFor(scopeA);
-    const credentialsB = yield* credentialsFor(scopeB);
-    const PropertyApi = PropertyRecordsApi.prefix('/property-portfolio-api');
-    const LeasingApi = LeasingRecordsApi.prefix('/property-leasing-api');
-    const network = inProcessFetch(
-      serveApi(
-        PropertyApi,
-        HttpApiBuilder.group(PropertyApi, 'records', (group) =>
-          group.handle('execute', () =>
-            Effect.gen(function* propertyRead() {
-              const request = yield* HttpServerRequest.HttpServerRequest;
-              calls.property.push(yield* issuedRead(request, '/property-portfolio-api').pipe(Effect.orDie));
-              return propertyRecords;
-            }),
-          ),
+/** The property and leasing owners in process, recording what each reference read carried to them. */
+const referenceOwners = (calls: ReferenceCalls) => {
+  const PropertyApi = PropertyRecordsApi.prefix('/property-portfolio-api');
+  const LeasingApi = LeasingRecordsApi.prefix('/property-leasing-api');
+  return inProcessFetch(
+    serveApi(
+      PropertyApi,
+      HttpApiBuilder.group(PropertyApi, 'records', (group) =>
+        group.handle('execute', () =>
+          Effect.gen(function* propertyRead() {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            calls.property.push(yield* issuedRead(request, '/property-portfolio-api').pipe(Effect.orDie));
+            return propertyRecords;
+          }),
         ),
       ),
-      serveApi(
-        LeasingApi,
-        HttpApiBuilder.group(LeasingApi, 'records', (group) =>
-          group.handle('execute', () =>
-            Effect.gen(function* leasingRead() {
-              const request = yield* HttpServerRequest.HttpServerRequest;
-              calls.leasing.push(yield* issuedRead(request, '/property-leasing-api').pipe(Effect.orDie));
-              return leasingRecords;
-            }),
-          ),
+    ),
+    serveApi(
+      LeasingApi,
+      HttpApiBuilder.group(LeasingApi, 'records', (group) =>
+        group.handle('execute', () =>
+          Effect.gen(function* leasingRead() {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            calls.leasing.push(yield* issuedRead(request, '/property-leasing-api').pipe(Effect.orDie));
+            return leasingRecords;
+          }),
         ),
       ),
-    );
-    yield* Effect.gen(function* validateInterleavedRequests() {
-      const referenceValidators = yield* AgreementsReferenceValidators;
-      const forA = yield* referenceValidators
-        .forScope(scopeA)
-        .pipe(
-          Effect.provideService(HttpServerRequest.HttpServerRequest, credentialsA.request),
-          Effect.annotateSpans({ referenceScope: `${scopeA.tenantId}/${scopeA.legalEntityId}` }),
-        );
-      const forB = yield* referenceValidators
-        .forScope(scopeB)
-        .pipe(
-          Effect.provideService(HttpServerRequest.HttpServerRequest, credentialsB.request),
-          Effect.annotateSpans({ referenceScope: `${scopeB.tenantId}/${scopeB.legalEntityId}` }),
-        );
-      expect(forA).not.toBe(forB);
-      expect(calls.sources.map((span) => span.attributes.get('referenceScope'))).toEqual([
-        `${tenantId}/${companyA}`,
-        `${tenantId}/${companyB}`,
-      ]);
+    ),
+  );
+};
 
-      const unitForA = yield* forA.unit(unitRef);
-      const refusedForB = yield* Effect.flip(forB.unit(unitRef));
-      const unitForAAgain = yield* forA.unit(unitRef);
-      expect(unitForA.legalEntityId).toBe(companyA);
-      expect(unitForAAgain.legalEntityId).toBe(companyA);
-      expect(Predicate.isTagged(refusedForB, 'AgreementsRejected')).toBe(true);
-      expect(refusedForB).toMatchObject({ code: 'agreements_rejected', reason: 'unit_not_usable' });
+type SignedRequest = Effect.Success<ReturnType<typeof requestFor>>;
 
-      yield* Effect.flip(forB.occupancy(occupancyRef));
-      yield* Effect.flip(forA.occupancy(occupancyRef));
-
-      expect(calls.property.map((read) => [read.correlationId, read.authorization])).toEqual([
-        ['request-a', credentialsA.property[0]],
-        ['request-a', credentialsA.property[1]],
-        ['request-b', credentialsB.property[0]],
-        ['request-b', credentialsB.property[1]],
-        ['request-a', credentialsA.property[2]],
-        ['request-a', credentialsA.property[3]],
-      ]);
-      const leasingModule = yield* Effect.fromNullishOr(
-        snapshot.composition.modules.find((module) => module.deployment.appId === 'property-leasing'),
+/** Company A's and company B's requests validated interleaved, and what each owner saw of them. */
+const validateInterleavedRequests = (input: {
+  readonly calls: ReferenceCalls;
+  readonly credentialsA: SignedRequest;
+  readonly credentialsB: SignedRequest;
+  readonly scopeA: OperationalScope;
+  readonly scopeB: OperationalScope;
+  readonly snapshot: Effect.Success<ReturnType<typeof makeApplicationCompositionSnapshotFixture>>;
+}) =>
+  Effect.gen(function* checkInterleavedRequests() {
+    const { calls, credentialsA, credentialsB, scopeA, scopeB, snapshot } = input;
+    const referenceValidators = yield* AgreementsReferenceValidators;
+    const forA = yield* referenceValidators
+      .forScope(scopeA)
+      .pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, credentialsA.request),
+        Effect.annotateSpans({ referenceScope: `${scopeA.tenantId}/${scopeA.legalEntityId}` }),
       );
-      const leasingBaseUrl = new URL('/property-leasing-api', leasingModule.backend.baseUrl).href;
-      expect(calls.leasing.map((read) => [read.correlationId, read.authorization, read.baseUrl])).toEqual([
-        ['request-b', credentialsB.leasing, leasingBaseUrl],
-        ['request-a', credentialsA.leasing, leasingBaseUrl],
-      ]);
-    }).pipe(
-      Effect.provide(AgreementsReferenceValidatorsLive),
-      Effect.provide(verifier),
-      Effect.provide(network),
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-      Effect.withTracer(sourceTracer(calls.sources)),
-      Effect.withTracerEnabled(true),
+    const forB = yield* referenceValidators
+      .forScope(scopeB)
+      .pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, credentialsB.request),
+        Effect.annotateSpans({ referenceScope: `${scopeB.tenantId}/${scopeB.legalEntityId}` }),
+      );
+    expect(forA).not.toBe(forB);
+    expect(calls.sources.map((span) => span.attributes.get('referenceScope'))).toEqual([
+      `${tenantId}/${companyA}`,
+      `${tenantId}/${companyB}`,
+    ]);
+
+    const unitForA = yield* forA.unit(unitRef);
+    const refusedForB = yield* Effect.flip(forB.unit(unitRef));
+    const unitForAAgain = yield* forA.unit(unitRef);
+    expect(unitForA.legalEntityId).toBe(companyA);
+    expect(unitForAAgain.legalEntityId).toBe(companyA);
+    expect(Predicate.isTagged(refusedForB, 'AgreementsRejected')).toBe(true);
+    expect(refusedForB).toMatchObject({ code: 'agreements_rejected', reason: 'unit_not_usable' });
+
+    yield* Effect.flip(forB.occupancy(occupancyRef));
+    yield* Effect.flip(forA.occupancy(occupancyRef));
+
+    expect(calls.property.map((read) => [read.correlationId, read.authorization])).toEqual([
+      ['request-a', credentialsA.property[0]],
+      ['request-a', credentialsA.property[1]],
+      ['request-b', credentialsB.property[0]],
+      ['request-b', credentialsB.property[1]],
+      ['request-a', credentialsA.property[2]],
+      ['request-a', credentialsA.property[3]],
+    ]);
+    const leasingModule = yield* Effect.fromNullishOr(
+      snapshot.composition.modules.find((module) => module.deployment.appId === 'property-leasing'),
     );
-  }),
-);
+    const leasingBaseUrl = new URL('/property-leasing-api', leasingModule.backend.baseUrl).href;
+    expect(calls.leasing.map((read) => [read.correlationId, read.authorization, read.baseUrl])).toEqual([
+      ['request-b', credentialsB.leasing, leasingBaseUrl],
+      ['request-a', credentialsA.leasing, leasingBaseUrl],
+    ]);
+  });
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('reference validators scope', (suite) => {
+  suite.effect('two companies interleaved never share validators, credentials or lookups', () =>
+    Effect.gen(function* interleavedCompanies() {
+      const calls: ReferenceCalls = {
+        leasing: [],
+        property: [],
+        sources: [],
+      };
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['property-leasing', 'property-portfolio'],
+        buildMarker,
+      );
+      const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
+      const publicJwk = {
+        ...(yield* Effect.promise(() => exportJWK(publicKey))),
+        alg: 'EdDSA',
+        kid: 'reference-validator-key',
+        use: 'sig',
+      };
+      const verifier = makeGatewayPrincipalVerifierLayer(
+        ConfigProvider.fromUnknown({
+          ONTOS_GATEWAY_ISSUER: issuer,
+          ONTOS_GATEWAY_PUBLIC_JWKS: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            keys: [publicJwk],
+          }),
+        }),
+      );
+      const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+      const scopeA = scopeOf(companyA, 'request-a');
+      const scopeB = scopeOf(companyB, 'request-b');
+      const credentialsFor = (scope: OperationalScope) =>
+        requestFor(scope, (audience) =>
+          signedCredential({ audience, compositionRevision: snapshot.composition.revision, now, privateKey, scope }),
+        );
+      const credentialsA = yield* credentialsFor(scopeA);
+      const credentialsB = yield* credentialsFor(scopeB);
+      const context = yield* Layer.build(
+        AgreementsReferenceValidatorsLive.pipe(
+          Layer.provideMerge(verifier),
+          Layer.provideMerge(referenceOwners(calls)),
+          Layer.provideMerge(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) })),
+        ),
+      );
+      yield* validateInterleavedRequests({ calls, credentialsA, credentialsB, scopeA, scopeB, snapshot }).pipe(
+        Effect.provide(context),
+        Effect.withTracer(sourceTracer(calls.sources)),
+        Effect.withTracerEnabled(true),
+      );
+    }),
+  );
+});

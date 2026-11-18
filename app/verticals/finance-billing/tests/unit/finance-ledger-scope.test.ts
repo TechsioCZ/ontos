@@ -10,7 +10,7 @@ import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-e
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Layer, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandPayloadSchema, ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -121,6 +121,7 @@ const renderScope = (scope?: string) =>
 
 const reads: (readonly [RecordsRequest, string | undefined])[] = [];
 const commands: ApplyCommandPayload[] = [];
+const committed = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ changed: true, revision: 8 });
 let answer: Effect.Effect<RecordsResponse> = Effect.succeed(companyLedger);
 const OwnerRecordsApi = RecordsApi.prefix('/finance-billing-api');
 const OwnerActionApi = ApplyCommandActionApi.prefix('/finance-billing-api');
@@ -143,10 +144,13 @@ const network = browserNetwork(
     OwnerActionApi,
     HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
       group.handle('execute', ({ payload }) =>
-        Effect.sync(() => {
-          commands.push(Schema.decodeUnknownSync(ApplyCommandPayloadSchema)(payload));
-          return Schema.decodeUnknownSync(ApplyCommandResultSchema)({ changed: true, revision: 8 });
-        }),
+        Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)(payload).pipe(
+          Effect.orDie,
+          Effect.map((command) => {
+            commands.push(command);
+            return committed;
+          }),
+        ),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
   ),
@@ -161,7 +165,7 @@ const priceItemCommand = {
   vatRate: 21 as const,
 };
 
-describe('finance ledger cache per verified Shell scope', () => {
+it.layer(network, { excludeTestServices: true })('finance ledger cache per verified Shell scope', (suite) => {
   beforeEach(() => {
     reads.length = 0;
     commands.length = 0;
@@ -170,7 +174,7 @@ describe('finance ledger cache per verified Shell scope', () => {
 
   afterEach(unmountAll);
 
-  it.live('keeps each scope on its own ledger, even when the old scope answers late', () =>
+  suite.effect('keeps each scope on its own ledger, even when the old scope answers late', () =>
     Effect.gen(function* scoped() {
       yield* pinTestDocument;
       const companyScope = financePageScope(companyContext);
@@ -217,10 +221,10 @@ describe('finance ledger cache per verified Shell scope', () => {
       expect(outcome).toEqual({ ok: true });
       expect(commands).toHaveLength(1);
       expect(commands[0]).toMatchObject({ expectedRevision: 7 });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('reads nothing and sends nothing without a verified scope', () =>
+  suite.effect('reads nothing and sends nothing without a verified scope', () =>
     Effect.gen(function* unscoped() {
       yield* pinTestDocument;
       // A ledger for the same filter is cached in a verified scope.
@@ -243,6 +247,6 @@ describe('finance ledger cache per verified Shell scope', () => {
 
       expect(yield* vm.execute(priceItemCommand)).toEqual({ feedback: 'unavailable', ok: false });
       expect(commands).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

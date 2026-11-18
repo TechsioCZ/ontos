@@ -126,62 +126,64 @@ beforeEach(() => {
   rendered.length = 0;
 });
 
-it.live('typing in the new-property form sends nothing, not even after a pause', () =>
-  Effect.gen(function* typingSendsNothing() {
-    yield* pinTestDocument;
-    const unmount = mountHarness();
-    yield* perform((editor) => editor.begin());
-    yield* perform((editor) => {
-      editor.change('code', 'NEW-01');
-      editor.change('name', 'Nová budova');
-      editor.change('address', 'Hlavní 1');
-      editor.change('propertyType', 'Komerční');
-      editor.changeResponsibleEmployees([employeeId]);
-    });
-    expect(current().createDraft.dirty).toBe(true);
-    expect(current().createDraft.canSave).toBe(true);
-    yield* Effect.sleep('1 second');
-    expect(commands).toEqual([]);
-    unmount();
-    yield* Effect.sleep('100 millis');
-    expect(commands).toEqual([]);
-    expect(reads).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('the new-property form', (suite) => {
+  suite.effect('typing in the new-property form sends nothing, not even after a pause', () =>
+    Effect.gen(function* typingSendsNothing() {
+      yield* pinTestDocument;
+      const unmount = mountHarness();
+      yield* perform((editor) => editor.begin());
+      yield* perform((editor) => {
+        editor.change('code', 'NEW-01');
+        editor.change('name', 'Nová budova');
+        editor.change('address', 'Hlavní 1');
+        editor.change('propertyType', 'Komerční');
+        editor.changeResponsibleEmployees([employeeId]);
+      });
+      expect(current().createDraft.dirty).toBe(true);
+      expect(current().createDraft.canSave).toBe(true);
+      yield* Effect.sleep('1 second');
+      expect(commands).toEqual([]);
+      unmount();
+      yield* Effect.sleep('100 millis');
+      expect(commands).toEqual([]);
+      expect(reads).toEqual([]);
+    }),
+  );
 
-it.live('the Save of the new-property form sends exactly one command', () =>
-  Effect.gen(function* saveSendsOnce() {
-    yield* pinTestDocument;
-    const unmount = mountHarness();
-    yield* perform((editor) => {
-      editor.begin();
-      editor.change('code', 'NEW-02');
-      editor.change('name', 'Druhá budova');
-      editor.change('address', 'Hlavní 2');
-      editor.change('propertyType', 'Komerční');
-      editor.changeResponsibleEmployees([employeeId]);
-    });
-    yield* perform((editor) => editor.createDraft.save());
-    yield* Effect.sleep('100 millis');
-    expect(commands).toHaveLength(1);
-    expect(commands[0]).toMatchObject({ command: { code: 'NEW-02', name: 'Druhá budova' }, expectedRevision: 4 });
-    unmount();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('the Save of the new-property form sends exactly one command', () =>
+    Effect.gen(function* saveSendsOnce() {
+      yield* pinTestDocument;
+      const unmount = mountHarness();
+      yield* perform((editor) => {
+        editor.begin();
+        editor.change('code', 'NEW-02');
+        editor.change('name', 'Druhá budova');
+        editor.change('address', 'Hlavní 2');
+        editor.change('propertyType', 'Komerční');
+        editor.changeResponsibleEmployees([employeeId]);
+      });
+      yield* perform((editor) => editor.createDraft.save());
+      yield* Effect.sleep('100 millis');
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ command: { code: 'NEW-02', name: 'Druhá budova' }, expectedRevision: 4 });
+      unmount();
+    }),
+  );
 
-it.live('an invalid new-property draft is not saved and its Save stays disabled', () =>
-  Effect.gen(function* invalidDraft() {
-    yield* pinTestDocument;
-    const unmount = mountHarness();
-    yield* perform((editor) => {
-      editor.begin();
-      editor.change('code', 'NEW-03');
-    });
-    expect(current().createDraft.status).toBe('invalid');
-    expect(current().createDraft.canSave).toBe(false);
-    yield* perform((editor) => editor.createDraft.save());
-    yield* Effect.sleep('100 millis');
-    expect(commands).toEqual([]);
-    unmount();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('an invalid new-property draft is not saved and its Save stays disabled', () =>
+    Effect.gen(function* invalidDraft() {
+      yield* pinTestDocument;
+      const unmount = mountHarness();
+      yield* perform((editor) => {
+        editor.begin();
+        editor.change('code', 'NEW-03');
+      });
+      expect(current().createDraft.status).toBe('invalid');
+      expect(current().createDraft.canSave).toBe(false);
+      yield* perform((editor) => editor.createDraft.save());
+      yield* Effect.sleep('100 millis');
+      expect(commands).toEqual([]);
+      unmount();
+    }),
+  );
+});

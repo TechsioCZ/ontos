@@ -109,74 +109,76 @@ afterEach(() => {
   rstest.useRealTimers();
 });
 
-it.live('the create form has no ARES button and looks a valid IČO up by itself, once', () =>
-  Effect.gen(function* automaticLookup() {
-    yield* pinTestDocument;
-    yield* renderDialog();
-    expect(screen.queryByRole('button', { name: /ARES/u })).toBeNull();
-    yield* type('customer-ico', '2708244');
-    yield* passFakeTime('800 millis', { between: networkIdle });
-    expect(requests).toHaveLength(0);
-    yield* type('customer-ico', validIco);
-    yield* passFakeTime('800 millis');
-    yield* waitUntilOnFakeTimers(() => field('customer-name').value === 'Příklad s.r.o.');
-    expect(field('customer-name').value).toBe('Příklad s.r.o.');
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toEqual({ ico: validIco });
-    expect(field('customer-vat-id').value).toBe(`CZ${validIco}`);
-    expect(field('customer-city').value).toBe('Praha');
-    expect(field('customer-postal-code').value).toBe('120 00');
-    expect(screen.getByText(copy(`${KEY}.aresDone`))).toBeTruthy();
-    // Editing another field never repeats the lookup of the same IČO.
-    yield* type('customer-email', 'obchod@priklad.cz');
-    yield* passFakeTime('800 millis', { between: networkIdle });
-    expect(requests).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customer create ares', (suite) => {
+  suite.effect('the create form has no ARES button and looks a valid IČO up by itself, once', () =>
+    Effect.gen(function* automaticLookup() {
+      yield* pinTestDocument;
+      yield* renderDialog();
+      expect(screen.queryByRole('button', { name: /ARES/u })).toBeNull();
+      yield* type('customer-ico', '2708244');
+      yield* passFakeTime('800 millis', { between: networkIdle });
+      expect(requests).toHaveLength(0);
+      yield* type('customer-ico', validIco);
+      yield* passFakeTime('800 millis');
+      yield* waitUntilOnFakeTimers(() => field('customer-name').value === 'Příklad s.r.o.');
+      expect(field('customer-name').value).toBe('Příklad s.r.o.');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toEqual({ ico: validIco });
+      expect(field('customer-vat-id').value).toBe(`CZ${validIco}`);
+      expect(field('customer-city').value).toBe('Praha');
+      expect(field('customer-postal-code').value).toBe('120 00');
+      expect(screen.getByText(copy(`${KEY}.aresDone`))).toBeTruthy();
+      // Editing another field never repeats the lookup of the same IČO.
+      yield* type('customer-email', 'obchod@priklad.cz');
+      yield* passFakeTime('800 millis', { between: networkIdle });
+      expect(requests).toHaveLength(1);
+    }),
+  );
 
-it.live('a wrong checksum is reported at once and never reaches ARES', () =>
-  Effect.gen(function* checksum() {
-    yield* pinTestDocument;
-    yield* renderDialog();
-    yield* type('customer-ico', '27082441');
-    expect(screen.getByText(copy(`${KEY}.validation.icoChecksum`))).toBeTruthy();
-    yield* passFakeTime('800 millis', { between: networkIdle });
-    expect(requests).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a wrong checksum is reported at once and never reaches ARES', () =>
+    Effect.gen(function* checksum() {
+      yield* pinTestDocument;
+      yield* renderDialog();
+      yield* type('customer-ico', '27082441');
+      expect(screen.getByText(copy(`${KEY}.validation.icoChecksum`))).toBeTruthy();
+      yield* passFakeTime('800 millis', { between: networkIdle });
+      expect(requests).toHaveLength(0);
+    }),
+  );
 
-it.live('the lookup shows its progress inline and keeps every field the user typed', () =>
-  Effect.gen(function* keepsTypedFields() {
-    const pending = yield* Deferred.make<typeof evidence>();
-    answer = Deferred.await(pending);
-    yield* pinTestDocument;
-    yield* renderDialog();
-    yield* type('customer-name', 'Moje firma');
-    yield* type('customer-ico', validIco);
-    yield* passFakeTime('800 millis');
-    yield* waitUntilOnFakeTimers(() => screen.queryByText(copy(`${KEY}.aresLoading`)) !== null);
-    expect(screen.getByText(copy(`${KEY}.aresLoading`))).toBeTruthy();
-    yield* type('customer-street', 'Vlastní 1');
-    yield* Deferred.succeed(pending, evidence);
-    yield* waitUntilOnFakeTimers(() => field('customer-city').value === 'Praha');
-    expect(field('customer-city').value).toBe('Praha');
-    expect(field('customer-name').value).toBe('Moje firma');
-    expect(field('customer-street').value).toBe('Vlastní 1');
-    expect(field('customer-vat-id').value).toBe(`CZ${validIco}`);
-    expect(screen.queryByText(copy(`${KEY}.aresLoading`))).toBeNull();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('the lookup shows its progress inline and keeps every field the user typed', () =>
+    Effect.gen(function* keepsTypedFields() {
+      const pending = yield* Deferred.make<typeof evidence>();
+      answer = Deferred.await(pending);
+      yield* pinTestDocument;
+      yield* renderDialog();
+      yield* type('customer-name', 'Moje firma');
+      yield* type('customer-ico', validIco);
+      yield* passFakeTime('800 millis');
+      yield* waitUntilOnFakeTimers(() => screen.queryByText(copy(`${KEY}.aresLoading`)) !== null);
+      expect(screen.getByText(copy(`${KEY}.aresLoading`))).toBeTruthy();
+      yield* type('customer-street', 'Vlastní 1');
+      yield* Deferred.succeed(pending, evidence);
+      yield* waitUntilOnFakeTimers(() => field('customer-city').value === 'Praha');
+      expect(field('customer-city').value).toBe('Praha');
+      expect(field('customer-name').value).toBe('Moje firma');
+      expect(field('customer-street').value).toBe('Vlastní 1');
+      expect(field('customer-vat-id').value).toBe(`CZ${validIco}`);
+      expect(screen.queryByText(copy(`${KEY}.aresLoading`))).toBeNull();
+    }),
+  );
 
-it.live('a quickly corrected IČO sends only the final one', () =>
-  Effect.gen(function* debounce() {
-    yield* pinTestDocument;
-    yield* renderDialog();
-    yield* type('customer-ico', '25596641');
-    yield* passFakeTime('200 millis');
-    yield* type('customer-ico', validIco);
-    yield* passFakeTime('800 millis');
-    yield* waitUntilOnFakeTimers(() => requests.length === 1);
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toEqual({ ico: validIco });
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a quickly corrected IČO sends only the final one', () =>
+    Effect.gen(function* debounce() {
+      yield* pinTestDocument;
+      yield* renderDialog();
+      yield* type('customer-ico', '25596641');
+      yield* passFakeTime('200 millis');
+      yield* type('customer-ico', validIco);
+      yield* passFakeTime('800 millis');
+      yield* waitUntilOnFakeTimers(() => requests.length === 1);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toEqual({ ico: validIco });
+    }),
+  );
+});

@@ -12,7 +12,7 @@ import {
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { ToastProvider } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import type { ReactElement } from 'react';
 import { CustomerListApi } from '../../../party-registry/shared/apis/customer-list.ts';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
@@ -247,8 +247,8 @@ beforeEach(() => {
 });
 afterEach(unmountAll);
 
-describe('create forms save from Uložit only', () => {
-  it.live('a recurring template is created once by Uložit; its suggested values close without asking', () =>
+it.layer(network, { excludeTestServices: true })('create forms save from Uložit only', (suite) => {
+  suite.effect('a recurring template is created once by Uložit; its suggested values close without asking', () =>
     Effect.gen(function* step1() {
       yield* pinTestDocument;
       const left: string[] = [];
@@ -271,10 +271,10 @@ describe('create forms save from Uložit only', () => {
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'CreateRecurringTemplate')).toBe(true);
       expect(sent[0]).toMatchObject({ dueDays: 14, issueDay: 1, name: 'Nájem kavárna', partyId: customer.partyId });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a received invoice is recorded once by Uložit; typed input asks before leaving', () =>
+  suite.effect('a received invoice is recorded once by Uložit; typed input asks before leaving', () =>
     Effect.gen(function* step2() {
       yield* pinTestDocument;
       yield* mount((vm) => <IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
@@ -299,10 +299,10 @@ describe('create forms save from Uložit only', () => {
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
       expect(sent[0]).toMatchObject({ documentNumber: 'ZF-2026-77', supplierName: 'ČEZ Prodej', totalMinor: 121_000 });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a new invoice draft is created once by Uložit; the untouched form closes without asking', () =>
+  suite.effect('a new invoice draft is created once by Uložit; the untouched form closes without asking', () =>
     Effect.gen(function* step3() {
       yield* pinTestDocument;
       const drafts: DraftInvoiceInput[] = [];
@@ -323,6 +323,6 @@ describe('create forms save from Uložit only', () => {
       expect(drafts).toHaveLength(1);
       expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
       expect(toastTitles()).toEqual([t(CREATED)]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

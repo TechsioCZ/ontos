@@ -276,7 +276,7 @@ export default defineConfig({
       },
     },
     {
-      files: ['**/*.{test,spec}.{ts,tsx,mts}'],
+      files: ['**/*.{test,spec}.{ts,tsx,mts}', '**/tests/support/**/*.{ts,tsx}'],
       rules: {
         // Sonar's hard-coded runner APIs do not recognize it.effect/it.live/it.layer.
         'sonarjs/no-empty-test-file': 'off',

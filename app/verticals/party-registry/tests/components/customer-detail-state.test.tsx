@@ -195,118 +195,124 @@ const fillBasis = () => {
   fireEvent.change(reasonField(), { target: { value: 'Reviewed document' } });
 };
 
-it.live('shows the customer name without exposing party or business-context identifiers', () =>
-  Effect.gen(function* readableIdentity() {
-    yield* pinTestDocument;
-    yield* mount(detailDialog(snapshot));
-    expect(screen.getByRole('heading', { name: 'Before' })).toBeTruthy();
-    expect(document.body.textContent).not.toContain(partyId);
-    expect(document.body.textContent).not.toContain(counterpartyId);
-    expectHumanReadable();
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customer detail state', (suite) => {
+  suite.effect('shows the customer name without exposing party or business-context identifiers', () =>
+    Effect.gen(function* readableIdentity() {
+      yield* pinTestDocument;
+      yield* mount(detailDialog(snapshot));
+      expect(screen.getByRole('heading', { name: 'Before' })).toBeTruthy();
+      expect(document.body.textContent).not.toContain(partyId);
+      expect(document.body.textContent).not.toContain(counterpartyId);
+      expectHumanReadable();
+    }),
+  );
 
-it.live('keeps the typed reason when the same customer snapshot passes through a loading refresh', () =>
-  Effect.gen(function* loadingRefresh() {
-    yield* pinTestDocument;
-    const { rerender } = yield* mount(detailDialog(snapshot));
-    yield* acted(() => {
-      fireEvent.change(reasonField(), { target: { value: 'Reviewed document' } });
-    });
-    yield* rerender(detailDialog());
-    yield* rerender(detailDialog(snapshot));
-    expect(reasonField().value).toBe('Reviewed document');
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('keeps the typed reason when the same customer snapshot passes through a loading refresh', () =>
+    Effect.gen(function* loadingRefresh() {
+      yield* pinTestDocument;
+      const { rerender } = yield* mount(detailDialog(snapshot));
+      yield* acted(() => {
+        fireEvent.change(reasonField(), { target: { value: 'Reviewed document' } });
+      });
+      yield* rerender(detailDialog());
+      yield* rerender(detailDialog(snapshot));
+      expect(reasonField().value).toBe('Reviewed document');
+    }),
+  );
 
-it.live('typing and waiting write nothing until the one Save button is pressed', () =>
-  Effect.gen(function* explicitSave() {
-    yield* pinTestDocument;
-    yield* mount(detailDialog(snapshot));
-    yield* acted(() => {
-      fillBasis();
-      fireEvent.change(nameField(), { target: { value: 'After' } });
-    });
-    yield* Effect.sleep('1 second');
-    expect(commands).toHaveLength(0);
-    expect(saveButton().disabled).toBe(false);
-    yield* acted(() => {
-      fireEvent.click(saveButton());
-    });
-    yield* waitUntil(() => commands.length === 1);
-    expect(commands).toHaveLength(1);
-    yield* waitUntil(() =>
-      ['idle', 'saved'].includes(document.querySelector<HTMLElement>('[data-save-state]')?.dataset['saveState'] ?? ''),
-    );
-    expect(['idle', 'saved']).toContain(document.querySelector<HTMLElement>('[data-save-state]')?.dataset['saveState']);
-    expect(saveButton().disabled).toBe(true);
-    expect(commands).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('typing and waiting write nothing until the one Save button is pressed', () =>
+    Effect.gen(function* explicitSave() {
+      yield* pinTestDocument;
+      yield* mount(detailDialog(snapshot));
+      yield* acted(() => {
+        fillBasis();
+        fireEvent.change(nameField(), { target: { value: 'After' } });
+      });
+      yield* Effect.sleep('1 second');
+      expect(commands).toHaveLength(0);
+      expect(saveButton().disabled).toBe(false);
+      yield* acted(() => {
+        fireEvent.click(saveButton());
+      });
+      yield* waitUntil(() => commands.length === 1);
+      expect(commands).toHaveLength(1);
+      yield* waitUntil(() =>
+        ['idle', 'saved'].includes(
+          document.querySelector<HTMLElement>('[data-save-state]')?.dataset['saveState'] ?? '',
+        ),
+      );
+      expect(['idle', 'saved']).toContain(
+        document.querySelector<HTMLElement>('[data-save-state]')?.dataset['saveState'],
+      );
+      expect(saveButton().disabled).toBe(true);
+      expect(commands).toHaveLength(1);
+    }),
+  );
 
-it.live('an empty name leaves Save disabled and writes nothing', () =>
-  Effect.gen(function* invalidDraft() {
-    yield* pinTestDocument;
-    yield* mount(detailDialog(snapshot));
-    yield* acted(() => {
-      fillBasis();
-      fireEvent.change(nameField(), { target: { value: '' } });
-    });
-    yield* Effect.sleep('1 second');
-    expect(saveButton().disabled).toBe(true);
-    expect(commands).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('an empty name leaves Save disabled and writes nothing', () =>
+    Effect.gen(function* invalidDraft() {
+      yield* pinTestDocument;
+      yield* mount(detailDialog(snapshot));
+      yield* acted(() => {
+        fillBasis();
+        fireEvent.change(nameField(), { target: { value: '' } });
+      });
+      yield* Effect.sleep('1 second');
+      expect(saveButton().disabled).toBe(true);
+      expect(commands).toHaveLength(0);
+    }),
+  );
 
-it.live('closing with unsaved text asks first and leaving discards without writing', () =>
-  Effect.gen(function* leaveAsks() {
-    yield* pinTestDocument;
-    yield* mount(detailDialog(snapshot));
-    yield* acted(() => {
-      fillBasis();
-      fireEvent.change(nameField(), { target: { value: 'After' } });
-      fireEvent.click(screen.getByText(copy('party-registry.pages.customers.detail.cancel'), { selector: 'button' }));
-    });
-    expect(closed).toHaveLength(0);
-    yield* waitUntil(() => screen.queryByRole('button', { name: 'Zůstat' }) !== null);
-    expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy();
-    yield* acted(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
-    });
-    yield* waitUntil(() => closed.length > 0);
-    yield* networkIdle;
-    expect(closed).toContain(false);
-    expect(commands).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('closing with unsaved text asks first and leaving discards without writing', () =>
+    Effect.gen(function* leaveAsks() {
+      yield* pinTestDocument;
+      yield* mount(detailDialog(snapshot));
+      yield* acted(() => {
+        fillBasis();
+        fireEvent.change(nameField(), { target: { value: 'After' } });
+        fireEvent.click(screen.getByText(copy('party-registry.pages.customers.detail.cancel'), { selector: 'button' }));
+      });
+      expect(closed).toHaveLength(0);
+      yield* waitUntil(() => screen.queryByRole('button', { name: 'Zůstat' }) !== null);
+      expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy();
+      yield* acted(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
+      });
+      yield* waitUntil(() => closed.length > 0);
+      yield* networkIdle;
+      expect(closed).toContain(false);
+      expect(commands).toHaveLength(0);
+    }),
+  );
 
-it.live('a route change from the peek panel with unsaved text asks first; Zůstat keeps the draft', () =>
-  Effect.gen(function* routeChangeAsks() {
-    yield* pinTestDocument;
-    const { router } = yield* mount(detailDialog(snapshot));
-    // A clean panel lets the real router navigate without a leave question.
-    yield* acted(() => {
-      router.history.push('/cs/prodej/zakaznici?clean=1');
-    });
-    yield* waitUntil(() => router.state.location.searchStr === '?clean=1');
-    expect(screen.queryByRole('button', { name: 'Zůstat' })).toBeNull();
-    yield* acted(() => {
-      fillBasis();
-      fireEvent.change(nameField(), { target: { value: 'After' } });
-    });
-    yield* acted(() => {
-      router.history.push('/cs/prodej/zakaznici?next=1');
-    });
-    yield* waitUntil(() => screen.queryByRole('button', { name: 'Zůstat' }) !== null);
-    expect(router.state.location.searchStr).toBe('?clean=1');
-    expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy();
-    yield* acted(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Zůstat' }));
-    });
-    // Reset resolves the pending navigation and closes its question; proceeding would change the URL.
-    expect(screen.queryByRole('button', { name: 'Zůstat' })).toBeNull();
-    expect(router.state.location.searchStr).toBe('?clean=1');
-    expect(nameField().value).toBe('After');
-    expect(commands).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a route change from the peek panel with unsaved text asks first; Zůstat keeps the draft', () =>
+    Effect.gen(function* routeChangeAsks() {
+      yield* pinTestDocument;
+      const { router } = yield* mount(detailDialog(snapshot));
+      // A clean panel lets the real router navigate without a leave question.
+      yield* acted(() => {
+        router.history.push('/cs/prodej/zakaznici?clean=1');
+      });
+      yield* waitUntil(() => router.state.location.searchStr === '?clean=1');
+      expect(screen.queryByRole('button', { name: 'Zůstat' })).toBeNull();
+      yield* acted(() => {
+        fillBasis();
+        fireEvent.change(nameField(), { target: { value: 'After' } });
+      });
+      yield* acted(() => {
+        router.history.push('/cs/prodej/zakaznici?next=1');
+      });
+      yield* waitUntil(() => screen.queryByRole('button', { name: 'Zůstat' }) !== null);
+      expect(router.state.location.searchStr).toBe('?clean=1');
+      expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy();
+      yield* acted(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'Zůstat' }));
+      });
+      // Reset resolves the pending navigation and closes its question; proceeding would change the URL.
+      expect(screen.queryByRole('button', { name: 'Zůstat' })).toBeNull();
+      expect(router.state.location.searchStr).toBe('?clean=1');
+      expect(nameField().value).toBe('After');
+      expect(commands).toHaveLength(0);
+    }),
+  );
+});

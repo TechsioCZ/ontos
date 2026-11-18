@@ -81,20 +81,22 @@ beforeEach(() => {
   propertyRecords.invalidate();
 });
 
-it.live('the property register ignores a live change from an app it does not show', () =>
-  Effect.gen(function* unrelatedChange() {
-    yield* pinTestDocument;
-    const unsubscribe = propertyRecords.subscribe(() => {
-      propertyRecords.snapshot(input);
-    }, input);
-    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-    yield* propertyRecords.preload(input);
-    expect(reads).toHaveLength(1);
-    dispatchChange(['property-leasing']);
-    yield* Effect.sleep('10 millis');
-    expect(reads).toHaveLength(1);
-    dispatchChange(['workforce']);
-    yield* waitUntil(() => reads.length === 2);
-    expect(reads).toHaveLength(2);
-  }).pipe(Effect.scoped, Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('the property register live change scope', (suite) => {
+  suite.effect('the property register ignores a live change from an app it does not show', () =>
+    Effect.gen(function* unrelatedChange() {
+      yield* pinTestDocument;
+      const unsubscribe = propertyRecords.subscribe(() => {
+        propertyRecords.snapshot(input);
+      }, input);
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* propertyRecords.preload(input);
+      expect(reads).toHaveLength(1);
+      dispatchChange(['property-leasing']);
+      yield* Effect.sleep('10 millis');
+      expect(reads).toHaveLength(1);
+      dispatchChange(['workforce']);
+      yield* waitUntil(() => reads.length === 2);
+      expect(reads).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+});

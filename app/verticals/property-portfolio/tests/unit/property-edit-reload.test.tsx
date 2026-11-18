@@ -20,7 +20,7 @@ import {
 } from '@app/workforce/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Layer, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -204,8 +204,8 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-describe('property edit dialog across a background reload', () => {
-  it.live('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
+it.layer(network, { excludeTestServices: true })('property edit dialog across a background reload', (suite) => {
+  suite.effect('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
     Effect.gen(function* typedSurvives() {
       yield* openEdit(firstId);
       yield* type(name, 'typed-name');
@@ -238,10 +238,10 @@ describe('property edit dialog across a background reload', () => {
         command: { name: 'typed-name' },
         expectedRevision: 4,
       });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a draft with nothing typed takes the reloaded building', () =>
+  suite.effect('a draft with nothing typed takes the reloaded building', () =>
     Effect.gen(function* cleanFollows() {
       yield* openEdit(firstId);
       expect(value(address)).toBe('server-address');
@@ -252,10 +252,10 @@ describe('property edit dialog across a background reload', () => {
       yield* waitUntil(() => value(address) === 'someone-else-address');
       expect(text()).not.toContain(labels.unsaved);
       expect(button(labels.save).disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('another building never shows the draft typed for this one', () =>
+  suite.effect('another building never shows the draft typed for this one', () =>
     Effect.gen(function* otherBuilding() {
       const { router } = yield* openEdit(firstId);
       yield* type(name, 'typed-name');
@@ -271,6 +271,6 @@ describe('property edit dialog across a background reload', () => {
       yield* waitUntil(() => Option.isSome(maybeField(name)));
       expect(value(name)).toBe('second-name');
       expect(text()).not.toContain('typed-name');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

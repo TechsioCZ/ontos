@@ -10,7 +10,7 @@ import {
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Layer, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -161,7 +161,7 @@ const toastTypes = () =>
     .map((title) => title.dataset['type']);
 const copy = moduleText('cs');
 
-describe('finance commands parked for approval', () => {
+it.layer(network, { excludeTestServices: true })('finance commands parked for approval', (suite) => {
   beforeEach(() => {
     commands.length = 0;
     reads.length = 0;
@@ -175,7 +175,7 @@ describe('finance commands parked for approval', () => {
     unmountAll();
   });
 
-  it.live('reports a parked command as pending approval and never re-proposes the same intent', () =>
+  suite.effect('reports a parked command as pending approval and never re-proposes the same intent', () =>
     Effect.gen(function* parked() {
       const vm = yield* preparedVm('pending-approval-dedupe');
       const readsBefore = reads.length;
@@ -200,10 +200,10 @@ describe('finance commands parked for approval', () => {
       expect(edited).toEqual({ ok: true });
       expect(commands).toHaveLength(2);
       expect(toastTypes()).toEqual(['info', 'info', 'success']);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('does not let another scope reuse a proposal with the same revision and command', () =>
+  suite.effect('does not let another scope reuse a proposal with the same revision and command', () =>
     Effect.gen(function* switched() {
       expect(companyScope).toBeDefined();
       expect(otherCompanyScope).not.toBe(companyScope);
@@ -235,10 +235,10 @@ describe('finance commands parked for approval', () => {
         ok: false,
       });
       expect(commands).toHaveLength(2);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('keeps a genuine direct write a success that refreshes the ledger', () =>
+  suite.effect('keeps a genuine direct write a success that refreshes the ledger', () =>
     Effect.gen(function* direct() {
       const vm = yield* preparedVm('pending-approval-direct');
       const readsBefore = reads.length;
@@ -248,10 +248,10 @@ describe('finance commands parked for approval', () => {
       expect(outcome).toEqual({ ok: true });
       expect(toastTypes()).toEqual(['success']);
       expect(reads.length).toBe(readsBefore + 1);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('shows a parked outcome as neutral information and a refusal as an error', () =>
+  suite.effect('shows a parked outcome as neutral information and a refusal as an error', () =>
     Effect.gen(function* notices() {
       const vm = yield* preparedVm('pending-approval-notice');
       expect(outcomeNotice(vm, { feedback: 'pendingApproval', ok: false })).toEqual({
@@ -262,10 +262,10 @@ describe('finance commands parked for approval', () => {
         status: 'error',
         text: copy('finance-billing.demo.feedback.forbidden'),
       });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('lists a parked recurring invoice as pending, not as a failed template', () =>
+  suite.effect('lists a parked recurring invoice as pending, not as a failed template', () =>
     Effect.gen(function* recurring() {
       const vm = yield* preparedVm('pending-approval-recurring');
       answer = proposal;
@@ -287,6 +287,6 @@ describe('finance commands parked for approval', () => {
       yield* perform(recurringPanelGenerateProgram(context, [template]));
       expect(commands).toHaveLength(1);
       expect(results.at(-1)).toEqual({ created: [], duplicates: [], failed: [], pending: ['Nájem kancelář'] });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

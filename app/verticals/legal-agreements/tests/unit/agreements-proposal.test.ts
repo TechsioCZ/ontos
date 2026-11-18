@@ -9,7 +9,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Schema } from 'effect';
-import { beforeEach, describe, expect, it } from 'effect-rstest';
+import { beforeEach, expect, it } from 'effect-rstest';
 
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -59,28 +59,30 @@ const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
 
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
 const OwnerActionApi = ApplyCommandActionApi.prefix('/legal-agreements-api');
-const networkFor = (answer: ActionProposalAccepted | typeof ApplyCommandResultSchema.Type) =>
-  browserNetwork(
-    shellGatewayIssuer({ 'legal-agreements': '/legal-agreements-api' }).application,
-    serveApi(
-      OwnerActionApi,
-      HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
-        group.handle('execute', ({ payload }) =>
-          Effect.sync(() => {
-            commands.push(payload);
-            return answer;
-          }),
-        ),
-      ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
-    ),
-  );
+/** What the owner answers the next command with; each test sets it. */
+let answer: ActionProposalAccepted | typeof ApplyCommandResultSchema.Type = proposal;
+const network = browserNetwork(
+  shellGatewayIssuer({ 'legal-agreements': '/legal-agreements-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+);
 
 beforeEach(() => {
   commands.length = 0;
+  answer = proposal;
 });
 
-describe('contract terms save with approval', () => {
-  it.live('keeps terms parked for approval unsaved and reports the proposal', () =>
+it.layer(network, { excludeTestServices: true })('contract terms save with approval', (suite) => {
+  suite.effect('keeps terms parked for approval unsaved and reports the proposal', () =>
     Effect.gen(function* parked() {
       yield* pinTestDocument;
       const reported: ActionProposalAccepted[] = [];
@@ -95,12 +97,13 @@ describe('contract terms save with approval', () => {
       expect(result).toBe('proposed');
       expect(reported).toEqual([proposal]);
       expect(commands).toHaveLength(1);
-    }).pipe(Effect.provide(networkFor(proposal))),
+    }),
   );
 
-  it.live('adopts the committed revision and reports no proposal', () =>
+  suite.effect('adopts the committed revision and reports no proposal', () =>
     Effect.gen(function* committed() {
       yield* pinTestDocument;
+      answer = yield* Schema.decodeUnknownEffect(ApplyCommandResultSchema)({ resourceRef: contractRef, revision: 5 });
       const reported: ActionProposalAccepted[] = [];
       const result = yield* saveTerms(
         command,
@@ -112,10 +115,6 @@ describe('contract terms save with approval', () => {
       );
       expect(result).toBe(5);
       expect(reported).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        networkFor(Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: contractRef, revision: 5 })),
-      ),
-    ),
+    }),
   );
 });

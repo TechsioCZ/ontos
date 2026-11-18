@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { GatewayAssertionRedemptionService, GatewayAssertionReplayError } from '@app/core-runtime';
 import type { VerticalRuntimeRegistration } from '@app/core-runtime';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
@@ -7,7 +5,8 @@ import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import type { ActionTestHarnessOptions } from '@app/core-runtime/testing/actions';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
-import { Clock, ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Clock, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { GatewayPrincipalVerifierLive } from '../../src/server.ts';
@@ -58,9 +57,9 @@ export const registeredActionGateway = (
       ownerRegistration: owner.ownerRegistration,
       ...options,
     });
-    const { privateKey, publicKey } = yield* Effect.promise(async () => await generateKeyPair('Ed25519'));
+    const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
-      ...(yield* Effect.promise(async () => await exportJWK(publicKey))),
+      ...(yield* Effect.promise(() => exportJWK(publicKey))),
       alg: 'EdDSA',
       kid: keyId,
       use: 'sig',
@@ -68,25 +67,26 @@ export const registeredActionGateway = (
     const publicJwks = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({ keys: [publicJwk] });
     const redeemed = new Set<string>();
     const clock = yield* Clock.Clock;
+    const crypto = Context.get(yield* Layer.build(NodeCrypto.layer), Crypto.Crypto);
 
     const authorization = Effect.gen(function* signAssertion() {
       const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-      const token = yield* Effect.promise(
-        async () =>
-          await new SignJWT({
-            compositionRevision,
-            principal: { ...fixturePrincipal, authContextRef: `better-auth-session:${owner.audience}-http` },
-            targetBuildMarker: owner.apiMarker.buildMarker,
-            ver: GATEWAY_ASSERTION_VERSION,
-          })
-            .setProtectedHeader({ alg: 'EdDSA', kid: keyId, typ: 'JWT' })
-            .setIssuer(issuer)
-            .setAudience(owner.audience)
-            .setSubject(fixturePrincipal.principalId)
-            .setIssuedAt(now)
-            .setExpirationTime(now + 300)
-            .setJti(randomUUID())
-            .sign(privateKey),
+      const jti = yield* crypto.randomUUIDv4();
+      const token = yield* Effect.promise(() =>
+        new SignJWT({
+          compositionRevision,
+          principal: { ...fixturePrincipal, authContextRef: `better-auth-session:${owner.audience}-http` },
+          targetBuildMarker: owner.apiMarker.buildMarker,
+          ver: GATEWAY_ASSERTION_VERSION,
+        })
+          .setProtectedHeader({ alg: 'EdDSA', kid: keyId, typ: 'JWT' })
+          .setIssuer(issuer)
+          .setAudience(owner.audience)
+          .setSubject(fixturePrincipal.principalId)
+          .setIssuedAt(now)
+          .setExpirationTime(now + 300)
+          .setJti(jti)
+          .sign(privateKey),
       );
       return `Bearer ${token}`;
     }).pipe(Effect.provideService(Clock.Clock, clock));
@@ -141,5 +141,5 @@ export const relayActionWrite = (
       headers.set('x-action-intent', write.intent);
     }
     const request = new Request(`https://owner.test${write.path}`, { body: write.body, headers, method: 'POST' });
-    return yield* Effect.promise(async () => await handle(request));
+    return yield* Effect.promise(() => handle(request));
   });

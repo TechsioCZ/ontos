@@ -162,66 +162,68 @@ beforeEach(() => {
 });
 afterEach(unmountAll);
 
-it.live('typing only changes the draft and writes nothing', () =>
-  Effect.gen(function* typingChangesOnlyDraft() {
-    yield* pinTestDocument;
-    yield* renderDialog();
-    yield* type('customer-name', 'Nová firma');
-    yield* type('customer-email', 'obchod@example.test');
-    expect(partyRequests).toEqual([]);
-    expect(onboardRequests).toEqual([]);
-    expect(button(labels.save).hasAttribute('disabled')).toBe(false);
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customer create save', (suite) => {
+  suite.effect('typing only changes the draft and writes nothing', () =>
+    Effect.gen(function* typingChangesOnlyDraft() {
+      yield* pinTestDocument;
+      yield* renderDialog();
+      yield* type('customer-name', 'Nová firma');
+      yield* type('customer-email', 'obchod@example.test');
+      expect(partyRequests).toEqual([]);
+      expect(onboardRequests).toEqual([]);
+      expect(button(labels.save).hasAttribute('disabled')).toBe(false);
+    }),
+  );
 
-it.live('reads the required text of a required field in Czech', () =>
-  Effect.gen(function* requiredCopyIsCzech() {
-    yield* pinTestDocument;
-    yield* renderDialog();
-    const label = document.querySelector<HTMLLabelElement>('label[for="customer-name"]');
-    expect(label?.textContent).toContain(requiredLabelFor('cs'));
-    expect(document.body.textContent).not.toContain('(required)');
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredCopyIsCzech() {
+      yield* pinTestDocument;
+      yield* renderDialog();
+      const label = document.querySelector<HTMLLabelElement>('label[for="customer-name"]');
+      expect(label?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+    }),
+  );
 
-it.live('Uložit writes exactly once', () =>
-  Effect.gen(function* saveOnce() {
-    yield* pinTestDocument;
-    const { completed, createdCustomers } = yield* renderDialog();
-    yield* type('customer-name', 'Nová firma');
-    yield* acted(() => {
-      fireEvent.click(button(labels.save));
-    });
-    yield* Deferred.await(completed);
-    yield* settle;
-    expect(createdCustomers).toHaveLength(1);
-    expect(partyRequests).toHaveLength(1);
-    expect(onboardRequests).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('Uložit writes exactly once', () =>
+    Effect.gen(function* saveOnce() {
+      yield* pinTestDocument;
+      const { completed, createdCustomers } = yield* renderDialog();
+      yield* type('customer-name', 'Nová firma');
+      yield* acted(() => {
+        fireEvent.click(button(labels.save));
+      });
+      yield* Deferred.await(completed);
+      yield* settle;
+      expect(createdCustomers).toHaveLength(1);
+      expect(partyRequests).toHaveLength(1);
+      expect(onboardRequests).toHaveLength(1);
+    }),
+  );
 
-it.live('leaving with unsaved input asks first and keeps the form on Zůstat', () =>
-  Effect.gen(function* askBeforeLeaving() {
-    yield* pinTestDocument;
-    const { openChanges } = yield* renderDialog();
-    yield* type('customer-name', 'Nová firma');
-    yield* acted(() => {
-      fireEvent.click(button(copy(`${KEY}.cancel`)));
-    });
-    yield* waitUntil(() => findButton(labels.stay) !== undefined);
-    expect(findButton(labels.stay)).toBeDefined();
-    expect(partyRequests).toEqual([]);
-    expect(onboardRequests).toEqual([]);
-    expect(openChanges).not.toContain(false);
-    const stay = findButton(labels.stay);
-    if (stay === undefined) {
-      throw new Error('missing Zůstat');
-    }
-    yield* acted(() => {
-      fireEvent.click(stay);
-    });
-    yield* waitUntil(() => findButton(labels.stay) === undefined);
-    expect(findButton(labels.stay)).toBeUndefined();
-    expect(openChanges).not.toContain(false);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('leaving with unsaved input asks first and keeps the form on Zůstat', () =>
+    Effect.gen(function* askBeforeLeaving() {
+      yield* pinTestDocument;
+      const { openChanges } = yield* renderDialog();
+      yield* type('customer-name', 'Nová firma');
+      yield* acted(() => {
+        fireEvent.click(button(copy(`${KEY}.cancel`)));
+      });
+      yield* waitUntil(() => findButton(labels.stay) !== undefined);
+      expect(findButton(labels.stay)).toBeDefined();
+      expect(partyRequests).toEqual([]);
+      expect(onboardRequests).toEqual([]);
+      expect(openChanges).not.toContain(false);
+      const stay = findButton(labels.stay);
+      if (stay === undefined) {
+        throw new Error('missing Zůstat');
+      }
+      yield* acted(() => {
+        fireEvent.click(stay);
+      });
+      yield* waitUntil(() => findButton(labels.stay) === undefined);
+      expect(findButton(labels.stay)).toBeUndefined();
+      expect(openChanges).not.toContain(false);
+    }),
+  );
+});

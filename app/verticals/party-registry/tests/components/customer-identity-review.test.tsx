@@ -442,535 +442,546 @@ const liveChange = (event = moduleChangeEvent) => {
   });
 };
 
-it.live('the extracted panel presents loading, empty, denied and unavailable queue states with read retries', () =>
-  Effect.gen(function* panelQueueStates() {
-    yield* pinTestDocument;
-    const pendingQueue = yield* Deferred.make<typeof queue>();
-    listNext.push(Deferred.await(pendingQueue));
-    const review = yield* renderReview();
-    act(() => review.result.current.openReview());
-    const panel = yield* renderPanel(review.result.current);
-    expect(document.body.textContent).not.toContain(partyRef.resourceId);
-    expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
-    expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
-    expectHumanReadable();
-    expect(screen.getByText(copy(`${reviewKey}.loading`))).toBeTruthy();
-    expect(screen.queryByText(copy(`${reviewKey}.empty`))).toBeNull();
-    yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('ready')));
-    yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
-    expect(screen.getByText(copy(`${reviewKey}.empty`))).toBeTruthy();
-    for (const [schema, tag, status, key] of [
-      [DuplicateCandidateListForbiddenProblemSchema, 'DuplicateCandidateListForbiddenProblem', 403, 'forbidden'],
-      [DuplicateCandidateListUnavailableProblemSchema, 'DuplicateCandidateListUnavailableProblem', 503, 'unavailable'],
-    ] as const) {
-      const failure = yield* Schema.decodeUnknownEffect(schema)({
-        _tag: tag,
-        detail: 'Read failed',
-        retryable: true,
-        status,
-        title: 'Read failed',
-        type: 'urn:test:read-failed',
-      });
-      listNext.push(Effect.fail(failure));
-      // A shown page follows live changes; a failed one offers only an error-state retry.
-      if (review.result.current.queue.status === 'ready') {
-        liveChange();
-      } else {
-        fireEvent.click(screen.getByRole('button', { name: copy(`${reviewKey}.retryQueue`) }));
-      }
-      yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('failed')));
-      yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
-      expect(screen.getByText(copy(`${reviewKey}.${key}`))).toBeTruthy();
-      expect(screen.queryByText(copy(`${reviewKey}.empty`))).toBeNull();
-    }
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customer identity review', (suite) => {
+  suite.effect(
+    'the extracted panel presents loading, empty, denied and unavailable queue states with read retries',
+    () =>
+      Effect.gen(function* panelQueueStates() {
+        yield* pinTestDocument;
+        const pendingQueue = yield* Deferred.make<typeof queue>();
+        listNext.push(Deferred.await(pendingQueue));
+        const review = yield* renderReview();
+        act(() => review.result.current.openReview());
+        const panel = yield* renderPanel(review.result.current);
+        expect(document.body.textContent).not.toContain(partyRef.resourceId);
+        expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
+        expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
+        expectHumanReadable();
+        expect(screen.getByText(copy(`${reviewKey}.loading`))).toBeTruthy();
+        expect(screen.queryByText(copy(`${reviewKey}.empty`))).toBeNull();
+        yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
+        yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('ready')));
+        yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+        expect(screen.getByText(copy(`${reviewKey}.empty`))).toBeTruthy();
+        for (const [schema, tag, status, key] of [
+          [DuplicateCandidateListForbiddenProblemSchema, 'DuplicateCandidateListForbiddenProblem', 403, 'forbidden'],
+          [
+            DuplicateCandidateListUnavailableProblemSchema,
+            'DuplicateCandidateListUnavailableProblem',
+            503,
+            'unavailable',
+          ],
+        ] as const) {
+          const failure = yield* Schema.decodeUnknownEffect(schema)({
+            _tag: tag,
+            detail: 'Read failed',
+            retryable: true,
+            status,
+            title: 'Read failed',
+            type: 'urn:test:read-failed',
+          });
+          listNext.push(Effect.fail(failure));
+          // A shown page follows live changes; a failed one offers only an error-state retry.
+          if (review.result.current.queue.status === 'ready') {
+            liveChange();
+          } else {
+            fireEvent.click(screen.getByRole('button', { name: copy(`${reviewKey}.retryQueue`) }));
+          }
+          yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('failed')));
+          yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+          expect(screen.getByText(copy(`${reviewKey}.${key}`))).toBeTruthy();
+          expect(screen.queryByText(copy(`${reviewKey}.empty`))).toBeNull();
+        }
+      }),
+  );
 
-it.live('the extracted panel requires an explicit subject choice and renders a committed resolved case', () =>
-  Effect.gen(function* panelResolution() {
-    yield* pinTestDocument;
-    const review = yield* renderReview();
-    yield* opened(review);
-    const panel = yield* renderPanel(review.result.current);
-    expect(document.body.textContent).not.toContain(partyRef.resourceId);
-    expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
-    expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
-    expectHumanReadable();
-    const confirm = () => screen.getByRole<HTMLButtonElement>('button', { name: copy(`${reviewKey}.match`) });
-    expect(confirm().disabled).toBe(true);
-    fireEvent.click(
-      screen.getByRole('button', { name: copy(`${reviewKey}.selectParty`, { name: 'Existing identity' }) }),
-    );
-    fireEvent.change(screen.getByRole('textbox', { name: new RegExp(copy(`${reviewKey}.reason`), 'u') }), {
-      target: { value: 'Compared submitted evidence' },
-    });
-    yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
-    expect(confirm().disabled).toBe(false);
-    expect(
-      screen
-        .getByRole('button', { name: copy(`${reviewKey}.selectParty`, { name: 'Existing identity' }) })
-        .getAttribute('aria-pressed'),
-    ).toBe('true');
-    listAnswer = Effect.succeed({ items: [], nextCaseRef: null });
-    detailAnswer = Effect.succeed({
-      ...candidateCase,
-      lifecycleState: 'RESOLVED',
-      resolutionOutcome: 'MATCH_EXISTING',
-    });
-    fireEvent.click(confirm());
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
-    yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
-    expect(screen.getByText(copy(`${reviewKey}.states.RESOLVED`))).toBeTruthy();
-    expect(screen.getByText(copy(`${reviewKey}.saved`))).toBeTruthy();
-    expect(confirm().disabled).toBe(true);
-    expect(screen.getByText(copy(`${reviewKey}.empty`))).toBeTruthy();
-    expect(resolved).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('the queue exposes loading, empty, unavailable, and retried ready states', () =>
-  Effect.gen(function* queueStates() {
-    yield* pinTestDocument;
-    const pendingQueue = yield* Deferred.make<typeof queue>();
-    listNext.push(Deferred.await(pendingQueue));
-    const review = yield* renderReview();
-    expect(review.result.current.queue.status).toBe('idle');
-    act(() => review.result.current.openReview());
-    expect(review.result.current.queue.status).toBe('loading');
-    yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('ready')));
-    expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
-    const failure = yield* Schema.decodeEffect(DuplicateCandidateListUnavailableProblemSchema)({
-      _tag: 'DuplicateCandidateListUnavailableProblem',
-      detail: 'Unavailable',
-      retryable: true,
-      status: 503,
-      title: 'Unavailable',
-      type: 'urn:test:unavailable',
-    });
-    listNext.push(Effect.fail(failure));
-    act(() => review.result.current.loadQueue());
-    yield* Effect.promise(() =>
-      waitFor(() => expect(review.result.current.queue).toEqual({ failure: 'unavailable', status: 'failed' })),
-    );
-    act(() => review.result.current.loadQueue());
-    yield* Effect.promise(() =>
-      waitFor(() => expect(review.result.current.queue).toEqual({ status: 'ready', value: queue })),
-    );
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a queue permission denial stays distinct from an empty pending queue', () =>
-  Effect.gen(function* deniedQueue() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(DuplicateCandidateListForbiddenProblemSchema)({
-      _tag: 'DuplicateCandidateListForbiddenProblem',
-      detail: 'Denied',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    listAnswer = Effect.fail(failure);
-    const review = yield* renderReview();
-    act(() => review.result.current.openReview());
-    yield* Effect.promise(() =>
-      waitFor(() => expect(review.result.current.queue).toEqual({ failure: 'forbidden', status: 'failed' })),
-    );
-    yield* networkIdle;
-    yield* settle;
-    expect(detailCalls).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live(
-  'requires explicit selection and reason, sends the case revision, locks pending writes, and refreshes after commit',
-  () =>
-    Effect.gen(function* matchExisting() {
+  suite.effect('the extracted panel requires an explicit subject choice and renders a committed resolved case', () =>
+    Effect.gen(function* panelResolution() {
       yield* pinTestDocument;
-      const pending = yield* Deferred.make<typeof matched>();
-      matchAnswer = Deferred.await(pending);
       const review = yield* renderReview();
       yield* opened(review);
-      act(() => review.result.current.resolve('MATCH_EXISTING'));
-      expect(review.result.current.notice?.key).toBe('validation');
-      yield* networkIdle;
-      yield* settle;
-      expect(matchCalls).toHaveLength(0);
-      prepare(review);
-      act(() => {
-        review.result.current.resolve('MATCH_EXISTING');
-        review.result.current.resolve('MATCH_EXISTING');
+      const panel = yield* renderPanel(review.result.current);
+      expect(document.body.textContent).not.toContain(partyRef.resourceId);
+      expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
+      expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
+      expectHumanReadable();
+      const confirm = () => screen.getByRole<HTMLButtonElement>('button', { name: copy(`${reviewKey}.match`) });
+      expect(confirm().disabled).toBe(true);
+      fireEvent.click(
+        screen.getByRole('button', { name: copy(`${reviewKey}.selectParty`, { name: 'Existing identity' }) }),
+      );
+      fireEvent.change(screen.getByRole('textbox', { name: new RegExp(copy(`${reviewKey}.reason`), 'u') }), {
+        target: { value: 'Compared submitted evidence' },
       });
-      yield* waitUntil(() => matchCalls.length === 1);
-      expect(review.result.current.busy).toBe(true);
-      expect(matchCalls[0]).toEqual([
-        {
-          caseRef: candidateCase.caseRef,
-          expectedRevision: 3,
-          reason: 'Reviewed the signup evidence',
-          selectedPartyRef: partyRef,
-        },
-        expect.objectContaining({ idempotencyKey: expect.any(String) }),
-      ]);
+      yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+      expect(confirm().disabled).toBe(false);
+      expect(
+        screen
+          .getByRole('button', { name: copy(`${reviewKey}.selectParty`, { name: 'Existing identity' }) })
+          .getAttribute('aria-pressed'),
+      ).toBe('true');
       listAnswer = Effect.succeed({ items: [], nextCaseRef: null });
       detailAnswer = Effect.succeed({
         ...candidateCase,
         lifecycleState: 'RESOLVED',
         resolutionOutcome: 'MATCH_EXISTING',
       });
-      yield* Deferred.succeed(pending, matched);
+      fireEvent.click(confirm());
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
-      expect(review.result.current.committed).toBe(true);
-      expect(review.result.current.canResolve).toBe(false);
-      expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
+      yield* panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
+      expect(screen.getByText(copy(`${reviewKey}.states.RESOLVED`))).toBeTruthy();
+      expect(screen.getByText(copy(`${reviewKey}.saved`))).toBeTruthy();
+      expect(confirm().disabled).toBe(true);
+      expect(screen.getByText(copy(`${reviewKey}.empty`))).toBeTruthy();
       expect(resolved).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
-);
+    }),
+  );
 
-it.live('matching submits the explicitly chosen second candidate, not the first suggestion', () =>
-  Effect.gen(function* selectedCandidate() {
-    yield* pinTestDocument;
-    const secondPartyRef = { ...partyRef, resourceId: '20000000-0000-4000-8000-000000000002' };
-    detailAnswer = Effect.succeed({ ...candidateCase, candidateParties: [partyRef, secondPartyRef] });
-    identityRead = (input) =>
-      Effect.succeed({
-        currentFactAssertions: [],
-        party: { ...party, partyRef: input.partyRef },
-        resolution: {
-          aliasChain: [],
-          canonicalPartyRef: input.partyRef,
-          kind: 'DIRECT',
-          requestedPartyRef: input.partyRef,
-        },
-      });
-    const review = yield* renderReview();
-    yield* opened(review);
-    act(() => {
-      review.result.current.setReason('Compared both subjects');
-      review.result.current.setSelectedPartyId(secondPartyRef.resourceId);
-    });
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* waitUntil(() => matchCalls.length === 1);
-    expect(matchCalls[0]?.[0].selectedPartyRef).toEqual(secondPartyRef);
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
-  }).pipe(Effect.provide(network)),
-);
-
-const rejectsSelectedSubject = (state: 'archived' | 'alias' | 'forbidden' | 'not-candidate') => {
-  it.live(`matching rejects a selected subject that is ${state}`, () =>
-    Effect.gen(function* ineligibleCandidate() {
+  suite.effect('the queue exposes loading, empty, unavailable, and retried ready states', () =>
+    Effect.gen(function* queueStates() {
       yield* pinTestDocument;
-      if (state === 'forbidden') {
-        const failure = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
-          _tag: 'PartyDetailForbiddenProblem',
-          detail: 'Denied',
+      const pendingQueue = yield* Deferred.make<typeof queue>();
+      listNext.push(Deferred.await(pendingQueue));
+      const review = yield* renderReview();
+      expect(review.result.current.queue.status).toBe('idle');
+      act(() => review.result.current.openReview());
+      expect(review.result.current.queue.status).toBe('loading');
+      yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('ready')));
+      expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
+      const failure = yield* Schema.decodeEffect(DuplicateCandidateListUnavailableProblemSchema)({
+        _tag: 'DuplicateCandidateListUnavailableProblem',
+        detail: 'Unavailable',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'urn:test:unavailable',
+      });
+      listNext.push(Effect.fail(failure));
+      act(() => review.result.current.loadQueue());
+      yield* Effect.promise(() =>
+        waitFor(() => expect(review.result.current.queue).toEqual({ failure: 'unavailable', status: 'failed' })),
+      );
+      act(() => review.result.current.loadQueue());
+      yield* Effect.promise(() =>
+        waitFor(() => expect(review.result.current.queue).toEqual({ status: 'ready', value: queue })),
+      );
+    }),
+  );
+
+  suite.effect('a queue permission denial stays distinct from an empty pending queue', () =>
+    Effect.gen(function* deniedQueue() {
+      yield* pinTestDocument;
+      const failure = yield* Schema.decodeEffect(DuplicateCandidateListForbiddenProblemSchema)({
+        _tag: 'DuplicateCandidateListForbiddenProblem',
+        detail: 'Denied',
+        status: 403,
+        title: 'Forbidden',
+        type: 'urn:test:forbidden',
+      });
+      listAnswer = Effect.fail(failure);
+      const review = yield* renderReview();
+      act(() => review.result.current.openReview());
+      yield* Effect.promise(() =>
+        waitFor(() => expect(review.result.current.queue).toEqual({ failure: 'forbidden', status: 'failed' })),
+      );
+      yield* networkIdle;
+      yield* settle;
+      expect(detailCalls).toHaveLength(0);
+    }),
+  );
+
+  suite.effect(
+    'requires explicit selection and reason, sends the case revision, locks pending writes, and refreshes after commit',
+    () =>
+      Effect.gen(function* matchExisting() {
+        yield* pinTestDocument;
+        const pending = yield* Deferred.make<typeof matched>();
+        matchAnswer = Deferred.await(pending);
+        const review = yield* renderReview();
+        yield* opened(review);
+        act(() => review.result.current.resolve('MATCH_EXISTING'));
+        expect(review.result.current.notice?.key).toBe('validation');
+        yield* networkIdle;
+        yield* settle;
+        expect(matchCalls).toHaveLength(0);
+        prepare(review);
+        act(() => {
+          review.result.current.resolve('MATCH_EXISTING');
+          review.result.current.resolve('MATCH_EXISTING');
+        });
+        yield* waitUntil(() => matchCalls.length === 1);
+        expect(review.result.current.busy).toBe(true);
+        expect(matchCalls[0]).toEqual([
+          {
+            caseRef: candidateCase.caseRef,
+            expectedRevision: 3,
+            reason: 'Reviewed the signup evidence',
+            selectedPartyRef: partyRef,
+          },
+          expect.objectContaining({ idempotencyKey: expect.any(String) }),
+        ]);
+        listAnswer = Effect.succeed({ items: [], nextCaseRef: null });
+        detailAnswer = Effect.succeed({
+          ...candidateCase,
+          lifecycleState: 'RESOLVED',
+          resolutionOutcome: 'MATCH_EXISTING',
+        });
+        yield* Deferred.succeed(pending, matched);
+        yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
+        expect(review.result.current.committed).toBe(true);
+        expect(review.result.current.canResolve).toBe(false);
+        expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
+        expect(resolved).toHaveLength(1);
+      }),
+  );
+
+  suite.effect('matching submits the explicitly chosen second candidate, not the first suggestion', () =>
+    Effect.gen(function* selectedCandidate() {
+      yield* pinTestDocument;
+      const secondPartyRef = { ...partyRef, resourceId: '20000000-0000-4000-8000-000000000002' };
+      detailAnswer = Effect.succeed({ ...candidateCase, candidateParties: [partyRef, secondPartyRef] });
+      identityRead = (input) =>
+        Effect.succeed({
+          currentFactAssertions: [],
+          party: { ...party, partyRef: input.partyRef },
+          resolution: {
+            aliasChain: [],
+            canonicalPartyRef: input.partyRef,
+            kind: 'DIRECT',
+            requestedPartyRef: input.partyRef,
+          },
+        });
+      const review = yield* renderReview();
+      yield* opened(review);
+      act(() => {
+        review.result.current.setReason('Compared both subjects');
+        review.result.current.setSelectedPartyId(secondPartyRef.resourceId);
+      });
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* waitUntil(() => matchCalls.length === 1);
+      expect(matchCalls[0]?.[0].selectedPartyRef).toEqual(secondPartyRef);
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
+    }),
+  );
+
+  const rejectsSelectedSubject = (state: 'archived' | 'alias' | 'forbidden' | 'not-candidate') => {
+    suite.effect(`matching rejects a selected subject that is ${state}`, () =>
+      Effect.gen(function* ineligibleCandidate() {
+        yield* pinTestDocument;
+        if (state === 'forbidden') {
+          const failure = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
+            _tag: 'PartyDetailForbiddenProblem',
+            detail: 'Denied',
+            status: 403,
+            title: 'Forbidden',
+            type: 'urn:test:forbidden',
+          });
+          identityAnswer = Effect.fail(failure);
+        } else {
+          identityAnswer = Effect.succeed({
+            currentFactAssertions: [],
+            party: { ...party, archivedAt: state === 'archived' ? Option.some(party.createdAt) : Option.none() },
+            resolution: {
+              aliasChain: state === 'alias' ? [partyRef] : [],
+              canonicalPartyRef: partyRef,
+              kind: state === 'alias' ? 'ALIAS' : 'DIRECT',
+              requestedPartyRef: partyRef,
+            },
+          });
+        }
+        const review = yield* renderReview();
+        yield* opened(review);
+        prepare(review);
+        if (state === 'not-candidate') {
+          act(() => review.result.current.setSelectedPartyId('20000000-0000-4000-8000-000000000099'));
+        }
+        act(() => review.result.current.resolve('MATCH_EXISTING'));
+        expect(review.result.current.notice?.key).toBe('validation');
+        yield* networkIdle;
+        yield* settle;
+        expect(matchCalls).toHaveLength(0);
+        expect(resolved).toHaveLength(0);
+      }),
+    );
+  };
+  for (const state of ['archived', 'alias', 'forbidden', 'not-candidate'] as const) {
+    rejectsSelectedSubject(state);
+  }
+
+  suite.effect('a denied resolution retains the reason and chosen identity without claiming success', () =>
+    Effect.gen(function* deniedResolution() {
+      yield* pinTestDocument;
+      const failure = yield* Schema.decodeEffect(PartyCommandForbiddenProblemSchema)({
+        _tag: 'PartyCommandForbiddenProblem',
+        detail: 'Denied',
+        status: 403,
+        title: 'Forbidden',
+        type: 'urn:test:forbidden',
+      });
+      matchAnswer = Effect.fail(failure);
+      const review = yield* renderReview();
+      yield* opened(review);
+      prepare(review);
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('forbidden')));
+      expect(review.result.current.reason).toBe('Reviewed the signup evidence');
+      expect(review.result.current.selectedPartyId).toBe(partyRef.resourceId);
+      expect(resolved).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('the panel offers no manual reload and follows live changes and module writes while open', () =>
+    Effect.gen(function* followsLiveChanges() {
+      yield* pinTestDocument;
+      const review = yield* renderReview();
+      liveChange();
+      yield* networkIdle;
+      yield* settle;
+      expect(listCalls).toHaveLength(0);
+      yield* opened(review);
+      prepare(review);
+      yield* renderPanel(review.result.current);
+      // No button carries any of the module's retry or reload copy (the queue and detail retries, the detail reload).
+      const offered = screen.queryAllByRole('button').map((button) => button.textContent?.trim() ?? '');
+      expect(offered.length).toBeGreaterThan(0);
+      expect(offered.filter((name) => retryOrReloadCopy.has(name) || /^(?:Zkusit znovu|Obnovit)/u.test(name))).toEqual(
+        [],
+      );
+      listCalls.length = 0;
+      detailCalls.length = 0;
+      detailAnswer = Effect.succeed({ ...candidateCase, revision: 5 });
+      liveChange();
+      yield* Effect.promise(() =>
+        waitFor(() => {
+          const { detail } = review.result.current;
+          expect(detail.status === 'ready' ? detail.value.candidateCase.revision : undefined).toBe(5);
+        }),
+      );
+      expect(listCalls).toHaveLength(1);
+      expect(detailCalls).toHaveLength(1);
+      // The background read never blanks the panel and keeps the reviewer's draft.
+      expect(review.result.current.queue.status).toBe('ready');
+      expect(review.result.current.reason).toBe('Reviewed the signup evidence');
+      expect(review.result.current.selectedPartyId).toBe(partyRef.resourceId);
+      liveChange(moduleWriteEvent);
+      yield* waitUntil(() => listCalls.length === 2);
+      act(() => review.result.current.closeReview(false));
+      liveChange();
+      yield* networkIdle;
+      yield* settle;
+      expect(listCalls).toHaveLength(2);
+      unmountAll();
+    }),
+  );
+
+  suite.effect('a revision or claim conflict reloads the case and requires a fresh subject choice', () =>
+    Effect.gen(function* conflict() {
+      yield* pinTestDocument;
+      const failure = yield* Schema.decodeEffect(PartyCommandConflictProblemSchema)({
+        _tag: 'PartyCommandConflictProblem',
+        code: 'duplicate_candidate_conflict',
+        detail: 'Changed',
+        status: 409,
+        title: 'Conflict',
+        type: 'urn:test:conflict',
+      });
+      matchAnswer = Effect.fail(failure);
+      const review = yield* renderReview();
+      yield* opened(review);
+      prepare(review);
+      const reloaded = yield* Deferred.make<typeof candidateCase>();
+      detailAnswer = Deferred.await(reloaded);
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.stale).toBe(true)));
+      expect(review.result.current.notice?.key).toBe('conflict');
+      expect(review.result.current.selectedPartyId).toBe('');
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* Deferred.succeed(reloaded, { ...candidateCase, revision: 4 });
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.canResolve).toBe(true)));
+      // The reload has landed and the network is idle: a resolve sent while the case was stale would be recorded.
+      yield* networkIdle;
+      expect(matchCalls).toHaveLength(1);
+      prepare(review);
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* waitUntil(() => matchCalls.length === 2);
+      expect(matchCalls[1]?.[0].expectedRevision).toBe(4);
+    }),
+  );
+
+  suite.effect('a successful resolution with a failed refresh is terminal and never resubmitted', () =>
+    Effect.gen(function* refreshFailure() {
+      yield* pinTestDocument;
+      const failure = yield* Schema.decodeEffect(DuplicateCandidateListForbiddenProblemSchema)({
+        _tag: 'DuplicateCandidateListForbiddenProblem',
+        detail: 'Revoked',
+        status: 403,
+        title: 'Forbidden',
+        type: 'urn:test:forbidden',
+      });
+      const review = yield* renderReview();
+      yield* opened(review);
+      prepare(review);
+      listAnswer = Effect.fail(failure);
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('savedReloadFailed')));
+      expect(review.result.current.committed).toBe(true);
+      expect(review.result.current.queue).toEqual({ failure: 'forbidden', status: 'failed' });
+      expect(review.result.current.detail.status).toBe('ready');
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* networkIdle;
+      yield* settle;
+      expect(matchCalls).toHaveLength(1);
+      expect(resolved).toHaveLength(1);
+    }),
+  );
+
+  suite.effect(
+    'a failed committed detail refresh preserves the refreshed empty queue and allows read-only recovery',
+    () =>
+      Effect.gen(function* detailRefreshFailure() {
+        yield* pinTestDocument;
+        const failure = yield* Schema.decodeEffect(DuplicateCandidateDetailForbiddenProblemSchema)({
+          _tag: 'DuplicateCandidateDetailForbiddenProblem',
+          detail: 'Revoked',
           status: 403,
           title: 'Forbidden',
           type: 'urn:test:forbidden',
         });
-        identityAnswer = Effect.fail(failure);
-      } else {
-        identityAnswer = Effect.succeed({
-          currentFactAssertions: [],
-          party: { ...party, archivedAt: state === 'archived' ? Option.some(party.createdAt) : Option.none() },
-          resolution: {
-            aliasChain: state === 'alias' ? [partyRef] : [],
-            canonicalPartyRef: partyRef,
-            kind: state === 'alias' ? 'ALIAS' : 'DIRECT',
-            requestedPartyRef: partyRef,
-          },
+        const review = yield* renderReview();
+        yield* opened(review);
+        prepare(review);
+        listAnswer = Effect.succeed({ items: [], nextCaseRef: null });
+        detailAnswer = Effect.fail(failure);
+        act(() => review.result.current.resolve('MATCH_EXISTING'));
+        yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
+        expect(review.result.current.notice?.key).toBe('savedReloadFailed');
+        expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
+        expect(review.result.current.detail).toEqual({ failure: 'forbidden', status: 'failed' });
+        detailAnswer = Effect.succeed({
+          ...candidateCase,
+          lifecycleState: 'RESOLVED',
+          resolutionOutcome: 'MATCH_EXISTING',
         });
-      }
+        act(() => review.result.current.retryDetail());
+        yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
+        expect(review.result.current.canResolve).toBe(false);
+        expect(matchCalls).toHaveLength(1);
+      }),
+  );
+
+  for (const [resolution, command] of [
+    ['CREATE_NEW', createCalls],
+    ['NEEDS_EVIDENCE', evidenceCalls],
+    ['DISMISSED_AS_NON_SUBJECT', dismissCalls],
+  ] as const) {
+    suite.effect(`${resolution} uses its existing Action with no invented Party selection or merge`, () =>
+      Effect.gen(function* supportedResolution() {
+        yield* pinTestDocument;
+        const review = yield* renderReview();
+        yield* opened(review);
+        act(() => review.result.current.setReason('Reviewed the evidence'));
+        act(() => review.result.current.resolve(resolution));
+        yield* waitUntil(() => resolved.length === 1);
+        expect(command[0]).toEqual([
+          { caseRef: candidateCase.caseRef, expectedRevision: 3, reason: 'Reviewed the evidence' },
+          expect.any(Object),
+        ]);
+        yield* networkIdle;
+        yield* settle;
+        expect(matchCalls).toHaveLength(0);
+      }),
+    );
+  }
+
+  suite.effect('uncertain writes require native commit proof and retry only the identical invocation identity', () =>
+    Effect.gen(function* uncertainResolution() {
+      yield* pinTestDocument;
+      const failure = yield* Schema.decodeEffect(PartyCommandUnavailableProblemSchema)({
+        _tag: 'PartyCommandUnavailableProblem',
+        detail: 'Acknowledgement lost',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'urn:test:unavailable',
+      });
+      matchNext.push(Effect.fail(failure));
+      matchAnswer = Effect.succeed(matched);
+      commitAnswer = Effect.succeed({ _tag: 'PartyCommandCommitResolution', retryCommand: true, state: 'NOT_STARTED' });
       const review = yield* renderReview();
       yield* opened(review);
       prepare(review);
-      if (state === 'not-candidate') {
-        act(() => review.result.current.setSelectedPartyId('20000000-0000-4000-8000-000000000099'));
-      }
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.uncertain).toBe(true)));
+      act(() => review.result.current.resolve('CREATE_NEW'));
+      yield* networkIdle;
+      yield* settle;
+      expect(createCalls).toHaveLength(0);
+      act(() => review.result.current.checkStatus());
+      yield* waitUntil(() => resolved.length === 1);
+      const calls = matchCalls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toEqual(calls[1]);
+      expect(commitCalls[0]).toEqual([
+        { actionKey: 'party.registry.resolve-duplicate-candidate-match', idempotencyKey: calls[0]?.[1].idempotencyKey },
+        expect.any(Object),
+      ]);
+    }),
+  );
+
+  suite.effect('changing cases clears the previous subject choice and reason before the new detail arrives', () =>
+    Effect.gen(function* resetSelection() {
+      yield* pinTestDocument;
+      const review = yield* renderReview();
+      yield* opened(review);
+      prepare(review);
+      const pendingDetail = yield* Deferred.make<typeof candidateCase>();
+      detailAnswer = Deferred.await(pendingDetail);
+      const next = {
+        ...candidateCase,
+        caseRef: { ...candidateCase.caseRef, resourceId: '30000000-0000-4000-8000-000000000002' },
+      };
+      act(() => review.result.current.selectCase(next.caseRef));
+      expect(review.result.current.detail.status).toBe('loading');
+      expect(review.result.current.selectedPartyId).toBe('');
+      expect(review.result.current.reason).toBe('');
+      act(() => review.result.current.resolve('MATCH_EXISTING'));
+      // The new detail read is held open, so the network cannot go idle here; the check below, once it is answered,
+      // covers both resolves.
+      yield* settle;
+      expect(matchCalls).toHaveLength(0);
+      yield* Deferred.succeed(pendingDetail, next);
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       expect(review.result.current.notice?.key).toBe('validation');
       yield* networkIdle;
       yield* settle;
       expect(matchCalls).toHaveLength(0);
-      expect(resolved).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
+    }),
   );
-};
-for (const state of ['archived', 'alias', 'forbidden', 'not-candidate'] as const) {
-  rejectsSelectedSubject(state);
-}
 
-it.live('a denied resolution retains the reason and chosen identity without claiming success', () =>
-  Effect.gen(function* deniedResolution() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(PartyCommandForbiddenProblemSchema)({
-      _tag: 'PartyCommandForbiddenProblem',
-      detail: 'Denied',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    matchAnswer = Effect.fail(failure);
-    const review = yield* renderReview();
-    yield* opened(review);
-    prepare(review);
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('forbidden')));
-    expect(review.result.current.reason).toBe('Reviewed the signup evidence');
-    expect(review.result.current.selectedPartyId).toBe(partyRef.resourceId);
-    expect(resolved).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('the panel offers no manual reload and follows live changes and module writes while open', () =>
-  Effect.gen(function* followsLiveChanges() {
-    yield* pinTestDocument;
-    const review = yield* renderReview();
-    liveChange();
-    yield* networkIdle;
-    yield* settle;
-    expect(listCalls).toHaveLength(0);
-    yield* opened(review);
-    prepare(review);
-    yield* renderPanel(review.result.current);
-    // No button carries any of the module's retry or reload copy (the queue and detail retries, the detail reload).
-    const offered = screen.queryAllByRole('button').map((button) => button.textContent?.trim() ?? '');
-    expect(offered.length).toBeGreaterThan(0);
-    expect(offered.filter((name) => retryOrReloadCopy.has(name) || /^(?:Zkusit znovu|Obnovit)/u.test(name))).toEqual(
-      [],
-    );
-    listCalls.length = 0;
-    detailCalls.length = 0;
-    detailAnswer = Effect.succeed({ ...candidateCase, revision: 5 });
-    liveChange();
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        const { detail } = review.result.current;
-        expect(detail.status === 'ready' ? detail.value.candidateCase.revision : undefined).toBe(5);
-      }),
-    );
-    expect(listCalls).toHaveLength(1);
-    expect(detailCalls).toHaveLength(1);
-    // The background read never blanks the panel and keeps the reviewer's draft.
-    expect(review.result.current.queue.status).toBe('ready');
-    expect(review.result.current.reason).toBe('Reviewed the signup evidence');
-    expect(review.result.current.selectedPartyId).toBe(partyRef.resourceId);
-    liveChange(moduleWriteEvent);
-    yield* waitUntil(() => listCalls.length === 2);
-    act(() => review.result.current.closeReview(false));
-    liveChange();
-    yield* networkIdle;
-    yield* settle;
-    expect(listCalls).toHaveLength(2);
-    unmountAll();
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a revision or claim conflict reloads the case and requires a fresh subject choice', () =>
-  Effect.gen(function* conflict() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(PartyCommandConflictProblemSchema)({
-      _tag: 'PartyCommandConflictProblem',
-      code: 'duplicate_candidate_conflict',
-      detail: 'Changed',
-      status: 409,
-      title: 'Conflict',
-      type: 'urn:test:conflict',
-    });
-    matchAnswer = Effect.fail(failure);
-    const review = yield* renderReview();
-    yield* opened(review);
-    prepare(review);
-    const reloaded = yield* Deferred.make<typeof candidateCase>();
-    detailAnswer = Deferred.await(reloaded);
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.stale).toBe(true)));
-    expect(review.result.current.notice?.key).toBe('conflict');
-    expect(review.result.current.selectedPartyId).toBe('');
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* Deferred.succeed(reloaded, { ...candidateCase, revision: 4 });
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.canResolve).toBe(true)));
-    // The reload has landed and the network is idle: a resolve sent while the case was stale would be recorded.
-    yield* networkIdle;
-    expect(matchCalls).toHaveLength(1);
-    prepare(review);
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* waitUntil(() => matchCalls.length === 2);
-    expect(matchCalls[1]?.[0].expectedRevision).toBe(4);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a successful resolution with a failed refresh is terminal and never resubmitted', () =>
-  Effect.gen(function* refreshFailure() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(DuplicateCandidateListForbiddenProblemSchema)({
-      _tag: 'DuplicateCandidateListForbiddenProblem',
-      detail: 'Revoked',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    const review = yield* renderReview();
-    yield* opened(review);
-    prepare(review);
-    listAnswer = Effect.fail(failure);
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('savedReloadFailed')));
-    expect(review.result.current.committed).toBe(true);
-    expect(review.result.current.queue).toEqual({ failure: 'forbidden', status: 'failed' });
-    expect(review.result.current.detail.status).toBe('ready');
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* networkIdle;
-    yield* settle;
-    expect(matchCalls).toHaveLength(1);
-    expect(resolved).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a failed committed detail refresh preserves the refreshed empty queue and allows read-only recovery', () =>
-  Effect.gen(function* detailRefreshFailure() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(DuplicateCandidateDetailForbiddenProblemSchema)({
-      _tag: 'DuplicateCandidateDetailForbiddenProblem',
-      detail: 'Revoked',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    const review = yield* renderReview();
-    yield* opened(review);
-    prepare(review);
-    listAnswer = Effect.succeed({ items: [], nextCaseRef: null });
-    detailAnswer = Effect.fail(failure);
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
-    expect(review.result.current.notice?.key).toBe('savedReloadFailed');
-    expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
-    expect(review.result.current.detail).toEqual({ failure: 'forbidden', status: 'failed' });
-    detailAnswer = Effect.succeed({
-      ...candidateCase,
-      lifecycleState: 'RESOLVED',
-      resolutionOutcome: 'MATCH_EXISTING',
-    });
-    act(() => review.result.current.retryDetail());
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
-    expect(review.result.current.canResolve).toBe(false);
-    expect(matchCalls).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-for (const [resolution, command] of [
-  ['CREATE_NEW', createCalls],
-  ['NEEDS_EVIDENCE', evidenceCalls],
-  ['DISMISSED_AS_NON_SUBJECT', dismissCalls],
-] as const) {
-  it.live(`${resolution} uses its existing Action with no invented Party selection or merge`, () =>
-    Effect.gen(function* supportedResolution() {
+  suite.effect('late case detail responses cannot replace a newer staff selection', () =>
+    Effect.gen(function* staleSelection() {
       yield* pinTestDocument;
+      const previous = yield* Deferred.make<typeof candidateCase>();
+      detailNext.push(Deferred.await(previous));
       const review = yield* renderReview();
-      yield* opened(review);
-      act(() => review.result.current.setReason('Reviewed the evidence'));
-      act(() => review.result.current.resolve(resolution));
-      yield* waitUntil(() => resolved.length === 1);
-      expect(command[0]).toEqual([
-        { caseRef: candidateCase.caseRef, expectedRevision: 3, reason: 'Reviewed the evidence' },
-        expect.any(Object),
-      ]);
-      yield* networkIdle;
-      yield* settle;
-      expect(matchCalls).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
+      const next = {
+        ...candidateCase,
+        caseRef: { ...candidateCase.caseRef, resourceId: '30000000-0000-4000-8000-000000000002' },
+      };
+      act(() => review.result.current.selectCase(candidateCase.caseRef));
+      yield* waitUntil(() => detailCalls.length === 1);
+      detailAnswer = Effect.succeed(next);
+      act(() => review.result.current.selectCase(next.caseRef));
+      yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
+      yield* Deferred.succeed(previous, candidateCase);
+      yield* Effect.promise(() =>
+        waitFor(() => {
+          const { detail } = review.result.current;
+          expect(detail.status === 'ready' ? detail.value.candidateCase.caseRef : undefined).toEqual(next.caseRef);
+        }),
+      );
+    }),
   );
-}
-
-it.live('uncertain writes require native commit proof and retry only the identical invocation identity', () =>
-  Effect.gen(function* uncertainResolution() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(PartyCommandUnavailableProblemSchema)({
-      _tag: 'PartyCommandUnavailableProblem',
-      detail: 'Acknowledgement lost',
-      retryable: true,
-      status: 503,
-      title: 'Unavailable',
-      type: 'urn:test:unavailable',
-    });
-    matchNext.push(Effect.fail(failure));
-    matchAnswer = Effect.succeed(matched);
-    commitAnswer = Effect.succeed({ _tag: 'PartyCommandCommitResolution', retryCommand: true, state: 'NOT_STARTED' });
-    const review = yield* renderReview();
-    yield* opened(review);
-    prepare(review);
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.uncertain).toBe(true)));
-    act(() => review.result.current.resolve('CREATE_NEW'));
-    yield* networkIdle;
-    yield* settle;
-    expect(createCalls).toHaveLength(0);
-    act(() => review.result.current.checkStatus());
-    yield* waitUntil(() => resolved.length === 1);
-    const calls = matchCalls;
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toEqual(calls[1]);
-    expect(commitCalls[0]).toEqual([
-      { actionKey: 'party.registry.resolve-duplicate-candidate-match', idempotencyKey: calls[0]?.[1].idempotencyKey },
-      expect.any(Object),
-    ]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('changing cases clears the previous subject choice and reason before the new detail arrives', () =>
-  Effect.gen(function* resetSelection() {
-    yield* pinTestDocument;
-    const review = yield* renderReview();
-    yield* opened(review);
-    prepare(review);
-    const pendingDetail = yield* Deferred.make<typeof candidateCase>();
-    detailAnswer = Deferred.await(pendingDetail);
-    const next = {
-      ...candidateCase,
-      caseRef: { ...candidateCase.caseRef, resourceId: '30000000-0000-4000-8000-000000000002' },
-    };
-    act(() => review.result.current.selectCase(next.caseRef));
-    expect(review.result.current.detail.status).toBe('loading');
-    expect(review.result.current.selectedPartyId).toBe('');
-    expect(review.result.current.reason).toBe('');
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    // The new detail read is held open, so the network cannot go idle here; the check below, once it is answered,
-    // covers both resolves.
-    yield* settle;
-    expect(matchCalls).toHaveLength(0);
-    yield* Deferred.succeed(pendingDetail, next);
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
-    act(() => review.result.current.resolve('MATCH_EXISTING'));
-    expect(review.result.current.notice?.key).toBe('validation');
-    yield* networkIdle;
-    yield* settle;
-    expect(matchCalls).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('late case detail responses cannot replace a newer staff selection', () =>
-  Effect.gen(function* staleSelection() {
-    yield* pinTestDocument;
-    const previous = yield* Deferred.make<typeof candidateCase>();
-    detailNext.push(Deferred.await(previous));
-    const review = yield* renderReview();
-    const next = {
-      ...candidateCase,
-      caseRef: { ...candidateCase.caseRef, resourceId: '30000000-0000-4000-8000-000000000002' },
-    };
-    act(() => review.result.current.selectCase(candidateCase.caseRef));
-    yield* waitUntil(() => detailCalls.length === 1);
-    detailAnswer = Effect.succeed(next);
-    act(() => review.result.current.selectCase(next.caseRef));
-    yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
-    yield* Deferred.succeed(previous, candidateCase);
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        const { detail } = review.result.current;
-        expect(detail.status === 'ready' ? detail.value.candidateCase.caseRef : undefined).toEqual(next.caseRef);
-      }),
-    );
-  }).pipe(Effect.provide(network)),
-);
+});

@@ -19,7 +19,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Layer, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -165,8 +165,8 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-describe('price list item editor across a background reload', () => {
-  it.live('keeps typed input, its status and the leave question; Save sends the typed draft', () =>
+it.layer(network, { excludeTestServices: true })('price list item editor across a background reload', (suite) => {
+  suite.effect('keeps typed input, its status and the leave question; Save sends the typed draft', () =>
     Effect.gen(function* typedSurvives() {
       yield* openItem;
       yield* type(name, 'typed-name');
@@ -198,10 +198,10 @@ describe('price list item editor across a background reload', () => {
       expect(commands[0]).toMatchObject({
         command: { _tag: 'UpsertPriceListItem', id: itemId, name: 'typed-name' },
       });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a draft with nothing typed takes the reloaded item', () =>
+  suite.effect('a draft with nothing typed takes the reloaded item', () =>
     Effect.gen(function* cleanFollows() {
       yield* openItem;
       const opened = value(amount);
@@ -212,6 +212,6 @@ describe('price list item editor across a background reload', () => {
       yield* waitUntil(() => value(amount) !== opened && value(amount) !== undefined);
       expect(text()).not.toContain(labels.unsaved);
       expect(button(labels.save).disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

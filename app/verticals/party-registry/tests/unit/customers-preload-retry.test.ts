@@ -65,44 +65,52 @@ const denied = Schema.decodeSync(CounterpartyReadForbiddenProblemSchema)({
   type: 'urn:test:denied',
 });
 
-afterEach(cleanup);
-
-it.live('visible preloads warm each batch once, with bounded concurrency and no retry of failed rows', () =>
-  Effect.gen(function* retryFailedVisiblePreloads() {
-    yield* pinTestDocument;
-    customerDetailData.invalidate();
-    const initialGate = yield* Deferred.make<true>();
-    const twoActive = yield* Deferred.make<true>();
-    const reads: CounterpartyReadRequest[] = [];
-    let active = 0;
-    let peak = 0;
-    const api = CounterpartyReadApi.prefix('/party-registry-api');
-    const network = browserNetwork(
-      shellGatewayIssuer({ 'party-registry': '/party-registry-api' }).application,
-      serveApi(
-        api,
-        HttpApiBuilder.group(api, 'counterpartyRead', (group) =>
-          group.handle('execute', ({ payload }) =>
-            Effect.acquireUseRelease(
-              Effect.gen(function* startRead() {
-                reads.push(payload);
-                active += 1;
-                peak = Math.max(peak, active);
-                if (active === 2) {
-                  yield* Deferred.succeed(twoActive, true);
-                }
-              }),
-              () => Deferred.await(initialGate).pipe(Effect.andThen(Effect.fail(denied))),
-              () =>
-                Effect.sync(() => {
-                  active -= 1;
-                }),
-            ),
-          ),
+/** The Counterparty reads the owner received, and how many it is answering at once. */
+const reads: CounterpartyReadRequest[] = [];
+let active = 0;
+let peak = 0;
+/** Opens once two reads are in flight; the owner holds every read until `initialGate` opens, then refuses it. */
+let twoActive = Deferred.makeUnsafe<true>();
+let initialGate = Deferred.makeUnsafe<true>();
+const api = CounterpartyReadApi.prefix('/party-registry-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'party-registry': '/party-registry-api' }).application,
+  serveApi(
+    api,
+    HttpApiBuilder.group(api, 'counterpartyRead', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.acquireUseRelease(
+          Effect.gen(function* startRead() {
+            reads.push(payload);
+            active += 1;
+            peak = Math.max(peak, active);
+            if (active === 2) {
+              yield* Deferred.succeed(twoActive, true);
+            }
+          }),
+          () => Deferred.await(initialGate).pipe(Effect.andThen(Effect.fail(denied))),
+          () =>
+            Effect.sync(() => {
+              active -= 1;
+            }),
         ),
       ),
-    );
-    yield* Effect.gen(function* checkVisiblePreloads() {
+    ),
+  ),
+);
+
+afterEach(cleanup);
+
+it.layer(network, { excludeTestServices: true })('customers preload retry', (suite) => {
+  suite.effect('visible preloads warm each batch once, with bounded concurrency and no retry of failed rows', () =>
+    Effect.gen(function* retryFailedVisiblePreloads() {
+      yield* pinTestDocument;
+      customerDetailData.invalidate();
+      reads.length = 0;
+      active = 0;
+      peak = 0;
+      initialGate = yield* Deferred.make<true>();
+      twoActive = yield* Deferred.make<true>();
       // Only the first rows are warmed; every other row waits for its intent.
       const visible = rows.slice(0, LIST_WARM_ROWS);
       const overflow = rows.slice(LIST_WARM_ROWS);
@@ -131,6 +139,6 @@ it.live('visible preloads warm each batch once, with bounded concurrency and no 
         overflow.map(() => 'pending'),
       );
       unmount();
-    }).pipe(Effect.provide(network));
-  }),
-);
+    }),
+  );
+});

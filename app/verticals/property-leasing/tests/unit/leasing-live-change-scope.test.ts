@@ -73,21 +73,23 @@ beforeEach(() => {
   leaseRecords.invalidate();
 });
 
-it.live('lease records ignore a live change from an app they do not show', () =>
-  Effect.gen(function* unrelatedChange() {
-    yield* pinTestDocument;
-    const unsubscribe = leaseRecords.subscribe(() => {
-      leaseRecords.snapshot(input);
-    }, input);
-    yield* Effect.gen(function* checkChanges() {
-      yield* leaseRecords.preload(input);
-      expect(reads).toHaveLength(1);
-      dispatchChange(['finance-billing']);
-      yield* Effect.sleep('10 millis');
-      expect(reads).toHaveLength(1);
-      dispatchChange(['party-registry']);
-      yield* waitUntil(() => leaseRecords.snapshot(input).state === 'ready');
-      expect(reads).toHaveLength(2);
-    }).pipe(Effect.ensuring(Effect.sync(unsubscribe)));
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('leasing live change scope', (suite) => {
+  suite.effect('lease records ignore a live change from an app they do not show', () =>
+    Effect.gen(function* unrelatedChange() {
+      yield* pinTestDocument;
+      const unsubscribe = leaseRecords.subscribe(() => {
+        leaseRecords.snapshot(input);
+      }, input);
+      yield* Effect.gen(function* checkChanges() {
+        yield* leaseRecords.preload(input);
+        expect(reads).toHaveLength(1);
+        dispatchChange(['finance-billing']);
+        yield* Effect.sleep('10 millis');
+        expect(reads).toHaveLength(1);
+        dispatchChange(['party-registry']);
+        yield* waitUntil(() => leaseRecords.snapshot(input).state === 'ready');
+        expect(reads).toHaveLength(2);
+      }).pipe(Effect.ensuring(Effect.sync(unsubscribe)));
+    }),
+  );
+});

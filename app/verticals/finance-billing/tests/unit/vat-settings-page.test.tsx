@@ -224,55 +224,59 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-it.live('a read-only accountant sees the regime and the rates with their history, and no change is offered', () =>
-  Effect.gen(function* readOnly() {
-    yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: false });
-    // The regime with its history, the current rate, the planned rate and the missing classification are shown.
-    expect(text()).toContain(say('state.current'));
-    expect(text()).toContain(say('currentRate', { date: '1. 1. 2024', rate: '21' }));
-    expect(text()).toContain(say('planned'));
-    expect(text()).toContain(say('missing'));
-    expect(text()).not.toContain(say('regimeHistoryHidden'));
-    expect(offered()).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('vat settings page', (suite) => {
+  suite.effect(
+    'a read-only accountant sees the regime and the rates with their history, and no change is offered',
+    () =>
+      Effect.gen(function* readOnly() {
+        yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: false });
+        // The regime with its history, the current rate, the planned rate and the missing classification are shown.
+        expect(text()).toContain(say('state.current'));
+        expect(text()).toContain(say('currentRate', { date: '1. 1. 2024', rate: '21' }));
+        expect(text()).toContain(say('planned'));
+        expect(text()).toContain(say('missing'));
+        expect(text()).not.toContain(say('regimeHistoryHidden'));
+        expect(offered()).toEqual([]);
+      }),
+  );
 
-it.live('an owner sees every change and can open each', () =>
-  Effect.gen(function* owner() {
-    yield* showWith({ createRevision: true, createRule: true, declareRegime: true, endRevision: true });
-    expect(offered().toSorted()).toEqual(editing().toSorted());
-    yield* acted(() => {
-      [...document.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === say('plan'))?.click();
+  suite.effect('an owner sees every change and can open each', () =>
+    Effect.gen(function* owner() {
+      yield* showWith({ createRevision: true, createRule: true, declareRegime: true, endRevision: true });
+      expect(offered().toSorted()).toEqual(editing().toSorted());
+      yield* acted(() => {
+        [...document.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === say('plan'))?.click();
+      });
+      yield* waitUntil(() => text().includes(say('planTitle', { name: 'Základní sazba DPH' })));
+    }),
+  );
+
+  suite.effect('a person who may only end a planned rate is offered only the withdrawal', () =>
+    Effect.gen(function* endOnly() {
+      yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: true });
+      expect(offered()).toEqual([say('withdraw')]);
+    }),
+  );
+
+  suite.effect('Tax installed but no regime declared: the page says so and what to do, not that Tax is off', () =>
+    Effect.gen(function* notDeclared() {
+      declared = false;
+      yield* render;
+      yield* waitUntil(() => text().includes(say('notDeclared')));
+      expect(text()).toContain(say('notDeclaredDescription'));
+      expect(text()).not.toContain(say('notInstalled'));
+    }),
+  );
+
+  it("the Shell's refusal names the page state: not installed, temporarily unavailable, or no access", () => {
+    const forbidden = 'https://ontos.dev/problems/gateway-forbidden';
+    expect(gatewayRefusalState({ type: 'https://ontos.dev/problems/gateway-module-not-installed' })).toEqual({
+      state: 'notInstalled',
     });
-    yield* waitUntil(() => text().includes(say('planTitle', { name: 'Základní sazba DPH' })));
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a person who may only end a planned rate is offered only the withdrawal', () =>
-  Effect.gen(function* endOnly() {
-    yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: true });
-    expect(offered()).toEqual([say('withdraw')]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('Tax installed but no regime declared: the page says so and what to do, not that Tax is off', () =>
-  Effect.gen(function* notDeclared() {
-    declared = false;
-    yield* render;
-    yield* waitUntil(() => text().includes(say('notDeclared')));
-    expect(text()).toContain(say('notDeclaredDescription'));
-    expect(text()).not.toContain(say('notInstalled'));
-  }).pipe(Effect.provide(network)),
-);
-
-it("the Shell's refusal names the page state: not installed, temporarily unavailable, or no access", () => {
-  const forbidden = 'https://ontos.dev/problems/gateway-forbidden';
-  expect(gatewayRefusalState({ type: 'https://ontos.dev/problems/gateway-module-not-installed' })).toEqual({
-    state: 'notInstalled',
+    expect(gatewayRefusalState({ reason: 'audience_module_not_active', type: forbidden })).toEqual({
+      state: 'unavailable',
+    });
+    expect(gatewayRefusalState({ reason: 'scope_unavailable', type: forbidden })).toEqual({ state: 'unavailable' });
+    expect(gatewayRefusalState({ reason: 'scope_refused', type: forbidden })).toEqual({ state: 'forbidden' });
   });
-  expect(gatewayRefusalState({ reason: 'audience_module_not_active', type: forbidden })).toEqual({
-    state: 'unavailable',
-  });
-  expect(gatewayRefusalState({ reason: 'scope_unavailable', type: forbidden })).toEqual({ state: 'unavailable' });
-  expect(gatewayRefusalState({ reason: 'scope_refused', type: forbidden })).toEqual({ state: 'forbidden' });
 });

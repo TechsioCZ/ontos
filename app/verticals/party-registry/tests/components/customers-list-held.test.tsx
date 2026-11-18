@@ -9,11 +9,12 @@ import {
   serveApi,
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
+import { commerceCustomerContextApi } from '@app/commerce-customer-context/api';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { Deferred, Effect, Schema } from 'effect';
+import { HttpApi } from 'effect/http-api';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { CounterpartyCustomerGroupMembershipsApi } from '../../../commerce-customer-context/shared/apis/counterparty-customer-group-memberships.ts';
 import {
   CustomerListApi,
   CustomerListForbiddenProblemSchema,
@@ -72,7 +73,9 @@ const listOwner = HttpApiBuilder.group(OwnerListApi, 'customerList', (group) =>
     }),
   ),
 );
-const OwnerMembershipsApi = CounterpartyCustomerGroupMembershipsApi.prefix('/commerce-customer-context-api');
+const OwnerMembershipsApi = HttpApi.make('CustomerSegmentsTestApi')
+  .add(commerceCustomerContextApi.groups.counterpartyCustomerGroupMemberships)
+  .prefix('/commerce-customer-context-api');
 const membershipsOwner = HttpApiBuilder.group(OwnerMembershipsApi, 'counterpartyCustomerGroupMemberships', (group) =>
   group.handle('execute', () => Effect.succeed({ effectiveAt: instant, groups: [], items: [] })),
 );
@@ -117,86 +120,88 @@ afterEach(() => {
   rstest.useRealTimers();
 });
 
-it.live('the rows stay on screen while the same register reloads', () =>
-  Effect.gen(function* held() {
-    yield* pinTestDocument;
-    yield* customersData.read(customersQuery(company));
-    const { result } = renderHook(useTable, { initialProps: { context: company } });
-    expect(result.current).toBe('rows:Before');
+it.layer(network, { excludeTestServices: true })('customers list held', (suite) => {
+  suite.effect('the rows stay on screen while the same register reloads', () =>
+    Effect.gen(function* held() {
+      yield* pinTestDocument;
+      yield* customersData.read(customersQuery(company));
+      const { result } = renderHook(useTable, { initialProps: { context: company } });
+      expect(result.current).toBe('rows:Before');
 
-    const gate = yield* Deferred.make<boolean>();
-    answer = Deferred.await(gate).pipe(Effect.as({ items: [customerOf('After')] }));
-    shown.length = 0;
-    liveChange();
-    expect(customersData.snapshot(customersQuery(company)).state).toBe('pending');
-    expect(shown.length).toBeGreaterThan(0);
-    expect(new Set(shown)).toEqual(new Set(['rows:Before']));
+      const gate = yield* Deferred.make<boolean>();
+      answer = Deferred.await(gate).pipe(Effect.as({ items: [customerOf('After')] }));
+      shown.length = 0;
+      liveChange();
+      expect(customersData.snapshot(customersQuery(company)).state).toBe('pending');
+      expect(shown.length).toBeGreaterThan(0);
+      expect(new Set(shown)).toEqual(new Set(['rows:Before']));
 
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => result.current === 'rows:After');
-    expect(result.current).toBe('rows:After');
-    expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
+      yield* Deferred.succeed(gate, true);
+      yield* waitUntil(() => result.current === 'rows:After');
+      expect(result.current).toBe('rows:After');
+      expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
+    }),
+  );
 
-it.live('another company never shows the rows held for the company before it', () =>
-  Effect.gen(function* otherScope() {
-    yield* pinTestDocument;
-    yield* customersData.read(customersQuery(company));
-    const { rerender, result } = renderHook(useTable, { initialProps: { context: company } });
-    expect(result.current).toBe('rows:Before');
+  suite.effect('another company never shows the rows held for the company before it', () =>
+    Effect.gen(function* otherScope() {
+      yield* pinTestDocument;
+      yield* customersData.read(customersQuery(company));
+      const { rerender, result } = renderHook(useTable, { initialProps: { context: company } });
+      expect(result.current).toBe('rows:Before');
 
-    const gate = yield* Deferred.make<boolean>();
-    answer = Deferred.await(gate).pipe(Effect.as({ items: [customerOf('Theirs')] }));
-    liveChange();
-    shown.length = 0;
-    rerender({ context: otherCompany });
-    expect(new Set(shown)).toEqual(new Set(['pending']));
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => customersData.snapshot(customersQuery(company)).state === 'ready');
-    yield* settle;
-  }).pipe(Effect.provide(network)),
-);
+      const gate = yield* Deferred.make<boolean>();
+      answer = Deferred.await(gate).pipe(Effect.as({ items: [customerOf('Theirs')] }));
+      liveChange();
+      shown.length = 0;
+      rerender({ context: otherCompany });
+      expect(new Set(shown)).toEqual(new Set(['pending']));
+      yield* Deferred.succeed(gate, true);
+      yield* waitUntil(() => customersData.snapshot(customersQuery(company)).state === 'ready');
+      yield* settle;
+    }),
+  );
 
-it.live('a refused reload takes the held rows away at once', () =>
-  Effect.gen(function* refused() {
-    yield* pinTestDocument;
-    yield* customersData.read(customersQuery(company));
-    const { result } = renderHook(useTable, { initialProps: { context: company } });
-    expect(result.current).toBe('rows:Before');
+  suite.effect('a refused reload takes the held rows away at once', () =>
+    Effect.gen(function* refused() {
+      yield* pinTestDocument;
+      yield* customersData.read(customersQuery(company));
+      const { result } = renderHook(useTable, { initialProps: { context: company } });
+      expect(result.current).toBe('rows:Before');
 
-    answer = Effect.fail(denied);
-    liveChange();
-    yield* waitUntil(() => result.current === 'failed');
-    expect(result.current).toBe('failed');
-  }).pipe(Effect.provide(network)),
-);
+      answer = Effect.fail(denied);
+      liveChange();
+      yield* waitUntil(() => result.current === 'failed');
+      expect(result.current).toBe('failed');
+    }),
+  );
 
-it.live('a list reopened after its rows went stale shows them at once and reloads once', () =>
-  Effect.gen(function* reopenedList() {
-    // The store's freshness window runs on the browser runtime's clock: `setTimeout` and `Date`.
-    rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-    yield* pinTestDocument;
-    yield* customersData.read(customersQuery(company));
-    const first = renderHook(useTable, { initialProps: { context: company } });
-    expect(first.result.current).toBe('rows:Before');
-    first.unmount();
+  suite.effect('a list reopened after its rows went stale shows them at once and reloads once', () =>
+    Effect.gen(function* reopenedList() {
+      // The store's freshness window runs on the browser runtime's clock: `setTimeout` and `Date`.
+      rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      yield* pinTestDocument;
+      yield* customersData.read(customersQuery(company));
+      const first = renderHook(useTable, { initialProps: { context: company } });
+      expect(first.result.current).toBe('rows:Before');
+      first.unmount();
 
-    // Let the real store's 20 s freshness window pass with no mounted reader.
-    yield* passFakeTime('30 seconds');
-    const loadsBefore = reads.length;
-    shown.length = 0;
-    const second = renderHook(useTable, { initialProps: { context: company } });
-    expect(shown[0]).toBe('rows:Before');
-    expect(shown).not.toContain('pending');
-    // The page's mount effect starts the one background reload that follows.
-    act(() => {
-      customersData.ensure(customersQuery(company));
-    });
-    yield* waitUntilOnFakeTimers(() => customersData.snapshot(customersQuery(company)).state === 'ready');
-    yield* passFakeTime('1 second', { between: networkIdle });
-    expect(reads.length - loadsBefore).toBe(1);
-    expect(second.result.current).toBe('rows:Before');
-    second.unmount();
-  }).pipe(Effect.provide(network)),
-);
+      // Let the real store's 20 s freshness window pass with no mounted reader.
+      yield* passFakeTime('30 seconds');
+      const loadsBefore = reads.length;
+      shown.length = 0;
+      const second = renderHook(useTable, { initialProps: { context: company } });
+      expect(shown[0]).toBe('rows:Before');
+      expect(shown).not.toContain('pending');
+      // The page's mount effect starts the one background reload that follows.
+      act(() => {
+        customersData.ensure(customersQuery(company));
+      });
+      yield* waitUntilOnFakeTimers(() => customersData.snapshot(customersQuery(company)).state === 'ready');
+      yield* passFakeTime('1 second', { between: networkIdle });
+      expect(reads.length - loadsBefore).toBe(1);
+      expect(second.result.current).toBe('rows:Before');
+      second.unmount();
+    }),
+  );
+});

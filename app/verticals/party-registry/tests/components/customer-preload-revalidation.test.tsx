@@ -278,305 +278,307 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it.live('a warmed mounted body follows live cache revalidation without another opening or manual reload', () =>
-  Effect.gen(function* liveBodyRevalidation() {
-    yield* pinTestDocument;
-    const scope = pageDataScopeKey(context, 'party.registry') ?? '';
-    yield* preloadCustomerDetails(context, [customer]);
-    const { result } = renderHook(() => {
-      const current = useSyncExternalStore(
-        (listener) => customerDetailData.subscribe(listener, { customer, scope }),
-        () => customerDetailData.snapshot({ customer, scope }),
-        () => pageDataPending,
-      );
-      return useCustomerDetail(
-        customer,
-        current.state === 'ready' ? current.value : undefined,
-        noop,
-        noop,
-        noop,
-        translate,
-      );
-    });
-    expect(result.current.party?.revision).toBe(1);
-    if (snapshot.identity.status === 'ready') {
-      partyAnswer = Effect.succeed({
-        ...snapshot.identity.value,
-        party: { ...party, displayName: Option.some('After live change'), revision: 2 },
+it.layer(network, { excludeTestServices: true })('customer preload revalidation', (suite) => {
+  suite.effect('a warmed mounted body follows live cache revalidation without another opening or manual reload', () =>
+    Effect.gen(function* liveBodyRevalidation() {
+      yield* pinTestDocument;
+      const scope = pageDataScopeKey(context, 'party.registry') ?? '';
+      yield* preloadCustomerDetails(context, [customer]);
+      const { result } = renderHook(() => {
+        const current = useSyncExternalStore(
+          (listener) => customerDetailData.subscribe(listener, { customer, scope }),
+          () => customerDetailData.snapshot({ customer, scope }),
+          () => pageDataPending,
+        );
+        return useCustomerDetail(
+          customer,
+          current.state === 'ready' ? current.value : undefined,
+          noop,
+          noop,
+          noop,
+          translate,
+        );
       });
-    }
-    act(() => {
+      expect(result.current.party?.revision).toBe(1);
+      if (snapshot.identity.status === 'ready') {
+        partyAnswer = Effect.succeed({
+          ...snapshot.identity.value,
+          party: { ...party, displayName: Option.some('After live change'), revision: 2 },
+        });
+      }
+      act(() => {
+        window.dispatchEvent(new Event(moduleChangeEvent));
+      });
+      yield* waitUntil(() => result.current.party?.revision === 2);
+      expect(result.current.party?.revision).toBe(2);
+      expect(result.current.party?.displayName).toEqual(Option.some('After live change'));
+    }),
+  );
+
+  suite.effect('the full-page preload reuses a complete scoped warmed detail without any owner read', () =>
+    Effect.gen(function* warmedPage() {
+      yield* pinTestDocument;
+      yield* warmCustomer;
+      const warmed = cachedCustomerDetailByRef(context, counterpartyRef);
+      expect(warmed).toBeDefined();
+      clearReadCalls();
+      expect(yield* customerDetailPageData.read(pageInput)).toBe(warmed);
+      expect(customerDetailPageData.snapshot(pageInput).state).toBe('ready');
+      expect(yield* customerDetailPageData.read(pageInput)).toBe(warmed);
+      expect(counterpartyReads).toHaveLength(0);
+      expect(partyReads).toHaveLength(0);
+      expect(contactReads).toHaveLength(0);
+      expect(identifierReads).toHaveLength(0);
+      expect(listReads).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('a list row alone never substitutes for the independent detail reads', () =>
+    Effect.gen(function* listIsNotDetailAuthority() {
+      yield* pinTestDocument;
+      yield* customersData.read(customersQuery(context));
+      clearReadCalls();
+      yield* loadCustomerDetailPageRecord(pageInput);
+      expect(counterpartyReads).toHaveLength(1);
+      expect(partyReads).toHaveLength(1);
+      expect(contactReads).toHaveLength(1);
+      expect(identifierReads).toHaveLength(1);
+      expect(listReads).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('a customer absent from the list cache still opens through the exact Counterparty read', () =>
+    Effect.gen(function* coldPageOutsideList() {
+      yield* pinTestDocument;
+      listItems = [];
+      yield* customersData.read(customersQuery(context));
+      clearReadCalls();
+      const record = yield* loadCustomerDetailPageRecord(pageInput);
+      expect(record.counterparty).toEqual(snapshot.counterparty);
+      expect(counterpartyReads).toEqual([{ correlation: expect.any(String), payload: { counterpartyRef } }]);
+      expect(partyReads).toHaveLength(1);
+      expect(listReads).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('changing principal, tenant or company never reuses the warmed customer facts', () =>
+    Effect.gen(function* scopedPageReuse() {
+      yield* pinTestDocument;
+      yield* warmCustomer;
+      for (const field of ['principalId', 'tenantId', 'legalEntityId'] as const) {
+        const other = { ...context, [field]: '90000000-0000-4000-8000-000000000009' };
+        expect(cachedCustomerDetailByRef(other, counterpartyRef)).toBeUndefined();
+        clearReadCalls();
+        counterpartyAnswer = Effect.fail(denied);
+        const failure = yield* Effect.flip(loadCustomerDetailPageRecord({ ...pageInput, context: other }));
+        expect(failure.reason).toBe('forbidden');
+        expect(counterpartyReads).toHaveLength(1);
+        expect(partyReads).toHaveLength(0);
+      }
+    }),
+  );
+
+  suite.effect('a live refusal clears both held page data and the warmed detail instead of reusing either', () =>
+    Effect.gen(function* invalidatedPage() {
+      yield* pinTestDocument;
+      yield* warmCustomer;
+      yield* customerDetailPageData.read(pageInput);
       window.dispatchEvent(new Event(moduleChangeEvent));
-    });
-    yield* waitUntil(() => result.current.party?.revision === 2);
-    expect(result.current.party?.revision).toBe(2);
-    expect(result.current.party?.displayName).toEqual(Option.some('After live change'));
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('the full-page preload reuses a complete scoped warmed detail without any owner read', () =>
-  Effect.gen(function* warmedPage() {
-    yield* pinTestDocument;
-    yield* warmCustomer;
-    const warmed = cachedCustomerDetailByRef(context, counterpartyRef);
-    expect(warmed).toBeDefined();
-    clearReadCalls();
-    expect(yield* customerDetailPageData.read(pageInput)).toBe(warmed);
-    expect(customerDetailPageData.snapshot(pageInput).state).toBe('ready');
-    expect(yield* customerDetailPageData.read(pageInput)).toBe(warmed);
-    expect(counterpartyReads).toHaveLength(0);
-    expect(partyReads).toHaveLength(0);
-    expect(contactReads).toHaveLength(0);
-    expect(identifierReads).toHaveLength(0);
-    expect(listReads).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a list row alone never substitutes for the independent detail reads', () =>
-  Effect.gen(function* listIsNotDetailAuthority() {
-    yield* pinTestDocument;
-    yield* customersData.read(customersQuery(context));
-    clearReadCalls();
-    yield* loadCustomerDetailPageRecord(pageInput);
-    expect(counterpartyReads).toHaveLength(1);
-    expect(partyReads).toHaveLength(1);
-    expect(contactReads).toHaveLength(1);
-    expect(identifierReads).toHaveLength(1);
-    expect(listReads).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a customer absent from the list cache still opens through the exact Counterparty read', () =>
-  Effect.gen(function* coldPageOutsideList() {
-    yield* pinTestDocument;
-    listItems = [];
-    yield* customersData.read(customersQuery(context));
-    clearReadCalls();
-    const record = yield* loadCustomerDetailPageRecord(pageInput);
-    expect(record.counterparty).toEqual(snapshot.counterparty);
-    expect(counterpartyReads).toEqual([{ correlation: expect.any(String), payload: { counterpartyRef } }]);
-    expect(partyReads).toHaveLength(1);
-    expect(listReads).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('changing principal, tenant or company never reuses the warmed customer facts', () =>
-  Effect.gen(function* scopedPageReuse() {
-    yield* pinTestDocument;
-    yield* warmCustomer;
-    for (const field of ['principalId', 'tenantId', 'legalEntityId'] as const) {
-      const other = { ...context, [field]: '90000000-0000-4000-8000-000000000009' };
-      expect(cachedCustomerDetailByRef(other, counterpartyRef)).toBeUndefined();
+      expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
+      expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
       clearReadCalls();
       counterpartyAnswer = Effect.fail(denied);
-      const failure = yield* Effect.flip(loadCustomerDetailPageRecord({ ...pageInput, context: other }));
+      const failure = yield* Effect.flip(customerDetailPageData.read(pageInput));
       expect(failure.reason).toBe('forbidden');
+      expect(customerDetailPageData.snapshot(pageInput).state).toBe('failed');
       expect(counterpartyReads).toHaveLength(1);
       expect(partyReads).toHaveLength(0);
-    }
-  }).pipe(Effect.provide(network)),
-);
+    }),
+  );
 
-it.live('a live refusal clears both held page data and the warmed detail instead of reusing either', () =>
-  Effect.gen(function* invalidatedPage() {
-    yield* pinTestDocument;
-    yield* warmCustomer;
-    yield* customerDetailPageData.read(pageInput);
-    window.dispatchEvent(new Event(moduleChangeEvent));
-    expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
-    expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
-    clearReadCalls();
-    counterpartyAnswer = Effect.fail(denied);
-    const failure = yield* Effect.flip(customerDetailPageData.read(pageInput));
-    expect(failure.reason).toBe('forbidden');
-    expect(customerDetailPageData.snapshot(pageInput).state).toBe('failed');
-    expect(counterpartyReads).toHaveLength(1);
-    expect(partyReads).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a new real list revision cannot reuse the old revision-qualified detail', () =>
-  Effect.gen(function* revisedListRow() {
-    yield* pinTestDocument;
-    yield* warmCustomer;
-    customersData.update(customersQuery(context), (current) => ({
-      ...current,
-      items: [{ ...customer, partyRevision: 2 }],
-    }));
-    expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
-    clearReadCalls();
-    yield* loadCustomerDetailPageRecord(pageInput);
-    expect(counterpartyReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a denied required section never supplies a reusable visible-row warm snapshot', () =>
-  Effect.gen(function* partialWarmIsNotReady() {
-    yield* pinTestDocument;
-    const failure = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
-      _tag: 'PartyDetailForbiddenProblem',
-      detail: 'Denied',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:denied',
-    });
-    partyAnswer = Effect.fail(failure);
-    yield* warmCustomer;
-    expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
-    clearReadCalls();
-    const record = yield* loadCustomerDetailPageRecord(pageInput);
-    expect(record.identity.status).toBe('forbidden');
-    expect(counterpartyReads).toHaveLength(1);
-    expect(partyReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('warmed data must still prove an exact Counterparty, selected company and current CUSTOMER role', () =>
-  Effect.gen(function* validateCachedProof() {
-    yield* pinTestDocument;
-    const encoded = yield* Schema.encodeEffect(CounterpartyReadResponseSchema)(snapshot.counterparty);
-    const invalid = [
-      { ...encoded, currentRoles: [] },
-      {
-        ...encoded,
-        legalEntityRef: { ...encoded.legalEntityRef, resourceId: '60000000-0000-4000-8000-000000000009' },
-      },
-      {
-        ...encoded,
-        counterpartyRef: { ...encoded.counterpartyRef, resourceId: '30000000-0000-4000-8000-000000000009' },
-      },
-    ];
-    for (const input of invalid) {
-      customersData.invalidate();
-      customerDetailData.invalidate();
-      const value = yield* Schema.decodeEffect(CounterpartyReadResponseSchema)(input);
-      counterpartyAnswer = Effect.succeed(value);
+  suite.effect('a new real list revision cannot reuse the old revision-qualified detail', () =>
+    Effect.gen(function* revisedListRow() {
+      yield* pinTestDocument;
       yield* warmCustomer;
+      customersData.update(customersQuery(context), (current) => ({
+        ...current,
+        items: [{ ...customer, partyRevision: 2 }],
+      }));
+      expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
       clearReadCalls();
-      const failure = yield* Effect.flip(loadCustomerDetailPageRecord(pageInput));
-      expect(failure.reason).toBe('not-found');
+      yield* loadCustomerDetailPageRecord(pageInput);
+      expect(counterpartyReads).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a denied required section never supplies a reusable visible-row warm snapshot', () =>
+    Effect.gen(function* partialWarmIsNotReady() {
+      yield* pinTestDocument;
+      const failure = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
+        _tag: 'PartyDetailForbiddenProblem',
+        detail: 'Denied',
+        status: 403,
+        title: 'Forbidden',
+        type: 'urn:test:denied',
+      });
+      partyAnswer = Effect.fail(failure);
+      yield* warmCustomer;
+      expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
+      clearReadCalls();
+      const record = yield* loadCustomerDetailPageRecord(pageInput);
+      expect(record.identity.status).toBe('forbidden');
+      expect(counterpartyReads).toHaveLength(1);
+      expect(partyReads).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('warmed data must still prove an exact Counterparty, selected company and current CUSTOMER role', () =>
+    Effect.gen(function* validateCachedProof() {
+      yield* pinTestDocument;
+      const encoded = yield* Schema.encodeEffect(CounterpartyReadResponseSchema)(snapshot.counterparty);
+      const invalid = [
+        { ...encoded, currentRoles: [] },
+        {
+          ...encoded,
+          legalEntityRef: { ...encoded.legalEntityRef, resourceId: '60000000-0000-4000-8000-000000000009' },
+        },
+        {
+          ...encoded,
+          counterpartyRef: { ...encoded.counterpartyRef, resourceId: '30000000-0000-4000-8000-000000000009' },
+        },
+      ];
+      for (const input of invalid) {
+        customersData.invalidate();
+        customerDetailData.invalidate();
+        const value = yield* Schema.decodeEffect(CounterpartyReadResponseSchema)(input);
+        counterpartyAnswer = Effect.succeed(value);
+        yield* warmCustomer;
+        clearReadCalls();
+        const failure = yield* Effect.flip(loadCustomerDetailPageRecord(pageInput));
+        expect(failure.reason).toBe('not-found');
+        expect(counterpartyReads).toHaveLength(0);
+      }
+    }),
+  );
+
+  suite.effect('an incomplete Shell scope cannot reuse data or start a cold owner read', () =>
+    Effect.gen(function* incompletePageScope() {
+      yield* pinTestDocument;
+      const failure = yield* Effect.flip(
+        loadCustomerDetailPageRecord({ ...pageInput, context: { ...context, principalId: '' } }),
+      );
+      expect(failure.reason).toBe('unavailable');
       expect(counterpartyReads).toHaveLength(0);
-    }
-  }).pipe(Effect.provide(network)),
-);
+    }),
+  );
 
-it.live('an incomplete Shell scope cannot reuse data or start a cold owner read', () =>
-  Effect.gen(function* incompletePageScope() {
-    yield* pinTestDocument;
-    const failure = yield* Effect.flip(
-      loadCustomerDetailPageRecord({ ...pageInput, context: { ...context, principalId: '' } }),
-    );
-    expect(failure.reason).toBe('unavailable');
-    expect(counterpartyReads).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('refreshed owner props replace displayed facts immediately without losing unrelated drafts', () =>
+    Effect.gen(function* ownerProps() {
+      yield* pinTestDocument;
+      const { rerender, result } = renderHook(useDetail, { initialProps });
+      act(() => result.current.changeDraft('unrelated', 'unsaved'));
+      const next: CustomerDetailSnapshot = {
+        ...snapshot,
+        contacts: { status: 'forbidden' },
+        identifiers: { status: 'unavailable' },
+        identity: { status: 'forbidden' },
+      };
+      rerender({ value: next });
+      expect(result.current.snapshot).toBe(next);
+      expect(result.current.party).toBeUndefined();
+      expect(result.current.contactRows.every((row) => row.existing === undefined)).toBe(true);
+      expect(result.current.draft).toEqual({ unrelated: 'unsaved' });
+      expect(counterpartyReads).toHaveLength(0);
+    }),
+  );
 
-it.live('refreshed owner props replace displayed facts immediately without losing unrelated drafts', () =>
-  Effect.gen(function* ownerProps() {
-    yield* pinTestDocument;
-    const { rerender, result } = renderHook(useDetail, { initialProps });
-    act(() => result.current.changeDraft('unrelated', 'unsaved'));
-    const next: CustomerDetailSnapshot = {
-      ...snapshot,
-      contacts: { status: 'forbidden' },
-      identifiers: { status: 'unavailable' },
-      identity: { status: 'forbidden' },
-    };
-    rerender({ value: next });
-    expect(result.current.snapshot).toBe(next);
-    expect(result.current.party).toBeUndefined();
-    expect(result.current.contactRows.every((row) => row.existing === undefined)).toBe(true);
-    expect(result.current.draft).toEqual({ unrelated: 'unsaved' });
-    expect(counterpartyReads).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a pending parent revalidation cannot leave the old body facts visible', () =>
+    Effect.gen(function* ownerProps() {
+      yield* pinTestDocument;
+      const { rerender, result } = renderHook(useDetail, { initialProps });
+      rerender({});
+      expect(result.current.snapshot).toBeUndefined();
+      expect(result.current.party).toBeUndefined();
+    }),
+  );
 
-it.live('a pending parent revalidation cannot leave the old body facts visible', () =>
-  Effect.gen(function* ownerProps() {
-    yield* pinTestDocument;
-    const { rerender, result } = renderHook(useDetail, { initialProps });
-    rerender({});
-    expect(result.current.snapshot).toBeUndefined();
-    expect(result.current.party).toBeUndefined();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a refused local reload clears the displayed owner snapshot', () =>
+    Effect.gen(function* refusedReload() {
+      yield* pinTestDocument;
+      const { rerender, result } = renderHook(useDetail, { initialProps });
+      counterpartyAnswer = Effect.fail(denied);
+      act(() => result.current.refresh());
+      yield* waitUntil(() => !result.current.busy);
+      expect(result.current.busy).toBe(false);
+      expect(result.current.notice).toBe(translate('party-registry.pages.customers.detail.forbidden'));
+      expect(result.current.stale).toBe(true);
+      expect(result.current.snapshot).toBeUndefined();
+      expect(result.current.party).toBeUndefined();
+      const revalidated = { ...snapshot };
+      rerender({ value: revalidated });
+      expect(result.current.snapshot).toBe(revalidated);
+      expect(result.current.stale).toBe(false);
+    }),
+  );
 
-it.live('a refused local reload clears the displayed owner snapshot', () =>
-  Effect.gen(function* refusedReload() {
-    yield* pinTestDocument;
-    const { rerender, result } = renderHook(useDetail, { initialProps });
-    counterpartyAnswer = Effect.fail(denied);
-    act(() => result.current.refresh());
-    yield* waitUntil(() => !result.current.busy);
-    expect(result.current.busy).toBe(false);
-    expect(result.current.notice).toBe(translate('party-registry.pages.customers.detail.forbidden'));
-    expect(result.current.stale).toBe(true);
-    expect(result.current.snapshot).toBeUndefined();
-    expect(result.current.party).toBeUndefined();
-    const revalidated = { ...snapshot };
-    rerender({ value: revalidated });
-    expect(result.current.snapshot).toBe(revalidated);
-    expect(result.current.stale).toBe(false);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a local Counterparty denial also revokes warmed panel and full-page snapshots', () =>
+    Effect.gen(function* refusedReloadRevokesCaches() {
+      yield* pinTestDocument;
+      yield* warmCustomer;
+      yield* customerDetailPageData.read(pageInput);
+      const { result } = renderHook(useDetail, { initialProps });
+      counterpartyAnswer = Effect.fail(denied);
+      act(() => result.current.refresh());
+      yield* waitUntil(() => !result.current.busy);
+      expect(result.current.busy).toBe(false);
+      expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
+      expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
+      const failure = yield* Effect.flip(customerDetailPageData.read(pageInput));
+      expect(failure.reason).toBe('forbidden');
+      expect(customerDetailPageData.snapshot(pageInput).state).toBe('failed');
+    }),
+  );
 
-it.live('a local Counterparty denial also revokes warmed panel and full-page snapshots', () =>
-  Effect.gen(function* refusedReloadRevokesCaches() {
-    yield* pinTestDocument;
-    yield* warmCustomer;
-    yield* customerDetailPageData.read(pageInput);
-    const { result } = renderHook(useDetail, { initialProps });
-    counterpartyAnswer = Effect.fail(denied);
-    act(() => result.current.refresh());
-    yield* waitUntil(() => !result.current.busy);
-    expect(result.current.busy).toBe(false);
-    expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
-    expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
-    const failure = yield* Effect.flip(customerDetailPageData.read(pageInput));
-    expect(failure.reason).toBe('forbidden');
-    expect(customerDetailPageData.snapshot(pageInput).state).toBe('failed');
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('an independently forbidden Party section cannot reopen from either complete warm cache', () =>
+    Effect.gen(function* sectionRefusalRevokesCaches() {
+      yield* pinTestDocument;
+      yield* warmCustomer;
+      yield* customerDetailPageData.read(pageInput);
+      const { result } = renderHook(useDetail, { initialProps });
+      const forbidden = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
+        _tag: 'PartyDetailForbiddenProblem',
+        detail: 'Denied',
+        status: 403,
+        title: 'Forbidden',
+        type: 'urn:test:denied',
+      });
+      partyAnswer = Effect.fail(forbidden);
+      act(() => result.current.refresh());
+      yield* waitUntil(() => !result.current.busy);
+      expect(result.current.busy).toBe(false);
+      expect(result.current.snapshot?.identity.status).toBe('forbidden');
+      expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
+      expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
+      const reopened = yield* customerDetailPageData.read(pageInput);
+      expect(reopened.identity.status).toBe('forbidden');
+      expect(reopened.counterparty).toEqual(snapshot.counterparty);
+    }),
+  );
 
-it.live('an independently forbidden Party section cannot reopen from either complete warm cache', () =>
-  Effect.gen(function* sectionRefusalRevokesCaches() {
-    yield* pinTestDocument;
-    yield* warmCustomer;
-    yield* customerDetailPageData.read(pageInput);
-    const { result } = renderHook(useDetail, { initialProps });
-    const forbidden = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
-      _tag: 'PartyDetailForbiddenProblem',
-      detail: 'Denied',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:denied',
-    });
-    partyAnswer = Effect.fail(forbidden);
-    act(() => result.current.refresh());
-    yield* waitUntil(() => !result.current.busy);
-    expect(result.current.busy).toBe(false);
-    expect(result.current.snapshot?.identity.status).toBe('forbidden');
-    expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
-    expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
-    const reopened = yield* customerDetailPageData.read(pageInput);
-    expect(reopened.identity.status).toBe('forbidden');
-    expect(reopened.counterparty).toEqual(snapshot.counterparty);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('an obsolete in-flight local reload cannot replace a newer owner snapshot', () =>
-  Effect.gen(function* obsoleteReload() {
-    yield* pinTestDocument;
-    const gate = yield* Deferred.make<true>();
-    counterpartyAnswer = Deferred.await(gate).pipe(Effect.as(snapshot.counterparty));
-    const { rerender, result } = renderHook(useDetail, { initialProps });
-    act(() => result.current.refresh());
-    const next: CustomerDetailSnapshot = { ...snapshot, identity: { status: 'forbidden' } };
-    rerender({ value: next });
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => !result.current.busy);
-    expect(result.current.busy).toBe(false);
-    expect(result.current.snapshot).toBe(next);
-    expect(result.current.party).toBeUndefined();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('an obsolete in-flight local reload cannot replace a newer owner snapshot', () =>
+    Effect.gen(function* obsoleteReload() {
+      yield* pinTestDocument;
+      const gate = yield* Deferred.make<true>();
+      counterpartyAnswer = Deferred.await(gate).pipe(Effect.as(snapshot.counterparty));
+      const { rerender, result } = renderHook(useDetail, { initialProps });
+      act(() => result.current.refresh());
+      const next: CustomerDetailSnapshot = { ...snapshot, identity: { status: 'forbidden' } };
+      rerender({ value: next });
+      yield* Deferred.succeed(gate, true);
+      yield* waitUntil(() => !result.current.busy);
+      expect(result.current.busy).toBe(false);
+      expect(result.current.snapshot).toBe(next);
+      expect(result.current.party).toBeUndefined();
+    }),
+  );
+});

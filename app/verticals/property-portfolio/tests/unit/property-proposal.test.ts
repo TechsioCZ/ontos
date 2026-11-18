@@ -83,57 +83,59 @@ beforeEach(() => {
   answer = Effect.succeed(proposal);
 });
 
-it.live('keeps an edit parked for approval unsaved and reports the proposal', () =>
-  Effect.gen(function* parked() {
-    yield* pinTestDocument;
-    const reported: ActionProposalAccepted[] = [];
-    const result = yield* savePropertyEdit(
-      command,
-      4,
-      () => true,
-      (value) => {
-        reported.push(value);
-      },
-    );
-    expect(result).toBe('proposed');
-    expect(reported).toEqual([proposal]);
-    expect(commands).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('saving a property edit', (suite) => {
+  suite.effect('keeps an edit parked for approval unsaved and reports the proposal', () =>
+    Effect.gen(function* parked() {
+      yield* pinTestDocument;
+      const reported: ActionProposalAccepted[] = [];
+      const result = yield* savePropertyEdit(
+        command,
+        4,
+        () => true,
+        (value) => {
+          reported.push(value);
+        },
+      );
+      expect(result).toBe('proposed');
+      expect(reported).toEqual([proposal]);
+      expect(commands).toHaveLength(1);
+    }),
+  );
 
-it.live('adopts the committed revision of an edit without reporting a proposal', () =>
-  Effect.gen(function* committedEdit() {
-    yield* pinTestDocument;
-    answer = Effect.succeed(committed);
-    const reported: ActionProposalAccepted[] = [];
-    const result = yield* savePropertyEdit(
-      command,
-      4,
-      () => true,
-      (value) => {
-        reported.push(value);
-      },
-    );
-    expect(result).toBe(5);
-    expect(reported).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('adopts the committed revision of an edit without reporting a proposal', () =>
+    Effect.gen(function* committedEdit() {
+      yield* pinTestDocument;
+      answer = Effect.succeed(committed);
+      const reported: ActionProposalAccepted[] = [];
+      const result = yield* savePropertyEdit(
+        command,
+        4,
+        () => true,
+        (value) => {
+          reported.push(value);
+        },
+      );
+      expect(result).toBe(5);
+      expect(reported).toEqual([]);
+    }),
+  );
 
-it.live('treats a resend after a register race that is parked for approval as not saved', () =>
-  Effect.gen(function* raced() {
-    yield* pinTestDocument;
-    answer = Effect.suspend(() => (commands.length === 1 ? Effect.fail(conflict) : Effect.succeed(proposal)));
-    const reported: ActionProposalAccepted[] = [];
-    const result = yield* savePropertyEdit(
-      command,
-      4,
-      () => true,
-      (value) => {
-        reported.push(value);
-      },
-    );
-    expect(result).toBe('proposed');
-    expect(reported).toEqual([proposal]);
-    expect(commands).toHaveLength(2);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('treats a resend after a register race that is parked for approval as not saved', () =>
+    Effect.gen(function* raced() {
+      yield* pinTestDocument;
+      answer = Effect.suspend(() => (commands.length === 1 ? Effect.fail(conflict) : Effect.succeed(proposal)));
+      const reported: ActionProposalAccepted[] = [];
+      const result = yield* savePropertyEdit(
+        command,
+        4,
+        () => true,
+        (value) => {
+          reported.push(value);
+        },
+      );
+      expect(result).toBe('proposed');
+      expect(reported).toEqual([proposal]);
+      expect(commands).toHaveLength(2);
+    }),
+  );
+});

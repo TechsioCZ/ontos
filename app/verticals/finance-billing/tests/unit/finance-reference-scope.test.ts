@@ -20,7 +20,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import {
   CustomerListApi,
@@ -212,7 +212,7 @@ const names = (value: ReturnType<typeof useFinanceReferences>) => value.customer
 const productNames = (value: ReturnType<typeof useFinanceReferences>) => value.products.map((entry) => entry.name);
 const readCounts = () => [customerReads.length, productReads.length, sessionReads.length];
 
-describe('finance reference caches per verified Shell scope', () => {
+it.layer(network, { excludeTestServices: true })('finance reference caches per verified Shell scope', (suite) => {
   beforeEach(() => {
     customerReads.length = 0;
     productReads.length = 0;
@@ -223,7 +223,7 @@ describe('finance reference caches per verified Shell scope', () => {
   });
   afterEach(unmountAll);
 
-  it.live('gives each scope its own directory and catalog, even when the old scope answers late', () =>
+  suite.effect('gives each scope its own directory and catalog, even when the old scope answers late', () =>
     Effect.gen(function* directories() {
       yield* pinTestDocument;
       const companyScope = financePageScope(companyContext);
@@ -255,10 +255,10 @@ describe('finance reference caches per verified Shell scope', () => {
       expect(names(company())).toEqual(['Alfa a.s.']);
       // Each scope read once per list; the reads themselves carry no scope.
       expect(customerReads).toEqual([{ includeArchived: true }, { includeArchived: true }]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('reports missing names only when a name list failed, not when the product catalog did', () =>
+  suite.effect('reports missing names only when a name list failed, not when the product catalog did', () =>
     Effect.gen(function* namesNotice() {
       yield* pinTestDocument;
       const catalogScope = financePageScope({
@@ -267,7 +267,7 @@ describe('finance reference caches per verified Shell scope', () => {
       });
       customersAnswer = Effect.succeed({ items: [customer(partyC, 'Gama a.s.')] });
       productsAnswer = Effect.fail(
-        Schema.decodeUnknownSync(MerchandiseUnavailableProblemSchema)({
+        yield* Schema.decodeUnknownEffect(MerchandiseUnavailableProblemSchema)({
           _tag: 'RecordsUnavailableProblem',
           detail: 'catalog unavailable',
           retryable: true,
@@ -287,7 +287,7 @@ describe('finance reference caches per verified Shell scope', () => {
         legalEntityId: 'b0000000-0000-4000-8000-000000000022',
       });
       customersAnswer = Effect.fail(
-        Schema.decodeUnknownSync(CustomerListUnavailableProblemSchema)({
+        yield* Schema.decodeUnknownEffect(CustomerListUnavailableProblemSchema)({
           _tag: 'CustomerListUnavailableProblem',
           detail: 'customers unavailable',
           retryable: true,
@@ -300,10 +300,10 @@ describe('finance reference caches per verified Shell scope', () => {
       const customersFailed = yield* renderReferences(customersScope);
       yield* waitUntil(() => !customersFailed().customersLoading);
       expect(customersFailed().referencesFailed).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('shows each principal its own label, never a late label of the previous principal', () =>
+  suite.effect('shows each principal its own label, never a late label of the previous principal', () =>
     Effect.gen(function* labels() {
       yield* pinTestDocument;
       const accountantScope = financePageScope(companyContext);
@@ -326,10 +326,10 @@ describe('finance reference caches per verified Shell scope', () => {
       expect(controller().actorLabel).toBe('Kontrolor (controller@example.test)');
       expect(accountant().actorLabel).toBe('Účetní (accountant@example.test)');
       expect(sessionReads).toHaveLength(2);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('reads nothing and exposes no cached reference or label without a verified scope', () =>
+  suite.effect('reads nothing and exposes no cached reference or label without a verified scope', () =>
     Effect.gen(function* unscoped() {
       yield* pinTestDocument;
       const scope = financePageScope(companyContext);
@@ -357,6 +357,6 @@ describe('finance reference caches per verified Shell scope', () => {
       expect(vm.actorLabel).toBeUndefined();
       expect(vm.references.customers).toEqual([]);
       expect(readCounts()).toEqual(reads);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

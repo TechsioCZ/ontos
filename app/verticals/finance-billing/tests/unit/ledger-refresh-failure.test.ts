@@ -9,7 +9,7 @@ import {
 import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { HttpServerResponse } from 'effect/http';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import {
   InvoiceSchema,
@@ -216,7 +216,7 @@ const settleLedgerReads = (label: string, count: number) =>
   });
 const settleRefresh = (label: string) => settleLedgerReads(label, 2);
 
-describe('finance ledger after a successful empty load', () => {
+it.layer(network, { excludeTestServices: true })('finance ledger after a successful empty load', (suite) => {
   beforeEach(() => {
     reads.length = 0;
     rendered.length = 0;
@@ -225,7 +225,7 @@ describe('finance ledger after a successful empty load', () => {
   });
   afterEach(unmountAll);
 
-  it.live('shows the successful empty state when the ledger really is empty', () =>
+  suite.effect('shows the successful empty state when the ledger really is empty', () =>
     Effect.gen(function* initialSuccess() {
       yield* pinTestDocument;
       yield* preload('ledger-refresh-initial');
@@ -238,10 +238,10 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: false,
         showsSuccessfulEmpty: true,
       });
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 
-  it.live('promises the create button only to a user who can write', () =>
+  suite.effect('promises the create button only to a user who can write', () =>
     Effect.gen(function* emptyByPermission() {
       yield* pinTestDocument;
       const createHint = czech('finance-billing.faktury.emptyFirstDescription');
@@ -261,10 +261,10 @@ describe('finance ledger after a successful empty load', () => {
         create: false,
         readOnly: true,
       });
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 
-  it.live('shows loading, not an empty ledger, before the first read settles', () =>
+  suite.effect('shows loading, not an empty ledger, before the first read settles', () =>
     Effect.gen(function* pendingLoad() {
       yield* pinTestDocument;
       query = '?partyId=ledger-refresh-pending';
@@ -279,10 +279,10 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: false,
         showsSuccessfulEmpty: false,
       });
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 
-  it.live('never reports successful emptiness when the refresh is unavailable', () =>
+  suite.effect('never reports successful emptiness when the refresh is unavailable', () =>
     Effect.gen(function* transientFailure() {
       yield* pinTestDocument;
       yield* preload('ledger-refresh-unavailable');
@@ -315,10 +315,10 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: false,
         showsSuccessfulEmpty: true,
       });
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 
-  it.live('distinguishes a denied refresh from an unavailable one', () =>
+  suite.effect('distinguishes a denied refresh from an unavailable one', () =>
     Effect.gen(function* deniedFailure() {
       yield* pinTestDocument;
       yield* preload('ledger-refresh-forbidden');
@@ -335,10 +335,10 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: true,
         showsSuccessfulEmpty: false,
       });
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 
-  it.live('keeps an explicit invoice target unavailable, never a stale row, when the refresh is unavailable', () =>
+  suite.effect('keeps an explicit invoice target unavailable, never a stale row, when the refresh is unavailable', () =>
     Effect.gen(function* detailUnavailable() {
       yield* pinTestDocument;
       yield* preload('ledger-refresh-detail-unavailable', { resourceId: invoiceId }, ledgerWithInvoices);
@@ -354,10 +354,10 @@ describe('finance ledger after a successful empty load', () => {
       expect(vm.selected).toBeUndefined();
       expect(vm.invoices).toEqual([]);
       expect(vm.canWrite).toBe(false);
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 
-  it.live('reports a denied refresh of an explicit invoice target as forbidden, not unavailable', () =>
+  suite.effect('reports a denied refresh of an explicit invoice target as forbidden, not unavailable', () =>
     Effect.gen(function* detailForbidden() {
       yield* pinTestDocument;
       yield* preload('ledger-refresh-detail-forbidden', { resourceId: invoiceId }, ledgerWithInvoices);
@@ -373,6 +373,6 @@ describe('finance ledger after a successful empty load', () => {
       expect(vm.selected).toBeUndefined();
       expect(vm.invoices).toEqual([]);
       expect(vm.canWrite).toBe(false);
-    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 });

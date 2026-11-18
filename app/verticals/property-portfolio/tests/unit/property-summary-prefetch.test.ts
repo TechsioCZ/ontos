@@ -305,185 +305,191 @@ beforeEach(() => {
   window.dispatchEvent(new Event(moduleChangeEvent));
 });
 
-it.live('warms only supplied final rows and shares unfiltered owner reads instead of a portfolio burst', () =>
-  Effect.gen(function* warmsRows() {
-    yield* pinTestDocument;
-    yield* preloadPropertySummaries(input, [row(2), row(1)], 7);
-    expect(reads.finance).toEqual([{ propertyId: id(2) }, { propertyId: id(1) }]);
-    expect(reads.agreements).toHaveLength(1);
-    expect(reads.occupancy).toHaveLength(1);
-    expect(reads.work).toHaveLength(1);
-    expect(propertySummary.snapshot(detail(3)).state).toBe('pending');
-    yield* propertySummary.read(detail(2));
-    expect(reads.finance).toHaveLength(2);
-  }).pipe(Effect.provide(network)),
-);
-
-it('keys both primary and related data by tenant, principal, company, module and actual revision', () => {
-  const original = propertySummary.key(detail(1));
-  for (const field of ['tenantId', 'principalId', 'legalEntityId'] as const) {
-    const changed = recordsInput({ ...context, [field]: id(99) });
-    expect(propertyRecords.key(changed)).not.toBe(propertyRecords.key(input));
-    expect(propertySummary.key({ ...changed, propertyId: id(1), revision: 7 })).not.toBe(original);
-  }
-  expect(propertySummary.key(detail(1, 8))).not.toBe(original);
-  expect(original).toContain('property.portfolio');
-});
-
-it.live('disables warming with incomplete context and rejects rows from another tenant', () =>
-  Effect.gen(function* noScopeReuse() {
-    yield* pinTestDocument;
-    yield* preloadPropertySummaries(recordsInput(), [row(1)], 7);
-    yield* preloadPropertySummaries(recordsInput({ ...context, principalId: '' }), [row(1)], 7);
-    yield* preloadPropertySummaries(recordsInput({ ...context, tenantId: id(99) }), [row(1)], 7);
-    expect(reads.finance).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live(
-  'a partial denial stays failed, independently reads other owners, and retries rather than caching a grant',
-  () =>
-    Effect.gen(function* partialRetry() {
+it.layer(network, { excludeTestServices: true })('property summary prefetch', (suite) => {
+  suite.effect('warms only supplied final rows and shares unfiltered owner reads instead of a portfolio burst', () =>
+    Effect.gen(function* warmsRows() {
       yield* pinTestDocument;
-      denyAgreementOnce = true;
-      const first = yield* propertySummary.read(detail(1)).pipe(Effect.result);
-      expect(Result.isFailure(first)).toBe(true);
-      if (Result.isFailure(first)) {
-        expect(Result.isFailure(first.failure.value.agreements)).toBe(true);
-        expect(Result.isSuccess(first.failure.value.finance)).toBe(true);
-      }
-      expect(propertySummary.snapshot(detail(1)).state).toBe('failed');
-      yield* propertySummary.read(detail(1));
-      expect(reads.agreements).toHaveLength(2);
-      expect(reads.finance).toHaveLength(2);
+      yield* preloadPropertySummaries(input, [row(2), row(1)], 7);
+      expect(reads.finance).toEqual([{ propertyId: id(2) }, { propertyId: id(1) }]);
+      expect(reads.agreements).toHaveLength(1);
       expect(reads.occupancy).toHaveLength(1);
       expect(reads.work).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
-);
-
-it.live('two background rows dedupe a foreground join and cancellation leaves only the joined read alive', () =>
-  Effect.gen(function* cancelsRows() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    const stopped = yield* Deferred.make<boolean>();
-    let active = 0;
-    let total = 0;
-    financeAnswer = Effect.gen(function* blockedFinance() {
-      active += 1;
-      total += 1;
-      if (total === 2) {
-        yield* Deferred.succeed(started, true);
-      }
-      return yield* Deferred.await(release).pipe(Effect.as(financeResponse));
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          active -= 1;
-          if (active === 1) {
-            Deferred.doneUnsafe(stopped, Effect.succeed(true));
-          }
-        }),
-      ),
-    );
-    const background = yield* Effect.forkChild(preloadPropertySummaries(input, [row(1), row(2), row(3)], 7));
-    yield* Deferred.await(started);
-    expect(active).toBe(2);
-    const foreground = yield* Effect.forkChild(propertySummary.read(detail(1)));
-    yield* Effect.yieldNow;
-    yield* Fiber.interrupt(background);
-    yield* Deferred.await(stopped);
-    expect(active).toBe(1);
-    expect(total).toBe(2);
-    yield* Deferred.succeed(release, true);
-    yield* Fiber.join(foreground);
-    expect(total).toBe(2);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('live and settled-write invalidation remove old related values even when owner revision is unchanged', () =>
-  Effect.gen(function* invalidates() {
-    yield* pinTestDocument;
-    yield* propertySummary.read(detail(1));
-    for (const event of [moduleChangeEvent, moduleWriteEvent]) {
-      window.dispatchEvent(new Event(event));
-      expect(propertySummary.snapshot(detail(1)).state).toBe('pending');
-      yield* propertySummary.read(detail(1));
-    }
-    expect(reads.finance).toHaveLength(3);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('cold direct property links prepare the selected related summary and never choose an unrelated property', () =>
-  Effect.gen(function* directPreload() {
-    yield* pinTestDocument;
-    yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
-    expect(propertySummary.snapshot(detail(2)).state).toBe('ready');
-    expect(reads.finance).toHaveLength(1);
-    yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }));
-    expect(reads.finance).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a denied primary refresh clears the record and writeable snapshot', () =>
-  Effect.gen(function* deniedBase() {
-    yield* pinTestDocument;
-    yield* propertyRecords.read(input);
-    recordsAnswer = Effect.fail(forbidden);
-    yield* propertyRecords.refresh(input);
-    expect(propertyRecords.snapshot(input).state).toBe('failed');
-    expect(propertyRecords.snapshot(input)).not.toHaveProperty('value');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('caps speculative work at 200 rendered rows', () =>
-  Effect.gen(function* boundsRows() {
-    yield* pinTestDocument;
-    const rows = Array.from({ length: 202 }, (_, index) => row(index + 1));
-    yield* preloadPropertySummaries(input, rows, 9);
-    expect(reads.finance).toHaveLength(200);
-    expect(propertySummary.snapshot(detail(201, 9)).state).toBe('pending');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('an unrelated foreground row starts outside the two occupied background slots', () =>
-  Effect.gen(function* foregroundPriority() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    const foregroundStarted = yield* Deferred.make<boolean>();
-    let total = 0;
-    financeAnswer = Effect.gen(function* blockedFinance() {
-      total += 1;
-      if (total === 2) {
-        yield* Deferred.succeed(started, true);
-      }
-      if (total === 3) {
-        yield* Deferred.succeed(foregroundStarted, true);
-      }
-      return yield* Deferred.await(release).pipe(Effect.as(financeResponse));
-    });
-    const background = yield* Effect.forkChild(preloadPropertySummaries(input, [row(1), row(2), row(3)], 7));
-    yield* Deferred.await(started);
-    const foreground = yield* Effect.forkChild(propertySummary.read(detail(4)));
-    yield* Deferred.await(foregroundStarted);
-    expect(total).toBe(3);
-    yield* Fiber.interrupt(background);
-    yield* Deferred.succeed(release, true);
-    yield* Fiber.join(foreground);
-    expect(total).toBe(3);
-  }).pipe(Effect.provide(network)),
-);
-
-it('warms only the rendered property hierarchy when the portfolio cards are hidden', () => {
-  const visible = [row(1), row(2)];
-  expect(renderedPropertySummaryRows(undefined, visible)).toEqual(visible);
-  expect(renderedPropertySummaryRows(row(2), visible)).toEqual([row(2)]);
-});
-it('does not reuse incomplete context across mounts or partial identity changes', () => {
-  const missing = recordsInput(undefined, 'mount-a');
-  expect(propertyRecords.key(recordsInput(undefined, 'mount-b'))).not.toBe(propertyRecords.key(missing));
-  expect(propertyRecords.key(recordsInput({ ...context, principalId: '' }, 'mount-a'))).not.toBe(
-    propertyRecords.key(missing),
+      expect(propertySummary.snapshot(detail(3)).state).toBe('pending');
+      yield* propertySummary.read(detail(2));
+      expect(reads.finance).toHaveLength(2);
+    }),
   );
+
+  it('keys both primary and related data by tenant, principal, company, module and actual revision', () => {
+    const original = propertySummary.key(detail(1));
+    for (const field of ['tenantId', 'principalId', 'legalEntityId'] as const) {
+      const changed = recordsInput({ ...context, [field]: id(99) });
+      expect(propertyRecords.key(changed)).not.toBe(propertyRecords.key(input));
+      expect(propertySummary.key({ ...changed, propertyId: id(1), revision: 7 })).not.toBe(original);
+    }
+    expect(propertySummary.key(detail(1, 8))).not.toBe(original);
+    expect(original).toContain('property.portfolio');
+  });
+
+  suite.effect('disables warming with incomplete context and rejects rows from another tenant', () =>
+    Effect.gen(function* noScopeReuse() {
+      yield* pinTestDocument;
+      yield* preloadPropertySummaries(recordsInput(), [row(1)], 7);
+      yield* preloadPropertySummaries(recordsInput({ ...context, principalId: '' }), [row(1)], 7);
+      yield* preloadPropertySummaries(recordsInput({ ...context, tenantId: id(99) }), [row(1)], 7);
+      expect(reads.finance).toHaveLength(0);
+    }),
+  );
+
+  suite.effect(
+    'a partial denial stays failed, independently reads other owners, and retries rather than caching a grant',
+    () =>
+      Effect.gen(function* partialRetry() {
+        yield* pinTestDocument;
+        denyAgreementOnce = true;
+        const first = yield* propertySummary.read(detail(1)).pipe(Effect.result);
+        expect(Result.isFailure(first)).toBe(true);
+        if (Result.isFailure(first)) {
+          expect(Result.isFailure(first.failure.value.agreements)).toBe(true);
+          expect(Result.isSuccess(first.failure.value.finance)).toBe(true);
+        }
+        expect(propertySummary.snapshot(detail(1)).state).toBe('failed');
+        yield* propertySummary.read(detail(1));
+        expect(reads.agreements).toHaveLength(2);
+        expect(reads.finance).toHaveLength(2);
+        expect(reads.occupancy).toHaveLength(1);
+        expect(reads.work).toHaveLength(1);
+      }),
+  );
+
+  suite.effect('two background rows dedupe a foreground join and cancellation leaves only the joined read alive', () =>
+    Effect.gen(function* cancelsRows() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      const stopped = yield* Deferred.make<boolean>();
+      let active = 0;
+      let total = 0;
+      financeAnswer = Effect.gen(function* blockedFinance() {
+        active += 1;
+        total += 1;
+        if (total === 2) {
+          yield* Deferred.succeed(started, true);
+        }
+        return yield* Deferred.await(release).pipe(Effect.as(financeResponse));
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            active -= 1;
+            if (active === 1) {
+              Deferred.doneUnsafe(stopped, Effect.succeed(true));
+            }
+          }),
+        ),
+      );
+      const background = yield* Effect.forkChild(preloadPropertySummaries(input, [row(1), row(2), row(3)], 7));
+      yield* Deferred.await(started);
+      expect(active).toBe(2);
+      const foreground = yield* Effect.forkChild(propertySummary.read(detail(1)));
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(background);
+      yield* Deferred.await(stopped);
+      expect(active).toBe(1);
+      expect(total).toBe(2);
+      yield* Deferred.succeed(release, true);
+      yield* Fiber.join(foreground);
+      expect(total).toBe(2);
+    }),
+  );
+
+  suite.effect(
+    'live and settled-write invalidation remove old related values even when owner revision is unchanged',
+    () =>
+      Effect.gen(function* invalidates() {
+        yield* pinTestDocument;
+        yield* propertySummary.read(detail(1));
+        for (const event of [moduleChangeEvent, moduleWriteEvent]) {
+          window.dispatchEvent(new Event(event));
+          expect(propertySummary.snapshot(detail(1)).state).toBe('pending');
+          yield* propertySummary.read(detail(1));
+        }
+        expect(reads.finance).toHaveLength(3);
+      }),
+  );
+
+  suite.effect(
+    'cold direct property links prepare the selected related summary and never choose an unrelated property',
+    () =>
+      Effect.gen(function* directPreload() {
+        yield* pinTestDocument;
+        yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
+        expect(propertySummary.snapshot(detail(2)).state).toBe('ready');
+        expect(reads.finance).toHaveLength(1);
+        yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }));
+        expect(reads.finance).toHaveLength(1);
+      }),
+  );
+
+  suite.effect('a denied primary refresh clears the record and writeable snapshot', () =>
+    Effect.gen(function* deniedBase() {
+      yield* pinTestDocument;
+      yield* propertyRecords.read(input);
+      recordsAnswer = Effect.fail(forbidden);
+      yield* propertyRecords.refresh(input);
+      expect(propertyRecords.snapshot(input).state).toBe('failed');
+      expect(propertyRecords.snapshot(input)).not.toHaveProperty('value');
+    }),
+  );
+
+  suite.effect('caps speculative work at 200 rendered rows', () =>
+    Effect.gen(function* boundsRows() {
+      yield* pinTestDocument;
+      const rows = Array.from({ length: 202 }, (_, index) => row(index + 1));
+      yield* preloadPropertySummaries(input, rows, 9);
+      expect(reads.finance).toHaveLength(200);
+      expect(propertySummary.snapshot(detail(201, 9)).state).toBe('pending');
+    }),
+  );
+
+  suite.effect('an unrelated foreground row starts outside the two occupied background slots', () =>
+    Effect.gen(function* foregroundPriority() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      const foregroundStarted = yield* Deferred.make<boolean>();
+      let total = 0;
+      financeAnswer = Effect.gen(function* blockedFinance() {
+        total += 1;
+        if (total === 2) {
+          yield* Deferred.succeed(started, true);
+        }
+        if (total === 3) {
+          yield* Deferred.succeed(foregroundStarted, true);
+        }
+        return yield* Deferred.await(release).pipe(Effect.as(financeResponse));
+      });
+      const background = yield* Effect.forkChild(preloadPropertySummaries(input, [row(1), row(2), row(3)], 7));
+      yield* Deferred.await(started);
+      const foreground = yield* Effect.forkChild(propertySummary.read(detail(4)));
+      yield* Deferred.await(foregroundStarted);
+      expect(total).toBe(3);
+      yield* Fiber.interrupt(background);
+      yield* Deferred.succeed(release, true);
+      yield* Fiber.join(foreground);
+      expect(total).toBe(3);
+    }),
+  );
+
+  it('warms only the rendered property hierarchy when the portfolio cards are hidden', () => {
+    const visible = [row(1), row(2)];
+    expect(renderedPropertySummaryRows(undefined, visible)).toEqual(visible);
+    expect(renderedPropertySummaryRows(row(2), visible)).toEqual([row(2)]);
+  });
+  it('does not reuse incomplete context across mounts or partial identity changes', () => {
+    const missing = recordsInput(undefined, 'mount-a');
+    expect(propertyRecords.key(recordsInput(undefined, 'mount-b'))).not.toBe(propertyRecords.key(missing));
+    expect(propertyRecords.key(recordsInput({ ...context, principalId: '' }, 'mount-a'))).not.toBe(
+      propertyRecords.key(missing),
+    );
+  });
 });

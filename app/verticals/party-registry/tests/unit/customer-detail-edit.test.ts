@@ -197,81 +197,83 @@ it('keeps structured address fields, omits blank parts, and uses the corresponde
   expect(Schema.is(ContactPointInputSchema)(input)).toBe(true);
 });
 
-it.live('rejects an invalid official identifier before issuing an authenticated write', () =>
-  Effect.gen(function* rejectIdentifier() {
-    yield* pinTestDocument;
-    const result = yield* Effect.exit(
-      saveCustomerFact(
-        partyRef,
-        { existing: undefined, identifierType: 'ICO', kind: 'identifier', value: '25741137' },
-        'Correction',
-        'document:42',
-      ),
-    );
-    expect(Exit.isFailure(result)).toBe(true);
-    expect(partyUpdates).toHaveLength(0);
-    expect(contactUpdates).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('sends the loaded Party revision and explicit supporting provenance for a name change', () =>
-  Effect.gen(function* saveName() {
-    yield* pinTestDocument;
-    yield* saveCustomerFact(partyRef, { kind: 'name', party, value: ' After ' }, 'Reviewed name', 'document:42');
-    expect(partyUpdates[0]).toMatchObject({
-      partyRef,
-      businessName: 'After',
-      expectedRevision: 9,
-      provenanceSource: 'document:42',
-      provenanceMethod: 'MANUAL_ENTRY',
-    });
-  }).pipe(Effect.provide(network)),
-);
-
-it.live(
-  'corrects a contact through its stable ref and revision, preserving privacy and leaving verification unclaimed',
-  () =>
-    Effect.gen(function* savePhone() {
+it.layer(network, { excludeTestServices: true })('customer detail edit', (suite) => {
+  suite.effect('rejects an invalid official identifier before issuing an authenticated write', () =>
+    Effect.gen(function* rejectIdentifier() {
       yield* pinTestDocument;
-      yield* saveCustomerFact(
-        partyRef,
-        {
-          existing: contact,
-          kind: 'contact',
-          value: customerContactInput('PHONE', { value: '+420777654321' }, contact),
-        },
-        'Wrong phone',
-        'document:42',
+      const result = yield* Effect.exit(
+        saveCustomerFact(
+          partyRef,
+          { existing: undefined, identifierType: 'ICO', kind: 'identifier', value: '25741137' },
+          'Correction',
+          'document:42',
+        ),
       );
-      expect(contactUpdates[0]).toMatchObject({
-        contactPointRef: contact.contactPointRef,
-        expectedRevision: 7,
-        change: {
-          type: 'CORRECT_CONTACT_POINT',
-          reason: 'Wrong phone',
-          evidenceReferences: ['document:42'],
-          replacement: {
-            privacyClassification: 'BUSINESS_SENSITIVE',
-            contactPoint: { type: 'PHONE', value: '+420777654321', extension: '12' },
-          },
-        },
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(partyUpdates).toHaveLength(0);
+      expect(contactUpdates).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('sends the loaded Party revision and explicit supporting provenance for a name change', () =>
+    Effect.gen(function* saveName() {
+      yield* pinTestDocument;
+      yield* saveCustomerFact(partyRef, { kind: 'name', party, value: ' After ' }, 'Reviewed name', 'document:42');
+      expect(partyUpdates[0]).toMatchObject({
+        partyRef,
+        businessName: 'After',
+        expectedRevision: 9,
+        provenanceSource: 'document:42',
+        provenanceMethod: 'MANUAL_ENTRY',
       });
-    }).pipe(Effect.provide(network)),
-);
+    }),
+  );
 
-it('clears only confirmed sections after a partial save and leaves other drafts available for correction', () => {
-  const draft = { name: 'Saved name', 'identifier-vat': 'CZINVALID', 'phone-value': '+420777222333' };
-  expect(discardCustomerDraftKeys(draft, ['name'])).toEqual({
-    'identifier-vat': 'CZINVALID',
-    'phone-value': '+420777222333',
+  suite.effect(
+    'corrects a contact through its stable ref and revision, preserving privacy and leaving verification unclaimed',
+    () =>
+      Effect.gen(function* savePhone() {
+        yield* pinTestDocument;
+        yield* saveCustomerFact(
+          partyRef,
+          {
+            existing: contact,
+            kind: 'contact',
+            value: customerContactInput('PHONE', { value: '+420777654321' }, contact),
+          },
+          'Wrong phone',
+          'document:42',
+        );
+        expect(contactUpdates[0]).toMatchObject({
+          contactPointRef: contact.contactPointRef,
+          expectedRevision: 7,
+          change: {
+            type: 'CORRECT_CONTACT_POINT',
+            reason: 'Wrong phone',
+            evidenceReferences: ['document:42'],
+            replacement: {
+              privacyClassification: 'BUSINESS_SENSITIVE',
+              contactPoint: { type: 'PHONE', value: '+420777654321', extension: '12' },
+            },
+          },
+        });
+      }),
+  );
+
+  it('clears only confirmed sections after a partial save and leaves other drafts available for correction', () => {
+    const draft = { name: 'Saved name', 'identifier-vat': 'CZINVALID', 'phone-value': '+420777222333' };
+    expect(discardCustomerDraftKeys(draft, ['name'])).toEqual({
+      'identifier-vat': 'CZINVALID',
+      'phone-value': '+420777222333',
+    });
+    expect(draft.name).toBe('Saved name');
   });
-  expect(draft.name).toBe('Saved name');
-});
 
-it('does not claim a Czech country context for a new international phone number', () => {
-  expect(customerContactInput('PHONE', { value: '+44 7700 900123' })).toEqual({
-    preferred: false,
-    type: 'PHONE',
-    value: '+44 7700 900123',
+  it('does not claim a Czech country context for a new international phone number', () => {
+    expect(customerContactInput('PHONE', { value: '+44 7700 900123' })).toEqual({
+      preferred: false,
+      type: 'PHONE',
+      value: '+44 7700 900123',
+    });
   });
 });

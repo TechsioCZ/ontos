@@ -70,13 +70,7 @@ Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true);
 
 /** Lets the client Effects and requests the page started take a turn, then flushes React's updates. Needs `it.live`. */
 export const settle: Effect.Effect<void> = Effect.sleep('1 millis').pipe(
-  Effect.andThen(
-    Effect.promise(async () => {
-      await act(async () => {
-        await Promise.resolve();
-      });
-    }),
-  ),
+  Effect.andThen(Effect.promise(() => act(() => Promise.resolve()))),
 );
 
 /**
@@ -84,11 +78,9 @@ export const settle: Effect.Effect<void> = Effect.sleep('1 millis').pipe(
  * sleep would wait for fake time: runs the fake timers already due and lets real work take a turn, then flushes
  * React's updates. No fake time passes.
  */
-export const settleOnFakeTimers: Effect.Effect<void> = Effect.promise(async () => {
-  await act(async () => {
-    await rstest.advanceTimersByTimeAsync(0);
-  });
-});
+export const settleOnFakeTimers: Effect.Effect<void> = Effect.promise(() =>
+  act(() => rstest.advanceTimersByTimeAsync(0)),
+);
 
 /** Runs `step` inside React's `act`, then settles (with `settled`, e.g. `settleOnFakeTimers`; default `settle`). */
 export const acted = (step: () => void, settled: Effect.Effect<void> = settle): Effect.Effect<void> =>
@@ -132,11 +124,7 @@ export const passFakeTime = (
   const pass = (left: number): Effect.Effect<void> =>
     left <= 0
       ? Effect.void
-      : Effect.promise(async () => {
-          await act(async () => {
-            await rstest.advanceTimersByTimeAsync(Math.min(stepMillis, left));
-          });
-        }).pipe(
+      : Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(Math.min(stepMillis, left)))).pipe(
           Effect.andThen(between),
           Effect.andThen(settleOnFakeTimers),
           Effect.andThen(Effect.suspend(() => pass(left - stepMillis))),
@@ -392,7 +380,7 @@ export const makeModuleUi = (bindings: ModuleRuntimeBindings) => {
         history: createMemoryHistory({ initialEntries: [url ?? `/${language}/test`] }),
         routeTree: root.addChildren([languageRoute.addChildren([page])]),
       });
-      yield* Effect.promise(async () => await router.load());
+      yield* Effect.promise(() => router.load());
       yield* mountRoot(
         <ModuleRuntime translations={translations}>
           <RouterProvider router={router} />

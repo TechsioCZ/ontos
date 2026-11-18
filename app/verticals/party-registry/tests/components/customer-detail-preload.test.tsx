@@ -257,62 +257,6 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it.live('exact direct detail lookup does not consult the bounded customer list or invent a revision', () =>
-  Effect.gen(function* directDetail() {
-    yield* pinTestDocument;
-    listAnswer = Effect.succeed({ items: [] });
-    const detail = yield* loadCustomerDetailByRef(counterpartyRef);
-    expect(counterpartyReads).toEqual([{ correlation: expect.any(String), payload: { counterpartyRef } }]);
-    expect(listReads).toHaveLength(0);
-    expect(detail.counterparty.counterpartyRef).toEqual(counterpartyRef);
-    expect(detail.identity).toEqual(snapshot.identity);
-    if (detail.identity.status === 'ready') {
-      expect(detail.identity.value.party.revision).toBe(1);
-    }
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a forbidden list refresh removes the last rows rather than retaining lastReady', () =>
-  Effect.gen(function* deniedRefresh() {
-    yield* pinTestDocument;
-    const query = customersQuery(context);
-    yield* customersData.read(query);
-    expect(customersData.snapshot(query).state).toBe('ready');
-    const failure = yield* Schema.decodeEffect(CustomerListForbiddenProblemSchema)({
-      _tag: 'CustomerListForbiddenProblem',
-      detail: 'Denied',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:denied',
-    });
-    listAnswer = Effect.fail(failure);
-    yield* customersData.refresh(query);
-    const deniedSnapshot = customersData.snapshot(query);
-    expect(deniedSnapshot.state).toBe('failed');
-    expect(deniedSnapshot).not.toHaveProperty('value');
-  }).pipe(Effect.provide(network)),
-);
-
-it('customer list cache keys use the same complete identity as detail prefetch', () => {
-  const key = customersData.key(customersQuery(context));
-  for (const field of ['legalEntityId', 'principalId', 'tenantId'] as const) {
-    expect(customersData.key(customersQuery({ ...context, [field]: 'other' }))).not.toBe(key);
-  }
-  expect(customersData.key(customersQuery())).not.toBe(key);
-});
-
-it.live('a confirmed identity write preserves the expected revision and invalidates cached sections', () =>
-  Effect.gen(function* writeInvalidation() {
-    yield* pinTestDocument;
-    yield* preloadCustomerDetails(context, [customer]);
-    yield* saveCustomerFact(partyRef, { kind: 'name', party, value: 'After' }, 'Correction', 'Source');
-    expect(writes[0]?.expectedRevision).toBe(1);
-    counterpartyReads.length = 0;
-    yield* preloadCustomerDetails(context, [customer]);
-    expect(counterpartyReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
 const expectNoReads = () => {
   expect(counterpartyReads).toHaveLength(0);
   expect(identityReads).toHaveLength(0);
@@ -320,268 +264,326 @@ const expectNoReads = () => {
   expect(identifierReads).toHaveLength(0);
 };
 
-it.live('a write does not rewarm the visible page; pointing at a row warms that row again', () =>
-  Effect.gen(function* rewarmOnIntent() {
-    yield* pinTestDocument;
-    const rows = [customer, { ...customer, partyRevision: 2 }];
-    const scope = pageDataScopeKey(context, 'party.registry') ?? '';
-    const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
-    yield* waitUntil(() => counterpartyReads.length === 2);
-    expect(counterpartyReads).toHaveLength(2);
-    clearReads();
-    act(() => customerDetailData.invalidate());
-    // A rewarm the write started has reached the owner by the time the network is idle.
-    yield* networkIdle;
-    // The batch was warmed once; a write that leaves its rows and revisions alone does not warm it again.
-    expect(counterpartyReads).toHaveLength(0);
-    const row = document.createElement('tr');
-    row.dataset['index'] = '1';
-    customerDetailIntent(context, () => rows).onPointerEnter({ currentTarget: row });
-    yield* waitUntil(() => customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state === 'ready');
-    expect(counterpartyReads).toHaveLength(1);
-    expect(customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state).toBe('ready');
-    unmount();
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customer detail preload', (suite) => {
+  suite.effect('exact direct detail lookup does not consult the bounded customer list or invent a revision', () =>
+    Effect.gen(function* directDetail() {
+      yield* pinTestDocument;
+      listAnswer = Effect.succeed({ items: [] });
+      const detail = yield* loadCustomerDetailByRef(counterpartyRef);
+      expect(counterpartyReads).toEqual([{ correlation: expect.any(String), payload: { counterpartyRef } }]);
+      expect(listReads).toHaveLength(0);
+      expect(detail.counterparty.counterpartyRef).toEqual(counterpartyRef);
+      expect(detail.identity).toEqual(snapshot.identity);
+      if (detail.identity.status === 'ready') {
+        expect(detail.identity.value.party.revision).toBe(1);
+      }
+    }),
+  );
 
-it.live('opens a preloaded customer with all real sections immediately and no detail request', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    yield* preloadCustomerDetails(context, [customer]);
-    clearReads();
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail(customer));
-    expect(result.current.detail).toBe(customer);
-    expect(result.current.detailValue?.counterparty).toEqual(snapshot.counterparty);
-    expect(result.current.detailValue?.identity).toEqual(snapshot.identity);
-    expect(result.current.detailValue?.contacts).toEqual(snapshot.contacts);
-    expect(result.current.detailValue?.identifiers).toEqual(snapshot.identifiers);
-    expect(result.current.detailFailure).toBeUndefined();
-    expectNoReads();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a forbidden list refresh removes the last rows rather than retaining lastReady', () =>
+    Effect.gen(function* deniedRefresh() {
+      yield* pinTestDocument;
+      const query = customersQuery(context);
+      yield* customersData.read(query);
+      expect(customersData.snapshot(query).state).toBe('ready');
+      const failure = yield* Schema.decodeEffect(CustomerListForbiddenProblemSchema)({
+        _tag: 'CustomerListForbiddenProblem',
+        detail: 'Denied',
+        status: 403,
+        title: 'Forbidden',
+        type: 'urn:test:denied',
+      });
+      listAnswer = Effect.fail(failure);
+      yield* customersData.refresh(query);
+      const deniedSnapshot = customersData.snapshot(query);
+      expect(deniedSnapshot.state).toBe('failed');
+      expect(deniedSnapshot).not.toHaveProperty('value');
+    }),
+  );
 
-it.live('does not reuse another tenant, company, principal or row revision', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    yield* preloadCustomerDetails(context, [customer]);
-    for (const field of ['tenantId', 'legalEntityId', 'principalId'] as const) {
+  it('customer list cache keys use the same complete identity as detail prefetch', () => {
+    const key = customersData.key(customersQuery(context));
+    for (const field of ['legalEntityId', 'principalId', 'tenantId'] as const) {
+      expect(customersData.key(customersQuery({ ...context, [field]: 'other' }))).not.toBe(key);
+    }
+    expect(customersData.key(customersQuery())).not.toBe(key);
+  });
+
+  suite.effect('a confirmed identity write preserves the expected revision and invalidates cached sections', () =>
+    Effect.gen(function* writeInvalidation() {
+      yield* pinTestDocument;
+      yield* preloadCustomerDetails(context, [customer]);
+      yield* saveCustomerFact(partyRef, { kind: 'name', party, value: 'After' }, 'Correction', 'Source');
+      expect(writes[0]?.expectedRevision).toBe(1);
+      counterpartyReads.length = 0;
+      yield* preloadCustomerDetails(context, [customer]);
+      expect(counterpartyReads).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a write does not rewarm the visible page; pointing at a row warms that row again', () =>
+    Effect.gen(function* rewarmOnIntent() {
+      yield* pinTestDocument;
+      const rows = [customer, { ...customer, partyRevision: 2 }];
+      const scope = pageDataScopeKey(context, 'party.registry') ?? '';
+      const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+      yield* waitUntil(() => counterpartyReads.length === 2);
+      expect(counterpartyReads).toHaveLength(2);
       clearReads();
-      const { result, unmount } = renderHook(() => useCustomerDetailSelection({ ...context, [field]: 'other' }));
+      act(() => customerDetailData.invalidate());
+      // A rewarm the write started has reached the owner by the time the network is idle.
+      yield* networkIdle;
+      // The batch was warmed once; a write that leaves its rows and revisions alone does not warm it again.
+      expect(counterpartyReads).toHaveLength(0);
+      const row = document.createElement('tr');
+      row.dataset['index'] = '1';
+      customerDetailIntent(context, () => rows).onPointerEnter({ currentTarget: row });
+      yield* waitUntil(() => customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state === 'ready');
+      expect(counterpartyReads).toHaveLength(1);
+      expect(customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state).toBe('ready');
+      unmount();
+    }),
+  );
+
+  suite.effect('opens a preloaded customer with all real sections immediately and no detail request', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      yield* preloadCustomerDetails(context, [customer]);
+      clearReads();
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
       act(() => result.current.openDetail(customer));
+      expect(result.current.detail).toBe(customer);
+      expect(result.current.detailValue?.counterparty).toEqual(snapshot.counterparty);
+      expect(result.current.detailValue?.identity).toEqual(snapshot.identity);
+      expect(result.current.detailValue?.contacts).toEqual(snapshot.contacts);
+      expect(result.current.detailValue?.identifiers).toEqual(snapshot.identifiers);
+      expect(result.current.detailFailure).toBeUndefined();
+      expectNoReads();
+    }),
+  );
+
+  suite.effect('does not reuse another tenant, company, principal or row revision', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      yield* preloadCustomerDetails(context, [customer]);
+      for (const field of ['tenantId', 'legalEntityId', 'principalId'] as const) {
+        clearReads();
+        const { result, unmount } = renderHook(() => useCustomerDetailSelection({ ...context, [field]: 'other' }));
+        act(() => result.current.openDetail(customer));
+        yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
+        expect(counterpartyReads).toHaveLength(1);
+        unmount();
+      }
+      clearReads();
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
+      act(() => result.current.openDetail({ ...customer, partyRevision: 2 }));
       yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
       expect(counterpartyReads).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('scope switching hides the prior selection before effects run and cancels unfinished reads', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      const started = Deferred.makeUnsafe<true>();
+      const interrupted = Deferred.makeUnsafe<true>();
+      counterpartyAnswer = Deferred.succeed(started, true).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(Deferred.succeed(interrupted, true)),
+      );
+      const { rerender, result } = renderHook(({ scope }) => useCustomerDetailSelection(scope), {
+        initialProps: { scope: context },
+      });
+      act(() => result.current.openDetail(customer));
+      yield* Deferred.await(started);
+      rerender({ scope: { ...context, legalEntityId: 'other-company' } });
+      expect(result.current.detail).toBeNull();
+      expect(result.current.detailValue).toBeUndefined();
+      yield* Deferred.await(interrupted);
+    }),
+  );
+
+  suite.effect('rapid selection interrupts obsolete work and cannot replace the latest customer', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      const started = Deferred.makeUnsafe<true>();
+      const interrupted = Deferred.makeUnsafe<true>();
+      counterpartyAnswer = Deferred.succeed(started, true).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(Deferred.succeed(interrupted, true)),
+      );
+      const resourceId = yield* Schema.decodeEffect(CustomerListItemSchema.fields.counterpartyId)(
+        '30000000-0000-4000-8000-000000000002',
+      );
+      const other = {
+        ...customer,
+        counterpartyId: '30000000-0000-4000-8000-000000000002',
+        counterpartyRef: {
+          ...customer.counterpartyRef,
+          resourceId,
+        },
+      };
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
+      act(() => result.current.openDetail(customer));
+      yield* Deferred.await(started);
+      counterpartyAnswer = Effect.succeed(snapshot.counterparty);
+      act(() => result.current.openDetail(other));
+      yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
+      yield* Deferred.await(interrupted);
+      expect(result.current.detail).toBe(other);
+    }),
+  );
+
+  suite.effect('a denied commercial context renders no fixture and retries after authorization changes', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      counterpartyAnswer = Effect.fail(denied);
+      yield* preloadCustomerDetails(context, [customer]);
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
+      act(() => result.current.openDetail(customer));
+      yield* Effect.promise(() => waitFor(() => expect(result.current.detailFailure).toBe('forbidden')));
+      expect(result.current.detailValue).toBeUndefined();
+      expect(identityReads).toHaveLength(0);
+      counterpartyAnswer = Effect.succeed(snapshot.counterparty);
+      act(() => result.current.retryDetail());
+      yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
+      expect(result.current.detailFailure).toBeUndefined();
+    }),
+  );
+
+  suite.effect('a partially forbidden identity never becomes a reusable negative decision', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      identityAnswer = Effect.fail(unavailableIdentity);
+      yield* preloadCustomerDetails(context, [customer]);
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
+      act(() => result.current.openDetail(customer));
+      yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue?.identity.status).toBe('forbidden')));
+      expect(identityReads).toHaveLength(2);
+      if (snapshot.identity.status === 'ready') {
+        identityAnswer = Effect.succeed(snapshot.identity.value);
+      }
+      act(() => result.current.closeDetail(false));
+      act(() => result.current.openDetail(customer));
+      yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue?.identity.status).toBe('ready')));
+      expect(identityReads).toHaveLength(3);
+    }),
+  );
+
+  suite.effect('a live authorization change replaces ready data with an explicit denial, not the stale snapshot', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      yield* preloadCustomerDetails(context, [customer]);
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
+      act(() => result.current.openDetail(customer));
+      expect(result.current.detailValue).toBeDefined();
+      counterpartyAnswer = Effect.fail(denied);
+      act(() => {
+        window.dispatchEvent(new Event(moduleChangeEvent));
+      });
+      yield* Effect.promise(() => waitFor(() => expect(result.current.detailFailure).toBe('forbidden')));
+      expect(result.current.detailValue).toBeUndefined();
+    }),
+  );
+
+  suite.effect('a visible-page prefetch is bounded and releases unfinished work on page change or unmount', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      const started = Deferred.makeUnsafe<true>();
+      let active = 0;
+      let peak = 0;
+      counterpartyAnswer = Effect.sync(() => {
+        active += 1;
+        peak = Math.max(peak, active);
+      }).pipe(
+        Effect.andThen(Deferred.succeed(started, true)),
+        Effect.andThen(Effect.never),
+        Effect.ensuring(
+          Effect.sync(() => {
+            active -= 1;
+          }),
+        ),
+      );
+      const rows = Array.from({ length: 5 }, (_, index) => ({ ...customer, partyRevision: index + 1 }));
+      const { rerender, unmount } = renderHook(({ page }) => usePrefetchCustomerDetails(context, page), {
+        initialProps: { page: rows },
+      });
+      yield* Deferred.await(started);
+      yield* waitUntil(() => active === 2);
+      expect(active).toBe(2);
+      expect(peak).toBe(2);
+      rerender({ page: [] });
+      yield* waitUntil(() => active === 0);
+      expect(active).toBe(0);
+      expect(counterpartyReads).toHaveLength(2);
+      rerender({ page: rows });
+      yield* waitUntil(() => active === 2);
+      expect(active).toBe(2);
       unmount();
-    }
-    clearReads();
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail({ ...customer, partyRevision: 2 }));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
-    expect(counterpartyReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+      yield* waitUntil(() => active === 0);
+      expect(active).toBe(0);
+      expect(counterpartyReads).toHaveLength(4);
+    }),
+  );
 
-it.live('scope switching hides the prior selection before effects run and cancels unfinished reads', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    const started = Deferred.makeUnsafe<true>();
-    const interrupted = Deferred.makeUnsafe<true>();
-    counterpartyAnswer = Deferred.succeed(started, true).pipe(
-      Effect.andThen(Effect.never),
-      Effect.ensuring(Deferred.succeed(interrupted, true)),
-    );
-    const { rerender, result } = renderHook(({ scope }) => useCustomerDetailSelection(scope), {
-      initialProps: { scope: context },
-    });
-    act(() => result.current.openDetail(customer));
-    yield* Deferred.await(started);
-    rerender({ scope: { ...context, legalEntityId: 'other-company' } });
-    expect(result.current.detail).toBeNull();
-    expect(result.current.detailValue).toBeUndefined();
-    yield* Deferred.await(interrupted);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('foreground detail starts without waiting for unrelated background rows', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      const started = Deferred.makeUnsafe<true>();
+      counterpartyAnswer = Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never));
+      const rows = [customer, { ...customer, partyRevision: 2 }];
+      const background = renderHook(() => usePrefetchCustomerDetails(context, rows));
+      yield* Deferred.await(started);
+      yield* waitUntil(() => counterpartyReads.length === 2);
+      expect(counterpartyReads).toHaveLength(2);
+      const foreground = renderHook(() => useCustomerDetailSelection(context));
+      act(() => foreground.result.current.openDetail({ ...customer, partyRevision: 3 }));
+      yield* waitUntil(() => counterpartyReads.length === 3);
+      expect(counterpartyReads).toHaveLength(3);
+      foreground.unmount();
+      background.unmount();
+    }),
+  );
 
-it.live('rapid selection interrupts obsolete work and cannot replace the latest customer', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    const started = Deferred.makeUnsafe<true>();
-    const interrupted = Deferred.makeUnsafe<true>();
-    counterpartyAnswer = Deferred.succeed(started, true).pipe(
-      Effect.andThen(Effect.never),
-      Effect.ensuring(Deferred.succeed(interrupted, true)),
-    );
-    const resourceId = yield* Schema.decodeEffect(CustomerListItemSchema.fields.counterpartyId)(
-      '30000000-0000-4000-8000-000000000002',
-    );
-    const other = {
-      ...customer,
-      counterpartyId: '30000000-0000-4000-8000-000000000002',
-      counterpartyRef: {
-        ...customer.counterpartyRef,
-        resourceId,
-      },
-    };
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail(customer));
-    yield* Deferred.await(started);
-    counterpartyAnswer = Effect.succeed(snapshot.counterparty);
-    act(() => result.current.openDetail(other));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
-    yield* Deferred.await(interrupted);
-    expect(result.current.detail).toBe(other);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('missing context disables shared reuse and preserves direct full-page detail loading', () =>
+    Effect.gen(function* customerPreloadTest() {
+      yield* pinTestDocument;
+      yield* preloadCustomerDetails(undefined, [customer]);
+      expectNoReads();
+      const values: CustomerDetailSnapshot[] = [];
+      loadCustomerDetailInto(customer, (loaded) => {
+        if (loaded.value !== undefined) {
+          values.push(loaded.value);
+        }
+      });
+      yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(1)));
+      loadCustomerDetailInto(customer, (loaded) => {
+        if (loaded.value !== undefined) {
+          values.push(loaded.value);
+        }
+      });
+      yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(2)));
+      expect(counterpartyReads).toHaveLength(2);
+    }),
+  );
 
-it.live('a denied commercial context renders no fixture and retries after authorization changes', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    counterpartyAnswer = Effect.fail(denied);
-    yield* preloadCustomerDetails(context, [customer]);
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail(customer));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailFailure).toBe('forbidden')));
-    expect(result.current.detailValue).toBeUndefined();
-    expect(identityReads).toHaveLength(0);
-    counterpartyAnswer = Effect.succeed(snapshot.counterparty);
-    act(() => result.current.retryDetail());
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
-    expect(result.current.detailFailure).toBeUndefined();
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a partially forbidden identity never becomes a reusable negative decision', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    identityAnswer = Effect.fail(unavailableIdentity);
-    yield* preloadCustomerDetails(context, [customer]);
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail(customer));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue?.identity.status).toBe('forbidden')));
-    expect(identityReads).toHaveLength(2);
-    if (snapshot.identity.status === 'ready') {
-      identityAnswer = Effect.succeed(snapshot.identity.value);
-    }
-    act(() => result.current.closeDetail(false));
-    act(() => result.current.openDetail(customer));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue?.identity.status).toBe('ready')));
-    expect(identityReads).toHaveLength(3);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a live authorization change replaces ready data with an explicit denial, not the stale snapshot', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    yield* preloadCustomerDetails(context, [customer]);
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail(customer));
-    expect(result.current.detailValue).toBeDefined();
-    counterpartyAnswer = Effect.fail(denied);
-    act(() => {
-      window.dispatchEvent(new Event(moduleChangeEvent));
-    });
-    yield* Effect.promise(() => waitFor(() => expect(result.current.detailFailure).toBe('forbidden')));
-    expect(result.current.detailValue).toBeUndefined();
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a visible-page prefetch is bounded and releases unfinished work on page change or unmount', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    const started = Deferred.makeUnsafe<true>();
-    let active = 0;
-    let peak = 0;
-    counterpartyAnswer = Effect.sync(() => {
-      active += 1;
-      peak = Math.max(peak, active);
-    }).pipe(
-      Effect.andThen(Deferred.succeed(started, true)),
-      Effect.andThen(Effect.never),
-      Effect.ensuring(
-        Effect.sync(() => {
-          active -= 1;
-        }),
-      ),
-    );
-    const rows = Array.from({ length: 5 }, (_, index) => ({ ...customer, partyRevision: index + 1 }));
-    const { rerender, unmount } = renderHook(({ page }) => usePrefetchCustomerDetails(context, page), {
-      initialProps: { page: rows },
-    });
-    yield* Deferred.await(started);
-    yield* waitUntil(() => active === 2);
-    expect(active).toBe(2);
-    expect(peak).toBe(2);
-    rerender({ page: [] });
-    yield* waitUntil(() => active === 0);
-    expect(active).toBe(0);
-    expect(counterpartyReads).toHaveLength(2);
-    rerender({ page: rows });
-    yield* waitUntil(() => active === 2);
-    expect(active).toBe(2);
-    unmount();
-    yield* waitUntil(() => active === 0);
-    expect(active).toBe(0);
-    expect(counterpartyReads).toHaveLength(4);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('foreground detail starts without waiting for unrelated background rows', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    const started = Deferred.makeUnsafe<true>();
-    counterpartyAnswer = Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never));
-    const rows = [customer, { ...customer, partyRevision: 2 }];
-    const background = renderHook(() => usePrefetchCustomerDetails(context, rows));
-    yield* Deferred.await(started);
-    yield* waitUntil(() => counterpartyReads.length === 2);
-    expect(counterpartyReads).toHaveLength(2);
-    const foreground = renderHook(() => useCustomerDetailSelection(context));
-    act(() => foreground.result.current.openDetail({ ...customer, partyRevision: 3 }));
-    yield* waitUntil(() => counterpartyReads.length === 3);
-    expect(counterpartyReads).toHaveLength(3);
-    foreground.unmount();
-    background.unmount();
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('missing context disables shared reuse and preserves direct full-page detail loading', () =>
-  Effect.gen(function* customerPreloadTest() {
-    yield* pinTestDocument;
-    yield* preloadCustomerDetails(undefined, [customer]);
-    expectNoReads();
-    const values: CustomerDetailSnapshot[] = [];
-    loadCustomerDetailInto(customer, (loaded) => {
-      if (loaded.value !== undefined) {
-        values.push(loaded.value);
-      }
-    });
-    yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(1)));
-    loadCustomerDetailInto(customer, (loaded) => {
-      if (loaded.value !== undefined) {
-        values.push(loaded.value);
-      }
-    });
-    yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(2)));
-    expect(counterpartyReads).toHaveLength(2);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a background reload of the open customer keeps its record in the side panel', () =>
-  Effect.gen(function* backgroundReload() {
-    yield* pinTestDocument;
-    yield* preloadCustomerDetails(context, [customer]);
-    const { result } = renderHook(() => useCustomerDetailSelection(context));
-    act(() => result.current.openDetail(customer));
-    const shown = result.current.detailValue;
-    expect(shown).toBeDefined();
-    // A live change reloads the same customer; the strict store reads as pending until it answers.
-    counterpartyAnswer = Effect.never;
-    act(() => {
-      window.dispatchEvent(new Event(moduleChangeEvent));
-    });
-    // The reload has reached the owner, which holds it open.
-    yield* networkQuietExcept(1);
-    expect(result.current.detailValue).toBe(shown);
-    expect(result.current.detailFailure).toBeUndefined();
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('a background reload of the open customer keeps its record in the side panel', () =>
+    Effect.gen(function* backgroundReload() {
+      yield* pinTestDocument;
+      yield* preloadCustomerDetails(context, [customer]);
+      const { result } = renderHook(() => useCustomerDetailSelection(context));
+      act(() => result.current.openDetail(customer));
+      const shown = result.current.detailValue;
+      expect(shown).toBeDefined();
+      // A live change reloads the same customer; the strict store reads as pending until it answers.
+      counterpartyAnswer = Effect.never;
+      act(() => {
+        window.dispatchEvent(new Event(moduleChangeEvent));
+      });
+      // The reload has reached the owner, which holds it open.
+      yield* networkQuietExcept(1);
+      expect(result.current.detailValue).toBe(shown);
+      expect(result.current.detailFailure).toBeUndefined();
+    }),
+  );
+});

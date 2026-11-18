@@ -1,9 +1,9 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The PostgreSQL driver's custom-stream option is typed as a Node Duplex.
 import { Duplex } from 'node:stream';
-import { finished } from 'node:stream/promises';
 
 import type { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { Context, Effect, Exit, Layer, Match, Redacted } from 'effect';
+import { Context, Deferred, Effect, Exit, Layer, Match, Redacted, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../src/db/schema.ts';
@@ -21,9 +21,9 @@ interface PoolRun {
 }
 
 interface PoolObservations {
+  readonly closed: Deferred.Deferred<void>[];
   readonly configurations: PgClient.PgPoolConfig<unknown>[];
   readonly runs: PoolRun[];
-  readonly transports: Duplex[];
 }
 
 const backendFrame = (type: string, payload = Buffer.alloc(0)) => {
@@ -33,16 +33,50 @@ const backendFrame = (type: string, payload = Buffer.alloc(0)) => {
   return Buffer.concat([header, payload]);
 };
 
-/** The native driver talks PostgreSQL over its public custom-stream transport. */
-const scriptedPostgres = (run: PoolRun) =>
-  Duplex.from(async function* postgresTransport(source: AsyncIterable<Uint8Array>) {
+/** The native driver talks PostgreSQL over its public custom-stream transport; `closed` settles when it ends. */
+const scriptedPostgres = (run: PoolRun, closed: Deferred.Deferred<void>) =>
+  Duplex.from((source: AsyncIterable<Uint8Array>) => {
     let pending = Buffer.alloc(0);
     let startup = true;
     const statements = new Map<string, string>();
     const session = { statement: '' };
 
-    for await (const chunk of source) {
+    const reply = (frame: Buffer): Buffer[] =>
+      Match.value(frame.toString('ascii', 0, 1)).pipe(
+        Match.when('P', () => {
+          const nameEnd = frame.indexOf(0, 5);
+          const queryEnd = frame.indexOf(0, nameEnd + 1);
+          statements.set(frame.toString('utf-8', 5, nameEnd), frame.toString('utf-8', nameEnd + 1, queryEnd));
+          return [backendFrame('1')];
+        }),
+        Match.when('B', () => {
+          const portalEnd = frame.indexOf(0, 5);
+          const nameEnd = frame.indexOf(0, portalEnd + 1);
+          const boundStatement = statements.get(frame.toString('utf-8', portalEnd + 1, nameEnd));
+          if (boundStatement === undefined) {
+            return expect.unreachable('Bind referenced an unknown statement');
+          }
+          session.statement = boundStatement;
+          return [backendFrame('2')];
+        }),
+        Match.when('D', () => [backendFrame('n')]),
+        Match.when('E', () => {
+          expect(run.released).toBe(false);
+          run.events.push(session.statement);
+          return [backendFrame('C', Buffer.from('SELECT 0\0'))];
+        }),
+        Match.when('S', () => [backendFrame('Z', Buffer.from('I'))]),
+        Match.when('X', () => {
+          run.released = true;
+          run.events.push('client-release');
+          return [];
+        }),
+        Match.orElse((type) => expect.unreachable(`Unexpected PostgreSQL message: ${type}`)),
+      );
+
+    const replies = (chunk: Uint8Array): Buffer[] => {
       pending = Buffer.concat([pending, chunk]);
+      const out: Buffer[] = [];
       while (pending.length >= 5) {
         const offset = startup ? 0 : 1;
         const length = pending.readInt32BE(offset) + offset;
@@ -53,49 +87,26 @@ const scriptedPostgres = (run: PoolRun) =>
         pending = pending.subarray(length);
         if (startup) {
           startup = false;
-          yield backendFrame('R', Buffer.alloc(4));
-          yield backendFrame('Z', Buffer.from('I'));
+          out.push(backendFrame('R', Buffer.alloc(4)), backendFrame('Z', Buffer.from('I')));
         } else {
-          const replies = Match.value(frame.toString('ascii', 0, 1)).pipe(
-            Match.when('P', () => {
-              const nameEnd = frame.indexOf(0, 5);
-              const queryEnd = frame.indexOf(0, nameEnd + 1);
-              statements.set(frame.toString('utf-8', 5, nameEnd), frame.toString('utf-8', nameEnd + 1, queryEnd));
-              return [backendFrame('1')];
-            }),
-            Match.when('B', () => {
-              const portalEnd = frame.indexOf(0, 5);
-              const nameEnd = frame.indexOf(0, portalEnd + 1);
-              const boundStatement = statements.get(frame.toString('utf-8', portalEnd + 1, nameEnd));
-              if (boundStatement === undefined) {
-                return expect.unreachable('Bind referenced an unknown statement');
-              }
-              session.statement = boundStatement;
-              return [backendFrame('2')];
-            }),
-            Match.when('D', () => [backendFrame('n')]),
-            Match.when('E', () => {
-              expect(run.released).toBe(false);
-              run.events.push(session.statement);
-              return [backendFrame('C', Buffer.from('SELECT 0\0'))];
-            }),
-            Match.when('S', () => [backendFrame('Z', Buffer.from('I'))]),
-            Match.when('X', () => {
-              run.released = true;
-              run.events.push('client-release');
-              return [];
-            }),
-            Match.orElse((type) => expect.unreachable(`Unexpected PostgreSQL message: ${type}`)),
-          );
-          yield* replies;
+          out.push(...reply(frame));
         }
       }
-    }
+      return out;
+    };
+
+    return Stream.toAsyncIterable(
+      Stream.fromAsyncIterable(source, (cause) => cause).pipe(
+        Stream.map(replies),
+        Stream.flattenIterable,
+        Stream.ensuring(Deferred.done(closed, Exit.void)),
+      ),
+    );
   });
 
 it.live('acquires one configured admin pool per fixture and keeps it open through cleanup on success and failure', () =>
   Effect.gen(function* databaseLayerLifetime() {
-    const observations: PoolObservations = { configurations: [], runs: [], transports: [] };
+    const observations: PoolObservations = { closed: [], configurations: [], runs: [] };
     const databaseLayer = layerTestDatabase(TestDatabase, {
       connectionString: adminUrl,
       poolOptions: {
@@ -104,9 +115,9 @@ it.live('acquires one configured admin pool per fixture and keeps it open throug
         stream: () => {
           const run: PoolRun = { events: [], released: false };
           observations.runs.push(run);
-          const transport = scriptedPostgres(run);
-          observations.transports.push(transport);
-          return transport;
+          const closed: Deferred.Deferred<void> = Deferred.makeUnsafe();
+          observations.closed.push(closed);
+          return scriptedPostgres(run, closed);
         },
       },
       relations: coreRelations,
@@ -126,7 +137,7 @@ it.live('acquires one configured admin pool per fixture and keeps it open throug
       expect(Exit.isFailure(exit)).toBe(failFixture);
     }
 
-    yield* Effect.promise(() => Promise.all(observations.transports.map((transport) => finished(transport))));
+    yield* Effect.forEach(observations.closed, Deferred.await, { discard: true });
     expect(new Set(observations.configurations).size).toBe(2);
     expect(observations.configurations).toHaveLength(2);
     for (const configuration of observations.configurations) {

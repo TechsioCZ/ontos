@@ -197,57 +197,59 @@ const renderReminders = (shown: Invoice, reminders: readonly InvoiceReminder[] =
 const outgoingConfirmed = invoice('invoice-outgoing');
 const incomingConfirmed = invoice('invoice-incoming', { direction: 'INCOMING' });
 
-it.live('never offers prepare/send on an incoming supplier invoice while keeping its reminder history', () =>
-  Effect.gen(function* incomingHistory() {
-    const content = yield* renderReminders(incomingConfirmed, [reminder(incomingConfirmed.ref.resourceId)]);
-    expect(content).toContain(czech('finance-billing.financeUi.reminders.title'));
-    expect(content).not.toContain('Připravit upomínku');
-    expect(document.querySelectorAll('#reminder-recipient')).toHaveLength(0);
-    expect(content).not.toContain('Odeslat e-mailem');
-    expect(content).toContain('odberatel@example.cz');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('keeps the prepare action on an outgoing confirmed unpaid invoice', () =>
-  Effect.gen(function* outgoingUnpaid() {
-    const content = yield* renderReminders(outgoingConfirmed);
-    expect(content).toContain('Připravit upomínku');
-    expect(content).toContain(czech('finance-billing.financeUi.reminders.empty'));
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('refuses the action for draft, voided and settled documents', () =>
-  Effect.gen(function* ineligibleDocuments() {
-    for (const overrides of [
-      { businessState: 'DRAFT' as const },
-      { businessState: 'VOIDED' as const },
-      { paidMinor: 100_000, paymentState: 'PAID' as const },
-    ]) {
-      const content = yield* renderReminders(invoice('invoice-ineligible', overrides));
+it.layer(network, { excludeTestServices: true })('invoice reminder direction', (suite) => {
+  suite.effect('never offers prepare/send on an incoming supplier invoice while keeping its reminder history', () =>
+    Effect.gen(function* incomingHistory() {
+      const content = yield* renderReminders(incomingConfirmed, [reminder(incomingConfirmed.ref.resourceId)]);
       expect(content).toContain(czech('finance-billing.financeUi.reminders.title'));
       expect(content).not.toContain('Připravit upomínku');
-      unmountAll();
-    }
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('explains that incoming invoices get no reminders when they have no history', () =>
-  Effect.gen(function* incomingEmpty() {
-    const content = yield* renderReminders(incomingConfirmed);
-    expect(content).toContain(czech('finance-billing.financeUi.reminders.incoming'));
-  }).pipe(Effect.provide(network)),
-);
-
-it('keys the reminder card per tenant, document and direction so retained editing state cannot cross invoices', () => {
-  const id = 'invoice-same-id';
-  expect(invoiceReminderDraftKey(invoice(id))).not.toBe(
-    invoiceReminderDraftKey(invoice(id, { direction: 'INCOMING' })),
+      expect(document.querySelectorAll('#reminder-recipient')).toHaveLength(0);
+      expect(content).not.toContain('Odeslat e-mailem');
+      expect(content).toContain('odberatel@example.cz');
+    }),
   );
-  const otherTenant = invoice(id, {
-    ref: { ...invoice(id).ref, tenantId: 'c0000000-0000-4000-8000-000000000002' },
+
+  suite.effect('keeps the prepare action on an outgoing confirmed unpaid invoice', () =>
+    Effect.gen(function* outgoingUnpaid() {
+      const content = yield* renderReminders(outgoingConfirmed);
+      expect(content).toContain('Připravit upomínku');
+      expect(content).toContain(czech('finance-billing.financeUi.reminders.empty'));
+    }),
+  );
+
+  suite.effect('refuses the action for draft, voided and settled documents', () =>
+    Effect.gen(function* ineligibleDocuments() {
+      for (const overrides of [
+        { businessState: 'DRAFT' as const },
+        { businessState: 'VOIDED' as const },
+        { paidMinor: 100_000, paymentState: 'PAID' as const },
+      ]) {
+        const content = yield* renderReminders(invoice('invoice-ineligible', overrides));
+        expect(content).toContain(czech('finance-billing.financeUi.reminders.title'));
+        expect(content).not.toContain('Připravit upomínku');
+        unmountAll();
+      }
+    }),
+  );
+
+  suite.effect('explains that incoming invoices get no reminders when they have no history', () =>
+    Effect.gen(function* incomingEmpty() {
+      const content = yield* renderReminders(incomingConfirmed);
+      expect(content).toContain(czech('finance-billing.financeUi.reminders.incoming'));
+    }),
+  );
+
+  it('keys the reminder card per tenant, document and direction so retained editing state cannot cross invoices', () => {
+    const id = 'invoice-same-id';
+    expect(invoiceReminderDraftKey(invoice(id))).not.toBe(
+      invoiceReminderDraftKey(invoice(id, { direction: 'INCOMING' })),
+    );
+    const otherTenant = invoice(id, {
+      ref: { ...invoice(id).ref, tenantId: 'c0000000-0000-4000-8000-000000000002' },
+    });
+    expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(otherTenant));
+    expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(invoice('invoice-other-id')));
+    // The same document keeps its draft across snapshot updates instead of remounting the section.
+    expect(invoiceReminderDraftKey(invoice(id))).toBe(invoiceReminderDraftKey(invoice(id)));
   });
-  expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(otherTenant));
-  expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(invoice('invoice-other-id')));
-  // The same document keeps its draft across snapshot updates instead of remounting the section.
-  expect(invoiceReminderDraftKey(invoice(id))).toBe(invoiceReminderDraftKey(invoice(id)));
 });
