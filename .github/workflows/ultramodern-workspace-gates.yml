@@ -889,6 +889,8 @@ jobs:
 
       # Both producers have finished through needs. Hosted Node, gh, tar and zstd need no workspace
       # install; unpack writes unit build outputs, while install-app restores only node_modules.
+      # Only the owner rows unpack here. The bootstrap row proves its migrator and Outbox Worker host
+      # from source alone, so its workspace receives the built outputs after those proofs, below.
       - name: Download and unpack the same-run Node artifacts for native owner fixtures
         id: native-artifacts
         if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
@@ -896,9 +898,10 @@ jobs:
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
+          SUITE: ${{ matrix.suite }}
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
-          bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+          if [ "$SUITE" = integration ]; then bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output; fi
 
       - name: Pull integration service images
         id: integration-images
@@ -1112,6 +1115,13 @@ jobs:
       # fails this join, not a later test. The download and unpack log stays with native-artifacts.
       - name: Wait for the same-run Node artifacts for native owner fixtures
         wait: native-artifacts
+
+      # The source-only bootstrap proofs above ran in a workspace without built outputs. Federation is
+      # proved next and reads them.
+      - name: Unpack the Node artifacts after the bootstrap's source-only proofs
+        if: matrix.suite == 'bootstrap'
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
       - name: Wait for the restored worker clusters
         wait: integration-workers

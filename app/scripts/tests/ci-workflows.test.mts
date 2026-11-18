@@ -224,9 +224,15 @@ const NATIVE_ARTIFACTS_STEP_ID = 'native-artifacts';
 const START_INTEGRATION_SERVICES_STEP = 'Start fresh PostgreSQL and SpiceDB services';
 const BACKEND_ARTIFACT_DOWNLOAD_COMMAND = [
   `gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern '${NODE_BUILD_ARTIFACT_PATTERN}' --dir "$RUNNER_TEMP/native-composition-units"`,
-  UNPACK_NATIVE_ARTIFACTS_COMMAND,
+  `if [ "$SUITE" = integration ]; then ${UNPACK_NATIVE_ARTIFACTS_COMMAND}; fi`,
   '',
 ].join('\n');
+const GATE_REPOSITORY = 'TechsioCZ/ontos';
+const FEDERATED_TYPES_STEP = 'Generate federated types and check performance readiness over every unit';
+const BACKEND_FEDERATION_PROOF_STEP = 'Prove Node backend-federation artifacts';
+const OUTBOX_WORKER_HOST_PROOF_STEP = 'Build and run the Outbox Worker host artifact against the fresh database';
+const BOOTSTRAP_ARTIFACT_UNPACK_STEP = "Unpack the Node artifacts after the bootstrap's source-only proofs";
+const BACKEND_ARTIFACT_ENV = { GH_TOKEN: GITHUB_TOKEN_EXPRESSION, SUITE: expression('matrix.suite') };
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 /** The integration matrix row that proves the built topology of every delivery unit. */
 const NODE_PROOF_SUITE = BOOTSTRAP_SUITE;
@@ -403,7 +409,7 @@ const runWithFakeGh = (
     chmodSync(gh, 0o755);
     const passed = stepPasses(script, {
       GH_TOKEN: 'test-token',
-      GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+      GITHUB_REPOSITORY: GATE_REPOSITORY,
       GITHUB_SERVER_URL: 'https://github.com',
       GITHUB_STEP_SUMMARY: summary,
       PATH: `${directory}:${STEP_PATH}`,
@@ -1402,8 +1408,8 @@ it('overlaps independent integration preparations and joins their failures befor
   expect(install < tls && tls < workers && tls < services).toBe(true);
   const artifactsReady = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
   for (const consumer of [
-    'Generate federated types and check performance readiness over every unit',
-    'Prove Node backend-federation artifacts',
+    FEDERATED_TYPES_STEP,
+    BACKEND_FEDERATION_PROOF_STEP,
     'Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry',
   ]) {
     expect(artifactsReady).toBeLessThan(named(consumer));
@@ -1430,13 +1436,14 @@ it('overlaps independent integration preparations and joins their failures befor
         cwd: directory,
         encoding: 'utf-8',
         env: {
-          GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+          GITHUB_REPOSITORY: GATE_REPOSITORY,
           GITHUB_RUN_ID: '123',
           PATH: `${directory}:${STEP_PATH}`,
           PREP_bash: unpack,
           PREP_docker: docker,
           PREP_gh: gh,
           RUNNER_TEMP: directory,
+          SUITE: 'integration',
         },
       });
       expect(result.status).toBe(status);
@@ -1445,6 +1452,28 @@ it('overlaps independent integration preparations and joins their failures befor
         expect(result.stderr).not.toContain(unpackOutput);
       }
     }
+    // The bootstrap row only downloads here: its workspace must hold no built outputs while its
+    // source-only proofs run, so an unpack that would fail is never started by this step.
+    const bootstrap = spawnSync(
+      '/bin/bash',
+      ['-eo', 'pipefail', '-c', steps.find(({ id }) => id === NATIVE_ARTIFACTS_STEP_ID)?.run ?? 'exit 1'],
+      {
+        cwd: directory,
+        encoding: 'utf-8',
+        env: {
+          GITHUB_REPOSITORY: GATE_REPOSITORY,
+          GITHUB_RUN_ID: '123',
+          PATH: `${directory}:${STEP_PATH}`,
+          PREP_bash: '43',
+          PREP_gh: '0',
+          RUNNER_TEMP: directory,
+          SUITE: 'bootstrap',
+        },
+      },
+    );
+    expect(bootstrap.status).toBe(0);
+    expect(bootstrap.stderr).toContain('gh preparation output');
+    expect(bootstrap.stderr).not.toContain(unpackOutput);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -1570,7 +1599,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
   expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
   // gh explicitly binds the download to this repository and workflow run.
-  expect(steps[download]?.env).toEqual({ GH_TOKEN: GITHUB_TOKEN_EXPRESSION });
+  expect(steps[download]?.env).toEqual(BACKEND_ARTIFACT_ENV);
   expect(steps[unpack]?.wait).toBe(NATIVE_ARTIFACTS_STEP_ID);
   expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
   expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
@@ -1593,8 +1622,8 @@ it('proves the built topology of every delivery unit in one row of the integrati
   const { steps } = integration;
   const named = (name: string) => steps.findIndex((step) => step.name === name);
   const proofs = [
-    'Generate federated types and check performance readiness over every unit',
-    'Prove Node backend-federation artifacts',
+    FEDERATED_TYPES_STEP,
+    BACKEND_FEDERATION_PROOF_STEP,
     'Prove the active Application Composition publisher output decodes',
   ];
   const indexes = proofs.map(named);
@@ -1622,7 +1651,7 @@ it('proves the built topology of every delivery unit in one row of the integrati
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
 });
 
-it('prepares the bootstrap Node artifacts during install, from shards it needs', () => {
+it('downloads the bootstrap Node artifacts during install and unpacks them after its source-only proofs', () => {
   const { needs, steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     TOPOLOGY_PROOF_JOB
   ];
@@ -1636,6 +1665,20 @@ it('prepares the bootstrap Node artifacts during install, from shards it needs',
   expect(download).toBeLessThan(named(INSTALL_APP_STEP));
   expect(named(BOOTSTRAP_MIGRATOR_STEP)).toBeLessThan(unpack);
   expect(download).toBeLessThan(unpack);
+  // Built outputs reach the bootstrap workspace only after both source-only proofs and the join,
+  // and before the federation proofs that read them.
+  const bootstrapUnpack = named(BOOTSTRAP_ARTIFACT_UNPACK_STEP);
+  expect(steps[bootstrapUnpack]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(steps[bootstrapUnpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
+  expect(steps[bootstrapUnpack]?.background).toBeUndefined();
+  expect(unpack).toBeLessThan(bootstrapUnpack);
+  for (const proof of [BOOTSTRAP_MIGRATOR_STEP, OUTBOX_WORKER_HOST_PROOF_STEP]) {
+    expect(named(proof)).toBeGreaterThan(-1);
+    expect(named(proof)).toBeLessThan(bootstrapUnpack);
+  }
+  for (const consumer of [FEDERATED_TYPES_STEP, BACKEND_FEDERATION_PROOF_STEP]) {
+    expect(named(consumer)).toBeGreaterThan(bootstrapUnpack);
+  }
   for (const step of steps) {
     if (step.wait !== undefined) {
       expect(step.if, step.name).toBeUndefined();
@@ -1966,7 +2009,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
     BOOTSTRAP_MIGRATOR_STEP,
     'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
     AUDIT_STEP,
-    'Build and run the Outbox Worker host artifact against the fresh database',
+    OUTBOX_WORKER_HOST_PROOF_STEP,
   ];
   expect(names.filter((name) => order.includes(name))).toEqual(order);
   // Each of the four proofs runs on the bootstrap row alone. Without that guard every row would pay them
@@ -1976,7 +2019,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
     'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
     BOOTSTRAP_MIGRATOR_STEP,
     AUDIT_STEP,
-    'Build and run the Outbox Worker host artifact against the fresh database',
+    OUTBOX_WORKER_HOST_PROOF_STEP,
   ];
   for (const name of bootstrapOnly) {
     const step = steps.find((candidate) => candidate.name === name);
@@ -2056,7 +2099,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(download < unpack && unpack < tests).toBe(true);
   expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
   // gh explicitly binds the download to this repository and workflow run.
-  expect(steps[download]?.env).toEqual({ GH_TOKEN: GITHUB_TOKEN_EXPRESSION });
+  expect(steps[download]?.env).toEqual(BACKEND_ARTIFACT_ENV);
   expect(steps[unpack]?.wait).toBe(NATIVE_ARTIFACTS_STEP_ID);
   expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(steps[unpack]?.if).toBeUndefined();
@@ -2085,7 +2128,7 @@ it('refuses root native integration when the same-run build archives are missing
     expect(() =>
       execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', unpack?.run?.split('\n').slice(1).join('\n') ?? 'exit 0'], {
         cwd: directory,
-        env: { PATH: STEP_PATH, RUNNER_TEMP: directory },
+        env: { PATH: STEP_PATH, RUNNER_TEMP: directory, SUITE: 'integration' },
         stdio: ['ignore', 'pipe', 'pipe'],
       }),
     ).toThrow(/No shard build outputs/u);
