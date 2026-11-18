@@ -123,7 +123,11 @@ type ActionHttpCommittedRecovery<RecoveryResult, DomainError, MappedProblem> =
     }
   | {
       readonly mapError: (error: ActionHttpErrorAfterCommittedRecovery<DomainError>) => MappedProblem;
-      /** Endpoint-owned translation of a committed retry into its declared success contract. */
+      /**
+       * Endpoint-owned translation of a committed retry into its declared success contract. A retry of an
+       * invocation with a saved reply succeeds with that reply, so this only serves invocations committed
+       * without one.
+       */
       readonly recoverAlreadyCommitted: (failure: ActionAlreadyCommitted) => RecoveryResult;
     };
 

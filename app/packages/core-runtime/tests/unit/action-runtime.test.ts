@@ -78,6 +78,7 @@ import type {
   ActionRepositoryService,
   FinalizeActionPolicyDenialInput,
   FlushActionSuccessInput,
+  LoadActionCommittedReplyInput,
   RejectPermissionDeniedInput,
 } from '../../src/actions/repository.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
@@ -244,6 +245,8 @@ interface HarnessOptions {
   readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
   readonly resolvedScope?: OperationalScope;
   readonly resourcePermissionDecision?: PermissionDecision;
+  /** The reply a succeeded `createRecord` saved with its commit; omitted models a row committed before replies. */
+  readonly savedReply?: FlushActionSuccessInput['committedReply'];
   readonly sourceExecutionFenceOpen?: boolean;
   readonly tenantPermissionDecision?: PermissionDecision;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
@@ -268,6 +271,7 @@ interface HistoricalPermissionCheckObservation {
 const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}) {
   const finalized: FinalizeActionPolicyDenialInput[] = [];
   const flushed: FlushActionSuccessInput[] = [];
+  const committedReplyLoads: LoadActionCommittedReplyInput[] = [];
   const businessPermissionChecks: unknown[] = [];
   const ownerPermissionChecks: unknown[] = [];
   const ownerPermissionInputs: unknown[] = [];
@@ -339,6 +343,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       transactionSteps.push('evidence_flushed');
       flushed.push(input);
       return Effect.void;
+    },
+    loadCommittedReply: (_executor, input) => {
+      committedReplyLoads.push(input);
+      return Effect.succeed(Option.fromNullishOr(options.savedReply));
     },
     loadRecordedRejection: () => {
       const [policyDenial] = finalized;
@@ -712,6 +720,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   return {
     accessQuestions: () => scriptedAccess?.accessDecision.askedDecisions ?? [],
     businessPermissionChecks,
+    committedReplyLoads,
     compositionAuthority: () => ({
       lockCount: compositionAuthorityLockCount,
       lockHeld: compositionAuthorityLockHeld,
@@ -4493,7 +4502,10 @@ it.effect(
 
     expect(Predicate.isTagged(committedError, 'ActionAlreadyCommitted')).toBe(true);
 
-    expect(committed.counts().transactionCount).toBe(0);
+    // Only the scoped read of the saved reply; no owner transaction locks the invocation.
+    expect(committed.counts().transactionCount).toBe(1);
+    expect(committed.counts().lockCount).toBe(0);
+    expect(committed.committedReplyLoads).toHaveLength(1);
     expect(committed.permissionCounts().permissionCheckCount).toBe(0);
     expect(Predicate.isTagged(conflictError, 'ActionRequestHashConflict')).toBe(true);
 
@@ -5033,7 +5045,9 @@ it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
       expect(result).toEqual({ total: 9 });
       expect(seen).toEqual(['AlreadyCommitted']);
       expect(harness.permissionCounts().permissionCheckCount).toBe(0);
-      expect(harness.counts().transactionCount).toBe(0);
+      // Only the scoped read of the (absent) saved reply; no owner transaction locks the invocation.
+      expect(harness.counts().transactionCount).toBe(1);
+      expect(harness.counts().lockCount).toBe(0);
     }),
   );
 
@@ -6136,3 +6150,175 @@ it.effect('rejects finite Organization processing Read authority before cached A
     expect(harness.gateCounts().handlerResolutionCount).toBe(0);
   }),
 );
+
+const succeededRecord = {
+  actionInvocationId: 'invocation-1',
+  completedAt: transactionOperationAt,
+  requestHash: '',
+  status: 'succeeded',
+} satisfies ActionInvocationRecord;
+
+it.effect('answers a saved reply only for the exact invocation, principal and request hash it was loaded for', () =>
+  Effect.gen(function* savedReplyLoadBinding() {
+    const harness = yield* makeHarness({
+      createRecord: succeededRecord,
+      savedReply: { encoded: { total: 7 }, kind: 'result' },
+    });
+    const result = yield* harness.runtime.runAction({
+      payload: { amount: 1 },
+      principal,
+      registration: registration(),
+      transport: transport('saved-reply-binding'),
+    });
+
+    expect(result).toEqual({ total: 7 });
+    expect(harness.committedReplyLoads).toEqual([
+      {
+        actionInvocationId: 'invocation-1',
+        principal: harness.preparedPrincipals[0],
+        requestHash: harness.requestHashes[0],
+      },
+    ]);
+    expect(harness.committedReplyLoads[0]?.principal.tenantId).toBe(principal.tenantId);
+    expect(harness.committedReplyLoads[0]?.principal.principalId).toBe(principal.principalId);
+    expect(harness.counts()).toMatchObject({ lockCount: 0, transactionCount: 1, transitionCount: 0 });
+    expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+    expect(harness.flushed).toHaveLength(0);
+  }),
+);
+
+it.effect('keeps ActionAlreadyCommitted for an invocation without a decodable saved reply', () =>
+  Effect.gen(function* savedReplyAbsentOrStale() {
+    for (const savedReply of [undefined, { encoded: { total: 'seven' }, kind: 'result' as const }]) {
+      const harness = yield* makeHarness(
+        savedReply === undefined ? { createRecord: succeededRecord } : { createRecord: succeededRecord, savedReply },
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport('saved-reply-missing'),
+        }),
+      );
+
+      expect(Predicate.isTagged(failure, 'ActionAlreadyCommitted')).toBe(true);
+      expect(harness.committedReplyLoads).toHaveLength(1);
+      expect(harness.counts()).toMatchObject({ lockCount: 0, transactionCount: 1, transitionCount: 0 });
+      expect(harness.flushed).toHaveLength(0);
+    }
+  }),
+);
+
+it.effect('shows a replay to the post-attempt hook as AlreadyCommitted and answers the saved reply', () =>
+  Effect.gen(function* savedReplyPostAttempt() {
+    for (const settlement of [{ _tag: 'Settled' as const }, { _tag: 'Recovered' as const, result: { total: 9 } }]) {
+      const harness = yield* makeHarness({
+        createRecord: succeededRecord,
+        savedReply: { encoded: { total: 7 }, kind: 'result' },
+      });
+      const seen: string[] = [];
+      const action = defineAction(
+        registration().descriptor,
+        () => Effect.die('A replay must not run the handler'),
+        () => Effect.succeed({}),
+        () => Effect.die('A replay must not run the decoded-success hook'),
+        (context) =>
+          Effect.sync(() => {
+            seen.push(context.outcome._tag);
+            return settlement;
+          }),
+      );
+      const result = yield* harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: action,
+        transport: transport('saved-reply-post-attempt'),
+      });
+
+      expect(result).toEqual({ total: 7 });
+      expect(seen).toEqual(['AlreadyCommitted']);
+      expect(harness.counts()).toMatchObject({ lockCount: 0, transactionCount: 1, transitionCount: 0 });
+      expect(harness.flushed).toHaveLength(0);
+    }
+  }),
+);
+
+it.effect('saves the encoded result with the success it commits', () =>
+  Effect.gen(function* savedReplyWritten() {
+    const harness = yield* makeHarness();
+    const result = yield* harness.runtime.runAction({
+      payload: { amount: 4 },
+      principal,
+      registration: registration(),
+      transport: transport('saved-reply-written'),
+    });
+
+    expect(result).toEqual({ total: 4 });
+    expect(harness.flushed).toHaveLength(1);
+    expect(harness.flushed[0]?.committedReply).toEqual({ encoded: { total: 4 }, kind: 'result' });
+  }),
+);
+
+it.layer(NodeCrypto.layer)('Action saved reply persistence', (suite) => {
+  suite.effect('writes the saved reply in the UPDATE that marks the invocation succeeded', () =>
+    Effect.gen(function* savedReplyUpdate() {
+      const statements: { readonly sql: string; readonly values: readonly unknown[] }[] = [];
+      const executor = yield* makeTestDatabase((statement, values) => {
+        statements.push({ sql: statement, values });
+        return Effect.succeed(statement.startsWith('update') ? [{ actionInvocationId: 'invocation-1' }] : []);
+      });
+      const repository = makeActionRepository(yield* Crypto.Crypto);
+      yield* executor.transaction((transaction) =>
+        repository.flushSuccess(transaction, {
+          actionInvocationId: 'invocation-1',
+          actionKey: 'shell.counter.change',
+          allowedPolicies: [],
+          auditProfile: 'standard',
+          committedReply: { encoded: { total: 4 }, kind: 'result' },
+          evidence: { auditEvidence: {}, dataAccessEvents: [], domainEvents: [], outboxMessages: [] },
+          principal,
+          resultHash: 'a'.repeat(64),
+          transport: transport('saved-reply-update'),
+        }),
+      );
+      const updates = statements.filter((statement) => statement.sql.startsWith('update'));
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.sql).toContain('"committed_reply_json" =');
+      expect(updates[0]?.sql).toContain('"status" =');
+      expect(updates[0]?.values).toContain('{"encoded":{"total":4},"kind":"result"}');
+    }),
+  );
+
+  suite.effect('loads a saved reply only for its tenant, principal, request hash and succeeded state', () =>
+    Effect.gen(function* savedReplySelect() {
+      const statements: { readonly sql: string; readonly values: readonly unknown[] }[] = [];
+      const executor = yield* makeTestDatabase((statement, values) => {
+        statements.push({ sql: statement, values });
+        return Effect.succeed([{ committedReplyJson: { encoded: { total: 4 }, kind: 'result' } }]);
+      });
+      const repository = makeActionRepository(yield* Crypto.Crypto);
+      const reply = yield* repository.loadCommittedReply(executor, {
+        actionInvocationId: 'invocation-1',
+        principal,
+        requestHash: 'b'.repeat(64),
+      });
+      const [query] = statements;
+
+      expect(Option.getOrUndefined(reply)).toEqual({ encoded: { total: 4 }, kind: 'result' });
+      expect(statements).toHaveLength(1);
+      for (const column of ['action_invocation_id', 'tenant_id', 'principal_id', 'request_hash', 'status']) {
+        expect(query?.sql).toContain(`"${column}" =`);
+      }
+      expect(query?.values).toEqual([
+        'invocation-1',
+        principal.tenantId,
+        principal.principalId,
+        'b'.repeat(64),
+        'succeeded',
+        1,
+      ]);
+    }),
+  );
+});

@@ -251,15 +251,30 @@ export interface FinalizeActionPolicyDenialInput {
   readonly transport: ActionTransportMetadata;
 }
 
+/** The reply a succeeded invocation saved: its encoded result or its committed domain rejection. */
+export type ActionCommittedReplyJson = NonNullable<(typeof actionInvocations.$inferSelect)['committedReplyJson']>;
+
 export interface FlushActionSuccessInput {
   readonly actionInvocationId: string;
   readonly actionKey: string;
   readonly allowedPolicies: readonly ActionPolicyEvidence[];
   readonly auditProfile: ActionAuditProfile;
+  /** Saved by the same UPDATE that marks the invocation succeeded, so it commits with it or not at all. */
+  readonly committedReply: ActionCommittedReplyJson;
   readonly evidence: ActionEvidenceSnapshot;
   readonly principal: TrustedPrincipalContext;
   readonly resultHash: string;
   readonly transport: ActionTransportMetadata;
+}
+
+/**
+ * Exactly the invocation a same-key retry already resolved and hash-verified. Every field is matched
+ * again in SQL, so a saved reply leaves its tenant, principal and request only for that same request.
+ */
+export interface LoadActionCommittedReplyInput {
+  readonly actionInvocationId: string;
+  readonly principal: Pick<TrustedPrincipalContext, 'principalId' | 'tenantId'>;
+  readonly requestHash: string;
 }
 
 export interface RejectPermissionDeniedInput {
@@ -297,6 +312,10 @@ export interface ActionRepositoryService {
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
   ) => Effect.Effect<void, ActionTransactionError>;
+  readonly loadCommittedReply: (
+    executor: Pick<CoreDatabaseExecutor, 'select'>,
+    input: LoadActionCommittedReplyInput,
+  ) => Effect.Effect<Option.Option<ActionCommittedReplyJson>, ActionInvocationPersistenceError>;
   readonly loadRecordedRejection: (
     executor: Pick<CoreDatabaseExecutor, 'select'>,
     invocationId: string,
@@ -633,6 +652,33 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       return Option.some<ActionRecordedRejection>({ policyReasonCode: rejection.outcomeCode, stage: 'policy' });
     }
     return Option.none();
+  });
+
+  // The saved reply is read only after the caller resolved this invocation through the idempotency
+  // index and compared its request hash. The SQL binds the same facts again, so it never answers for
+  // another tenant, principal, request or a row that is not committed.
+  const loadCommittedReply: ActionRepositoryService['loadCommittedReply'] = Effect.fn(
+    'makeActionRepository.loadCommittedReply',
+  )(function* loadCommittedReplyEffect(
+    executor: Pick<CoreDatabaseExecutor, 'select'>,
+    input: LoadActionCommittedReplyInput,
+  ) {
+    const rows = yield* executor
+      .select({ committedReplyJson: actionInvocations.committedReplyJson })
+      .from(actionInvocations)
+      .where(
+        and(
+          eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+          eq(actionInvocations.tenantId, input.principal.tenantId),
+          eq(actionInvocations.principalId, input.principal.principalId),
+          eq(actionInvocations.requestHash, input.requestHash),
+          eq(actionInvocations.status, 'succeeded'),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the committed Action reply', cause)));
+    const [row] = rows;
+    return Option.fromNullishOr(row?.committedReplyJson);
   });
 
   // A denial finalizer that finds the invocation already rejected reports the rejection that won,
@@ -1035,6 +1081,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       const succeeded = yield* transaction
         .update(actionInvocations)
         .set({
+          committedReplyJson: input.committedReply,
           completedAt,
           status: 'succeeded',
         })
@@ -1063,6 +1110,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     createOrResolveInvocation,
     finalizePolicyDenial,
     flushSuccess,
+    loadCommittedReply,
     loadRecordedRejection,
     lockInvocation,
     rejectPermissionDenied,

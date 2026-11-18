@@ -759,11 +759,51 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
       expect(states.length).toBe(1);
       expect(invocations[0]?.status).toBe('succeeded');
       expect(invocations[0]?.completedAt).toBeTruthy();
+      expect(invocations[0]?.committedReplyJson).toEqual({
+        encoded: { stateId: result.stateId, value: 'committed' },
+        kind: 'result',
+      });
       expect(audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId).length).toBe(1);
       expect(accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId).length).toBe(1);
       expect(events.length).toBe(1);
       expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId).length).toBe(1);
       expect((events[0]?.tenantSequenceNo ?? 0) > 0).toBe(true);
+
+      // A same-key retry answers the saved reply and writes nothing.
+      let replayExecutions = 0;
+      const replay = yield* runtime.runAction({
+        payload: { value: 'committed' },
+        principal,
+        registration: makeRegistration({
+          actionKey: 'core.shell.test.atomic-success',
+          moduleStateKey,
+          onExecute: () => {
+            replayExecutions += 1;
+          },
+        }),
+        transport: transport(key, moduleStateKey),
+      });
+      const [replayStates, replayInvocations, replayAudits, replayAccesses, replayEvents, replayMessages] =
+        yield* persistedActionEvidence(database, key, moduleStateKey);
+      expect(replay).toEqual(result);
+      expect(replayExecutions).toBe(0);
+      expect(replayStates).toHaveLength(states.length);
+      expect(replayInvocations).toHaveLength(invocations.length);
+      expect(replayAudits).toHaveLength(audits.length);
+      expect(replayAccesses).toHaveLength(accesses.length);
+      expect(replayEvents).toHaveLength(events.length);
+      expect(replayMessages).toHaveLength(messages.length);
+
+      // The same key with another payload stays a request-hash conflict.
+      const conflict = yield* Effect.exit(
+        runtime.runAction({
+          payload: { value: 'different' },
+          principal,
+          registration: makeRegistration({ actionKey: 'core.shell.test.atomic-success', moduleStateKey }),
+          transport: transport(key, moduleStateKey),
+        }),
+      );
+      expect(hasFailure(conflict, 'ActionRequestHashConflict')).toBe(true);
     }),
   );
 });
@@ -862,6 +902,33 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
       expect(accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)).toHaveLength(1);
       expect(events).toHaveLength(1);
       expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId)).toHaveLength(1);
+      expect(invocations[0]?.committedReplyJson).toEqual({
+        encoded: { _tag: 'TestDomainRejected', reason: 'test committed domain rejection' },
+        kind: 'rejection',
+      });
+
+      // A same-key retry fails again with the saved domain rejection and writes nothing.
+      const replayed = yield* Effect.flip(
+        runtime.runAction({
+          payload: { value: 'durable-rejection-evidence' },
+          principal,
+          registration: makeRegistration({
+            actionKey: 'core.shell.test.committed-domain-rejection',
+            mode: 'commit-reject',
+            moduleStateKey,
+          }),
+          transport: transport(key, moduleStateKey),
+        }),
+      );
+      const [replayStates, , replayAudits, , replayEvents] = yield* persistedActionEvidence(
+        database,
+        key,
+        moduleStateKey,
+      );
+      expect(replayed).toEqual(rejection);
+      expect(replayStates).toHaveLength(states.length);
+      expect(replayAudits).toHaveLength(audits.length);
+      expect(replayEvents).toHaveLength(events.length);
     }),
   );
 });
@@ -1471,26 +1538,40 @@ const testProgram10 = () =>
       yield* Deferred.succeed(handlerRelease, null);
       const concurrentResults = yield* Effect.all([Fiber.join(firstAttempt), Fiber.join(secondAttempt)]);
 
+      // The attempt that waited on the invocation lock answers the saved reply of the one that committed.
       expect(executions).toBe(1);
-      expect(concurrentResults.filter(Exit.isSuccess).length).toBe(1);
-      const failedResults = concurrentResults.filter(Exit.isFailure);
-      expect(failedResults.length).toBe(1);
-      for (const outcome of failedResults) {
-        expect(hasFailure(outcome, 'ActionAlreadyCommitted')).toBe(true);
-      }
-
-      const committedRetry = yield* Effect.exit(
-        runtime.runAction({
-          ...concurrentInput,
-          transport: {
-            ...concurrentInput.transport,
-            correlationId: 'integration-concurrent-retry',
-            traceId: 'retry-trace',
-          },
-        }),
+      const [firstExit, secondExit] = concurrentResults;
+      expect(firstExit !== undefined && Exit.isSuccess(firstExit)).toBe(true);
+      expect(secondExit !== undefined && Exit.isSuccess(secondExit)).toBe(true);
+      const committedReply = firstExit !== undefined && Exit.isSuccess(firstExit) ? firstExit.value : undefined;
+      expect(secondExit !== undefined && Exit.isSuccess(secondExit) ? secondExit.value : undefined).toEqual(
+        committedReply,
       );
-      expect(hasFailure(committedRetry, 'ActionAlreadyCommitted')).toBe(true);
+
+      const committedRetry = yield* runtime.runAction({
+        ...concurrentInput,
+        transport: {
+          ...concurrentInput.transport,
+          correlationId: 'integration-concurrent-retry',
+          traceId: 'retry-trace',
+        },
+      });
+      expect(committedRetry).toEqual(committedReply);
       expect(executions).toBe(1);
+      const concurrentEvidence = yield* persistedActionEvidence(database, concurrentKey, concurrentModule);
+      const [concurrentStates, concurrentInvocations, concurrentAudits, , concurrentEvents] = concurrentEvidence;
+      expect(concurrentStates).toHaveLength(1);
+      expect(concurrentInvocations).toHaveLength(1);
+      expect(
+        concurrentAudits.filter(
+          (row) =>
+            row.actionInvocationId === concurrentInvocations[0]?.actionInvocationId &&
+            row.eventType === 'action.executed',
+        ),
+      ).toHaveLength(1);
+      expect(
+        concurrentEvents.filter((row) => row.actionInvocationId === concurrentInvocations[0]?.actionInvocationId),
+      ).toHaveLength(1);
 
       const conflict = yield* Effect.exit(
         runtime.runAction({
@@ -1716,14 +1797,13 @@ const testProgram12 = () =>
           principal,
         }),
       );
-      const resolved = yield* Effect.exit(
-        resolvingRuntime.runAction({
-          payload: { value: 'committed-with-lost-ack' },
-          principal,
-          registration: actionRegistration,
-          transport: transport(key, moduleStateKey),
-        }),
-      );
+      // The reply of the commit whose acknowledgement was lost is answered from the saved reply.
+      const resolved = yield* resolvingRuntime.runAction({
+        payload: { value: 'committed-with-lost-ack' },
+        principal,
+        registration: actionRegistration,
+        transport: transport(key, moduleStateKey),
+      });
       const states = yield* database.executor
         .select()
         .from(tenantModuleStates)
@@ -1732,9 +1812,28 @@ const testProgram12 = () =>
       expect(hasFailure(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
       expect(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unavailableResolution, 'ActionCommitIndeterminate')).toBe(true);
-      expect(hasFailure(resolved, 'ActionAlreadyCommitted')).toBe(true);
+      expect(resolved).toEqual({ stateId: states[0]?.tenantModuleStateId, value: 'committed-with-lost-ack' });
       expect(invocations[0]?.status).toBe('succeeded');
+      expect(invocations[0]?.committedReplyJson).toEqual({
+        encoded: { stateId: states[0]?.tenantModuleStateId, value: 'committed-with-lost-ack' },
+        kind: 'result',
+      });
       expect(states.length).toBe(1);
+
+      // An invocation committed before replies were saved keeps answering ActionAlreadyCommitted.
+      yield* database.executor
+        .update(actionInvocations)
+        .set({ committedReplyJson: null })
+        .where(eq(actionInvocations.idempotencyKey, key));
+      const legacy = yield* Effect.exit(
+        resolvingRuntime.runAction({
+          payload: { value: 'committed-with-lost-ack' },
+          principal,
+          registration: actionRegistration,
+          transport: transport(key, moduleStateKey),
+        }),
+      );
+      expect(hasFailure(legacy, 'ActionAlreadyCommitted')).toBe(true);
 
       const openKey = 'lost-acknowledgement-open';
       const openModuleStateKey = `test.lost-ack-open.${tenantId}`;
@@ -2101,13 +2200,16 @@ it.layer(
   suite.effect('never lets a losing Policy denial replace a running or successful invocation', testProgram9);
 
   suite.effect(
-    'serializes concurrent requests and enforces committed, open-retry, and hash-conflict behavior',
+    'serializes concurrent requests, answers the saved reply, and keeps open-retry and hash-conflict behavior',
     testProgram10,
   );
 
   suite.effect('serializes Domain Event allocation by tenant commit order', testProgram11);
 
-  suite.effect('resolves a lost commit acknowledgement from the durable succeeded marker', testProgram12);
+  suite.effect(
+    'answers a lost commit acknowledgement with the saved reply and a legacy row with ActionAlreadyCommitted',
+    testProgram12,
+  );
 
   suite.effect('persists no invocation or evidence for every non-writable business module state', testProgram13);
 });

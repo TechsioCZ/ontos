@@ -32,7 +32,7 @@ const recoveryOwner = (action: AnyActionRegistration) => {
 };
 
 it.effect(
-  'committed retry and explicit recovery return the same invocation without rerunning or replaying the result',
+  'a committed retry answers the saved result and explicit recovery names the same invocation without rerunning',
   () =>
     Effect.gen(function* migratedTest() {
       let executions = 0;
@@ -91,18 +91,18 @@ it.effect(
       if (invocationId === undefined) {
         throw new Error('Missing invocationId');
       }
-      const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+      const replay = yield* harness.runtime.runAction(request);
       const recovered = yield* harness.runtime.resolveActionCommit({ invocationId, principal }).pipe(Effect.flip);
 
-      for (const outcome of [replay, recovered]) {
-        expect(Predicate.isTagged(outcome, 'ActionAlreadyCommitted')).toBe(true);
-        expect('invocationId' in outcome ? outcome.invocationId : undefined).toBe(invocationId);
-        expect('total' in outcome).toBe(false);
-        expect('result' in outcome).toBe(false);
-      }
+      expect(replay).toEqual({ total: 2 });
+      expect(Predicate.isTagged(recovered, 'ActionAlreadyCommitted')).toBe(true);
+      expect('invocationId' in recovered ? recovered.invocationId : undefined).toBe(invocationId);
+      expect('total' in recovered).toBe(false);
+      expect('result' in recovered).toBe(false);
       expect(executions).toBe(1);
       expect(harness.snapshot().committed.length).toBe(1);
-      expect(harness.snapshot().transactionCount).toBe(1);
+      // The owner transaction, then the retry's scoped read of the saved reply.
+      expect(harness.snapshot().transactionCount).toBe(2);
     }),
 );
 
@@ -198,18 +198,14 @@ it.effect('lost commit acknowledgement recovers the committed invocation and fau
         principal,
       })
       .pipe(Effect.flip);
-    const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-    for (const outcome of [recovered, replay]) {
-      expect(Predicate.isTagged(outcome, 'ActionAlreadyCommitted')).toBe(true);
-      expect('invocationId' in outcome).toBe(true);
-      if (!('invocationId' in outcome)) {
-        throw new Error('Missing invocation identifier');
-      }
-      expect(outcome.invocationId).toBe(uncertain.invocationId);
-    }
+    const replay = yield* harness.runtime.runAction(request);
+    expect(Predicate.isTagged(recovered, 'ActionAlreadyCommitted')).toBe(true);
+    expect('invocationId' in recovered ? recovered.invocationId : undefined).toBe(uncertain.invocationId);
+    // The reply lost with the acknowledgement is the saved reply of the committed invocation.
+    expect(replay).toBe(1);
     expect(executions).toBe(1);
     expect(harness.snapshot().committed.length).toBe(1);
-    expect(harness.snapshot().transactionCount).toBe(1);
+    expect(harness.snapshot().transactionCount).toBe(2);
 
     expect(
       yield* harness.runtime.runAction({

@@ -95,7 +95,7 @@ const request = {
 } as const;
 
 it.effect(
-  'runs the real Action lifecycle and preserves committed replay semantics',
+  'runs the real Action lifecycle and answers a same-key retry with the saved reply',
   Effect.fn(function* testProgram1() {
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
@@ -104,15 +104,14 @@ it.effect(
     });
 
     expect(yield* harness.runtime.runAction(request)).toEqual({ total: 2 });
-    const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+    expect(yield* harness.runtime.runAction(request)).toEqual({ total: 2 });
     const snapshot = harness.snapshot();
-
-    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
 
     expect(snapshot.stages.slice(0, ACTION_RUNTIME_STAGES.length)).toEqual(ACTION_RUNTIME_STAGES);
     expect(snapshot.invocations.length).toBe(1);
     expect(snapshot.invocations[0]?.status).toBe('succeeded');
-    expect(snapshot.transactionCount).toBe(1);
+    // The owner transaction, then the retry's scoped read of the saved reply.
+    expect(snapshot.transactionCount).toBe(2);
     expect(snapshot.committed.length).toBe(1);
     expect(snapshot.committed[0]?.evidence.domainEvents.length).toBe(1);
     expect(snapshot.committed[0]?.evidence.outboxMessages.length).toBe(1);
