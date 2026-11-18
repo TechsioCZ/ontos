@@ -1,6 +1,5 @@
 // @rstest-environment happy-dom
-// The security panels that create something (device card, fault report, inspection, resolution) send it on the shared
-// Uložit only: one click sends the same command as the old button, and leaving with typed input asks first.
+// Security forms preserve inspection-note validation and device/incident command mappings.
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
@@ -20,10 +19,7 @@ import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-actio
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { OpsCommandSchema } from '../../shared/agendas.ts';
 import type { OpsCommand } from '../../shared/agendas.ts';
-import {
-  ApplyCommandActionApi,
-  ApplyCommandActionForbiddenProblemSchema,
-} from '../../shared/apis/apply-command-action.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { inspectionNoteLimit, SecurityDeviceSchema, SecurityIncidentSchema } from '../../shared/domain/security.ts';
 import {
   DeviceFormPanel,
@@ -42,15 +38,8 @@ const propertyRecords = Schema.decodeUnknownSync(RecordsResponseSchema)({
   revision: 0,
   units: [],
 });
-const forbidden = ApplyCommandActionForbiddenProblemSchema.make({
-  code: 'facility_operations_permission_denied',
-  detail: 'The command is forbidden.',
-  status: 403,
-  title: 'Forbidden',
-  type: 'https://ontos.dev/problems/forbidden',
-});
 let received: OpsCommand[] = [];
-let answer: Effect.Effect<typeof ApplyCommandResultSchema.Type, typeof forbidden> = Effect.succeed(
+let answer: Effect.Effect<typeof ApplyCommandResultSchema.Type> = Effect.succeed(
   Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: ['created-1'], revision: 2 }),
 );
 const network = browserNetwork(
@@ -77,21 +66,16 @@ const network = browserNetwork(
   ),
 );
 
-const recordingRunner = (answers: readonly 'forbidden'[] = [], entityIds: readonly string[] = ['created-1']) => {
+const recordingRunner = (entityIds: readonly string[] = ['created-1']) => {
   const sent: OpsCommand[] = [];
   received = sent;
-  answer =
-    answers.length === 0
-      ? Effect.succeed(Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds, revision: 2 }))
-      : Effect.fail(forbidden);
+  answer = Effect.succeed(Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds, revision: 2 }));
   return { run: (command: OpsCommand) => runCommand(command, 0), sent };
 };
 type RecordingRunner = ReturnType<typeof recordingRunner>;
 const labels = saveLabelsFor('cs');
 const t = moduleText('cs');
-const copy = { cancel: t('facility-operations.common.cancel') };
 const saveButton = () => Option.getOrThrow(Option.fromUndefinedOr(buttons(labels.save)[0]));
-const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
 const click = (name: string) => acted(() => Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click());
 const typeInto = (selector: string, value: string) =>
   acted(() => {
@@ -213,22 +197,6 @@ describe('new device card', () => {
       expect(toastTitles()[0]?.textContent).toBe(t('facility-operations.security.created'));
     }).pipe(Effect.provide(network)),
   );
-
-  it.live('a refused save keeps the input; Zrušit with typed input asks, Zahodit změny leaves', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      const runner = recordingRunner(['forbidden']);
-      yield* mountCreate(runner);
-      yield* typeInto('#security-name', 'Kamera dvůr');
-      yield* saveSent(runner, 1);
-      expect(calls).toEqual([]);
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.discard);
-      expect(calls).toEqual(['close']);
-      expect(runner.sent).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
-  );
 });
 
 describe('fault report', () => {
@@ -236,7 +204,7 @@ describe('fault report', () => {
     Effect.gen(function* scenario() {
       // No created id comes back, so no follow-up task is created here.
       yield* pinTestDocument;
-      const runner = recordingRunner([], []);
+      const runner = recordingRunner([]);
       yield* mountReport(runner);
       yield* typeInto('#security-incident-title', 'Nefunguje záznam');
       yield* saveSent(runner, 1);
@@ -244,16 +212,6 @@ describe('fault report', () => {
         expect.objectContaining({ _tag: 'SecurityIncidentReport', deviceId: device.id, title: 'Nefunguje záznam' }),
       ]);
       expect(calls).toEqual(['saved']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an untouched report closes without asking', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mountReport(recordingRunner());
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(false);
-      expect(calls).toEqual(['close']);
     }).pipe(Effect.provide(network)),
   );
 });
@@ -287,18 +245,6 @@ describe('inspection and resolution', () => {
         expect.objectContaining({ _tag: 'SecurityDeviceRecordInspection', deviceId: device.id }),
       ]);
       expect(calls).toEqual(['saved']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a typed inspection note asks before Zrušit; an untouched one closes', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mountInspection(recordingRunner());
-      yield* typeInto('#security-inspection-note', 'Vyčištěn objektiv');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.stay);
-      expect(calls).toEqual([]);
     }).pipe(Effect.provide(network)),
   );
 

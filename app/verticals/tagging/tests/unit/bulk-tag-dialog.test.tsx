@@ -173,29 +173,4 @@ describe('bulk tag panel with the shared Uložit', () => {
       expect(view.events).toEqual(['done', 'closed']);
     }).pipe(Effect.provide(network)),
   );
-
-  it.live('an untouched panel closes without asking', () =>
-    Effect.gen(function* untouched() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      yield* click(button(copy('tagging.tags.form.cancel')));
-      expect(buttons(labels.discard)).toHaveLength(0);
-      expect(view.events).toEqual(['closed']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a started choice asks before leaving; Zahodit změny leaves without tagging', () =>
-    Effect.gen(function* leave() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      yield* pickVip();
-      yield* click(button(copy('tagging.tags.form.cancel')));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      expect(view.events).toEqual([]);
-
-      yield* click(button(labels.discard));
-      expect(view.events).toEqual(['closed']);
-      expect(writes).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
 });

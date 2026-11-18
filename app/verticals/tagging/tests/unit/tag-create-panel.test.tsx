@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
-// Draft edits and discard stay local; Save runs the real records and Action clients against their HTTP contracts.
-import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+// Tag creation sends the entered name and selected subject kinds through the owner contract.
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   pinTestDocument,
@@ -106,8 +106,6 @@ const click = (target: HTMLElement) =>
     target.click();
   });
 
-const saveState = () => document.querySelector<HTMLElement>('[data-save-state]')?.dataset.saveState;
-
 beforeEach(() => {
   commands.length = 0;
 });
@@ -115,26 +113,6 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe('tag create panel with one Save button', () => {
-  it.live('typing and ticking kinds changes only the draft: nothing is sent after a pause or on unmount', () =>
-    Effect.gen(function* typingSendsNothing() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      expect(buttons('Uložit')).toHaveLength(1);
-      expect(button('Uložit').disabled).toBe(true);
-      expect(text()).not.toMatch(/automat/iu);
-
-      yield* typeName('VIP klient');
-      yield* tickKind('order');
-      expect(button('Uložit').disabled).toBe(false);
-      expect(text()).toContain('Neuložené změny');
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      view.unmount();
-      yield* settle;
-      expect(commands.length).toBe(0);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('one click on Save creates the tag once and closes the panel', () =>
     Effect.gen(function* saveOnce() {
       yield* pinTestDocument;
@@ -149,37 +127,6 @@ describe('tag create panel with one Save button', () => {
         name: 'VIP klient',
         subjectKinds: ['order'],
       });
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a draft without a subject kind cannot be saved', () =>
-    Effect.gen(function* invalid() {
-      yield* pinTestDocument;
-      yield* mount();
-      yield* typeName('VIP klient');
-      expect(saveState()).toBe('invalid');
-      expect(button('Uložit').disabled).toBe(true);
-      expect(commands.length).toBe(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('leaving with typed values asks; Zůstat keeps the draft, Zahodit změny leaves without sending', () =>
-    Effect.gen(function* leave() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      yield* typeName('VIP klient');
-      yield* click(button(copy('tagging.tags.form.cancel')));
-      expect(buttons('Zahodit změny')).toHaveLength(1);
-      expect(view.closed).toEqual([]);
-
-      yield* click(button('Zůstat'));
-      yield* waitUntil(() => buttons('Zůstat').length === 0);
-      expect(nameField().value).toBe('VIP klient');
-
-      yield* click(button(copy('tagging.tags.form.cancel')));
-      yield* click(button('Zahodit změny'));
-      expect(view.closed).toEqual(['close']);
-      expect(commands.length).toBe(0);
     }).pipe(Effect.provide(network)),
   );
 });

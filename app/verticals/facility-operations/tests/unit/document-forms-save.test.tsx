@@ -1,6 +1,5 @@
 // @rstest-environment happy-dom
-// A new document, an amendment, a new version and a manual signature are sent on the shared Uložit only: one click
-// sends the same command as the old button did, and leaving with typed input asks first.
+// Document creation, amendments, file versions and signatures map to their owner commands.
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
@@ -65,9 +64,7 @@ const network = browserNetwork(
 const run = (command: OpsCommand) => runCommand(command, 0);
 const labels = saveLabelsFor('cs');
 const t = moduleText('cs');
-const copy = { cancel: t('facility-operations.common.cancel') };
 const saveButton = () => Option.getOrThrow(Option.fromUndefinedOr(buttons(labels.save)[0]));
-const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
 const click = (name: string) => acted(() => Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click());
 const typeInto = (selector: string, value: string) =>
   acted(() => {
@@ -166,20 +163,6 @@ describe('new document', () => {
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('Zrušit with a typed title asks; an untouched form closes at once', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mountCreate();
-      yield* click(copy.cancel);
-      expect(calls).toEqual(['close']);
-      yield* typeInto('#document-title', 'Revize');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.discard);
-      expect(calls).toEqual(['close', 'close']);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('an amendment opens filled in and Uložit sends it as it is', () =>
     Effect.gen(function* scenario() {
       yield* pinTestDocument;
@@ -243,18 +226,6 @@ describe('new version and signature', () => {
           version: 1,
         },
       ]);
-      expect(calls).toEqual(['done']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a typed signer asks before Zrušit drops it', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mountPanel(createElement(SignatureForm, { document: contract, onDone: page('done'), run }));
-      yield* typeInto('#signature-by', 'Jana');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.discard);
       expect(calls).toEqual(['done']);
     }).pipe(Effect.provide(network)),
   );

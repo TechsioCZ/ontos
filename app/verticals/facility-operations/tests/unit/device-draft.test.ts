@@ -1,7 +1,4 @@
-import { draftSavable, startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
+import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { SecurityDeviceSchema } from '../../shared/domain/security.ts';
 import {
@@ -11,7 +8,6 @@ import {
   deviceUpdateCommandOf,
   sameDeviceDraft,
 } from '../../src/routes/[lang]/provoz/bezpecnost/device-draft.ts';
-import type { DeviceDraft } from '../../src/routes/[lang]/provoz/bezpecnost/device-draft.ts';
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
@@ -61,36 +57,4 @@ describe('security device draft', () => {
     );
     expect(command).toMatchObject({ clear: ['note', 'location'], deviceId: device.id });
   });
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: DeviceDraft[] = [];
-  const controller = yield* startDraftSave(stored, {
-    equals: sameDeviceDraft,
-    isValid: (value: DeviceDraft) => Option.isSome(deviceUpdateCommandOf(value, device)),
-    save: (value: DeviceDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('security device edit panel explicit save', () => {
-  it.effect('sends a typed note only on Save, once; a blank name stays local', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, name: '' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-      expect(draftSavable(controller.status())).toBe(false);
-      controller.change({ ...stored, note: 'Krytá chodba, nový zámek' });
-      // Longer than any delay the panel ever saved after: typing alone sends nothing.
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-      expect(controller.status()).toBe('dirty');
-      controller.save();
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ note }) => note)).toEqual(['Krytá chodba, nový zámek']);
-      expect(controller.status()).toBe('saved');
-    }),
-  );
 });

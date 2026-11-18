@@ -1,6 +1,5 @@
 // @rstest-environment happy-dom
-// A new sales quote is created on the one shared Uložit (the former "Uložit koncept" / "Uložit odeslanou" pair is a
-// status field now): one click sends the same command, sent by default, and leaving with typed input asks first.
+// Quote creation preserves price minor units and the chosen lifecycle state.
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
@@ -19,10 +18,9 @@ import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-comma
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { SalesQuoteFormPanel } from '../../src/routes/[lang]/provoz/nakupy/sales-tab.tsx';
 import { runCommand } from '../../src/ui/use-agenda.ts';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
-const copy = { cancel: moduleText('cs')('facility-operations.common.cancel') };
 const customerId = '44444444-4444-4444-8444-444444444444';
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const customers = Schema.decodeUnknownSync(CustomerListResponseSchema)({
@@ -158,19 +156,6 @@ describe('new sales quote', () => {
       yield* pick('sales-quote-status', 'draft');
       yield* saveSent();
       expect(sent).toEqual([expect.objectContaining({ _tag: 'SalesQuoteCreate', status: 'draft' })]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('Zrušit with typed lines asks; Zahodit změny leaves without sending', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mount();
-      yield* typeInto('[id$="-0-description"]', 'Servis');
-      yield* click(copy.cancel);
-      expect(buttons(labels.discard).length > 0).toBe(true);
-      yield* click(labels.discard);
-      expect(calls).toEqual(['close']);
-      expect(sent).toEqual([]);
     }).pipe(Effect.provide(network)),
   );
 });

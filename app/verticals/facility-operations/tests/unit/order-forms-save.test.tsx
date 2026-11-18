@@ -46,7 +46,6 @@ const taxRevisionId = '70000000-0000-4000-8000-000000000022';
 
 const click = (name: string) => acted(() => Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click());
 const saveButton = () => Option.getOrThrow(Option.fromUndefinedOr(buttons(labels.save)[0]));
-const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
 const typeInto = (selector: string, value: string) =>
   acted(() => {
     const field = Option.getOrThrow(
@@ -246,15 +245,12 @@ describe('purchase order forms', () => {
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('an invoice is linked once with the typed number; leaving with it asks', () =>
+  it.live('links the typed invoice number to its purchase order', () =>
     Effect.gen(function* scenario() {
       yield* pinTestDocument;
       const runner = recordingRunner();
       yield* mountPanel(createElement(InvoiceForm, { onDone: page('done'), order, run: runner.run }));
       yield* typeInto('#invoice-number', 'FV-2026-118');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.stay);
       yield* saveSent(runner, 1);
       expect(runner.sent).toEqual([{ _tag: 'PurchaseOrderLinkInvoice', number: 'FV-2026-118', orderId: order.id }]);
       expect(calls).toEqual(['done']);

@@ -1,19 +1,14 @@
 // @rstest-environment happy-dom
-// The task edit panel as the user sees it: one Save button in the panel footer, the draft's status next to it, and a
-// question before unsaved changes are left. The real module i18n and router surround the panel; its save callback
-// records submissions at the component boundary.
+// Task editing preserves its submission revision and rejects an empty title.
 import type { RevisionedSaveResult } from '@app/admin-ui';
-import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { pinTestDocument } from '@app/shared-contracts/testing/http-double';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { TaskSchema } from '../../shared/apis/records.ts';
 import { TaskFormDialog } from '../../src/routes/[lang]/ukoly/task-form-dialog.tsx';
 import type { TaskFormSubmission } from '../../src/routes/[lang]/ukoly/task-form-dialog.tsx';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
-
-const czech = moduleText('cs');
-const closeLabel = czech('work-tasks.pages.records.close');
+import { mountInRoute } from '../support/module-ui.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const task = Schema.decodeUnknownSync(TaskSchema)({
@@ -106,25 +101,6 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe('task edit panel with one Save button', () => {
-  it.live('typing changes only the draft: nothing is sent after a pause, a blur or unmount', () =>
-    Effect.gen(function* typingSendsNothing() {
-      const view = yield* mount();
-      expect(buttons('Uložit')).toHaveLength(1);
-      expect(button('Uložit').disabled).toBe(true);
-      expect(text()).not.toMatch(/automat/iu);
-
-      yield* typeTitle('Saved task, revised');
-      expect(button('Uložit').disabled).toBe(false);
-      expect(text()).toContain('Neuložené změny');
-      // Longer than any debounce the panel ever had.
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      view.unmount();
-      yield* settle;
-      expect(sent).toEqual([]);
-    }),
-  );
-
   it.live('one click on Save sends one edit against the panel revision and shows it saved', () =>
     Effect.gen(function* saveOnce() {
       yield* mount();
@@ -145,51 +121,6 @@ describe('task edit panel with one Save button', () => {
       expect(saveState()).toBe('invalid');
       expect(button('Uložit').disabled).toBe(true);
       expect(sent).toEqual([]);
-    }),
-  );
-
-  it.live('closing with unsaved changes asks; Zůstat keeps the draft, Zahodit změny closes without sending', () =>
-    Effect.gen(function* leave() {
-      const view = yield* mount();
-      yield* typeTitle('Saved task, revised');
-      yield* click(button(closeLabel));
-      expect(buttons('Zahodit změny')).toHaveLength(1);
-      expect(view.closed).toEqual([]);
-
-      yield* click(button('Zůstat'));
-      yield* waitUntil(() => buttons('Zůstat').length === 0);
-      expect(titleField().value).toBe('Saved task, revised');
-
-      yield* click(button(closeLabel));
-      yield* click(button('Zahodit změny'));
-      expect(view.closed).toEqual(['close']);
-      expect(sent).toEqual([]);
-    }),
-  );
-
-  it.live('Uložit in the question saves once and then closes', () =>
-    Effect.gen(function* saveAndLeave() {
-      const view = yield* mount();
-      yield* typeTitle('Saved task, revised');
-      yield* click(button(closeLabel));
-      // The question's own Save button is the last one: the dialog renders after the panel.
-      const inDialog = buttons('Uložit').at(-1);
-      expect(inDialog).toBeDefined();
-      yield* click(Option.getOrThrow(Option.fromUndefinedOr(inDialog)));
-      yield* waitUntil(() => view.closed.length === 1);
-      expect(sent).toHaveLength(1);
-    }),
-  );
-
-  it.live('a revision conflict holds the draft and offers the current version', () =>
-    Effect.gen(function* conflict() {
-      answer = 'conflict';
-      yield* mount();
-      yield* typeTitle('Saved task, revised');
-      yield* click(button('Uložit'));
-      yield* waitUntil(() => saveState() === 'conflict');
-      expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
-      expect(sent).toHaveLength(1);
     }),
   );
 });

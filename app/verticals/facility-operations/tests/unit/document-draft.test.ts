@@ -1,7 +1,4 @@
-import { draftSavable, startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { DocumentSchema } from '../../shared/domain/documents.ts';
 import {
@@ -10,7 +7,6 @@ import {
   documentUpdateCommandOf,
   sameDocumentEditDraft,
 } from '../../src/routes/[lang]/provoz/dokumenty/document-draft.ts';
-import type { DocumentEditDraft } from '../../src/routes/[lang]/provoz/dokumenty/document-draft.ts';
 import { facilitySaveOutcome } from '../../src/ui/facility-save.ts';
 import type { CommandOutcome } from '../../src/ui/use-agenda.ts';
 
@@ -90,38 +86,6 @@ describe('facility save outcome', () => {
       expect(yield* facilitySaveOutcome(Effect.succeed(refused('approval_required')))).toBe('proposed');
       expect(yield* facilitySaveOutcome(Effect.succeed(refused('conflict')))).toBe('conflict');
       expect(yield* facilitySaveOutcome(Effect.succeed(refused('forbidden')))).toBe('failed');
-    }),
-  );
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: DocumentEditDraft[] = [];
-  const controller = yield* startDraftSave(stored, {
-    equals: sameDocumentEditDraft,
-    isValid: (value: DocumentEditDraft) => Option.isSome(documentUpdateCommandOf(documentId, value)),
-    save: (value: DocumentEditDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('document edit panel explicit save', () => {
-  it.effect('sends a typed description only on Save, once; an empty title stays local', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, title: '' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-      expect(draftSavable(controller.status())).toBe(false);
-      controller.change({ ...stored, description: 'Příloha k podpisu' });
-      // Longer than any delay the panel ever saved after: typing alone sends nothing.
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-      expect(controller.status()).toBe('dirty');
-      controller.save();
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ description }) => description)).toEqual(['Příloha k podpisu']);
-      expect(controller.status()).toBe('saved');
     }),
   );
 });

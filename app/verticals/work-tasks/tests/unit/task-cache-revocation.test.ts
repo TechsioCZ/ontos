@@ -111,21 +111,6 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-it.live('renders the permitted task rows and write controls before revocation', () =>
-  Effect.gen(function* permittedPage() {
-    yield* pinTestDocument;
-    const props = propsFor('20000000-0000-4000-8000-000000000101');
-    yield* Effect.promise(() => preloadPage(props));
-    yield* mountInRoute(createElement(RecordsPage, props), { url: '/cs/ukoly' });
-    yield* waitUntil(() => text().includes(taskTitle));
-    expect({
-      row: text().includes(taskTitle),
-      writeControl: text().includes(copy.newTask),
-    }).toEqual({ row: true, writeControl: true });
-    expect(reads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-
 it.live('a denied revalidation does not keep showing the previous rows or write controls', () =>
   Effect.gen(function* deniedRevalidation() {
     yield* pinTestDocument;

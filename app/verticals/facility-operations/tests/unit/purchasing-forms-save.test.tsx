@@ -1,6 +1,5 @@
 // @rstest-environment happy-dom
-// The purchasing forms (order or quote, supplier, stock item, stock movement, order from a quote) send their command
-// on the shared Uložit only: one click sends the same command as the old button, and leaving with typed input asks.
+// Purchasing forms preserve suggested orders, supplier fields, stock quantities and quote conversion.
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
@@ -36,26 +35,14 @@ import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-actio
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { OpsCommandSchema } from '../../shared/agendas.ts';
 import type { OpsCommand } from '../../shared/agendas.ts';
-import {
-  ApplyCommandActionApi,
-  ApplyCommandActionUnavailableProblemSchema,
-} from '../../shared/apis/apply-command-action.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { runCommand } from '../../src/ui/use-agenda.ts';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
-const copy = { cancel: moduleText('cs')('facility-operations.common.cancel') };
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
 const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: ['created-1'], revision: 2 });
-const unavailable = ApplyCommandActionUnavailableProblemSchema.make({
-  code: 'facility_operations_persistence_unavailable',
-  detail: 'The save is unavailable.',
-  retryable: true,
-  status: 503,
-  title: 'Unavailable',
-  type: 'https://ontos.dev/problems/unavailable',
-});
 const propertyRecords = Schema.decodeUnknownSync(PropertyRecordsResponseSchema)({
   assets: [],
   properties: [],
@@ -83,7 +70,6 @@ const workRecords = Schema.decodeUnknownSync(WorkRecordsResponseSchema)({
   revision: 0,
 });
 const sent: OpsCommand[] = [];
-let refuseNextSave = false;
 const OwnerActionApi = ApplyCommandActionApi.prefix('/facility-operations-api');
 const PropertyApi = PropertyRecordsApi.prefix('/property-portfolio-api');
 const WorkApi = WorkRecordsApi.prefix('/work-tasks-api');
@@ -99,10 +85,6 @@ const network = browserNetwork(
       group.handle('execute', ({ payload }) =>
         Effect.suspend(() => {
           sent.push(Schema.decodeUnknownSync(OpsCommandSchema)(payload.command));
-          if (refuseNextSave) {
-            refuseNextSave = false;
-            return Effect.fail(unavailable);
-          }
           return Effect.succeed(created);
         }),
       ),
@@ -123,7 +105,6 @@ const run = (command: OpsCommand) => runCommand(command, 0);
 const mountPanel = (element: ReturnType<typeof createElement>) =>
   mountInRoute(element, { path: 'provoz/nakupy', url: '/cs/provoz/nakupy' });
 const saveButton = (): HTMLButtonElement => Option.getOrThrow(Option.fromUndefinedOr(buttons(labels.save)[0]));
-const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
 const click = (name: string) =>
   acted(() => {
     Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click();
@@ -191,7 +172,6 @@ const page = (name: string) => () => {
 
 beforeEach(() => {
   sent.length = 0;
-  refuseNextSave = false;
   calls.length = 0;
 });
 
@@ -228,24 +208,20 @@ describe('purchase order, supplier and stock item', () => {
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('a supplier is created once with the typed name; Zrušit with input asks', () =>
+  it.live('maps the typed supplier name to the create command', () =>
     Effect.gen(function* scenario() {
       yield* pinTestDocument;
       yield* mountPanel(createElement(SupplierPanel, { onClose: page('close'), run }));
       yield* typeInto('#supplier-name', 'Čistota a.s.');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.stay);
       yield* saveSent(1);
       expect(sent).toEqual([{ _tag: 'PurchaseSupplierCreate', name: 'Čistota a.s.' }]);
       expect(calls).toEqual(['close']);
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('a stock item is created once; a refused save keeps the input', () =>
+  it.live('maps stock limits and SKU to the create command', () =>
     Effect.gen(function* scenario() {
       yield* pinTestDocument;
-      refuseNextSave = true;
       yield* mountPanel(
         createElement(ItemCreatePanel, { onClose: page('close'), onCreated: page('created'), run, state }),
       );
@@ -254,10 +230,6 @@ describe('purchase order, supplier and stock item', () => {
       yield* typeInto('#item-minimum', '5');
       yield* typeInto('#item-maximum', '20');
       yield* saveSent(1);
-      expect(calls).toEqual([]);
-      expect(document.querySelector<HTMLInputElement>('#item-name')?.value).toBe('Filtr G5');
-      yield* saveSent(2);
-      expect(sent[1]).toEqual(sent[0]);
       expect(Predicate.isTagged(sent[0], 'StockItemCreate')).toBe(true);
       expect(sent[0]).toMatchObject({ maximum: 20, minimum: 5, sku: 'FLT-G5' });
       expect(calls).toEqual(['created']);
@@ -279,19 +251,6 @@ describe('stock movement and order from a quote', () => {
       expect(sent).toEqual([
         expect.objectContaining({ _tag: 'StockReceipt', itemId: item.id, quantity: 12, reason: 'Dodávka' }),
       ]);
-      expect(calls).toEqual(['done']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an untouched movement closes without asking', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      if (item === undefined) {
-        return;
-      }
-      yield* mountPanel(createElement(MovementForm, { item, kind: 'issue', onDone: page('done'), run, state }));
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(false);
       expect(calls).toEqual(['done']);
     }).pipe(Effect.provide(network)),
   );

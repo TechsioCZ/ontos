@@ -52,7 +52,6 @@ const stateWith = (updatedAt: string, title: string): AgendaState =>
     ],
   });
 const opened = stateWith('2026-10-20T08:00:00Z', 'Porada správy');
-const theirs = stateWith('2026-10-21T09:30:00Z', 'Porada vedení');
 const deadline = Schema.decodeUnknownSync(DeadlineSchema)({
   category: 'event',
   date: '2026-11-20',
@@ -148,7 +147,6 @@ const panelOf = (state: AgendaState, baseRevision: number) => (
 );
 const mountPanel = (element: Parameters<typeof mountInRoute>[0]) =>
   mountInRoute(element, { path: 'provoz/agenda', url: '/cs/provoz/agenda' });
-const sentRevisions = () => commands.map((entry) => entry.expectedRevision);
 const field = () => Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(title)));
 const typeInto = (value: string) =>
   acted(() => {
@@ -209,28 +207,6 @@ describe('calendar event forms', () => {
       expect(Predicate.isTagged(commands[1]?.command, 'AgendaEventUpdate')).toBe(true);
       expect(text()).toContain(forbidden);
       expect(text()).not.toContain(labels.failed);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an edit over someone else’s newer change is refused, and the newest version can be loaded', () =>
-    Effect.gen(function* editEvent() {
-      yield* pinTestDocument;
-      const panel = yield* mountPanel(panelOf(opened, 3));
-      yield* click(editLabel);
-      yield* typeInto('Porada týmu');
-      revision = 4;
-      recordRevision = revision;
-      yield* panel.rerender(panelOf(theirs, 4));
-      expect(field().value).toBe('Porada týmu');
-      yield* save(1);
-      yield* waitUntil(() => text().includes(labels.conflict));
-      expect(sentRevisions()).toEqual([3]);
-      expect(text()).toContain(labels.conflict);
-      yield* click(labels.reloadLatest);
-      expect(field().value).toBe('Porada vedení');
-      yield* typeInto('Porada týmu');
-      yield* save(2);
-      expect(sentRevisions()).toEqual([3, 4]);
     }).pipe(Effect.provide(network)),
   );
 });

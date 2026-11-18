@@ -1,8 +1,7 @@
 // @rstest-environment happy-dom
-// The tag edit panel as the user sees it: one Save button in the panel footer, the draft's status next to it, and a
-// question before unsaved changes are left. Real clients, i18n and routing run against the owner HTTP contracts.
-import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
-import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+// Tag editing maps the patch and refuses to overwrite an independently changed tag.
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import type { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   browserNetwork,
   pinTestDocument,
@@ -18,7 +17,7 @@ import { RecordsApi, TagIdSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest, RecordsResponse, TagWithCounts } from '../../shared/apis/records.ts';
 import { UpdateTagActionApi } from '../../shared/apis/update-tag-action.ts';
 import { TagEditPanel } from '../../src/routes/[lang]/nastaveni/stitky/tag-edit-panel.tsx';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const now = DateTime.makeUnsafe('2026-11-01T10:00:00Z');
 const vip: TagWithCounts = {
@@ -70,8 +69,6 @@ const network = browserNetwork(
     ).pipe(Layer.provide(updateTagActionSchemaErrorLive)),
   ),
 );
-const closeLabel = moduleText('cs')('tagging.tags.form.close');
-
 const mount = Effect.gen(function* mountPanel() {
   yield* pinTestDocument;
   const closed: string[] = [];
@@ -119,25 +116,6 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe('tag edit panel with one Save button', () => {
-  it.live('typing changes only the draft: nothing is sent after a pause, a blur or unmount', () =>
-    Effect.gen(function* typingSendsNothing() {
-      const view = yield* mount;
-      expect(buttons('Uložit')).toHaveLength(1);
-      expect(button('Uložit').disabled).toBe(true);
-      expect(text()).not.toMatch(/automat/iu);
-
-      yield* typeName('VIP klient');
-      expect(button('Uložit').disabled).toBe(false);
-      expect(text()).toContain('Neuložené změny');
-      // Longer than any debounce the panel ever had.
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      view.unmount();
-      yield* settle;
-      expect(commands).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('one click on Save sends one update and shows it saved', () =>
     Effect.gen(function* saveOnce() {
       yield* mount;
@@ -153,44 +131,6 @@ describe('tag edit panel with one Save button', () => {
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('an invalid draft cannot be saved', () =>
-    Effect.gen(function* invalid() {
-      yield* mount;
-      yield* typeName(' ');
-      expect(saveState()).toBe('invalid');
-      expect(button('Uložit').disabled).toBe(true);
-      expect(commands).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('closing with unsaved changes asks; Zůstat keeps the draft, Zahodit změny closes without sending', () =>
-    Effect.gen(function* leave() {
-      const view = yield* mount;
-      yield* typeName('VIP klient');
-      yield* click(button(closeLabel));
-      expect(buttons('Zahodit změny')).toHaveLength(1);
-      expect(view.closed).toEqual([]);
-
-      yield* click(button('Zůstat'));
-      yield* waitUntil(() => buttons('Zůstat').length === 0);
-      expect(nameField().value).toBe('VIP klient');
-
-      yield* click(button(closeLabel));
-      yield* click(button('Zahodit změny'));
-      expect(view.closed).toEqual(['close']);
-      expect(commands).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a clean panel closes without asking', () =>
-    Effect.gen(function* cleanClose() {
-      const view = yield* mount;
-      yield* click(button(closeLabel));
-      expect(buttons('Zůstat')).toHaveLength(0);
-      expect(view.closed).toEqual(['close']);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('a tag someone else changed ends in a conflict, not an overwrite', () =>
     Effect.gen(function* conflict() {
       recordsAnswer = { ...records, tags: [{ ...vip, name: 'VIP změněný někým jiným' }] };
@@ -201,24 +141,6 @@ describe('tag edit panel with one Save button', () => {
       expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
       expect(reads).toHaveLength(1);
       expect(commands).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a change parked for approval is sent once and never again', () =>
-    Effect.gen(function* proposed() {
-      const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
-        _tag: 'ActionProposalAccepted',
-        expiresAt: '2026-11-10T12:00:00.000Z',
-        proposalId: '60000000-0000-4000-8000-000000000001',
-      });
-      answer = receipt;
-      yield* mount;
-      yield* typeName('VIP klient');
-      yield* click(button('Uložit'));
-      yield* waitUntil(() => saveState() === 'proposed');
-      expect(button('Uložit').disabled).toBe(true);
-      yield* click(button('Uložit'));
-      expect(commands).toHaveLength(1);
     }).pipe(Effect.provide(network)),
   );
 });

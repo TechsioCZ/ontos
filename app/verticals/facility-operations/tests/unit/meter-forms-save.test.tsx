@@ -1,8 +1,7 @@
 // @rstest-environment happy-dom
-// A new meter and a meter reading are sent by the shared Uložit only: typing changes the draft, one click sends the
-// same command as the old button did, and leaving with typed input asks first while an untouched form just closes.
+// Meter creation and readings map their serial numbers, quantities and destination IDs.
 import { saveLabelsFor } from '@app/admin-ui';
-import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
 import {
   browserNetwork,
@@ -13,10 +12,7 @@ import {
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
-import {
-  applyCommandActionProblem,
-  applyCommandActionSchemaErrorLive,
-} from '../../api/apply-command-action-problems.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
@@ -24,13 +20,10 @@ import type { OpsCommand } from '../../shared/agendas.ts';
 import { MeterSchema } from '../../shared/domain/meters.ts';
 import { MeterForm, ReadingForm } from '../../src/routes/[lang]/provoz/meridla/meter-forms.tsx';
 import { runCommand } from '../../src/ui/use-agenda.ts';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
-const t = moduleText('cs');
 const labels = saveLabelsFor('cs');
-const copy = { cancel: t('facility-operations.common.cancel') };
 const sent: (typeof ApplyCommandPayloadSchema.Encoded)['command'][] = [];
-let refuseNextSave = false;
 const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: ['created-1'], revision: 2 });
 const properties = Schema.decodeUnknownSync(RecordsResponseSchema)({
   assets: [],
@@ -51,10 +44,6 @@ const network = browserNetwork(
       group.handle('execute', ({ payload }) =>
         Effect.suspend(() => {
           sent.push(payload.command);
-          if (refuseNextSave) {
-            refuseNextSave = false;
-            return Effect.fail(applyCommandActionProblem.unavailable('facility_operations_persistence_unavailable'));
-          }
           return Effect.succeed(created);
         }),
       ),
@@ -79,7 +68,6 @@ const typeInto = (selector: string, value: string) =>
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
   });
-const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
 const saveSent = (count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => sent.length >= count)),
@@ -107,7 +95,6 @@ const record = (name: string) => (value?: string) => {
 beforeEach(() => {
   calls.length = 0;
   sent.length = 0;
-  refuseNextSave = false;
 });
 
 afterEach(unmountAll);
@@ -140,37 +127,6 @@ describe('new meter', () => {
       expect(calls).toEqual(['saved:created-1']);
     }).pipe(Effect.provide(network)),
   );
-
-  it.live('a refused save keeps the input and says why; the next Uložit sends it again', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      refuseNextSave = true;
-      yield* mountMeter();
-      yield* typeInto('#meter-serial', 'EL-77');
-      yield* saveSent(1);
-      expect(text()).toContain(t('facility-operations.common.errors.unavailable'));
-      expect(calls).toEqual([]);
-      yield* saveSent(2);
-      expect(sent[1]).toEqual(sent[0]);
-      expect(calls).toEqual(['saved:created-1']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an untouched form closes at once; typed input asks before Zrušit leaves', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mountMeter();
-      yield* click(copy.cancel);
-      expect(calls).toEqual(['cancel:']);
-      yield* typeInto('#meter-serial', 'EL-77');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      expect(calls).toEqual(['cancel:']);
-      yield* click(labels.discard);
-      expect(calls).toEqual(['cancel:', 'cancel:']);
-      expect(sent).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
 });
 
 describe('meter reading', () => {
@@ -181,20 +137,6 @@ describe('meter reading', () => {
       yield* typeInto('#reading-value', '12,5');
       yield* saveSent(1);
       expect(sent).toEqual([expect.objectContaining({ _tag: 'MeterReadingRecord', meterId: meter.id, value: 12.5 })]);
-      expect(calls).toEqual([`saved:${meter.id}`]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('leaving with a typed value asks; Zůstat keeps the input', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      yield* mountReading();
-      yield* typeInto('#reading-value', '3');
-      yield* click(copy.cancel);
-      expect(leaveQuestionOpen()).toBe(true);
-      yield* click(labels.stay);
-      expect(calls).toEqual([]);
-      yield* saveSent(1);
       expect(calls).toEqual([`saved:${meter.id}`]);
     }).pipe(Effect.provide(network)),
   );

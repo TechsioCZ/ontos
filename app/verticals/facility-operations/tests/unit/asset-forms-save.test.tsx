@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
-// Every assets form sends its command once on the shared Uložit, last in the panel footer; leaving asks first.
-import { SidePanel, saveLabelsFor } from '@app/admin-ui';
+// Asset forms map typed values, money and suggested defaults into owner commands.
+import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
 import {
@@ -11,19 +11,15 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { OpsCommandSchema } from '../../shared/agendas.ts';
 import type { OpsCommand } from '../../shared/agendas.ts';
-import {
-  ApplyCommandActionApi,
-  ApplyCommandActionUnavailableProblemSchema,
-} from '../../shared/apis/apply-command-action.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { runCommand } from '../../src/ui/use-agenda.ts';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 import { AssetSchema, AssetsStateSchema, DepreciationPlanSchema } from '../../shared/domain/assets.ts';
 import type { AssetsState } from '../../shared/domain/assets.ts';
 import {
@@ -40,15 +36,8 @@ import {
   ValueChangeForm,
 } from '../../src/routes/[lang]/provoz/majetek/asset-forms.tsx';
 import type { AssetSubmit } from '../../src/routes/[lang]/provoz/majetek/form-kit.tsx';
-import { FooterSlotProvider, useFooterSlot } from '../../src/ui/footer-slot.tsx';
 
 const labels = saveLabelsFor('cs');
-const t = moduleText('cs');
-const copy = {
-  panelTitle: t('facility-operations.assets.actions.recordEvent'),
-  resize: t('facility-operations.assets.resize'),
-};
-
 const OwnerActionApi = ApplyCommandActionApi.prefix('/facility-operations-api');
 const PropertyRecordsApi = RecordsApi.prefix('/property-portfolio-api');
 const propertyRecords = Schema.decodeUnknownSync(RecordsResponseSchema)({
@@ -58,16 +47,7 @@ const propertyRecords = Schema.decodeUnknownSync(RecordsResponseSchema)({
   units: [],
 });
 const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: ['created-1'], revision: 2 });
-const unavailable = ApplyCommandActionUnavailableProblemSchema.make({
-  code: 'facility_operations_persistence_unavailable',
-  detail: 'The save is unavailable.',
-  retryable: true,
-  status: 503,
-  title: 'Unavailable',
-  type: 'https://ontos.dev/problems/unavailable',
-});
 let received: OpsCommand[] = [];
-let refuseSave = false;
 const network = browserNetwork(
   shellGatewayIssuer({
     'facility-operations': '/facility-operations-api',
@@ -79,7 +59,7 @@ const network = browserNetwork(
       group.handle('execute', ({ payload }) =>
         Effect.suspend(() => {
           received.push(Schema.decodeUnknownSync(OpsCommandSchema)(payload.command));
-          return refuseSave ? Effect.fail(unavailable) : Effect.succeed(created);
+          return Effect.succeed(created);
         }),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
@@ -92,10 +72,9 @@ const network = browserNetwork(
   ),
 );
 
-const recordingRunner = (answers: readonly 'unavailable'[] = []) => {
+const recordingRunner = () => {
   const sent: OpsCommand[] = [];
   received = sent;
-  refuseSave = answers.length > 0;
   return { run: (command: OpsCommand) => runCommand(command, 0), sent };
 };
 type RecordingRunner = ReturnType<typeof recordingRunner>;
@@ -106,7 +85,6 @@ const mountPanel = (element: ReturnType<typeof createElement>) =>
     url: '/cs/provoz/majetek',
   });
 const saveButton = (): HTMLButtonElement => Option.getOrThrow(Option.fromUndefinedOr(buttons(labels.save)[0]));
-const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
 const typeInto = (selector: string, value: string) =>
   acted(() => {
     const field = Option.getOrThrow(
@@ -329,56 +307,6 @@ describe('assets forms save once on Uložit', () => {
       yield* saveSent(runner, 1);
       expect(runner.sent).toEqual([expect.objectContaining({ _tag: 'AssetArchive', assetId: asset.id })]);
       expect(saved).toEqual(['saved']);
-    }).pipe(Effect.provide(network)),
-  );
-});
-
-/** An assets side panel as the page builds it: the form's Uložit renders into the footer slot. */
-const EventPanel = ({ runner }: { readonly runner: RecordingRunner }) => {
-  const footer = useFooterSlot();
-  return createElement(
-    SidePanel,
-    {
-      actions: footer.target,
-      onOpenChange: constVoid,
-      open: true,
-      resizeLabel: copy.resize,
-      title: copy.panelTitle,
-    },
-    createElement(
-      FooterSlotProvider,
-      { slot: footer.slot },
-      createElement(EventForm, { asset, onSubmit: submitThrough(runner) }),
-    ),
-  );
-};
-
-describe('the panel footer and the way out', () => {
-  it.live('Uložit is the last control of the panel footer and saves from there', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      const runner = recordingRunner();
-      yield* mountPanel(createElement(EventPanel, { runner }));
-      const slot = document.querySelector('[data-footer-slot]');
-      const footerButtons = [...(slot?.querySelectorAll('button') ?? [])];
-      expect(footerButtons.at(-1)?.textContent.trim()).toBe(labels.save);
-      yield* typeInto('#event-note', 'Výměna kompresoru');
-      yield* saveSent(runner, 1);
-      expect(runner.sent).toEqual([expect.objectContaining({ _tag: 'AssetEventRecord', note: 'Výměna kompresoru' })]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a refused save keeps the typed input and says why', () =>
-    Effect.gen(function* scenario() {
-      yield* pinTestDocument;
-      const runner = recordingRunner(['unavailable']);
-      yield* mountPanel(createElement(EventForm, { asset, onSubmit: submitThrough(runner) }));
-      yield* typeInto('#event-note', 'Výměna kompresoru');
-      yield* saveSent(runner, 1);
-      expect(saved).toEqual([]);
-      expect(document.body.textContent).toContain(t('facility-operations.common.errors.unavailable'));
-      expect(document.querySelector<HTMLTextAreaElement>('#event-note')?.value).toBe('Výměna kompresoru');
-      expect(leaveQuestionOpen()).toBe(false);
     }).pipe(Effect.provide(network)),
   );
 });

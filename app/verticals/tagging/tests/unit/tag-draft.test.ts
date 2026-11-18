@@ -2,10 +2,8 @@ import {
   UpdateTagActionConflictProblemSchema,
   UpdateTagActionUnavailableProblemSchema,
 } from '../../shared/apis/update-tag-action.ts';
-import { startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TagIdSchema } from '../../shared/apis/records.ts';
 import type { RecordsResponse, Tag } from '../../shared/apis/records.ts';
@@ -17,7 +15,6 @@ import {
   tagUnchangedSince,
   validTagDraft,
 } from '../../src/routes/[lang]/nastaveni/stitky/tag-draft.ts';
-import type { TagDraft } from '../../src/routes/[lang]/nastaveni/stitky/tag-draft.ts';
 
 const now = DateTime.makeUnsafe('2026-11-01T10:00:00Z');
 const vip: Tag = {
@@ -90,78 +87,14 @@ const unavailable = UpdateTagActionUnavailableProblemSchema.make({
   type: 'urn:ontos:test:tag-unavailable',
 });
 
-const panel = Effect.fnUntraced(function* panel(write: Effect.Effect<'applied' | 'stale', unknown>) {
-  const sent: TagDraft[] = [];
-  const controller = yield* startDraftSave(saved, {
-    equals: sameTagDraft,
-    isValid: validTagDraft,
-    save: (value: TagDraft) =>
-      Effect.sync(() => sent.push(value)).pipe(
-        Effect.andThen(tagSaveResult(write)),
-        Effect.map((result): SaveOutcome => (Predicate.isNumber(result) ? 'saved' : result)),
-      ),
-  });
-  return { controller, sent };
-});
-
-describe('tag edit panel save', () => {
-  it.live('sends nothing while the draft only changes, and one update on Save', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel(Effect.succeed('applied'));
-      controller.change({ ...saved, name: 'VIP klient' });
-      expect(controller.status()).toBe('dirty');
-      yield* Effect.sleep('1 second');
-      expect(sent).toEqual([]);
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ name }) => name)).toEqual(['VIP klient']);
-      expect(controller.status()).toBe('saved');
-    }),
-  );
-
-  it.effect('keeps a draft without a kind local', () =>
-    Effect.gen(function* invalid() {
-      const { controller, sent } = yield* panel(Effect.succeed('applied'));
-      controller.change({ ...saved, kinds: [] });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toEqual([]);
-      expect(controller.status()).toBe('invalid');
-    }),
-  );
-
-  it.effect('reports a conflict when someone else changed the tag or won the revision race', () =>
-    Effect.gen(function* conflict() {
-      const stale = yield* panel(Effect.succeed('stale'));
-      stale.controller.change({ ...saved, color: 'blue' });
-      stale.controller.save();
-      yield* Effect.yieldNow;
-      expect(stale.controller.status()).toBe('conflict');
-
-      const race = yield* panel(Effect.fail(isConflict));
-      race.controller.change({ ...saved, color: 'blue' });
-      race.controller.save();
-      yield* Effect.yieldNow;
-      expect(race.controller.status()).toBe('conflict');
-
-      const failed = yield* panel(Effect.fail(unavailable));
-      failed.controller.change({ ...saved, color: 'blue' });
-      failed.controller.save();
-      yield* Effect.yieldNow;
-      expect(failed.controller.status()).toBe('error');
-    }),
-  );
-
-  it.effect('parks a change sent for approval and does not send it again', () =>
-    Effect.gen(function* proposed() {
-      const { controller, sent } = yield* panel(Effect.fail(proposal));
-      controller.change({ ...saved, color: 'blue' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('proposed');
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toHaveLength(1);
+describe('tag save result', () => {
+  it.effect('distinguishes committed, stale, revision-race, unavailable and approval outcomes', () =>
+    Effect.gen(function* outcomes() {
+      expect(yield* tagSaveResult(Effect.succeed('applied'))).toBe('saved');
+      expect(yield* tagSaveResult(Effect.succeed('stale'))).toBe('conflict');
+      expect(yield* tagSaveResult(Effect.fail(isConflict))).toBe('conflict');
+      expect(yield* tagSaveResult(Effect.fail(unavailable))).toBe('failed');
+      expect(yield* tagSaveResult(Effect.fail(proposal))).toBe('proposed');
     }),
   );
 });

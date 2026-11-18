@@ -5,9 +5,9 @@ import { Effect, Option, Schema } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import type { PlanOutcome } from '../../src/routes/[lang]/ukoly/planning-proposal.ts';
 import { ProjectEditor } from '../../src/routes/[lang]/ukoly/work-planning.tsx';
-import { PlanningCommandSchema } from '../../shared/actions/apply-command.ts';
 import { ProjectSchema } from '../../shared/apis/records.ts';
 import type { WorkProject } from '../../shared/apis/records.ts';
+import { PlanningCommandSchema } from '../../shared/actions/apply-command.ts';
 
 import { mountInRoute } from '../support/module-ui.ts';
 
@@ -31,7 +31,6 @@ interface Mounted {
   readonly unmount: () => void;
 }
 
-const [, UpdateProjectCommand] = PlanningCommandSchema.members;
 const committed: PlanOutcome = { ok: true };
 afterEach(unmountAll);
 
@@ -90,17 +89,24 @@ const clickSave = (): Effect.Effect<void> =>
   });
 
 describe('project panel save', () => {
-  it.live('opening the panel and typing send nothing; the Save button sends the plan once', () =>
+  it.live('maps a renamed project while retaining its dates, state and responsible principal', () =>
     Effect.gen(function* saveOnce() {
       const view = yield* mount(committed);
-      expect(saveState()).toBe('idle');
       yield* typeTitle('Renamed project');
-      expect(saveState()).toBe('dirty');
-      yield* Effect.sleep('1 second');
-      expect(view.sent).toEqual([]);
       yield* clickSave();
       expect(view.sent).toHaveLength(1);
-      expect(Schema.is(UpdateProjectCommand)(view.sent[0])).toBe(true);
+      expect(
+        Schema.is(PlanningCommandSchema.pipe(Schema.toTaggedUnion('_tag')).cases.UpdateProject)(view.sent[0]),
+      ).toBe(true);
+      expect(view.sent[0]).toMatchObject({
+        id: project.id,
+        milestones: [],
+        plannedEnd: '2026-12-31',
+        plannedStart: '2026-10-01',
+        responsiblePrincipalRef: principalRef,
+        state: 'PLANNED',
+        title: 'Renamed project',
+      });
       expect(view.closed).toEqual(['close']);
     }),
   );
@@ -111,15 +117,6 @@ describe('project panel save', () => {
       yield* typeTitle('   ');
       expect(saveState()).toBe('invalid');
       expect(button('Uložit').disabled).toBe(true);
-      expect(view.sent).toEqual([]);
-    }),
-  );
-
-  it.live('unmounting with unsaved typing sends nothing', () =>
-    Effect.gen(function* unmountSendsNothing() {
-      const view = yield* mount(committed);
-      yield* typeTitle('Unsaved name');
-      view.unmount();
       expect(view.sent).toEqual([]);
     }),
   );

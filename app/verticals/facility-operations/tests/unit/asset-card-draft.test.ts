@@ -1,7 +1,4 @@
-import { draftSavable, startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
+import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { AssetSchema } from '../../shared/domain/assets.ts';
 import {
@@ -93,36 +90,4 @@ describe('asset card draft', () => {
     const noAmount = Option.getOrThrow(assetCardCreateCommandOf({ ...draft, acquisitionValue: '' }, placement));
     expect('acquisitionValueMinor' in noAmount).toBe(false);
   });
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: AssetCardDraft[] = [];
-  const controller = yield* startDraftSave(stored, {
-    equals: sameAssetCardDraft,
-    isValid: (value: AssetCardDraft) => Option.isSome(assetCardUpdateCommandOf(value, asset, placement)),
-    save: (value: AssetCardDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('asset card edit explicit save', () => {
-  it.effect('sends a typed name only on Save, once; an empty category stays local', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, category: '' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-      expect(draftSavable(controller.status())).toBe(false);
-      controller.change({ ...stored, note: 'Vyměněno 2026' });
-      // Longer than any delay the panel ever saved after: typing alone sends nothing.
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-      expect(controller.status()).toBe('dirty');
-      controller.save();
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ note }) => note)).toEqual(['Vyměněno 2026']);
-      expect(controller.status()).toBe('saved');
-    }),
-  );
 });

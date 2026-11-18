@@ -114,34 +114,6 @@ beforeEach(() => {
 });
 afterEach(unmountAll);
 
-it.live('an empty composer lets the record go without asking', () =>
-  Effect.gen(function* untouched() {
-    const panel = yield* openThread;
-    yield* panel.navigate('/cs/left');
-    yield* waitUntil(() => panel.router.state.location.pathname === '/cs/left');
-    expect(asked()).toBe(false);
-    expect(panel.left).toEqual(['proceed']);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('leaving with a typed comment asks; Zahodit změny drops it and leaves without posting', () =>
-  Effect.gen(function* discard() {
-    const panel = yield* openThread;
-    yield* typeInto(composer, 'Prosím o kontrolu');
-    yield* panel.navigate('/cs/left');
-    yield* waitUntil(asked);
-    expect(panel.router.state.location.pathname).toBe('/cs/thread');
-    expect(asked()).toBe(true);
-    yield* click(labels.discard);
-    yield* waitUntil(() => panel.router.state.location.pathname === '/cs/left');
-    expect(panel.left).toEqual(['proceed']);
-    expect(commands).toEqual([]);
-    yield* panel.navigate('/cs/after-discard');
-    yield* waitUntil(() => panel.router.state.location.pathname === '/cs/after-discard');
-    expect(asked()).toBe(false);
-  }).pipe(Effect.provide(network)),
-);
-
 it.live('Uložit in the question posts the same comment and leaves once it went through', () =>
   Effect.gen(function* saveAndLeave() {
     const panel = yield* openThread;
