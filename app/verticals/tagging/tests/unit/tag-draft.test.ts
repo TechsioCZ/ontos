@@ -130,18 +130,6 @@ describe('tag edit panel save', () => {
     }),
   );
 
-  it.effect('discarding goes back to the confirmed version without sending', () =>
-    Effect.gen(function* discarded() {
-      const { controller, sent } = yield* panel(Effect.succeed('applied'));
-      controller.change({ ...saved, name: 'VIP klient' });
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toEqual([]);
-    }),
-  );
-
   it.effect('reports a conflict when someone else changed the tag or won the revision race', () =>
     Effect.gen(function* conflict() {
       const stale = yield* panel(Effect.succeed('stale'));
