@@ -433,7 +433,7 @@ export const serveScriptedPostgres = (
   executor: PostgresWireExecutor,
 ): Effect.Effect<number, SocketServer.SocketServerError, Scope.Scope> =>
   Effect.gen(function* scriptedPostgres() {
-    const server = yield* NodeSocketServer.make({ host: '127.0.0.1', port: 0 });
+    const server = yield* NodeSocketServer.make({ host: '127.0.0.1', noDelay: true, port: 0 });
     yield* server.run((socket) => serveConnection(socket, executor)).pipe(Effect.forkScoped);
     return yield* Match.value(server.address).pipe(
       Match.when(NetAddress.isInetAddress, (address) => Effect.succeed(address.port)),
