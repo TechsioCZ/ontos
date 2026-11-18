@@ -1708,6 +1708,8 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
   );
   // The Purchase Context is replayed as Pricing's own granted service identity: the buyer's original assertion is
   // never retained, and Customer Context binds the replay to the retained actor, Profile, and context revision.
+  // The replay asks the owner about now, not about the decision's operation time: the owner only answers requests
+  // whose operation time is current, and the fence must prove the retained revision is still the current one.
   const verifyPurchaseSingleton = Effect.fn(
     'makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.verifyPurchaseSingleton',
   )(function* verifyPurchaseContext({
@@ -1743,13 +1745,14 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
           customerContextGatewayUnavailable('Customer Context owner credential is unavailable', cause),
         ),
       );
-    const replayRequest = yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationRequestSchema)(
+    const retainedRequest = yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationRequestSchema)(
       material.request,
     ).pipe(
       Effect.mapError((cause) =>
         customerContextGatewayUnavailable('Purchase Context replay request is invalid', cause),
       ),
     );
+    const replayRequest = { ...retainedRequest, operationTime: DateTime.formatIso(yield* DateTime.now) };
     const raw = yield* (dependencies.executePurchaseContext ?? executeAuthorizedPurchaseContext)(
       replayRequest,
       credential,
@@ -1776,6 +1779,11 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
       ),
     );
     const replayed = response.evidence;
+    if (replayed.currentness.evaluatedAt !== replayRequest.operationTime) {
+      return yield* customerContextGatewayUnavailable(
+        'Purchase Context owner did not verify the current operation time',
+      );
+    }
     if (
       replayed.ownerRef !== retained.ownerRef ||
       replayed.ownerRevisionRef !== retained.ownerRevisionRef ||

@@ -1,8 +1,12 @@
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { PricingPurchaseContextVerificationResponseSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
+import {
+  PricingPurchaseContextVerificationRequestSchema,
+  PricingPurchaseContextVerificationResponseSchema,
+} from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import type { PricingPurchaseContextVerificationRequest } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import type { PricingMaterialEvidenceFenceSource } from '@app/pricing-contracts/domain/material-evidence';
-import { Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import { makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway } from '../../src/integrations/current-pricing-decision-owner-final-fence.ts';
@@ -58,6 +62,8 @@ const purchaseRequest = {
   subject: snapshot.decision.purchasingContext.subject,
   tenantId: snapshot.decision.tenantId,
 };
+/** The retained request exactly as the owner decodes it. */
+const retainedRequest = Schema.decodeUnknownSync(PricingPurchaseContextVerificationRequestSchema)(purchaseRequest);
 const purchaseSource: PricingMaterialEvidenceFenceSource = {
   verificationMaterial: {
     evidence: retainedEvidence,
@@ -66,12 +72,65 @@ const purchaseSource: PricingMaterialEvidenceFenceSource = {
   },
 };
 
-const verifiedResponse = (evidence: typeof retainedEvidence) =>
+/** The owner's verified answer for exactly the asked request, evaluated at the request's operation time. */
+const verifiedResponse = (request: PricingPurchaseContextVerificationRequest, evidence = retainedEvidence) =>
   Schema.decodeUnknownSync(PricingPurchaseContextVerificationResponseSchema)({
-    evidence,
+    evidence: {
+      ...evidence,
+      currentness: {
+        evaluatedAt: request.operationTime,
+        observedAt: request.operationTime,
+        validFrom: request.operationTime,
+        validTo: null,
+      },
+    },
     outcome: 'PURCHASE_CONTEXT_VERIFIED',
-    request: purchaseRequest,
+    request,
   });
+
+const decisionTimeMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(snapshot.decision.operationTime));
+/** Moves the test clock to the decision's operation time plus the given elapsed evaluation time. */
+const evaluationElapsed = (millis: number) => TestClock.setTime(decisionTimeMillis + millis);
+const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
+/**
+ * Customer Context's owner contract: it answers only a request whose operation time is within 30 seconds of its own
+ * observation, and verifies only the revision that is current at that observation.
+ */
+const currentOwner =
+  (currentContextRevision: string) =>
+  (request: PricingPurchaseContextVerificationRequest): PurchaseContextReply =>
+    Effect.gen(function* answerCurrentOwner() {
+      const observedAt = DateTime.toEpochMillis(yield* DateTime.now);
+      const requestedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(request.operationTime));
+      if (requestedAt > observedAt || observedAt - requestedAt > 30_000) {
+        return yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationResponseSchema)({
+          outcome: 'PURCHASE_CONTEXT_UNAVAILABLE',
+          reason: 'PROFILE_AUTHORITY_UNAVAILABLE',
+          request,
+          retryable: true,
+        }).pipe(Effect.orDie);
+      }
+      if (request.purchasingContext.contextRevision !== currentContextRevision) {
+        return yield* Schema.decodeUnknownEffect(PricingPurchaseContextVerificationResponseSchema)({
+          currentContextRevision,
+          evidence: {
+            ...retainedEvidence,
+            currentness: {
+              evaluatedAt: request.operationTime,
+              observedAt: request.operationTime,
+              validFrom: request.operationTime,
+              validTo: null,
+            },
+            ownerRevisionRef: currentContextRevision,
+          },
+          outcome: 'PURCHASE_CONTEXT_STALE',
+          request,
+          retryable: true,
+        }).pipe(Effect.orDie);
+      }
+      return verifiedResponse(request);
+    });
 
 interface ExecutorCall {
   readonly correlation: string;
@@ -93,7 +152,10 @@ const subjectScope = verifiedTestScope({
   tenantId: snapshot.decision.tenantId,
 });
 
-const makeGateway = (reply: () => PurchaseContextReply, acquireFails = false) => {
+const makeGateway = (
+  reply: (payload: PricingPurchaseContextVerificationRequest) => PurchaseContextReply,
+  acquireFails = false,
+) => {
   const executorCalls: ExecutorCall[] = [];
   const acquireCalls: OwnerGatewayConnectionInput[] = [];
   const gateway = makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway({
@@ -106,7 +168,7 @@ const makeGateway = (reply: () => PurchaseContextReply, acquireFails = false) =>
     execute: () => Effect.die('Price Group replay must not run for a source-free Purchase Context singleton'),
     executePurchaseContext: (payload, credential, correlation) => {
       executorCalls.push({ correlation, credential: Redacted.value(credential), payload });
-      return reply();
+      return reply(payload);
     },
   });
   return { acquireCalls, executorCalls, gateway };
@@ -138,8 +200,9 @@ const expectFailsClosed = (failure: PricingOwnerMaterialEvidenceFenceGatewayUnav
 describe('Pricing final fence Purchase Context replay for the verified subject', () => {
   it.effect('replays for the verified subject through the owner connection, not the caller assertion', () =>
     Effect.gen(function* serviceIdentityReplay() {
-      const { acquireCalls, executorCalls, gateway } = makeGateway(() =>
-        Effect.succeed(verifiedResponse(retainedEvidence)),
+      yield* evaluationElapsed(250);
+      const { acquireCalls, executorCalls, gateway } = makeGateway((payload) =>
+        Effect.succeed(verifiedResponse(payload)),
       );
 
       const result = yield* replay(gateway);
@@ -159,13 +222,14 @@ describe('Pricing final fence Purchase Context replay for the verified subject',
       expect(call?.credential).toBe(ownerConnectionSecret);
       expect(call?.correlation).toBe(candidateRef);
       // The retained buyer actor travels as data; the buyer's own gateway assertion is never retained or forwarded.
-      expect(call?.payload).toEqual(purchaseRequest);
+      expect(call?.payload).toEqual({ ...purchaseRequest, operationTime: yield* nowIso });
     }),
   );
 
   it.effect('replays once per final-fence phase, including generation confirmation', () =>
     Effect.gen(function* bothPhases() {
-      const { executorCalls, gateway } = makeGateway(() => Effect.succeed(verifiedResponse(retainedEvidence)));
+      yield* evaluationElapsed(250);
+      const { executorCalls, gateway } = makeGateway((payload) => Effect.succeed(verifiedResponse(payload)));
 
       yield* gateway.confirmObservedGenerationsThrough({
         candidateRef,
@@ -182,9 +246,9 @@ describe('Pricing final fence Purchase Context replay for the verified subject',
 
   it.effect('fails the fence when the verified verification reference no longer matches the retained evidence', () =>
     Effect.gen(function* changedVerification() {
-      const { gateway } = makeGateway(() =>
+      const { gateway } = makeGateway((payload) =>
         Effect.succeed(
-          verifiedResponse({ ...retainedEvidence, verificationRef: 'purchase-context-verification:other' }),
+          verifiedResponse(payload, { ...retainedEvidence, verificationRef: 'purchase-context-verification:other' }),
         ),
       );
 
@@ -194,9 +258,9 @@ describe('Pricing final fence Purchase Context replay for the verified subject',
 
   it.effect('fails the fence when the verified subject authority differs from the retained evidence', () =>
     Effect.gen(function* changedSubjectAuthority() {
-      const { gateway } = makeGateway(() =>
+      const { gateway } = makeGateway((payload) =>
         Effect.succeed(
-          verifiedResponse({
+          verifiedResponse(payload, {
             ...retainedEvidence,
             subjectAuthority: {
               ...retainedEvidence.subjectAuthority,
@@ -245,7 +309,7 @@ describe('Pricing final fence Purchase Context replay for the verified subject',
 
   it.effect('fails closed without calling the owner when the Pricing service credential is unavailable', () =>
     Effect.gen(function* credentialUnavailable() {
-      const { executorCalls, gateway } = makeGateway(() => Effect.succeed(verifiedResponse(retainedEvidence)), true);
+      const { executorCalls, gateway } = makeGateway((payload) => Effect.succeed(verifiedResponse(payload)), true);
 
       expectFailsClosed(yield* replay(gateway).pipe(Effect.flip), /credential is unavailable/iu);
       expect(executorCalls).toHaveLength(0);
@@ -254,7 +318,7 @@ describe('Pricing final fence Purchase Context replay for the verified subject',
 
   it.effect('fails closed without calling the owner when the Purchase Context singleton is absent', () =>
     Effect.gen(function* singletonAbsent() {
-      const { executorCalls, gateway } = makeGateway(() => Effect.succeed(verifiedResponse(retainedEvidence)));
+      const { executorCalls, gateway } = makeGateway((payload) => Effect.succeed(verifiedResponse(payload)));
 
       const failure = yield* gateway
         .verifyOpaqueProofsAgainstCurrentState({
@@ -269,6 +333,39 @@ describe('Pricing final fence Purchase Context replay for the verified subject',
 
       expectFailsClosed(failure, /singleton authority is required/iu);
       expect(executorCalls).toHaveLength(0);
+    }),
+  );
+  it.effect('asks the current owner now when the evaluation outlasts the owner request currency', () =>
+    Effect.gen(function* longEvaluation() {
+      yield* evaluationElapsed(51_332);
+      const owner = currentOwner(purchaseRequest.purchasingContext.contextRevision);
+      const { executorCalls, gateway } = makeGateway(owner);
+
+      // The retained request is no longer current for the owner; replaying it unchanged could never verify.
+      expect(yield* owner(retainedRequest)).toMatchObject({ outcome: 'PURCHASE_CONTEXT_UNAVAILABLE' });
+      yield* replay(gateway);
+
+      expect(executorCalls.map(({ payload }) => payload)).toEqual([
+        { ...purchaseRequest, operationTime: yield* nowIso },
+      ]);
+    }),
+  );
+
+  it.effect('fails the fence when the current owner revision moved during a long evaluation', () =>
+    Effect.gen(function* revisionMoved() {
+      yield* evaluationElapsed(51_332);
+      const { gateway } = makeGateway(currentOwner('context-revision:moved'));
+
+      expectFailsClosed(yield* replay(gateway).pipe(Effect.flip), /no longer verified/iu);
+    }),
+  );
+
+  it.effect('fails the fence when the owner verifies the retained operation time instead of now', () =>
+    Effect.gen(function* staleAnswer() {
+      yield* evaluationElapsed(51_332);
+      const { gateway } = makeGateway(() => Effect.succeed(verifiedResponse(retainedRequest)));
+
+      expectFailsClosed(yield* replay(gateway).pipe(Effect.flip), /did not verify the current operation time/iu);
     }),
   );
 });
