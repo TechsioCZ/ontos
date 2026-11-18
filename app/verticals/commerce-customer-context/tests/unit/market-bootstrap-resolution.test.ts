@@ -7,9 +7,14 @@ import {
   EligibleMarketTuplesResponseSchema,
   ResolveCommerceMarketResponseSchema,
 } from '@app/commerce-market-catalog/api/client';
+import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import { installOperationalScope } from '@app/core-runtime/testing/actions';
+import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -337,23 +342,50 @@ describe('Market bootstrap policy resolution', () => {
 });
 
 const marketBootstrapServiceFactory = getReadServiceFactory(marketBootstrapResolutionRead);
-type MarketBootstrapReadTransaction = Parameters<typeof marketBootstrapServiceFactory>[0];
-const refuseInvoke: MarketBootstrapReadTransaction['invoke'] = () =>
-  Effect.die('building the services must not invoke persistence');
+
+/**
+ * A genuine scoped read transaction over a scripted connection: it answers only Core's own scope installation and
+ * records every statement, so a test sees exactly what building the read services sends to the database.
+ */
+const scriptedScopedTransaction = <Value, Failure>(
+  statements: string[],
+  use: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* runInScriptedScopedTransaction() {
+      const connection = testSqlConnection((statement) =>
+        Effect.sync(() => {
+          statements.push(statement);
+          return statement.includes('current_user')
+            ? [{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: scope.tenantId }]
+            : [];
+        }),
+      );
+      const pgContext = yield* Layer.build(
+        scriptedPgClientLayer(Effect.succeed(connection)).pipe(Layer.provideMerge(Reactivity.layer)),
+      );
+      const database = yield* testCoreDatabase.pipe(Effect.provide(pgContext));
+      return yield* database.transaction((transaction) =>
+        installOperationalScope(transaction, scope).pipe(Effect.flatMap(use)),
+      );
+    }),
+  );
 
 describe('Governed Market bootstrap resolution', () => {
   it.effect('keeps the remote Market owner out of the services its read transactions receive', () =>
     Effect.gen(function* databaseOnlyReadServices() {
       // `finish`'s owner transaction receives exactly this factory's output while a database transaction is
       // open, so it must hold no remote port (D14); the Market owner calls are built in `finish` itself.
-      const services = yield* marketBootstrapServiceFactory(
-        // SAFETY: building the services issues no statement; the policy repository only closes over `invoke`.
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Scoped transaction behavior beyond `invoke` is unreachable while the services are only built.
-        { invoke: refuseInvoke } as MarketBootstrapReadTransaction,
-        scope,
-        'a'.repeat(64),
-      ).pipe(Effect.provide(nodeCryptoLayer));
+      const statements: string[] = [];
+      let installed = 0;
+      const services = yield* scriptedScopedTransaction(statements, (transaction) => {
+        installed = statements.length;
+        return marketBootstrapServiceFactory(transaction, scope, 'a'.repeat(64)).pipe(Effect.provide(nodeCryptoLayer));
+      });
       expect(Object.keys(services)).toEqual(['loadPolicyCandidates']);
+      // Building the services sent nothing to the database between Core's scope installation and the commit.
+      expect(statements.slice(0, installed)).toContain('BEGIN');
+      expect(statements.slice(installed)).toEqual(['COMMIT']);
     }),
   );
 
