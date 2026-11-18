@@ -34,7 +34,7 @@ import { MarketBootstrapDependencyUnavailable } from '../../shared/domain/market
 import type { MarketBootstrapMarketPortService } from '../../shared/domain/market-bootstrap-market-port.ts';
 import type { MarketBootstrapPolicyBatchCurrentResponse } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import { marketBootstrapMarketPortFromPublishedClient } from '../integrations/market-bootstrap-market-client.ts';
-import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
+import { loadCurrentMarketBootstrapPolicyCandidates } from '../persistence/customer-commerce-policy-persistence.ts';
 
 const moduleKey = 'commerce.customer-context';
 const marketUnavailableReason = 'The Current Commerce Market owner is unavailable';
@@ -337,11 +337,10 @@ export const marketBootstrapResolutionRead = defineRead(
     }),
   },
   Effect.fn('MarketBootstrapResolutionRead.serviceFactory')(
-    function* marketBootstrapResolutionServiceFactory(transaction, scope) {
-      const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
-      return {
+    function* marketBootstrapResolutionServiceFactory(transaction) {
+      return yield* Effect.succeed({
         loadPolicyCandidates: (sellerIds, at) =>
-          repository.loadCurrentMarketBootstrapPolicyCandidates(sellerIds, at).pipe(
+          loadCurrentMarketBootstrapPolicyCandidates(transaction, sellerIds, at).pipe(
             Effect.mapError((cause) => {
               const failure = new MarketBootstrapDependencyUnavailable({
                 dependency: 'POLICY',
@@ -351,7 +350,7 @@ export const marketBootstrapResolutionRead = defineRead(
               return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
             }),
           ),
-      } satisfies MarketBootstrapPolicyOwnerServices;
+      } satisfies MarketBootstrapPolicyOwnerServices);
     },
   ),
 );

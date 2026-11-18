@@ -37,7 +37,8 @@ import {
 const MODULE_KEY = 'commerce.customer-context';
 const ROUTINE_SCHEMA = 'commerce_customer_context';
 const generation = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-const RoutineResultSchema = Schema.Struct({ result: Schema.Json });
+// The routine's JSONB result; each caller decodes it with its own result schema.
+const RoutineResultSchema = Schema.Struct({ result: Schema.Unknown });
 const loadParameters = Object.freeze([
   Object.freeze({ source: 'tenantId', type: 'uuid' }),
   Object.freeze({ source: 'legalEntityId', type: 'uuid' }),
@@ -288,6 +289,22 @@ const nativeQuantityAssignmentProfileFailure = (failure: ScopedRoutineInvocation
   return null;
 };
 
+/** The single result row of a routine, decoded by `resultSchema`. */
+const decodeRoutineResult = <Result>(
+  routineKey: string,
+  rows: readonly (typeof RoutineResultSchema.Type)[],
+  resultSchema: Schema.Decoder<Result>,
+): Effect.Effect<Result, CustomerCommercePolicyAdministrationRejected> => {
+  const [row] = rows;
+  return row === undefined
+    ? Effect.fail(persistenceUnavailable(`Customer Commerce Policy routine returned no result (${routineKey})`))
+    : Schema.decodeEffect(resultSchema)(row.result).pipe(
+        Effect.mapError((cause) =>
+          persistenceUnavailable(`Customer Commerce Policy routine returned an invalid result (${routineKey})`, cause),
+        ),
+      );
+};
+
 const invokeJson = <Result, const Parameters extends readonly ScopedRoutineParameter[]>(
   transaction: ScopedRoutineInvoker,
   routine: ScopedRoutineDefinition<typeof RoutineResultSchema, Parameters>,
@@ -302,23 +319,31 @@ const invokeJson = <Result, const Parameters extends readonly ScopedRoutineParam
           : undefined) ??
         persistenceUnavailable(`Customer Commerce Policy routine failed (${routine.routineKey})`, cause),
     ),
-    Effect.flatMap((rows) => {
-      const [row] = rows;
-      return row === undefined
-        ? Effect.fail(
-            persistenceUnavailable(`Customer Commerce Policy routine returned no result (${routine.routineKey})`),
-          )
-        : Schema.decodeEffect(resultSchema)(row.result).pipe(
-            Effect.mapError((cause) =>
-              persistenceUnavailable(
-                `Customer Commerce Policy routine returned an invalid result (${routine.routineKey})`,
-                cause,
-              ),
-            ),
-          );
-    }),
+    Effect.flatMap((rows) => decodeRoutineResult(routine.routineKey, rows, resultSchema)),
     Effect.withSpan(`commerce.customer-context.${routine.routineKey}`),
   );
+
+/**
+ * The current Market bootstrap policy candidates of the given Selling Legal Entities, through the one batch
+ * routine. The Market bootstrap Read's own transaction reaches only this, never the whole policy repository.
+ */
+export const loadCurrentMarketBootstrapPolicyCandidates = Effect.fn(
+  `commerce.customer-context.${loadCurrentMarketBootstrapPolicyCandidatesRoutine.routineKey}`,
+)(function* loadCurrentMarketBootstrapPolicyCandidatesEffect(
+  transaction: ScopedRoutineInvoker,
+  eligibleSellingLegalEntityIds: readonly string[],
+  at: string,
+) {
+  const { routineKey } = loadCurrentMarketBootstrapPolicyCandidatesRoutine;
+  const rows = yield* transaction
+    .invoke(loadCurrentMarketBootstrapPolicyCandidatesRoutine, [eligibleSellingLegalEntityIds, at])
+    .pipe(
+      Effect.mapError((cause) =>
+        persistenceUnavailable(`Customer Commerce Policy routine failed (${routineKey})`, cause),
+      ),
+    );
+  return yield* decodeRoutineResult(routineKey, rows, MarketBootstrapPolicyBatchCurrentResponseSchema);
+});
 
 const JsonValueSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
   Schema.Union([
@@ -450,12 +475,7 @@ export const customerCommercePolicyRepositoryForScope = (
       CommerceQuantityRuleStateSchema,
     ),
     loadCurrentMarketBootstrapPolicyCandidates: (eligibleSellingLegalEntityIds, at) =>
-      invokeJson(
-        transaction,
-        loadCurrentMarketBootstrapPolicyCandidatesRoutine,
-        [eligibleSellingLegalEntityIds, at],
-        MarketBootstrapPolicyBatchCurrentResponseSchema,
-      ),
+      loadCurrentMarketBootstrapPolicyCandidates(transaction, eligibleSellingLegalEntityIds, at),
     loadMarketBootstrapPolicyState: invokeJson(
       transaction,
       loadMarketBootstrapPolicyStateRoutine,
