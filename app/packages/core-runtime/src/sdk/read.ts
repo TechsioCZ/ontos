@@ -22,7 +22,6 @@ import type { GateCarrier } from '../access/enforcement/contract.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from '../reads/context.ts';
-import type { ReadDescriptor, ReadRegistration, ReadServiceFactory } from '../reads/definition.ts';
 import type { AnyReadOperationRef, DeclaredCall, ExecutionCapabilities, RequestExecution } from './index.ts';
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -40,7 +39,7 @@ export interface AccessQuestionTarget {
     readonly accessDeclaration?: GateCarrier['accessDeclaration'];
     readonly accessFieldGroups?: readonly Readonly<{ readonly key: string }>[];
     readonly accessWorkload?: GateCarrier['accessWorkload'];
-    readonly entrypoint: Readonly<{ readonly entrypointKey: string }>;
+    readonly entrypoint: Readonly<{ readonly entrypointKey: string; readonly moduleKey: string }>;
     readonly legalEntityScope: LegalEntityScope;
     readonly schemaVersion: string;
   }>;
@@ -191,48 +190,3 @@ export interface ReadLoadStepWithAnswers<
 /** A read's answer: its result and the evidence metadata its capture mode allows. */
 export const readAnswer = <Value>(result: Value, evidence: ReadEvidenceMetadata): ReadHandlerResult<Value> =>
   Object.freeze({ evidence, result });
-
-/**
- * The two signatures `defineRead` gains (implemented by the read adapter in `reads/definition.ts`; a
- * unit test there asserts `defineRead` satisfies this type). The existing signature stays as it is.
- */
-export interface DefineReadSdkForms {
-  /** The new form: `{ run }`, with the calls it may make declared on the descriptor. */
-  <
-    InputSchema extends Schema.ConstraintDecoder<unknown>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    const Owner extends string,
-    Services,
-    HandlerError,
-    Requirements,
-    const Calls extends ReadCalls = NoReadCalls,
-    const Questions extends AccessQuestions = NoAccessQuestions,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }> = typeof Schema.Never,
-  >(
-    descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema> &
-      ReadSdkDescriptorFields<Calls, Questions>,
-    ...definition: readonly [
-      run: ReadRunStep<InputSchema, ResultSchema, Services, Calls, Questions, HandlerError, Requirements>,
-      serviceFactory: ReadServiceFactory<Services, Requirements>,
-    ]
-  ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, HandlerError, Requirements, DomainErrorSchema>;
-  /** One transaction, exactly as today, with Core's answers to extra access questions in `context.access`. */
-  <
-    InputSchema extends Schema.ConstraintDecoder<unknown>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    const Owner extends string,
-    Services,
-    HandlerError,
-    Requirements,
-    const Questions extends AccessQuestions,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }> = typeof Schema.Never,
-  >(
-    descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema> & {
-      readonly accessQuestions: Questions;
-    },
-    ...definition: readonly [
-      load: ReadLoadStepWithAnswers<InputSchema, ResultSchema, Services, Questions, HandlerError, Requirements>,
-      serviceFactory: ReadServiceFactory<Services, Requirements>,
-    ]
-  ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, HandlerError, Requirements, DomainErrorSchema>;
-}

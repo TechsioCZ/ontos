@@ -1,11 +1,6 @@
 /**
  * Private contract of the read adapter of the execution kernel: everything read-only that the neutral
  * engine (`execution/contract.ts`) must not know. Not exported from the package.
- *
- * - access lane:   `reads/access-questions.ts` `materializeAccessQuestions: MaterializeAccessQuestions`,
- *                                              `answerAccessQuestions: AnswerAccessQuestions`
- * - read adapter:  `reads/run-form.ts`         `executeRunFormRead: ExecuteRunFormRead`
- * - runner lane:   `reads/run-evidence-live.ts` (tag and types in `reads/run-evidence.ts`)
  */
 import type { Effect, Schema } from 'effect';
 
@@ -46,12 +41,13 @@ export interface MaterializedAccessQuestion {
 
 /**
  * Definition time (`reads/access-questions.ts`), called by `defineRead`: turns `accessQuestions` into
- * concrete questions once. Refuses (throws `ReadDefinitionInvariantError`) a target without a protected
- * carrier, a `can_run` whose declaration has record selectors, a `can_see_fields` naming a group the
- * target does not declare, and more than 16 questions.
+ * concrete questions once. Refuses (throws `ReadDefinitionInvariantError`) an empty record, a target of
+ * another module than the asking read's `moduleKey`, a target without a protected carrier, a `can_run`
+ * whose declaration has record selectors, a `can_see_fields` naming a group the target does not
+ * declare, and more than 16 questions.
  */
 export type MaterializeAccessQuestions = (
-  read: Readonly<{ readonly accessKind: string; readonly carrier: GateCarrier }>,
+  read: Readonly<{ readonly accessKind: string; readonly carrier: GateCarrier; readonly moduleKey: string }>,
   questions: AccessQuestions,
 ) => readonly MaterializedAccessQuestion[];
 
@@ -60,9 +56,9 @@ export type MaterializeAccessQuestions = (
  * so no question can change the read's own answer). Asks every question not `sameAsOwnDecision` in one
  * `decideMany` where the gate has it, lists separately, with the same `now` and scope as the read's
  * decision. `transaction` is the transaction the read's own decision used (the governed `{ load }`
- * path passes the same `ownedTransaction` as `authorizeThroughGate`, so no second pooled connection is
- * opened while the governed transaction is held, O75); the `{ run }` path holds none and passes
- * `undefined`. Never fails: an unavailable gate or answer is `'unavailable'` /
+ * path, and a governed `{ run }` read inside its fenced admission transaction, pass the same
+ * `ownedTransaction` as `authorizeThroughGate`, so no second pooled connection is opened while the
+ * governed transaction is held, O75); only an ungoverned read passes `undefined`. Never fails: an unavailable gate or answer is `'unavailable'` /
  * `Result.fail('unavailable')` for that name. A list answer without a predicate is
  * `Result.succeed(Option.none())`. `NEEDS_APPROVAL` is `'needs_approval'` for `can_run`, `'denied'`
  * for a field group.
@@ -81,7 +77,7 @@ export type AnswerAccessQuestions = <Questions extends AccessQuestions>(input: {
 /* ------------------------------------------------------------------------------------------------ */
 
 /** Today's `withReadExecution` bound to one read: keeps the module operation execution lease open. */
-export type ExecutionLease = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+type ExecutionLease = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 
 /** What `reads/runtime.ts` has established when it hands a `{ run }` read to the run-form executor. */
 export interface RunFormReadInput {

@@ -990,13 +990,6 @@ type AuthoredReadDefinition<
 const ReadSpellingSchema = Schema.Literals(['bare', 'load', 'run']);
 type ReadSpelling = typeof ReadSpellingSchema.Type;
 
-/**
- * The property a `{ load }` or `{ run }` object holds its function in: an own, enumerable data property
- * holding a function. A getter, a hidden or inherited property, or anything else is refused.
- */
-const isStepProperty = (property: PropertyDescriptor | undefined): boolean =>
-  property !== undefined && property.enumerable === true && 'value' in property && Predicate.isFunction(property.value);
-
 /** What `readStepOf` read from the authored definition: how it was written and what it runs. */
 interface ReadAuthoredStep<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1009,15 +1002,12 @@ interface ReadAuthoredStep<
   readonly step: ReadRegistrationStep<InputSchema, ResultSchema, Services, Error, Requirements>;
 }
 
-const LOAD_FORM_REFUSAL = '{ load } must hold the read handler as its only own enumerable data property';
-const RUN_FORM_REFUSAL = '{ run } must hold the run function as its only own enumerable data property';
+const READ_FORMS = 'it is defined with its handler, { load: handler } or { run }';
 
 /**
- * What a read is defined with. A bare handler function passes through untouched. Anything else must be
- * a plain object whose only own key is an enumerable data property holding a function: `load` (the
- * same handler, one transaction) or `run` (the kernel form). Every other value, a `prepare`, `prepared`
- * or `finish` step above all, `{ run, load }` together, or `{ run }` with any other key, has no meaning
- * here and is refused.
+ * What a read is defined with: its handler, `{ load: handler }` (the same handler, one transaction) or
+ * `{ run }` (the kernel form). A `prepare`, `prepared` or `finish` step, both `load` and `run`, any other
+ * key, or a step that is no function is refused with the form the author meant.
  */
 const readStepOf = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1034,32 +1024,23 @@ const readStepOf = <
   if (Predicate.isFunction(definition)) {
     return { spelling: 'bare', step: { form: 'handler', handler: definition } };
   }
-  const plain =
-    Predicate.isObject(definition) &&
-    (Object.getPrototypeOf(definition) === Object.prototype || Object.getPrototypeOf(definition) === null);
-  const keys = plain ? Reflect.ownKeys(definition) : [];
+  const keys = Predicate.isObject(definition) ? Object.keys(definition) : [];
   const steps = keys.filter((key) => key === 'prepare' || key === 'prepared' || key === 'finish');
   if (steps.length > 0) {
+    return failReadDefinition(`Read ${readKey}: a read has no ${steps.join(', ')} step; ${READ_FORMS}`);
+  }
+  if (keys.includes('run') && keys.includes('load')) {
     return failReadDefinition(
-      `Read ${readKey}: a read has no ${steps.map(String).join(', ')} step; it is defined with its handler, { load: handler } or { run }`,
+      `Read ${readKey}: { run } and { load } are two forms of a read; it is defined with exactly one`,
     );
   }
-  if (keys.includes('run')) {
-    if (keys.includes('load')) {
-      return failReadDefinition(
-        `Read ${readKey}: { run } and { load } are two forms of a read; it is defined with exactly one`,
-      );
-    }
-    if (keys.length !== 1) {
-      return failReadDefinition(`Read ${readKey}: ${RUN_FORM_REFUSAL}`);
-    }
-    const property = Object.getOwnPropertyDescriptor(definition, 'run');
-    // One read of the property, and it has to give the function the descriptor showed.
-    if (!isStepProperty(property) || !Predicate.hasProperty(definition, 'run') || definition.run !== property?.value) {
-      return failReadDefinition(`Read ${readKey}: ${RUN_FORM_REFUSAL}`);
-    }
-    // SAFETY: proved the object's only own enumerable data property and a function; the authored union
-    // has exactly one member with a `run` key, and Core builds its context from the same descriptor.
+  const unknown = keys.filter((key) => key !== 'run' && key !== 'load');
+  if (unknown.length > 0) {
+    return failReadDefinition(`Read ${readKey}: unknown key ${unknown.join(', ')}; ${READ_FORMS}`);
+  }
+  if (Predicate.hasProperty(definition, 'run') && Predicate.isFunction(definition.run)) {
+    // SAFETY: the authored union has exactly one member with a `run` key, and Core builds its context
+    // from the same descriptor.
     const run = definition.run as unknown as ReadRun<
       InputSchema,
       ResultSchema,
@@ -1071,15 +1052,14 @@ const readStepOf = <
     >;
     return { spelling: 'run', step: { form: 'run', run } };
   }
-  const property = keys.length === 1 ? Object.getOwnPropertyDescriptor(definition, 'load') : undefined;
-  if (!isStepProperty(property) || !Predicate.hasProperty(definition, 'load') || definition.load !== property?.value) {
-    return failReadDefinition(`Read ${readKey}: ${LOAD_FORM_REFUSAL}`);
+  if (Predicate.hasProperty(definition, 'load') && Predicate.isFunction(definition.load)) {
+    // SAFETY: a handler written for access answers receives `context.access` exactly when its descriptor
+    // asks questions, which `defineRead` requires of it, so it runs as the one-transaction handler with
+    // that optional field set.
+    const handler = definition.load as ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+    return { spelling: 'load', step: { form: 'handler', handler } };
   }
-  // SAFETY: proved the object's only own enumerable data property and a function. A handler written for
-  // access answers receives `context.access` exactly when its descriptor asks questions, which
-  // `defineRead` requires of it, so it runs as the one-transaction handler with that optional field set.
-  const handler = definition.load as ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
-  return { spelling: 'load', step: { form: 'handler', handler } };
+  return failReadDefinition(`Read ${readKey}: the read handler or run step must be a function; ${READ_FORMS}`);
 };
 
 /** The declared calls of a read as data: each names its operation, with its kind, route and schemas. */
@@ -1169,7 +1149,10 @@ const readSdkPartsOf = (
       accessQuestions === undefined
         ? NO_MATERIALIZED_QUESTIONS
         : Object.freeze([
-            ...materializeAccessQuestions({ accessKind: descriptor.accessKind, carrier }, accessQuestions),
+            ...materializeAccessQuestions(
+              { accessKind: descriptor.accessKind, carrier, moduleKey: descriptor.entrypoint.moduleKey },
+              accessQuestions,
+            ),
           ]),
     calls: calls === undefined ? NO_READ_CALLS : readCallsOf(readKey, calls),
   });
@@ -1193,8 +1176,7 @@ type AuthoredReadPermissionTargetResolver<Input> =
  * One signature whose second argument is the union of the three spellings, so an inline handler or
  * `run` is contextually typed by the member its key selects. The descriptor rules the types cannot
  * state (calls only with `{ run }`, questions not on a bare handler, no write call) are refused here at
- * definition. `defineRead` satisfies `DefineReadSdkForms` (asserted by
- * `tests/unit/read-definition-sdk-forms.test.ts`).
+ * definition.
  */
 export const defineRead = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,

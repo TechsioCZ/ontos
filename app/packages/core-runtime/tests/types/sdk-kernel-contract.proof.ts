@@ -1,6 +1,6 @@
 /**
  * Type-level proof of the SDK kernel contract. Compiled by the package typecheck, never executed and
- * never registered: `defineRead` is declared with the two signatures the read adapter adds.
+ * never registered: every read below is written against the real `defineRead`.
  *
  * Core-runtime cannot import vertical packages (a composite project, and they depend on it), so the
  * provider and owner schemas below mirror the real contracts where the logic reads them. Sources:
@@ -23,11 +23,11 @@ import type { ListAccessPredicate } from '../../src/access/decision/list-access.
 import { TenantIdSchema } from '../../src/auth/external-identity-contracts.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
+import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadServiceFactory } from '../../src/reads/definition.ts';
 import { ReadHandlerNotFound } from '../../src/reads/read-handler-not-found.ts';
 import { ReadHandlerUnavailable } from '../../src/reads/read-handler-unavailable.ts';
 import { ReadPermissionDenied } from '../../src/reads/read-permission-denied.ts';
-import { coreOperations } from '../../src/sdk/core-operations.ts';
 import {
   IdempotencyKeySchema,
   callAnswer,
@@ -48,14 +48,7 @@ import type {
   WriteCallOutcome,
 } from '../../src/sdk/index.ts';
 import { canList, canRun, canSeeFields, readAnswer } from '../../src/sdk/read.ts';
-import type {
-  AccessQuestionTarget,
-  DefineReadSdkForms,
-  NoAccessQuestions,
-  ReadRunContext,
-} from '../../src/sdk/read.ts';
-
-declare const defineRead: DefineReadSdkForms;
+import type { AccessQuestionTarget, NoAccessQuestions, ReadRunContext } from '../../src/sdk/read.ts';
 
 const READ = 'read';
 const RUN = 'run';
@@ -764,10 +757,6 @@ const reserveRetirementOperation = moduleOperation({
   response: ReservationSchema,
 });
 const retirementCalls = {
-  commitState: declaredCall(
-    coreOperations.actionCommitState,
-    'commerce.market-catalog.requirement.retire-commit-state',
-  ),
   recover: declaredCall(recoverReservationOperation, 'commerce.market-catalog.requirement.retirement-recover'),
   reserve: declaredWriteCall(
     reserveRetirementOperation,
