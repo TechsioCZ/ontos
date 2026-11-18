@@ -16,6 +16,7 @@ import { Widget } from './src/components/widget.tsx';
 // </generated-module-manifest-imports>
 
 import { privacyRuntimeManifest } from './vertical.runtime-declaration.ts';
+import { privacyRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   ...privacyRuntimeManifest,
@@ -59,4 +60,5 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-search>
     ],
   },
+  registeredWorkloadCalls: privacyRegisteredWorkloadCalls,
 });
