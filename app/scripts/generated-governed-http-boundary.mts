@@ -1750,8 +1750,9 @@ const hasConstructorOwnerPair = (
     deployment?.modulePath !== '../shared/ultramodern-build.ts' ||
     deployment.imported !== 'ultramodernDeliveryUnit' ||
     !(
+      // A backend-only registration comes only from the owner's runtime declaration, never its registration module.
       (registration?.modulePath === '../vertical.registration.ts' &&
-        /^[a-z][A-Za-z0-9]*Registration$/u.test(registration.imported)) ||
+        /^[a-z][A-Za-z0-9]*(?<!Backend)Registration$/u.test(registration.imported)) ||
       (backendRegistration !== undefined &&
         registration?.modulePath === '../vertical.runtime-declaration.ts' &&
         registration.imported === backendRegistration)
@@ -1984,9 +1985,13 @@ export const hasValidGovernedHttpCompositionRoot = (
       GOVERNED_HANDLER_LAYER_SLOT_END,
       expectedApi,
     );
+  // A root proved with its owner context may bind that exact owner's backend-only registration, as the
+  // approval publication and phased-read proofs already accept (e.g. Privacy's UI-free worker host binding).
+  const backendRegistration =
+    context === undefined ? undefined : `${toCamelCase(path.posix.basename(context.ownerPath))}BackendRegistration`;
   return (
     sharedRoot !== undefined &&
-    hasGovernedHandlerRoot(handlerRoot, undefined, context) &&
+    hasGovernedHandlerRoot(handlerRoot, backendRegistration, context) &&
     sharedImports?.depth === 0 &&
     handlerImports?.depth === 0 &&
     hasGovernedSupportSlots(handlerRoot) &&
