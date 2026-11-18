@@ -159,6 +159,107 @@ it('keeps every scoped storefront file out of everything a scoped plan skips', (
   expect(inScope(STOREFRONTS, 'app/akros-storefront/src/catalog-import/generated/catalog.generated.json')).toBe(false);
 });
 
+const TsconfigSchema = Schema.Struct({
+  files: Schema.optional(Schema.Array(Schema.String)),
+  include: Schema.optional(Schema.Array(Schema.String)),
+  references: Schema.optional(Schema.Array(Schema.Struct({ path: Schema.String }))),
+});
+/**
+ * The app-relative trees and files a TS-Go program compiles, with the projects it references: each include or file
+ * up to its first wildcard, or the project's whole directory when it names neither. `''` is the whole app.
+ */
+const programInputs = (project: string, seen = new Set<string>()): readonly string[] => {
+  const file = project.endsWith('.json') ? project : path.posix.join(project, 'tsconfig.json');
+  if (seen.has(file)) {
+    return [];
+  }
+  seen.add(file);
+  const config = Schema.decodeUnknownSync(Schema.fromJsonString(TsconfigSchema))(
+    readFileSync(path.join(repository, 'app', file), 'utf-8'),
+  );
+  const directory = path.posix.dirname(file);
+  const entries = [...(config.include ?? []), ...(config.files ?? [])].map((entry) => {
+    const resolved = path.posix.normalize(path.posix.join(directory, entry));
+    const wildcard = resolved.search(/[*?{]/u);
+    return wildcard === -1 ? resolved : resolved.slice(0, resolved.lastIndexOf('/', wildcard) + 1);
+  });
+  const own =
+    config.include === undefined && config.files === undefined ? [directory === '.' ? '' : `${directory}/`] : entries;
+  return [
+    ...own,
+    ...(config.references ?? []).flatMap((reference) =>
+      programInputs(path.posix.join(directory, reference.path), seen),
+    ),
+  ];
+};
+const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+const { scripts } = Schema.decodeUnknownSync(Schema.fromJsonString(RootScriptsSchema))(
+  readFileSync(path.join(repository, 'app/package.json'), 'utf-8'),
+);
+
+/**
+ * What each command of a source row that some scope skips reads: app-relative trees (ending in `/`) and files, `''`
+ * for the whole app. The TS-Go programs are read from their tsconfig files; the scripts' inputs are the trees they
+ * walk (scripts/check-ontos-api-boundaries.mts, check-handler-service-provision.mts, generate-shell-ui-candidates.mts,
+ * check-module-entrypoint-boundaries.mts, authorization-catalog-report.mts and authorization-catalog-artifact.mts, and
+ * the files the generation tests copy). What a command imports is found by the name checks above. A command that
+ * walks the whole app, as the repository policy does, can therefore never be skipped by a scope, and a new command in
+ * a skipped row fails here until its inputs are declared.
+ */
+const PACKAGES = 'packages/';
+const VERTICALS = 'verticals/';
+const WORKSPACE = ['apps/', PACKAGES, VERTICALS, 'topology/'];
+const skippedCommandInputs = new Map<string, readonly string[]>([
+  ['pnpm --filter ./packages/shared-contracts test:types', ['packages/shared-contracts/']],
+  // Each storefront's tsconfig.typecheck.json also references workspace packages and verticals.
+  [
+    'pnpm --filter akros-storefront --filter n1-storefront run typecheck',
+    [...programInputs('akros-storefront'), ...programInputs('n1-storefront'), PACKAGES, VERTICALS],
+  ],
+  ['pnpm api:check:ontos', [...WORKSPACE, 'package.json']],
+  ['pnpm handler-services:check', WORKSPACE],
+  [
+    'pnpm lint:effect-diagnostics',
+    [...(scripts['lint:effect-diagnostics'] ?? '').matchAll(/--project (?<project>\S+)/gu)].flatMap(({ groups }) =>
+      programInputs(groups?.project ?? '.'),
+    ),
+  ],
+  ['pnpm module-entrypoints:check', [...WORKSPACE, 'scripts/zerops/module-credential-callers.generated.mts']],
+  ['pnpm shell:ui-candidates:check', ['apps/shell-super-app/', VERTICALS]],
+  ['pnpm test:generation', ['scripts/scaffolding/', ...WORKSPACE]],
+  ['pnpm typecheck', programInputs('tsconfig.json')],
+]);
+/** Whether a repository path lies in an app-relative input. */
+const readBy = (file: string, input: string) =>
+  input === '' || file === `app/${input}` || file.startsWith(input.endsWith('/') ? `app/${input}` : `app/${input}/`);
+
+it('skips no source command that reads a scoped file, whether it names the file or walks its tree', () => {
+  const skipped = (entry: CiScope) =>
+    templates.source
+      .filter(({ name }) => !entry.source.includes(name))
+      .flatMap(({ commands }) => commands.split('\n').filter(Boolean));
+  const scopes = templates.scopes ?? [];
+  // Every skipped command is declared, and every declared one is still skipped somewhere.
+  expect([...skippedCommandInputs.keys()].toSorted()).toEqual([...new Set(scopes.flatMap(skipped))].toSorted());
+  // The derived TS-Go inputs are the packages' own trees, so a program that compiles a scoped file is caught.
+  expect(skippedCommandInputs.get('pnpm typecheck')?.length).toBeGreaterThan(40);
+  expect(skippedCommandInputs.get('pnpm lint:effect-diagnostics')).toContain('scripts/scaffolding/');
+  const reads = scopes.flatMap((entry) => {
+    const scoped = tracked.filter((file) => inScope(entry, file));
+    return skipped(entry).flatMap((command) =>
+      (skippedCommandInputs.get(command) ?? ['']).flatMap((input) =>
+        scoped
+          .filter((file) => readBy(file, input))
+          .map((file) => `${entry.name} skips ${command}, which reads ${file}`),
+      ),
+    );
+  });
+  expect(reads).toEqual([]);
+  // The whole-tree walker of the policy is declared as such, so no scope may skip a row that runs it.
+  expect(readBy('app/n1-storefront/src/app/page.tsx', '')).toBe(true);
+  expect(scopes.flatMap(skipped)).not.toContain('pnpm lint:repository-policy');
+});
+
 /** A push run as the run list returns it; a run without a conclusion is still running. */
 const run = (sha: string, conclusion: string | null) => ({
   conclusion,
