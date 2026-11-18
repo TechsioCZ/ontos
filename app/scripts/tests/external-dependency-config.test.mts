@@ -110,7 +110,6 @@ it.effect('discovers external pins without removing release-age or major-update 
     const extracted = yield* Effect.all(
       [
         ['app/scripts/run-zerops-spicedb.sh', 'docker', 'authzed/spicedb'],
-        ['.github/actions/zerops-vpn/action.yml', 'npm', '@zerops/zcli'],
         ['app/scripts/locki-feature.sh', 'pypi', 'locki'],
         ['app/zerops.yaml', 'github-releases', 'cloudflare/cloudflared'],
       ].map(([file = '', datasource = '', dependency = '']) =>

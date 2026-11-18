@@ -226,7 +226,6 @@ it('plans affected selection by default and keeps the forced backstop on the com
   expect(plan.reason).toBe(AFFECTED_REASON);
   expect(plan.integration).not.toEqual(templates.integration);
   expect(EffectArray.sort(Object.keys(plan.expected), Order.String)).toEqual(REQUIRED_GATES);
-  expect(plan.expected).not.toHaveProperty('cloudflare-artifact-build');
   // The nightly cron and workflow_dispatch pass --full; that run is the backstop for a missed impact edge.
   const forced = planCiChecks({ changedPaths: [CATALOG_SOURCE], forceFull: true, packages, templates });
   expect(forced.mode).toBe('full');
@@ -575,7 +574,6 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       ]) {
         expect(documentationPlan).toContain(`${helper}=[]\n`);
       }
-      expect(documentationPlan).not.toContain('cloudflare-artifact-build');
       expect(documentationPlan).toContain('lintSweep=changed\n');
       expect(run('push')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
