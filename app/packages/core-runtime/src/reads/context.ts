@@ -2,6 +2,7 @@ import { Effect, Predicate, Schema } from 'effect';
 
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { AccessAnswers, AccessQuestions } from '../sdk/read.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
 
@@ -21,6 +22,12 @@ export interface ReadEvidenceMetadata {
 }
 
 export interface ReadHandlerContext<Services> {
+  /**
+   * Core's answers to the descriptor's `accessQuestions`, by the names it gave them. Present exactly
+   * when the read is written `{ load }` and declares questions: Core asks them after the read's own
+   * decision allowed it, with the same time, scope and transaction, and never lets them change it.
+   */
+  readonly access?: AccessAnswers<AccessQuestions>;
   /**
    * The declared result paths this caller's field grants deny (O17, O25). It is present exactly when
    * the access gate decided this read, and it is empty when every declared field group is granted,

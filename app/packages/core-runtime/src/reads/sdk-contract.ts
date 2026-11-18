@@ -9,11 +9,10 @@
  */
 import type { Effect, Schema } from 'effect';
 
-import type { AccessDecision } from '../access/decision/contract.ts';
+import type { AccessDecision, ParentReadRequirement } from '../access/decision/contract.ts';
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
 import type { GateCarrier } from '../access/enforcement/contract.ts';
 import type { OwnerAuthorizationInput, OwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
-import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import type { ActionPolicyTarget } from '../actions/policy.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type { KernelSessions } from '../execution/kernel-sessions.ts';
@@ -36,8 +35,11 @@ export interface MaterializedAccessQuestion {
   readonly kind: 'decide' | 'field' | 'list';
   readonly legalEntityScope: LegalEntityScope;
   readonly name: string;
-  /** For a field question: the parent capability, decided scope-wide. */
-  readonly parentCapabilityKey?: string;
+  /**
+   * For a field question, or a field capability run as an operation: the parent read it rides, its
+   * capability decided scope-wide (D14, O74).
+   */
+  readonly parentRead?: ParentReadRequirement;
   /** Equal to the read's own carrier: answered from the read's own decision, never asked twice. */
   readonly sameAsOwnDecision: boolean;
 }
@@ -94,7 +96,6 @@ export interface RunFormReadInput {
   /** The owner rule's question, completed with each transaction's `operationAt`. */
   readonly ownerQuestion: Omit<OwnerAuthorizationInput, 'operationAt'>;
   readonly permissionTargetMetadata: ActionPolicyTarget;
-  readonly principal: TrustedPrincipalContext;
   readonly queryHash: string | undefined;
   readonly scope: OperationalScope;
   /** True when the access gate decided this read: `deniedFieldPaths` is then handed to `run`. */
@@ -109,15 +110,18 @@ export interface RunFormReadInput {
  * 1. Builds the `OwnerBinding`: `build` = the read's service factory closed over `listAccess`;
  *    `decide` = `OwnerAuthorizationOverlay.authorize(sealed, { ...ownerQuestion, operationAt })`;
  *    `seal` = `bindScopedWorkloadAdmission(tx, { carrier, scope }, decision)`. `callerSource` is
- *    `RequestPrincipalCallerSourceSchema.make({ principal })`. The read runtime provides the
+ *    `{ _tag: 'RequestPrincipal', principal: scope }`: the very scope object the lease was opened
+ *    with (`input.lease`), which the lease and the gateway delegation recognise by identity; a
+ *    schema-made copy or the pre-scope principal is refused. The read runtime provides the
  *    `OwnerAuthorizationOverlay` it uses today (`failClosedOwnerAuthorizationOverlay` where it has none).
  * 2. Opens a kernel session with `READ_EXECUTION_BUDGET` and `transactionMode: 'read_only'`, inside
  *    `input.lease` so requirement lookups resolve. `open` decides the owner rule first; its failure
  *    goes to step 5 and no module code runs.
  * 3. Runs `run(decodedInput, context)` with `context = { ...capabilities, access, deniedFieldPaths
  *    (when `usesAccessGate`), listAccess, readKey, scope }`.
- * 4. Success, and `session.ownerDenied` is false: decode the result with `Schema.toType(resultSchema)`;
- *    the legacy result permission check when declared; `validateReadEvidenceMetadata`; then
+ * 4. Success, and `session.ownerDenied` is false: decode the result with `Schema.toType(resultSchema)`
+ *    (a `{ run }` read declares no legacy result permission resolver: `defineRead` refuses it);
+ *    `validateReadEvidenceMetadata`; then
  *    `ReadRunEvidence.settle` with the read's `allowed` row plus `callEvidenceRows`; then
  *    `projectReadResultFields` with `deniedFieldPaths`. The caller receives the projection only after
  *    the evidence committed; the result is released as computed (see `TransactionFacts.operationAt`).
