@@ -270,6 +270,14 @@ export interface RunActionInput<
 > {
   /** Trusted receiving deployment audience for per-operation admission. */
   readonly audience?: string;
+  /**
+   * Runs once, just before the request answers, when the answer is the saved reply of an invocation
+   * that already committed (its result, or its committed domain rejection) instead of a commit made
+   * by this request. A caller that performs an effect only the committing request may perform (a
+   * provider call after a checkpoint Action) uses it to know that this request did not commit. It is
+   * never told to a client: what a transport answers stays its declared contract.
+   */
+  readonly onReplay?: ((replay: ActionReplay) => Effect.Effect<void>) | undefined;
   readonly payload: unknown;
   readonly principal: unknown;
   readonly registration: ActionRegistration<
@@ -289,6 +297,11 @@ export interface RunActionInput<
    */
   readonly successContract?: SuccessContract | undefined;
   readonly transport: unknown;
+}
+
+/** The committed invocation whose saved reply answered a same-key request. */
+export interface ActionReplay {
+  readonly invocationId: string;
 }
 
 export interface ResolveActionCommitInput {
@@ -3218,118 +3231,148 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return result;
       },
     );
-    if (postAttemptHook === undefined) {
-      return yield* answerSavedReply(yield* Effect.exit(executeAttempt()));
-    }
-    return yield* Effect.uninterruptibleMask(
-      Effect.fn('ActionRuntime.settleActionAttempt')(function* settleActionAttempt(
-        restore: <Value, Failure, Requirements>(
-          effect: Effect.Effect<Value, Failure, Requirements>,
-        ) => Effect.Effect<Value, Failure, Requirements>,
-      ) {
-        const executionExit = yield* Effect.exit(restore(executeAttempt()));
-        const { original } = attempt;
-        // A parked proposal ran no owner command, so there is no attempt for the owner to settle (O85).
-        if (
-          original === undefined ||
-          (Exit.isSuccess(executionExit) && Schema.is(ActionProposalAcceptedSchema)(executionExit.value))
+    const settleWithOwner = (hook: NonNullable<typeof postAttemptHook>) =>
+      Effect.uninterruptibleMask(
+        Effect.fn('ActionRuntime.settleActionAttempt')(function* settleActionAttempt(
+          restore: <Value, Failure, Requirements>(
+            effect: Effect.Effect<Value, Failure, Requirements>,
+          ) => Effect.Effect<Value, Failure, Requirements>,
         ) {
-          return yield* answerSavedReply(executionExit);
-        }
-        const outcome = yield* classifyAttemptOutcome(executionExit);
-        const mode = Match.value(outcome).pipe(
-          Match.tags({
-            AlreadyCommitted: () => ({ interrupted: false, phase: 'recovery' as const, recoverable: true }),
-            Committed: () => ({ interrupted: false, phase: 'settlement' as const, recoverable: false }),
-            CommittedRejection: () => ({ interrupted: false, phase: 'settlement' as const, recoverable: false }),
-            DefinitelyUncommitted: () => ({ interrupted: false, phase: 'settlement' as const, recoverable: false }),
-            Indeterminate: () => ({ interrupted: false, phase: 'recovery' as const, recoverable: true }),
-            Interrupted: () => ({ interrupted: true, phase: 'settlement' as const, recoverable: false }),
-          }),
-          Match.exhaustive,
-        );
-        const settleAttempt = Effect.gen(function* settleAttemptWithOwner() {
-          let { revision } = attempt;
-          if (revision === undefined) {
-            if (options.applicationComposition !== undefined && options.expectedDeployment !== undefined) {
-              const admission = yield* loadModuleOperationAdmission(
-                options.applicationComposition,
-                options.expectedDeployment,
-                input.registration,
-                original.principal,
-              ).pipe(Effect.mapError(unavailableActionComposition));
-              if (admission.catalog !== undefined) {
-                yield* validateBoundOperationOwner(
-                  input.registration,
-                  admission.catalog,
-                  options.ownerRegistration,
-                ).pipe(Effect.mapError(unavailableActionComposition));
-              }
-              ({ revision } = admission);
-            } else {
-              revision = yield* resolveCompositionRevision(original.principal);
-            }
+          const executionExit = yield* Effect.exit(restore(executeAttempt()));
+          const { original } = attempt;
+          // A parked proposal ran no owner command, so there is no attempt for the owner to settle (O85).
+          if (
+            original === undefined ||
+            (Exit.isSuccess(executionExit) && Schema.is(ActionProposalAcceptedSchema)(executionExit.value))
+          ) {
+            return yield* answerSavedReply(executionExit);
           }
-          const settleAndConfirm = Effect.gen(function* settleAndConfirmUnderSourceFence() {
-            const settlementExit = yield* Effect.exit(
-              withModuleOperationExecution(
-                {
-                  loadCatalog: operationCatalogLoader(operationAuthority, revision),
-                  ownerRegistration: options.ownerRegistration,
-                  phase: mode.phase,
-                  registration: input.registration,
-                  revision,
-                  scope: original.scope,
-                },
-                Effect.suspend(() =>
-                  postAttemptHook(
-                    Object.freeze({
-                      actionInvocationId: original.invocationId,
-                      compositionRevision: revision,
-                      outcome,
-                      payload: original.payload,
-                      scope: original.scope,
-                    }),
+          const outcome = yield* classifyAttemptOutcome(executionExit);
+          const mode = Match.value(outcome).pipe(
+            Match.tags({
+              AlreadyCommitted: () => ({ interrupted: false, phase: 'recovery' as const, recoverable: true }),
+              Committed: () => ({ interrupted: false, phase: 'settlement' as const, recoverable: false }),
+              CommittedRejection: () => ({ interrupted: false, phase: 'settlement' as const, recoverable: false }),
+              DefinitelyUncommitted: () => ({ interrupted: false, phase: 'settlement' as const, recoverable: false }),
+              Indeterminate: () => ({ interrupted: false, phase: 'recovery' as const, recoverable: true }),
+              Interrupted: () => ({ interrupted: true, phase: 'settlement' as const, recoverable: false }),
+            }),
+            Match.exhaustive,
+          );
+          const settleAttempt = Effect.gen(function* settleAttemptWithOwner() {
+            let { revision } = attempt;
+            if (revision === undefined) {
+              if (options.applicationComposition !== undefined && options.expectedDeployment !== undefined) {
+                const admission = yield* loadModuleOperationAdmission(
+                  options.applicationComposition,
+                  options.expectedDeployment,
+                  input.registration,
+                  original.principal,
+                ).pipe(Effect.mapError(unavailableActionComposition));
+                if (admission.catalog !== undefined) {
+                  yield* validateBoundOperationOwner(
+                    input.registration,
+                    admission.catalog,
+                    options.ownerRegistration,
+                  ).pipe(Effect.mapError(unavailableActionComposition));
+                }
+                ({ revision } = admission);
+              } else {
+                revision = yield* resolveCompositionRevision(original.principal);
+              }
+            }
+            const settleAndConfirm = Effect.gen(function* settleAndConfirmUnderSourceFence() {
+              const settlementExit = yield* Effect.exit(
+                withModuleOperationExecution(
+                  {
+                    loadCatalog: operationCatalogLoader(operationAuthority, revision),
+                    ownerRegistration: options.ownerRegistration,
+                    phase: mode.phase,
+                    registration: input.registration,
+                    revision,
+                    scope: original.scope,
+                  },
+                  Effect.suspend(() =>
+                    hook(
+                      Object.freeze({
+                        actionInvocationId: original.invocationId,
+                        compositionRevision: revision,
+                        outcome,
+                        payload: original.payload,
+                        scope: original.scope,
+                      }),
+                    ),
                   ),
                 ),
-              ),
-            );
-            if (mode.interrupted) {
-              return yield* executionExit;
-            }
-            if (Exit.isFailure(settlementExit)) {
-              return yield* failSettlement(settlementExit.cause);
-            }
-            const settlement = yield* decodeActionPostAttemptResult(
-              input.registration.descriptor.resultSchema,
-              settlementExit.value,
-            ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
-            return yield* Match.value(settlement).pipe(
-              Match.tags({
-                Recovered: ({ result }) =>
-                  attempt.replayAllowed === true
-                    ? answerSavedReply(executionExit)
-                    : confirmOriginalRecovery(result, original, mode.recoverable),
-                Settled: () => answerSavedReply(executionExit),
-              }),
-              Match.exhaustive,
-            );
+              );
+              if (mode.interrupted) {
+                return yield* executionExit;
+              }
+              if (Exit.isFailure(settlementExit)) {
+                return yield* failSettlement(settlementExit.cause);
+              }
+              const settlement = yield* decodeActionPostAttemptResult(
+                input.registration.descriptor.resultSchema,
+                settlementExit.value,
+              ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
+              return yield* Match.value(settlement).pipe(
+                Match.tags({
+                  Recovered: ({ result }) =>
+                    attempt.replayAllowed === true
+                      ? answerSavedReply(executionExit)
+                      : confirmOriginalRecovery(result, original, mode.recoverable),
+                  Settled: () => answerSavedReply(executionExit),
+                }),
+                Match.exhaustive,
+              );
+            });
+            return yield* mode.interrupted
+              ? settleAndConfirm
+              : withRegisteredSourceExecutionFence(original.scope, settleAndConfirm);
           });
-          return yield* mode.interrupted
-            ? settleAndConfirm
-            : withRegisteredSourceExecutionFence(original.scope, settleAndConfirm);
-        });
-        const settled = yield* Effect.exit(settleAttempt);
-        // A request that met its committed invocation keeps its own answer when the replay was refused
-        // or the saved reply could not be read: the hook still sees its AlreadyCommitted attempt once,
-        // but neither a recovered value nor a hook failure replaces the refusal or the retryable failure.
-        // Only a plain ActionAlreadyCommitted without a saved reply leaves the answer to the owner's recovery.
-        const keepsOwnAnswer =
-          attempt.replayAllowed === false ||
-          (attempt.commitObserved && attempt.replayAllowed === undefined && !failsWithAlreadyCommitted(executionExit));
-        return yield* keepsOwnAnswer && !mode.interrupted ? executionExit : settled;
-      }),
-    );
+          const settled = yield* Effect.exit(settleAttempt);
+          // A request that met its committed invocation keeps its own answer when the replay was refused
+          // or the saved reply could not be read: the hook still sees its AlreadyCommitted attempt once,
+          // but neither a recovered value nor a hook failure replaces the refusal or the retryable failure.
+          // Only a plain ActionAlreadyCommitted without a saved reply leaves the answer to the owner's recovery.
+          const keepsOwnAnswer =
+            attempt.replayAllowed === false ||
+            (attempt.commitObserved &&
+              attempt.replayAllowed === undefined &&
+              !failsWithAlreadyCommitted(executionExit));
+          return yield* keepsOwnAnswer && !mode.interrupted ? executionExit : settled;
+        }),
+      );
+    /**
+     * Whether the request's final answer is its saved reply. Only `answerSavedReply` turns an allowed
+     * replay into a success, so a success after an allowed replay is the saved result, and a failure
+     * is the saved rejection only when it is that very decoded value.
+     */
+    const answersSavedReply = <Success, Failure>(exit: Exit.Exit<Success, Failure>) => {
+      const saved = attempt.savedReply;
+      if (saved === undefined || attempt.replayAllowed !== true) {
+        return false;
+      }
+      return Result.match(saved.reply, {
+        onFailure: (rejection) =>
+          Exit.isFailure(exit) &&
+          exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && reason.error === rejection),
+        onSuccess: () => Exit.isSuccess(exit),
+      });
+    };
+    /** Answers the request, telling its caller first when the answer is the saved reply (`onReplay`). */
+    const answer = Effect.fn('ActionRuntime.answer')(function* answerRequest<Success, Failure>(
+      exit: Exit.Exit<Success, Failure>,
+    ) {
+      if (input.onReplay !== undefined && attempt.savedReply !== undefined && answersSavedReply(exit)) {
+        yield* input.onReplay(Object.freeze({ invocationId: attempt.savedReply.invocationId }));
+      }
+      return yield* exit;
+    });
+    if (postAttemptHook === undefined) {
+      return yield* Effect.exit(executeAttempt()).pipe(Effect.map(answerSavedReply), Effect.flatMap(answer));
+    }
+    return yield* answer(yield* Effect.exit(settleWithOwner(postAttemptHook)));
   });
 
   /**
