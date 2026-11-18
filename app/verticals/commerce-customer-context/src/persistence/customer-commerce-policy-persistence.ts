@@ -38,20 +38,27 @@ const MODULE_KEY = 'commerce.customer-context';
 const ROUTINE_SCHEMA = 'commerce_customer_context';
 const generation = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const RoutineResultSchema = Schema.Struct({ result: Schema.Json });
-const loadParameters = [
-  { source: 'tenantId', type: 'uuid' },
-  { source: 'legalEntityId', type: 'uuid' },
-] as const;
-const persistParameters = [
-  ...loadParameters,
-  { source: 'input', type: 'bigint' },
-  { source: 'input', type: 'jsonb' },
-] as const;
-const batchBootstrapParameters = [
-  { source: 'tenantId', type: 'uuid' },
-  { source: 'input', type: 'uuid[]' },
-  { source: 'input', type: 'timestamptz' },
-] as const;
+const loadParameters = Object.freeze([
+  Object.freeze({ source: 'tenantId', type: 'uuid' }),
+  Object.freeze({ source: 'legalEntityId', type: 'uuid' }),
+] as const);
+const persistParameters = Object.freeze([
+  Object.freeze({ source: 'tenantId', type: 'uuid' }),
+  Object.freeze({ source: 'legalEntityId', type: 'uuid' }),
+  Object.freeze({ source: 'input', type: 'bigint' }),
+  Object.freeze({ source: 'input', type: 'jsonb' }),
+] as const);
+const batchBootstrapParameters = Object.freeze([
+  Object.freeze({ source: 'tenantId', type: 'uuid' }),
+  Object.freeze({ source: 'input', type: 'uuid[]' }),
+  Object.freeze({ source: 'input', type: 'timestamptz' }),
+] as const);
+const inspectProfileParameters = Object.freeze([
+  Object.freeze({ source: 'tenantId', type: 'uuid' }),
+  Object.freeze({ source: 'legalEntityId', type: 'uuid' }),
+  Object.freeze({ source: 'input', type: 'text' }),
+  Object.freeze({ source: 'input', type: 'text' }),
+] as const);
 
 /* oxlint-disable effect-native/no-unbranded-identifier-schema -- Persistence decoders mirror domain-owned identifiers that were validated before storage. */
 const commandReceipt = Schema.Struct({ fingerprint: Schema.String, idempotencyKey: Schema.String });
@@ -195,7 +202,7 @@ const loadCommerceQuantityRuleAssignmentsRoutine = defineScopedRoutine({
 const inspectCommerceQuantityAssignmentProfileRoutine = defineScopedRoutine({
   name: 'inspect_commerce_quantity_assignment_profile',
   ownerModuleKey: MODULE_KEY,
-  parameters: [...loadParameters, { source: 'input', type: 'text' }, { source: 'input', type: 'text' }],
+  parameters: inspectProfileParameters,
   resultSchema: RoutineResultSchema,
   routineKey: 'customer-commerce-policy.inspect-commerce-quantity-assignment-profile',
   schema: ROUTINE_SCHEMA,
@@ -207,13 +214,23 @@ const QuantityAssignmentProfileInspectionSchema = Schema.Union([
     reason: Schema.Literals(['PROFILE_BUSY', 'RECONCILIATION_REQUIRED', 'COMPLETED_ALIAS', 'OWNER_RESPONSE_INVALID']),
   }),
 ]);
-const quantityAssignmentProfileUnavailableReason = {
-  COMPLETED_ALIAS:
-    'Commerce Quantity assignment profile is a completed alias and cannot be verified as the referenced identity',
-  OWNER_RESPONSE_INVALID: 'Commerce Quantity assignment profile owner response cannot be verified',
-  PROFILE_BUSY: 'Commerce Quantity assignment profile is busy; retry its owner verification',
-  RECONCILIATION_REQUIRED: 'Commerce Quantity assignment profile requires owner reconciliation',
-} as const;
+const quantityAssignmentProfileUnavailableReason = (
+  reason: 'COMPLETED_ALIAS' | 'OWNER_RESPONSE_INVALID' | 'PROFILE_BUSY' | 'RECONCILIATION_REQUIRED',
+) =>
+  Match.value(reason).pipe(
+    Match.when(
+      'COMPLETED_ALIAS',
+      () =>
+        'Commerce Quantity assignment profile is a completed alias and cannot be verified as the referenced identity',
+    ),
+    Match.when(
+      'OWNER_RESPONSE_INVALID',
+      () => 'Commerce Quantity assignment profile owner response cannot be verified',
+    ),
+    Match.when('PROFILE_BUSY', () => 'Commerce Quantity assignment profile is busy; retry its owner verification'),
+    Match.when('RECONCILIATION_REQUIRED', () => 'Commerce Quantity assignment profile requires owner reconciliation'),
+    Match.exhaustive,
+  );
 const brokenQuantityAssignmentProfile = (kindMismatch: boolean) =>
   new CustomerCommercePolicyAdministrationRejected({
     code: 'BROKEN_ASSIGNMENT',
@@ -265,7 +282,7 @@ const nativeQuantityAssignmentProfileFailure = (failure: ScopedRoutineInvocation
     ['OWNER_RESPONSE_INVALID', 'ccc_quantity_assignment_profile_response'],
   ] as const) {
     if (constraint === name) {
-      return persistenceUnavailable(quantityAssignmentProfileUnavailableReason[reason], failure);
+      return persistenceUnavailable(quantityAssignmentProfileUnavailableReason(reason), failure);
     }
   }
   return null;
@@ -476,7 +493,7 @@ export const customerCommercePolicyRepositoryForScope = (
       ).pipe(
         Effect.flatMap((inspection) => {
           if ('reason' in inspection) {
-            return Effect.fail(persistenceUnavailable(quantityAssignmentProfileUnavailableReason[inspection.reason]));
+            return Effect.fail(persistenceUnavailable(quantityAssignmentProfileUnavailableReason(inspection.reason)));
           }
           return Match.value(inspection.outcome).pipe(
             Match.when('VERIFIED', () => Effect.void),
