@@ -398,7 +398,7 @@ it('exports the contribution authoring vocabulary from the focused worker entryp
   expect(entrypoint.has('OntosMcpHidden')).toBe(true);
 });
 
-it.each(['inventory/commands', 'InventoryCommands'])(
+it.each(['inventory/commands', 'Příkazy skladu', 'InventoryCommands'])(
   'resolves a command union whose definition identifier is %s',
   (identifier) => {
     const command = Schema.Union([

@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { Array as EffectArray, Order, Predicate, Result, Schema } from 'effect';
+import { Array as EffectArray, JsonPointer, Order, Predicate, Result, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { HttpApi } from 'effect/http-api';
 
@@ -98,12 +98,13 @@ const resolveRef = (node: Json | undefined, definitions: JsonObject): Json | und
   if (!isJsonObject(node) || !isString(node.$ref)) {
     return node;
   }
-  // The fragment is a JSON Pointer token: Effect writes an identifier's `/` as `~1` and its `~` as `~0`.
-  const name = node.$ref
-    .replace(/^#\/(?:\$defs|definitions)\//u, '')
-    .replaceAll('~1', '/')
-    .replaceAll('~0', '~');
-  return Object.hasOwn(definitions, name) ? definitions[name] : node;
+  // Effect writes the ref as a URI fragment: JSON Pointer escapes (`~1`, `~0`), then percent-encoding.
+  const path = JsonPointer.parseUriFragment(node.$ref);
+  if (path?.length !== 2 || (path[0] !== '$defs' && path[0] !== 'definitions')) {
+    return node;
+  }
+  const [, name] = path;
+  return name !== undefined && Object.hasOwn(definitions, name) ? definitions[name] : node;
 };
 
 interface TaggedVariant {
