@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadHandlerResult, ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   CounterpartyAccessInvitationReadRequestSchema,
@@ -71,6 +71,29 @@ export const readCounterpartyAccessInvitationFromServices = (
           ),
         );
 
+export const handleCounterpartyAccessInvitationRead = Effect.fn('CounterpartyAccessInvitationRead.handle')(
+  function* handle(
+    input: CounterpartyAccessInvitationReadRequest,
+    context: ReadLoadContext<CounterpartyAccessInvitationReadServices>,
+  ): Effect.fn.Return<
+    ReadHandlerResult<CounterpartyAccessInvitationReadResponse>,
+    ReadHandlerNotFound | ReadHandlerUnavailable
+  > {
+    const { legalEntityId } = context.scope;
+    if (legalEntityId === undefined) {
+      return yield* unavailable();
+    }
+    const result = yield* readCounterpartyAccessInvitationFromServices(
+      input,
+      context.scope.principalId,
+      legalEntityId,
+      context.scope.tenantId,
+      context.services,
+    );
+    return { evidence: { resultCount: 1 }, result };
+  },
+);
+
 const counterpartyAccessInvitationReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -104,19 +127,7 @@ export const counterpartyAccessInvitationReadRead = defineRead(
     resultSchema: CounterpartyAccessInvitationReadResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<CounterpartyAccessInvitationReadServices>) => {
-    const { legalEntityId } = context.scope;
-    if (legalEntityId === undefined) {
-      return Effect.fail(unavailable());
-    }
-    return readCounterpartyAccessInvitationFromServices(
-      input,
-      context.scope.principalId,
-      legalEntityId,
-      context.scope.tenantId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result })));
-  },
+  { load: handleCounterpartyAccessInvitationRead },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ getInvitation: port.getInvitation })),
