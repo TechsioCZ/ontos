@@ -3,7 +3,7 @@
 // @ontos-module-id privacy.core
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
-import { privacyMcpContribution } from './shared/mcp/contribution.ts';
+import { privacyMcpContributionWithoutConsentAuthorities } from './shared/mcp/contribution.ts';
 // <generated-module-manifest-imports>
 import { identityReconciliationResourceDescriptor } from './shared/resources/identity-reconciliation.ts';
 import { legalBasisAssignmentResourceDescriptor } from './shared/resources/legal-basis-assignment.ts';
@@ -40,7 +40,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-components>
     },
     events: [],
-    mcp: privacyMcpContribution,
+    mcp: privacyMcpContributionWithoutConsentAuthorities,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
