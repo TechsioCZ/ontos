@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Reactivity } from 'effect/reactivity';
-import { Array as EffectArray, ConfigProvider, Effect, Order } from 'effect';
+import { Array as EffectArray, ConfigProvider, Effect, FileSystem, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { selectApplicationMigrationPlan } from '../application-migration-plan.mts';
@@ -17,6 +17,8 @@ import {
   assertNativeMigrationBounds,
   prepareApplicationMigrationPlan,
 } from '../application-migration-runtime.mts';
+
+import { PARTY_REGISTRY_WORKER_DATABASE_GRANTS } from '../../verticals/party-registry/src/db/database-grants.ts';
 
 const coreOwner = 'core-runtime';
 const first = { hash: 'a'.repeat(64), name: '20260101000000_first' };
@@ -292,6 +294,15 @@ it.effect(
             (requirement) => requirement.migrationName === '20261020063004_dedicated-identity-core-policies',
           )?.identityIds,
       ).toEqual(['shared_runtime', 'party_registry_request', 'party_registry_worker']);
+      // The saved-reply column must not reach the worker through a table-wide SELECT an older bootstrap
+      // granted: naming the worker makes the migrator refresh its manifest grants around this migration.
+      expect(
+        inventory
+          .find((owner) => owner.ownerId === coreOwner)
+          ?.migrationRuntimeIdentityRequirements?.find(
+            (requirement) => requirement.migrationName === '20261118203150_action-committed-reply',
+          )?.identityIds,
+      ).toEqual(['party_registry_worker']);
       expect(inventory.find((owner) => owner.ownerId === 'promotion')?.prerequisites).toEqual([
         { migrate: true, ownerId: coreOwner, verify: true },
       ]);
@@ -307,5 +318,40 @@ it.effect(
         ]);
         expect(pendingMigrationRuntimeIdentityIds(core, [])).toEqual([]);
       }
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'replaces the worker table-wide Action invocation read with the manifest columns when the saved reply is added',
+  () =>
+    Effect.gen(function* savedReplyWorkerGrant() {
+      const fs = yield* FileSystem.FileSystem;
+      const sql = yield* fs.readFileString(
+        new URL(
+          '../../packages/core-runtime/drizzle/20261118203150_action-committed-reply/migration.sql',
+          import.meta.url,
+        ).pathname,
+      );
+      const statements = sql.split('--> statement-breakpoint').map((statement) => statement.trim());
+      const addColumn = statements.findIndex((statement) => statement.includes('ADD COLUMN "committed_reply_json"'));
+      const revoke = statements.indexOf(
+        'REVOKE SELECT ON TABLE "core"."action_invocations" FROM "party_registry_worker";',
+      );
+      const grant = statements.findIndex(
+        (statement) =>
+          statement.startsWith('GRANT SELECT (') &&
+          statement.endsWith('ON TABLE "core"."action_invocations" TO "party_registry_worker";'),
+      );
+      expect(addColumn).toBeGreaterThanOrEqual(0);
+      expect(revoke).toBeGreaterThan(addColumn);
+      expect(grant).toBe(revoke + 1);
+      const granted = [...(statements[grant] ?? '').matchAll(/"(?<column>[a-z_]+)"/gu)]
+        .map((match) => match.groups?.column)
+        .filter((column) => !['core', 'action_invocations', 'party_registry_worker'].includes(column ?? ''));
+      const manifest = PARTY_REGISTRY_WORKER_DATABASE_GRANTS.tables.find(
+        ({ table }) => table === 'core.action_invocations',
+      );
+      expect(granted).toEqual(manifest?.columns?.select);
+      expect(granted).not.toContain('committed_reply_json');
     }).pipe(Effect.provide(NodeServices.layer)),
 );
