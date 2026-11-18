@@ -870,6 +870,34 @@ jobs:
             echo 'SPICEDB_CA_CERT_EOF'
           } >> "$GITHUB_ENV"
 
+      # An owner row starts its empty worker clusters once its build has ended, while the database producer
+      # still migrates; only the restore below needs this run's archive.
+      - name: Start each integration worker's own empty PostgreSQL cluster and SpiceDB datastore
+        if: matrix.suite == 'integration'
+        working-directory: app
+        env:
+          ONTOS_CI_ISOLATED_WORKERS: '2'
+        run: bash scripts/ci/start-integration-workers.sh
+
+      # The restore waits for this run's migrated archive and loads it into every worker cluster while the
+      # Node artifacts below transfer and unpack; the tests wait for both.
+      - name: Restore this run's migrated database into every worker cluster
+        id: integration-workers
+        if: matrix.suite == 'integration'
+        background: true
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+          WAIT_FOR_ARTIFACT_PATTERN: integration-database
+          WAIT_FOR_BUILD_UPLOAD_STEP: Upload the migrated integration database
+          ONTOS_CI_ISOLATED_WORKERS: '2'
+          INTEGRATION_DATABASE_ARCHIVE: ${{ runner.temp }}/integration-database
+        run: |
+          bash scripts/wait-for-build-shards.sh 'Prepare integration database' 1
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name integration-database --dir "$INTEGRATION_DATABASE_ARCHIVE"
+          bash scripts/ci/restore-integration-workers.sh
+
       - name: Start fresh PostgreSQL and SpiceDB services
         if: matrix.suite == 'bootstrap' || matrix.suite == 'browser' || matrix.suite == 'database'
         working-directory: app
@@ -982,32 +1010,6 @@ jobs:
           SPICEDB_DATABASE_PASSWORD: spicedb
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
-      # Early rows poll from their install until the archive lands, about 1.5 minutes later.
-      - name: Wait for the same-run migrated database archive
-        if: matrix.suite == 'integration'
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
-          WAIT_FOR_ARTIFACT_PATTERN: integration-database
-          WAIT_FOR_BUILD_UPLOAD_STEP: Upload the migrated integration database
-        run: bash scripts/wait-for-build-shards.sh 'Prepare integration database' 1
-
-      - name: Download the same-run migrated database archive
-        if: matrix.suite == 'integration'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-database
-          path: ${{ runner.temp }}/integration-database
-
-      - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
-        if: matrix.suite == 'integration'
-        working-directory: app
-        env:
-          ONTOS_CI_ISOLATED_WORKERS: '2'
-          INTEGRATION_DATABASE_ARCHIVE: ${{ runner.temp }}/integration-database
-        run: bash scripts/ci/start-integration-workers.sh
-
       # Setup overlaps the builds. Artifact consumers still wait for this exact run's uploads;
       # the required gate independently requires the build jobs to finish successfully.
       - name: Wait for the same-run Node artifacts
@@ -1037,6 +1039,9 @@ jobs:
         if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Wait for the restored worker clusters
+        wait: integration-workers
 
       - name: Derive the fresh built Composition for native owner fixtures
         if: matrix.native-composition == true

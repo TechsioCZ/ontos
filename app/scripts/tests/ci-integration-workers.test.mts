@@ -167,7 +167,7 @@ it('refuses to start without an explicit task list instead of inventing one', ()
   }
 });
 
-it('refuses a missing database archive before starting any service', () => {
+it('refuses a missing database archive before writing into any worker cluster', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'ontos-archive-boundary-'));
   const invoked = path.join(directory, 'docker-invoked');
   const docker = path.join(directory, 'docker');
@@ -175,11 +175,12 @@ it('refuses a missing database archive before starting any service', () => {
   chmodSync(docker, 0o755);
   try {
     expect(() =>
-      execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/start-integration-workers.sh', import.meta.url))], {
+      execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/restore-integration-workers.sh', import.meta.url))], {
         env: {
           DOCKER_INVOKED: invoked,
           GITHUB_SHA: 'a'.repeat(40),
           INTEGRATION_DATABASE_ARCHIVE: directory,
+          ONTOS_CI_ISOLATED_WORKERS: '2',
           PATH: `${directory}:${testPath}`,
           POSTGRES_DB: 'ontos_ci',
           POSTGRES_PASSWORD: 'test',
