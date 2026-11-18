@@ -20,7 +20,8 @@ it.effect('preserves RPC details, status name and operation through projection a
       details: 'connection closed before response',
     });
     const rpcError = new SpiceDbRpcError({ cause, code: Option.some(14) });
-    const transport = accessProjectionTransport(failingRpc(rpcError));
+    const rpc = failingRpc(rpcError);
+    const transport = accessProjectionTransport(rpc);
     for (const [operation, call] of [
       ['ReadRelationships', transport.readRelationships(v1.ReadRelationshipsRequest.create({})).pipe(Effect.asVoid)],
       ['WriteRelationships', transport.writeRelationships(v1.WriteRelationshipsRequest.create({})).pipe(Effect.asVoid)],
@@ -50,7 +51,8 @@ it.effect('preserves RPC details, status name and operation through projection a
 it.effect('retains diagnostic causes without reclassifying permanent engine rejections', () =>
   Effect.gen(function* retainsPermanentRefusal() {
     const rpcError = new SpiceDbRpcError({ cause: new Error('invalid relationship'), code: Option.some(3) });
-    const transport = accessProjectionTransport(failingRpc(rpcError));
+    const rpc = failingRpc(rpcError);
+    const transport = accessProjectionTransport(rpc);
     const failure = yield* Effect.flip(transport.writeRelationships(v1.WriteRelationshipsRequest.create({})));
     expect(failure).toMatchObject({
       cause: rpcError,

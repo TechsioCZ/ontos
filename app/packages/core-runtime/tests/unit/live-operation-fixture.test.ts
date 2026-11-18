@@ -45,11 +45,6 @@ type FixtureReadRow = CoreTableRow;
 type FixtureInsertTable = PgTable;
 type FixtureInsertValues = CoreTableRow | readonly CoreTableRow[];
 
-class FixtureModuleStateUpdateFailure extends Schema.TaggedError<FixtureModuleStateUpdateFailure>()(
-  'FixtureModuleStateUpdateFailure',
-  {},
-) {}
-
 /**
  * What the native PostgreSQL and SpiceDB listeners observed and answer with. The fixture reaches both
  * through its production clients over real sockets; these recorders only script the remote side.
@@ -75,7 +70,7 @@ const transport = {
         table: FixtureReadTable,
         values: CoreTableRow,
         where: CoreTableWhere,
-      ) => Effect.Effect<readonly CoreTableRow[], FixtureModuleStateUpdateFailure>
+      ) => Effect.Effect<readonly CoreTableRow[], PostgresWireStatementError>
     >(),
   writeRelationships: rs.fn<(request: v1.WriteRelationshipsRequest) => Promise<v1.WriteRelationshipsResponse>>(),
 };
@@ -92,10 +87,7 @@ const answerFixtureStatement = answerCoreTableStatements(
     nativeRows: () => transport.nativeRows() ?? [],
     role: fixtureRuntimeRole,
     selectRows: (table, where) => transport.selectRows(table, where) ?? [],
-    updateRows: (table, values, where) =>
-      transport
-        .updateRows(table, values, where)
-        .pipe(Effect.mapError((failure) => new PostgresWireStatementError({ code: 'P0001', message: failure._tag }))),
+    updateRows: (table, values, where) => transport.updateRows(table, values, where),
   },
 );
 
@@ -103,7 +95,7 @@ const answerFixtureStatement = answerCoreTableStatements(
 const scriptedAnswer = <Response>(answer: () => Promise<Response> | undefined) =>
   Effect.tryPromise({
     catch: (cause) => new ScriptedSpiceDbUnavailable({ details: String(cause) }),
-    try: async () => await answer(),
+    try: () => Promise.resolve(answer()),
   }).pipe(
     Effect.flatMap((response) =>
       response === undefined
@@ -123,11 +115,14 @@ const fixtureConfiguration = (port: number, database: string) => ({
 });
 
 /** The native PostgreSQL and SpiceDB endpoints this file's fixtures connect to. */
-const NativeFixtureEndpoints = Context.Service<{
-  readonly attachmentConfiguration: ReturnType<typeof fixtureConfiguration>;
-  readonly configuration: ReturnType<typeof fixtureConfiguration>;
-  readonly spiceDbEndpoint: string;
-}>('LiveOperationFixtureTest/NativeFixtureEndpoints');
+class NativeFixtureEndpoints extends Context.Service<
+  NativeFixtureEndpoints,
+  {
+    readonly attachmentConfiguration: ReturnType<typeof fixtureConfiguration>;
+    readonly configuration: ReturnType<typeof fixtureConfiguration>;
+    readonly spiceDbEndpoint: string;
+  }
+>()('@app/core-runtime/tests/unit/live-operation-fixture.test/NativeFixtureEndpoints') {}
 
 const NativeFixtureEndpointsLive = Layer.effect(
   NativeFixtureEndpoints,
@@ -363,7 +358,9 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, NativeFixtureEndpointsLive), { exclude
         const moduleKey = 'commerce.customer-context';
         const fixture = yield* makeLiveOperationFixture({ ...configuration, moduleKeys: [moduleKey] });
         const beforeInsert = transport.insert.mock.calls.length;
-        transport.updateRows.mockReturnValueOnce(Effect.fail(new FixtureModuleStateUpdateFailure({})));
+        transport.updateRows.mockReturnValueOnce(
+          Effect.fail(new PostgresWireStatementError({ code: 'P0001', message: 'Fixture module state update failed' })),
+        );
         const failed = yield* Effect.flip(fixture.setConfiguredModuleState(moduleKey, 'suspended'));
         expect(failed.reason).toBe('Unable to persist configured fixture module state');
         transport.updateRows.mockReturnValueOnce(Effect.succeed([]));
@@ -1417,6 +1414,10 @@ const prepareAttachment = Effect.gen(function* prepareAttachment() {
   );
   return { creator, seeded };
 });
+/** One attachment creator whose close is owned by the surrounding test scope, even when the test fails. */
+const prepareScopedAttachment = Effect.acquireRelease(prepareAttachment, ({ creator }) =>
+  creator.close().pipe(Effect.orDie),
+);
 
 const foreignFixtureIdentity = '00000000-0000-4000-8000-000000000099';
 const faultedFixtureRows =
@@ -1450,6 +1451,19 @@ const faultedFixtureRows =
             },
       );
     });
+
+/** Every persisted creator table the runtime attachment verifies, each refused once per fault. */
+const persistedCreatorFaults = (
+  [
+    ['tenants', tenants],
+    ['legal entities', legalEntities],
+    ['principals', principals],
+    ['principal auth bindings', principalAuthBindings],
+    ['tenant module states', tenantModuleStates],
+  ] as const
+).flatMap(([label, refusedTable]) =>
+  (['missing', 'inactive', 'mismatched'] as const).map((fault) => ({ fault, label, refusedTable })),
+);
 
 it.layer(
   Layer.mergeAll(NodeCrypto.layer, ConfigProvider.layer(ConfigProvider.fromUnknown({})), NativeFixtureEndpointsLive),
@@ -1607,30 +1621,28 @@ it.layer(
       }),
   );
 
-  suite.effect('refuses inactive, contradictory or missing persisted creator identities', () =>
-    Effect.gen(function* refuseMissingCreatorState() {
-      const { attachmentConfiguration } = yield* NativeFixtureEndpoints;
-      const { creator, seeded } = yield* prepareAttachment;
-      const beforeInsert = transport.insert.mock.calls.length;
-      const beforeWrite = transport.writeRelationships.mock.calls.length;
-      for (const refusedTable of [tenants, legalEntities, principals, principalAuthBindings, tenantModuleStates]) {
-        for (const fault of ['missing', 'inactive', 'mismatched'] as const) {
-          transport.selectRows.mockImplementation(faultedFixtureRows(seeded, refusedTable, fault));
-          const result = yield* Effect.result(
-            makeLiveOperationFixtureRuntime({
-              configuration: creator.runtimeHandoff.configuration,
-              handoff: creator.runtimeHandoff,
-              runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
-            }),
-          );
-          expect(Result.isFailure(result)).toBe(true);
-        }
-      }
-      expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
-      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
-      yield* creator.close();
-    }),
-  );
+  for (const { fault, label, refusedTable } of persistedCreatorFaults) {
+    suite.effect(`refuses ${fault} persisted creator ${label} without writes`, () =>
+      Effect.gen(function* refuseFaultedCreatorState() {
+        const { attachmentConfiguration } = yield* NativeFixtureEndpoints;
+        const { creator, seeded } = yield* prepareScopedAttachment;
+        const beforeInsert = transport.insert.mock.calls.length;
+        const beforeWrite = transport.writeRelationships.mock.calls.length;
+        transport.selectRows.mockImplementation(faultedFixtureRows(seeded, refusedTable, fault));
+        const failure = yield* Effect.flip(
+          makeLiveOperationFixtureRuntime({
+            configuration: creator.runtimeHandoff.configuration,
+            handoff: creator.runtimeHandoff,
+            runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+          }),
+        );
+        assert(Predicate.isTagged(failure, 'LiveOperationFixtureError'));
+        expect(failure.reason).toBe('Runtime fixture identities are not the active persisted creator state');
+        expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
+        expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+      }),
+    );
+  }
 
   suite.effect(
     'accepts one closed bootstrap request and rejects malformed or repeated requests without another seed',

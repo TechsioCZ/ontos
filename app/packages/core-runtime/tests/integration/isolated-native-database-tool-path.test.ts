@@ -185,7 +185,7 @@ if (program === 'pg_dump') {
         const dumpFailure = yield* Effect.flip(attempt);
         expect(dumpFailure).toMatchObject({ reason: 'Schema-only dump failed' });
         expect(yield* fs.exists(`${directory}/pg_restore.json`)).toBe(false);
-        const failedDumpClone = Schema.decodeUnknownSync(cloneNameSchema)(generatedCloneNames.at(-1));
+        const failedDumpClone = yield* Schema.decodeUnknownEffect(cloneNameSchema)(generatedCloneNames.at(-1));
         expect(failedDumpClone).not.toBe(restoredClone);
         expect(yield* databaseExists(failedDumpClone)).toBe(false);
 
