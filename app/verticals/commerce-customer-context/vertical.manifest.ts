@@ -23,6 +23,16 @@ import { COMMERCE_PORTAL_AUTH_POLICY } from './api/portal-auth/provider/config.t
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './shared/portal-auth/profile-api.ts';
 import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
+import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
+import type { OntosExternalIdentityProviderInput } from '@app/core-runtime/auth/external-identity-provider';
+import {
+  COMMERCE_ADMISSION_DEADLINE_MS,
+  COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+} from './shared/portal-auth-contracts.ts';
+import {
+  COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
+  COMMERCE_PORTAL_AUTH_VERIFY_PATH,
+} from './shared/portal-auth-verification.ts';
 // <generated-module-manifest-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
@@ -226,16 +236,6 @@ import { VerifyEffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/ve
 import { verifyEffectiveCustomerGroupMembershipSetV1Read } from './src/api/verify-effective-customer-group-membership-set-v1.read.ts';
 import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
-import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
-import type { OntosExternalIdentityProviderInput } from '@app/core-runtime/auth/external-identity-provider';
-import {
-  COMMERCE_ADMISSION_DEADLINE_MS,
-  COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-} from './shared/portal-auth-contracts.ts';
-import {
-  COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
-  COMMERCE_PORTAL_AUTH_VERIFY_PATH,
-} from './shared/portal-auth-verification.ts';
 import { commerceCustomerContextRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const createCounterpartyProfileEntrypoint = 'commerce.customer-context.create-counterparty-purchasing-profile';
@@ -787,7 +787,6 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       timelines: [],
     },
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: commerceCustomerContextRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],

@@ -273,7 +273,6 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: pricingRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],

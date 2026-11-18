@@ -176,7 +176,6 @@ export const assortmentManifest = defineOntosModuleManifest({
       timelines: [],
     },
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: assortmentRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],

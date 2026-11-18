@@ -262,7 +262,6 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
       timelines: [],
     },
   },
-  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
   registeredWorkloadCalls: symmyIntegrationRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [],
