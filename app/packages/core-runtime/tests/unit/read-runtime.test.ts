@@ -4730,6 +4730,53 @@ it.effect('releases no result and no allowed evidence when the projection breaks
   }),
 );
 
+/** How many transactions and savepoints were open when `marker` was recorded. */
+const transactionDepthAt = (events: readonly string[], marker: string): number => {
+  let depth = 0;
+  for (const event of events) {
+    if (event === marker) {
+      return depth;
+    }
+    if (event === 'BEGIN' || event.startsWith('SAVEPOINT')) {
+      depth += 1;
+    } else if (event === 'COMMIT' || event.startsWith('ROLLBACK') || event.startsWith('RELEASE SAVEPOINT')) {
+      depth -= 1;
+    }
+  }
+  return Number.NaN;
+};
+
+it.effect('holds no transaction or composition lock while a verified staged Read prepares or finishes', () =>
+  Effect.gen(function* verifiedStagedReadPhases() {
+    const events: string[] = [];
+    const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events), { verified: true });
+    expect(exit).toEqual(Exit.succeed(['prepared-owner-value']));
+    expect(transactionDepthAt(events, 'prepare')).toBe(0);
+    expect(transactionDepthAt(events, 'finish')).toBe(0);
+    // Every short database phase fences itself against the inbound revision: load, finish's owner-state
+    // read and the allowed evidence each lock the composition again.
+    const afterPrepare = events.slice(events.indexOf('prepare'));
+    expect(afterPrepare.filter((event) => event === 'authority_locked')).toHaveLength(3);
+    expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).toEqual(['read_allowed']);
+  }),
+);
+
+for (const ownerState of [false, true]) {
+  it.effect(
+    `refuses a verified staged result when the composition changes before its evidence${ownerState ? ' and owner-state read' : ''}`,
+    () =>
+      Effect.gen(function* verifiedRevisionChangeAfterLoad() {
+        const events: string[] = [];
+        const authority: StagedReadAuthority = {};
+        const read = makeStagedRead(events, { duringFinish: () => authority.replace?.(), ownerState });
+        const { exit, harness } = yield* runStagedRead(events, read, { authority, verified: true });
+        expect(stagedFailureTag(exit)).toBe('ReadHandlerUnavailable');
+        expect(events).not.toContain('owner-state');
+        expect(harness.evidence()).toBe(0);
+      }),
+  );
+}
+
 for (const ownerState of [false, true]) {
   it.effect(
     `refuses a staged Read whose owner grant is revoked during finish${ownerState ? ' before an owner-state read' : ''}`,
