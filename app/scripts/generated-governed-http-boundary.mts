@@ -3308,7 +3308,7 @@ const LOAD_WORK_EFFECT_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new M
       'zipWith',
     ]),
   ],
-  ['DateTime', new Set(['formatIso', 'now', 'toEpochMillis'])],
+  ['DateTime', new Set(['formatIso', 'toEpochMillis'])],
   [
     'Option',
     new Set([
@@ -3344,6 +3344,33 @@ const LOAD_WORK_EFFECT_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new M
       'fromJsonString',
     ]),
   ],
+]);
+/**
+ * The one ambient read proven load work may make, named as the exception it is: `DateTime.now` reads the
+ * Effect `Clock` service. A load step reads owner state as of the current instant (the Catalog manufacturer
+ * read has no `prepare` to take it from), and the clock is the runtime's own process-local service: it does
+ * no I/O, holds no connection and cannot be replaced by load work, which may not provide services. Every
+ * other clock read (`DateTime.nowAsDate`, `Clock.*`, sleeping) still refuses.
+ */
+const LOAD_WORK_CLOCK_READ = { member: 'now', module: 'DateTime' } as const;
+/** How load work may read an allowlisted export: by its own name, and through which members. */
+interface LoadWorkExportUse {
+  readonly byName: boolean;
+  readonly members: ReadonlySet<string>;
+}
+const loadWorkByName = (...names: readonly string[]): ReadonlyMap<string, LoadWorkExportUse> =>
+  new Map(names.map((name) => [name, { byName: true, members: new Set<string>() }]));
+/**
+ * The library exports proven load work may read besides `effect`, by exact module path and export name:
+ * the hash and encoding functions of their arguments the real staged reads use. Each export lists whether
+ * it may be read by its own name and the members it may be read through, so a namespace such as `Hex` is
+ * never handed out whole. Nothing else from these packages passes, so `randomBytes`, which reads
+ * `globalThis.crypto`, refuses.
+ */
+const LOAD_WORK_PURE_IMPORTS: ReadonlyMap<string, ReadonlyMap<string, LoadWorkExportUse>> = new Map([
+  ['@noble/hashes/sha2.js', loadWorkByName('sha256')],
+  ['@noble/hashes/utils.js', loadWorkByName('utf8ToBytes')],
+  ['effect/encoding', new Map([['Hex', { byName: false, members: new Set(['encode']) }]])],
 ]);
 /** `effect` functions proven load work may read as values. */
 const LOAD_WORK_EFFECT_FUNCTIONS: ReadonlySet<string> = new Set(['flow', 'identity', 'pipe']);
@@ -3683,7 +3710,16 @@ const isProvenLoadWorkEffectExport = (imported: string, member: string | undefin
   if (LOAD_WORK_EFFECT_FUNCTIONS.has(imported)) {
     return true;
   }
+  if (imported === LOAD_WORK_CLOCK_READ.module && member === LOAD_WORK_CLOCK_READ.member) {
+    return true;
+  }
   return member !== undefined && LOAD_WORK_EFFECT_MEMBERS.get(imported)?.has(member) === true;
+};
+
+/** An allowlisted hash or encoding export, read by its name or through one of its listed members. */
+const isProvenLoadWorkPureImport = (modulePath: string, imported: string, member: string | undefined): boolean => {
+  const use = LOAD_WORK_PURE_IMPORTS.get(modulePath)?.get(imported);
+  return use !== undefined && (member === undefined ? use.byName : use.members.has(member));
 };
 
 /** A value import the load-work proof admits; a same-owner relative import is proven by `proves`. */
@@ -3709,8 +3745,8 @@ const isProvenLoadWorkImport = (
   if (modulePath === CORE_RUNTIME_MODULE) {
     return LOAD_WORK_CORE_RUNTIME_EXPORTS.has(imported);
   }
-  if (modulePath === 'effect/encoding' || /^@noble\/hashes\/[a-z0-9]+\.js$/u.test(modulePath)) {
-    return true;
+  if (LOAD_WORK_PURE_IMPORTS.has(modulePath)) {
+    return isProvenLoadWorkPureImport(modulePath, imported, member);
   }
   const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), modulePath));
   return (
@@ -3731,7 +3767,7 @@ const loadWorkProofModule = (proof: LoadWorkProof, file: string): LoadWorkModule
 
 /**
  * Proves that a name read in `file` is load work the gate can see: a pure global or one of its allowed
- * members, an allowlisted `effect`, `effect/encoding`, `@noble/hashes` or core read-error import (an
+ * members, an allowlisted `effect`, hash, encoding or core read-error import (an
  * `effect` module only as `Module.member`, `Effect` only through its allowed members), or the single
  * top-level `const` or function of a same-owner module whose own name reads prove the same way. Any other
  * import, a namespace or default import, a re-export, `let`, an ambient declaration, a class or a

@@ -1799,3 +1799,69 @@ it.live(
     expect(yield* verdicts(refused), 'load-work escapes the gate accepted').toEqual([]);
   }),
 );
+
+/** The indexes of `sources` the gate accepts as the stock-list Read; every refusal is the generator diagnostic. */
+const acceptedReadSources = Effect.fn(function* acceptedReadSources(root: string, sources: readonly string[]) {
+  const passed: number[] = [];
+  for (const [index, source] of sources.entries()) {
+    yield* write(root, STOCK_LIST_READ_FILE, source);
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    if (Exit.isSuccess(result)) {
+      passed.push(index);
+    } else {
+      expect(Cause.pretty(result.cause), `source ${index}`).toMatch(
+        /module APIs require an approved Codesmith generator/u,
+      );
+    }
+  }
+  return passed;
+});
+
+it.live(
+  'admits only the named hash and encoding exports the staged reads use, and the clock only as DateTime.now',
+  Effect.fn(function* readLoadWorkPureImports() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
+    const withHelper = (body: string, imports: string): string =>
+      [
+        bareRead
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { DateTime, Effect } from 'effect';\n${imports}`)
+          .replace(bareHandler, HELPER_LOAD + LAYER_ARGUMENT),
+        stockLoadHelper(body),
+      ].join('\n');
+    const hashImports =
+      "import { sha256 } from '@noble/hashes/sha2.js';\nimport { utf8ToBytes } from '@noble/hashes/utils.js';\nimport { Hex } from 'effect/encoding';\n";
+    const accepted = [
+      withHelper(
+        '  return yield* Effect.succeed(Hex.encode(sha256(utf8ToBytes(String(input) + tenantId))));',
+        hashImports,
+      ),
+      withHelper('  return DateTime.formatIso(yield* DateTime.now);', ''),
+    ];
+    expect(yield* acceptedReadSources(root, accepted), 'pure imports the gate refused').toEqual([0, 1]);
+    const refused = [
+      withHelper(
+        '  return yield* Effect.succeed(randomBytes(16));',
+        "import { randomBytes } from '@noble/hashes/utils.js';\n",
+      ),
+      withHelper(
+        '  return yield* Effect.succeed(sha512(utf8ToBytes(tenantId)));',
+        "import { sha512 } from '@noble/hashes/sha2.js';\nimport { utf8ToBytes } from '@noble/hashes/utils.js';\n",
+      ),
+      withHelper(
+        '  return yield* Effect.succeed(sha256(utf8ToBytes(tenantId)));',
+        "import { sha256 } from '@noble/hashes/sha256.js';\nimport { utf8ToBytes } from '@noble/hashes/utils.js';\n",
+      ),
+      withHelper('  return yield* Effect.succeed(Hex.decode(tenantId));', "import { Hex } from 'effect/encoding';\n"),
+      withHelper(
+        '  return yield* Effect.succeed(Base64.encode(utf8ToBytes(tenantId)));',
+        "import { Base64 } from 'effect/encoding';\nimport { utf8ToBytes } from '@noble/hashes/utils.js';\n",
+      ),
+      withHelper('  return yield* DateTime.nowAsDate;', ''),
+      withHelper('  return yield* Clock.currentTimeMillis;', "import { Clock } from 'effect';\n"),
+    ];
+    expect(yield* acceptedReadSources(root, refused), 'ambient or unlisted imports the gate accepted').toEqual([]);
+  }),
+);
