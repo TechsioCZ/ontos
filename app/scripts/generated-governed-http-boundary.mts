@@ -3333,13 +3333,17 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
-  // `defineRead` also takes the handler written as `{ load: handler }`. That object must hold exactly the
-  // one `load` entry, and the handler it holds is judged by the rule a bare handler gets; any other object
-  // (a `prepare` or `finish` step, an extra key, a spread) is no single handler; a staged pipeline is judged
-  // by the demo exception below.
+  // `defineRead` also takes the handler written as `{ load: handler }`. When that object holds exactly the
+  // one `load` entry naming a handler, the named handler is judged by the rule a bare handler gets. Any other
+  // object (a `prepare` or `finish` step, an inline phase, an extra key, a spread) is a staged pipeline and is
+  // judged only by the demo exception below, which proves each phase, its bindings and its Effect import.
   let loadHandler = handler;
   if (handler !== undefined && topLevelObjectEntries(handler) !== undefined) {
-    loadHandler = topLevelObjectEntries(handler)?.length === 1 ? objectPropertyValue(handler, 'load') : undefined;
+    const named = objectPropertyValue(handler, 'load');
+    loadHandler =
+      topLevelObjectEntries(handler)?.length === 1 && named !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(named)
+        ? named
+        : undefined;
   }
   // Demo-only exception 3: a staged prepare/load/finish read is proven by the ported staged-read proof.
   const phaseOwner: ReadPhaseOwner = { ownerPath, readFile, sources };
