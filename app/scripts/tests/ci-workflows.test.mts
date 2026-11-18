@@ -20,8 +20,29 @@ import { parse } from 'yaml';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 
-import { CiTemplatesSchema, ciPlanOutputs, planCiChecks, taskDirectory } from '../plan-ci-checks.mts';
+import { CiTemplatesSchema, ciPlanOutputs, planCiChecks as computeCiPlan, taskDirectory } from '../plan-ci-checks.mts';
+import {
+  exclusiveIntegrationTasks,
+  integrationRowSeconds as estimateRowSeconds,
+  nativeIntegrationProofs,
+} from '../ci-integration-packing.mts';
 
+const planCiChecks = (input: Parameters<typeof computeCiPlan>[0]) => {
+  const result = computeCiPlan(input);
+  if ('invalid' in result) {
+    throw new Error(result.invalid);
+  }
+  return result;
+};
+const integrationRowSeconds = (...args: Parameters<typeof estimateRowSeconds>) => {
+  const result = estimateRowSeconds(...args);
+  if ('invalid' in result) {
+    throw new TypeError(result.invalid);
+  }
+  return result.seconds;
+};
+
+const INTEGRATION_SUITES_SCRIPT = new URL('../ci/run-integration-suites.sh', import.meta.url);
 const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
 const RESTORE_INTEGRATION_WORKERS = 'bash scripts/ci/restore-integration-workers.sh';
 const INTEGRATION_WORKERS_STEP_ID = 'integration-workers';
@@ -1787,6 +1808,31 @@ const integrationRows = () => {
   const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
   return jobs[OWNER_INTEGRATION_JOB].strategy.matrix.include.filter(({ suite }) => suite === 'integration');
 };
+
+it('publishes the complete measured two-lane packing without weakening runner isolation', () => {
+  const rows = integrationRows();
+  const before = readTemplates().integration.flatMap((row) => row.tasks ?? []);
+  const after = rows.flatMap((row) => row.tasks ?? []);
+  expect(sorted(after)).toEqual(sorted(before));
+  expect(new Set(after).size).toBe(before.length);
+  expect(rows).toHaveLength(11);
+  expect(rows.every(({ lanes }) => lanes === 2)).toBe(true);
+  expect(rows.map(({ tasks }) => integrationRowSeconds(tasks ?? []))).toEqual([
+    251, 251, 250, 316, 288, 279, 250, 250, 250, 250, 250,
+  ]);
+  const scheduler = readFileSync(INTEGRATION_SUITES_SCRIPT, 'utf-8');
+  expect(scheduler).toContain(`exclusive_tasks=(${exclusiveIntegrationTasks.join(' ')})`);
+  const exclusive = scheduler.indexOf('for task in');
+  const parallel = scheduler.indexOf('xargs -0');
+  expect(exclusive).toBeGreaterThan(0);
+  expect(parallel).toBeGreaterThan(exclusive);
+  for (const row of rows) {
+    expect((row.tasks ?? []).filter((task) => nativeIntegrationProofs.includes(task)).length).toBeLessThanOrEqual(1);
+  }
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
+  const run = jobs[OWNER_INTEGRATION_JOB].steps.find(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(run?.env?.INTEGRATION_LANES).toBe(expression('matrix.lanes'));
+});
 /** Each sharded family's `k/n` shards, keyed by `root` or the package selector. */
 const shardFamilies = (tasks: readonly string[]) => {
   const families = new Map<string, string[]>();
@@ -1864,7 +1910,7 @@ it('names every package integration suite and keeps native proofs one per runner
   );
   expect(sorted(tested)).toEqual(sorted(namedPackages));
   // Native preproposal proofs supplement the ordinary package suites, one case per runner.
-  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  const scheduler = readFileSync(INTEGRATION_SUITES_SCRIPT, 'utf-8');
   expect(scheduler).toContain(
     "exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal -t 'produces an exact preproposal basis'",
   );
@@ -2579,7 +2625,7 @@ it('finds every job that polls its own run or downloads an artifact its needs do
 
 it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
   const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
-  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  const scheduler = readFileSync(INTEGRATION_SUITES_SCRIPT, 'utf-8');
   const excluded = ['whole:organization', 'whole:pricing', 'whole:privacy'];
   const proofs = integrationRows()
     .flatMap((row) => row.tasks ?? [])

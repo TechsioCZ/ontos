@@ -39,6 +39,9 @@ const plan = planCiChecks({
   }),
   templates: read('scripts/ci-matrices.json'),
 });
+if ('invalid' in plan) {
+  throw new Error(plan.invalid);
+}
 appendFileSync(process.env.GITHUB_OUTPUT, [
   `mode=${plan.mode}\n`,
   ...Object.entries(ciPlanOutputs(plan, lintSweep)).map(([key, value]) => `${key}=${JSON.stringify(value)}\n`),

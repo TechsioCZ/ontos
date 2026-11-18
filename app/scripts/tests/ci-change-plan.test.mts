@@ -25,16 +25,116 @@ import {
   knownTask,
   unitPhases,
   matchingPackages,
-  planCiChecks,
+  planCiChecks as computeCiPlan,
   taskDirectory,
   unknownFilters,
   withCiTopologyDependencies,
 } from '../plan-ci-checks.mts';
 import { workspacePackageDirectories, workspacePackageGlobs } from '../ci-impact.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
+import {
+  exclusiveIntegrationTasks,
+  integrationRowSeconds as estimateRowSeconds,
+  integrationTaskSeconds,
+  nativeIntegrationProofs,
+  packIntegrationRows as packRows,
+} from '../ci-integration-packing.mts';
+import { integrationTimings } from '../refresh-ci-integration-costs.mts';
 
-const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
+// Surface pure planner failures as test failures; production CLI edges use their typed error channel.
+const planCiChecks = (input: Parameters<typeof computeCiPlan>[0]) => {
+  const result = computeCiPlan(input);
+  if ('invalid' in result) {
+    throw new Error(result.invalid);
+  }
+  return result;
+};
+const packIntegrationRows = (...args: Parameters<typeof packRows>) => {
+  const result = packRows(...args);
+  if ('invalid' in result) {
+    throw new Error(result.invalid);
+  }
+  return result;
+};
+const integrationRowSeconds = (...args: Parameters<typeof estimateRowSeconds>) => {
+  const result = estimateRowSeconds(...args);
+  if ('invalid' in result) {
+    throw new TypeError(result.invalid);
+  }
+  return result.seconds;
+};
+const PRIVACY_SOURCE = 'app/verticals/privacy/src/service.ts';
+
+const authoredTemplates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+);
+const templates = { ...authoredTemplates, integration: packIntegrationRows(authoredTemplates.integration) };
+
+it('packs the identical 154-task inventory into eleven measured two-lane rows at the 316-second bound', () => {
+  const planned = planCiChecks({ changedPaths: [], forceFull: true, packages: [], templates: authoredTemplates });
+  const before = EffectArray.sort(
+    authoredTemplates.integration.flatMap((row) => row.tasks ?? []),
+    Order.String,
+  );
+  const rows = planned.integration.filter(({ suite }) => suite === 'integration');
+  const after = EffectArray.sort(
+    rows.flatMap((row) => row.tasks ?? []),
+    Order.String,
+  );
+  expect(before).toHaveLength(154);
+  expect(after).toEqual(before);
+  expect(new Set(after).size).toBe(154);
+  expect(EffectArray.sort(Object.keys(integrationTaskSeconds), Order.String)).toEqual(before);
+  expect(rows).toHaveLength(11);
+  expect(rows.every(({ lanes }) => lanes === 2)).toBe(true);
+  expect(rows.map(({ tasks }) => integrationRowSeconds(tasks ?? []))).toEqual([
+    251, 251, 250, 316, 288, 279, 250, 250, 250, 250, 250,
+  ]);
+  expect(Math.max(...Object.values(integrationTaskSeconds))).toBe(316);
+  // Repacking and changing the inventory's prior order must not affect placement.
+  expect(packIntegrationRows(planned.integration)).toEqual(planned.integration);
+  expect(
+    packIntegrationRows(
+      authoredTemplates.integration.map((row) =>
+        row.tasks === undefined ? row : { ...row, tasks: EffectArray.reverse(row.tasks) },
+      ),
+    ),
+  ).toEqual(planned.integration);
+});
+
+it('models serial exclusive work plus the longer lane, not half of the sum', () => {
+  const serial = 'whole:pricing';
+  const costs = { long: 100, medium: 50, [serial]: 20, short: 10 };
+  expect(integrationRowSeconds(['long', serial, 'medium', 'short'], costs)).toBe(120);
+  expect(integrationRowSeconds([serial, 'medium', 'short'], costs)).toBe(70);
+  expect(exclusiveIntegrationTasks).toEqual([
+    serial,
+    './verticals/commerce-market-catalog#1/4',
+    './verticals/party-registry#4/4',
+  ]);
+  for (const row of templates.integration) {
+    expect((row.tasks ?? []).filter((task) => nativeIntegrationProofs.includes(task)).length).toBeLessThanOrEqual(1);
+  }
+});
+
+it.effect('refreshes only successful, nonduplicated task timings from finished job logs', () =>
+  Effect.gen(function* verifyIntegrationTimingParser() {
+    expect(
+      yield* integrationTimings(
+        '2026-11-18T14:00:00Z Suite wall time: 316s slot=1 task=root:22/23 status=0\n' +
+          'Suite CPU: task=root:22/23 user=5.0s system=1.0s\n' +
+          'Suite wall time: 42s slot=2 task=./verticals/catalog#1/4 status=0',
+      ),
+    ).toEqual({ './verticals/catalog#1/4': 42, 'root:22/23': 316 });
+    for (const log of [
+      'Suite wall time: 1s slot=1 task=root:1/23 status=1',
+      'Suite wall time: 0s slot=1 task=root:1/23 status=0',
+      'Suite wall time: 1s slot=1 task=root:1/23 status=0\nSuite wall time: 2s slot=2 task=root:1/23 status=0',
+    ]) {
+      const failure = yield* Effect.flip(integrationTimings(log));
+      expect(failure.reason).toContain('Invalid, failed or duplicate suite timing');
+    }
+  }),
 );
 
 /** Every build shard, numbered 1..n. */
@@ -103,6 +203,22 @@ const packages = [
     .filter((directory) => !owners.some((owner) => owner.directory === directory))
     .map((directory) => ({ dependencies: [], directory, name: `@app/${path.basename(directory)}` })),
 ];
+
+it('fails the planner for a missing cost, including a task an affected plan would otherwise omit', () => {
+  const { 'root:22/23': _missing, ...costs } = integrationTaskSeconds;
+  const affected = planCiChecks({
+    changedPaths: [PRIVACY_SOURCE],
+    packages,
+    templates: authoredTemplates,
+  });
+  expect(affected.mode).toBe('affected');
+  expect(affected.integration.flatMap((row) => row.tasks ?? [])).not.toContain('root:22/23');
+  for (const changedPaths of [[], [PRIVACY_SOURCE]]) {
+    expect(() =>
+      planCiChecks({ changedPaths, integrationCosts: costs, packages, templates: authoredTemplates }),
+    ).toThrow('Missing or invalid integration cost for root:22/23');
+  }
+});
 
 const PACKAGE_MANIFEST = 'package.json';
 const appRoot = path.resolve(import.meta.dirname, '../..');
@@ -221,6 +337,10 @@ it('does not start an integration row after its selected tasks move to another r
     for (const row of plan.integration) {
       if (row.tasks !== undefined) {
         expect(row.tasks.length, `${owner.name}: ${row.name}`).toBeGreaterThan(0);
+        const full = templates.integration.find(({ name }) => name === row.name);
+        expect(row.tasks).toEqual(full?.tasks?.filter((task) => row.tasks?.includes(task) === true));
+        expect(integrationRowSeconds(row.tasks)).toBeLessThanOrEqual(316);
+        expect(row.lanes).toBe(2);
       }
     }
     const owns = (task: string) => task === `./${owner.directory}` || task.startsWith(`./${owner.directory}#`);
@@ -297,7 +417,7 @@ it('retains the native preproposal proof for each runtime owner even without ord
 
 it('omits the native preproposal proof for an unrelated owner and widens unknown proof dependencies', () => {
   const plan = (entries: typeof packages) =>
-    planCiChecks({ changedPaths: ['app/verticals/privacy/src/service.ts'], packages: entries, templates });
+    planCiChecks({ changedPaths: [PRIVACY_SOURCE], packages: entries, templates });
   expect(plan(packages).mode).toBe('affected');
   expect(
     plan(packages)
@@ -357,7 +477,7 @@ it('widens broken dependency metadata rather than silently dropping its consumer
   }
 });
 
-it('rejects incomplete full matrices and widens an unrunnable task form', () => {
+it('rejects incomplete full matrices and refuses to plan unmeasured task forms', () => {
   expect(
     Schema.is(CiTemplatesSchema)({
       ...templates,
@@ -370,8 +490,7 @@ it('rejects incomplete full matrices and widens an unrunnable task form', () => 
       integration: [{ name: 'Unrunnable task', suite: 'integration', tasks: ['@app/pricing...'] }],
     }),
   ).toBe(false);
-  // The dependency-free planner reads authored JSON without the schema, so it widens on its own.
-  // A runnable form naming a directory that is no workspace package widens too, instead of matching nothing.
+  // The dependency-free planner also fails closed rather than assigning unknown tasks zero seconds.
   for (const task of [
     '@app/pricing...',
     './verticals/catalog#one',
@@ -379,14 +498,13 @@ it('rejects incomplete full matrices and widens an unrunnable task form', () => 
     './sites/missing#1/2',
     './verticals/missing',
   ]) {
-    expect(
+    expect(() =>
       planCiChecks({
         changedPaths: [CATALOG_SOURCE],
         packages,
         templates: { ...templates, integration: [{ name: 'Unproven task', suite: 'integration', tasks: [task] }] },
-      }).mode,
-      task,
-    ).toBe('full');
+      }),
+    ).toThrow(`Missing or invalid integration cost for ${task}`);
   }
 });
 
@@ -433,9 +551,7 @@ it('follows topology-only Shell and vertical remote references to browser tests'
     expect(plan(CATALOG_SOURCE).mode).toBe('affected');
     expect(plan(CATALOG_SOURCE).affectedPackages).toContain(SHELL);
     expect(plan(CATALOG_SOURCE).integration.some(({ suite }) => suite === 'browser')).toBe(true);
-    expect(plan('app/verticals/privacy/src/service.ts').integration.some(({ suite }) => suite === 'browser')).toBe(
-      false,
-    );
+    expect(plan(PRIVACY_SOURCE).integration.some(({ suite }) => suite === 'browser')).toBe(false);
   }
   const graph = withCiTopologyDependencies(packages, {
     shell: { ...shell, verticalRefs: ['privacy'] },
@@ -992,6 +1108,8 @@ it('plans with no installed dependencies using the same tested impact algorithm'
       'topology/reference-topology.json',
       'scripts/ci-matrices.json',
       'scripts/ci-impact.mts',
+      'scripts/ci-integration-packing.mts',
+      'scripts/ci-integration-costs.json',
       'scripts/workspace-consumer-closure.mts',
       NO_INSTALL_PLANNER,
     ]) {
