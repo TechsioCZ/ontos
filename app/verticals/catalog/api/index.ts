@@ -1,4 +1,4 @@
-import { catalogRegistration } from '../vertical.registration.ts';
+import { catalogBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
@@ -331,7 +331,7 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
-const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
   Layer.provide(Layer.mergeAll(catalogExternalCorrelationResolverLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
@@ -345,7 +345,7 @@ const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogR
 const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
-const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
   Layer.provide(Layer.mergeAll(catalogSourceActionPersistenceLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(
