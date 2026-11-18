@@ -217,6 +217,15 @@ jobs:
     permissions: *stop-red-queue-run-permissions
     steps: *stop-red-queue-run-steps
 
+  stop-red-queue-run-after-deferred-browser:
+    name: Stop this red merge queue run (Deferred authenticated browser checks)
+    needs: [browser-integration-after-static]
+    if: ${{ !cancelled() && needs.browser-integration-after-static.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
   ci-plan:
     name: Select required checks from changed inputs
     needs: [queue-proof]
@@ -230,6 +239,7 @@ jobs:
     outputs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
       lintSweep: ${{ steps.changes.outputs.lintSweep }}
+      lint: ${{ steps.selection.outputs.lint || steps.changes.outputs.lint }}
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
@@ -238,6 +248,7 @@ jobs:
       unitAfterTooling: ${{ steps.selection.outputs.unitAfterTooling || steps.changes.outputs.unitAfterTooling }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
       integrationBrowser: ${{ steps.selection.outputs.integrationBrowser || steps.changes.outputs.integrationBrowser }}
+      integrationBrowserAfterStatic: ${{ steps.selection.outputs.integrationBrowserAfterStatic || steps.changes.outputs.integrationBrowserAfterStatic }}
       integrationBuild: ${{ steps.selection.outputs.integrationBuild || steps.changes.outputs.integrationBuild }}
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
@@ -495,7 +506,7 @@ jobs:
   # every shard uploaded, and no row holds a runner while a shard still builds. Each row also takes the slot
   # of a check that frees after the owner rows and the bootstrap took the producers' slots: the source
   # contracts, the changed-file lint, the static contracts and the repository tooling tests. A whole-tree
-  # lint holds its slot for minutes, so the planner moves that row behind the static contracts.
+  # lint frees two slots, so both deferred unit rows follow it and browser checks follow static contracts.
   # A row reads the build shards only when it asks for Node artifacts, so the shards must have reached what
   # the plan expected of them: a planned skip lets the row run, a failed or cancelled shard never does.
   workspace-unit:
@@ -712,11 +723,15 @@ jobs:
   # $RUNNER_TEMP is job-local and this job checks out at depth 1, so it can neither read that path nor
   # recompute the diff.
   format-and-lint:
-    name: Format, Lint, and Repository Tooling
+    name: Format, Lint, and Repository Tooling (${{ matrix.row }}/${{ matrix.rows }})
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: *gate-image
     timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.lint) }}
     env:
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     steps:
@@ -746,6 +761,7 @@ jobs:
       # The one workspace compiler pass of the run. The tooling tests hold all four cores of their runner;
       # beside a changed-file lint this pass costs the run nothing.
       - name: Typecheck the workspace
+        if: matrix.row == 1
         id: typecheck
         background: true
         working-directory: app
@@ -756,6 +772,7 @@ jobs:
         run: mise exec -- pnpm typecheck
 
       - name: Check OntOS APIs and generator behavior
+        if: matrix.row == 1
         id: generator-checks
         background: true
         working-directory: app
@@ -764,6 +781,7 @@ jobs:
           mise exec -- pnpm test:generation
 
       - name: Check lint rules and shared contract types
+        if: matrix.row == 1
         id: lint-rule-checks
         background: true
         working-directory: app
@@ -776,6 +794,8 @@ jobs:
       - name: Format and Lint the run's changed files through the pre-commit hook
         env:
           LINT_SWEEP: ${{ needs.ci-plan.outputs.lintSweep }}
+          LINT_ROW: ${{ matrix.row }}
+          LINT_ROWS: ${{ matrix.rows }}
         run: |
           changed="$RUNNER_TEMP/ci-plan/ci-changed-paths"
           files="$RUNNER_TEMP/hook-files"
@@ -789,6 +809,18 @@ jobs:
             all)
               echo 'ci-plan selected a sweep of every tracked file.'
               git ls-files -z >"$files"
+              # Git's sorted, NUL-delimited list is identical on every row. Adjacent boundaries partition
+              # it exactly, including odd counts and file names containing whitespace or glob characters.
+              tracked=()
+              while IFS= read -r -d '' file; do
+                tracked+=("$file")
+              done <"$files"
+              start=$(( ${#tracked[@]} * (LINT_ROW - 1) / LINT_ROWS ))
+              end=$(( ${#tracked[@]} * LINT_ROW / LINT_ROWS ))
+              : >"$files"
+              if (( end > start )); then
+                printf '%s\0' "${tracked[@]:start:end-start}" >"$files"
+              fi
               ;;
             changed)
               if [[ ! -s "$changed" ]]; then
@@ -809,16 +841,21 @@ jobs:
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$files"
           # Effect's tsgolint emits no Effect language-service diagnostics.
-          mise exec --cd app -- pnpm lint:effect-diagnostics
+          if [[ "$LINT_ROW" == 1 ]]; then
+            mise exec --cd app -- pnpm lint:effect-diagnostics
+          fi
           git diff --exit-code HEAD
 
       - name: Wait for lint rule checks
+        if: matrix.row == 1
         wait: lint-rule-checks
 
       - name: Wait for API and generator checks
+        if: matrix.row == 1
         wait: generator-checks
 
       - name: Wait for the workspace typecheck
+        if: matrix.row == 1
         wait: typecheck
 
   # No job of this workflow holds a runner while it waits for another job of the same run. A job that reads
@@ -828,6 +865,8 @@ jobs:
   # Producers start with the run and only produce: 11 build shards and the database producer. Runner
   # budget, at most 18 of the organisation's 20 including the pull request's Quality Audit: 11 build shards
   # + database producer + browser checks + lint + tooling tests + source contracts + static contracts = 17.
+  # A whole-tree sweep replaces the browser's first-wave slot with a second lint row. Browser checks then
+  # take the static-contracts slot, and both deferred unit rows take the two lint slots.
   # The 11 owner rows and this bootstrap take the 12 producers' slots; each unit row takes the slot of the
   # check it follows. The bootstrap and the owner rows always read their producers' artifacts, so every
   # producer they need must have succeeded.
@@ -844,8 +883,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.integrationTopology) }}
-    env: &integration-environment
-      # Cache compiled code only; every fixture still starts fresh owners and databases.
+    env: &integration-environment # Cache compiled code only; every fixture still starts fresh owners and databases.
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       RAYON_NUM_THREADS: '1'
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
@@ -1288,6 +1326,20 @@ jobs:
     env: *integration-environment
     steps: *integration-steps
 
+  # A whole-tree lint uses the browser's first-wave slot; no runner is allocated until static contracts end.
+  browser-integration-after-static:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, static-contracts]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' && needs.ci-plan.outputs.integrationBrowserAfterStatic != '[]' }}
+    runs-on: *gate-image
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.integrationBrowserAfterStatic) }}
+    env: *integration-environment
+    steps: *integration-steps
+
   # Owner rows restore this run's database archive and Node artifacts, so they need both producers and
   # start only once every build shard and the database producer uploaded. `gh run download` reads the
   # archive of this run by its id, which needs `actions: read`.
@@ -1412,6 +1464,7 @@ jobs:
         format-and-lint,
         service-integration,
         browser-integration,
+        browser-integration-after-static,
         owner-integration,
         node-artifact-build,
         node-topology-proof,

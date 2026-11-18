@@ -678,6 +678,8 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         'unitAfterTooling',
         'integration',
         'integrationBrowser',
+        'integrationBrowserAfterStatic',
+        'lint',
         'integrationBuild',
         'integrationOwners',
         'integrationTopology',
@@ -1079,18 +1081,33 @@ it('promotes only one deferred unit row so the others keep their bounded runner 
   expect([...phases.afterLint, ...phases.afterStatic, ...phases.afterTooling]).toHaveLength(selected.length - 1);
 });
 
-it('moves the row behind lint to the static contracts slot when ci-plan sweeps every file', () => {
+it('gives both deferred unit rows the lint slots and the browser the static slot for a whole-tree sweep', () => {
   const lint = templates.unit.filter((row) => row['after-check'] === 'lint');
   expect(lint).toHaveLength(1);
   const changed = unitPhases(templates.unit, 'changed');
   const all = unitPhases(templates.unit, 'all');
   expect(changed.afterLint).toEqual(lint);
-  expect(all.afterLint).toEqual([]);
-  expect(all.afterStatic).toEqual(
+  expect(all.afterLint).toEqual(
     templates.unit.filter((row) => changed.afterStatic.includes(row) || lint.includes(row)),
   );
+  expect(all.afterStatic).toEqual([]);
   expect(all.work).toEqual(changed.work);
   expect(all.afterTooling).toEqual(changed.afterTooling);
+});
+
+it('emits two whole-tree lint rows and only one changed-file row without duplicating browser work', () => {
+  const plan = planCiChecks({ changedPaths: [], forceFull: true, packages: [], templates });
+  const changed = ciPlanOutputs(plan, 'changed');
+  const all = ciPlanOutputs(plan, 'all');
+  expect(changed.lint).toEqual([{ row: 1, rows: 1 }]);
+  expect(all.lint).toEqual([
+    { row: 1, rows: 2 },
+    { row: 2, rows: 2 },
+  ]);
+  expect(changed.integrationBrowserAfterStatic).toEqual([]);
+  expect(all.integrationBrowser).toEqual([]);
+  expect(all.integrationBrowserAfterStatic).toEqual(changed.integrationBrowser);
+  expect(changed.integrationBrowser).toHaveLength(1);
 });
 
 /** Every owner task a list of integration rows runs, sorted. */
