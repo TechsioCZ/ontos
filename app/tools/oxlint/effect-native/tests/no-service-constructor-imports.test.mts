@@ -741,6 +741,34 @@ it('proves own Record entries without admitting inherited Object members as data
   );
 });
 
+/** A data factory beside a module-level declaration that runs during initialisation. */
+const initialisedFactory = (declaration: string): string =>
+  `import { DateTime, Option, Schema, SchemaGetter } from "effect"; ${declaration} export const makeData = () => ({ id: "data" });`;
+
+it('proves the callbacks a module-level schema pipe calls during initialisation', () => {
+  expectDataFactoryProofs(
+    [
+      initialisedFactory('const Tag = Schema.String.pipe(Schema.brand("Tag"));'),
+      initialisedFactory(
+        'const Icon = Schema.TemplateLiteral(["icon-[", Schema.String, "]"]).pipe((schema) => schema);',
+      ),
+      // The shape of party-registry's counterparty instant schema.
+      initialisedFactory(
+        'const canonical = (value: string): string | undefined => { const parsed = DateTime.make(value); return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value ? undefined : "not canonical"; }; const Instant = Schema.String.check(Schema.makeFilter(canonical)).pipe((schema) => schema.pipe(Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), { decode: SchemaGetter.transform(DateTime.makeUnsafe), encode: SchemaGetter.transform(DateTime.formatIso) })));',
+      ),
+    ],
+    [
+      initialisedFactory(
+        'const Icon = Schema.TemplateLiteral(["icon"]).pipe((schema) => { fetch("icon"); return schema; });',
+      ),
+      initialisedFactory('const Query = Schema.Json.pipe((schema) => { fetch("query"); return schema; });'),
+      initialisedFactory(
+        'const stage = <S,>(schema: S): S => { fetch("stage"); return schema; }; const Name = Schema.String.pipe(stage);',
+      ),
+    ],
+  );
+});
+
 /** A factory that returns data or `otherwise` by comparing a decoded entry with `test`. */
 const literalBranchFactory = (schema: string, input: string, read: string, test: string, otherwise: string): string =>
   `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entry: ${schema} })); export const makeData = (value: string) => decode({ entry: ${input} }).entry${read} === ${test} ? { ok: true } : ${otherwise};`;

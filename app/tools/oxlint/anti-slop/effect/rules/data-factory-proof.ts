@@ -714,7 +714,15 @@ class DataFactoryProof {
           callee.type === 'Identifier' ||
           (callee.type === 'CallExpression' &&
             ['deferred-effect', 'schema-class', 'deferred-runtime'].includes(origin ?? ''));
-        if (origin !== null && creation) {
+        // A schema `.pipe` calls each stage now, during initialisation. `safe` admits a function or a bare name
+        // without its body, so a callback or a named stage takes the normal callback proof below instead.
+        const eagerStage =
+          origin === 'deferred-schema' &&
+          callee.type === 'MemberExpression' &&
+          !callee.computed &&
+          callee.property.name === 'pipe' &&
+          node.arguments.some((argument: Node) => fnNode(unwrap(argument)) || unwrap(argument).type === 'Identifier');
+        if (origin !== null && creation && !eagerStage) {
           const receiverSafe =
             callee.type === 'MemberExpression' ? safe(callee.object) : callee.type !== 'CallExpression' || safe(callee);
           return receiverSafe && node.arguments.every((argument: Node) => fnNode(unwrap(argument)) || safe(argument));
