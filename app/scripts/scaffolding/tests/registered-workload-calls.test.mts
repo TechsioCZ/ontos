@@ -5,8 +5,10 @@ import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 const {
+  canonicalRegisteredWorkloadCall,
   registeredWorkloadCallDrift,
   registeredWorkloadCallerIssues,
+  registeredWorkloadCallInventoryIssues,
   registeredWorkloadCallReceiptIssues,
   REVIEWED_REGISTERED_WORKLOAD_CALLERS,
   REVIEWED_REGISTERED_WORKLOAD_CALLS,
@@ -31,7 +33,7 @@ const receivers = [
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })) }),
 );
-type Contract = Parameters<typeof registeredWorkloadCallReceiptIssues>[0][number];
+type Contract = Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>>;
 type Call = NonNullable<Contract['manifest']['registeredWorkloadCalls']>[number];
 
 const replacingCalls = (contracts: readonly Contract[], appId: string, calls: readonly Call[]) =>
@@ -146,28 +148,48 @@ it.effect('reviews the calls of every topology vertical whose manifest declares 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it('reports a reviewed call a caller lost and a call nobody reviewed', () => {
+it('reports a reviewed declaration a caller lost and a declaration nobody reviewed, by every field', () => {
   const read = {
     audience: 'catalog',
     declarationKey: 'commerce.catalog.selection-evidence.read',
+    entrypointKey: 'commerce.catalog.api.selection-evidence',
+    jobKey: 'integration.symmy.execute-symmy-job',
+    legalEntityScope: 'forbidden',
     schemaVersion: '1',
+    sourceWorkloadKey: 'commerce.pricing.source-write',
     workloadKey: 'commerce.catalog.symmy-product-read',
-  };
+  } as const;
   const market = {
+    ...read,
     audience: 'commerce-market-catalog',
     declarationKey: 'commerce.market-catalog.market-catalog.read',
-    schemaVersion: '1',
+    entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
+    legalEntityScope: 'required',
     workloadKey: 'commerce.market-catalog.source-read',
-  };
+  } as const;
   expect(registeredWorkloadCallDrift('pricing', [read, market])).toEqual([]);
   expect(registeredWorkloadCallDrift('pricing', [read])).toEqual([
-    { built: 0, call: `${market.workloadKey} ${market.audience} ${market.declarationKey} 1`, reviewed: 1 },
+    { built: 0, call: canonicalRegisteredWorkloadCall(market), reviewed: 1 },
   ]);
-  expect(registeredWorkloadCallDrift('pricing', [read, market, { ...read, schemaVersion: '2' }])).toEqual([
-    { built: 1, call: `${read.workloadKey} ${read.audience} ${read.declarationKey} 2`, reviewed: 0 },
+  const otherSelector = { ...read, sourceWorkloadKey: 'commerce.pricing.source-read' };
+  expect(registeredWorkloadCallDrift('pricing', [otherSelector, market])).toEqual([
+    { built: 1, call: canonicalRegisteredWorkloadCall(otherSelector), reviewed: 0 },
+    { built: 0, call: canonicalRegisteredWorkloadCall(read), reviewed: 1 },
   ]);
+  for (const changed of [
+    { ...read, workerKey: symmyJob },
+    { ...read, sourceActionKey: 'commerce.pricing.define-price' },
+    { ...read, recoveryOf: { actionKey: 'commerce.pricing.define-price', jobKey: symmyJob } },
+    { ...read, allowHistoricalDeliveryRecovery: true },
+    { ...read, allowRecoverySource: true },
+    { ...read, legalEntityScope: 'optional' },
+    { ...read, entrypointKey: 'commerce.catalog.api.other' },
+    { ...read, jobKey: 'integration.symmy.other-job' },
+  ] as const) {
+    expect(registeredWorkloadCallDrift('pricing', [changed, market]), JSON.stringify(changed)).toHaveLength(2);
+  }
   expect(registeredWorkloadCallDrift('tax', [read])).toEqual([
-    { built: 1, call: `${read.workloadKey} ${read.audience} ${read.declarationKey} 1`, reviewed: 0 },
+    { built: 1, call: canonicalRegisteredWorkloadCall(read), reviewed: 0 },
   ]);
 });
 
@@ -188,11 +210,7 @@ it.live(
         { concurrency: 2 },
       ).pipe(Effect.provide(NodeServices.layer));
       const contracts: readonly Contract[] = built;
-      for (const appId of Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS)) {
-        const calls =
-          contracts.find((candidate) => candidate.deployment.appId === appId)?.manifest.registeredWorkloadCalls ?? [];
-        expect(registeredWorkloadCallDrift(appId, calls)).toEqual([]);
-      }
+      expect(verdict(registeredWorkloadCallInventoryIssues(built))).toBe('accepted');
       for (const appId of receivers) {
         const contract = contracts.find((candidate) => candidate.deployment.appId === appId);
         expect(contract?.manifest.registeredWorkloadCalls).toBeUndefined();
@@ -206,6 +224,29 @@ it.live(
       if (first === undefined) {
         return;
       }
+      const pricingCalls =
+        contracts.find(({ deployment }) => deployment.appId === 'pricing')?.manifest.registeredWorkloadCalls ?? [];
+      const inventoryRefusal = (calls: readonly Call[]) =>
+        verdict(registeredWorkloadCallInventoryIssues(replacingPricingCalls(built, calls)));
+      // Only the authority selector changes: the receiver and the caller table still take the call.
+      const otherSelector = { ...first, sourceWorkloadKey: 'commerce.pricing.source-read' };
+      const selectorOnly = replacingPricingCalls(built, [otherSelector, ...pricingCalls.slice(1)]);
+      expect(refusal(selectorOnly)).toBe('accepted');
+      expect(callerRefusal(selectorOnly)).toBe('accepted');
+      expect(verdict(registeredWorkloadCallInventoryIssues(selectorOnly))).toMatch(
+        /pricing declares a registered-workload call the reviewed inventory does not: .*"sourceWorkloadKey":"commerce\.pricing\.source-read"/u,
+      );
+      expect(verdict(registeredWorkloadCallInventoryIssues(selectorOnly))).toMatch(
+        /pricing lacks a reviewed registered-workload call: .*"sourceWorkloadKey":"commerce\.pricing\.source-write"/u,
+      );
+      // An added, a removed and a changed call.
+      expect(inventoryRefusal([...pricingCalls, otherSelector])).toMatch(
+        /pricing declares a registered-workload call/u,
+      );
+      expect(inventoryRefusal(pricingCalls.slice(1))).toMatch(/pricing lacks a reviewed registered-workload call/u);
+      expect(inventoryRefusal([{ ...first, legalEntityScope: 'optional' }, ...pricingCalls.slice(1)])).toMatch(
+        /pricing declares a registered-workload call .*"legalEntityScope":"optional"/u,
+      );
       expect(refusal(replacingPricingCalls(contracts, [{ ...first, audience: 'unknown-receiver' }]))).toMatch(
         /receiver is not installed/u,
       );
