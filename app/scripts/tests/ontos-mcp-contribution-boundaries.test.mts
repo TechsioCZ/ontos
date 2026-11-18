@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -20,6 +21,7 @@ import {
   OntosMcpContributionDerivationError,
 } from '../ontos-mcp-contribution.mts';
 import type { DeriveOntosMcpContributionInput } from '../ontos-mcp-contribution.mts';
+import { focusedEntrypointValueExports } from '../materialize-outbox-worker.mjs';
 
 const title = { cs: 'Změnit rezervaci', en: 'Change booking' };
 const READ_PATH = '/reads/state';
@@ -384,4 +386,12 @@ it('keeps the normalization and hash suffix of long tool names', () => {
     `${full.slice(0, 55)}_${createHash('sha256').update(full).digest('hex').slice(0, 8)}`,
   );
   expect(mcpToolName(appId, suffix)).toHaveLength(64);
+});
+
+it('exports the contribution authoring vocabulary from the focused worker entrypoint `@app/core-runtime` resolves to', () => {
+  const entrypoint = focusedEntrypointValueExports(
+    readFileSync(new URL('../../packages/core-runtime/src/outbox/worker-entrypoint.ts', import.meta.url), 'utf-8'),
+  );
+  expect(entrypoint.has('defineOntosMcpContribution')).toBe(true);
+  expect(entrypoint.has('OntosMcpHidden')).toBe(true);
 });
