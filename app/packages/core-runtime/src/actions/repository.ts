@@ -21,6 +21,7 @@ import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import type { ActionAuditProfile } from './definition.ts';
 import {
+  ActionAlreadyCommitted,
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
@@ -309,10 +310,15 @@ export interface ActionRepositoryService {
     executor: ActionInvocationScopeExecutor,
     input: PrepareActionInvocationInput,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
+  /**
+   * Records a Policy denial on the still-open invocation. One a concurrent same-key attempt committed
+   * while the Policies ran is not rejected: it fails with ActionAlreadyCommitted, so the request takes
+   * the replay path instead.
+   */
   readonly finalizePolicyDenial: (
     executor: ActionInvocationScopeExecutor,
     input: FinalizeActionPolicyDenialInput,
-  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>;
+  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionAlreadyCommitted | ActionInvocationPersistenceError>;
   readonly flushSuccess: (
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
@@ -841,6 +847,15 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       }
       if (invocation.status === 'rejected' && invocation.completedAt !== null) {
         return yield* earlierRejection(transaction, input.actionInvocationId);
+      }
+      // A same-key attempt that held the invocation lock committed while this request evaluated its
+      // Policies against the state before that commit: the write happened, so this is a replay.
+      if (invocation.status === 'succeeded') {
+        return yield* new ActionAlreadyCommitted({
+          code: 'action_already_committed',
+          invocationId: input.actionInvocationId,
+          reason: 'This idempotency key already committed successfully',
+        });
       }
       if (invocation.status !== 'received' || invocation.completedAt !== null) {
         return yield* persistenceFailure(

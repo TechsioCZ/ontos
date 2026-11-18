@@ -7,6 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
+import type { PolicyDenied } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -53,6 +54,8 @@ const counterAction = (
     readonly beforeReply?: (run: number) => Effect.Effect<void>;
     /** The owning module; a composition fixture names its modules `<app>.module`. */
     readonly moduleKey?: string;
+    /** What the Policy answers on its nth evaluation; it allows by default. */
+    readonly policy?: (run: number) => Effect.Effect<void, PolicyDenied>;
     /** `protected` puts the Action behind the access gate instead of the action-execution permission. */
     readonly protectedAccess?: boolean;
     readonly reject?: boolean;
@@ -84,8 +87,9 @@ const counterAction = (
       policies: [
         defineGlobalPolicy({
           evaluate: () =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               probe.policyRuns += 1;
+              return options.policy?.(probe.policyRuns) ?? Effect.void;
             }),
           policyKey: 'global.saved-reply-counter.v1',
         }),
@@ -546,5 +550,133 @@ it.effect('saves no reply for an invocation without an idempotency key', () =>
     expect(snapshot.committed).toHaveLength(1);
     expect(snapshot.committed[0]?.committedReply).toBeNull();
     expect(snapshot.invocations[0]?.idempotencyKey).toBeUndefined();
+  }),
+);
+
+it.effect('saves no reply that PostgreSQL jsonb cannot hold and commits the Action as before', () =>
+  Effect.gen(function* unstorableReply() {
+    // jsonb refuses NUL in a string value or an object key, and a lone UTF-16 surrogate.
+    for (const labels of [{ note: 'before\u0000after' }, { 'key\u0000': 'value' }, { note: 'lone \uD800' }]) {
+      let handlerRuns = 0;
+      const action = defineAction(
+        {
+          ...counterAction({ handlerRuns: 0, policyRuns: 0 }).descriptor,
+          resultSchema: Schema.Struct({ labels: Schema.Record(Schema.String, Schema.String) }),
+        },
+        () =>
+          Effect.sync(() => {
+            handlerRuns += 1;
+            return { labels };
+          }),
+      );
+      const harness = yield* harnessFor(action);
+
+      const original = yield* harness.runtime.runAction(request(action));
+      const retry = yield* harness.runtime.runAction(request(action)).pipe(Effect.flip);
+      const snapshot = harness.snapshot();
+
+      expect(original).toEqual({ labels });
+      expect(snapshot.committed).toHaveLength(1);
+      expect(snapshot.committed[0]?.committedReply).toBeNull();
+      expect(snapshot.invocations[0]?.status).toBe('succeeded');
+      expect(Predicate.isTagged(retry, 'ActionAlreadyCommitted')).toBe(true);
+      expect(handlerRuns).toBe(1);
+    }
+  }),
+);
+
+it.effect('replays a retry whose Policy denies only after the concurrent first attempt committed', () =>
+  Effect.gen(function* policyRaceReplay() {
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const firstEntered = Deferred.makeUnsafe<null>();
+    const releaseFirst = Deferred.makeUnsafe<null>();
+    const firstCommitted = Deferred.makeUnsafe<null>();
+    // The Policy allows the first attempt. The retry evaluates it while the first attempt holds the
+    // invocation lock; it lets that attempt commit, and the committed state makes it deny.
+    const action = counterAction(probe, {
+      beforeReply: (run) =>
+        run === 1
+          ? Deferred.succeed(firstEntered, null).pipe(Effect.andThen(Deferred.await(releaseFirst)))
+          : Effect.void,
+      policy: (run) =>
+        run === 1
+          ? Effect.void
+          : Deferred.succeed(releaseFirst, null).pipe(
+              Effect.andThen(Deferred.await(firstCommitted)),
+              Effect.andThen(Effect.fail(denyPolicy('counter_already_used', 'The counter was already used'))),
+            ),
+    });
+    const harness = yield* harnessFor(action);
+
+    const first = yield* harness.runtime.runAction(request(action)).pipe(
+      Effect.tap(() => Deferred.succeed(firstCommitted, null)),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(firstEntered);
+    // The retry reads the invocation still open and evaluates its Policy before the invocation lock.
+    const retry = yield* harness.runtime.runAction(request(action)).pipe(Effect.exit);
+    const original = yield* Fiber.join(first);
+    const snapshot = harness.snapshot();
+
+    expect(retry).toEqual(Exit.succeed(original));
+    expect(probe).toEqual({ handlerRuns: 1, policyRuns: 2 });
+    // The denial was not recorded on the committed invocation.
+    expect(snapshot.policyDenials).toEqual([]);
+    expect(snapshot.invocations).toHaveLength(1);
+    expect(snapshot.invocations[0]?.status).toBe('succeeded');
+    expect(snapshot.committed).toHaveLength(1);
+  }),
+);
+
+it.effect('answers ActionAlreadyCommitted to a Policy-race retry whose commit saved no reply', () =>
+  Effect.gen(function* policyRaceWithoutReply() {
+    let policyRuns = 0;
+    let handlerRuns = 0;
+    const firstEntered = Deferred.makeUnsafe<null>();
+    const releaseFirst = Deferred.makeUnsafe<null>();
+    const firstCommitted = Deferred.makeUnsafe<null>();
+    const action = defineAction(
+      {
+        ...counterAction({ handlerRuns: 0, policyRuns: 0 }).descriptor,
+        policies: [
+          defineGlobalPolicy({
+            evaluate: () =>
+              Effect.suspend(() => {
+                policyRuns += 1;
+                return policyRuns === 1
+                  ? Effect.void
+                  : Deferred.succeed(releaseFirst, null).pipe(
+                      Effect.andThen(Deferred.await(firstCommitted)),
+                      Effect.andThen(Effect.fail(denyPolicy('counter_already_used', 'The counter was already used'))),
+                    );
+              }),
+            policyKey: 'global.saved-reply-once.v1',
+          }),
+        ],
+        resultSchema: Schema.Struct({ note: Schema.String }),
+      },
+      () =>
+        Effect.gen(function* unstorableResult() {
+          handlerRuns += 1;
+          yield* Deferred.succeed(firstEntered, null);
+          yield* Deferred.await(releaseFirst);
+          // A reply jsonb cannot hold is not saved.
+          return { note: 'nul\u0000' };
+        }),
+    );
+    const harness = yield* harnessFor(action);
+
+    const first = yield* harness.runtime.runAction(request(action)).pipe(
+      Effect.tap(() => Deferred.succeed(firstCommitted, null)),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(firstEntered);
+    const retry = yield* harness.runtime.runAction(request(action)).pipe(Effect.flip);
+    yield* Fiber.join(first);
+
+    expect(Predicate.isTagged(retry, 'ActionAlreadyCommitted')).toBe(true);
+    expect({ handlerRuns, policyRuns }).toEqual({ handlerRuns: 1, policyRuns: 2 });
+    expect(harness.snapshot().policyDenials).toEqual([]);
+    expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );

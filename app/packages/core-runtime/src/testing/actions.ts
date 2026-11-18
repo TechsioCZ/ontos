@@ -9,6 +9,7 @@ import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
 import { getActionServiceFactory } from '../actions/definition.ts';
 import {
+  ActionAlreadyCommitted,
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
@@ -280,7 +281,22 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       );
     const repository: ActionRepositoryService = {
       createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
-      finalizePolicyDenial: (_executor, input) => recordRejection(input, policyDenials),
+      // Like the repository: a Policy denial meeting an invocation a same-key attempt already committed
+      // is not recorded; the request takes the replay path.
+      finalizePolicyDenial: Effect.fn('ActionTestHarness.finalizePolicyDenial')(function* finalizeTestPolicyDenial(
+        _executor,
+        input: FinalizeActionPolicyDenialInput,
+      ) {
+        const invocation = yield* find(input.actionInvocationId);
+        if (invocation.status === 'succeeded') {
+          return yield* new ActionAlreadyCommitted({
+            code: 'action_already_committed',
+            invocationId: input.actionInvocationId,
+            reason: 'This idempotency key already committed successfully',
+          });
+        }
+        return yield* recordRejection(input, policyDenials);
+      }),
       flushSuccess: (_transaction, input) =>
         Effect.sync(() => {
           pendingCommit.push(commitSuccess(input));
