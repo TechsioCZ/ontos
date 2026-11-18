@@ -4,13 +4,13 @@
  * field groups and evidence apply exactly as for any other caller. No credential is used and no caller
  * kind is selected.
  */
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 
+import { coreOperationRegistrations } from '../modules/module-operation-execution.ts';
+import type { CoreOperationRegistration } from '../modules/module-operation-execution.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
-import type { CallRoute, CallRouteRequest, CoreCallRouteFor, RouteAnswer } from './contract.ts';
+import type { CallRoute, CallRouteRequest, CoreRunRead, RouteAnswer } from './contract.ts';
 import { RouteAnswerSchema } from './contract.ts';
-import { coreOperationRegistrations } from './core-operations.ts';
-import type { CoreOperationRegistration } from './core-operations.ts';
 
 const [answered, problemAnswer] = RouteAnswerSchema.members;
 
@@ -54,22 +54,11 @@ const transportOf = (scope: CallRouteRequest['execution']['scope']) =>
     : { correlationId: scope.correlationId, traceId: scope.traceId };
 
 /**
- * The key the calling module must own, read from the request decoded by the operation's own schema.
- * An undecodable request has none here; the Core read then refuses it as invalid input.
+ * The route for one read runtime, over its own `runRead` (which clears the caller's module operation
+ * lease, so the Core read never borrows it). An operation that is not one of `coreOperationRegistrations`
+ * at its exact version answers 404 without running anything.
  */
-const callerOwnedKeyOf = (registered: CoreOperationRegistration, request: CallRouteRequest): Option.Option<string> => {
-  const field = registered.callerOwnedField;
-  if (field === undefined) {
-    return Option.none();
-  }
-  return Option.flatMap(Schema.decodeUnknownOption(registered.operation.request)(request.encodedInput), (decoded) =>
-    Predicate.hasProperty(decoded, field) && Predicate.isString(decoded[field])
-      ? Option.some(decoded[field])
-      : Option.none(),
-  );
-};
-
-export const coreCallRouteFor: CoreCallRouteFor = (runRead) => {
+export const coreCallRouteFor = (runRead: CoreRunRead): CallRoute => {
   const registry: ReadonlyMap<string, CoreOperationRegistration> = new Map(
     coreOperationRegistrations.map((registration) => [registration.operation.provider.entrypointKey, registration]),
   );
@@ -82,13 +71,6 @@ export const coreCallRouteFor: CoreCallRouteFor = (runRead) => {
       registered.operation.provider.schemaVersion !== provider.schemaVersion
     ) {
       return Effect.succeed(problem(404, 'No such Core operation', 'core_operation_unknown'));
-    }
-    // An operation that answers only about the caller's own things refuses a key of another module.
-    const ownedKey = callerOwnedKeyOf(registered, request);
-    if (Option.isSome(ownedKey) && !ownedKey.value.startsWith(`${request.execution.facts.owningModuleKey}.`)) {
-      return Effect.succeed(
-        problem(403, 'The calling module may ask only about its own operations', 'core_operation_foreign_key'),
-      );
     }
     return runRead({
       input: request.encodedInput,

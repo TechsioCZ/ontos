@@ -60,7 +60,7 @@ const RUN_HANDLER =
 const LOAD_HANDLER = '{ load: (input, context) => Effect.succeed({ evidence: { resultCount: 1 }, result: input }) }';
 const BARE_HANDLER = '(input, context) => Effect.succeed({ evidence: { resultCount: 1 }, result: input })';
 const PROVIDER_CALL = `declaredCall(providerFactsOperation, '${providerRequirement}')`;
-const CORE_CALL = `declaredCall(coreOperations.assignablePrincipals, '${coreRequirement}')`;
+const CORE_CALL = `declaredCall(coreOperations.legalEntityDetail, '${coreRequirement}')`;
 const ACCESS_QUESTIONS =
   "{ write: canRun(applyRecordsAction), rows: canList(recordsRead), restricted: canSeeFields(recordsRead, 'demo.records.restricted') }";
 
@@ -137,7 +137,7 @@ describe('the read SDK form gate', () => {
       'coreOperations imported from @app/core-runtime/sdk',
       () =>
         violations({
-          calls: `{ assignees: declaredCall(sdkCoreOperations.assignablePrincipals, '${coreRequirement}') }`,
+          calls: `{ assignees: declaredCall(sdkCoreOperations.legalEntityDetail, '${coreRequirement}') }`,
           definition: RUN_HANDLER,
           extraImports: "import { coreOperations as sdkCoreOperations } from '@app/core-runtime/sdk';",
         }),
