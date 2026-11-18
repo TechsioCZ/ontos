@@ -40,7 +40,7 @@ const problem = (status: number, reason: string, code: string | undefined): Rout
  * the requirement, the pinned principal and the recovery request when present. A worker delivery
  * (`workload`) and an in-process caller never reach this route today.
  */
-export const delegationSubjectOf = (request: CallRouteRequest): Option.Option<GatewayDelegationSubject> => {
+const delegationSubjectOf = (request: CallRouteRequest): Option.Option<GatewayDelegationSubject> => {
   const scope = request.execution.callerSource.principal;
   return Match.value(request.caller).pipe(
     Match.discriminatorsExhaustive('kind')({

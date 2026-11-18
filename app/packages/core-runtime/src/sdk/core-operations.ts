@@ -44,5 +44,3 @@ export const coreOperations = Object.freeze({
     response: LegalEntityDetailResponseSchema,
   }),
 });
-
-export type CoreOperations = typeof coreOperations;
