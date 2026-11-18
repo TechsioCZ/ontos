@@ -152,7 +152,12 @@ const ownerDeniedFrom = (cause: Cause.Cause<unknown>): TransactionAborted =>
     value: cause,
   });
 
-const runTransaction = Effect.fn('KernelSession.transaction')(function* runTransaction<
+/**
+ * Admission and the fork are one uninterruptible step, so an interruption lands only on the join, and
+ * the caller settles the transaction after it: a fiber interrupted before it ran never reached its own
+ * `settleTransaction`, and must not leave the transaction open.
+ */
+const admitAndOpen = Effect.fnUntraced(function* admitAndOpen<
   Services,
   Calls extends DeclaredCalls,
   Requirements,
@@ -162,6 +167,7 @@ const runTransaction = Effect.fn('KernelSession.transaction')(function* runTrans
 >(
   state: SessionState<Services, Calls, Requirements>,
   body: (services: Services, facts: TransactionFacts) => Effect.Effect<A, E, R>,
+  restore: <X, Y, Z>(effect: Effect.Effect<X, Y, Z>) => Effect.Effect<X, Y, Z>,
 ): Effect.fn.Return<A, E | TransactionAborted, R> {
   const now = yield* Clock.currentTimeMillis;
   const admitted = yield* Effect.sync(() => admitTransaction(state, now));
@@ -188,11 +194,37 @@ const runTransaction = Effect.fn('KernelSession.transaction')(function* runTrans
   // Forked into the work scope, so settling the session interrupts (and so rolls back) a transaction
   // still open; interrupting the caller interrupts it as well.
   const fiber = yield* Effect.forkIn(opened, state.workScope);
-  const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber))));
+  const exit = yield* Effect.exit(
+    restore(Fiber.join(fiber)).pipe(
+      Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+      Effect.ensuring(
+        Effect.sync(() => {
+          ledger.transactionOpen = false;
+        }),
+      ),
+    ),
+  );
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }
-  return yield* deniedHere ? Effect.fail(ownerDeniedFrom(exit.cause)) : Effect.failCause(exit.cause);
+  // A decided denial is the typed answer of whatever settlement followed; an interruption stays one.
+  return yield* deniedHere && !Cause.hasInterruptsOnly(exit.cause)
+    ? Effect.fail(ownerDeniedFrom(exit.cause))
+    : Effect.failCause(exit.cause);
+});
+
+const runTransaction = Effect.fn('KernelSession.transaction')(function* runTransaction<
+  Services,
+  Calls extends DeclaredCalls,
+  Requirements,
+  A,
+  E,
+  R,
+>(
+  state: SessionState<Services, Calls, Requirements>,
+  body: (services: Services, facts: TransactionFacts) => Effect.Effect<A, E, R>,
+): Effect.fn.Return<A, E | TransactionAborted, R> {
+  return yield* Effect.uninterruptibleMask((restore) => admitAndOpen(state, body, restore));
 });
 
 /* Calls ------------------------------------------------------------------------------------------ */
@@ -271,25 +303,35 @@ const admitCall = <Services, Calls extends DeclaredCalls, Requirements>(
 
 /**
  * Accounts for one admitted call exactly once: its executor's record when it reported, otherwise the
- * record it was admitted with (`Interrupted`) or, for a defect, `Unavailable`.
+ * record it was admitted with (`Interrupted`) or, for a defect, `Unavailable`. A call already accounted
+ * for is left as it is.
  */
 const settleCall = (ledger: Ledger, sequence: number, exit: Exit.Exit<CallExecution>) =>
   Effect.sync(() => {
     const pending = ledger.callsInFlight.get(sequence);
+    if (pending === undefined) {
+      return;
+    }
     ledger.callsInFlight.delete(sequence);
     if (Exit.isSuccess(exit)) {
       ledger.records.push(exit.value.record);
-    } else if (pending !== undefined) {
+    } else {
       ledger.records.push(
         Cause.hasInterruptsOnly(exit.cause) ? pending : Object.freeze({ ...pending, outcome: 'Unavailable' as const }),
       );
     }
   });
 
-const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Calls extends DeclaredCalls, Requirements>(
+/**
+ * Admission and the fork are one uninterruptible step, so an interruption lands only on the join, and
+ * the caller settles the call after it: a fiber interrupted before it ran never reached its own
+ * `settleCall`, and must not leave the call in flight.
+ */
+const admitAndSend = Effect.fnUntraced(function* admitAndSend<Services, Calls extends DeclaredCalls, Requirements>(
   state: SessionState<Services, Calls, Requirements>,
   name: string,
   input: CallExecutionRequest['input'],
+  restore: <X, Y, Z>(effect: Effect.Effect<X, Y, Z>) => Effect.Effect<X, Y, Z>,
 ): Effect.fn.Return<CallOutcome<unknown> | WriteCallOutcome<unknown>> {
   const now = yield* Clock.currentTimeMillis;
   const admitted = yield* Effect.sync(() => admitCall(state, name, now));
@@ -317,8 +359,19 @@ const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Call
     .pipe(Effect.onExit((exit) => settleCall(ledger, sequence, exit)));
   // Forked into the work scope, so settling the session interrupts a call still in flight and accounts for it.
   const fiber = yield* Effect.forkIn(executing, state.workScope);
-  const executed = yield* Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)));
+  const executed = yield* restore(Fiber.join(fiber)).pipe(
+    Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+    Effect.ensuring(settleCall(ledger, sequence, Exit.interrupt())),
+  );
   return executed.outcome;
+});
+
+const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Calls extends DeclaredCalls, Requirements>(
+  state: SessionState<Services, Calls, Requirements>,
+  name: string,
+  input: CallExecutionRequest['input'],
+): Effect.fn.Return<CallOutcome<unknown> | WriteCallOutcome<unknown>> {
+  return yield* Effect.uninterruptibleMask((restore) => admitAndSend(state, name, input, restore));
 });
 
 type UntypedCall = (
@@ -409,7 +462,7 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
       ledger.closed = true;
     }).pipe(
       Effect.andThen(Scope.close(workScope, Exit.void)),
-      // A call admitted but never started (its fiber was interrupted before it ran) reports here.
+      // A call admitted while the session settled, whose caller has not yet settled it, reports here.
       Effect.andThen(
         Effect.sync(() => {
           ledger.records.push(...ledger.callsInFlight.values());

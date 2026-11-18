@@ -225,6 +225,36 @@ it.effect('a call while a transaction is open dies call_inside_transaction', () 
   ),
 );
 
+it.effect('a call interrupted right after admission leaves nothing in flight', () =>
+  Effect.scoped(
+    Effect.gen(function* callInterruptedAtFork() {
+      const harness = yield* makeHarness([], () => Effect.never);
+      const session = yield* harness.open(execution(calls));
+      yield* Effect.race(session.capabilities.call('restrictions', { subject: 'customer' }), Effect.void);
+      expect(yield* session.capabilities.transaction(() => Effect.succeed('after'))).toBe('after');
+      yield* session.settle;
+      expect((yield* session.callRecords).map((record) => record.outcome)).toStrictEqual(['Interrupted']);
+    }),
+  ),
+);
+
+it.effect('a transaction interrupted right after admission leaves none open', () =>
+  Effect.scoped(
+    Effect.gen(function* transactionInterruptedAtFork() {
+      const harness = yield* makeHarness([]);
+      const session = yield* harness.open(execution(calls));
+      yield* Effect.race(
+        session.capabilities.transaction(() => Effect.never),
+        Effect.void,
+      );
+      expect(yield* session.capabilities.transaction(() => Effect.succeed('after'))).toBe('after');
+      expect(callAnswer(yield* session.capabilities.call('restrictions', { subject: 'customer' }))).toStrictEqual(
+        Option.some({ outcome: 'CURRENT' }),
+      );
+    }),
+  ),
+);
+
 it.effect('a transaction while a forked call is in flight dies call_inside_transaction', () =>
   Effect.scoped(
     Effect.gen(function* transactionDuringCall() {
