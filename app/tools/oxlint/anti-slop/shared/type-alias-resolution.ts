@@ -43,6 +43,12 @@ function scopeStatements(node: ESTree.Node): readonly ESTree.Node[] | null {
   }
 }
 
+function isImportSpecifier(declaration: TypeDeclaration): boolean {
+  return declaration.type === "ImportSpecifier" ||
+    declaration.type === "ImportDefaultSpecifier" ||
+    declaration.type === "ImportNamespaceSpecifier";
+}
+
 function bind(
   bindings: Map<string, TypeBinding>,
   name: string,
@@ -54,10 +60,10 @@ function bind(
   if (existing?.kind === "declaration") {
     if (
       existing.declaration.type === "TSTypeAliasDeclaration" &&
-      (declaration.type === "ImportSpecifier" || declaration.type === "ImportDefaultSpecifier")
+      isImportSpecifier(declaration)
     ) return;
     if (
-      (existing.declaration.type === "ImportSpecifier" || existing.declaration.type === "ImportDefaultSpecifier") &&
+      isImportSpecifier(existing.declaration) &&
       declaration.type === "TSTypeAliasDeclaration"
     ) {
       bindings.set(name, { kind: "declaration", declaration });
