@@ -923,6 +923,11 @@ type ReadRegistrationPrivateValue<
   readonly policies: readonly ActionPolicy<InputSchema['Type'], Owner>[];
   readonly resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>;
   readonly serviceFactory: ReadServiceFactory<Services, Requirements>;
+  /**
+   * Whether the owner pipeline has a `prepare` or a `finish` step around its transaction. A staged Read runs owner
+   * work outside the read transaction, so Core re-decides the owner rule before releasing its result.
+   */
+  readonly staged: boolean;
   readonly stages: ReadOwnerStages<InputSchema['Type'], ResultSchema['Type'], Services, Failure, Requirements>;
 }>;
 
@@ -1594,6 +1599,7 @@ export function defineRead<
     permissionTargetResolver,
     policies: Object.freeze([...executablePolicies]),
     serviceFactory,
+    staged: pipeline.prepare !== undefined || pipeline.finish !== undefined,
     stages,
   };
   const publicFields = {
@@ -1687,6 +1693,19 @@ export const getReadStages = <
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadOwnerStages<InputSchema['Type'], ResultSchema['Type'], Services, Failure, Requirements> =>
   ReadPrivateStorage.getValue(registration).stages;
+
+/** Whether a Read runs owner `prepare` or `finish` work outside its read transaction (D14). */
+export const isStagedRead = <
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+>(
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
+): boolean => ReadPrivateStorage.getValue(registration).staged;
 
 /** The record target resolver of a record-scoped read, or undefined for a scope-wide read (O9, Q2). */
 export const getReadAccessTargetResolver = <

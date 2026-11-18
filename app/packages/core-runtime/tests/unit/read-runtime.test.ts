@@ -4730,6 +4730,81 @@ it.effect('releases no result and no allowed evidence when the projection breaks
   }),
 );
 
+for (const ownerState of [false, true]) {
+  it.effect(
+    `refuses a staged Read whose owner grant is revoked during finish${ownerState ? ' before an owner-state read' : ''}`,
+    () =>
+      Effect.gen(function* ownerGrantRevokedDuringFinish() {
+        const events: string[] = [];
+        let revoked = false;
+        const read = makeStagedRead(events, {
+          duringFinish: () => {
+            revoked = true;
+          },
+          ownerState,
+        });
+        const { exit, harness } = yield* runStagedRead(events, read, {
+          ownerAuthorizationOverlay: { authorize: () => Effect.succeed(revoked ? 'denied' : 'allowed') },
+        });
+        expect(stagedFailureTag(exit)).toBe('ReadPermissionDenied');
+        expect(events).not.toContain('owner-state');
+        expect(visibleOutcome(exit)).not.toContain('prepared-owner-value');
+        expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).toEqual(['read_permission_denied']);
+      }),
+  );
+}
+
+it.effect('gives a denying owner rule the same refusal whether prepare succeeded or failed', () =>
+  Effect.gen(function* overlayDecidesBeforePrepareFailure() {
+    const deny: OwnerAuthorizationOverlayService = { authorize: () => Effect.succeed('denied' as const) };
+    const outcomes = yield* Effect.forEach([false, true], (prepareFails) =>
+      Effect.gen(function* stagedPrepareOutcome() {
+        const events: string[] = [];
+        const read = makeStagedRead(
+          events,
+          prepareFails
+            ? {
+                prepareFailure: new ReadHandlerNotFound({
+                  code: 'read_handler_not_found',
+                  reason: 'The prepared subject does not exist',
+                }),
+              }
+            : {},
+        );
+        const { exit, harness } = yield* runStagedRead(events, read, { ownerAuthorizationOverlay: deny });
+        expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual(['prepare']);
+        return { evidence: harness.evidenceParameterRows(), failure: stagedFailureTag(exit) };
+      }),
+    );
+    expect(outcomes[0]?.failure).toBe('ReadPermissionDenied');
+    expect(outcomes[1]).toEqual(outcomes[0]);
+  }),
+);
+
+it.effect('releases a typed prepare failure only after the owner rule allowed the Read', () =>
+  Effect.gen(function* prepareFailureAfterOverlay() {
+    const events: string[] = [];
+    let overlayRuns = 0;
+    const notFound = new ReadHandlerNotFound({
+      code: 'read_handler_not_found',
+      reason: 'The prepared subject does not exist',
+    });
+    const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events, { prepareFailure: notFound }), {
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.sync(() => {
+            overlayRuns += 1;
+            return 'allowed' as const;
+          }),
+      },
+    });
+    expect(Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()).toEqual(Option.some(notFound));
+    expect(overlayRuns).toBe(1);
+    expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual(['prepare']);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
 it.effect('gives finish only the owner read services, in a read-only transaction', () =>
   Effect.gen(function* finishReadOnlyServices() {
     const events: string[] = [];
@@ -4746,10 +4821,12 @@ it.effect('gives finish only the owner read services, in a read-only transaction
     // The owner's own factory built what finish received: no raw insert, update or delete executor.
     expect(seen).toEqual([stagedReadServices]);
     expect(seen[0]).toBe(stagedReadServices);
-    // The database itself refuses a write: READ ONLY is the first statement of finish's transaction.
+    // The database itself refuses a write: finish's transaction is READ ONLY before any owner code runs in it.
     const ownerState = statements.indexOf('owner-state');
-    const begin = statements.lastIndexOf('BEGIN', ownerState);
-    expect(statements[begin + 1]?.toLowerCase()).toBe('set transaction read only');
+    expect(statements[ownerState - 1]?.toLowerCase()).toBe('set transaction read only');
+    expect(statements.slice(statements.lastIndexOf('BEGIN', ownerState), ownerState)).not.toContainEqual(
+      expect.stringMatching(/^(?:insert|update|delete)/iu),
+    );
   }),
 );
 

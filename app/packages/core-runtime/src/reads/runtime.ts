@@ -45,6 +45,8 @@ import { computeCanonicalValueHash, recoverSqlTransactionError } from '../action
 import { CoreDatabase } from '../db/client.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { CoreDbExecutor, CoreTransaction } from '../db/types.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
@@ -81,6 +83,7 @@ import {
   getReadResultPermissionTargetResolver,
   getReadServiceFactory,
   getReadStages,
+  isStagedRead,
   projectReadResultFields,
 } from './definition.ts';
 import type { ReadCoreError } from './errors.ts';
@@ -1149,18 +1152,25 @@ const readEvidenceFailure = (cause: unknown) =>
 /**
  * Allowed evidence after the owner's after-commit step: revalidate the admitted composition and hold the
  * publication fence through the separate evidence commit, so a result whose `finish` overlapped a
- * publication is never released or audited without that check.
+ * publication is never released or audited without that check. `beforeRelease` runs in the same
+ * transaction after the scope is installed: a staged Read decides its owner rule there once more, so a
+ * refusal leaves no allowed row and releases no result.
  */
 const persistReadEvidenceForComposition = (
   executor: CoreDbExecutor,
   input: PersistReadEvidenceInput,
   inboundRevision: string | undefined,
   admittedRevision: string | undefined,
+  beforeRelease: (
+    transaction: CoreTransaction,
+    installed: ScopedTransactionExecutor,
+  ) => Effect.Effect<void, OperationContextUnavailable | ReadPermissionDenied | ReadPermissionUnavailable>,
 ) =>
   executor
     .transaction((transaction) =>
       fenceReadRevision(transaction, inboundRevision, admittedRevision).pipe(
         Effect.andThen(() => installOperationalScope(transaction, input.scope)),
+        Effect.flatMap((installed) => beforeRelease(transaction, installed)),
         Effect.andThen(() => persistReadEvidence(transaction, input)),
       ),
     )
@@ -1820,11 +1830,81 @@ const readRuntimeFromDependencies = <
       // The owner factory's requirements are the read's own, already provided to this read.
       const readRequirements = yield* Effect.context<Requirements>();
       /**
+       * The owner rule that admits this Read, decided at the transaction's own start time. Only exactly
+       * `allowed` admits; a denial is a permission denial and anything else is unavailable.
+       */
+      const decideOwnerAuthorization = Effect.fn('ReadRuntime.decideOwnerAuthorization')(
+        function* decideOwnerAuthorizationEffect(admitted: ScopedTransactionExecutor, transaction: CoreTransaction) {
+          const operationAt = yield* trustedTransactionTime(transaction);
+          const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
+            admitted,
+            Object.freeze(
+              withOptionalProperty(
+                withOptionalProperty(
+                  {
+                    capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+                    operation: 'read' as const,
+                    operationAt,
+                    operationKey: input.registration.descriptor.readKey,
+                    owningModuleKey: input.registration.descriptor.owningModuleKey,
+                    scope,
+                    targets: ownerAuthorizationTargets,
+                  },
+                  Option.isSome(accessTarget),
+                  'target',
+                  Option.getOrUndefined(accessTarget),
+                  {},
+                ),
+                Option.isSome(accessOwnerFacts),
+                'ownerFacts',
+                Option.getOrUndefined(accessOwnerFacts),
+                {},
+              ),
+            ),
+          );
+          if (ownerAuthorizationDecision === 'denied') {
+            return yield* new ReadPermissionDenied({
+              code: 'read_permission_denied',
+              reason: 'The owner-local authorization state denies this Read',
+            });
+          }
+          if (ownerAuthorizationDecision !== 'allowed') {
+            return yield* new ReadPermissionUnavailable({
+              code: 'read_permission_unavailable',
+              reason: 'Owner-local Read authorization is temporarily unavailable',
+            });
+          }
+          return yield* Effect.void;
+        },
+      );
+      /** The first refusal the owner rule answered after commit; it refuses the Read whatever `finish` did with it. */
+      let ownerRefusalAfterCommit: ReadPermissionDenied | ReadPermissionUnavailable | undefined;
+      /** The owner rule decided again after the read transaction committed, in a later short transaction. */
+      const redecideOwnerAuthorization = (admitted: ScopedTransactionExecutor, transaction: CoreTransaction) =>
+        decideOwnerAuthorization(admitted, transaction).pipe(
+          Effect.tapError((failure) =>
+            Effect.sync(() => {
+              ownerRefusalAfterCommit ??=
+                Schema.is(ReadPermissionDenied)(failure) || Schema.is(ReadPermissionUnavailable)(failure)
+                  ? failure
+                  : preserveFailureCause(
+                      new ReadPermissionUnavailable({
+                        code: 'read_permission_unavailable',
+                        reason: 'Owner-local Read authorization is temporarily unavailable',
+                      }),
+                      failure,
+                    );
+            }),
+          ),
+        );
+      /**
        * A short, admitted, scoped owner transaction for `finish`: an evaluation that interleaves remote
        * owner calls with owner-state reads opens one per read, and no remote call ever runs while one is
-       * open (D14). It is READ ONLY in the database, and the callback receives only what the owner's own
-       * read service factory builds, so `finish` cannot write. Only the transaction's own failures are
-       * an outage; the callback's typed failures (not found, permission denied) reach `finish` unchanged.
+       * open (D14). The owner rule that admitted `load` is decided again first, so a grant revoked during
+       * a remote call refuses the Read. From then on the transaction is READ ONLY in the database, and the
+       * callback receives only what the owner's own read service factory builds, so `finish` cannot
+       * write. Only the transaction's own failures are an outage; an owner-rule refusal stays a refusal,
+       * and the callback's typed failures (not found, permission denied) reach `finish` unchanged.
        */
       const ownerTransaction: ReadOwnerTransaction<Services> = (use) => {
         let closeOwnerAdmission: (() => void) | undefined;
@@ -1833,8 +1913,6 @@ const readRuntimeFromDependencies = <
             Effect.fn('ReadRuntime.finishOwnerTransaction')(function* finishOwnerTransaction(
               transaction: CoreTransaction,
             ) {
-              // The first statement, so every later one, a routine call included, runs read-only.
-              yield* transaction.execute(sql`set transaction read only`, 'objects');
               yield* fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision);
               const installed = yield* installOperationalScope(transaction, scope);
               const ownerAdmission = bindScopedWorkloadAdmission(
@@ -1843,6 +1921,11 @@ const readRuntimeFromDependencies = <
                 gateAuthorization.mainAccessDecision,
               );
               closeOwnerAdmission = ownerAdmission.close;
+              // Core's own owner rule may lock the rows it decides on, so it runs before the switch.
+              yield* redecideOwnerAuthorization(ownerAdmission.transaction, transaction);
+              // PostgreSQL allows the switch to read-only at any point of a transaction: every later
+              // statement, a routine call of the owner's services included, is refused if it writes.
+              yield* transaction.execute(sql`set transaction read only`, 'objects');
               const services = yield* readServiceFactory(
                 ownerAdmission.transaction,
                 scope,
@@ -1856,13 +1939,15 @@ const readRuntimeFromDependencies = <
           .pipe(
             Effect.ensuring(Effect.sync(() => closeOwnerAdmission?.())),
             Effect.mapError((cause) =>
-              preserveFailureCause(
-                new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: 'The owner transaction scope is unavailable',
-                }),
-                cause,
-              ),
+              Schema.is(ReadPermissionDenied)(cause) || Schema.is(ReadPermissionUnavailable)(cause)
+                ? cause
+                : preserveFailureCause(
+                    new ReadHandlerUnavailable({
+                      code: 'read_handler_unavailable',
+                      reason: 'The owner transaction scope is unavailable',
+                    }),
+                    cause,
+                  ),
             ),
             Effect.flatMap((callbackExit) =>
               Exit.isSuccess(callbackExit) ? Effect.succeed(callbackExit.value) : Effect.failCause(callbackExit.cause),
@@ -1889,11 +1974,14 @@ const readRuntimeFromDependencies = <
       );
       const authorizedReadProgram = Effect.gen(function* executeAuthorizedRead() {
         // Owner `prepare` runs only after the access gate and the read Policies allowed this read, and
-        // before the read transaction opens. Its output reaches nothing but this read's own `load` and
-        // `finish`, so an owner-local refusal inside the transaction never releases it.
-        const loadWith = yield* Effect.suspend(() =>
-          getReadStages(input.registration)(decodedInput, ownerStepsContext),
-        ).pipe(sanitizeOwnerFailure);
+        // before the read transaction opens. Its outcome, a typed failure included, stays private until
+        // the owner rule inside the transaction allowed the Read, so a denied caller learns nothing from
+        // it, and its output reaches nothing but this read's own `load` and `finish`.
+        const preparedExit = yield* Effect.exit(
+          Effect.suspend(() => getReadStages(input.registration)(decodedInput, ownerStepsContext)).pipe(
+            sanitizeOwnerFailure,
+          ),
+        );
         let closeWorkloadAdmission: (() => void) | undefined;
         const transactionResult = executor
           .transaction(
@@ -1909,45 +1997,10 @@ const readRuntimeFromDependencies = <
               );
               scoped = workloadAdmission.transaction;
               closeWorkloadAdmission = workloadAdmission.close;
-              const operationAt = yield* trustedTransactionTime(transaction);
-              const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
-                scoped,
-                Object.freeze(
-                  withOptionalProperty(
-                    withOptionalProperty(
-                      {
-                        capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
-                        operation: 'read' as const,
-                        operationAt,
-                        operationKey: input.registration.descriptor.readKey,
-                        owningModuleKey: input.registration.descriptor.owningModuleKey,
-                        scope,
-                        targets: ownerAuthorizationTargets,
-                      },
-                      Option.isSome(accessTarget),
-                      'target',
-                      Option.getOrUndefined(accessTarget),
-                      {},
-                    ),
-                    Option.isSome(accessOwnerFacts),
-                    'ownerFacts',
-                    Option.getOrUndefined(accessOwnerFacts),
-                    {},
-                  ),
-                ),
-              );
-              if (ownerAuthorizationDecision === 'denied') {
-                return yield* new ReadPermissionDenied({
-                  code: 'read_permission_denied',
-                  reason: 'The owner-local authorization state denies this Read',
-                });
-              }
-              if (ownerAuthorizationDecision === 'unavailable') {
-                return yield* new ReadPermissionUnavailable({
-                  code: 'read_permission_unavailable',
-                  reason: 'Owner-local Read authorization is temporarily unavailable',
-                });
-              }
+              yield* decideOwnerAuthorization(scoped, transaction);
+              const loadWith = Exit.isSuccess(preparedExit)
+                ? preparedExit.value
+                : yield* Effect.failCause(preparedExit.cause);
               const services = yield* readServiceFactory(
                 scoped,
                 scope,
@@ -1981,7 +2034,13 @@ const readRuntimeFromDependencies = <
         // evidence run with its connection back in the pool. The transaction's own failures propagate
         // untouched; only the owner's after-commit step is sanitized as an owner failure.
         const finish = yield* transactionResult;
-        const handlerResult = yield* finish.pipe(sanitizeOwnerFailure);
+        const finishExit = yield* Effect.exit(finish.pipe(sanitizeOwnerFailure));
+        // An owner-rule refusal after commit refuses the Read even when `finish` caught it.
+        const refusalAfterCommit = ownerRefusalAfterCommit;
+        if (refusalAfterCommit !== undefined) {
+          return yield* refusalAfterCommit;
+        }
+        const handlerResult = Exit.isSuccess(finishExit) ? finishExit.value : yield* Effect.failCause(finishExit.cause);
         const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
           onExcessProperty: 'error',
         })(handlerResult.result).pipe(
@@ -2047,7 +2106,8 @@ const readRuntimeFromDependencies = <
           });
         }
         // The read transaction is gone, so the allowed evidence opens its own short scoped transaction
-        // under the same composition fence.
+        // under the same composition fence. A staged Read ran owner work after commit, so its owner rule
+        // is decided once more in that transaction before the allowed row is written (final release).
         yield* persistReadEvidenceForComposition(
           executor,
           withOptionalProperty(
@@ -2085,6 +2145,18 @@ const readRuntimeFromDependencies = <
           ),
           compositionRevision,
           admittedCompositionRevision,
+          isStagedRead(input.registration)
+            ? (transaction, installed) => {
+                const releaseAdmission = bindScopedWorkloadAdmission(
+                  installed,
+                  { carrier: accessCarrier, scope },
+                  gateAuthorization.mainAccessDecision,
+                );
+                return redecideOwnerAuthorization(releaseAdmission.transaction, transaction).pipe(
+                  Effect.ensuring(Effect.sync(releaseAdmission.close)),
+                );
+              }
+            : () => Effect.void,
         );
         stage('evidence_persisted');
         return projected.value;

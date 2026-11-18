@@ -5,7 +5,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
-import type { ReadHandlerUnavailable } from './errors.ts';
+import type { ReadHandlerUnavailable, ReadPermissionDenied, ReadPermissionUnavailable } from './errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -60,14 +60,21 @@ export interface ReadPrepareContext {
  * calls with owner-state reads: each owner-state read gets its own short transaction, and no remote call ever runs
  * while one is open.
  *
- * The callback receives the owner's read services, built by the same factory as `load`, never a database executor,
- * and the transaction is READ ONLY in the database, so `finish` can read owner state but cannot write it. A failure
- * of the transaction itself (database, scope, composition fence, service factory) is `ReadHandlerUnavailable`; the
- * callback's own typed failures reach `finish` unchanged.
+ * Core first decides the owner rule that admitted `load` again in this transaction, so a grant revoked while `finish`
+ * waited on a remote call refuses the Read (`ReadPermissionDenied` or `ReadPermissionUnavailable`, and Core refuses
+ * the Read even if `finish` handles that failure). The callback then receives the owner's read services, built by
+ * the same factory as `load`, never a database executor, and the transaction is READ ONLY in the database from that
+ * point, so `finish` can read owner state but cannot write it. A failure of the transaction itself (database, scope,
+ * composition fence, service factory) is `ReadHandlerUnavailable`; the callback's own typed failures reach `finish`
+ * unchanged.
  */
 export type ReadOwnerTransaction<Services> = <Value, Failure, Requirements>(
   use: (services: Services) => Effect.Effect<Value, Failure, Requirements>,
-) => Effect.Effect<Value, Failure | ReadHandlerUnavailable, Requirements>;
+) => Effect.Effect<
+  Value,
+  Failure | ReadHandlerUnavailable | ReadPermissionDenied | ReadPermissionUnavailable,
+  Requirements
+>;
 
 /**
  * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
