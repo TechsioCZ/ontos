@@ -489,6 +489,15 @@ export const actionInvocations = enableCoreGovernedRls(
       requestHash: text('request_hash').notNull(),
       startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
       completedAt: timestamp('completed_at', { withTimezone: true }),
+      /**
+       * The reply a succeeded invocation committed, saved with its commit so a same-key retry receives
+       * it again: the canonical JSON encoding of the Action's result (`result`) or of the domain error
+       * a committed domain rejection returned (`rejection`).
+       */
+      committedReplyJson: jsonb('committed_reply_json').$type<{
+        readonly encoded: Schema.Json;
+        readonly kind: 'rejection' | 'result';
+      }>(),
     },
     (table) => [
       uniqueIndex('core_action_invocations_tenant_id_uk').on(table.tenantId, table.actionInvocationId),
@@ -515,6 +524,10 @@ export const actionInvocations = enableCoreGovernedRls(
       check(
         'core_action_invocations_status_ck',
         sql`${table.status} in ('received', 'proposed', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
+      ),
+      check(
+        'core_action_invocations_committed_reply_ck',
+        sql`${table.committedReplyJson} is null or (${table.status} = 'succeeded' and jsonb_typeof(${table.committedReplyJson}) = 'object' and ${table.committedReplyJson} ->> 'kind' in ('result', 'rejection') and ${table.committedReplyJson} -> 'encoded' is not null)`,
       ),
       sharedRuntimeAllPolicy('action_invocations'),
       pgPolicy('core_action_invocations_party_registry_request_select', {

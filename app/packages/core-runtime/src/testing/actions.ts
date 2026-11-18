@@ -189,6 +189,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
     const invocations = new Map<string, ActionTestInvocation>();
     const idempotency = new Map<string, string>();
     const committed: FlushActionSuccessInput[] = [];
+    const committedReplies = new Map<string, FlushActionSuccessInput['committedReply']>();
     const permissionDenials: RejectPermissionDeniedInput[] = [];
     const ownerPermissionTargets: OwnerPermissionAccessTarget[] = [];
     const policyDenials: FinalizeActionPolicyDenialInput[] = [];
@@ -250,6 +251,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
     ) {
       const invocation = yield* find(input.actionInvocationId);
       committed.push(input);
+      committedReplies.set(input.actionInvocationId, input.committedReply);
       invocations.set(input.actionInvocationId, {
         ...invocation,
         completedAt: completionTime(),
@@ -276,6 +278,16 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       flushSuccess: (_transaction, input) =>
         Effect.sync(() => {
           pendingCommit.push(commitSuccess(input));
+        }),
+      loadCommittedReply: (_executor, input) =>
+        Effect.sync(() => {
+          const invocation = invocations.get(input.actionInvocationId);
+          return invocation?.status === 'succeeded' &&
+            invocation.tenantId === input.principal.tenantId &&
+            invocation.principalId === input.principal.principalId &&
+            invocation.requestHash === input.requestHash
+            ? Option.fromNullishOr(committedReplies.get(input.actionInvocationId))
+            : Option.none();
         }),
       loadRecordedRejection: (_executor, id) =>
         Effect.sync(() => {

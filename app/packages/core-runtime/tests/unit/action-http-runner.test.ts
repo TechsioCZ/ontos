@@ -18,7 +18,12 @@ import {
   decodeActionEndpointHeaders,
   runGovernedActionHttp,
 } from '../../src/http/http-instrumentation-seam.ts';
-import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeActionTestHarness } from '../../src/testing/actions.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -264,7 +269,8 @@ it.effect('takes the admission audience only from receiver configuration', () =>
   }),
 );
 
-it.effect('allows an endpoint to recover an already committed Action as its declared success', () =>
+// ActionAlreadyCommitted now reaches the endpoint only for an invocation committed without a saved reply.
+it.effect('allows an endpoint to recover an already committed Action without a saved reply as its success', () =>
   Effect.gen(function* recoverCommittedAction() {
     const committed = new ActionAlreadyCommitted({
       code: 'action_already_committed',
@@ -453,5 +459,100 @@ it.effect('decodes only the Action transport headers among open browser headers'
       );
       expect(Schema.isSchemaError(failure)).toBe(true);
     }
+  }),
+);
+
+it.effect('answers a same-key HTTP retry with the original success reply', () =>
+  Effect.gen(function* savedReplyOverHttp() {
+    let executions = 0;
+    const action = defineAction(
+      {
+        accessDeclaration: fixtureActionAccess('test.http-replay'),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.http-replay.read.v1' },
+        actionKey: 'test.http-replay.create',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: 'test.http-replay.create',
+          moduleKey: 'test.http-replay',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleKey: 'test.http-replay',
+        payloadSchema: Schema.Struct({ name: Schema.String }),
+        policies: [],
+        resultSchema: Schema.Struct({ createdNumber: Schema.Finite, name: Schema.String }),
+        schemaVersion: '1',
+      },
+      (payload) =>
+        Effect.sync(() => {
+          executions += 1;
+          return { createdNumber: executions, name: payload.name };
+        }),
+    );
+    const base = makeModuleContractFixture({ appId: 'test-http-replay', moduleId: 'test.http-replay' }).manifest;
+    const ownerRegistration = defineVerticalRuntimeRegistration({
+      actions: [action],
+      manifest: defineOntosModuleManifest({
+        ...base,
+        publicSurface: { ...base.publicSurface, actions: [action], api: {}, components: {} },
+      }),
+      outboxWorkers: [],
+    });
+    const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', ownerRegistration });
+    const mapped: unknown[] = [];
+    const send = () =>
+      runGovernedActionHttp({
+        endpointHeaders: { idempotencyKey: 'create-once', traceId: 'http-replay-trace' },
+        internalProblem: () => internalProblem,
+        invalidCorrelationProblem: () => invalidProblem,
+        mapError: (failure) => {
+          mapped.push(failure);
+          return internalProblem;
+        },
+        payload: { name: 'Acme' },
+        principal: { authenticate: () => Effect.succeed(principal) },
+        registration: action,
+        requestHeaders: { authorization: authorization(), 'x-correlation-id': 'http-replay-test' },
+      }).pipe(Effect.provideService(ActionRuntime, harness.runtime));
+
+    const original = yield* send();
+    const retry = yield* send();
+
+    expect(original).toEqual({ createdNumber: 1, name: 'Acme' });
+    expect(retry).toEqual(original);
+    expect(executions).toBe(1);
+    expect(mapped).toEqual([]);
+    expect(harness.snapshot().committed).toHaveLength(1);
+
+    // An endpoint that opted into committed-retry recovery gets the saved reply, never its recovery receipt.
+    let recoveries = 0;
+    const recoveredRetry = yield* runGovernedActionHttp({
+      endpointHeaders: { idempotencyKey: 'create-once', traceId: 'http-replay-recovery-trace' },
+      internalProblem: () => internalProblem,
+      invalidCorrelationProblem: () => invalidProblem,
+      mapError: (failure: Exclude<ActionCoreError, ActionAlreadyCommitted>) => {
+        mapped.push(failure);
+        return internalProblem;
+      },
+      payload: { name: 'Acme' },
+      principal: { authenticate: () => Effect.succeed(principal) },
+      recoverAlreadyCommitted: (failure) => {
+        recoveries += 1;
+        return CommittedRetryReceiptSchema.make({ invocationId: failure.invocationId });
+      },
+      registration: action,
+      requestHeaders: { authorization: authorization(), 'x-correlation-id': 'http-replay-recovery-test' },
+    }).pipe(Effect.provideService(ActionRuntime, harness.runtime));
+
+    expect(recoveredRetry).toEqual(original);
+    expect(recoveries).toBe(0);
+    expect(executions).toBe(1);
+    expect(mapped).toEqual([]);
+    expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );

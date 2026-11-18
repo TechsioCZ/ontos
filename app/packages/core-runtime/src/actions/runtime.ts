@@ -156,6 +156,8 @@ import type {
   ActionPolicyEvidence,
   ActionRecordedRejection,
   ActionRepositoryService,
+  FlushActionSuccessInput,
+  LoadActionCommittedReplyInput,
 } from './repository.ts';
 import {
   ActionRepository,
@@ -726,10 +728,30 @@ const recordedRejectionPersistenceFailure = (cause: unknown) =>
     cause,
   );
 
+const committedReplyPersistenceFailure = (cause: unknown) =>
+  createActionInvocationPersistenceErrorWithCause(
+    {
+      code: 'action_invocation_persistence_failed',
+      reason: 'Unable to load the committed Action reply',
+    },
+    cause,
+  );
+
+/** The canonical JSON form of a committed reply: what Core saves and decodes again on a replay. */
+const encodeCommittedReplyJson = <Value>(schema: Schema.Constraint, value: Value) =>
+  Schema.encodeUnknownResult(Schema.toCodecJson(Schema.make<Schema.ConstraintEncoder<unknown>>(schema.ast)))(value);
+
+/**
+ * A same-key request that meets a succeeded invocation with its own request hash. `stageSavedReply`
+ * runs only on that branch, after the hash comparison, and prepares the saved reply; the request
+ * still fails with ActionAlreadyCommitted here, so whatever follows it (a rollback, the post-attempt
+ * hook) behaves as before, and the runner answers the prepared reply at its one answer point.
+ */
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
   requestHash: string,
   recordedRejection: Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>,
+  stageSavedReply: Effect.Effect<void, ActionInvocationPersistenceError>,
 ): Effect.Effect<
   void,
   | ActionAlreadyCommitted
@@ -744,7 +766,7 @@ const verifyInvocation = (
     return Effect.fail(requestHashConflict());
   }
   if (invocation.status === 'succeeded') {
-    return Effect.fail(alreadyCommitted(invocation.actionInvocationId));
+    return stageSavedReply.pipe(Effect.andThen(Effect.fail(alreadyCommitted(invocation.actionInvocationId))));
   }
   if (invocation.status === 'indeterminate') {
     return Effect.fail(
@@ -960,11 +982,20 @@ interface ActionAttemptOriginal<Payload> {
   readonly requestHash: string;
   readonly scope: OperationalScope;
 }
-interface ActionAttemptState<Payload, DomainError> {
+/**
+ * The decoded reply a succeeded invocation saved, prepared for a same-key retry of that request: its
+ * result as a success, or its committed domain rejection as a failure.
+ */
+interface ActionSavedReply<Success, DomainError> {
+  readonly invocationId: string;
+  readonly reply: Result.Result<Success, DomainError>;
+}
+interface ActionAttemptState<Payload, Success, DomainError> {
   committedRejection: DomainError | undefined;
   disposition: 'unstarted' | 'uncommitted' | 'indeterminate' | 'committed';
   original: ActionAttemptOriginal<Payload> | undefined;
   revision: string | undefined;
+  savedReply: ActionSavedReply<Success, DomainError> | undefined;
 }
 
 // oxlint-disable-next-line effect-native/no-wide-factory-signature -- Trusted scope and the four resolved optional permission targets are cohesive authorization data for this Action run.
@@ -1063,6 +1094,16 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         Effect.catchTags({
           OperationContextUnavailable: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),
           SqlError: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),
+        }),
+      );
+  const loadCommittedReplyInScope = (scope: OperationalScope, replyInput: LoadActionCommittedReplyInput) =>
+    invocationScopeExecutor(scope)
+      .transaction((transaction) => repository.loadCommittedReply(transaction, replyInput))
+      .pipe(
+        recoverSqlTransactionError,
+        Effect.catchTags({
+          OperationContextUnavailable: (failure) => Effect.fail(committedReplyPersistenceFailure(failure)),
+          SqlError: (failure) => Effect.fail(committedReplyPersistenceFailure(failure)),
         }),
       );
   const resolveCompositionRevision =
@@ -1245,11 +1286,82 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const declaredCarrier = input.registration.descriptor;
 
     const postAttemptHook = getActionPostAttemptHook(input.registration);
-    const attempt: ActionAttemptState<PayloadSchema['Type'], DomainErrorSchema['Type']> = {
+    const attempt: ActionAttemptState<PayloadSchema['Type'], ResultSchema['Type'], DomainErrorSchema['Type']> = {
       committedRejection: undefined,
       disposition: 'unstarted',
       original: undefined,
       revision: undefined,
+      savedReply: undefined,
+    };
+    /**
+     * Decodes the reply the succeeded invocation saved and keeps it for this attempt's answer. A
+     * missing reply (committed before replies were saved) or one the current schemas no longer accept
+     * prepares nothing, so the request keeps answering ActionAlreadyCommitted; nothing runs again.
+     */
+    const stageSavedReply = (
+      load: Effect.Effect<Option.Option<FlushActionSuccessInput['committedReply']>, ActionInvocationPersistenceError>,
+      invocationId: string,
+    ): Effect.Effect<void, ActionInvocationPersistenceError> =>
+      load.pipe(
+        Effect.flatMap((saved) => {
+          if (Option.isNone(saved)) {
+            return Effect.void;
+          }
+          const { encoded, kind } = saved.value;
+          const decoded: Effect.Effect<
+            Result.Result<ResultSchema['Type'], DomainErrorSchema['Type']>,
+            Schema.SchemaError
+          > = kind === 'result'
+            ? Schema.decodeUnknownEffect(Schema.toCodecJson(input.registration.descriptor.resultSchema))(encoded).pipe(
+                Effect.map((result) => Result.succeed(result)),
+              )
+            : Schema.decodeUnknownEffect(Schema.toCodecJson(input.registration.descriptor.domainErrorSchema))(
+                encoded,
+              ).pipe(Effect.map((rejection) => Result.fail(rejection)));
+          return decoded.pipe(
+            Effect.matchEffect({
+              onFailure: (cause) => Effect.logWarning('A saved Action reply no longer decodes', cause),
+              onSuccess: (reply) =>
+                Effect.sync(() => {
+                  attempt.savedReply = { invocationId, reply };
+                }),
+            }),
+          );
+        }),
+      );
+    /**
+     * The one place a saved reply becomes the answer. A same-key request with the same request hash
+     * that meets a succeeded invocation is a replay, and a replay runs nothing again:
+     * - it returns before the owner transaction body or after rolling it back, so no handler, Policy
+     *   write, outbox message, domain event or audit is written twice, and onDecodedSuccess (which
+     *   runs only inside the first attempt's transaction) never runs for it;
+     * - the post-attempt hook sees `AlreadyCommitted`, never `Committed` or `CommittedRejection`, so
+     *   an owner recovers or reconciles but never settles the same commit twice;
+     * - the answer is the saved reply whatever the hook answers (Settled or Recovered): the decoded
+     *   result, or the decoded committed domain rejection as the failure the first request received.
+     * Without a decodable saved reply the request keeps answering ActionAlreadyCommitted.
+     */
+    const answerSavedReply = <Success, Failure>(
+      exit: Exit.Exit<Success, Failure>,
+    ): Exit.Exit<Success | ResultSchema['Type'], Failure | DomainErrorSchema['Type']> => {
+      const saved = attempt.savedReply;
+      if (
+        saved === undefined ||
+        Exit.isSuccess(exit) ||
+        exit.cause.reasons.some(Cause.isInterruptReason) ||
+        !exit.cause.reasons.some(
+          (reason) =>
+            Cause.isFailReason(reason) &&
+            Schema.is(ActionAlreadyCommitted)(reason.error) &&
+            reason.error.invocationId === saved.invocationId,
+        )
+      ) {
+        return exit;
+      }
+      return Result.match(saved.reply, {
+        onFailure: (rejection): Exit.Exit<ResultSchema['Type'], DomainErrorSchema['Type']> => Exit.fail(rejection),
+        onSuccess: (result): Exit.Exit<ResultSchema['Type'], DomainErrorSchema['Type']> => Exit.succeed(result),
+      });
     };
     const executeAttempt = Effect.fn('ActionRuntime.executeAttempt')(function* executeAttemptEffect() {
       const prepareTrustedInputAndContext = Effect.fn('ActionRuntime.prepareTrustedInputAndContext')(
@@ -1696,6 +1808,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           invocation,
           requestHash,
           loadRecordedRejectionInScope(scope, invocation.actionInvocationId),
+          stageSavedReply(
+            loadCommittedReplyInScope(scope, {
+              actionInvocationId: invocation.actionInvocationId,
+              principal,
+              requestHash,
+            }),
+            invocation.actionInvocationId,
+          ),
         );
         return { invocation, normalizedPayload, parked: Option.none<ActionProposalAccepted>(), requestHash };
       });
@@ -2312,10 +2432,19 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             }
             return { lockedInvocation, parked };
           }
+          // A request that waited here while a concurrent first attempt committed answers its saved reply.
           yield* verifyInvocation(
             lockedInvocation,
             requestHash,
             repository.loadRecordedRejection(transaction, lockedInvocation.actionInvocationId),
+            stageSavedReply(
+              repository.loadCommittedReply(transaction, {
+                actionInvocationId: lockedInvocation.actionInvocationId,
+                principal,
+                requestHash,
+              }),
+              lockedInvocation.actionInvocationId,
+            ),
           );
           return { lockedInvocation, parked: Option.none<ActionProposalAccepted>() };
         },
@@ -2474,6 +2603,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               runningInvocation,
               requestHash,
               repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
+              stageSavedReply(
+                repository.loadCommittedReply(scopedTransaction, {
+                  actionInvocationId: runningInvocation.actionInvocationId,
+                  principal,
+                  requestHash,
+                }),
+                runningInvocation.actionInvocationId,
+              ),
             );
             const serviceFactory = resolveServiceFactory(input.registration);
             const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
@@ -2521,6 +2658,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             const handlerValue = handlerExit.value;
             let transactionValue: ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>;
             let resultHash: string;
+            let committedReply: FlushActionSuccessInput['committedReply'];
             if (Schema.is(CommittedActionDomainRejectionSchema)(handlerValue)) {
               // A committed domain rejection is not successful mandate execution: rollback its
               // business transaction instead of consuming the one-use approval on a failed command.
@@ -2545,6 +2683,19 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
                 try: () => computeCanonicalValueHash(committedDomainError.encodedDomainError),
               });
+              committedReply = {
+                encoded: yield* Effect.try({
+                  catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
+                  try: () =>
+                    Result.getOrThrow(
+                      encodeCommittedReplyJson(
+                        input.registration.descriptor.domainErrorSchema,
+                        committedDomainError.domainError,
+                      ),
+                    ),
+                }),
+                kind: 'rejection',
+              };
             } else {
               const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerValue);
               transactionValue = result;
@@ -2566,6 +2717,21 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                     ),
                   ),
               });
+              committedReply = {
+                encoded: yield* Effect.try({
+                  catch: (cause) =>
+                    attachFailureCause(
+                      new ActionResultValidationError({
+                        code: 'action_result_invalid',
+                        reason: 'The decoded Action result cannot be saved as its committed reply',
+                      }),
+                      cause,
+                    ),
+                  try: () =>
+                    Result.getOrThrow(encodeCommittedReplyJson(input.registration.descriptor.resultSchema, result)),
+                }),
+                kind: 'result',
+              };
               const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
               if (onDecodedSuccess !== undefined) {
                 const hookExit = yield* Effect.exit(
@@ -2605,6 +2771,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 actionKey: input.registration.descriptor.actionKey,
                 allowedPolicies,
                 auditProfile: input.registration.descriptor.auditProfile,
+                committedReply,
                 evidence: collector.snapshot(),
                 principal,
                 resultHash,
@@ -2820,7 +2987,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       },
     );
     if (postAttemptHook === undefined) {
-      return yield* executeAttempt();
+      return yield* answerSavedReply(yield* Effect.exit(executeAttempt()));
     }
     return yield* Effect.uninterruptibleMask(
       Effect.fn('ActionRuntime.settleActionAttempt')(function* settleActionAttempt(
@@ -2835,7 +3002,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           original === undefined ||
           (Exit.isSuccess(executionExit) && Schema.is(ActionProposalAcceptedSchema)(executionExit.value))
         ) {
-          return yield* executionExit;
+          return yield* answerSavedReply(executionExit);
         }
         const outcome = yield* classifyAttemptOutcome(executionExit);
         const mode = Match.value(outcome).pipe(
@@ -2904,8 +3071,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
           return yield* Match.value(settlement).pipe(
             Match.tags({
-              Recovered: ({ result }) => confirmOriginalRecovery(result, original, mode.recoverable),
-              Settled: () => executionExit,
+              Recovered: ({ result }) =>
+                attempt.savedReply === undefined
+                  ? confirmOriginalRecovery(result, original, mode.recoverable)
+                  : answerSavedReply(executionExit),
+              Settled: () => answerSavedReply(executionExit),
             }),
             Match.exhaustive,
           );

@@ -472,7 +472,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
   const moduleKey = testModuleKey('idempotency', tenantOne);
   const input = actionInput(moduleKey, 'active', 'same-intent');
 
-  yield* withDatabase((database) => {
+  const original = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(crypto),
@@ -482,6 +482,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
     );
     return runtime.runAction(input);
   });
+  // A same-key retry answers the saved reply of the committed change; the history below stays one row.
   const replay = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
@@ -490,9 +491,9 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
       testOperationalScopeResolver,
       moduleStateRuntimeOptions,
     );
-    return Effect.exit(runtime.runAction(input));
+    return runtime.runAction(input);
   });
-  expect(failureTag(replay)).toBe('ActionAlreadyCommitted');
+  expect(replay).toEqual(original);
 
   const unchanged = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
