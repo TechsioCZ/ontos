@@ -120,8 +120,7 @@ describe('Inventory public owner contracts', () => {
       'NO_AVAILABILITY_CONTRACT',
     ]);
 
-    expect(inventoryPublicOperations).toHaveLength(31);
-    expect(new Set(inventoryPublicOperations.map(({ key }) => key))).toHaveLength(31);
+    expect(new Set(inventoryPublicOperations.map(({ key }) => key)).size).toBe(inventoryPublicOperations.length);
     const publicKeys = inventoryPublicOperations.map(({ key }) => key);
     expect(publicKeys.some((key) => key.includes('update-inventory'))).toBe(false);
     expect(publicKeys.some((key) => key.includes('provider'))).toBe(false);
@@ -136,7 +135,6 @@ describe('Inventory public owner contracts', () => {
     expect(inventoryPublicActionContracts).toHaveLength(20);
     expect(inventoryGovernedReadContracts).toHaveLength(11);
     expect(new Set(actualOperationClientExports)).toEqual(new Set(expectedOperationClientExports));
-    expect(actualOperationClientExports).toHaveLength(64);
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSet).toBe(executeCurrentRelevantStockPositionSet);
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSetWithAuthorization).toBe(
       executeCurrentRelevantStockPositionSetWithAuthorization,

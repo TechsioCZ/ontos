@@ -9,7 +9,7 @@ const actionsByKey = new Map(
 );
 
 describe('Catalog Action recovery permission exclusivity (#478)', () => {
-  it('registers all 83 separately typed recovery reads with exact, non-umbrella permissions', () => {
+  it('registers a separately typed recovery read for every published Action with exact, non-umbrella permissions', () => {
     const permissions = new Set<string>();
     for (const name of recoveryNames) {
       const readKey = `commerce.catalog.api.${name}`;
@@ -35,7 +35,9 @@ describe('Catalog Action recovery permission exclusivity (#478)', () => {
     expect(permissions).not.toContain('commerce.catalog.read.recovery');
     expect(permissions).not.toContain('commerce.catalog.read.action-result');
     expect(permissions).not.toContain('commerce.catalog.read');
-    expect(new Set(recoveryNames).size).toBe(83);
-    expect(recoveryNames).toHaveLength(83);
+    expect(new Set(recoveryNames).size).toBe(recoveryNames.length);
+    expect(new Set(recoveryNames.map((name) => `commerce.catalog.${name.slice(0, -'-recovery'.length)}`))).toEqual(
+      new Set(actionsByKey.keys()),
+    );
   });
 });
