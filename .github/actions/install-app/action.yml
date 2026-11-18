@@ -114,17 +114,18 @@ runs:
             positives+=("$glob")
           fi
         done <pnpm-workspace.yaml
-        excluded=' '
+        # One directory per line: a directory name may hold a space, never a newline.
+        excluded=$'\n'
         for glob in ${negatives[@]+"${negatives[@]}"}; do
           for manifest in $glob/package.json; do
-            excluded+="${manifest%/package.json} "
+            excluded+="${manifest%/package.json}"$'\n'
           done
         done
         directories=()
         for glob in ${positives[@]+"${positives[@]}"}; do
           for manifest in $glob/package.json; do
             directory="${manifest%/package.json}"
-            [[ "$excluded" == *" $directory "* || "/$directory/" == */node_modules/* ]] || directories+=("$directory")
+            [[ "$excluded" == *$'\n'"$directory"$'\n'* || "/$directory/" == */node_modules/* ]] || directories+=("$directory")
           done
         done
         if [[ "${#directories[@]}" == '0' ]]; then

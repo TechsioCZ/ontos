@@ -174,6 +174,13 @@ it('follows the packages: globs, negations, quotes and comments of a workspace f
   });
 });
 
+it('excludes only the directory a negation names, not one its name begins', () => {
+  const kept = 'sites/web';
+  withWorkspace("packages:\n  - sites/*\n  - '!sites/*lib'\n", [kept, `${kept} lib`], (workspace) => {
+    expect(deriveOrThrow(workspace).directories).toEqual([kept]);
+  });
+});
+
 it('covers a package directory added to the workspace in the cached paths and the key', () => {
   withWorkspace(LISTING, FIXTURE, (workspace) => {
     const before = deriveOrThrow(workspace);
