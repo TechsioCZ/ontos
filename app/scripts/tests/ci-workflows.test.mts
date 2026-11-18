@@ -304,6 +304,17 @@ it('selects work before gates and starts source checks without waiting for artif
 });
 
 const CANCEL_REPLACED_QUEUE_RUNS_JOB = 'cancel-replaced-queue-runs';
+/** Each job that stops a red merge queue run, with the one check whose failure starts it. */
+const STOPPED_CHECKS = {
+  'stop-red-queue-run-after-bootstrap': TOPOLOGY_PROOF_JOB,
+  'stop-red-queue-run-after-browser': BROWSER_INTEGRATION_JOB,
+  'stop-red-queue-run-after-build': NODE_ARTIFACT_BUILD_JOB,
+  'stop-red-queue-run-after-database': SERVICE_INTEGRATION_JOB,
+  'stop-red-queue-run-after-lint': FORMAT_AND_LINT_JOB,
+  'stop-red-queue-run-after-source-contracts': SOURCE_CONTRACTS_JOB,
+  'stop-red-queue-run-after-static-contracts': STATIC_CONTRACTS_JOB,
+  'stop-red-queue-run-after-tooling': WORKSPACE_GATE_JOB,
+} as const satisfies Readonly<Record<string, string>>;
 const CancelWorkflowSchema = Schema.Struct({
   concurrency: Schema.Struct({ 'cancel-in-progress': Schema.String, group: Schema.String }),
   jobs: Schema.Record(
@@ -335,7 +346,7 @@ it('cancels the runs of replaced merge queue entries from a job that runs no rep
   expect(cancel?.permissions).toEqual({ actions: 'write' });
   expect(cancel?.steps?.map(({ uses }) => uses)).toEqual([undefined]);
   for (const [job, { needs, permissions }] of Object.entries(jobs)) {
-    if (job !== CANCEL_REPLACED_QUEUE_RUNS_JOB) {
+    if (job !== CANCEL_REPLACED_QUEUE_RUNS_JOB && !(job in STOPPED_CHECKS)) {
       expect(permissions?.actions, job).not.toBe('write');
     }
     // A cancel never decides the verdict, and nothing waits for it.
@@ -505,6 +516,59 @@ it('cancels exactly the older live merge group runs of the same pull request', (
     expect(rejected.passed, ref).toBe(false);
     expect(rejected.calls, ref).toEqual([]);
   }
+});
+
+// 18 Nov: 44260932910 failed lint at 07:48:53 and left the queue at 08:00:52, 85 runner-minutes later.
+it('stops a red merge queue run as soon as one early check fails, from jobs that run no repository code', () => {
+  const { jobs } = readCancelWorkflow();
+  const stops = Object.keys(jobs).filter((job) => job.startsWith('stop-red-queue-run-'));
+  expect(new Set(stops)).toEqual(new Set(Object.keys(STOPPED_CHECKS)));
+  for (const [stop, check] of Object.entries(STOPPED_CHECKS)) {
+    const job = jobs[stop];
+    // Started through its check alone, so it holds no runner while it waits and fires as that check ends.
+    expect(job?.needs, stop).toEqual([check]);
+    expect(job?.if, stop).toBe(
+      expression(`!cancelled() && needs.${check}.result == 'failure' && github.event_name == 'merge_group'`),
+    );
+    expect(job?.permissions, stop).toEqual({ actions: 'write' });
+    expect(
+      job?.steps?.map(({ uses }) => uses),
+      stop,
+    ).toEqual([undefined]);
+    expect(job?.steps?.[0]?.run, stop).toContain('"repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/cancel"');
+  }
+  // A matrix need waits for every row: the owner rows end with the run, so nothing would be saved.
+  expect(Object.values(STOPPED_CHECKS)).not.toContain(OWNER_INTEGRATION_JOB);
+  // The required check still reports on a cancelled run, red, so the queue removes the entry at once.
+  expect(jobs['workspace-gates']?.if).toBe(expression('always()'));
+  for (const [job, { needs }] of Object.entries(jobs)) {
+    for (const stop of stops) {
+      expect(needs ?? [], job).not.toContain(stop);
+    }
+  }
+});
+
+it('cancels only its own run and accepts a run that another stop already cancelled', () => {
+  const script = readCancelWorkflow().jobs['stop-red-queue-run-after-lint']?.steps?.[0]?.run ?? 'exit 1';
+  const environment = {
+    GITHUB_REF: `refs/heads/${QUEUE_ENTRY_PREFIX}${QUEUE_BASES[0]}`,
+    GITHUB_RUN_ID: String(QUEUE_RUN_ID),
+  };
+  const cancel = cancelArgs(QUEUE_RUN_ID);
+  const stopped = runWithFakeGh(script, [{ args: cancel, stdout: '' }], environment);
+  expect(stopped).toMatchObject({ calls: [cancel], passed: true });
+  const already = runWithFakeGh(
+    script,
+    [{ args: cancel, exit: 1, stderr: 'gh: Cannot cancel a workflow run that is completed. (HTTP 409)\n' }],
+    environment,
+  );
+  expect(already).toMatchObject({ calls: [cancel], passed: true });
+  const refused = runWithFakeGh(
+    script,
+    [{ args: cancel, exit: 1, stderr: 'gh: Resource not accessible by integration (HTTP 403)\n' }],
+    environment,
+  );
+  expect(refused).toMatchObject({ calls: [cancel], passed: false });
 });
 
 it('classifies documentation before installation and schedules full regression without enabling deployment', () => {

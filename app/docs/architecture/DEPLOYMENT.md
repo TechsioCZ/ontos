@@ -918,6 +918,13 @@ being rebuilt fires no event, so its run ends by itself. That job is outside `Wo
 fails, the entry still merges, but its run concludes `failure`, so the push of that commit finds no
 proof and runs the gates once.
 
+A merge-group run stops itself as soon as one of its early checks fails: lint, the repository tooling
+tests, the source and static contracts, the build shards, the database producer, the browser checks or
+the deployment bootstrap. Each of them has a `stop-red-queue-run-after-*` job that starts only when that
+check failed and cancels the run. `Workspace gates` still runs on the cancelled run and fails, so the
+queue removes the entry without waiting for the owner rows. Pull request runs still run every job, so
+their authors see every failure.
+
 The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
 run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
 passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
