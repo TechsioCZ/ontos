@@ -8,12 +8,12 @@ import {
   BUILD_DRIVER_TOOLS,
   buildEnvironment,
   isTestInput,
-  runtimeClosure,
   unitInputDigest,
   unitInputGraph,
   unitInputs,
 } from './delivery-plan.mts';
 import type { ExcludedInput, UnitInputGraph, WorkspacePackage } from './delivery-plan.mts';
+import { packageEntries } from '../ci/unit-inputs.mts';
 
 const CRM = 'app/verticals/crm';
 const PARTY = 'app/verticals/party';
@@ -22,28 +22,37 @@ const SHELL = 'app/apps/shell-super-app';
 const CONTRACTS = 'app/packages/shared-contracts';
 const PARTY_PACKAGE = '@app/party';
 const PARTY_API = `${PARTY}/src/api.ts`;
+/** A Party export no other unit imports: only a build that walks every export of Party reads it. */
+const PARTY_WORKER = `${PARTY}/src/worker.ts`;
+const EXPORT_WALK = 'app/scripts/complete-packaged-node-dependencies.mts';
+const KIT = 'app/packages/kit';
+const KIT_PACKAGE = '@app/kit';
+const SHELL_PACKAGE = '@app/shell-super-app';
+const KIT_SOURCE = `${KIT}/src/index.ts`;
 const CRM_ENTRY = `${CRM}/src/index.ts`;
 const CRM_IMPORTED_TEST_HELPER = `${CRM}/tests/support/fixture-ids.ts`;
 const OWNER_ENTRY = 'app/scripts/zerops/owner-entry.mts';
 const EMPTY_MODULE = 'export {};';
 const ZEROPS_YAML = 'app/zerops.yaml';
+const LOCKFILE = 'app/pnpm-lock.yaml';
 const packages: readonly WorkspacePackage[] = [
   {
     directory: CRM,
     name: '@app/crm',
-    runtimeDependencies: [PARTY_PACKAGE],
     // The Shell is a devDependency (a test helper), so only an import from included code brings it in.
-    workspaceDependencies: [PARTY_PACKAGE, '@app/shell-super-app'],
+    workspaceDependencies: [PARTY_PACKAGE, KIT_PACKAGE, SHELL_PACKAGE],
   },
-  { directory: PARTY, name: PARTY_PACKAGE, runtimeDependencies: [], workspaceDependencies: [] },
-  { directory: OTHER, name: '@app/other', runtimeDependencies: [], workspaceDependencies: [] },
-  { directory: SHELL, name: '@app/shell-super-app', runtimeDependencies: [], workspaceDependencies: [] },
-  { directory: CONTRACTS, name: '@app/shared-contracts', runtimeDependencies: [], workspaceDependencies: [] },
+  { directory: PARTY, name: PARTY_PACKAGE, workspaceDependencies: [] },
+  { directory: OTHER, name: '@app/other', workspaceDependencies: [KIT_PACKAGE] },
+  { directory: SHELL, name: SHELL_PACKAGE, workspaceDependencies: [] },
+  { directory: CONTRACTS, name: '@app/shared-contracts', workspaceDependencies: [] },
+  { directory: KIT, name: KIT_PACKAGE, workspaceDependencies: [] },
 ];
 const CRM_SOURCE = [
   "import { party } from '@app/party/api';",
+  "import { kit } from '@app/kit';",
   "import { ids } from '../tests/support/fixture-ids.ts';",
-  'export const crm = [party, ids];',
+  'export const crm = [party, kit, ids];',
 ].join('\n');
 /** A small commit: each file's text is what the reference scan reads, its identity is what the digest hashes. */
 const FILES: readonly (readonly [string, string])[] = [
@@ -63,17 +72,27 @@ const FILES: readonly (readonly [string, string])[] = [
   [CRM_IMPORTED_TEST_HELPER, 'export const ids = [1];'],
   [`${CRM}/tests/page.test.ts`, "import { crm } from '../src/index.ts';"],
   [`${CRM}/tsconfig.json`, '{"extends":"../../tsconfig.base.json"}'],
+  [`${KIT}/package.json`, '{"name":"@app/kit","exports":{".":"./src/index.ts"}}'],
+  [KIT_SOURCE, 'export const kit = 1;'],
   [`${OTHER}/package.json`, '{"name":"@app/other"}'],
-  [`${OTHER}/src/index.ts`, 'export const other = 1;'],
-  [`${PARTY}/package.json`, '{"name":"@app/party"}'],
+  [`${OTHER}/src/index.ts`, "import { kit } from '@app/kit';\nexport const other = kit;"],
+  [`${PARTY}/package.json`, '{"name":"@app/party","exports":{"./api":"./src/api.ts","./worker":"./src/worker.ts"}}'],
   [PARTY_API, 'export const party = 1;'],
+  [PARTY_WORKER, 'export const worker = 1;'],
   [`${PARTY}/tests/api.test.ts`, "import { party } from '../src/api.ts';"],
-  [`${SHELL}/package.json`, '{"name":"@app/shell-super-app"}'],
-  [`${SHELL}/src/index.ts`, 'export const shell = 1;'],
+  [
+    `${SHELL}/package.json`,
+    JSON.stringify({
+      name: SHELL_PACKAGE,
+      scripts: { build: 'modern build && node ../../scripts/complete-packaged-node-dependencies.mts .' },
+    }),
+  ],
+  [`${SHELL}/src/index.ts`, "import { party } from '@app/party/api';\nexport const shell = party;"],
+  [EXPORT_WALK, EMPTY_MODULE],
   ['app/.mise.toml', '[tools]'],
   ['app/module-federation.shared.ts', 'export const shared = {};'],
   ['app/package.json', '{"name":"app"}'],
-  ['app/pnpm-lock.yaml', 'lockfileVersion: 9'],
+  [LOCKFILE, 'lockfileVersion: 9'],
   ['app/quality-audit/lint-suppressions.json', '[]'],
   [
     'app/scripts/generate-contract.mts',
@@ -125,8 +144,8 @@ const environment = buildEnvironment([
   ['HOME', '/home/runner'],
   ['ONTOS_PUBLIC_ORIGIN', 'https://stage.example'],
 ]);
-const identity = (graph: UnitInputGraph, variables = environment) =>
-  unitInputDigest(CRM, { environment: variables, graph });
+const identity = (graph: UnitInputGraph, variables = environment, unit = CRM) =>
+  unitInputDigest(unit, { environment: variables, graph });
 const sameAfter = (changed: string) =>
   identity(graphOf([changed])).pipe(
     Effect.flatMap((after) => identity(graphOf()).pipe(Effect.map((before) => ({ changed, same: after === before })))),
@@ -146,7 +165,7 @@ it.effect('changes a unit identity for a change in any dependency, reached file,
       BUILD_DRIVER,
       OWNER_ENTRY,
       'app/scripts/zerops/hosted-credential-claim.mts',
-      'app/pnpm-lock.yaml',
+      LOCKFILE,
       'app/.mise.toml',
       'app/tsconfig.base.json',
       'app/module-federation.shared.ts',
@@ -198,26 +217,90 @@ it.effect('keeps a unit identity for unrelated units, deploy files, tests, docs,
 
 it.effect('follows a devDependency only when included code imports it', () =>
   Effect.gen(function* devDependency() {
-    expect(yield* runtimeClosure(CRM, packages)).toEqual([CRM, PARTY]);
+    expect(yield* sameAfter(`${SHELL}/src/index.ts`)).toEqual({ changed: `${SHELL}/src/index.ts`, same: true });
     const importing = [[CRM_ENTRY, `${CRM_SOURCE}\nimport '@app/shell-super-app/runtime';`]] as const;
     const baseline = yield* identity(graphOf([], importing));
     expect(yield* identity(graphOf([`${SHELL}/src/index.ts`], importing))).not.toBe(baseline);
   }),
 );
 
-/** The rule the identity must never break: inside the unit or a dependency, only tests and docs stay out. */
-const unsafeExclusions = (closure: readonly string[], excluded: readonly ExcludedInput[]) =>
+/**
+ * One unit's change rebuilds only what depends on it; whatever every unit reads rebuilds all. A dependency counts by
+ * what the unit reaches of it: a package's exports (and their imports), never a file no export reaches.
+ */
+it.effect('changes the units that reach a change and keeps every other unit', () =>
+  Effect.gen(function* dependents() {
+    const units = [CRM, OTHER, PARTY];
+    const changedUnits = (changed: string) =>
+      Effect.gen(function* compareUnits() {
+        const changes = [];
+        for (const unit of units) {
+          const before = yield* identity(graphOf(), environment, unit);
+          if ((yield* identity(graphOf([changed]), environment, unit)) !== before) {
+            changes.push(unit);
+          }
+        }
+        return { changed, units: changes };
+      });
+    // One vertical's source: the vertical and the units that import what it exports.
+    expect(yield* changedUnits(PARTY_API)).toEqual({ changed: PARTY_API, units: [CRM, PARTY] });
+    expect(yield* changedUnits(PARTY_WORKER)).toEqual({ changed: PARTY_WORKER, units: [PARTY] });
+    expect(yield* changedUnits(`${OTHER}/src/index.ts`)).toEqual({ changed: `${OTHER}/src/index.ts`, units: [OTHER] });
+    // A build that walks every export of the packages it carries reads the exports it does not import too.
+    const shellBefore = yield* identity(graphOf(), environment, SHELL);
+    expect(yield* identity(graphOf([PARTY_WORKER]), environment, SHELL)).not.toBe(shellBefore);
+    // A shared package: every unit that imports it.
+    expect(yield* changedUnits(KIT_SOURCE)).toEqual({ changed: KIT_SOURCE, units: [CRM, OTHER] });
+    // The packages the build driver compiles first, the build driver and what it runs: every unit.
+    for (const changed of [`${CONTRACTS}/src/index.ts`, BUILD_DRIVER, OWNER_ENTRY, LOCKFILE]) {
+      expect(yield* changedUnits(changed)).toEqual({ changed, units });
+    }
+  }),
+);
+
+it('reads a package as its manifest and every export target, or whole when its exports are not plain files', () => {
+  const manifest = `${PARTY}/package.json`;
+  const index = `${PARTY}/src/index.ts`;
+  const entries = (exports: string) => packageEntries(PARTY, `{"name":"${PARTY_PACKAGE}","exports":${exports}}`);
+  expect(entries('{".":"./src/index.ts","./api":{"default":"./src/api.ts","types":"./src/api.d.ts"}}')).toEqual([
+    manifest,
+    index,
+    `${PARTY}/src/api.ts`,
+    `${PARTY}/src/api.d.ts`,
+  ]);
+  expect(entries('"./src/index.ts"')).toEqual([manifest, index]);
+  // A subpath reads only its own targets, under every condition.
+  const subpaths = '{".":"./src/index.ts","./api":{"default":"./src/api.ts","types":"./src/api.d.ts"}}';
+  expect(packageEntries(PARTY, `{"exports":${subpaths}}`, './api')).toEqual([
+    manifest,
+    `${PARTY}/src/api.ts`,
+    `${PARTY}/src/api.d.ts`,
+  ]);
+  expect(packageEntries(PARTY, `{"exports":${subpaths}}`, '.')).toEqual([manifest, index]);
+  expect(packageEntries(PARTY, '{"exports":{"default":"./src/index.ts"}}', '.')).toEqual([manifest, index]);
+  // An unexported or pattern-matched subpath cannot be named from the map, so the package counts whole.
+  expect(packageEntries(PARTY, `{"exports":${subpaths}}`, './other')).toEqual([]);
+  expect(packageEntries(PARTY, '{"exports":{"./*":"./src/*.ts"}}', './api')).toEqual([]);
+  expect(entries('{".":"./src/index.ts","./private":null}')).toEqual([manifest, index]);
+  // Each of these resolves files the map does not name, so the package counts whole.
+  for (const exports of ['{"./*":"./src/*.ts"}', '{"./":"./"}', '{".":"../other/index.ts"}', '{".":1}']) {
+    expect({ entries: entries(exports), exports }).toEqual({ entries: [], exports });
+  }
+  expect(packageEntries(PARTY, `{"name":"${PARTY_PACKAGE}"}`)).toEqual([]);
+});
+
+/** The rule the identity must never break: inside the unit, only tests and docs stay out. */
+const unsafeExclusions = (directory: string, excluded: readonly ExcludedInput[]) =>
   excluded.filter(
     (entry) =>
-      closure.some((root) => entry.path.startsWith(`${root}/`)) &&
+      entry.path.startsWith(`${directory}/`) &&
       !(entry.reason === 'test' && isTestInput(entry.path)) &&
       entry.reason !== 'documentation',
   );
-
-it.effect('excludes nothing from a unit or its dependencies except tests and documentation', () =>
+it.effect('excludes nothing from a unit except tests and documentation', () =>
   Effect.gen(function* fixtureExclusions() {
-    const { closure, excluded, inputs } = yield* unitInputs(CRM, graphOf());
-    expect(unsafeExclusions(closure, excluded)).toEqual([]);
+    const { excluded, inputs } = yield* unitInputs(CRM, graphOf());
+    expect(unsafeExclusions(CRM, excluded)).toEqual([]);
     expect(inputs.map((entry) => entry.path)).toContain(CRM_IMPORTED_TEST_HELPER);
     expect(excluded.map((entry) => entry.path)).not.toContain(CRM_IMPORTED_TEST_HELPER);
     expect(excluded.find((entry) => entry.path === ZEROPS_YAML)?.reason).toBe('non-build');
@@ -236,8 +319,8 @@ it.effect(
       }
       expect(units.length).toBeGreaterThan(1);
       for (const { directory } of units) {
-        const { closure, excluded } = yield* unitInputs(directory, graph);
-        expect({ directory, unsafe: unsafeExclusions(closure, excluded) }).toEqual({ directory, unsafe: [] });
+        const { excluded } = yield* unitInputs(directory, graph);
+        expect({ directory, unsafe: unsafeExclusions(directory, excluded) }).toEqual({ directory, unsafe: [] });
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   60_000,

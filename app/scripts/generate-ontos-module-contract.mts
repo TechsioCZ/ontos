@@ -143,16 +143,28 @@ const repositoryEsbuildPath = (): string => {
   });
 };
 
+/**
+ * Source-only React workspace packages ship `.tsx`, which Node's ESM loader cannot import, so the owner bundle carries
+ * them instead of leaving them external. Each resolves through the owner's own install, as its package's `exports`
+ * name it, so only an owner that installs one reads it. A package root is aliased to its entry's directory, not the
+ * entry: esbuild appends a subpath import such as `@app/admin-ui/visible-text` to an alias target.
+ */
 const sourceOnlyReactPackages = [
-  // A directory, not index.ts: esbuild appends a subpath import such as `@app/admin-ui/visible-text` to an
-  // alias target, so a file target resolves to `index.ts/visible-text` and the owner bundle fails to build.
-  { entry: 'packages/admin-ui/src', name: '@app/admin-ui' },
-  {
-    entry: 'verticals/facility-operations/src/components/record-discussion.tsx',
-    name: '@app/facility-operations/ui/record-discussion',
-  },
-  { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
+  '@app/admin-ui',
+  '@app/facility-operations/ui/record-discussion',
+  '@app/tagging/components/tag-controls',
 ] as const;
+const sourceOnlyReactAliases = (verticalDirectory: string) => {
+  const ownerRequire = createRequire(path.join(verticalDirectory, 'package.json'));
+  return Effect.all(
+    sourceOnlyReactPackages.map((name) =>
+      Effect.try(() => ownerRequire.resolve(name)).pipe(
+        Effect.map((entry) => [`--alias:${name}=${name.split('/').length === 2 ? path.dirname(entry) : entry}`]),
+        Effect.orElseSucceed((): string[] => []),
+      ),
+    ),
+  ).pipe(Effect.map((aliases) => aliases.flat()));
+};
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
   pattern.test(value) ? Effect.succeed(value) : Effect.fail(failure(`${label} must be one safe generated identifier`));
@@ -266,6 +278,7 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
         catch: (cause) => failure('unable to resolve the repository esbuild executable', cause),
         try: repositoryEsbuildPath,
       });
+      const aliases = yield* sourceOnlyReactAliases(verticalDirectory);
       const handle = yield* spawner
         .spawn(
           ChildProcess.make(
@@ -276,12 +289,7 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
               '--format=esm',
               '--platform=node',
               '--packages=external',
-              // Source-only React workspace packages ship `.tsx`, which Node's ESM loader cannot import, so
-              // they are bundled into the owner bundle instead of being left as external package imports.
-              ...sourceOnlyReactPackages.map(
-                (sourcePackage) =>
-                  `--alias:${sourcePackage.name}=${platformPath.join(workspaceRoot, sourcePackage.entry)}`,
-              ),
+              ...aliases,
               `--outfile=${bundlePath}`,
             ],
             { cwd: workspaceRoot },

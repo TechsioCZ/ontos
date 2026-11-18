@@ -13,7 +13,7 @@
 # Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs, git-ignored). Run from app/.
 #
 # A unit whose inputs did not change keeps its previous build: dist/.zerops-build-digest records the digest of its
-# committed inputs (unitInputs in delivery-plan.mts: its runtime workspace closure, every file its build reaches,
+# committed inputs (unitInputs in delivery-plan.mts: its own package, every file its build reaches,
 # the scripts its build runs, the root build configuration) and its build variables. Each built dist/ is copied to
 # $UNIT_CACHE_DIR (default .zerops/unit-cache), which zerops.yaml keeps in the Zerops build cache together with the
 # Rspack caches, and restored from there. A kept unit keeps the release identity (source revision, build marker) it

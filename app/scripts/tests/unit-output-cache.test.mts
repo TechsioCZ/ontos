@@ -80,6 +80,8 @@ const basePackages: readonly WorkspacePackage[] = [
 const sources = new Map([
   [DRIVER, 'node "$root/scripts/build.mts"\n[ -z "$UNIT_POST_BUILD" ] || node "$UNIT_POST_BUILD" "$unit"'],
   [`${DIRECTORY}/package.json`, '{"name":"@app/catalog","scripts":{"build":"modern build"}}'],
+  // A dependency is an input through what the unit's sources reach of it.
+  [SOURCE, "import { contract } from '@app/catalog-contracts';"],
 ]);
 const graphOf = (entries: readonly GitEntry[] = baseEntries, packages: readonly WorkspacePackage[] = basePackages) =>
   unitInputGraph({ entries, packages, sources });
@@ -121,10 +123,18 @@ it.effect('is stable for identical inputs, documentation, and unrelated private 
   }),
 );
 
-it.effect('changes for each committed input class, including Git modes and closure membership', () =>
+it.effect('changes for each committed input class, including Git modes', () =>
   Effect.gen(function* committedInputClasses() {
     const expected = yield* gatesInputDigest(inputs);
-    const paths = [SOURCE, `${DEPENDENCY}/index.ts`, COMMON, BUILD_TOOL, DRIVER, POST_BUILD_PATH];
+    const paths = [
+      SOURCE,
+      `${DIRECTORY}/package.json`,
+      `${DEPENDENCY}/index.ts`,
+      COMMON,
+      BUILD_TOOL,
+      DRIVER,
+      POST_BUILD_PATH,
+    ];
     for (const filepath of paths) {
       expect(yield* gatesInputDigest({ ...inputs, graph: changeEntry(filepath) })).not.toBe(expected);
     }
@@ -135,10 +145,6 @@ it.effect('changes for each committed input class, including Git modes and closu
     expect(
       yield* gatesInputDigest({ ...inputs, graph: graphOf(baseEntries.filter((entry) => entry.path !== SOURCE)) }),
     ).not.toBe(expected);
-    const packages = basePackages.map((entry) =>
-      entry.directory === DIRECTORY ? { ...entry, workspaceDependencies: [] } : entry,
-    );
-    expect(yield* gatesInputDigest({ ...inputs, graph: graphOf(baseEntries, packages) })).not.toBe(expected);
     return yield* Effect.void;
   }),
 );

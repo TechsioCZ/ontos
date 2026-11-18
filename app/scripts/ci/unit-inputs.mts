@@ -6,15 +6,14 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { Effect, Order, Schema, Stream } from 'effect';
+import { Effect, Option, Order, Predicate, Schema, Stream } from 'effect';
 import { sort as sortArray } from 'effect/Array';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 const DigestInputsSchema = Schema.Struct({
-  closure: Schema.Array(Schema.String),
   environment: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
   inputs: Schema.Array(Schema.Struct({ identity: Schema.String, path: Schema.String })),
-  version: Schema.Literal(3),
+  version: Schema.Literal(4),
 });
 const BuildManifestSchema = Schema.fromJsonString(
   Schema.Struct({ scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)) }),
@@ -23,11 +22,6 @@ const BuildManifestSchema = Schema.fromJsonString(
 export interface WorkspacePackage {
   readonly directory: string;
   readonly name: string;
-  /**
-   * The workspace packages a built unit can contain without importing them: `dependencies`, `peerDependencies` and
-   * `optionalDependencies` (Module Federation shares declared dependencies). Absent means all of them.
-   */
-  readonly runtimeDependencies?: readonly string[];
   readonly workspaceDependencies: readonly string[];
 }
 export interface DeliveryUnit {
@@ -48,11 +42,8 @@ export const isDocumentation = (filepath: string): boolean =>
   /(?:^|\/)(?:README|AGENTS|CLAUDE|CONTRIBUTING|SECURITY|CHANGELOG|LICENSE)\.md$/u.test(filepath);
 export const inside = (filepath: string, directory: string): boolean => filepath.startsWith(`${directory}/`);
 
-const closureOf = (
-  directory: string,
-  packages: readonly WorkspacePackage[],
-  dependenciesOf: (entry: WorkspacePackage) => readonly string[],
-) =>
+/** Resolve committed workspace manifests, not node_modules symlinks or the runner's installed graph. */
+export const workspaceClosure = (directory: string, packages: readonly WorkspacePackage[]) =>
   Effect.gen(function* resolveWorkspaceClosure() {
     const byName = new Map(packages.map((entry) => [entry.name, entry]));
     const byDirectory = new Map(packages.map((entry) => [entry.directory, entry]));
@@ -67,7 +58,7 @@ const closureOf = (
         return yield* new WorkspaceInputsInvalid({ reason: `Missing workspace manifest: ${current}` });
       }
       seen.add(current);
-      for (const name of dependenciesOf(entry)) {
+      for (const name of entry.workspaceDependencies) {
         const dependency = byName.get(name);
         if (dependency === undefined) {
           return yield* new WorkspaceInputsInvalid({ reason: `Unresolved workspace dependency ${name} in ${current}` });
@@ -77,34 +68,30 @@ const closureOf = (
     }
     return sortArray(Order.String)([...seen]);
   });
-/** Resolve committed workspace manifests, not node_modules symlinks or the runner's installed graph. */
-export const workspaceClosure = (directory: string, packages: readonly WorkspacePackage[]) =>
-  closureOf(directory, packages, (entry) => entry.workspaceDependencies);
-/**
- * The packages a unit's build output can hold without the unit importing them. A devDependency (a test helper, a
- * fixture owner) enters a unit's identity only when included code references it, which the reference graph follows.
- */
-export const runtimeClosure = (directory: string, packages: readonly WorkspacePackage[]) =>
-  closureOf(directory, packages, (entry) => entry.runtimeDependencies ?? entry.workspaceDependencies);
 
 /*
  * A unit's identity: a cached build of the unit may be reused if and only if nothing its build can read changed.
  *
  * Included (fail closed):
- * - every file of the unit's workspace closure (the unit and, transitively, the workspace packages it depends on),
- *   except tests, fixtures and documentation;
+ * - every file of the unit's own package, except tests, fixtures and documentation;
  * - every file reached from an included file by a static reference: imports, re-exports, `require`, `import()`,
- *   `new URL(…, import.meta.url)`, CSS `@import`/`@source`/`@plugin`/`url()`, tsconfig `extends`/`references`, a
- *   workspace package named by a bare specifier (all of it), the nearest package.json, and every string literal
- *   outside comments that names a tracked file (the paths code reads);
+ *   `new URL(…, import.meta.url)`, CSS `@import`/`@source`/`@plugin`/`url()`, tsconfig `extends` and the tsconfig of
+ *   each `references` project, the nearest package.json, and every string literal outside comments that names a
+ *   tracked file (the paths code reads);
+ * - for a workspace package named by a bare specifier, its manifest and the targets of that subpath in its `exports`
+ *   under every condition (packageEntries): the bundler, TypeScript, the deploy trace and Node all resolve the
+ *   specifier through that map. A unit whose build walks every export of the packages it carries counts all of them
+ *   (EXPORT_WALKING_STEPS). A package whose `exports` cannot be read that way (none, an unexported subpath, a pattern,
+ *   a directory or an untracked target) counts whole. A declared dependency the unit never names is no input: no
+ *   build step reads it (Module Federation shares only npm packages);
  * - the build driver, every script it names (except its tools), its extra inputs and every script the unit's own
  *   `build` script runs, with their reference graphs;
  * - every other path at the repository or app root that is not classified below (lockfile, workspace and tool
  *   pins, patches, tsconfigs, topology, Module Federation sharing, Git ignore rules and any new root file);
  * - the build variables of the environment, as values (see buildEnvironment).
  * Excluded, each with its reason: tests and fixtures (never bundled; a test file a build does import is reached
- * and included), documentation, other workspace packages and tool scripts the build neither runs nor reaches, and
- * NON_BUILD_PATHS. The commit is NOT part of the identity: a kept unit keeps the release identity it was built with.
+ * and included), documentation, the files of other workspace packages and the tool scripts the build neither runs
+ * nor reaches, and NON_BUILD_PATHS. The commit is NOT part of the identity: a kept unit keeps the release identity it was built with.
  */
 
 /** Why a tracked path is not part of a unit's identity. */
@@ -167,6 +154,11 @@ const BUILD_STEP_READS = new Map([
     /^app\/verticals\/[^/]+\/(?:src\/|vertical\.manifest\.ts$|vertical\.runtime-declaration\.ts$)/u,
   ],
 ]);
+/**
+ * Build steps that read every export of each workspace package the unit names, not only the subpaths it imports: the
+ * Shell's packaging walks the ES module entries of every workspace package it carries, imported or not.
+ */
+const EXPORT_WALKING_STEPS = new Set(['app/scripts/complete-packaged-node-dependencies.mts']);
 /** The build driver typechecks these packages before any unit build, which then reads their declarations. */
 const PREBUILT_PACKAGES = /^\s*for project in (?<value>[^;]+);\s*do\b/mu;
 const TEST_PATH = /(?:^|\/)(?:tests|__tests__|fixtures|__fixtures__)\/|\.(?:test|spec)\.[^/]+$/u;
@@ -238,10 +230,12 @@ interface Reach {
   /** Every tracked file below these directories: a Tailwind `@source` scan, tests included. */
   readonly directories: readonly string[];
   readonly files: readonly string[];
+  /** Workspace packages named by a bare specifier and counted by their exports (see EXPORT_WALKING_STEPS). */
+  readonly named: readonly string[];
   /** Whole workspace packages, without their tests and documentation. */
   readonly packages: readonly string[];
 }
-const NOTHING: Reach = { directories: [], files: [], packages: [] };
+const NOTHING: Reach = { directories: [], files: [], named: [], packages: [] };
 /**
  * Code without its comments, for the path-literal scan only: a comment that names a file is prose, not a read.
  * A regex literal can confuse this scanner, so import references are always read from the full text.
@@ -303,6 +297,53 @@ const ancestors = (filepath: string) =>
     .split('/')
     .slice(0, -1)
     .map((_, index, parts) => parts.slice(0, parts.length - index).join('/'));
+
+/** An `exports` target naming one file of its package: no subpath pattern, no directory. */
+const ExportFileSchema = Schema.String.check(Schema.isPattern(/^\.\/[^*]*[^*/]$/u));
+/** An `exports` value that names files only, under any subpaths and conditions (`null` exports nothing). */
+type ExportsValue = string | null | readonly ExportsValue[] | { readonly [key: string]: ExportsValue };
+const ExportsValueSchema: Schema.Codec<ExportsValue> = Schema.suspend(() =>
+  Schema.Union([
+    ExportFileSchema,
+    Schema.Null,
+    Schema.Array(ExportsValueSchema),
+    Schema.Record(Schema.String, ExportsValueSchema),
+  ]),
+);
+const ExportsManifestSchema = Schema.fromJsonString(Schema.Struct({ exports: ExportsValueSchema }));
+/** The value a subpath (`.` or `./name`) resolves through; a map without subpath keys is the conditions of `.`. */
+const subpathExport = (exports: ExportsValue, subpath: string): ExportsValue => {
+  const subpaths = Predicate.isObject(exports) ? Object.entries(exports).filter(([key]) => key.startsWith('.')) : [];
+  if (subpaths.length === 0) {
+    return subpath === '.' ? exports : null;
+  }
+  return subpaths.find(([key]) => key === subpath)?.[1] ?? null;
+};
+const exportFiles = (value: ExportsValue): readonly string[] => {
+  if (Predicate.isString(value)) {
+    return [value];
+  }
+  return value === null ? [] : Object.values(value).flatMap(exportFiles);
+};
+/**
+ * The files a bare specifier of a workspace package can resolve to under any condition: the package's manifest and
+ * the targets of `subpath` in its `exports` map (every subpath when absent). Empty when the map does not name files of
+ * the package only (no `exports`, an unexported subpath, a subpath pattern, a directory or an outside target): then
+ * the package counts whole.
+ */
+export const packageEntries = (
+  directory: string,
+  manifest: string | undefined,
+  subpath?: string,
+): readonly string[] => {
+  const files = Option.match(Schema.decodeUnknownOption(ExportsManifestSchema)(manifest ?? ''), {
+    onNone: () => [],
+    onSome: (decoded) => exportFiles(subpath === undefined ? decoded.exports : subpathExport(decoded.exports, subpath)),
+  }).map((target) => path.posix.normalize(path.posix.join(directory, target)));
+  return files.length > 0 && files.every((file) => inside(file, directory))
+    ? [`${directory}/package.json`, ...files]
+    : [];
+};
 
 /** The reference graph of one commit. Each file's references are resolved once and shared by every unit. */
 export const unitInputGraph = (workspace: UnitWorkspace) => {
@@ -373,7 +414,17 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
       return owner === undefined ? NOTHING : { ...NOTHING, packages: [owner] };
     }
     const named = byName.find((entry) => specifier === entry.name || specifier.startsWith(`${entry.name}/`));
-    return named === undefined ? NOTHING : { ...NOTHING, packages: [named.directory] };
+    if (named === undefined) {
+      return NOTHING;
+    }
+    const entries = packageEntries(
+      named.directory,
+      workspace.sources.get(`${named.directory}/package.json`),
+      `.${specifier.slice(named.name.length)}`,
+    );
+    return entries.length > 0 && entries.every((file) => tracked.has(file))
+      ? { ...NOTHING, files: entries, named: [named.directory] }
+      : { ...NOTHING, packages: [named.directory] };
   };
   /** In code, a string naming a tracked file (from the file or from app/) is taken as a path the code reads. */
   const resolveLiteral = (from: string, literal: string): readonly string[] =>
@@ -384,9 +435,13 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     const name = path.posix.basename(filepath);
     if (/^tsconfig[^/]*\.json$/u.test(name)) {
       const extended = matches(TSCONFIG_EXTENDS, text).flatMap((value) => matches(QUOTED, value));
-      // A root tsconfig references every package for the workspace typecheck; no unit build follows those.
+      // A root tsconfig references every package for the workspace typecheck; no unit build follows those. A package's
+      // reference names a project, whose tsconfig a build can read (its options and its own references).
       const references = owningPackage(filepath) === undefined ? [] : matches(TSCONFIG_REFERENCE, text);
-      return [...extended, ...references];
+      return [
+        ...extended,
+        ...references.map((reference) => (reference.endsWith('.json') ? reference : `${reference}/tsconfig.json`)),
+      ];
     }
     if (name.endsWith('.json') || name.endsWith('.sh')) {
       return [];
@@ -437,6 +492,7 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
         ...(stepReads === undefined ? [] : [...tracked].filter((candidate) => stepReads.test(candidate))),
         ...(manifest === undefined ? [] : [manifest]),
       ],
+      named: resolved.flatMap((entry) => entry.named),
       packages: resolved.flatMap((entry) => entry.packages),
     };
     reaches.set(filepath, result);
@@ -473,25 +529,14 @@ const buildScriptFiles = (directory: string, graph: UnitInputGraph) =>
       .filter((candidate) => graph.tracked.has(candidate));
   });
 
-/** Whether a directory of <roots> contains <filepath>, by its ancestors: every unit asks this of every tracked file. */
-const insideAny = (filepath: string, roots: ReadonlySet<string>): boolean => {
-  for (let slash = filepath.indexOf('/'); slash !== -1; slash = filepath.indexOf('/', slash + 1)) {
-    if (roots.has(filepath.slice(0, slash))) {
-      return true;
-    }
-  }
-  return false;
-};
-
-const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: UnitInputGraph) => {
-  const inClosure = insideAny(filepath, closure);
+const exclusionReason = (filepath: string, directory: string, graph: UnitInputGraph) => {
   if (isTestInput(filepath)) {
     return 'test' as const;
   }
   if (isUnitDocumentation(filepath)) {
     return 'documentation' as const;
   }
-  if (inClosure) {
+  if (inside(filepath, directory)) {
     return 'input' as const;
   }
   if (graph.owningPackage(filepath) !== undefined) {
@@ -506,7 +551,6 @@ const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: 
 /** The committed inputs of one unit, and every tracked path left out with its reason. */
 export const unitInputs = (directory: string, graph: UnitInputGraph, driver: BuildDriver) =>
   Effect.gen(function* collectUnitInputs() {
-    const closure = yield* runtimeClosure(directory, graph.workspace.packages);
     const included = new Set<string>();
     const pending: string[] = [];
     const reachedFrom = new Map<string, string>();
@@ -531,10 +575,9 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       }
     };
     const excluded: ExcludedInput[] = [];
-    current = '(closure or root input)';
-    const closureRoots = new Set(closure);
+    current = '(unit or root input)';
     for (const entry of graph.workspace.entries) {
-      const reason = exclusionReason(entry.path, closureRoots, graph);
+      const reason = exclusionReason(entry.path, directory, graph);
       if (reason === 'input') {
         add(entry.path);
       } else {
@@ -549,25 +592,28 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
     add(driver.path);
     // A shell comment is not a unit-build dependency.
     const commands = text.replaceAll(/^[\t ]*#.*$/gmu, '');
+    const runs: string[] = [];
     for (const token of matches(SCRIPT_TOKEN, commands)) {
       const script = path.posix.normalize(token.replace(/^\$\{?root\}?\//u, ''));
       if (!driver.tools.has(script)) {
-        add(`app/${script}`);
+        runs.push(`app/${script}`);
       }
     }
     for (const script of driver.extraInputs) {
       if (!graph.tracked.has(script)) {
         return yield* new WorkspaceInputsInvalid({ reason: `Missing build driver input: ${script}` });
       }
-      add(script);
+      runs.push(script);
     }
     const prebuilt = groupValue(PREBUILT_PACKAGES.exec(commands)) ?? '';
     for (const project of prebuilt.split(/\s+/u).filter((value) => value.length > 0)) {
       addPackage(`app/${project}`);
     }
-    for (const script of yield* buildScriptFiles(directory, graph)) {
+    runs.push(...(yield* buildScriptFiles(directory, graph)));
+    for (const script of runs) {
       add(script);
     }
+    const walksExports = runs.some((script) => EXPORT_WALKING_STEPS.has(script));
     for (const filepath of pending) {
       current = filepath;
       const reached = graph.reach(filepath);
@@ -577,9 +623,13 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       for (const root of reached.packages) {
         addPackage(root);
       }
+      for (const root of walksExports ? reached.named : []) {
+        for (const file of packageEntries(root, graph.workspace.sources.get(`${root}/package.json`))) {
+          add(file);
+        }
+      }
     }
     return {
-      closure,
       excluded: excluded.filter((entry) => !included.has(entry.path)),
       inputs: graph.workspace.entries.filter((entry) => included.has(entry.path)),
       /** Why each input is one: the file that reached it, or the rule that included it. */
@@ -600,13 +650,10 @@ const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
  */
 export const unitIdentity = (directory: string, input: UnitDigestInput) =>
   Effect.gen(function* identifyUnit() {
-    const { closure, inputs } = yield* unitInputs(directory, input.graph, input.driver);
+    const { inputs } = yield* unitInputs(directory, input.graph, input.driver);
     const encode = Schema.encodeEffect(Schema.fromJsonString(DigestInputsSchema));
     const [digest, files] = yield* Effect.all(
-      [
-        encode({ closure, environment: input.environment, inputs, version: 3 }),
-        encode({ closure, environment: [], inputs, version: 3 }),
-      ],
+      [encode({ environment: input.environment, inputs, version: 4 }), encode({ environment: [], inputs, version: 4 })],
       { concurrency: 1 },
     );
     return {
@@ -645,18 +692,9 @@ const git = (args: readonly string[]) =>
     }
     return stdout;
   }).pipe(Effect.scoped);
-const workspaceNames = (dependencies: Readonly<Record<string, string>>) =>
-  Object.entries(dependencies)
-    .filter(([, range]) => range.startsWith('workspace:'))
-    .map(([name]) => name);
 const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => ({
   directory,
   name: manifest.name,
-  runtimeDependencies: workspaceNames({
-    ...manifest.dependencies,
-    ...manifest.optionalDependencies,
-    ...manifest.peerDependencies,
-  }),
   workspaceDependencies: Object.entries({
     ...manifest.dependencies,
     ...manifest.devDependencies,

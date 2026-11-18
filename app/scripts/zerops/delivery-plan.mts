@@ -20,7 +20,6 @@ export {
   isDocumentation,
   isReferenceSource,
   isTestInput,
-  runtimeClosure,
   unitInputGraph,
   workspaceClosure,
 } from '../ci/unit-inputs.mts';
