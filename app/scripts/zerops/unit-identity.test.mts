@@ -252,6 +252,7 @@ const PLANNER = new Set([
   'app/scripts/zerops/delivery-plan.mts',
   ...[...BUILD_DRIVER_TOOLS.keys()].map((script) => `app/${script}`),
   'app/scripts/ci/unit-output-cache.mts',
+  'app/scripts/ci/unit-inputs.mts',
 ]);
 it.effect(
   'keeps the deploy planner out of every committed unit, the Shell included',

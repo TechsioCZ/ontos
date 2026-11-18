@@ -4,23 +4,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import {
   CiTemplatesSchema,
   filterPaths,
   matchingPackages,
   planCiChecks,
-  rootLevelPackageDirectories,
   unknownFilters,
   withCiTopologyDependencies,
 } from '../plan-ci-checks.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 
-const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
-  readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+/** The demo trunk's matrices: the shared file with the overlay its gates workflow names. */
+const templates = Result.getOrThrow(
+  parseCiMatrices(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../ci-matrices.demo.json', import.meta.url), 'utf-8'),
+  ),
 );
+const rootLevelPackageDirectories = templates['root-packages'] ?? [];
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const PACKAGE_MANIFEST = 'package.json';
 const ManifestFromJson = Schema.fromJsonString(
