@@ -662,6 +662,8 @@ jobs:
           else
             mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
               <"$files"
+            # Effect's tsgolint emits no Effect language-service diagnostics; `pnpm lint` chains these on sweeps.
+            mise exec --cd app -- pnpm lint:effect-diagnostics
           fi
           git diff --exit-code HEAD
 

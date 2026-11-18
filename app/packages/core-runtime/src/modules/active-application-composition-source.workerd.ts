@@ -24,16 +24,13 @@ const load = Effect.gen(function* readEdgeSnapshot() {
     catch: (cause) =>
       new ActiveApplicationCompositionSourceReadError({ cause, reason: 'The Workers KV snapshot read failed' }),
     try: (signal): PromiseLike<Awaited<ReturnType<typeof binding.get>>> =>
-      binding
-        .get(ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY, 'stream')
-        .then((stream): Awaited<ReturnType<typeof binding.get>> | PromiseLike<ReadableStream<Uint8Array>> =>
-          !signal.aborted || stream === null
-            ? stream
-            : stream.cancel().then(
-                () => stream,
-                () => stream,
-              ),
-        ),
+      binding.get(ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY, 'stream').then((stream) => {
+        if (signal.aborted && stream !== null) {
+          // Nothing reads an abandoned body: release it, and a failed release leaves nothing to read either.
+          void Promise.allSettled([stream.cancel()]);
+        }
+        return stream;
+      }),
   });
   if (snapshot === null) {
     return yield* new ActiveApplicationCompositionSourceReadError({
