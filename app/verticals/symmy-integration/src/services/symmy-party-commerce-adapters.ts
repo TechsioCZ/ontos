@@ -1052,6 +1052,44 @@ const recordCreatedParty = (
     }),
     Match.orElse(() => Effect.void),
   );
+const sendPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.PartyCreate')(function* sendPartyCreate(
+  input: SymmyEffectAdapterInput,
+  intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCreate' }>,
+  context: Pick<Effect.Success<ReturnType<typeof freshOwnerContext>>, 'authorization' | 'partyOptions'>,
+  actionInvocationId?: string,
+) {
+  const payload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)(intent.payload);
+  const result = yield* createPartyWithAuthorization(payload, context.authorization, context.partyOptions);
+  yield* recordCreatedParty(input, result, actionInvocationId);
+  return yield* outcome(input, createdPartyStatus(result.outcome));
+});
+/**
+ * Core keeps the reply of a committed Action and answers a retry with the same key, principal and request with it;
+ * nothing runs again. So a create-party whose reply was lost is settled by sending the pinned request once more.
+ * The resend repeats only the pinned identity: freshOwnerContext requires the pinned executor and recomputes the
+ * request hash against the pinned one. Every failure here, including a Core without a saved reply, stays unavailable.
+ */
+const replayCommittedPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.replayCommittedPartyCreate')(
+  function* replayCommittedPartyCreate(
+    crypto: Crypto.Crypto,
+    input: SymmyEffectAdapterInput,
+    intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCreate' }>,
+  ) {
+    const { originalInvocationId } = input;
+    if (
+      originalInvocationId === undefined ||
+      input.originalExecutorPrincipalId === undefined ||
+      input.originalRequestHash === undefined ||
+      input.originalAuthContextRef === undefined
+    ) {
+      return unavailableRecovery;
+    }
+    const selected = operationForIntent(intent);
+    const context = yield* freshOwnerContext(crypto, input, selected.declaration, selected.moduleId, true, intent);
+    const replayed = yield* sendPartyCreate(input, intent, context, originalInvocationId);
+    return { outcome: replayed, status: 'settled' as const };
+  },
+);
 const recordMatchedParty = Effect.fn('SymmyPartyCommerceAdapters.recordMatchedParty')(function* recordMatchedParty(
   input: SymmyEffectAdapterInput,
   result: typeof MatchPartyResultSchema.Type,
@@ -1074,7 +1112,8 @@ const recordMatchedParty = Effect.fn('SymmyPartyCommerceAdapters.recordMatchedPa
 const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(function* recoverParty(
   crypto: Crypto.Crypto,
   input: SymmyEffectAdapterInput,
-  operation: (typeof PartySourceEffectReceiptRequestSchema.Type)['operation'],
+  // A created Party is settled by Core's saved reply (replayCommittedPartyCreate), never by its receipt Read.
+  operation: Exclude<(typeof PartySourceEffectReceiptRequestSchema.Type)['operation'], 'CREATE'>,
   intent: SymmyPartyCommerceIntent,
 ) {
   const request = yield* Schema.decodeUnknownEffect(PartySourceEffectReceiptRequestSchema)({
@@ -1104,9 +1143,6 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     return unavailableRecovery;
   }
   yield* Match.value(receipt).pipe(
-    Match.when({ operation: 'CREATE' }, (original) =>
-      recordCreatedParty(input, original.result, original.actionInvocationId),
-    ),
     Match.when({ operation: 'MATCH' }, (original) =>
       recordMatchedParty(input, original.result, original.actionInvocationId),
     ),
@@ -1132,7 +1168,6 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     Match.orElse(() => Effect.void),
   );
   const status = Match.value(receipt).pipe(
-    Match.when({ operation: 'CREATE' }, (created) => createdPartyStatus(created.result.outcome)),
     Match.when({ operation: 'MATCH' }, (matched) => matchedPartyStatus(matched.result.outcome)),
     Match.when({ operation: 'ONBOARD_COUNTERPARTY_CUSTOMER' }, (original) =>
       changedStatus(original.result.counterpartyCreated || original.result.rolePeriodCreated),
@@ -1149,7 +1184,7 @@ const contactReceiptAfterAcknowledgement = Effect.fn('SymmyPartyCommerceAdapters
   function* contactReceiptAfterAcknowledgement(
     crypto: Crypto.Crypto,
     input: SymmyEffectAdapterInput,
-    operation: (typeof PartySourceEffectReceiptRequestSchema.Type)['operation'],
+    operation: Exclude<(typeof PartySourceEffectReceiptRequestSchema.Type)['operation'], 'CREATE'>,
     intent: SymmyPartyCommerceIntent,
   ) {
     const recovered = yield* recoverParty(crypto, input, operation, intent).pipe(
@@ -1917,14 +1952,7 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
           yield* correctPartyFactWithAuthorization(payload, context.authorization, context.partyOptions);
           return yield* outcome(input, 'accepted_change');
         }),
-        PartyCreate: Effect.fn('SymmyPartyCommerceAdapters.PartyCreate')(function* invokePartyCreate(
-          intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCreate' }>,
-        ) {
-          const payload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)(intent.payload);
-          const result = yield* createPartyWithAuthorization(payload, context.authorization, context.partyOptions);
-          yield* recordCreatedParty(input, result);
-          return yield* outcome(input, createdPartyStatus(result.outcome));
-        }),
+        PartyCreate: (intent) => sendPartyCreate(input, intent, context),
         PartyMatch: Effect.fn('SymmyPartyCommerceAdapters.PartyMatch')(function* invokePartyMatch(
           intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyMatch' }>,
         ) {
@@ -2560,7 +2588,7 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
       OrganizationCustomerProfileIco: (selected) => recoverOrganizationIco(crypto, input, selected),
       OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       PartyCorrect: (selected) => recoverParty(crypto, input, 'CORRECTION', selected),
-      PartyCreate: (selected) => recoverParty(crypto, input, 'CREATE', selected),
+      PartyCreate: (selected) => replayCommittedPartyCreate(crypto, input, selected),
       PartyMatch: (selected) => recoverParty(crypto, input, 'MATCH', selected),
       PartyUpdate: (selected) => recoverParty(crypto, input, 'UPDATE', selected),
       RemoveSavedAddress: (selected) => recoverSavedAddress(crypto, input, selected),
