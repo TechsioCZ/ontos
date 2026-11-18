@@ -1243,8 +1243,13 @@ it.live(
           (catalog) => nestedWith(catalog).pipe(Effect.map((refusal) => expect(refusal).toBe('forbidden'))),
           { discard: true },
         );
-        // A module whose contract does not declare the call is refused, even with a valid source assertion.
-        expect(yield* refusalOf(issue(nestedSubject, 'privacy', privacyProviderKey))).toBe('forbidden');
+        // A module cannot present a source assertion addressed to another module: Party's assertion in Privacy's hands
+        // is not authenticated at all. With an assertion that is its own, a module whose contract does not declare
+        // the call is refused by the call policy.
+        expect(yield* refusalOf(issue(nestedSubject, 'privacy', privacyProviderKey))).toBe('authentication_required');
+        expect(
+          yield* refusalOf(issue({ ...nestedSubject, sourceAssertion: nested.token }, 'privacy', privacyProviderKey)),
+        ).toBe('forbidden');
         expect(
           Exit.isFailure(
             yield* Effect.exit(issue({ ...nestedSubject, sourceAssertion: 'not-a-jwt' }, 'privacy', partyProviderKey)),
