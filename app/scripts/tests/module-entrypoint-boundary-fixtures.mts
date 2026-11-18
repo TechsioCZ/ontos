@@ -1225,8 +1225,11 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       ],
     }),
   );
-  for (const [file, source] of yield* readPricingSourceTree(workspace, owner)) {
-    yield* write(root, file, source);
+  // verify-market-eligibility-v1 calls Customer Context's operation reference from its contract package.
+  for (const folder of [owner, 'packages/customer-market-retirement-contracts']) {
+    for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
+      yield* write(root, file, source);
+    }
   }
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
@@ -1350,6 +1353,8 @@ export const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFix
   return root;
 });
 
+const CORE_SDK_SOURCE_PATH = 'packages/core-runtime/src/sdk/index.ts';
+
 export const CATALOG_QUANTITY_CONTRACT = 'verticals/catalog/shared/domain/catalog-quantity-handoff.ts';
 
 export const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
@@ -1361,11 +1366,19 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
     'packages/customer-payment-term-contracts',
     'packages/payment-term-catalog-contracts',
     'packages/catalog-selection-contracts',
+    // customer-price-group-resolution calls the Catalog's operation reference from this package.
+    'packages/price-group-catalog-contracts',
   ]) {
     const sources = yield* readPricingSourceTree(workspace, folder);
     for (const [file, source] of sources) {
       yield* write(root, file, source);
     }
   }
+  // Public contracts export operation references built by the Core SDK's `moduleOperation`.
+  yield* write(
+    root,
+    CORE_SDK_SOURCE_PATH,
+    yield* Effect.promise(async () => await readFile(path.join(workspace, CORE_SDK_SOURCE_PATH), 'utf-8')),
+  );
   return root;
 });
