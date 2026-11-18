@@ -24,7 +24,7 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import { Config, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -464,6 +464,18 @@ it.live(
                   request: { consumerModuleId: partyModuleId, operation, source: flatSource, target: null },
                 }) satisfies Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'][number],
             ),
+            // Party recovers the lost create-party reply for the Party this exact source occurrence created.
+            {
+              authMethod: 'system',
+              principalId: systemId,
+              request: {
+                consumerModuleId: partyModuleId,
+                operation: 'RECOVER_CREATE',
+                source: flatSource,
+                target: null,
+              },
+              targetAdmission: 'SOURCE_CREATED_PARTY',
+            },
             {
               authMethod: 'api_key',
               principalId: integration.principalId,
@@ -681,6 +693,15 @@ it.live(
         if (moduleKey === undefined) {
           return yield* unavailable('The actual independent module credential is missing');
         }
+        // The Party owner commits the first job's create-party and loses its response; while the marker exists its
+        // receipt read is down too, so the worker can only recover the original effect once the marker is gone.
+        const fs = yield* FileSystem.FileSystem;
+        const faultMarker = `${yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_CUSTOMER_' })}/drop-party-response`;
+        yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after native Party commit');
+        const partyFault = {
+          ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
+          ONTOS_C14_RESPONSE_LOSS_OPERATION: 'party-create',
+        };
         // Each receiver owns a distinct map key, port and artifact; readiness makes no peer requests.
         const [, workerArtifact] = yield* Effect.all(
           [
@@ -690,7 +711,7 @@ it.live(
                 startOwner({
                   appId,
                   contracts,
-                  environment,
+                  environment: appId === 'party-registry' ? { ...environment, ...partyFault } : environment,
                   moduleKeys,
                   ownerDiagnostics,
                   ownerRuntimes,
@@ -738,15 +759,30 @@ it.live(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
           );
-        const completed = yield* observeUntil(
-          ledger.pipe(
-            Effect.flatMap((rows) =>
-              rows.some(({ state }) => state === 'indeterminate')
-                ? Effect.fail(unavailable('An actual customer owner response was uncertain during the positive proof'))
-                : Effect.succeed(rows),
-            ),
+        const diagnoseWorker = Effect.all([
+          worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+          shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+          ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+            diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
           ),
+        ]);
+        // Only the faulted create-party may become uncertain; any other uncertain effect fails the proof at once.
+        const onlyPartyCreateUncertain = ledger.pipe(
+          Effect.flatMap((rows) =>
+            rows.some(({ effect_key, state }) => effect_key !== partyCreateEffectKey && state === 'indeterminate')
+              ? Effect.fail(unavailable('An unfaulted customer owner response was uncertain during the proof'))
+              : Effect.succeed(rows),
+          ),
+        );
+        yield* observeUntil(onlyPartyCreateUncertain, (rows) =>
+          rows.some(({ effect_key, state }) => effect_key === partyCreateEffectKey && state === 'indeterminate'),
+        ).pipe(Effect.tapError(() => diagnoseWorker));
+        yield* fs.remove(faultMarker);
+        // The worker retries the uncertain effect after its delivery backoff, at most 30 seconds.
+        const completed = yield* observeUntil(
+          onlyPartyCreateUncertain,
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
+          1800,
         ).pipe(
           Effect.tapError(() =>
             Effect.all([
