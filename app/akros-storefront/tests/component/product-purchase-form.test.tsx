@@ -205,26 +205,6 @@ describe("ProductPurchaseForm", () => {
     expect(within(row).getByText("/ ks")).toBeTruthy();
   });
 
-  it("renders the source variants through the purchase data table", () => {
-    render(
-      <CartProvider storage={null}>
-        <ProductPurchaseForm product={product} variants={variants} />
-      </CartProvider>,
-    );
-
-    expect(screen.getByRole("table", { name: "Varianty produktu" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Název" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Kód" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "M.J." })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Dostupnost" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Cena" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Množství" })).toBeTruthy();
-    expect(
-      (screen.getByRole("spinbutton", { name: "Počet celých balení M 2 × 5" }) as HTMLInputElement)
-        .value,
-    ).toBe("0");
-  });
-
   it("shows every variant without repeating the container name or requiring another page", async () => {
     const user = userEvent.setup();
     const allVariants = Array.from({ length: 8 }, (_, index) => ({

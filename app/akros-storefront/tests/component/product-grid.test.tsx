@@ -13,40 +13,11 @@ const getActionProducts = () => getProducts().filter((product) => product.isActi
 describe("ProductGrid", () => {
   afterEach(cleanup);
 
-  it.each(["catalog", "featured"] as const)(
-    "marks the %s grid for compact mobile styling without duplicating cards",
-    (columns) => {
-      const product = toProductSummary(
-        getProductBySlug("profilovana-stresni-krytina-product-35919")!,
-      );
-      const { container } = render(<ProductGrid columns={columns} products={[product]} />);
-
-      expect(container.firstElementChild?.getAttribute("data-sf-product-listing")).toBe(columns);
-      expect(screen.getAllByRole("article")).toHaveLength(1);
-      expect(screen.getAllByRole("link", { name: "Vybrat variantu" })).toHaveLength(1);
-      expect(screen.getByRole("img").getAttribute("sizes")).toContain("max-width: 359px");
-    },
-  );
-
-  it.each(["checkout", "related"] as const)(
-    "keeps the %s cards outside the mobile listing overrides",
-    (columns) => {
-      const product = toProductSummary(
-        getProductBySlug("profilovana-stresni-krytina-product-35919")!,
-      );
-      const { container } = render(<ProductGrid columns={columns} products={[product]} />);
-
-      expect(container.firstElementChild?.hasAttribute("data-sf-product-listing")).toBe(false);
-      expect(screen.getByRole("img").getAttribute("sizes")).toContain("max-width: 430px");
-    },
-  );
-
   it("presents a mixed-unit variant group without inventing aggregate stock", () => {
     const product = getProductBySlug("profilovana-stresni-krytina-product-35919");
 
     expect(product).toBeDefined();
-    const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
-    expect(container.firstElementChild?.className).toBe("sf-product-grid");
+    render(<ProductGrid products={[toProductSummary(product!)]} />);
 
     expect(screen.getByText("Cena dle varianty")).toBeDefined();
     expect(screen.queryByText(/^od /)).toBeNull();

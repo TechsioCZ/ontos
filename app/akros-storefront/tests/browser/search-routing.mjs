@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 const base = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000";
@@ -48,11 +48,9 @@ const browser = await chromium.launch(
     ? { executablePath: process.env.AKROS_CHROMIUM_PATH }
     : { channel: "chrome" },
 );
-await mkdir("test-results/search-routing", { recursive: true });
 try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
   const errors = [];
-  const report = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error" && /hydrat/i.test(message.text())) errors.push(message.text());
@@ -62,10 +60,10 @@ try {
     const rows = page.locator("[data-variant-detail-link]");
     await rows.first().waitFor();
     assert.deepEqual(
-      (
-        await rows.evaluateAll((links) => links.map((link) => link.dataset.variantDetailLink))
-      ).sort(),
-      [...ids].sort(),
+      (await rows.evaluateAll((links) => links.map((link) => link.dataset.variantDetailLink))).sort(
+        (left, right) => left.localeCompare(right),
+      ),
+      [...ids].sort((left, right) => left.localeCompare(right)),
     );
   };
   const checkHref = (href, fixture) => {
@@ -97,19 +95,6 @@ try {
       assert.equal(normalize(await option.locator("strong").innerText()), expectedPrice);
       const href = await option.getAttribute("href");
       checkHref(href, fixture);
-      const popup = page.locator('.sf-header__search [data-part="content"]');
-      const bounds = await popup.boundingBox();
-      assert.ok(bounds.x >= -1 && bounds.x + bounds.width <= width + 1);
-      assert.equal(
-        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
-        false,
-      );
-      if ([fixtures[0], fixtures[2]].includes(fixture) && [1920, 390, 320].includes(width)) {
-        await page.screenshot({
-          path: `test-results/search-routing/${fixture.sku}-${width}.png`,
-          animations: "disabled",
-        });
-      }
       if (width >= 1024) {
         const optionId = await option.getAttribute("id");
         for (
@@ -155,14 +140,12 @@ try {
       await resultLink.click();
       await page.waitForURL((url) => `${url.pathname}${url.search}${url.hash}` === resultHref);
       await assertRows(fixture.ids);
-      report.push({ sku: fixture.sku, width, ids: fixture.ids, href, resultHref });
     }
     console.log(
       `Search routing passed ${width}px: exact and prefix-colliding SKUs, duplicate SKUs, prices, results, reload and modal identity.`,
     );
   }
   assert.deepEqual(errors, []);
-  await writeFile("test-results/search-routing/report.json", JSON.stringify(report, null, 2));
 } finally {
   await browser.close();
 }

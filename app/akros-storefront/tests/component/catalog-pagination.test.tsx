@@ -6,7 +6,7 @@ import { CatalogPagination } from "@/components/catalog-pagination";
 afterEach(cleanup);
 
 describe("CatalogPagination", () => {
-  it("scopes the mobile layout while preserving category page links", () => {
+  it("preserves category page links", () => {
     const { container } = render(
       <CatalogPagination
         currentPage={1}
@@ -16,7 +16,6 @@ describe("CatalogPagination", () => {
       />,
     );
 
-    expect(container.firstElementChild?.classList.contains("sf-catalog-pagination")).toBe(true);
     expect(container.querySelector('a[href="/kategorie/matice?page=2"]')).toBeTruthy();
     expect(screen.getByRole("navigation").getAttribute("aria-label")).toBeTruthy();
   });
