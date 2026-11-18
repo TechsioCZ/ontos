@@ -49,8 +49,10 @@ const LEFTHOOK_CONFIG = 'lefthook.yml';
 const CACHE_SAVE_ACTION = 'actions/cache/save@';
 const INSTALL_APP_ACTION = './.github/actions/install-app';
 const WHOLE_TREE_LINT_SHARDS = 'shards=[1,2,3]';
-/** The overlay the gates workflow names: the demo trunk's rows, scopes and weights on top of the shared matrices. */
-const MATRICES_OVERLAY = 'scripts/ci-matrices.demo.json';
+/** The overlay the gates workflow binds (CI_MATRICES_OVERLAY of its env), so the tests plan from what the gates run. */
+const MATRICES_OVERLAY = Schema.decodeUnknownSync(
+  Schema.Struct({ env: Schema.Struct({ CI_MATRICES_OVERLAY: Schema.NonEmptyString }) }),
+)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).env.CI_MATRICES_OVERLAY;
 /** The matrices the gates plan from (scripts/ci/ci-matrices.mts). */
 const MATRICES = Result.getOrThrow(
   parseCiMatrices(
@@ -1334,6 +1336,9 @@ const SEED_KEY_INPUTS = [
   "'app/packages/core-runtime/src/access/**'",
   "'app/packages/core-runtime/src/permissions/**'",
   "'app/scripts/ci/integration-seed*.mts'",
+  // The fresh-database tests the seed model refuses (scripts/ci/ci-matrices.mts).
+  "'app/scripts/ci-matrices*.json'",
+  "'app/scripts/ci/ci-matrices.mts'",
   "'app/packages/core-runtime/spicedb/**'",
   "'app/topology/**'",
   "'app/docker-compose.yml'",

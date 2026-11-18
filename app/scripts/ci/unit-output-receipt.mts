@@ -35,7 +35,7 @@ export const CacheReceiptSchema = Schema.Struct({
   files: Schema.Array(OutputFileSchema),
   identity: IdentitySchema,
   /**
-   * The unit's committed-inputs digest at the commit it was built from (unitIdentity in scripts/ci/unit-inputs.mts, without
+   * The unit's committed-inputs digest at the commit it was built from (unitIdentity in delivery-plan.mts, without
    * build variables). A test that bundles the checkout's sources under a kept unit's identity proves with it that
    * those sources are the ones the unit was built from (scripts/ci/kept-unit-identity.mts).
    */

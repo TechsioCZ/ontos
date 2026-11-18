@@ -126,8 +126,8 @@ const appended = <Entry,>(
 const byName = (entry: { readonly name: string }) => entry.name;
 const itself = (entry: string) => entry;
 
-/** The base with the overlay's entries added (see the module comment). */
-export const mergeCiMatrices = (base: CiTemplates, overlay: Overlay): Result.Result<CiTemplates, CiMatricesInvalid> => {
+/** The base with the overlay's entries added (see the module comment); every list and map is present, empty if neither file names it. */
+export const mergeCiMatrices = (base: CiTemplates, overlay: Overlay) => {
   const weights = overlay['test-weights'] ?? {};
   const repeatedWeights = Object.keys(weights).filter((name) => Object.hasOwn(base['test-weights'] ?? {}, name));
   if (repeatedWeights.length > 0) {
@@ -164,7 +164,7 @@ const decodeMatrices = <A,>(label: string, schema: Schema.Codec<A>, text: string
   );
 
 /** The merged matrices from the text of ci-matrices.json and of the overlay, if any. */
-export const parseCiMatrices = (base: string, overlay?: string): Result.Result<CiTemplates, CiMatricesInvalid> =>
+export const parseCiMatrices = (base: string, overlay?: string) =>
   Result.all([
     decodeMatrices(CI_MATRICES, CiTemplatesSchema, base),
     overlay === undefined ? Result.succeed({}) : decodeMatrices('the overlay', OverlaySchema, overlay),

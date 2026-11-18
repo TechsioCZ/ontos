@@ -204,6 +204,9 @@ export const integrationSeedInputs: readonly string[] = [
   'app/scripts/audit-database-trust-boundaries.mts',
   'app/scripts/prove-zerops-migrator-artifact.sh',
   'app/scripts/ci/integration-seed*.mts',
+  // The fresh-database tests: a change to that list changes which rows may restore the seed.
+  'app/scripts/ci-matrices*.json',
+  'app/scripts/ci/ci-matrices.mts',
   'app/packages/core-runtime/spicedb/**',
   'app/packages/core-runtime/src/install/**',
   'app/packages/core-runtime/src/access/**',

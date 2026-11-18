@@ -247,6 +247,10 @@ it('runs the fresh-database rows only for a diff that names a new integration se
     'app/scripts/verify-application-db-schema.mts',
     'app/scripts/prove-zerops-migrator-artifact.sh',
     'app/verticals/commerce-customer-context/scripts/seed-portal.mts',
+    // The fresh-database tests live in the matrices; editing that list must run the rows that prove it.
+    'app/scripts/ci-matrices.json',
+    'app/scripts/ci-matrices.demo.json',
+    'app/scripts/ci/ci-matrices.mts',
   ]) {
     const seeded = plan(changedPath);
     expect(seeded.mode, changedPath).toBe('affected');
@@ -263,7 +267,11 @@ it('runs the fresh-database rows only for a diff that names a new integration se
       planCiChecks({ applyAffected: false, changedPaths: ['app/pnpm-lock.yaml'], packages, templates }).integration,
     ),
   ).toHaveLength(2);
-  // The seed input list mirrors the gates' own cache key, so it must stay comparable by eye.
+  // The seed input list is the gates' own cache key, glob for glob.
+  const seedKey = /integration-seed-v1-[^\n]*hashFiles\((?<globs>[^)]*)\)/u.exec(
+    readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
+  )?.groups?.globs;
+  expect(seedKey?.split(', ').map((glob) => glob.slice(1, -1))).toEqual(integrationSeedInputs);
   expect(integrationSeedInputs.filter((glob) => glob.startsWith('!'))).toEqual([
     '!app/**/node_modules/**',
     '!app/tools/**',
