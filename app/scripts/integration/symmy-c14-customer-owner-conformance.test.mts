@@ -136,8 +136,6 @@ interface StartOwnerInput {
   readonly appId: string;
   readonly contracts: Effect.Success<ReturnType<typeof productComposition>>['contracts'];
   readonly environment: Readonly<Record<string, string>>;
-  /** Extra environment of one owner, such as the response-loss fault of its child. */
-  readonly extra?: Readonly<Record<string, string>>;
   readonly moduleKeys: ReadonlyMap<string, string>;
   readonly ownerDiagnostics: Map<string, Effect.Effect<string>>;
   readonly ownerRuntimes: Map<string, OwnerRuntime>;
@@ -162,7 +160,7 @@ const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner
   const receiver = yield* startProductOwner({
     artifacts,
     contract,
-    environment: { ...environment, ...input.extra, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+    environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
     port,
     prefix,
   });
@@ -692,8 +690,7 @@ it.live(
             startOwner({
               appId,
               contracts,
-              environment,
-              extra: appId === 'party-registry' ? partyFault : {},
+              environment: appId === 'party-registry' ? { ...environment, ...partyFault } : environment,
               moduleKeys,
               ownerDiagnostics,
               ownerRuntimes,
@@ -749,13 +746,21 @@ it.live(
             diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
           ),
         ]);
-        yield* observeUntil(ledger, (rows) =>
+        // Only the faulted create-party may become uncertain; any other uncertain effect fails the proof at once.
+        const onlyPartyCreateUncertain = ledger.pipe(
+          Effect.flatMap((rows) =>
+            rows.some(({ effect_key, state }) => effect_key !== partyCreateEffectKey && state === 'indeterminate')
+              ? Effect.fail(unavailable('An unfaulted customer owner response was uncertain during the proof'))
+              : Effect.succeed(rows),
+          ),
+        );
+        yield* observeUntil(onlyPartyCreateUncertain, (rows) =>
           rows.some(({ effect_key, state }) => effect_key === partyCreateEffectKey && state === 'indeterminate'),
         ).pipe(Effect.tapError(() => diagnoseWorker));
         yield* fs.remove(faultMarker);
         // The worker retries the uncertain effect after its delivery backoff, at most 30 seconds.
         const completed = yield* observeUntil(
-          ledger,
+          onlyPartyCreateUncertain,
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
           1800,
         ).pipe(
