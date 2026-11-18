@@ -2,14 +2,14 @@
 
 // This Node-only build entry sits outside the package's src-only TypeScript project.
 // @effect-diagnostics nodeBuiltinImport:off -- Build-time Modern config: Node's connect dev middleware, Rspack resolution and file URLs run outside any Effect runtime, and the effect barrel cannot load under jiti; expires: 2027-03-31.
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { AppUserConfig } from '@modern-js/app-tools/cli-config';
 import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { isSuccess as isResultSuccess } from 'effect/Result';
-import { OptionFromUndefinedOr, Trim, check, decodeResult, isMinLength } from 'effect/Schema';
+import { Literal, OptionFromUndefinedOr, Struct, Trim, check, decodeResult, is, isMinLength } from 'effect/Schema';
 
 type BuildEnvironmentReader = (name: string) => string | undefined;
 
@@ -35,6 +35,8 @@ type DevelopmentMiddlewareSetup = Pick<
 
 const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
 
+const isMissingFileError = is(Struct({ code: Literal('ENOENT') }));
+
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
   DEVELOPMENT_MCP_TOOL_CATALOG,
@@ -50,14 +52,18 @@ export const createDevelopmentContractMiddleware =
         next();
         return;
       }
-      const artifactPath = fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl));
-      // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
-      if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && !existsSync(artifactPath)) {
-        response.statusCode = 404;
-        response.end();
-        return;
+      let contract: Buffer;
+      try {
+        contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      } catch (error) {
+        // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
+        if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
+          response.statusCode = 404;
+          response.end();
+          return;
+        }
+        throw error;
       }
-      const contract = readFileSync(artifactPath);
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
