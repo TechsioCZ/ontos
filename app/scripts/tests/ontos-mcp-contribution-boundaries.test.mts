@@ -432,6 +432,22 @@ it('gives a command tool the Action revision constraint and keeps the revision o
   });
 });
 
+it('offers every JSON payload variant of a read, and a single payload as it is', () => {
+  const variants = [Schema.Struct({ search: Schema.String }), Schema.Struct({ phrase: Schema.String })];
+  const api = HttpApi.make('BookingApi').add(
+    HttpApiGroup.make('booking').add(
+      HttpApiEndpoint.post('state', READ_PATH, { payload: variants, success: Schema.Void }),
+    ),
+  );
+  const { catalog } = catalogOf({ api: { BookingApi: api }, authored: { ...authored, reads: { state: { title } } } });
+  expect(catalog.tools[0]?.inputSchema).toEqual(Schema.toJsonSchemaDocument(Schema.Union(variants)).schema);
+  const single = catalogOf({
+    api: { BookingApi: readApi(readPayload) },
+    authored: { ...authored, reads: { state: { title } } },
+  });
+  expect(single.catalog.tools[0]?.inputSchema).toEqual(Schema.toJsonSchemaDocument(readPayload).schema);
+});
+
 it('adds a definition named like an Object prototype member and still rejects its conflicting redefinition', () => {
   const payloadSchema = Schema.Struct({ value: Schema.String }).annotate({ identifier: 'constructor' });
   const contribution = { ...authored, actions: { alpha: { title }, beta: { title } } };
