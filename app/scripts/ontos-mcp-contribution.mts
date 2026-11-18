@@ -167,10 +167,27 @@ const READ_PATH = /^\/reads\/(?<slug>[a-z0-9-]+)$/u;
 const compareSlugs = (left: Pick<ReadEndpoint, 'slug'>, right: Pick<ReadEndpoint, 'slug'>) =>
   Order.Number(left.slug.localeCompare(right.slug), 0);
 
+const documentText = ({ document }: ReadEndpoint) =>
+  encodeJson({ definitions: document.definitions, schema: document.schema });
+
+/** One read published by several APIs keeps one tool only when every API gives it the same payload schema. */
+const sameRead = (
+  kept: Result.Result<ReadEndpoint, DerivationFailure>,
+  next: Result.Result<ReadEndpoint, DerivationFailure>,
+  label: string,
+): Result.Result<ReadEndpoint, DerivationFailure> =>
+  Result.gen(function* keepIdenticalRead() {
+    const read = yield* kept;
+    if ((yield* documentText(read)) !== (yield* documentText(yield* next))) {
+      return yield* fail(`${label}: read ${read.slug} has a different payload schema in another API of the module`);
+    }
+    return read;
+  });
+
 const readEndpointsOf = (
   api: DeriveOntosMcpContributionInput['api'],
-): Result.Result<ReadEndpoint[], OntosMcpContributionDerivationError> => {
-  const reads = new Map<string, Result.Result<ReadEndpoint, OntosMcpContributionDerivationError>>();
+): Result.Result<ReadEndpoint[], DerivationFailure> => {
+  const reads = new Map<string, Result.Result<ReadEndpoint, DerivationFailure>>();
   for (const [apiKey, value] of Object.entries(api)) {
     if (!HttpApi.isHttpApi(value)) {
       continue;
@@ -179,15 +196,15 @@ const readEndpointsOf = (
       onEndpoint: ({ endpoint }) => {
         const slug = READ_PATH.exec(endpoint.path)?.groups?.slug;
         const schema = endpoint.payload.get('application/json')?.schemas[0];
-        if (slug === undefined || schema === undefined || reads.has(slug)) {
+        if (slug === undefined || schema === undefined) {
           return;
         }
-        reads.set(
-          slug,
-          documentOf(schema, `${apiKey} ${endpoint.path}`).pipe(
-            Result.map((document) => ({ document, path: endpoint.path, slug })),
-          ),
+        const label = `${apiKey} ${endpoint.path}`;
+        const read = documentOf(schema, label).pipe(
+          Result.map((document) => ({ document, path: endpoint.path, slug })),
         );
+        const kept = reads.get(slug);
+        reads.set(slug, kept === undefined ? read : sameRead(kept, read, label));
       },
       onGroup: constVoid,
     });
@@ -391,7 +408,8 @@ const checkCoverage = (
   moduleId: string,
 ): Result.Result<void, OntosMcpContributionDerivationError> => {
   const missing = EffectArray.sort(
-    [...available].filter((key) => !(key in declared)),
+    // Own keys only: an inherited entry is no classification of this module.
+    [...available].filter((key) => !Object.hasOwn(declared, key)),
     Order.String,
   );
   if (missing.length > 0) {
