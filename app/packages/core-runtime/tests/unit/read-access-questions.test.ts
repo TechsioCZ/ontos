@@ -79,14 +79,19 @@ const restrictedGroup = (overrides: Partial<AccessFieldGroupInput> = {}) =>
 const target = (
   entrypointKey: string,
   fields: Partial<Omit<AccessQuestionTarget['descriptor'], 'entrypoint' | 'legalEntityScope' | 'schemaVersion'>>,
-): AccessQuestionTarget => ({
-  descriptor: {
-    ...fields,
-    entrypoint: { entrypointKey },
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-  },
-});
+  moduleKey: string = MODULE,
+): AccessQuestionTarget => {
+  // A registration's entrypoint descriptor, which names the module that owns it.
+  const entrypoint = { entrypointKey, moduleKey };
+  return {
+    descriptor: {
+      ...fields,
+      entrypoint,
+      legalEntityScope: 'required',
+      schemaVersion: '1',
+    },
+  };
+};
 
 const recordsRead = target(`${MODULE}.api.records`, {
   accessDeclaration: declaration(RECORDS_READ_KEY),
@@ -109,7 +114,7 @@ const ownCarrierOf = (questionTarget: AccessQuestionTarget): GateCarrier =>
     'accessDeclaration',
     questionTarget.descriptor.accessDeclaration,
   );
-const ownRead = { accessKind: 'detail', carrier: ownCarrierOf(ownReadTarget) } as const;
+const ownRead = { accessKind: 'detail', carrier: ownCarrierOf(ownReadTarget), moduleKey: MODULE } as const;
 
 const decisionOf = (outcome: DecisionOutcome): AccessDecision => ({
   evidence: [],
@@ -251,6 +256,17 @@ describe('materializeAccessQuestions', () => {
       { rows: canList(ownReadTarget) },
     );
     expect(listOwnList?.sameAsOwnDecision).toBe(true);
+  });
+
+  it("refuses a question about another module's operation and an empty question record", () => {
+    const foreign = target(
+      'billing.invoices.api.records',
+      { accessDeclaration: declaration(RECORDS_READ_KEY) },
+      'billing.invoices',
+    );
+    expect(refusal({ foreign: canRun(foreign) })).toContain("not to the asking read's module facility.operations");
+    expect(refusal({ foreign: canList(foreign) })).toContain('belongs to billing.invoices');
+    expect(refusal({})).toContain('accessQuestions is empty');
   });
 
   it('refuses a target without a protected carrier', () => {

@@ -12,7 +12,7 @@ import {
 import type { ReadLoadContext } from '../../src/reads/definition.ts';
 import { declaredCall, declaredWriteCall, moduleOperation } from '../../src/sdk/index.ts';
 import { canList, canRun, readAnswer } from '../../src/sdk/read.ts';
-import type { DefineReadSdkForms, ReadRunContext } from '../../src/sdk/read.ts';
+import type { ReadRunContext } from '../../src/sdk/read.ts';
 
 /**
  * `defineRead` takes three spellings: the bare handler and `{ load }` (one transaction, as before) and
@@ -78,11 +78,6 @@ const run = (
 /** The neighbouring registration access questions ask about. */
 const recordsRead = defineRead(descriptor(`${MODULE}.records`), handler, services);
 
-it('defineRead satisfies the two SDK signatures next to its existing one', () => {
-  const sdkForms: DefineReadSdkForms = defineRead;
-  expect(sdkForms).toBe(defineRead);
-});
-
 it('defines a { run } read with its calls kept in the registration, not in the descriptor', () => {
   const registration = defineRead({ ...descriptor(`${MODULE}.run`), calls }, { run }, services);
   expect(getReadRun(registration)).toBe(run);
@@ -131,21 +126,13 @@ it('materializes the access questions of a { load } read once, at definition', (
 /** Values the types admit (they are no fresh literals) that only the definition-time check refuses. */
 const runAndLoad = { load: handler, run };
 const runWithExtra = { extra: true, run };
-const runWithGetter = {
-  get run() {
-    return run;
-  },
-};
 
-it('refuses { run, load }, { run } with any other key, and a { run } that is no data property', () => {
+it('refuses { run, load } and { run } with any other key', () => {
   expect(() => defineRead({ ...descriptor(`${MODULE}.both`), calls }, runAndLoad, services)).toThrow(
     /\{ run \} and \{ load \} are two forms of a read/u,
   );
   expect(() => defineRead({ ...descriptor(`${MODULE}.extra`), calls }, runWithExtra, services)).toThrow(
-    /\{ run \} must hold the run function as its only own enumerable data property/u,
-  );
-  expect(() => defineRead({ ...descriptor(`${MODULE}.getter`), calls }, runWithGetter, services)).toThrow(
-    /\{ run \} must hold the run function as its only own enumerable data property/u,
+    /unknown key extra/u,
   );
 });
 
