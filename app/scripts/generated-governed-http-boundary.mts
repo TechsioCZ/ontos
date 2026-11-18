@@ -3368,7 +3368,7 @@ interface ParsedImport {
 }
 
 /** What the gate knows about the read whose `{ run }`, `calls` and `accessQuestions` it judges. */
-export interface ReadSdkFormInput {
+interface ReadSdkFormInput {
   readonly readFile: string;
   /** The exported `defineRead` binding, e.g. `quotationVerificationRead`. */
   readonly readName: string;

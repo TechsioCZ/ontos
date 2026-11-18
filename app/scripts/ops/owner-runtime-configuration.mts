@@ -93,9 +93,10 @@ const customerContextApi = byUrl(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER
 export const SHELL_CREDENTIAL_VARIABLES: readonly string[] = ['ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS'];
 
 /**
- * Every module deployment that calls another module through `acquireDelegatedGatewayContext`, each with
- * its own module credential. A module that starts calling another module must add its entry here; the
- * deployment contract test derives the callers from source and fails when an entry is missing.
+ * Every module deployment that calls another module, each with its own module credential. A module calls
+ * another when its manifest declares it (`declaresModuleCalls`) or, in code not yet on the SDK, through
+ * `acquireDelegatedGatewayContext`. A module that starts calling another module must add its entry here;
+ * the deployment contract test derives the callers from both and fails when an entry is missing.
  */
 export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] = [
   {
@@ -214,6 +215,23 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
     unitId: SYMMY_INTEGRATION_UNIT,
   },
 ];
+
+/** The part of a module manifest that declares its calls to other modules. */
+interface ModuleCallDeclarations {
+  readonly registeredWorkloadCalls?: readonly unknown[];
+  readonly requirements?: {
+    readonly operations: readonly { readonly callers?: readonly unknown[] }[];
+  };
+}
+
+/**
+ * Whether a module's manifest declares a call to another module: an operation requirement naming the
+ * callers its SDK `call` may carry (only a requirement on another module's operation names any; Core runs
+ * its own in-process), or a registered-workload call. Such a module needs its module credential.
+ */
+export const declaresModuleCalls = (manifest: ModuleCallDeclarations): boolean =>
+  (manifest.registeredWorkloadCalls ?? []).length > 0 ||
+  (manifest.requirements?.operations ?? []).some(({ callers }) => (callers ?? []).length > 0);
 
 export const ownerRuntimeConfiguration = (unitId: string) =>
   OWNER_RUNTIME_CONFIGURATIONS.find((configuration) => configuration.unitId === unitId);
