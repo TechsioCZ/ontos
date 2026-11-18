@@ -527,7 +527,8 @@ export const actionInvocations = enableCoreGovernedRls(
       ),
       check(
         'core_action_invocations_committed_reply_ck',
-        sql`${table.committedReplyJson} is null or (${table.status} = 'succeeded' and jsonb_typeof(${table.committedReplyJson}) = 'object' and ${table.committedReplyJson} ->> 'kind' in ('result', 'rejection') and ${table.committedReplyJson} -> 'encoded' is not null)`,
+        // IS TRUE: a missing or JSON-null `kind` makes the comparison UNKNOWN, which a CHECK would pass.
+        sql`${table.committedReplyJson} is null or (${table.status} = 'succeeded' and jsonb_typeof(${table.committedReplyJson}) = 'object' and ${table.committedReplyJson} ->> 'kind' in ('result', 'rejection') and ${table.committedReplyJson} -> 'encoded' is not null) is true`,
       ),
       sharedRuntimeAllPolicy('action_invocations'),
       pgPolicy('core_action_invocations_party_registry_request_select', {

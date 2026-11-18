@@ -190,4 +190,6 @@ it('keeps the saved reply on the invocation row and only on a succeeded one', ()
   const replySql = dialect.sqlToQuery(replyCheck.value).sql;
   expect(replySql).toMatch(/"committed_reply_json" is null or \(\S*"status" = 'succeeded'/u);
   expect(replySql).toContain(`in ('result', 'rejection')`);
+  // A missing or JSON-null `kind` makes the envelope UNKNOWN; only IS TRUE refuses it.
+  expect(replySql).toMatch(/"committed_reply_json" is null or \(.*\) is true$/u);
 });
