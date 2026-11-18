@@ -244,21 +244,65 @@ const listCell = (cell: string): readonly string[] =>
     .map((item) => item.replaceAll('`', '').trim())
     .filter((item) => item.length > 0 && item !== '—');
 
-/** The standing verdicts: rows `| V<n> | globs | kinds | rule |` between the markers of MERGING.md. */
-const parseVerdicts = (document: string): readonly VerdictRule[] => {
+/** What a verdict row may name in its Kinds cell: any, a conflict kind, or demo-deleted. */
+const VERDICT_KINDS: ReadonlySet<string> = new Set(['any', 'demo-deleted', ...ConflictKindSchema.literals]);
+const TABLE_HEADER = /^\|\s*Id\s*\|\s*Paths\s*\|\s*Kinds\s*\|\s*Verdict\s*\|$/u;
+const TABLE_SEPARATOR = /^\|(?:\s*-+\s*\|){4}$/u;
+
+const verdictFailure = (reason: string) => Effect.fail(planFailure(`${VERDICTS_DOCUMENT}: ${reason}`));
+
+/** One table row `| V<n> | globs | kinds | verdict |`; fails with why it is not one. */
+const parseVerdictRow = (line: string, ids: ReadonlySet<string>): Effect.Effect<VerdictRule, MergePlanError> => {
+  const cells = line.split('|').map((cell) => cell.trim());
+  if (cells.length !== 6 || cells[0] !== '' || cells[5] !== '') {
+    return verdictFailure(`a verdict row has four cells: ${line}`);
+  }
+  const [, id = '', globCell = '', kindCell = '', rule = ''] = cells;
+  const globs = listCell(globCell);
+  const kinds = listCell(kindCell);
+  const unknown = kinds.filter((kind) => !VERDICT_KINDS.has(kind));
+  if (!/^V\d+$/u.test(id)) {
+    return verdictFailure(`a verdict id is V<n>, not "${id}": ${line}`);
+  }
+  if (ids.has(id)) {
+    return verdictFailure(`verdict ${id} is declared twice`);
+  }
+  if (unknown.length > 0) {
+    return verdictFailure(
+      `verdict ${id} names unknown kinds ${unknown.join(', ')}; a kind is one of ${[...VERDICT_KINDS].join(', ')}`,
+    );
+  }
+  if ((globs.length === 0) !== (kinds.length === 0)) {
+    return verdictFailure(`verdict ${id} needs both path globs and kinds, or neither (a preflight rule)`);
+  }
+  return rule.length === 0
+    ? verdictFailure(`verdict ${id} has no verdict text`)
+    : Effect.succeed({ globs, id, kinds, rule });
+};
+
+/**
+ * The standing verdicts: rows `| V<n> | globs | kinds | verdict |` between the markers of MERGING.md. A missing
+ * marker, a line in the table that is not its header or a well-formed row, a duplicate id or an unknown kind fails
+ * the plan: a silently dropped row would leave its conflicts undecided.
+ */
+export const parseVerdicts = Effect.fn(function* parseVerdicts(document: string) {
   const start = document.indexOf(VERDICTS_START);
   const end = document.indexOf(VERDICTS_END);
-  if (start === -1 || end < start) {
-    return [];
+  if (start === -1 || end === -1 || end < start) {
+    return yield* verdictFailure(`needs ${VERDICTS_START} followed by ${VERDICTS_END}`);
   }
-  return lines(document.slice(start + VERDICTS_START.length, end)).flatMap((line) => {
-    const [id = '', globs = '', kinds = '', rule = ''] = line
-      .split('|')
-      .slice(1, -1)
-      .map((cell) => cell.trim());
-    return /^V\d+$/u.test(id) ? [{ globs: listCell(globs), id, kinds: listCell(kinds), rule }] : [];
-  });
-};
+  const rows = lines(document.slice(start + VERDICTS_START.length, end))
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !TABLE_HEADER.test(line) && !TABLE_SEPARATOR.test(line));
+  const rules: VerdictRule[] = [];
+  for (const row of rows) {
+    rules.push(yield* parseVerdictRow(row, new Set(rules.map(({ id }) => id))));
+  }
+  if (rules.length === 0) {
+    return yield* verdictFailure('declares no verdict between its markers');
+  }
+  return rules;
+});
 
 type UndecidedConflict = Omit<Conflict, 'verdict'>;
 
@@ -781,7 +825,7 @@ export const writeMergePlan = Effect.fn(function* writeMergePlan(options: {
     ],
     { concurrency: GIT_CONCURRENCY },
   );
-  const rules = parseVerdicts(verdictDocument);
+  const rules = yield* parseVerdicts(verdictDocument);
   const ownerContracts = ownerContractsOf(commits);
   const [conflicts, intents, consumers] = yield* Effect.all(
     [

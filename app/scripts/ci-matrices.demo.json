@@ -13,6 +13,7 @@
       "paths": [
         ".github/workflows/zerops-stage.yml",
         ".github/actions/deliver-stage/**",
+        "app/docs/architecture/MERGING.md",
         "app/scripts/zerops/app-boot-stages.sh",
         "app/scripts/zerops/build-shard-units.mts",
         "app/scripts/zerops/build-storefront.sh",

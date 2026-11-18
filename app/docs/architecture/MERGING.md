@@ -59,7 +59,9 @@ conflicts.
 Everything under `app/verticals/*/src` or `app/verticals/*/shared` that conflicts is always
 `verdict: null`, whatever row would match it.
 
-The plan reads this table from pinned demo, and from the checkout only while demo has no copy yet.
+The plan reads this table from pinned demo, and from the checkout only while demo has no copy yet. A
+missing marker, a row that is not `| V<n> | globs | kinds | verdict |`, a duplicate id or an unknown kind
+stops the plan; `app/scripts/merge/plan.test.mts` proves this file on every push that changes it.
 
 <!-- verdicts:start -->
 
