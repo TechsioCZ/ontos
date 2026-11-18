@@ -64,7 +64,12 @@ type CallSelectorFields = Pick<
 const callSelectors = (call: CallSelectorFields): readonly string[] => {
   const base = [call.audience, call.declarationKey];
   const selectors: (readonly (boolean | string)[])[] = [];
-  if (call.workerKey === undefined && call.sourceActionKey === undefined && call.sourceWorkloadKey !== undefined) {
+  if (
+    call.workerKey === undefined &&
+    call.sourceActionKey === undefined &&
+    call.recoveryOf === undefined &&
+    call.sourceWorkloadKey !== undefined
+  ) {
     selectors.push(['assertion', ...base, call.sourceWorkloadKey, call.allowRecoverySource === true]);
   }
   if (call.recoveryOf === undefined && call.allowRecoverySource !== true) {
@@ -120,7 +125,6 @@ export interface RegisteredWorkloadCallReceiver {
   readonly manifest: {
     readonly publicSurface: {
       readonly actions: readonly {
-        readonly accessActor?: { readonly subjectWorkloads?: readonly string[] } | undefined;
         readonly accessDeclaration?: { readonly key: string } | undefined;
         readonly accessWorkload?: { readonly workloads: readonly string[] } | undefined;
         readonly entrypoint: { readonly entrypointKey: string };
@@ -142,10 +146,11 @@ export interface RegisteredWorkloadCallReceiver {
 
 /**
  * Whether the receiver publishes the call's exact operation version and, on it, the call's declaration and its
- * registered workload (as an `accessWorkload` workload or an `accessActor` subject workload), and whether a receiving
- * action runs in the call's legal-entity scope. A call to anything else is refused: an absent receiver, operation or
- * version, another declaration, a workload the receiver does not name, or an action with another or no scope. A
- * receiving read publishes no scope, so the Shell checks a read's scope only at runtime.
+ * registered workload (a receiving action's own `accessWorkload` workload, as the Shell requires; a read's published
+ * workload carrier), and whether a receiving action runs in the call's legal-entity scope. A call to anything else is
+ * refused: an absent receiver, operation or version, another declaration, a workload the receiver does not name (an
+ * action's `accessActor` subject workload alone is not enough), or an action with another or no scope. A receiving
+ * read publishes no scope, so the Shell checks a read's scope only at runtime.
  */
 export const registeredWorkloadCallReceiverIssue = (
   call: Pick<
@@ -171,7 +176,7 @@ export const registeredWorkloadCallReceiverIssue = (
         ? [
             {
               declarationKey: action.accessDeclaration?.key,
-              workloads: [...(action.accessWorkload?.workloads ?? []), ...(action.accessActor?.subjectWorkloads ?? [])],
+              workloads: action.accessWorkload?.workloads ?? [],
             },
           ]
         : [],
