@@ -54,6 +54,7 @@ import {
   Struct,
 } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import {
   defineAction,
@@ -6169,6 +6170,9 @@ const succeededRecord = {
 
 it.effect('answers a saved reply only for the exact invocation, principal and request hash it was loaded for', () =>
   Effect.gen(function* savedReplyLoadBinding() {
+    // The Effect clock, which stamps `completedAt`, is not PostgreSQL's transaction time here.
+    const now = transactionOperationAt.getTime() + 30 * 24 * 60 * 60 * 1000;
+    yield* TestClock.setTime(now);
     const harness = yield* makeHarness({
       createRecord: succeededRecord,
       savedReply: { encoded: { total: 7 }, kind: 'result' },
@@ -6184,10 +6188,8 @@ it.effect('answers a saved reply only for the exact invocation, principal and re
     expect(harness.committedReplyLoads).toEqual([
       {
         actionInvocationId: 'invocation-1',
-        // The recovery window ends seven days before PostgreSQL's transaction time.
-        committedSince: DateTime.toDateUtc(
-          DateTime.makeUnsafe(transactionOperationAt.getTime() - 7 * 24 * 60 * 60 * 1000),
-        ),
+        // The recovery window ends seven days before the clock that stamps the commit.
+        committedSince: DateTime.toDateUtc(DateTime.makeUnsafe(now - 7 * 24 * 60 * 60 * 1000)),
         principal: harness.preparedPrincipals[0],
         requestHash: harness.requestHashes[0],
       },

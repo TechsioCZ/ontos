@@ -1,6 +1,7 @@
 import type { AnyActionRegistration } from '../../src/actions/definition.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { DateTime, Deferred, Effect, Exit, Fiber, Match, Predicate, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { ActionTransactionError } from '../../src/actions/errors.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { expect, it } from 'effect-rstest';
@@ -501,20 +502,19 @@ it.effect('answers a saved reply inside the recovery window and withholds it aft
   Effect.gen(function* recoveryWindow() {
     const day = 24 * 60 * 60 * 1000;
     const committedAt = Date.UTC(2026, 10, 1, 12, 0);
-    let now = committedAt;
+    yield* TestClock.setTime(committedAt);
     const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
     const action = counterAction(probe);
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
-      databaseTime: () => DateTime.toDateUtc(DateTime.makeUnsafe(now)),
       ownerRegistration: fixtureOwner(action),
     });
 
     const inside = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'inside-window' }));
     const outside = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'outside-window' }));
-    now = committedAt + 7 * day - 60_000;
+    yield* TestClock.setTime(committedAt + 7 * day - 60_000);
     const insideRetry = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'inside-window' }));
-    now = committedAt + 7 * day + 60_000;
+    yield* TestClock.setTime(committedAt + 7 * day + 60_000);
     const outsideRetry = yield* harness.runtime
       .runAction(request(action, { idempotencyKey: 'outside-window' }))
       .pipe(Effect.flip);
@@ -524,6 +524,28 @@ it.effect('answers a saved reply inside the recovery window and withholds it aft
     expect(Predicate.isTagged(outsideRetry, 'ActionAlreadyCommitted')).toBe(true);
     expect(probe.handlerRuns).toBe(2);
     expect(harness.snapshot().committed).toHaveLength(2);
+  }),
+);
+
+it.effect('measures the recovery window with the clock that stamped the commit, whatever PostgreSQL time says', () =>
+  Effect.gen(function* windowUsesCommitClock() {
+    const day = 24 * 60 * 60 * 1000;
+    const committedAt = Date.UTC(2026, 8, 25, 10, 12);
+    yield* TestClock.setTime(committedAt);
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = counterAction(probe);
+    // PostgreSQL's transaction time runs weeks ahead of the Effect clock that stamps `completedAt`.
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(action),
+      transactionTime: () => DateTime.toDateUtc(DateTime.makeUnsafe(committedAt + 54 * day)),
+    });
+
+    const original = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'pinned-clock' }));
+    const retry = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'pinned-clock' }));
+
+    expect(retry).toEqual(original);
+    expect(probe.handlerRuns).toBe(1);
   }),
 );
 
