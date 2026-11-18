@@ -239,22 +239,28 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
       privacy: '/privacy-api',
     } as const;
     const diagnostics = new Map<string, Effect.Effect<string>>();
-    for (const appId of appIds) {
-      const contract = contracts.find(({ deployment }) => deployment.appId === appId);
-      const port = ports.get(appId);
-      const moduleKey = moduleKeys.get(appId);
-      if (contract === undefined || port === undefined || moduleKey === undefined) {
-        return yield* unavailable('An actual company owner deployment is missing');
-      }
-      const owner = yield* startProductOwner({
-        artifacts: yield* buildProductOwner(contract),
-        contract,
-        environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
-        port,
-        prefix: prefixes[appId],
-      });
-      diagnostics.set(appId, owner.diagnostic);
-    }
+    yield* Effect.forEach(
+      appIds,
+      (appId) =>
+        Effect.gen(function* startCompanyOwner() {
+          const contract = contracts.find(({ deployment }) => deployment.appId === appId);
+          const port = ports.get(appId);
+          const moduleKey = moduleKeys.get(appId);
+          if (contract === undefined || port === undefined || moduleKey === undefined) {
+            return yield* unavailable('An actual company owner deployment is missing');
+          }
+          const owner = yield* startProductOwner({
+            artifacts: yield* buildProductOwner(contract),
+            contract,
+            environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+            port,
+            prefix: prefixes[appId],
+          });
+          diagnostics.set(appId, owner.diagnostic);
+          return yield* Effect.void;
+        }),
+      { concurrency: 3, discard: true },
+    );
     const options = (appId: (typeof appIds)[number], idempotencyKey: string = randomUUID()) => ({
       baseUrl: new URL(prefixes[appId], `http://127.0.0.1:${ports.get(appId)}/`),
       compositionRevision: snapshot.composition.revision,
@@ -266,38 +272,35 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
       const context = yield* shell.issueFixtureSetupGateway({ audience, legalEntityId });
       return `Bearer ${context.token}`;
     });
-    const recordGovernance = Effect.fn('OrganizationProfileIcoHttp.recordGovernance')(function* recordGovernance() {
-      const decisions: (typeof PrivacyApplicabilityDecisionSchema.Type)[] = [];
-      for (const prepared of governance) {
-        const decision = yield* executeRecordPrivacyApplicabilityWithAuthorization(
-          prepared.recordPayload,
-          yield* authorize('privacy'),
-          `internal:company-ico:${prepared.decisionRef}`,
-          options('privacy', randomUUID()),
-        ).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(PrivacyApplicabilityDecisionSchema)),
-          Effect.tapError(() =>
-            Effect.gen(function* recordFailureDiagnostics() {
-              for (const [appId, diagnostic] of diagnostics) {
-                const fs = yield* FileSystem.FileSystem;
-                yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
-                yield* Effect.logError({ appId, diagnosticFile: `/tmp/commerce-org-http-${appId}.diag.log` });
-              }
-              yield* Effect.logError({ gateway: yield* shell.gatewayDiagnostics() });
-            }),
-          ),
-          Effect.mapError(() =>
-            unavailable('Actual public RecordPrivacyApplicability failed with current owner facts'),
-          ),
-        );
-        decisions.push(decision);
-        const observed = yield* prepared.observe();
-        if (Option.isNone(observed.decision)) {
-          return yield* unavailable('The real applicability Action did not persist its decision');
-        }
+    const recordDecision = Effect.fn('OrganizationProfileIcoHttp.recordDecision')(function* recordDecision(
+      prepared: (typeof governance)[number],
+    ) {
+      const decision = yield* executeRecordPrivacyApplicabilityWithAuthorization(
+        prepared.recordPayload,
+        yield* authorize('privacy'),
+        `internal:company-ico:${prepared.decisionRef}`,
+        options('privacy', randomUUID()),
+      ).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(PrivacyApplicabilityDecisionSchema)),
+        Effect.tapError(() =>
+          Effect.gen(function* recordFailureDiagnostics() {
+            for (const [appId, diagnostic] of diagnostics) {
+              const fs = yield* FileSystem.FileSystem;
+              yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
+              yield* Effect.logError({ appId, diagnosticFile: `/tmp/commerce-org-http-${appId}.diag.log` });
+            }
+            yield* Effect.logError({ gateway: yield* shell.gatewayDiagnostics() });
+          }),
+        ),
+        Effect.mapError(() => unavailable('Actual public RecordPrivacyApplicability failed with current owner facts')),
+      );
+      const observed = yield* prepared.observe();
+      if (Option.isNone(observed.decision)) {
+        return yield* unavailable('The real applicability Action did not persist its decision');
       }
-      return decisions;
+      return decision;
     });
+    const recordGovernance = () => Effect.forEach(governance, recordDecision, { concurrency: 2 });
     return {
       admin,
       authorize,

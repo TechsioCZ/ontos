@@ -30,9 +30,29 @@ if [[ "${1:-}" == --execute ]]; then
     whole:organization)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/organization-source-customer-owner-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:organization-identity)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/organization-source-customer-identity-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:customer-readback)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/symmy-c14-customer-owner-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:customer-roundtrip)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:pricing-recovery)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:pricing-revisions)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts --pool.maxWorkers 1 ;;
     whole:privacy)
       exec mise exec -- pnpm --filter ./verticals/privacy run test:integration \
-        tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1 ;;
+        tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1 \
+        -t '^(?!Privacy message-bound completion recovery)' ;;
+    whole:privacy-recovery)
+      exec mise exec -- pnpm --filter ./verticals/privacy run test:integration \
+        tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1 \
+        -t '^Privacy message-bound completion recovery' ;;
     whole:pricing)
       exec mise exec -- pnpm --filter ./verticals/pricing run test:integration \
         tests/integration/market-revision-whole-current-pricing-postgres.test.ts --pool.maxWorkers 1 ;;
@@ -44,6 +64,11 @@ if [[ "${1:-}" == --execute ]]; then
   if [[ "$task" == root:* ]]; then
     exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}" \
       --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts \
+      --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts \
+      --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts \
+      --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts \
+      --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts \
+      --exclude scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts \
       --exclude scripts/integration/scoped-owner-migrations.test.mts
   fi
   if [[ "$task" == ./verticals/party-registry#* ]]; then

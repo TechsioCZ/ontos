@@ -318,7 +318,7 @@ export const taskDirectory = (task: string) =>
 /** Every task form run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
 export const knownTask = (task: string) =>
   /^root:\d+\/\d+$/u.test(task) ||
-  /^whole:(?:organization|privacy|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
+  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-recovery|pricing-revisions|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
     task,
   ) ||
   taskDirectory(task) !== undefined;
