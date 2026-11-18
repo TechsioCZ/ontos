@@ -12,6 +12,7 @@ import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { ActionRuntime } from '../actions/runtime.ts';
+import type { ActionReplay } from '../actions/runtime.ts';
 
 export { ActionProposalAcceptedSchema } from '../actions/proposal-accepted.ts';
 
@@ -96,6 +97,8 @@ interface GovernedActionHttpRunnerBaseInput<
   readonly endpointHeaders: ActionHttpEndpointHeaders;
   readonly internalProblem: () => InternalProblem;
   readonly invalidCorrelationProblem: () => InvalidProblem;
+  /** The runtime's `onReplay`: the endpoint learns that its answer is a saved reply; the client does not. */
+  readonly onReplay?: ((replay: ActionReplay) => Effect.Effect<void>) | undefined;
   readonly payload: NoInfer<PayloadSchema['Type']>;
   readonly principal: ActionHttpPrincipalAuthentication<PrincipalProblem, PrincipalRequirements>;
   readonly registration: ActionRegistration<
@@ -306,6 +309,7 @@ export const runGovernedActionHttp = <
     }
     const action = runtime.runAction({
       ...receivingAudience,
+      onReplay: input.onReplay,
       payload: encodedPayload,
       principal,
       registration: input.registration,

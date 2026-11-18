@@ -451,6 +451,7 @@ export { recoverSqlTransactionError } from './actions/repository.ts';
 export { ActionRuntime, makeActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
 export type {
   ActionCommitOpen,
+  ActionReplay,
   ActionRuntimeService,
   ResolveActionCommitInput,
   RunActionInput,

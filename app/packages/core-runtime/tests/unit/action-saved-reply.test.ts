@@ -680,3 +680,107 @@ it.effect('answers ActionAlreadyCommitted to a Policy-race retry whose commit sa
     expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );
+
+/** A request whose `onReplay` records every saved reply the runtime reports for it. */
+const reportingRequest = <Registration>(
+  registration: Registration,
+  replays: string[],
+  options: Parameters<typeof request>[1] = {},
+) => ({
+  ...request(registration, options),
+  onReplay: (replay: { readonly invocationId: string }) =>
+    Effect.sync(() => {
+      replays.push(replay.invocationId);
+    }),
+});
+
+it.effect('tells the caller, and only the caller, that its answer is the saved reply', () =>
+  Effect.gen(function* replayIsReported() {
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = counterAction(probe);
+    const harness = yield* harnessFor(action);
+    const replays: string[] = [];
+
+    const original = yield* harness.runtime.runAction(reportingRequest(action, replays));
+    expect(replays).toEqual([]);
+    const retry = yield* harness.runtime.runAction(reportingRequest(action, replays));
+    const fresh = yield* harness.runtime.runAction(reportingRequest(action, replays, { idempotencyKey: 'another' }));
+
+    // The committing request and a request of another key commit; only the same-key retry replays.
+    const [committed] = harness.snapshot().invocations;
+    expect(retry).toEqual(original);
+    expect(fresh.run).toBe(2);
+    expect(replays).toEqual([committed?.actionInvocationId]);
+  }),
+);
+
+it.effect('reports a replayed committed rejection and never a refused replay', () =>
+  Effect.gen(function* rejectionAndRefusalReports() {
+    const rejectedProbe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const rejecting = counterAction(rejectedProbe, { reject: true });
+    const rejectingHarness = yield* harnessFor(rejecting);
+    const rejectionReplays: string[] = [];
+    yield* rejectingHarness.runtime.runAction(reportingRequest(rejecting, rejectionReplays)).pipe(Effect.flip);
+    const replayedRejection = yield* rejectingHarness.runtime
+      .runAction(reportingRequest(rejecting, rejectionReplays))
+      .pipe(Effect.flip);
+    expect(replayedRejection).toBeInstanceOf(CounterRejected);
+    expect(rejectionReplays).toEqual([rejectingHarness.snapshot().invocations[0]?.actionInvocationId]);
+
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = counterAction(probe, { protectedAccess: true });
+    const { gate, state } = switchableGate();
+    const harness = yield* makeActionTestHarness({
+      accessDecision: gate,
+      actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(action),
+    });
+    const replays: string[] = [];
+    yield* harness.runtime.runAction(reportingRequest(action, replays));
+    state.allow = false;
+    const refused = yield* harness.runtime.runAction(reportingRequest(action, replays)).pipe(Effect.flip);
+    expect(Predicate.isTagged(refused, 'ActionAlreadyCommitted')).toBe(true);
+    expect(replays).toEqual([]);
+  }),
+);
+
+it.effect('reports a replay through the post-attempt hook only when the saved reply is the answer', () =>
+  Effect.gen(function* hookReplayReports() {
+    for (const hookAnswer of ['settled', 'hook-fails'] as const) {
+      const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+      const action = defineAction(
+        counterAction(probe).descriptor,
+        (payload) =>
+          Effect.sync(() => {
+            probe.handlerRuns += 1;
+            return { at: DateTime.makeUnsafe(0), run: probe.handlerRuns, total: payload.amount };
+          }),
+        () => Effect.succeed({}),
+        undefined,
+        (context) =>
+          Match.value(context.outcome).pipe(
+            Match.tag('AlreadyCommitted', () =>
+              hookAnswer === 'hook-fails'
+                ? Effect.fail(new CounterRejected({ reason: 'hook' }))
+                : Effect.succeed({ _tag: 'Settled' as const }),
+            ),
+            Match.orElse(() => Effect.succeed({ _tag: 'Settled' as const })),
+          ),
+      );
+      const harness = yield* harnessFor(action);
+      const replays: string[] = [];
+
+      const original = yield* harness.runtime.runAction(reportingRequest(action, replays));
+      const retry = yield* harness.runtime.runAction(reportingRequest(action, replays)).pipe(Effect.exit);
+
+      if (hookAnswer === 'settled') {
+        expect(retry).toEqual(Exit.succeed(original));
+        expect(replays).toEqual([harness.snapshot().invocations[0]?.actionInvocationId]);
+      } else {
+        // The hook's failure is the answer, so the request did not answer the saved reply.
+        expect(Exit.isFailure(retry)).toBe(true);
+        expect(replays).toEqual([]);
+      }
+    }
+  }),
+);

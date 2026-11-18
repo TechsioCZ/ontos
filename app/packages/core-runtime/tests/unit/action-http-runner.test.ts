@@ -505,6 +505,7 @@ it.effect('answers a same-key HTTP retry with the original success reply', () =>
     });
     const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', ownerRegistration });
     const mapped: unknown[] = [];
+    const replays: string[] = [];
     const send = () =>
       runGovernedActionHttp({
         endpointHeaders: { idempotencyKey: 'create-once', traceId: 'http-replay-trace' },
@@ -514,6 +515,10 @@ it.effect('answers a same-key HTTP retry with the original success reply', () =>
           mapped.push(failure);
           return internalProblem;
         },
+        onReplay: ({ invocationId }) =>
+          Effect.sync(() => {
+            replays.push(invocationId);
+          }),
         payload: { name: 'Acme' },
         principal: { authenticate: () => Effect.succeed(principal) },
         registration: action,
@@ -528,6 +533,8 @@ it.effect('answers a same-key HTTP retry with the original success reply', () =>
     expect(executions).toBe(1);
     expect(mapped).toEqual([]);
     expect(harness.snapshot().committed).toHaveLength(1);
+    // The endpoint learns that the retry answered the saved reply; the success itself is unchanged.
+    expect(replays).toEqual([harness.snapshot().invocations[0]?.actionInvocationId]);
 
     // An endpoint that opted into committed-retry recovery gets the saved reply, never its recovery receipt.
     let recoveries = 0;
