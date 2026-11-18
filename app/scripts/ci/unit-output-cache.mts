@@ -599,8 +599,12 @@ export const planUnits = Effect.fn('UnitOutputCache.plan')(function* planUnits(
   for (const [index, check] of checks.entries()) {
     const unit = units[index];
     if (unit !== undefined) {
+      // Why a restored unit is rebuilt, on stderr: stdout is the step's output.
       yield* 'mismatch' in check
-        ? fs.remove(path.join(context.root, unit.path, KEEP_PROOF), { force: true })
+        ? Effect.andThen(
+            Console.error(`rebuild ${check.mismatch}`),
+            fs.remove(path.join(context.root, unit.path, KEEP_PROOF), { force: true }),
+          )
         : writeKeepProof(context, unit);
     }
   }
