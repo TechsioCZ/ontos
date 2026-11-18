@@ -910,6 +910,14 @@ No merge strategy flag is needed: the queue rebases. Before the pull request's o
 command enables auto-merge, and the pull request joins the queue once they do. It leaves the queue if
 its merge-group run fails. Nobody bypasses the queue, so do not pass `--admin`.
 
+When an entry leaves the queue, the queue builds every entry behind it again on a new
+`gh-readonly-queue/main/pr-<number>-<base commit>` ref, and GitHub leaves the replaced entries' runs
+running. The `cancel-replaced-queue-runs` job of each new merge-group run cancels the older live
+merge-group runs of the same pull request as soon as it gets a runner. An entry that leaves without
+being rebuilt fires no event, so its run ends by itself. That job is outside `Workspace gates`; if it
+fails, the entry still merges, but its run concludes `failure`, so the push of that commit finds no
+proof and runs the gates once.
+
 The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
 run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
 passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
