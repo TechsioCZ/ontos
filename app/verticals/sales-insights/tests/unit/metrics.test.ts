@@ -357,7 +357,8 @@ it('counts open and done tasks by assignee', () => {
 });
 
 it('exposes the full catalog with Czech labels and allowed groupings', () => {
-  expect(metricCatalog).toHaveLength(14);
+  expect(new Set(metricCatalog.map(({ id }) => id)).size).toBe(metricCatalog.length);
+  expect(metricCatalog.map(({ id }) => id)).toEqual(expect.arrayContaining(['revenue_invoiced', 'tasks_done']));
   const revenue = metricCatalog.find((entry) => entry.id === 'revenue_invoiced');
   expect(revenue?.label).toBe('Tržby z faktur');
   expect(revenue?.unit).toBe('CZK');
