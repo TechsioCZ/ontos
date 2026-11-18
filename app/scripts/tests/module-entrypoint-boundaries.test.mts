@@ -1485,3 +1485,65 @@ it.live(
     );
   }),
 );
+
+it.live(
+  'accepts a load step that calls an Effect.fn const of the same module and rejects work it cannot see',
+  Effect.fn(function* readLoadHelperGate() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const layerArgument = ', () => Layer.empty);';
+    const bareHandler = `() => Effect.succeed({})${layerArgument}`;
+    const coreImport = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
+    expect(bareRead).toContain(bareHandler);
+    expect(bareRead).toContain(coreImport);
+    const effectFnHelper =
+      "export const loadStock = Effect.fn('StockList.load')(function* loadStock(input: unknown, tenantId: string) {\n  return yield* Effect.succeed({ input, tenantId });\n});\n";
+    const helperLoad =
+      '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
+    const withLoad = (load: string, helper: string, imports = ''): string => {
+      const read = bareRead.replace(coreImport, coreImport + imports).replace(bareHandler, load + layerArgument);
+      return `${read}\n${helper}`;
+    };
+    yield* write(root, STOCK_LIST_READ_FILE, withLoad(helperLoad, effectFnHelper));
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      [
+        withLoad(helperLoad, '', "import { loadStock } from './stock-load.ts';\n"),
+        withLoad(
+          helperLoad,
+          'export const loadStock = (input: unknown, tenantId: string) => Effect.succeed({ input, tenantId });\n',
+        ),
+        withLoad(
+          helperLoad,
+          'export function loadStock(input: unknown, tenantId: string) {\n  return Effect.succeed({ input, tenantId });\n}\n',
+        ),
+        withLoad(helperLoad, `${effectFnHelper}loadStock = otherStockWork;\n`),
+        withLoad(
+          helperLoad,
+          `${effectFnHelper}function loadStock(input: unknown) {\n  return otherStockWork(input);\n}\n`,
+        ),
+        withLoad(helperLoad, effectFnHelper, "import { loadStock } from './stock-load.ts';\n"),
+        withLoad(
+          '{ load: (loadStock: unknown, context: ReadLoadContext<object>) => loadStock(context) }',
+          effectFnHelper,
+        ),
+        withLoad(
+          '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, otherStockWork(context)) }',
+          effectFnHelper,
+        ),
+        withLoad(
+          '{ load: (input: unknown) => { const loadStock = otherStockWork; return loadStock(input); } }',
+          effectFnHelper,
+        ),
+        withLoad(
+          helperLoad,
+          "export const loadStock = Effect.fn('StockList.load')(function* loadStock(input: unknown, tenantId: string) {\n  return otherStockWork(input, tenantId);\n});\n",
+        ),
+      ],
+      /module APIs require an approved Codesmith generator/u,
+    );
+  }),
+);

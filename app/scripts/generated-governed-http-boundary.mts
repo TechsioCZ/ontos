@@ -3196,6 +3196,50 @@ export const hasReadOwnerPermissionDeclaration = (
   return wrapperSource !== undefined && hasOwnerReadPermissionFactoryExport(wrapperSource, imported.imported);
 };
 
+/**
+ * `load: (input, context) => helper(input, context.scope.tenantId)`: an expression-bodied load arrow whose
+ * whole body calls a read handler `Effect.fn` const of the Read's own module, passing only its own parameters
+ * or their property paths. The helper name has that one module-level declaration and no import, parameter or
+ * assignment rebinds it, so the load work stays in code this gate reads.
+ */
+const isOwnerEffectFnLoadCall = (candidate: string | undefined, ownerSource: string): boolean => {
+  if (candidate === undefined || !hasBalancedArrowCallback(candidate) || /^async\b/u.test(candidate)) {
+    return false;
+  }
+  const arrow = maskNonCode(candidate).indexOf('=>');
+  const body = candidate.slice(arrow + 2).trim();
+  const closing = candidate.startsWith('(') ? matchingDelimiterEnd(candidate, 0, '(', ')') : undefined;
+  const parameterSource = candidate.startsWith('(') ? candidate.slice(1, closing) : candidate.slice(0, arrow);
+  const parameters = separatedSource(
+    parameterSource,
+    topLevelSeparators(maskNonCode(parameterSource), ',', 0, parameterSource.length, true),
+  )
+    .filter((parameter) => parameter !== '')
+    .map((parameter) => /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]*)?$/u.exec(parameter)?.groups?.name);
+  const callee = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(body)?.groups?.name;
+  if (callee === undefined || parameters.some((parameter) => parameter === undefined || parameter === callee)) {
+    return false;
+  }
+  const name = escapeRegExp(callee);
+  const structure = maskNonCode(ownerSource);
+  const args = wholeCallArguments(body, new RegExp(`^${name}\\(`, 'u'), true);
+  return (
+    args !== undefined &&
+    args.every((argument) => {
+      const root = /^(?<root>[A-Za-z_$][A-Za-z0-9_$]*)(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/u.exec(argument)?.groups?.root;
+      return root !== undefined && parameters.includes(root);
+    }) &&
+    topLevelBindingDeclarations(ownerSource, callee).length === 1 &&
+    !new RegExp(`^\\s*import\\b[^;]*\\b${name}\\b`, 'mu').test(structure) &&
+    !new RegExp(
+      `(?<!\\bconst\\s+)(?<![.\\w$])${name}\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|\\?\\?|&&|\\|\\|)?=(?![=>])`,
+      'u',
+    ).test(structure) &&
+    isEffectFnCallback(constInitializer(ownerSource, callee) ?? '') &&
+    isReadHandlerCallback(callee, ownerSource)
+  );
+};
+
 const READ_PIPELINE_STEPS: ReadonlySet<string> = new Set(['finish', 'load', 'prepare']);
 
 const hasReadCallbacks = (
@@ -3247,7 +3291,9 @@ const hasReadCallbacks = (
     );
   };
   const isReadLoadStep = (candidate: string | undefined): boolean =>
-    isReadHandlerCallback(candidate, source) || isOwnerLocalImportedFactoryResult(candidate);
+    isReadHandlerCallback(candidate, source) ||
+    isOwnerEffectFnLoadCall(candidate, source) ||
+    isOwnerLocalImportedFactoryResult(candidate);
   // The owner work: a bare read handler, or a pipeline object of unique `prepare`, `load` and `finish`
   // steps that always has `load`. Every step is an executable owner callback.
   const isReadOwnerPipeline = (candidate: string | undefined): boolean => {
