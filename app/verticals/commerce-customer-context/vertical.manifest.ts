@@ -217,6 +217,7 @@ import { VerifyEffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/ve
 import { verifyEffectiveCustomerGroupMembershipSetV1Read } from './src/api/verify-effective-customer-group-membership-set-v1.read.ts';
 import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
+import { commerceCustomerContextRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const createCounterpartyProfileEntrypoint = 'commerce.customer-context.create-counterparty-purchasing-profile';
 const organizationBusinessProviderEntrypoint = 'privacy.core.api.organization-business-applicability';
@@ -720,6 +721,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       timelines: [],
     },
   },
+  registeredWorkloadCalls: commerceCustomerContextRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],

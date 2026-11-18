@@ -36,7 +36,6 @@ import {
 } from './support/symmy-c14-policy-fixture.mts';
 
 const workloadKey = 'commerce.assortment.symmy-fixture-rule-import';
-const declarationKey = 'commerce.assortment.symmy-fixture-rule.import';
 const routeKey = 'assortmentRulesFixtureBatch';
 const mappingVersion = 'INTERNAL_C14_ASSORTMENT_RULE_V1';
 const operation = {
@@ -166,11 +165,9 @@ it.live(
     Effect.scoped(
       Effect.gen(function* nativeAssortmentConformance() {
         const runtime = yield* makeSymmyC14PolicyFixture({
-          declarationKey,
           initializeScopes: (scope) =>
             initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.admin)),
           lifecyclePolicy,
-          operation,
           owner: 'assortment',
           workloadKey,
         });

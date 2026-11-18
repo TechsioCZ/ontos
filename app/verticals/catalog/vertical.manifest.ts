@@ -17,6 +17,7 @@ import { productTypeResourceDescriptor } from './shared/resources/product-type.t
 import { productUnitResourceDescriptor } from './shared/resources/product-unit.ts';
 import { variantResourceDescriptor } from './shared/resources/variant.ts';
 // </generated-module-manifest-imports>
+import { catalogMcpContribution } from './shared/mcp/contribution.ts';
 import { catalogRuntimeManifest } from './vertical.runtime-declaration.ts';
 
 export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManifest({
@@ -39,6 +40,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: catalogMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

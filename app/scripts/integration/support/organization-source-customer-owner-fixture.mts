@@ -92,226 +92,10 @@ const purpose = 'implementation-1096-registered-workload-gateway';
 const sourceWrite = 'commerce.customer-context.source-write';
 const partyWrite = 'party.registry.source-write';
 const businessRead = 'privacy.core.organization-business-check';
-const appIds = [partyApp, commerceApp, 'privacy', symmyApp, priceGroupApp] as const;
+const ownerApps = [partyApp, commerceApp, 'privacy', priceGroupApp] as const;
+const appIds = [...ownerApps, symmyApp] as const;
 const json = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
-const endpoint = (
-  audience: (typeof appIds)[number],
-  declarationKey: string,
-  entrypointKey: string,
-  workloadKey: string,
-) => ({
-  audience,
-  declarationKey,
-  entrypointKey,
-  jobKey,
-  legalEntityScope: 'required' as const,
-  schemaVersion: '1' as const,
-  workloadKey,
-});
-const workerRules = [
-  {
-    ...endpoint(partyApp, 'party.registry.party.update', 'party.registry.update-party', partyWrite),
-    legalEntityScope: 'optional' as const,
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      commerceApp,
-      'commerce.customer-context.customer-profile-source.read',
-      'commerce.customer-context.api.customer-profile-source',
-      SOURCE_READ_WORKLOAD,
-    ),
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      commerceApp,
-      'commerce.customer-context.organization-customer-profile-ico.change',
-      'commerce.customer-context.change-organization-customer-profile-ico',
-      sourceWrite,
-    ),
-    workerKey: jobKey,
-  },
-
-  {
-    ...endpoint(partyApp, 'party.registry.party.create', 'party.registry.create-party', partyWrite),
-    legalEntityScope: 'optional' as const,
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      partyApp,
-      'party.registry.counterparty.onboard',
-      'party.registry.counterparty-customer-onboard',
-      partyWrite,
-    ),
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      commerceApp,
-      'commerce.customer-context.counterparty-purchasing-profile.create',
-      'commerce.customer-context.create-counterparty-purchasing-profile',
-      sourceWrite,
-    ),
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      commerceApp,
-      'commerce.customer-context.customer-group.create',
-      'commerce.customer-context.create-customer-group',
-      sourceWrite,
-    ),
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      commerceApp,
-      'commerce.customer-context.customer-group-definition-source.read',
-      'commerce.customer-context.api.customer-group-definition-source',
-      SOURCE_READ_WORKLOAD,
-    ),
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      priceGroupApp,
-      'pricing.price-group-catalog.price-group.create',
-      PRICE_CREATE_KEY,
-      'pricing.price-group-catalog.source-write',
-    ),
-    legalEntityScope: 'forbidden' as const,
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(
-      commerceApp,
-      'commerce.customer-context.customer-group-membership-source.apply',
-      MEMBERSHIP_WRITE_KEY,
-      sourceWrite,
-    ),
-    workerKey: jobKey,
-  },
-  {
-    ...endpoint(commerceApp, 'commerce.customer-context.counterparty-price-group.assign', ASSIGN_ACTION, sourceWrite),
-    workerKey: jobKey,
-  },
-  ...[
-    {
-      actionKey: MEMBERSHIP_WRITE_KEY,
-      declarationKey: 'commerce.customer-context.customer-group-membership-source-receipt.read',
-      readKey: 'commerce.customer-context.api.customer-group-membership-source-receipt',
-    },
-    {
-      actionKey: ASSIGN_ACTION,
-      declarationKey: 'commerce.customer-context.customer-price-group-assignment-receipt.read',
-      readKey: 'commerce.customer-context.api.customer-price-group-assignment-receipt',
-    },
-  ].map((read) => ({
-    ...endpoint(commerceApp, read.declarationKey, read.readKey, SOURCE_READ_WORKLOAD),
-    allowHistoricalDeliveryRecovery: true,
-    recoveryOf: { actionKey: read.actionKey, jobKey },
-    workerKey: jobKey,
-  })),
-  {
-    ...endpoint(
-      priceGroupApp,
-      'pricing.price-group-catalog.price-group-result-lookup.read',
-      'pricing.price-group-catalog.api.price-group-result-lookup',
-      PRICE_READ_WORKLOAD,
-    ),
-    allowHistoricalDeliveryRecovery: true,
-    legalEntityScope: 'forbidden' as const,
-    recoveryOf: { actionKey: PRICE_CREATE_KEY, jobKey },
-    workerKey: jobKey,
-  },
-] as const;
-const business = endpoint(
-  'privacy',
-  'privacy.core.organization-business-applicability.read',
-  'privacy.core.api.organization-business-applicability',
-  businessRead,
-);
-const organizationBase = endpoint(
-  partyApp,
-  'party.registry.organization-record-facts.read',
-  'party.registry.api.organization-record-facts',
-  PARTY_READ_WORKLOAD,
-);
-const organization = { ...organizationBase, legalEntityScope: 'optional' as const };
-const sourceFacts = endpoint(
-  symmyApp,
-  'integration.symmy.symmy-source-organization-facts.read',
-  'integration.symmy.api.symmy-source-organization-facts',
-  'integration.symmy.source-organization-facts.read',
-);
-const profileFacts = endpoint(
-  commerceApp,
-  'commerce.customer-context.customer-profile-organization-ico-facts.read',
-  'commerce.customer-context.api.customer-profile-organization-ico-facts',
-  PROFILE_FACTS_WORKLOAD,
-);
-const priceCompatibility = {
-  ...endpoint(
-    priceGroupApp,
-    'pricing.price-group-catalog.price-group.read.compatibility',
-    'pricing.price-group-catalog.api.validate-price-group-compatibility',
-    PRICE_READ_WORKLOAD,
-  ),
-  legalEntityScope: 'forbidden' as const,
-};
-const profileIco = endpoint(
-  'privacy',
-  'privacy.core.organization-profile-ico-applicability.read',
-  'privacy.core.api.organization-profile-ico-applicability',
-  PROFILE_ICO_WORKLOAD,
-);
-const organizationIco = {
-  ...endpoint(
-    partyApp,
-    'party.registry.organization-ico-facts.read',
-    'party.registry.api.organization-ico-facts',
-    PARTY_READ_WORKLOAD,
-  ),
-  legalEntityScope: 'optional' as const,
-};
-const counterpartyIco = endpoint(
-  partyApp,
-  'party.registry.counterparty-organization-ico-facts.read',
-  'party.registry.api.counterparty-organization-ico-facts',
-  PARTY_READ_WORKLOAD,
-);
-const relaySources = [
-  { registeredWorkloads: [{ ...business, sourceWorkloadKey: partyWrite }], sourceAppId: partyApp },
-  {
-    registeredWorkloads: [
-      { ...business, sourceWorkloadKey: sourceWrite },
-      { ...business, sourceWorkloadKey: SOURCE_READ_WORKLOAD },
-      { ...business, allowRecoverySource: true, sourceWorkloadKey: SOURCE_READ_WORKLOAD },
-      { ...priceCompatibility, sourceWorkloadKey: sourceWrite },
-      { ...profileIco, sourceWorkloadKey: sourceWrite },
-      { ...profileIco, sourceWorkloadKey: SOURCE_READ_WORKLOAD },
-      { ...counterpartyIco, sourceWorkloadKey: PROFILE_FACTS_WORKLOAD },
-      { ...counterpartyIco, allowRecoverySource: true, sourceWorkloadKey: PROFILE_FACTS_WORKLOAD },
-    ],
-    sourceAppId: commerceApp,
-  },
-  {
-    registeredWorkloads: [
-      { ...sourceFacts, sourceWorkloadKey: businessRead },
-      { ...organization, sourceWorkloadKey: businessRead },
-      { ...organization, allowRecoverySource: true, sourceWorkloadKey: businessRead },
-      { ...profileFacts, sourceWorkloadKey: businessRead },
-      { ...profileFacts, allowRecoverySource: true, sourceWorkloadKey: businessRead },
-      { ...profileFacts, sourceWorkloadKey: PROFILE_ICO_WORKLOAD },
-      { ...organizationIco, sourceWorkloadKey: PROFILE_ICO_WORKLOAD },
-    ],
-    sourceAppId: 'privacy',
-  },
-  { registeredWorkloads: [], sourceAppId: priceGroupApp },
-] as const;
 export const organizationSourceFixture = {
   issuer: 'INTERNAL_ORGANIZATION_CUSTOMER_ISSUER',
   mappingRevision: 'explicit-organization-mapping-1',
@@ -347,10 +131,10 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: relaySources,
+      additionalRelaySources: ownerApps.map((sourceAppId) => ({ sourceAppId })),
       ownedDatabase: isolated,
       productionGate: true,
-      relaySource: { registeredWorkloads: workerRules, sourceAppId: symmyApp },
+      relaySource: { sourceAppId: symmyApp },
       // The company read composes several owner reads, each behind its own gateway assertion.
       requestDeadlineSeconds: 60,
       snapshotJson: yield* encodeProductComposition(snapshot),
@@ -1215,13 +999,17 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         headers: { 'x-api-key': Redacted.value(key.secret) },
       });
     });
-    const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
-      function* originalReceipt(input: {
+    /**
+     * The real Shell's recovery authority for one Symmy write the worker delivered: it seals that exact original
+     * invocation for the current reader, or refuses when Symmy's manifest declares no call recovering that write by
+     * that read.
+     */
+    const issueOriginalRecovery = Effect.fn('OrganizationSourceCustomerOwner.originalRecovery')(
+      function* originalRecovery(input: {
         readonly actionInvocationId: string;
         readonly actionKey: string;
-        readonly body: Schema.Json;
+        readonly audience: typeof commerceApp | typeof partyApp;
         readonly declarationKey: string;
-        readonly endpoint: string;
         readonly readKey: string;
         readonly requestHash: string;
       }) {
@@ -1233,7 +1021,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
               actionInvocationId: Schema.String.check(Schema.isUUID()).pipe(
                 Schema.brand('OrganizationOriginalInvocationId'),
               ),
-              actionKey: Schema.Literals([MEMBERSHIP_WRITE_KEY, ASSIGN_ACTION]),
+              actionKey: Schema.String.pipe(Schema.brand('OrganizationOriginalActionKey')),
               authContextRef: Schema.String,
               idempotencyKey: Schema.String.pipe(Schema.brand('OrganizationOriginalIdempotencyKey')),
               principalId: TrustedPrincipalContextSchema.fields.principalId,
@@ -1272,7 +1060,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         );
         const issued = yield* issueDelegatedGatewayContext(
           {
-            audience: commerceApp,
+            audience: input.audience,
             compositionRevision: snapshot.composition.revision,
             exchangeId: randomUUID(),
             legalEntityScope: 'subject',
@@ -1299,6 +1087,20 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
             'Shell must independently seal the exact original native invocation and current reader',
           );
         }
+        return issued;
+      },
+    );
+    const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
+      function* originalReceipt(input: {
+        readonly actionInvocationId: string;
+        readonly actionKey: string;
+        readonly body: Schema.Json;
+        readonly declarationKey: string;
+        readonly endpoint: string;
+        readonly readKey: string;
+        readonly requestHash: string;
+      }) {
+        const issued = yield* issueOriginalRecovery({ ...input, audience: commerceApp });
         return yield* client.post(`${new URL(issued.apiBaseUrl, shell.baseUrl)}/reads/${input.endpoint}`, {
           body: yield* HttpBody.json(input.body),
           headers: {
@@ -1319,6 +1121,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       groupSource,
       integration,
       isolated,
+      issueOriginalRecovery,
       key,
       ledgerFor,
       legalEntityId,

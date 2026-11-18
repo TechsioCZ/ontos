@@ -1693,7 +1693,8 @@ export const validRuntimeDeclarationViews = (
       manifest,
       `${manifestName}.publicSurface`,
       ['components', 'events', 'reports', 'resourceTypes', 'search'],
-      ['businessPermissions'],
+      // `mcp` is the module's agent tool classification; it stays on the full manifest view.
+      ['businessPermissions', 'mcp'],
     ),
     ownerObjectView(fullRegistration, registration, declarationName, ['entrypoints', 'manifest']),
     ownerReference(ownerProperty(fullRegistration, 'manifest'), registration, `${prefix}Manifest`),

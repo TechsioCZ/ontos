@@ -12,7 +12,6 @@ import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { expect, it } from 'effect-rstest';
 import { Array as EffectArray, Duration, Effect, Order, Redacted, Schema } from 'effect';
 import { HttpClient } from 'effect/http';
-import { savedAddressWorkerRules, savedAddressRecoveryRules } from './support/symmy-c14-saved-address-rules.mts';
 import {
   customerFixtureServices as services,
   makeSymmyC14CustomerFixture,
@@ -71,31 +70,8 @@ const jobStatusSchema = Schema.Struct({
 });
 const commerceModuleId = 'commerce.customer-context';
 const partyModuleId = 'party.registry';
-const partyApp = 'party-registry';
 const addAddressEntrypoint = 'commerce.customer-context.add-saved-address';
 const addContactEntrypoint = 'party.registry.add-contact-point';
-const contactWorkerRule = {
-  audience: partyApp,
-  declarationKey: 'party.registry.contact-point.add',
-  entrypointKey: addContactEntrypoint,
-  jobKey: customerWorkerKey,
-  legalEntityScope: 'optional',
-  schemaVersion: '1',
-  workerKey: customerWorkerKey,
-  workloadKey: 'party.registry.source-write',
-} as const;
-const contactRecoveryRule = {
-  allowHistoricalDeliveryRecovery: true,
-  audience: partyApp,
-  declarationKey: 'party.registry.party-source-effect-receipt.read',
-  entrypointKey: 'party.registry.api.party-source-effect-receipt',
-  jobKey: customerWorkerKey,
-  legalEntityScope: 'optional',
-  recoveryOf: { actionKey: addContactEntrypoint, jobKey: customerWorkerKey },
-  schemaVersion: '1',
-  workerKey: customerWorkerKey,
-  workloadKey: 'party.registry.source-read',
-} as const;
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
 const sortedStrings = (values: readonly string[]) => EffectArray.sort(values, Order.String);
 
@@ -325,12 +301,6 @@ it.live(
               ),
             ),
           verifyPausedIntake: true,
-          workerRules: [
-            ...savedAddressWorkerRules,
-            ...savedAddressRecoveryRules,
-            contactWorkerRule,
-            contactRecoveryRule,
-          ],
         });
         const { admin, legalEntityId, recordId, sourceIdentity, submitFor, systemId, tenantId } = fixture;
         yield* admin`insert into commerce_customer_context.saved_address_source_routes

@@ -45,6 +45,7 @@ import { requestPaymentOperationRecoveryAction } from './src/actions/request-pay
 import { requestPaymentRefundAction } from './src/actions/request-payment-refund.action.ts';
 import { rotateProviderCredentialAction } from './src/actions/rotate-provider-credential.action.ts';
 import { startPaymentCollectionAction } from './src/actions/start-payment-collection.action.ts';
+import { paymentRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 // </generated-module-manifest-imports>
 
 const profilePaymentTermEvidence = ['payment.core.evidence.payment-term.current-profile-purchase'] as const;
@@ -217,6 +218,7 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
+  registeredWorkloadCalls: paymentRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],

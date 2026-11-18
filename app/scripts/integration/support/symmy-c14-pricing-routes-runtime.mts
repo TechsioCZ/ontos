@@ -45,112 +45,11 @@ const priceRead = 'commerce.pricing.source-read';
 const catalogRead = 'commerce.catalog.symmy-product-read';
 const marketRead = 'commerce.market-catalog.source-read';
 const groupModuleId = 'pricing.price-group-catalog';
-const groupAudience = 'price-group-catalog';
 const groupAssociationsRead = 'pricing.price-group-catalog.api.price-group-source-associations';
 const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
-const groupRevisionAction = 'pricing.price-group-catalog.create-price-group-definition-revision';
 const pricingModule = 'commerce.pricing';
-const pricingAudience = 'pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
-const rules = [
-  ...[groupCreateAction, groupRevisionAction].map((actionKey) => ({
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-result-lookup.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup',
-    legalEntityScope: 'forbidden' as const,
-    recoveryOf: { actionKey, jobKey: workerKey },
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  })),
-  ...[definePriceOperation, revisePriceOperation].map((actionKey) => {
-    const rule = {
-      audience: pricingAudience,
-      declarationKey: 'commerce.pricing.price-source-result-lookup.read',
-      entrypointKey: 'commerce.pricing.api.price-source-result-lookup',
-      legalEntityScope: 'required' as const,
-      recoveryOf: { actionKey, jobKey: workerKey },
-      schemaVersion: '1',
-      workloadKey: priceRead,
-    };
-    return actionKey === definePriceOperation ? { ...rule, allowHistoricalDeliveryRecovery: true } : rule;
-  }),
-  {
-    audience: pricingAudience,
-    declarationKey: 'commerce.pricing.price.read-definition',
-    entrypointKey: 'commerce.pricing.api.price-definition',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: priceRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
-    entrypointKey: groupAssociationsRead,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group.create',
-    entrypointKey: groupCreateAction,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupWrite,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-definition-revision.create',
-    entrypointKey: groupRevisionAction,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupWrite,
-  },
-  {
-    audience: pricingAudience,
-    declarationKey: 'commerce.pricing.price.define',
-    entrypointKey: definePriceOperation,
-    legalEntityScope: 'required' as const,
-    schemaVersion: '2',
-    workloadKey: priceWrite,
-  },
-  {
-    audience: pricingAudience,
-    declarationKey: 'commerce.pricing.price.revise',
-    entrypointKey: revisePriceOperation,
-    legalEntityScope: 'required' as const,
-    schemaVersion: '2',
-    workloadKey: priceWrite,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, workerKey }));
-// These exact nested Reads are independent from the upstream Symmy worker enrollment.
-const pricingDelegationRules = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.selection-evidence.read',
-    entrypointKey: 'commerce.catalog.api.selection-evidence',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-  {
-    audience: 'commerce-market-catalog',
-    declarationKey: 'commerce.market-catalog.market-catalog.read',
-    entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: marketRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, sourceWorkloadKey: priceWrite }));
 /** One authority-only enrollment: an owner operation the route may use, never an intent. */
 const enrolled = (
   entityKind: 'PRICE' | 'PRICE_GROUP',
@@ -247,13 +146,13 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       schemaVersion: 1,
     });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: [{ registeredWorkloads: pricingDelegationRules, sourceAppId: 'pricing' }],
+      additionalRelaySources: [{ sourceAppId: 'pricing' }],
       ownedDatabase: isolated,
       priceReadProjectionJson: yield* Schema.encodeEffect(
         Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
       )(priceReadSources),
       productionGate: true,
-      relaySource: { registeredWorkloads: rules, sourceAppId: 'symmy-integration' },
+      relaySource: { sourceAppId: 'symmy-integration' },
       // A price-list read composes several owner reads, each behind its own gateway assertion.
       requestDeadlineSeconds: 60,
       snapshotJson: yield* encodeProductComposition(snapshot),

@@ -25,6 +25,11 @@ import type {
 } from '../packages/core-runtime/src/index.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
+  registeredWorkloadCallerIssues,
+  registeredWorkloadCallInventoryIssues,
+  registeredWorkloadCallReceiptIssues,
+} from './registered-workload-callers.mts';
+import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   readModuleRuntimeDeclarationEffect,
   toCamelCase,
@@ -563,6 +568,15 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
     const duplicateModuleId = moduleIds.find((moduleId, index) => moduleIds.indexOf(moduleId) !== index);
     if (duplicateModuleId !== undefined) {
       yield* failure(`duplicate OntOS module ID ${duplicateModuleId}`);
+    }
+    const derived = contracts.map(({ contract }) => contract);
+    const registeredWorkloadIssues = [
+      ...registeredWorkloadCallerIssues(derived),
+      ...registeredWorkloadCallInventoryIssues(derived),
+      ...registeredWorkloadCallReceiptIssues(derived),
+    ];
+    if (registeredWorkloadIssues.length > 0) {
+      yield* failure(registeredWorkloadIssues.join('\n'));
     }
     buildInstalledModuleCatalog(contracts);
   });
