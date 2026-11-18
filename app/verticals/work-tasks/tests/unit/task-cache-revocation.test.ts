@@ -4,6 +4,7 @@ import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -134,6 +135,7 @@ it.live('a denied revalidation does not keep showing the previous rows or write 
     yield* waitUntil(() => text().includes(copy.forbidden));
 
     // Identity switches reload the Shell document; this covers a same-session permission revocation.
+    yield* networkIdle;
     expect(reads).toHaveLength(2);
     expect({
       forbidden: text().includes(copy.forbidden),

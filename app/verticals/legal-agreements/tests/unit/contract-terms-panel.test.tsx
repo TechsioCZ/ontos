@@ -5,6 +5,7 @@
 import { acted, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -125,6 +126,7 @@ describe('contract terms panel with one Save button', () => {
       yield* type(notice, '3 měsíce');
       yield* click(button('Uložit'));
       yield* waitUntil(() => text().includes('Uloženo'));
+      yield* networkIdle;
       expect(commands.length).toBe(1);
       expect(commands[0]).toMatchObject({
         command: { _tag: 'SetContractTerms', noticePeriod: '3 měsíce' },
@@ -140,6 +142,7 @@ describe('contract terms panel with one Save button', () => {
       yield* mount();
       yield* type('contract-terms-monthly', 'hodně');
       expect(button('Uložit').disabled).toBe(true);
+      yield* networkIdle;
       expect(commands.length).toBe(0);
     }).pipe(Effect.provide(network)),
   );

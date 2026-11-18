@@ -1,9 +1,16 @@
 // @rstest-environment happy-dom
 
 import { pinDocumentNavigationModules } from '@app/shared-contracts';
-import { pinTestDocument, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import {
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  streamingBrowserNetwork,
+} from '@app/shared-contracts/testing/http-double';
 import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
-import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import {
   RecordsApi as AgreementsApi,
   RecordsResponseSchema as AgreementsResponse,
@@ -25,7 +32,7 @@ import {
 } from '../../shared/apis/apply-command-action.ts';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { mountInRoute } from '../support/module-ui.ts';
-import { Deferred, Effect, Fiber, FiberSet, Layer, Option, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
@@ -261,48 +268,7 @@ const applications = [
   ),
 ] as const;
 
-type BrowserRequest = Parameters<
-  NonNullable<Window['happyDOM']['settings']['fetch']['interceptor']>['beforeAsyncRequest']
->[0];
-const forwardBrowserRequest = (
-  handler: (request: Request) => Promise<Response>,
-  { request, window: sourceWindow }: BrowserRequest,
-) =>
-  Effect.gen(function* forward() {
-    const head = { headers: [...request.headers], method: request.method, signal: request.signal };
-    const forwarded =
-      request.method === 'GET' || request.method === 'HEAD'
-        ? new Request(request.url, head)
-        : new Request(request.url, { ...head, body: yield* Effect.promise(() => request.arrayBuffer()) });
-    const response = yield* Effect.promise(() => handler(forwarded));
-    const bytes = yield* Effect.promise(() => response.arrayBuffer());
-    return new sourceWindow.Response(bytes, {
-      headers: [...response.headers],
-      status: response.status,
-      statusText: response.statusText,
-    });
-  });
-// Preserve abort signals across the in-process HTTP hop so the real handler observes cancellation.
-const network = Layer.effectDiscard(
-  Effect.gen(function* browserTransport() {
-    const server = yield* Effect.acquireRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(Layer.mergeAll(...applications), { disableLogger: true })),
-      (value) => Effect.promise(() => value.dispose()),
-    );
-    const run = yield* FiberSet.makeRuntimePromise();
-    const settings = window.happyDOM.settings.fetch;
-    const previous = settings.interceptor;
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        settings.interceptor = { beforeAsyncRequest: (request) => run(forwardBrowserRequest(server.handler, request)) };
-      }),
-      () =>
-        Effect.sync(() => {
-          settings.interceptor = previous;
-        }),
-    );
-  }),
-);
+const network = streamingBrowserNetwork(...applications);
 afterEach(unmountAll);
 beforeEach(() => {
   contractReads.length = 0;
@@ -331,11 +297,13 @@ it.live('renders the opportunity task, customer contract and case order from the
   Effect.gen(function* relatedHook() {
     yield* pinTestDocument;
     yield* preloadOpportunityDetails(context, [row], 7);
+    yield* networkIdle;
     expect(contractReads).toHaveLength(1);
     expect(taskReads).toHaveLength(2);
     expect(orderReads).toHaveLength(1);
     yield* mountInRoute(createElement(Detail));
     expect(text()).toContain('Visible task|Visible contract|Order A');
+    yield* networkIdle;
     expect(contractReads).toHaveLength(1);
     expect(taskReads).toHaveLength(2);
     expect(orderReads).toHaveLength(1);
@@ -355,6 +323,7 @@ it.live('separates tenant, principal, company, module, revision and exact custom
     yield* opportunityRelatedData.read({ ...input, scope: pageDataScopeKey(context, 'other.module') ?? '' });
     yield* opportunityRelatedData.read({ ...input, revision: 8 });
     yield* opportunityRelatedData.read({ ...input, counterpartyId: 'different-customer' });
+    yield* networkIdle;
     expect(contractReads).toHaveLength(7);
     expect(opportunityRelatedData.snapshot(input).state).toBe('ready');
   }).pipe(Effect.provide(network)),
@@ -364,6 +333,7 @@ it.live('does not prefetch with absent or incomplete identity', () =>
     yield* pinTestDocument;
     yield* preloadOpportunityDetails(undefined, [row], 7);
     yield* preloadOpportunityDetails({ ...context, principalId: '' }, [row], 7);
+    yield* networkIdle;
     expect(contractReads).toHaveLength(0);
     expect(taskReads).toHaveLength(0);
   }).pipe(Effect.provide(network)),
@@ -382,6 +352,7 @@ it.live('keeps independent successful sections but never reuses a denial as succ
     }
     contractAnswer = Effect.succeed(contracts);
     yield* opportunityRelatedData.read(input);
+    yield* networkIdle;
     expect(contractReads).toHaveLength(2);
     expect(opportunityRelatedData.snapshot(input).state).toBe('ready');
   }).pipe(Effect.provide(network)),
@@ -420,10 +391,12 @@ it.live('limits background work to two rows and cancels both active and queued w
     }));
     const fiber = yield* Effect.forkChild(preloadOpportunityDetails(context, rows, 7));
     yield* Deferred.await(started);
+    yield* networkQuietExcept(2);
     expect(active).toBe(2);
     yield* Fiber.interrupt(fiber);
     yield* Deferred.await(cancelled);
     expect(stopped).toBe(2);
+    yield* networkIdle;
     expect(contractReads).toHaveLength(2);
     expect(orderReads).toHaveLength(0);
   }).pipe(Effect.provide(network)),
@@ -449,6 +422,7 @@ it.live('preserves a cold URL record and does not return last-authorized rows af
       preloadPipelinePage({ context, routeParams: {}, search: `?opportunityId=${opportunity.id}` }),
     );
     yield* pipelineRecords.read(initial.value);
+    yield* networkIdle;
     expect(recordsReads).toHaveLength(1);
     const ready = pipelineRecords.snapshot(initial.value);
     expect(ready.state).toBe('ready');
@@ -473,8 +447,10 @@ it.live('does not invent a successful contract section before the independent cu
       expect(partial.error.value.orders.status).toBe('ready');
       expect(partial.error.value.tasks.status).toBe('ready');
     }
+    yield* networkIdle;
     expect(contractReads).toHaveLength(0);
     yield* opportunityRelatedData.read(input);
+    yield* networkIdle;
     expect(contractReads).toHaveLength(1);
     expect(orderReads[0]).toEqual({
       view: { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 },

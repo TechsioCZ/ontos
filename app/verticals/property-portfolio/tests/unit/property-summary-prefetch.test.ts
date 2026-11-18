@@ -18,11 +18,17 @@ import {
   RecordsApi as EmployeesApi,
   RecordsResponseSchema as EmployeesResponse,
 } from '@app/workforce/contracts/records';
-import { pinTestDocument, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
-import type { InProcessApplication } from '@app/shared-contracts/testing/http-double';
-import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
+import {
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  streamingBrowserNetwork,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { Deferred, Effect, Fiber, FiberSet, Layer, Result, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Result, Schema } from 'effect';
 import { afterAll, beforeEach, expect, it } from 'effect-rstest';
 import {
   PropertyRecordSchema,
@@ -166,55 +172,7 @@ const Finance = FinanceApi.prefix('/finance-billing-api');
 const Work = WorkApi.prefix('/work-tasks-api');
 const Employees = EmployeesApi.prefix('/workforce-api');
 const Records = RecordsApi.prefix('/property-portfolio-api');
-const makeServer = (applications: readonly [InProcessApplication, ...InProcessApplication[]]) =>
-  HttpRouter.toWebHandler(Layer.mergeAll(...applications), { disableLogger: true });
-type BrowserInterceptor = NonNullable<Window['happyDOM']['settings']['fetch']['interceptor']>;
-const answerRequest = (
-  server: ReturnType<typeof makeServer>,
-  { request, window: ownerWindow }: Parameters<BrowserInterceptor['beforeAsyncRequest']>[0],
-) =>
-  Effect.gen(function* answerHttpRequest() {
-    const body =
-      request.method === 'GET' || request.method === 'HEAD'
-        ? {}
-        : { body: yield* Effect.promise(() => request.arrayBuffer()) };
-    const forwarded = new Request(request.url, {
-      ...body,
-      headers: [...request.headers],
-      method: request.method,
-      signal: request.signal,
-    });
-    const response = yield* Effect.promise(() => server.handler(forwarded));
-    const bytes = yield* Effect.promise(() => response.arrayBuffer());
-    return new ownerWindow.Response(bytes, {
-      headers: [...response.headers],
-      status: response.status,
-      statusText: response.statusText,
-    });
-  });
-// The shared transport omits the request signal. Preserve it here so cancellation reaches the real HTTP handler.
-const abortableBrowserNetwork = (...applications: readonly [InProcessApplication, ...InProcessApplication[]]) =>
-  Layer.effectDiscard(
-    Effect.gen(function* serveAbortableRequests() {
-      const server = yield* Effect.acquireRelease(
-        Effect.sync(() => makeServer(applications)),
-        (current) => Effect.promise(current.dispose),
-      );
-      const run = yield* FiberSet.makeRuntimePromise();
-      const settings = window.happyDOM.settings.fetch;
-      const previous = settings.interceptor;
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          settings.interceptor = { beforeAsyncRequest: (request) => run(answerRequest(server, request)) };
-        }),
-        () =>
-          Effect.sync(() => {
-            settings.interceptor = previous;
-          }),
-      );
-    }),
-  );
-const network = abortableBrowserNetwork(
+const network = streamingBrowserNetwork(
   shellGatewayIssuer({
     'finance-billing': '/finance-billing-api',
     'legal-agreements': '/legal-agreements-api',
@@ -310,12 +268,14 @@ it.layer(network, { excludeTestServices: true })('property summary prefetch', (s
     Effect.gen(function* warmsRows() {
       yield* pinTestDocument;
       yield* preloadPropertySummaries(input, [row(2), row(1)], 7);
+      yield* networkIdle;
       expect(reads.finance).toEqual([{ propertyId: id(2) }, { propertyId: id(1) }]);
       expect(reads.agreements).toHaveLength(1);
       expect(reads.occupancy).toHaveLength(1);
       expect(reads.work).toHaveLength(1);
       expect(propertySummary.snapshot(detail(3)).state).toBe('pending');
       yield* propertySummary.read(detail(2));
+      yield* networkIdle;
       expect(reads.finance).toHaveLength(2);
     }),
   );
@@ -336,6 +296,7 @@ it.layer(network, { excludeTestServices: true })('property summary prefetch', (s
       yield* preloadPropertySummaries(recordsInput(), [row(1)], 7);
       yield* preloadPropertySummaries(recordsInput({ ...context, principalId: '' }), [row(1)], 7);
       yield* preloadPropertySummaries(recordsInput({ ...context, tenantId: id(99) }), [row(1)], 7);
+      yield* networkIdle;
       expect(reads.finance).toHaveLength(0);
     }),
   );
@@ -354,6 +315,7 @@ it.layer(network, { excludeTestServices: true })('property summary prefetch', (s
         }
         expect(propertySummary.snapshot(detail(1)).state).toBe('failed');
         yield* propertySummary.read(detail(1));
+        yield* networkIdle;
         expect(reads.agreements).toHaveLength(2);
         expect(reads.finance).toHaveLength(2);
         expect(reads.occupancy).toHaveLength(1);
@@ -368,8 +330,10 @@ it.layer(network, { excludeTestServices: true })('property summary prefetch', (s
         yield* pinTestDocument;
         yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
         expect(propertySummary.snapshot(detail(2)).state).toBe('ready');
+        yield* networkIdle;
         expect(reads.finance).toHaveLength(1);
         yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }));
+        yield* networkIdle;
         expect(reads.finance).toHaveLength(1);
       }),
   );
@@ -395,6 +359,7 @@ it.layer(network, { excludeTestServices: true })('property summary prefetch', (s
       yield* pinTestDocument;
       const rows = Array.from({ length: 202 }, (_, index) => row(index + 1));
       yield* preloadPropertySummaries(input, rows, 9);
+      yield* networkIdle;
       expect(reads.finance).toHaveLength(200);
       expect(propertySummary.snapshot(detail(201, 9)).state).toBe('pending');
     }),
@@ -434,15 +399,18 @@ it.layer(network, { excludeTestServices: true })('property summary prefetch', (s
       );
       const background = yield* Effect.forkChild(preloadPropertySummaries(input, [row(1), row(2), row(3)], 7));
       yield* Deferred.await(started);
+      yield* networkQuietExcept(2);
       expect(active).toBe(2);
       const foreground = yield* Effect.forkChild(propertySummary.read(detail(1)));
       yield* Effect.yieldNow;
       yield* Fiber.interrupt(background);
       yield* Deferred.await(stopped);
       expect(active).toBe(1);
+      yield* networkQuietExcept(1);
       expect(total).toBe(2);
       yield* Deferred.succeed(release, true);
       yield* Fiber.join(foreground);
+      yield* networkIdle;
       expect(total).toBe(2);
     }),
   );

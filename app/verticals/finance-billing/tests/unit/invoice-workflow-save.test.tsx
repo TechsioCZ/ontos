@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -219,10 +220,12 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
         expect(saveButton().disabled).toBe(true);
         yield* checkConfirmation;
         yield* waitUntil(() => !saveButton().disabled);
+        yield* networkIdle;
         expect(sent).toEqual([]);
 
         yield* clickSave;
         yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
         expect(sent).toEqual([
           {
             _tag: 'SetPriorSettlement',
@@ -252,6 +255,7 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
       yield* waitUntil(() => currentModel().snapshot?.revision === 2);
       yield* clickSave;
       yield* waitUntil(() => (document.body.textContent ?? '').includes(labels.conflict));
+      yield* networkIdle;
       expect(sent).toEqual([]);
       expect(closes).toEqual([]);
     }),
@@ -265,9 +269,12 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
       expect(leaveQuestion()).toBe(true);
       yield* clickNamed(labels.stay);
       expect(closes).toEqual([]);
+      yield* networkIdle;
+      expect(sent).toEqual([]);
 
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
+      yield* networkIdle;
       expect(sent).toEqual([
         {
           _tag: 'MarkAccountingExportFailed',
@@ -282,9 +289,10 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
   suite.effect('the accountant accepted a package: its proof and export identity are saved', () =>
     Effect.gen(function* confirmation() {
       yield* mountForm('confirmation');
-      yield* typeInto('export-evidence', 'e-mail z 20. 10. 2026');
+      yield* typeInto('export-evidence', ' e-mail z 20. 10. 2026 ');
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
+      yield* networkIdle;
       expect(sent).toEqual([
         {
           _tag: 'ConfirmAccountingExport',
@@ -301,9 +309,11 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
       yield* mountForm('kind');
       yield* pick(KIND_PICKER, 'ADVANCE');
       yield* waitUntil(() => buttons(KIND_CONFIRM).length > 0);
+      yield* networkIdle;
       expect(sent).toEqual([]);
       yield* clickNamed(KIND_CONFIRM);
       yield* waitUntil(() => sent.length === 1);
+      yield* networkIdle;
       expect(sent).toEqual([{ _tag: 'SetInvoiceDetails', documentKind: 'ADVANCE', invoiceRef: target.ref }]);
     }),
   );

@@ -8,6 +8,7 @@ import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testi
 import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -206,11 +207,13 @@ it.live('reordering and removing change only the draft; Uložit sends the galler
 
     // "Move later" on the main picture makes the second one main.
     yield* click(labelled(copy.moveLater));
+    yield* networkIdle;
     expect(gallerySaves()).toEqual([]);
     expect(button(labels.save).disabled).toBe(false);
 
     yield* click(button(labels.save));
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(gallerySaves()).toEqual([{ change: { _tag: 'Set', images: [second, first] }, expectedRevision: 7 }]);
     // The settings did not change, so only the gallery was sent.
     expect(settingsRequests).toEqual([]);
@@ -224,12 +227,14 @@ it.live('an uploaded picture is stored at once but reaches the e-shop only with 
     yield* pick(new File([new Uint8Array([1])], 'detail.png', { type: 'image/png' }));
     yield* waitUntil(() => tiles() === 3);
     yield* waitUntil(() => !button(labels.save).disabled);
+    yield* networkIdle;
     expect(staging).toHaveLength(1);
     // Nothing reached the public gallery yet.
     expect(gallerySaves()).toEqual([]);
 
     yield* click(button(labels.save));
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(gallerySaves()).toEqual([{ change: { _tag: 'Set', images: [first, second, staged] }, expectedRevision: 7 }]);
   }).pipe(Effect.provide(network)),
 );
@@ -243,6 +248,7 @@ it.live('a save over someone else’s newer change is refused as a conflict and 
     expect(tiles()).toBe(1);
     yield* click(button(labels.save));
     yield* waitUntil(() => buttons(labels.reloadLatest).length === 1);
+    yield* networkIdle;
     expect(gallerySaves()).toHaveLength(1);
     expect(committed).toEqual([]);
     expect(tiles()).toBe(1);
@@ -260,6 +266,7 @@ it.live(
       yield* click(labelled(copy.remove));
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(copy.saveRejected));
+      yield* networkIdle;
       expect(settingsSaves()).toHaveLength(1);
       expect(committed).toEqual([]);
       // The slug went through: it is not reported as taken, and Uložit stays usable for the gallery.
@@ -269,6 +276,7 @@ it.live(
       galleryAnswer = Effect.succeed(saved);
       yield* click(button(labels.save));
       yield* waitUntil(() => committed.length === 1);
+      yield* networkIdle;
       expect(settingsSaves()).toHaveLength(1);
       expect(gallerySaves()).toEqual([
         { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },

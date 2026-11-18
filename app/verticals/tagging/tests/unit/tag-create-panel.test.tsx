@@ -3,13 +3,14 @@
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -112,8 +113,8 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-describe('tag create panel with one Save button', () => {
-  it.live('one click on Save creates the tag once and closes the panel', () =>
+it.layer(network, { excludeTestServices: true })('tag create panel with one Save button', (suite) => {
+  suite.effect('one click on Save creates the tag once and closes the panel', () =>
     Effect.gen(function* saveOnce() {
       yield* pinTestDocument;
       const view = yield* mount();
@@ -121,12 +122,14 @@ describe('tag create panel with one Save button', () => {
       yield* tickKind('order');
       yield* click(button('Uložit'));
       yield* waitUntil(() => view.closed.length === 1);
+      // A second create the click started would have reached the owner by now.
+      yield* networkIdle;
       expect(commands.length).toBe(1);
       expect(Predicate.isTagged(commands[0]?.command, 'CreateTag')).toBe(true);
       expect(commands[0]?.command).toMatchObject({
         name: 'VIP klient',
         subjectKinds: ['order'],
       });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

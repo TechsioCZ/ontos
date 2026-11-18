@@ -1,6 +1,13 @@
 // @rstest-environment happy-dom
 import { moduleChangeEvent, pageDataPending } from '@app/shared-contracts/page-data';
-import { pinTestDocument, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import {
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  streamingBrowserNetwork,
+} from '@app/shared-contracts/testing/http-double';
 import { InvoiceSchema, RecordsApi as FinanceRecordsApi } from '@app/finance-billing/contracts/records';
 import { RecordsApi as PropertyRecordsApi } from '@app/property-portfolio/contracts/records';
 import { RecordsApi as AgreementRecordsApi } from '@app/legal-agreements/contracts/records';
@@ -11,9 +18,8 @@ import {
   RecordsResponseSchema as WorkResponseSchema,
   RecordsForbiddenProblemSchema,
 } from '@app/work-tasks/contracts/records';
-import type { InProcessApplication } from '@app/shared-contracts/testing/http-double';
-import { HttpApiBuilder, HttpRouter, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
-import { Deferred, Effect, Fiber, FiberSet, Layer, Option, Result, Schema } from 'effect';
+import { HttpApiBuilder, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Fiber, Option, Result, Schema } from 'effect';
 import { afterAll, beforeEach, expect, it } from 'effect-rstest';
 import type { CounterpartyReadRequestSchema } from '../../../party-registry/shared/apis/counterparty-read.ts';
 import {
@@ -214,53 +220,7 @@ const Property = PropertyRecordsApi.prefix('/property-portfolio-api');
 const Agreement = AgreementRecordsApi.prefix('/legal-agreements-api');
 const Counterparty = CounterpartyReadApi.prefix('/party-registry-api');
 const Customers = CustomerListApi.prefix('/party-registry-api');
-type BrowserRequest = Parameters<
-  NonNullable<Window['happyDOM']['settings']['fetch']['interceptor']>['beforeAsyncRequest']
->[0];
-const answerBrowserRequest = (
-  handler: (request: Request) => Promise<Response>,
-  { request, window: sender }: BrowserRequest,
-) =>
-  Effect.gen(function* answerRequest() {
-    const head = { headers: [...request.headers], method: request.method, signal: request.signal };
-    const forwarded =
-      request.method === 'GET' || request.method === 'HEAD'
-        ? new Request(request.url, head)
-        : new Request(request.url, { ...head, body: yield* Effect.promise(() => request.arrayBuffer()) });
-    const response = yield* Effect.promise(() => handler(forwarded));
-    const body = yield* Effect.promise(() => response.arrayBuffer());
-    return new sender.Response(body, {
-      headers: [...response.headers],
-      status: response.status,
-      statusText: response.statusText,
-    });
-  });
-// Forward the browser request's AbortSignal too: the shared double currently drops it when
-// constructing its server Request, so an interrupted client cannot cancel a blocked HTTP handler.
-const cancellableBrowserNetwork = (...applications: readonly [InProcessApplication, ...InProcessApplication[]]) =>
-  Layer.effectDiscard(
-    Effect.gen(function* interceptRequests() {
-      const server = yield* Effect.acquireRelease(
-        Effect.sync(() => HttpRouter.toWebHandler(Layer.mergeAll(...applications), { disableLogger: true })),
-        (handler) => Effect.promise(() => handler.dispose()),
-      );
-      const run = yield* FiberSet.makeRuntimePromise();
-      const settings = window.happyDOM.settings.fetch;
-      const previous = settings.interceptor;
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          settings.interceptor = {
-            beforeAsyncRequest: (request) => run(answerBrowserRequest(server.handler, request)),
-          };
-        }),
-        () =>
-          Effect.sync(() => {
-            settings.interceptor = previous;
-          }),
-      );
-    }),
-  );
-const network = cancellableBrowserNetwork(
+const network = streamingBrowserNetwork(
   shellGatewayIssuer({
     'finance-billing': '/finance-billing-api',
     'legal-agreements': '/legal-agreements-api',
@@ -352,6 +312,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       yield* seed;
       const visible = [detail(3).record, detail(1).record];
       yield* warm(renderedLeaseOccupantRows(undefined, undefined, visible));
+      yield* networkIdle;
       expect(reads.work).toEqual([
         { contextResourceId: row(3).unitRef.resourceId },
         { contextResourceId: row(1).unitRef.resourceId },
@@ -368,6 +329,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
     Effect.gen(function* coldLink() {
       yield* pinTestDocument;
       yield* prepareLeasePage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }, preloadLeaseRelated);
+      yield* networkIdle;
       expect(leaseTasks.snapshot(detail(2)).state).toBe('ready');
       expect(leaseTasks.snapshot(detail(1))).toBe(pageDataPending);
       expect(reads.work).toContainEqual({ contextResourceId: row(2).unitRef.resourceId });
@@ -377,6 +339,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       expect(leaseInvoicesExact.snapshot(detail(1))).toBe(pageDataPending);
       expect(reads.finance).toHaveLength(0);
       yield* prepareLeasePage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }, preloadLeaseRelated);
+      yield* networkIdle;
       expect(reads.work).toHaveLength(1);
       expect(reads.leaseInvoices).toHaveLength(1);
     }),
@@ -391,6 +354,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       yield* preloadLeaseRelated(detail(1, 8));
       leaseRecords.invalidate();
       yield* preloadLeaseRelated(detail(1));
+      yield* networkIdle;
       expect(reads.work).toHaveLength(0);
       expect(reads.leaseInvoices).toHaveLength(0);
       expect(reads.finance).toHaveLength(0);
@@ -409,6 +373,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       };
       yield* preloadLeaseRelated(foreign);
       expect(Result.isFailure(yield* Effect.result(leaseTasks.read(foreign)))).toBe(true);
+      yield* networkIdle;
       expect(reads.work).toHaveLength(0);
       expect(reads.leaseInvoices).toHaveLength(0);
     }),
@@ -474,6 +439,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       yield* warm([detail(1).record]);
       expect(leaseOccupant.snapshot(detail(1)).state).toBe('failed');
       expect(leaseTasks.snapshot(detail(1)).state).toBe('ready');
+      yield* networkIdle;
       expect(reads.work).toHaveLength(1);
     }),
   );
@@ -505,6 +471,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       recordsAnswer = current;
       yield* seed;
       yield* warm(canonicalRecords().occupancies);
+      yield* networkIdle;
       expect(reads.work).toHaveLength(1);
       expect(reads.counterparty).toHaveLength(2);
     }),
@@ -535,12 +502,15 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       invoiceAnswer = Effect.succeed({ invoices: [invoice], revision: 23 });
       yield* seed;
       yield* warm([detail(1).record]);
+      yield* networkIdle;
       expect(reads.leaseInvoices).toHaveLength(1);
       const first = yield* leaseInvoicesExact.read(detail(1));
       const second = yield* leaseInvoicesExact.read({ ...detail(1) });
       expect(second.invoices).toEqual(first.invoices);
+      yield* networkIdle;
       expect(reads.leaseInvoices).toHaveLength(1);
       yield* preloadLeaseRelated(detail(2));
+      yield* networkIdle;
       expect(reads.leaseInvoices).toHaveLength(2);
       expect(reads.finance).toHaveLength(0);
       expect(invoicesForLease(detail(1).record, first.invoices)).toEqual([invoice]);
@@ -569,6 +539,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       recordsAnswer = many;
       yield* seed;
       yield* warm(canonicalRecords().occupancies);
+      yield* networkIdle;
       expect(reads.counterparty).toHaveLength(200);
       expect(reads.work).toHaveLength(200);
       expect(reads.leaseInvoices).toHaveLength(200);
@@ -603,6 +574,7 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       );
       const background = yield* Effect.forkChild(warm());
       yield* Deferred.await(started);
+      yield* networkQuietExcept(2);
       expect(active).toBe(2);
       expect(reads.counterparty).toHaveLength(2);
       const foreground = yield* Effect.forkChild(leaseTasks.read(detail(1)));
@@ -610,9 +582,11 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       yield* Fiber.interrupt(background);
       yield* Deferred.await(stopped);
       expect(active).toBe(1);
+      yield* networkQuietExcept(1);
       expect(total).toBe(2);
       yield* Deferred.succeed(release, true);
       expect((yield* Fiber.join(foreground)).items).toEqual([tasks[0]]);
+      yield* networkIdle;
       expect(total).toBe(2);
       expect(reads.finance).toHaveLength(0);
     }),

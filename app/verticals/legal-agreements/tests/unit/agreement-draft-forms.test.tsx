@@ -6,6 +6,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -185,10 +186,12 @@ describe('period of a draft contract', () => {
       field(endDate).form?.requestSubmit();
       yield* click(field(endDate));
       expect(text()).toContain(labels.unsaved);
+      yield* networkIdle;
       expect(sent()).toHaveLength(0);
 
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
+      yield* networkIdle;
       expect(sent()).toEqual([
         {
           command: {
@@ -214,6 +217,7 @@ describe('period of a draft contract', () => {
       yield* type(endDate, '2028-01-31');
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.conflict));
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(buttons(labels.reloadLatest)).toHaveLength(1);
     }).pipe(Effect.provide(network)),
@@ -227,6 +231,7 @@ describe('period of a draft contract', () => {
       yield* type(endDate, '2028-01-31');
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
+      yield* networkIdle;
       expect(sent().map((payload) => payload.expectedRevision)).toEqual([4, 7]);
     }).pipe(Effect.provide(network)),
   );
@@ -254,6 +259,7 @@ describe('new contract', () => {
       );
       expect(field('contract-start-date').value).toBe('2030-01-31');
       expect(field(endDate).value).toBe('2031-01-31');
+      yield* networkIdle;
       expect(sent()).toEqual([]);
       // The suggested successor period is valid as it opens: Uložit could send it without retyping a date.
       expect(button(labels.save).disabled).toBe(false);
@@ -262,6 +268,7 @@ describe('new contract', () => {
       yield* type(endDate, '2032-02-01');
       yield* click(button(labels.save));
       yield* waitUntil(() => created.length === 1);
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(sent()[0]).toMatchObject({
         command: {
@@ -298,9 +305,11 @@ describe('new contract', () => {
       expect(button(labels.save).disabled).toBe(false);
       document.querySelector('form')?.requestSubmit();
       yield* click(document.querySelector('form') ?? undefined);
+      yield* networkIdle;
       expect(sent()).toHaveLength(0);
       yield* click(button(labels.save));
       yield* waitUntil(() => created.length === 1);
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(sent()[0]).toMatchObject({
         command: { _tag: 'CreateContract', record: { counterpartyRef, kind: 'OTHER', lifecycleState: 'DRAFT' } },

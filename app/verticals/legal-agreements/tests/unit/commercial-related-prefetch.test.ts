@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { Deferred, Effect, Fiber, FiberSet, Layer, Match, Option, Result, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Match, Option, Result, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import { moduleChangeEvent, moduleWriteEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
@@ -17,9 +17,16 @@ import {
   CustomerListForbiddenProblemSchema,
 } from '../../../party-registry/shared/apis/customer-list.ts';
 import type { CustomerListResponse } from '../../../party-registry/shared/apis/customer-list.ts';
-import { pinTestDocument, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import {
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  streamingBrowserNetwork,
+} from '@app/shared-contracts/testing/http-double';
 import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
-import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { mountInRoute } from '../support/module-ui.ts';
 import {
   agreementCustomerData,
@@ -167,51 +174,7 @@ const applications = [
     ),
   ),
 ] as const;
-type BrowserRequest = Parameters<
-  NonNullable<Window['happyDOM']['settings']['fetch']['interceptor']>['beforeAsyncRequest']
->[0];
-const forwardBrowserRequest = (
-  handler: (request: Request) => Promise<Response>,
-  { request, window: sourceWindow }: BrowserRequest,
-) =>
-  Effect.gen(function* forward() {
-    const head = { headers: [...request.headers], method: request.method, signal: request.signal };
-    const forwarded =
-      request.method === 'GET' || request.method === 'HEAD'
-        ? new Request(request.url, head)
-        : new Request(request.url, { ...head, body: yield* Effect.promise(() => request.arrayBuffer()) });
-    const response = yield* Effect.promise(() => handler(forwarded));
-    const bytes = yield* Effect.promise(() => response.arrayBuffer());
-    return new sourceWindow.Response(bytes, {
-      headers: [...response.headers],
-      status: response.status,
-      statusText: response.statusText,
-    });
-  });
-// Keep the browser request's abort signal when forwarding it to the in-process owner.
-// The shared browserNetwork currently rebuilds the request without that signal.
-const network = Layer.effectDiscard(
-  Effect.gen(function* browserTransport() {
-    const server = yield* Effect.acquireRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(Layer.mergeAll(...applications), { disableLogger: true })),
-      (value) => Effect.promise(() => value.dispose()),
-    );
-    const run = yield* FiberSet.makeRuntimePromise();
-    const settings = window.happyDOM.settings.fetch;
-    const previous = settings.interceptor;
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        settings.interceptor = {
-          beforeAsyncRequest: (request) => run(forwardBrowserRequest(server.handler, request)),
-        };
-      }),
-      () =>
-        Effect.sync(() => {
-          settings.interceptor = previous;
-        }),
-    );
-  }),
-);
+const network = streamingBrowserNetwork(...applications);
 afterEach(unmountAll);
 beforeEach(() => {
   customerReads.length = 0;
@@ -233,6 +196,7 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
       Effect.gen(function* test() {
         yield* pinTestDocument;
         yield* Effect.promise(() => preloadPage(props));
+        yield* networkIdle;
         expect(recordsReads).toHaveLength(1);
         expect(customerReads).toHaveLength(1);
         expect(customerReads[0]).toEqual({ counterpartyRef: contract.counterpartyRef });
@@ -240,6 +204,7 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
         expect(selected.state).toBe('ready');
         const next = { ...props, search: `?resourceId=${otherId}` };
         yield* Effect.promise(() => preloadPage(next));
+        yield* networkIdle;
         expect(recordsReads).toHaveLength(1);
         expect(customerReads).toHaveLength(2);
         expect(agreements.key(agreementsInputOf(props, ''))).toBe(agreements.key(agreementsInputOf(next, '')));
@@ -252,6 +217,7 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
         preloadPage({ ...props, search: '?resourceId=10000000-0000-4000-8000-000000000099' }),
       );
       yield* Effect.promise(() => preloadPage({ ...props, search: '?resourceId=invalid' }));
+      yield* networkIdle;
       expect(customerReads).toHaveLength(0);
       expect(recordsReads).toHaveLength(1);
     }),
@@ -279,6 +245,7 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
           counterpartyRef: { ...contract.counterpartyRef, tenantId: '10000000-0000-4000-8000-000000000004' },
         },
       });
+      yield* networkIdle;
       expect(customerReads).toHaveLength(7);
     }),
   );
@@ -287,12 +254,14 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
       yield* pinTestDocument;
       yield* preloadAgreementCustomers(undefined, [contract], 7);
       yield* preloadAgreementCustomers({ ...context, tenantId: '' }, [contract], 7);
+      yield* networkIdle;
       expect(customerReads).toHaveLength(0);
       customerAnswer = Effect.fail(customerForbidden);
       yield* preloadAgreementCustomers(context, [contract], 7);
       expect(agreementCustomerData.snapshot(input).state).toBe('failed');
       customerAnswer = Effect.succeed(customer('Now allowed'));
       expect(yield* agreementCustomerData.read(input)).toBe('Now allowed');
+      yield* networkIdle;
       expect(customerReads).toHaveLength(2);
     }),
   );
@@ -342,10 +311,12 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
       };
       const fiber = yield* Effect.forkChild(preloadAgreementCustomers(context, [...records.contracts, third], 7));
       yield* Deferred.await(started);
+      yield* networkQuietExcept(2);
       expect(active).toBe(2);
       yield* Fiber.interrupt(fiber);
       yield* Deferred.await(stopped);
       expect(aborted).toBe(2);
+      yield* networkIdle;
       expect(customerReads).toHaveLength(2);
     }),
   );

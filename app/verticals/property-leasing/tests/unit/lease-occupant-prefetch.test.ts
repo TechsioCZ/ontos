@@ -1,6 +1,8 @@
 // @rstest-environment happy-dom
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -232,6 +234,7 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       yield* pinTestDocument;
       const current = yield* leaseRecords.read(input);
       expect(current.records.occupancies).toHaveLength(3);
+      yield* networkIdle;
       expect(reads.guest).toHaveLength(0);
       expect(reads.counterparty).toHaveLength(0);
     }),
@@ -249,9 +252,11 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
         correlation: expect.any(String),
         payload: { counterpartyRef: row(1).customerCounterpartyRef },
       });
+      yield* networkIdle;
       expect(reads.guest).toHaveLength(1);
       expect(leaseOccupant.snapshot(detail(3, 7, true)).state).toBe('pending');
       expect(yield* leaseOccupant.read(detail(2, 7, true))).toBe('Guest');
+      yield* networkIdle;
       expect(reads.guest).toHaveLength(1);
     }),
   );
@@ -273,6 +278,7 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       yield* preloadLeaseOccupants(leaseInputOf(), [row(1)], 7);
       yield* preloadLeaseOccupants(leaseInputOf({ ...context, principalId: '' }), [row(1)], 7);
       yield* preloadLeaseOccupants(leaseInputOf({ ...context, tenantId: id(99) }), [row(1)], 7);
+      yield* networkIdle;
       expect(reads.counterparty).toHaveLength(0);
     }),
   );
@@ -294,6 +300,7 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       yield* preloadLeaseOccupants(input, [row(1)], 7);
       expect(leaseOccupant.snapshot(detail(1)).state).toBe('failed');
       expect(yield* leaseOccupant.read(detail(1))).toBe('Tenant');
+      yield* networkIdle;
       expect(reads.counterparty).toHaveLength(2);
       expect(reads.directory).toHaveLength(0);
       expect(reads.guest).toHaveLength(0);
@@ -305,8 +312,10 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       yield* pinTestDocument;
       yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
       expect(leaseOccupant.snapshot(detail(2, 7, true)).state).toBe('ready');
+      yield* networkIdle;
       expect(reads.guest).toHaveLength(1);
       yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }));
+      yield* networkIdle;
       expect(reads.guest).toHaveLength(1);
       expect(reads.counterparty).toHaveLength(0);
     }),
@@ -337,6 +346,7 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
         Array.from({ length: 202 }, (_, index) => row(index + 1)),
         9,
       );
+      yield* networkIdle;
       expect(reads.counterparty).toHaveLength(200);
       expect(leaseOccupant.snapshot(detail(201, 9)).state).toBe('pending');
     }),
@@ -381,6 +391,7 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
         });
       const background = yield* Effect.forkChild(preloadLeaseOccupants(input, [row(1), row(2), row(3)], 7));
       yield* Deferred.await(started);
+      yield* networkQuietExcept(2);
       window.removeEventListener(pageDataWorkEvent, onWork);
       expect(active).toBe(2);
       const foreground = yield* Effect.forkChild(leaseOccupant.read(detail(1)));
@@ -388,9 +399,11 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       yield* Fiber.interrupt(background);
       yield* Deferred.await(stopped);
       expect(active).toBe(1);
+      yield* networkQuietExcept(2);
       expect(total).toBe(2);
       yield* Deferred.succeed(release, true);
       expect(yield* Fiber.join(foreground)).toBe('Tenant');
+      yield* networkIdle;
       expect(total).toBe(2);
     }).pipe(Effect.scoped),
   );

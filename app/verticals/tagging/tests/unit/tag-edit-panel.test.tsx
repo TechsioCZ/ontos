@@ -4,6 +4,7 @@ import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testi
 import type { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -122,6 +123,7 @@ describe('tag edit panel with one Save button', () => {
       yield* typeName('VIP klient');
       yield* click(button('Uložit'));
       yield* waitUntil(() => text().includes('Uloženo'));
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
       expect(Predicate.isTagged(commands[0]?.command, 'UpdateTag')).toBe(true);
       expect(commands[0]?.command).toMatchObject({
@@ -139,6 +141,7 @@ describe('tag edit panel with one Save button', () => {
       yield* click(button('Uložit'));
       yield* waitUntil(() => saveState() === 'conflict');
       expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
+      yield* networkIdle;
       expect(reads).toHaveLength(1);
       expect(commands).toHaveLength(0);
     }).pipe(Effect.provide(network)),

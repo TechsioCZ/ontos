@@ -5,6 +5,7 @@
 import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -232,6 +233,8 @@ it.live('the rows, the write capability and the header counts stay on screen whi
     serve({ counted: 4, pages: { 0: ['ORD-3', 'ORD-1'] }, revision: 8 }, gate);
     shown.length = 0;
     yield* invalidate;
+    // The reads this started have all arrived; the gate holds 3 of them open.
+    yield* networkQuietExcept(3);
     expect(shown.length).toBeGreaterThan(0);
     expect(new Set(shown)).toEqual(new Set([before]));
 
@@ -255,6 +258,8 @@ it.live('another tenant never shows the rows of the tenant before it', () =>
     shown.length = 0;
     yield* view.show(otherTenant, 0);
     yield* settle;
+    // The reads this started have all arrived; the gate holds 3 of them open.
+    yield* networkQuietExcept(3);
     expect(new Set(shown)).toEqual(new Set(['loading']));
 
     yield* Deferred.succeed(gate, true);

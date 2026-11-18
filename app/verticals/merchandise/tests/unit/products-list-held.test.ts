@@ -7,6 +7,8 @@
 import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -231,6 +233,8 @@ it.live('a tree category stays in the request and its rows on screen while the f
     shown.length = 0;
     requested.length = 0;
     yield* invalidate;
+    // The reads this started have all arrived; the gate holds 2 of them open.
+    yield* networkQuietExcept(2);
     expect(shown.length).toBeGreaterThan(0);
     // The tree filter control and the filtered rows stay; the table does not turn to the unfiltered page.
     expect(new Set(shown)).toEqual(new Set([filteredBefore]));
@@ -238,6 +242,7 @@ it.live('a tree category stays in the request and its rows on screen while the f
     yield* Deferred.succeed(gate, true);
     yield* waitUntil(() => shown.at(-1) === 'tree/rows:Cable|write|r8');
     expect(new Set(shown)).toEqual(new Set([filteredBefore, 'tree/rows:Cable|write|r8']));
+    yield* networkIdle;
     expect(requested.filter((request) => request === 'list:*')).toEqual([]);
     expect(mounts).toBe(mountsBefore);
   }).pipe(Effect.provide(network)),
@@ -256,11 +261,14 @@ it.live('another company never gets the tree filter of the company before it', (
     requested.length = 0;
     yield* view.show(otherCompany);
     yield* settle;
+    // The reads this started have all arrived; the gate holds 2 of them open.
+    yield* networkQuietExcept(2);
     expect(new Set(shown)).toEqual(new Set(['labels/loading']));
 
     yield* Deferred.succeed(gate, true);
     yield* waitUntil(() => shown.at(-1) === 'labels/rows:Cable,Switch|write|r3');
     expect(shown.filter((table) => table.startsWith('tree/'))).toEqual([]);
+    yield* networkIdle;
     expect(requested.filter((request) => request === `list:${TREE_CATEGORY}`)).toEqual([]);
   }).pipe(Effect.provide(network)),
 );

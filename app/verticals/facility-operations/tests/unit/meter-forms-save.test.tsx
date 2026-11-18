@@ -5,6 +5,7 @@ import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/mod
 import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -72,6 +73,7 @@ const saveSent = (count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => sent.length >= count)),
     Effect.andThen(waitUntil(() => saveButton().textContent.trim() === labels.save)),
+    Effect.andThen(networkIdle),
   );
 
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId: '70000000-0000-4000-8000-000000000020' };

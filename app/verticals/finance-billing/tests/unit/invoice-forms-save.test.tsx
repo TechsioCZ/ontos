@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -166,17 +167,21 @@ it.layer(network, { excludeTestServices: true })(
 
           yield* typeInto('payment-amount', '400');
           yield* typeInto('payment-note', 'Platba převodem');
+          yield* networkIdle;
           expect(sent).toEqual([]);
           yield* clickSave;
           expect(paymentReview()).toBe(true);
+          yield* networkIdle;
           expect(sent).toEqual([]);
           yield* clickNamed(REVIEW_BACK);
           expect(paymentReview()).toBe(false);
+          yield* networkIdle;
           expect(sent).toEqual([]);
 
           yield* clickSave;
           yield* clickNamed(REVIEW_CONFIRM);
           yield* waitUntil(() => closes.length === 1);
+          yield* networkIdle;
           expect(sent).toEqual([
             {
               _tag: 'RecordManualPayment',
@@ -199,9 +204,11 @@ it.layer(network, { excludeTestServices: true })(
         yield* clickNamed(labels.save);
         expect(leaveQuestion()).toBe(false);
         expect(paymentReview()).toBe(true);
+        yield* networkIdle;
         expect(sent).toEqual([]);
         yield* clickNamed(REVIEW_CONFIRM);
         yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
         expect(sent).toHaveLength(1);
         expect(Predicate.isTagged(sent[0], 'RecordManualPayment')).toBe(true);
         expect(sent[0]).toMatchObject({ amountMinor: 25_000 });
@@ -214,6 +221,7 @@ it.layer(network, { excludeTestServices: true })(
         yield* typeInto('payment-amount', '5000');
         expect(saveButton().disabled).toBe(true);
         yield* clickSave;
+        yield* networkIdle;
         expect(sent).toEqual([]);
       }),
     );
@@ -236,14 +244,17 @@ it.layer(network, { excludeTestServices: true })(
 
           yield* clickSave;
           expect(reminderReview()).toContain('fakturace@kavarna.cz');
+          yield* networkIdle;
           expect(sent).toEqual([]);
           yield* clickNamed(REMINDER_BACK);
           expect(reminderReview()).toBeUndefined();
+          yield* networkIdle;
           expect(sent).toEqual([]);
 
           yield* clickSave;
           yield* clickNamed(REMINDER_CONFIRM);
           yield* waitUntil(() => closes.length === 1);
+          yield* networkIdle;
           expect(sent).toHaveLength(1);
           expect(Predicate.isTagged(sent[0], 'RecordReminder')).toBe(true);
           expect(sent[0]).toMatchObject({ invoiceRef: invoice.ref, recipient: 'fakturace@kavarna.cz' });
@@ -260,10 +271,12 @@ it.layer(network, { excludeTestServices: true })(
         yield* clickNamed(labels.save);
         expect(leaveQuestion()).toBe(false);
         expect(reminderReview()).toContain('fakturace@kavarna.cz');
+        yield* networkIdle;
         expect(sent).toEqual([]);
         expect(closes).toEqual([]);
         yield* clickNamed(REMINDER_CONFIRM);
         yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
         expect(sent).toHaveLength(1);
       }),
     );
@@ -276,6 +289,7 @@ it.layer(network, { excludeTestServices: true })(
         yield* typeInto('setup-accountant', 'Eva Malá');
         yield* clickSave;
         yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
         expect(sent).toEqual([
           {
             _tag: 'UpdateAccountingSetup',
@@ -298,6 +312,7 @@ it.layer(network, { excludeTestServices: true })(
         yield* waitUntil(() => current().snapshot?.state.accountingSetup?.product === 'Money S3');
         yield* clickSave;
         yield* waitUntil(() => document.querySelector('[data-save-state="conflict"]') !== null);
+        yield* networkIdle;
         expect(sent).toEqual([]);
         expect(closes).toEqual([]);
       }),

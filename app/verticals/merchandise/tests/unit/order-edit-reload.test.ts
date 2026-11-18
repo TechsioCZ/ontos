@@ -5,6 +5,7 @@
 import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -240,6 +241,7 @@ const type = (patch: Partial<Draft>) => acted(() => edit().record.setDraft((curr
 /** Save sends now; wait for received data and the resulting draft state, never a client spy. */
 const saveNow = (sent: number) =>
   acted(() => edit().record.save()).pipe(
+    Effect.andThen(networkIdle),
     Effect.andThen(waitUntil(() => sentEdits().length === sent && edit().record.status !== 'saving')),
   );
 

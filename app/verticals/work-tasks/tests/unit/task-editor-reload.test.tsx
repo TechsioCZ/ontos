@@ -10,7 +10,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { RecordsApi, RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { RecordsPage, taskRecords } from '../../src/routes/[lang]/ukoly/page.tsx';
@@ -127,14 +127,14 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-describe('task editor across a background reload', () => {
-  it.live('a refused reload takes write access away at once', () =>
+it.layer(network, { excludeTestServices: true })('task editor across a background reload', (suite) => {
+  suite.effect('a refused reload takes write access away at once', () =>
     Effect.gen(function* refusedReload() {
       yield* openEdit;
       answer = Effect.fail(refused);
       yield* acted(() => taskRecords.invalidate());
       yield* waitUntil(() => buttons(labels.save).length === 0);
       expect(text()).toContain(copy.readOnly);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

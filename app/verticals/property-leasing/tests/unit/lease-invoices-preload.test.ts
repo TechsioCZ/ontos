@@ -8,6 +8,8 @@ import { RecordsApi as PropertyRecordsApi } from '@app/property-portfolio/contra
 import { moduleChangeEvent, moduleWriteEvent, pageDataPending } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -323,6 +325,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       );
       const view = yield* mount();
       yield* waitUntil(() => view.text() === '450');
+      yield* networkIdle;
       expect(reads.leaseInvoices).toEqual([
         { counterpartyRef: customerCounterpartyRef, limit: 200, occupancyRef, unitRef },
         { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-200', limit: 200, occupancyRef, unitRef },
@@ -367,6 +370,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       yield* dispatch(moduleWriteEvent);
       yield* waitUntil(() => view.text() === 'unavailable');
       expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      yield* networkIdle;
       expect(reads.finance).toHaveLength(0);
     }),
   );
@@ -377,6 +381,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed({ ...page(2, 1), revision: 24 }));
       const view = yield* mount();
       yield* waitUntil(() => view.text() === 'unavailable');
+      yield* networkIdle;
       expect(reads.leaseInvoices).toHaveLength(2);
       expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       answer = Effect.succeed(page(1, 1));
@@ -387,6 +392,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       yield* dispatch(moduleChangeEvent);
       yield* waitUntil(() => view.text() === 'unavailable');
       expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
+      yield* networkIdle;
       expect(reads.finance).toHaveLength(0);
     }),
   );
@@ -395,9 +401,10 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
     Effect.gen(function* mountedCancel() {
       yield* pinTestDocument;
       const started = yield* Deferred.make<boolean>();
+      const held = yield* Deferred.make<boolean>();
       answers.push(
         Effect.succeed(page(1, 1, 'cursor-1')),
-        Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never)),
+        Deferred.succeed(started, true).pipe(Effect.andThen(Deferred.await(held)), Effect.as(page(2, 1))),
       );
       const view = yield* mount();
       yield* Deferred.await(started);
@@ -405,6 +412,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       expect(view.text()).toBe('loading');
       view.unmount();
       yield* settle;
+      yield* networkQuietExcept(1);
       expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
       expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       expect(reads.finance).toHaveLength(0);
@@ -412,6 +420,8 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       const remount = yield* mount();
       yield* waitUntil(() => remount.text() === '1');
       expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
+      // Release the cancelled page's read, still held at the owner, so the next test starts on an idle network.
+      yield* Deferred.succeed(held, true);
     }),
   );
 
@@ -425,6 +435,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       );
       yield* seed;
       yield* preloadLeaseRelated(detail());
+      yield* networkIdle;
       expect(reads.leaseInvoices).toEqual([
         { counterpartyRef: customerCounterpartyRef, limit: 200, occupancyRef, unitRef },
         { counterpartyRef: customerCounterpartyRef, cursor: 'cursor-200', limit: 200, occupancyRef, unitRef },
@@ -446,10 +457,12 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
     Effect.gen(function* scopeFence() {
       yield* pinTestDocument;
       yield* preloadLeaseRelated(detail());
+      yield* networkIdle;
       expect(reads.leaseInvoices).toHaveLength(0);
       yield* seed;
       const foreign = detail({ ...(records.occupancies[0] ?? row), unitRef: { ...unitRef, tenantId: id(99) } });
       yield* preloadLeaseRelated(foreign);
+      yield* networkIdle;
       expect(reads.leaseInvoices).toHaveLength(0);
       expect(Exit.isFailure(yield* Effect.exit(leaseInvoicesExact.read(foreign)))).toBe(true);
       yield* preloadLeaseRelated(guestDetail());

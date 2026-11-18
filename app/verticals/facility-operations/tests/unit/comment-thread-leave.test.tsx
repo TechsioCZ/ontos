@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -164,6 +165,7 @@ it.live("Zrušit in the edit of one's own comment asks once the wording changed;
     yield* click(cancelLabel);
     yield* click(labels.discard);
     expect(document.body.querySelector(editor)).toBeNull();
+    yield* networkIdle;
     expect(commands).toEqual([]);
   }).pipe(Effect.provide(network)),
 );

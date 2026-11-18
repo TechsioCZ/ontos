@@ -5,6 +5,7 @@ import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/tes
 import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -97,6 +98,7 @@ const saveSent = (runner: RecordingRunner, count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => runner.sent.length >= count)),
     Effect.andThen(waitUntil(() => saveButton().textContent.trim() === labels.save)),
+    Effect.andThen(networkIdle),
     Effect.andThen(settle),
   );
 const toastTitles = () => [...document.querySelectorAll('[data-scope="toast"][data-part="title"]')];
@@ -226,11 +228,13 @@ describe('inspection and resolution', () => {
       const selector = '#security-inspection-note';
       yield* typeInto(selector, longNote);
       yield* click(labels.save);
+      yield* networkIdle;
       expect(runner.sent).toEqual([]);
       expect(document.querySelector<HTMLTextAreaElement>(selector)?.value).toBe(longNote);
       expect(document.body.textContent).toContain(
         t('facility-operations.security.inspection.noteTooLong', { limit: inspectionNoteLimit }),
       );
+      yield* networkIdle;
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(network)),
   );

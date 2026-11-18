@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -176,6 +177,7 @@ describe('bulk opportunity change by customer tag', () => {
 
       yield* acted(() => button(labels.save).click());
       yield* waitUntil(() => done.length === 1);
+      yield* networkIdle;
       expect(sent).toEqual([
         {
           command: { _tag: 'BulkUpdateOpportunities', ids: [opportunity.id], patch: { stage: copy.stage } },

@@ -3,8 +3,10 @@
 // Save runs, and that one save sends exactly one command. The generated clients run for real: the Shell's gateway
 // issuer and the property owner's Action and records endpoints answer in process through their HttpApi contracts.
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -133,7 +135,8 @@ it.layer(network, { excludeTestServices: true })('the new-property form', (suite
         editor.changeResponsibleEmployees([employeeId]);
       });
       yield* perform((editor) => editor.createDraft.save());
-      yield* Effect.sleep('100 millis');
+      yield* waitUntil(() => commands.length > 0);
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
       expect(commands[0]).toMatchObject({
         command: {

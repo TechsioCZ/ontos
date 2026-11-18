@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -158,11 +159,13 @@ describe('bulk tag panel with the shared Uložit', () => {
       expect(button(labels.save).disabled).toBe(true);
 
       yield* pickVip();
+      yield* networkIdle;
       expect(writes).toEqual([]);
       expect(button(labels.save).disabled).toBe(false);
 
       yield* click(button(labels.save));
       yield* waitUntil(() => view.events.includes('closed'));
+      yield* networkIdle;
       expect(writes).toEqual([
         {
           mode: 'add',

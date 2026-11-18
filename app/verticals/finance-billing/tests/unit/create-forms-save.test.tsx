@@ -5,6 +5,7 @@ import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/mod
 import { pinDocumentNavigationModules } from '@app/shared-contracts';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -248,6 +249,7 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
       yield* typeInto('template-amount', '18 000');
       yield* clickSave;
       yield* waitUntil(() => left.length === 1);
+      yield* networkIdle;
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'CreateRecurringTemplate')).toBe(true);
       expect(sent[0]).toMatchObject({ dueDays: 14, issueDay: 1, name: 'Nájem kavárna', partyId: customer.partyId });
@@ -265,6 +267,7 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
       yield* typeInto('invoice-line-price-incoming-line-1', '1000');
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
+      yield* networkIdle;
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
       expect(sent[0]).toMatchObject({ documentNumber: 'ZF-2026-77', supplierName: 'ČEZ Prodej', totalMinor: 121_000 });

@@ -159,6 +159,7 @@ it.live('the agenda store keeps nothing outside the document', () =>
       value: { agendas: { purchasing: { revision: 5 } } },
     });
     yield* agendaRecordsData.refresh(['purchasing']);
+    yield* networkIdle;
     expect(reads).toHaveLength(2);
     expect(agendaRecordsData.snapshot(['purchasing'])).toMatchObject({
       state: 'ready',

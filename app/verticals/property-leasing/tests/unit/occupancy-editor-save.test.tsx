@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -157,6 +158,7 @@ describe('lease draft', () => {
 
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
+      yield* networkIdle;
       expect(sent()).toEqual([
         {
           command: {
@@ -188,6 +190,7 @@ describe('lease draft', () => {
       yield* type(monthly, '19000');
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.conflict));
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(buttons(labels.reloadLatest)).toHaveLength(1);
     }).pipe(Effect.provide(network)),
@@ -202,6 +205,7 @@ describe('lease draft', () => {
       yield* type(monthly, '19000');
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
+      yield* networkIdle;
       expect(sent().map((payload) => payload.expectedRevision)).toEqual([4, 7]);
     }).pipe(Effect.provide(network)),
   );
@@ -216,10 +220,12 @@ describe('new lease and stay', () => {
       yield* pick(copy('property-leasing.demo.guest'), guestRef.resourceId);
       yield* type('occupancy-end-date', '2026-11-14');
       expect(button(labels.save).disabled).toBe(false);
+      yield* networkIdle;
       expect(sent()).toHaveLength(0);
 
       yield* click(button(labels.save));
       yield* waitUntil(() => created.length === 1);
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(sent()[0]).toMatchObject({
         command: {

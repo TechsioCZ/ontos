@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -115,7 +116,8 @@ const pick = (name: string, value: string) =>
     yield* waitUntil(() => select.value === value);
   });
 
-const saveSent = () => click(labels.save).pipe(Effect.andThen(waitUntil(() => calls.includes('saved'))));
+const saveSent = () =>
+  click(labels.save).pipe(Effect.andThen(waitUntil(() => calls.includes('saved'))), Effect.andThen(networkIdle));
 
 beforeEach(() => {
   calls.length = 0;

@@ -9,6 +9,7 @@ import {
 } from '@app/property-portfolio/contracts/records';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -159,7 +160,11 @@ const click = (name: string) =>
     Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click();
   });
 const save = (count: number) =>
-  click(labels.save).pipe(Effect.andThen(waitUntil(() => commands.length >= count)), Effect.andThen(settle));
+  click(labels.save).pipe(
+    Effect.andThen(waitUntil(() => commands.length >= count)),
+    Effect.andThen(networkIdle),
+    Effect.andThen(settle),
+  );
 
 beforeEach(() => {
   commands.length = 0;
@@ -176,6 +181,7 @@ describe('calendar event forms', () => {
       yield* pinTestDocument;
       yield* mountPanel(<CreateEventPanel initialDate="2026-11-20" onClose={constVoid} onRun={runnerAt(3)} open />);
       yield* typeInto('Revize výtahu');
+      yield* networkIdle;
       expect(commands).toEqual([]);
       yield* save(1);
       expect(commands).toHaveLength(1);
@@ -191,6 +197,7 @@ describe('calendar event forms', () => {
       yield* typeInto('Revize výtahu');
       yield* save(1);
       yield* waitUntil(() => text().includes(forbidden));
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
       expect(Predicate.isTagged(commands[0]?.command, 'AgendaEventCreate')).toBe(true);
       expect(text()).toContain(forbidden);
@@ -202,6 +209,7 @@ describe('calendar event forms', () => {
       yield* typeInto('Porada týmu');
       yield* save(2);
       yield* waitUntil(() => text().includes(forbidden));
+      yield* networkIdle;
       expect(commands).toHaveLength(2);
       expect(Predicate.isTagged(commands[0]?.command, 'AgendaEventCreate')).toBe(true);
       expect(Predicate.isTagged(commands[1]?.command, 'AgendaEventUpdate')).toBe(true);
