@@ -131,8 +131,11 @@ export const moduleOperation = <
  * Entity, or the tenant only.
  */
 const CallerLegalEntityScopeSchema = Schema.Literals(['subject', 'tenant']);
-/** The access declaration a registered or workload caller acts under (an access key). */
-export const CallerDeclarationKeySchema = AccessKeySyntaxSchema.pipe(Schema.brand('CallerDeclarationKey'));
+/**
+ * The access declaration a registered or workload caller acts under: an access key, written in a manifest
+ * as a plain string like the module's `registeredWorkloadCalls[].declarationKey` it must match.
+ */
+export const CallerDeclarationKeySchema = AccessKeySyntaxSchema;
 export const RequirementCallerSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('person'), legalEntityScope: CallerLegalEntityScopeSchema }),
   Schema.Struct({
