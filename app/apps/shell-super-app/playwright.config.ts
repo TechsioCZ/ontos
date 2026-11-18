@@ -74,6 +74,7 @@ export default defineConfig({
     baseURL: origin,
     trace: 'retain-on-failure',
   },
+  // Every server's output reaches the job log, so a failed browser test is traced to the server's logged cause.
   webServer: [
     {
       command: 'pnpm dev',
@@ -83,6 +84,7 @@ export default defineConfig({
         ULTRAMODERN_MF_DEV_ORIGIN: origin,
       },
       reuseExistingServer: false,
+      stdout: 'pipe',
       url: 'http://127.0.0.1:4102/party-registry-api/party-registry/readiness',
     },
     {
@@ -93,12 +95,14 @@ export default defineConfig({
         ULTRAMODERN_MF_DEV_ORIGIN: origin,
       },
       reuseExistingServer: false,
+      stdout: 'pipe',
       url: 'http://127.0.0.1:4110/inventory-api/inventory/readiness',
     },
     {
       command: 'pnpm dev',
       env: compositionEnvironment,
       reuseExistingServer: false,
+      stdout: 'pipe',
       url: `${origin}/en`,
     },
     {
@@ -106,6 +110,7 @@ export default defineConfig({
       env: compositionEnvironment,
       gracefulShutdown: { signal: 'SIGTERM', timeout: 40_000 },
       reuseExistingServer: false,
+      stdout: 'pipe',
       url: `${compositionOrigin}/active`,
     },
   ],

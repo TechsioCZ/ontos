@@ -353,49 +353,65 @@ it.live(
     const root = yield* fixture();
     const rootSetup = 'src/root-setup.ts';
     const projectSetup = 'src/integration-setup.ts';
+    const wrappedSetup = 'src/wrapped-setup.ts';
+    // Rstest gives inline projects none of the root's setupFiles, so the root setup is dead here.
     write(
       root,
       rstestConfigFile,
-      `import { defineConfig } from '@rstest/core';
+      `import { defineConfig, defineInlineProject } from '@rstest/core';
        export default defineConfig({
          setupFiles: ['./${rootSetup}'],
          projects: [
            { name: 'integration', setupFiles: ['./${projectSetup}'] },
+           defineInlineProject({ name: 'wrapped', setupFiles: ['./${wrappedSetup}'] }),
            { name: 'dynamic', setupFiles: [chooseSetup()] },
            { name: 'relocated', root: 'elsewhere', setupFiles: ['./${deadFile}'] }
          ]
        });`,
     );
-    for (const file of [rootSetup, projectSetup]) {
+    for (const file of [rootSetup, projectSetup, wrappedSetup]) {
       write(root, file, 'export const unusedSetupExport = 1;');
     }
     const consumerPath = path.join(root, auditConsumersFile);
-    const model = yield* buildKnipModel(
-      root,
-      {
-        workspaces: {
-          '.': {
-            entry: [rstestConfigFile],
-            node: false,
-            project: [rstestConfigFile, 'src/*.ts'],
-            rstest: { config: [] },
-          },
+    const knipConfig = {
+      workspaces: {
+        '.': {
+          entry: [rstestConfigFile],
+          node: false,
+          project: [rstestConfigFile, 'src/*.ts'],
+          rstest: { config: [] },
         },
       },
-      consumerPath,
-    ).pipe(Effect.provide(NodeServices.layer));
+    };
+    const setupEvidence = Effect.fn(function* setupEvidence() {
+      const built = yield* buildKnipModel(root, knipConfig, consumerPath).pipe(Effect.provide(NodeServices.layer));
+      return {
+        model: built,
+        targets: built.evidence
+          .filter(({ reason }) => reason === 'Rstest setupFiles consumer')
+          .map(({ target }) => target),
+      };
+    });
+    const { model, targets } = yield* setupEvidence();
     const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
     const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
     const files = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
     const exports = report.issues.flatMap((issue) => issue.exports.map((finding) => `${issue.file}#${finding.name}`));
-    for (const file of [rootSetup, projectSetup]) {
+    for (const file of [projectSetup, wrappedSetup]) {
       expect(files).not.toContain(file);
       expect(exports).toContain(`${file}#unusedSetupExport`);
     }
     expect(files).toContain(deadFile);
-    expect(
-      model.evidence.filter(({ reason }) => reason === 'Rstest setupFiles consumer').map(({ target }) => target),
-    ).toEqual([rootSetup, projectSetup]);
+    expect(files).toContain(rootSetup);
+    expect(targets).toEqual([projectSetup, wrappedSetup]);
+    // Without projects the root is the test project, and its setup file is live.
+    write(
+      root,
+      rstestConfigFile,
+      `import { defineConfig } from '@rstest/core';
+       export default defineConfig({ setupFiles: ['./${rootSetup}'] });`,
+    );
+    expect((yield* setupEvidence()).targets).toEqual([rootSetup]);
   }),
 );
 

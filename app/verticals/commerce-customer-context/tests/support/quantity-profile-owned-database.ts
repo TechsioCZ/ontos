@@ -196,7 +196,7 @@ const runQuantityMigrationCommand = Effect.fn('QuantityProfileAdmissionTests.mig
   }
   expect(Number(status)).toBe(0);
 });
-const applyQuantityProfileCurrentMigrations = Effect.fn('QuantityProfileAdmissionTests.currentMigrations')(
+export const applyQuantityProfileCurrentMigrations = Effect.fn('QuantityProfileAdmissionTests.currentMigrations')(
   function* migrate(connections: QuantityMigrationConnections) {
     const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     expect(connections.admin.database).toBe(connections.runtime.database);
@@ -348,13 +348,13 @@ const applyQuantityProfileCurrentMigrations = Effect.fn('QuantityProfileAdmissio
 
 export const makeQuantityProfileOwnedDatabase = Effect.fn('QuantityProfileAdmissionTests.ownedDatabase')(
   function* makeOwnedDatabase(snapshot: ActiveApplicationCompositionSnapshot) {
-    const isolated = yield* makeIsolatedNativeDatabaseFixture({
+    // The job already migrated and verified this schema; one scenario replays the migrations themselves
+    // (applyQuantityProfileCurrentMigrations), the business scenarios share the cloned current schema.
+    return yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
       databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1266-quantity-profile-admission',
     });
-    const receipts = yield* applyQuantityProfileCurrentMigrations(isolated.connections);
-    return { isolated, receipts };
   },
 );

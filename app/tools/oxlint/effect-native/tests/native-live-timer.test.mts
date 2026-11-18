@@ -1237,6 +1237,23 @@ describe('keeps an orthogonal literal layer timeout compatible with explicit rea
       source: layerTimeoutSource('{ excludeTestServices: true, concurrent: enabled }'),
     },
     {
+      expected: 0,
+      name: 'layer-real-asserted-literals',
+      source: layerTimeoutSource(
+        '{ excludeTestServices: true as const, concurrent: true satisfies boolean, timeout: 600_000 as const }',
+      ),
+    },
+    {
+      expected: 1,
+      name: 'layer-concurrent-asserted-unknown-value',
+      source: layerTimeoutSource('{ excludeTestServices: true, concurrent: enabled as boolean }'),
+    },
+    {
+      expected: 1,
+      name: 'layer-asserted-virtual-services',
+      source: layerTimeoutSource('{ excludeTestServices: false as const, concurrent: true as const }'),
+    },
+    {
       expected: 1,
       name: 'layer-timeout-unknown-option',
       source: layerTimeoutSource('{ excludeTestServices: true, timeout: 600_000, other: true }'),

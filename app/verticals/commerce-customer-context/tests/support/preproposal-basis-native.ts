@@ -991,7 +991,11 @@ const deriveFromSource = Effect.fn('PreproposalNative.deriveFromSource')(functio
   stage: string,
   program: string,
 ) {
-  const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const inherited = yield* Config.all({
+    HOME: Config.String('HOME'),
+    NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
+    PATH: Config.String('PATH'),
+  });
   const child = yield* ChildProcess.make(
     process.execPath,
     ['--experimental-strip-types', '--input-type=module', '--eval', program],
@@ -1021,7 +1025,11 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
   readonly moduleCredentialChannel?: boolean;
   readonly stage: string;
 }) {
-  const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const inherited = yield* Config.all({
+    HOME: Config.String('HOME'),
+    NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
+    PATH: Config.String('PATH'),
+  });
   const credentialChannel = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const commands = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const standardInput = yield* Queue.unbounded<Uint8Array, Cause.Done>();

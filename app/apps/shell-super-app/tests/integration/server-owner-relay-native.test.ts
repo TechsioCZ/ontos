@@ -130,7 +130,7 @@ import {
 import { startNativeHttpServer } from '../support/native-http-server.ts';
 import { makeTestTenantRoleAccess } from '../../../../packages/core-runtime/src/testing/tenant-access-roles.ts';
 import type { TestTenantRole } from '../../../../packages/core-runtime/src/testing/tenant-access-roles.ts';
-import { requireExecutedAction } from '../../../../verticals/commerce-customer-context/tests/support/action-execution-result.ts';
+import { requireExecutedAction } from '../support/executed-action.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 
 import { GatewayIssuer, GatewayIssuerError, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';

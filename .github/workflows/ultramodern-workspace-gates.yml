@@ -44,6 +44,10 @@ permissions:
 
 env:
   ONTOS_ACTION_TRANSACTION_IO_GUARD: 'true'
+  # Native fixtures, migration tools and test workers start many short-lived Node processes over the same files.
+  # V8 reuses their compiled code within this runner, never database state or test results. A literal path: the
+  # runner context is unavailable at workflow level, where `runner.temp` would name no directory.
+  NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
 
 defaults:
   run:
@@ -177,7 +181,7 @@ jobs:
         id: changes
         env:
           # A demo trunk push without a proven base gets none, never github.event.before.
-          BASE_SHA: ${{ steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '') }}
+          BASE_SHA: ${{ steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '') }}
           CANDIDATE_DISPATCH: ${{ steps.candidate.outputs.base != '' }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
@@ -190,13 +194,15 @@ jobs:
         run: printf '## CI selection\n\n%s\n\nNo app dependencies, builds or services are needed.\n' "$REASON" >> "$GITHUB_STEP_SUMMARY"
       # $RUNNER_TEMP is job-local and format-and-lint checks out at depth 1, so it can neither read this list nor
       # recompute the diff. The list is empty whenever the comparison is unavailable (full, docs and proven modes),
-      # so an empty file is a valid result.
+      # so an empty file is a valid result. The planning steps after it can fail, so a re-run of this job replaces its
+      # own earlier upload instead of failing on the existing name.
       - name: Publish the exact changed-path list
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-changed-paths
           path: ${{ runner.temp }}/ci-changed-paths
           if-no-files-found: warn
+          overwrite: true
           retention-days: 1
       # Every gate installs the workspace from the pnpm store. On the trunks this one install saves a missed store
       # before the gates fan out; it runs once per run, so no two jobs race to save.
@@ -454,6 +460,7 @@ jobs:
             | grep -zv '/node_modules/$' \
             | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
 
+      # A re-run of the run's jobs replaces the shard's earlier upload instead of failing on the existing name.
       - name: Upload the shard's build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -461,6 +468,7 @@ jobs:
           path: ${{ runner.temp }}/units.tar.zst
           compression-level: 0
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   # Source checks start immediately after planning; they do not wait for Node artifacts.
@@ -518,8 +526,6 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  # Unit rows whose suites read no build output start right after planning, beside the build shards.
-
       # The trunk's own TS-Go typecheck build, which the next runs on this branch restore by prefix. A cache is readable
       # from its own ref and the default branch only, so main's warmed build never matches the demo lockfile. Saved only
       # after the row passed, under this commit's key, which no other job writes.
@@ -530,6 +536,7 @@ jobs:
           path: app/node_modules/.cache/tsgo
           key: ${{ steps.install.outputs.typescript-build-key }}
 
+  # Unit rows whose suites read no build output start right after planning, beside the build shards.
   workspace-unit:
     name: ${{ matrix.name }}
     needs: [ci-plan]
