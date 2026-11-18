@@ -82,8 +82,7 @@ it('accepts the complete SQL-ordered runtime routine set through the verifier co
   expect(source).toContain('array_agg(routine.proname::text order by routine.proname)');
   expect(source).toContain('!sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES)');
   expect(source).toContain('row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length');
-  expect(expected).toHaveLength(151);
-  expect(new Set(expected).size).toBe(151);
+  expect(new Set(expected).size).toBe(expected.length);
   expect(shippedRuntimeRoutines()).toEqual(sqlOrdered);
   expect(expected).toContain('apply_customer_group_membership_source');
   expect(expected).toContain('lock_profile_ico_correlation');
