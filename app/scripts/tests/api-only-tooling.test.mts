@@ -657,7 +657,7 @@ it.live(
       }),
     );
     expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.25.0-ts7.1.0-beta');
-    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.69.0');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.70.0');
   }),
 );
 
