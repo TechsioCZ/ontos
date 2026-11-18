@@ -654,17 +654,13 @@ jobs:
               exit 1
               ;;
           esac
-          if [[ "$LINT_SWEEP" == all ]]; then
-            # Directory arguments keep one linter process and one program per tsconfig, not one per
-            # Lefthook argument chunk. Use the same formatter, configuration and rules as the hook.
-            mise exec --cd app -- pnpm format:check
-            mise exec --cd app -- pnpm lint
-          else
-            mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
-              <"$files"
-            # Effect's tsgolint emits no Effect language-service diagnostics; `pnpm lint` chains these on sweeps.
-            mise exec --cd app -- pnpm lint:effect-diagnostics
-          fi
+          # A sweep runs through the hook too: lefthook cuts the list into command lines of contiguous files, so no
+          # linter process holds every type program at once. One `pnpm lint` over every file did, beside the
+          # workspace typecheck, and lost its 16 GB runner.
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
+            <"$files"
+          # Effect's tsgolint emits no Effect language-service diagnostics.
+          mise exec --cd app -- pnpm lint:effect-diagnostics
           git diff --exit-code HEAD
 
       - name: Wait for lint rule checks
