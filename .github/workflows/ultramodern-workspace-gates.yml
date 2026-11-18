@@ -44,6 +44,8 @@ permissions:
 
 env:
   ONTOS_ACTION_TRANSACTION_IO_GUARD: 'true'
+  # The demo trunk's rows, scopes, weights and build origins on top of the shared matrices (scripts/ci/ci-matrices.mts).
+  CI_MATRICES_OVERLAY: scripts/ci-matrices.demo.json
 
 defaults:
   run:
@@ -310,6 +312,10 @@ jobs:
       # With maps a unit was about 54 MB against 18 MB on main, and every artifact consumer downloads every unit.
       ONTOS_CI_TYPECHECK_SEPARATE: '1'
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+      # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
+      # owner-entry writes after the build, as the stage build does; the native hosted-owner fixtures start them so too.
+      UNIT_POST_BUILD: scripts/zerops/owner-entry.mts
+      UNIT_SERVED_ENTRY: dist/zerops-entry.mjs
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -357,7 +363,8 @@ jobs:
           SHARD_UNITS: ${{ matrix.units }}
         run: |
           # Written only once whole: a failed digest names no entry.
-          key="$(mise exec -- node scripts/ci/unit-output-cache.mts digest --unit "$SHARD_UNITS" |
+          key="$(mise exec -- node scripts/ci/unit-output-cache.mts digest --unit "$SHARD_UNITS" \
+            --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD" |
             bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-")"
           echo "$key" >>"$GITHUB_OUTPUT"
 
@@ -374,65 +381,23 @@ jobs:
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
-        run: mise exec -- node scripts/ci/unit-output-cache.mts plan --units "$SHARD_UNITS" >>"$GITHUB_OUTPUT"
+        run: >-
+          mise exec -- node scripts/ci/unit-output-cache.mts plan --units "$SHARD_UNITS"
+          --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD" >>"$GITHUB_OUTPUT"
 
       - name: Build the shard's changed units two at a time
         working-directory: app
         env:
           BUILD_UNITS: ${{ steps.cached-plan.outputs.build }}
-        run: |
-          read -ra ids <<<"$BUILD_UNITS"
-          if [ "${#ids[@]}" -eq 0 ]; then
-            echo 'Every unit of this shard was kept from the unit output cache.'
-            exit 0
-          fi
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          logs="$RUNNER_TEMP/unit-build-logs"
-          mkdir -p "$logs"
-          export logs
-          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
-          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
-          served="$(mise exec -- node -e '
-            const intent = require("./topology/application-release-intent.json");
-            for (const { appId } of intent.modules) console.log(appId);
-            console.log("shell-super-app");
-          ')"
-          export served
-          # xargs bounds the parallel builds; each unit runs its own package `build` script, as pnpm -r run build does,
-          # from clean outputs, then gets its app host entry when served and its cache receipt.
-          status=0
-          printf '%s\n' "${ids[@]}" | mise exec -- xargs -P "$BUILD_JOBS" -n 1 bash -c '
-            id="$1"
-            unit="verticals/$id"
-            [ "$id" != shell-super-app ] || unit=apps/shell-super-app
-            log="$logs/$id.log"
-            started="$SECONDS"
-            if {
-              rm -rf -- "$unit/dist" "$unit/.output" &&
-                pnpm --filter "./$unit" run build &&
-                { ! grep -qxF "$id" <<<"$served" || node scripts/zerops/owner-entry.mts "$unit"; } &&
-                node scripts/ci/unit-output-cache.mts stamp --unit "$id"
-            } >"$log" 2>&1; then
-              echo "built $unit in $((SECONDS - started))s"
-            else
-              tail -80 "$log"
-              echo "::error title=Unit build failed::$unit"
-              exit 1
-            fi
-          ' _ || status=$?
-          for log in "$logs"/*.log; do
-            echo "::group::$(basename "$log" .log)"
-            cat "$log"
-            echo '::endgroup::'
-          done
-          [ "$status" -eq 0 ]
+        run: mise exec -- bash scripts/ci/build-units.sh
 
       - name: Verify every unit output of the shard
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
-        run: mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
+        run: >-
+          mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
+          --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD"
 
       # Saved only after verify, under this run's own ref scope; a failed shard saves nothing, and a shard that restored
       # its exact entry writes nothing (the cache cannot overwrite a key, and nothing in it changed).
@@ -557,16 +522,13 @@ jobs:
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
-      # The finance-billing POHODA export tests validate their generated documents against the
-      # official STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Only the
-      # shard that runs finance-billing needs them, so it provisions the pinned set named by
-      # verticals/finance-billing/tests/fixtures/pohoda-xsd/version-2.sha256 before it runs.
-      - name: Provision the POHODA XML schemas for the finance-billing shard
-        if: matrix.name == 'Unit and Component Tests (every other package)'
+      # A row may need system tools or provisioned fixtures before its tests run (the matrices' `setup`).
+      - name: Run the row's package setup
+        if: matrix.setup
         working-directory: app
-        run: |
-          command -v xmllint >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends libxml2-utils
-          mise exec -- pnpm provision:pohoda-xsd
+        env:
+          SETUP: ${{ matrix.setup }}
+        run: bash -eo pipefail -c "$SETUP"
 
       - name: Run ${{ matrix.name }}
         working-directory: app

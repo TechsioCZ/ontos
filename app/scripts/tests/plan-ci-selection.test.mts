@@ -1,19 +1,20 @@
 import { readFileSync } from 'node:fs';
 
-import { Schema } from 'effect';
+import { Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import type { CiWorkspacePackage } from '../plan-ci-checks.mts';
-import {
-  CiTemplatesSchema,
-  integrationSeedInputs,
-  planCiChecks,
-  rootLevelPackageDirectories,
-} from '../plan-ci-checks.mts';
+import { integrationSeedInputs, planCiChecks } from '../plan-ci-checks.mts';
 
-const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
-  readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+/** The demo trunk's matrices: the shared file with the overlay its gates workflow names. */
+const templates = Result.getOrThrow(
+  parseCiMatrices(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../ci-matrices.demo.json', import.meta.url), 'utf-8'),
+  ),
 );
+const rootLevelPackageDirectories = templates['root-packages'] ?? [];
 
 const AKROS = 'akros-storefront';
 const N1 = 'n1-storefront';

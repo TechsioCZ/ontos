@@ -6,13 +6,13 @@
 # Rstest's own --shard cuts the alphabetically sorted file list into contiguous slices, so the parts of one split
 # giant file (<name>-a.test.ts, <name>-b.test.ts, ...) land in the same shard and one heavy family decides that
 # shard's length. This lists the project's files with `rstest list --filesOnly`, weighs each file by the longest
-# matching file-name prefix of the "test-weights" map in scripts/ci-matrices.json (measured seconds of the whole
+# matching file-name prefix of the "test-weights" map of the gate matrices (measured seconds of the whole
 # family, shared equally by the family's files) or CI_DEFAULT_TEST_SECONDS, and deals the files heaviest first to
 # the lightest shard. Every shard computes the same deal from the same list, so together the shards run every file
 # exactly once. An empty shard passes; a failed listing fails.
 #
 # FRESH_DATABASE_TESTS=skip leaves out, and FRESH_DATABASE_TESTS=only keeps just, the test files that must migrate or
-# recover their job's database from a fresh preparation ("fresh-database-tests" in scripts/ci-matrices.json and the
+# recover their job's database from a fresh preparation ("fresh-database-tests" of the gate matrices and the
 # seed model's name rule), so a row that restores the integration seed never runs them.
 set -euo pipefail
 
@@ -26,8 +26,13 @@ fi
 index="${BASH_REMATCH[1]}"
 count="${BASH_REMATCH[2]}"
 script_directory="$(cd "$(dirname "$0")" && pwd)"
-weights="$(jq -c '."test-weights" // {}' "$script_directory/../ci-matrices.json")"
-fresh_tests="$(jq -c '."fresh-database-tests" // []' "$script_directory/../ci-matrices.json")"
+app_root="$(cd "$script_directory/../.." && pwd)"
+# The matrices plus the overlay the trunk names, relative to app/ (scripts/ci/ci-matrices.mts, which the planner runs
+# first and which refuses an overlay that repeats an entry).
+matrices=("$app_root/scripts/ci-matrices.json")
+[ -z "${CI_MATRICES_OVERLAY:-}" ] || matrices+=("$app_root/$CI_MATRICES_OVERLAY")
+weights="$(jq -cs 'map(."test-weights" // {}) | add' "${matrices[@]}")"
+fresh_tests="$(jq -cs 'map(."fresh-database-tests" // []) | add' "${matrices[@]}")"
 fresh_mode="${FRESH_DATABASE_TESTS:-}"
 case "$fresh_mode" in
   '' | skip | only) ;;
@@ -36,7 +41,6 @@ case "$fresh_mode" in
     exit 2
     ;;
 esac
-app_root="$(cd "$script_directory/../.." && pwd)"
 listing="$(mktemp)"
 trap 'rm -f "$listing"' EXIT
 

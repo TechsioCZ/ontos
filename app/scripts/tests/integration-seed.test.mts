@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
-import { Effect, Exit, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { ConfigProvider, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -10,17 +11,18 @@ import {
   seedFailure,
   seedRestoreRefusal,
   FRESH_JOB,
-  MUST_MIGRATE_TESTS,
   SEAL_TABLE,
   SeedDatabaseSchema,
   assertDatabaseEvidence,
   assertSeedConsumer,
   manifestJson,
+  readFreshDatabaseTests,
   schemaFingerprint,
 } from '../ci/integration-seed-model.mts';
 import type { DatabaseEvidence, SeedJournal, SeedManifest } from '../ci/integration-seed-model.mts';
 
 const PRIMARY_DATABASE = 'ontos_ci';
+const DEMO_OVERLAY = 'scripts/ci-matrices.demo.json';
 const NORMAL_JOB = 'Catalog Integration';
 const journal: SeedJournal = { rows: 42, table: 'drizzle.__drizzle_migrations_core' };
 const evidence: DatabaseEvidence = { fingerprint: 'a'.repeat(64), journals: [journal], name: PRIMARY_DATABASE };
@@ -66,7 +68,9 @@ it.effect('rejects malformed manifest JSON and unsafe archive paths', () =>
 it.effect('allows ordinary tests and refuses every must-migrate file before restore', () =>
   Effect.gen(function* migrationCoverage() {
     yield* assertSeedConsumer(consumer);
-    for (const filename of MUST_MIGRATE_TESTS) {
+    const freshTests = yield* readFreshDatabaseTests(DEMO_OVERLAY);
+    expect(freshTests.length).toBeGreaterThan(8);
+    for (const filename of freshTests) {
       const result = yield* assertSeedConsumer({ ...consumer, testFiles: [filename] }).pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
     }
@@ -104,7 +108,11 @@ it.effect('allows ordinary tests and refuses every must-migrate file before rest
       ),
     ).toBe(true);
     return yield* Effect.void;
-  }),
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    // The demo trunk's gates name its overlay, so its fresh-database tests are refused too.
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ CI_MATRICES_OVERLAY: DEMO_OVERLAY }))),
+  ),
 );
 
 it.effect('fails closed on a restored schema fingerprint or migration-journal mismatch', () =>
