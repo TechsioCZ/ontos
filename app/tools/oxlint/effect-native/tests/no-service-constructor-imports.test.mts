@@ -872,6 +872,21 @@ it('proves a TemplateLiteral only when every part is a string literal or a close
   );
 });
 
+/** A factory that decodes through a TemplateLiteral of a local parts array after `mutation`. */
+const localPartsFactory = (mutation: string): string =>
+  `import { Schema } from "effect"; export const makeData = (value: string) => { const parts = ["icon-"]; ${mutation} return Schema.decodeUnknownSync(Schema.TemplateLiteral(parts))(value); };`;
+
+it('proves a TemplateLiteral of local parts only while every position is known', () => {
+  expectDataFactoryProofs(
+    [localPartsFactory('')],
+    [
+      // A pushed part is a new position the stale fields would not list.
+      localPartsFactory('parts.push(1);'),
+      localPartsFactory('parts.push("x");'),
+    ],
+  );
+});
+
 const resultPipelineFactory = (errorClass: string, finalStep: string): string =>
   [
     'import { Result, Schema } from "effect";',
