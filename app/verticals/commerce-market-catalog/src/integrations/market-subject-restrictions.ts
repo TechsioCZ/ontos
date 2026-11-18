@@ -1,9 +1,9 @@
 import type { OperationalScope, ReadPrepareContext } from '@app/core-runtime';
+import { requireModuleOperation } from '@app/core-runtime';
 import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
-import type { Option } from 'effect';
-import { Crypto, Effect, Schema } from 'effect';
+import { Crypto, Effect, Option, Schema } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
 import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
@@ -144,6 +144,32 @@ export const serverMarketSubjectRestrictionsReaderFor = Effect.fn('MarketSubject
 );
 
 /**
+ * The production reader of one Read's owner step: every question first admits the Read's declared Customer Context
+ * requirement, so `prepare` and the check before release ask through the same admitted contract.
+ */
+export const requiredSubjectRestrictionsReader = Effect.fn('MarketSubjectRestrictions.requiredReader')(
+  function* requiredSubjectRestrictionsReader(context: ReadPrepareContext, requirementKey: string) {
+    const source = yield* serverMarketSubjectRestrictionsReaderFor(context);
+    return {
+      current: (subject, requestCorrelation) =>
+        requireModuleOperation(requirementKey).pipe(
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new MarketSubjectRestrictionsUnavailable({
+                code: 'market_subject_restrictions_unavailable',
+                reason: 'Current subject restrictions contract is unavailable',
+              }),
+              'cause',
+              { configurable: true, value: cause },
+            ),
+          ),
+          Effect.andThen(source.current(subject, requestCorrelation)),
+        ),
+    } satisfies MarketSubjectRestrictionsReader;
+  },
+);
+
+/**
  * The purchasing subject's current restrictions from Customer Context, read in `prepare` so the remote round trip
  * never holds the Read's database connection. None for an absent or guest subject, and none when the owner cannot
  * answer (the caller fails closed for a named subject).
@@ -156,3 +182,47 @@ export const currentSubjectRestrictions = (
   subject === undefined || subject.kind === 'GUEST'
     ? Effect.succeedNone
     : reader.current(subject, requestCorrelation).pipe(Effect.option);
+
+const sameValues = (left: readonly string[] | undefined, right: readonly string[] | undefined): boolean =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.length === right.length &&
+    left.every((value, index) => value === right[index]));
+
+/** Whether two owner answers restrict the subject identically; only the instant of observation may differ. */
+const sameRestrictions = (used: MarketSubjectRestrictionSnapshot, current: MarketSubjectRestrictionSnapshot) =>
+  used.ownerRevision === current.ownerRevision &&
+  used.decision === current.decision &&
+  used.profileState === current.profileState &&
+  used.subjectIdentityRef === current.subjectIdentityRef &&
+  used.subjectKind === current.subjectKind &&
+  sameValues(used.allowedChannels, current.allowedChannels) &&
+  sameValues(used.allowedSellerIds, current.allowedSellerIds) &&
+  sameValues(used.allowedMarketIds, current.allowedMarketIds) &&
+  sameValues(used.evidenceRefs, current.evidenceRefs);
+
+/**
+ * The check before release, run in `finish` after `load` committed: `load` filtered Markets by the restrictions
+ * `prepare` read, so Customer Context is asked again and the result may leave only when it still answers exactly
+ * those restrictions. A subject suspended, re-sellered or re-revisioned while the Read waited, or an owner that
+ * cannot answer now, is `false`, and the Read refuses its result. Nothing was used when `prepare` read nothing (a
+ * guest, or a named subject `load` already answered as unavailable), so there is nothing to confirm.
+ */
+export const subjectRestrictionsUnchanged = <Failure, Requirements>(
+  used: Option.Option<MarketSubjectRestrictionSnapshot>,
+  subject: PurchasingSubject | undefined,
+  requestCorrelation: string,
+  reader: Effect.Effect<MarketSubjectRestrictionsReader, Failure, Requirements>,
+): Effect.Effect<boolean, Failure, Requirements> => {
+  if (Option.isNone(used)) {
+    return Effect.succeed(true);
+  }
+  if (subject === undefined || subject.kind === 'GUEST') {
+    return Effect.succeed(false);
+  }
+  return reader.pipe(
+    Effect.flatMap((source) => currentSubjectRestrictions(source, subject, requestCorrelation)),
+    Effect.map((current) => Option.isSome(current) && sameRestrictions(used.value, current.value)),
+  );
+};

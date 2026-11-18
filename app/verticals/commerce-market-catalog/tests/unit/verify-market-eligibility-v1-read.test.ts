@@ -15,6 +15,7 @@ import { MarketResolutionPersistenceUnavailable } from '../../src/persistence/ma
 import type { MarketSubjectRestrictionSnapshot } from '../../src/integrations/market-subject-restrictions.ts';
 import {
   verifyMarketEligibilityV1Read,
+  finishVerifyMarketEligibilityV1,
   handleVerifyMarketEligibilityV1,
   prepareVerifyMarketEligibilityV1,
 } from '../../src/api/verify-market-eligibility-v1.read.ts';
@@ -133,6 +134,8 @@ const run = (
   current: ReturnType<typeof snapshotFor>,
   restrictions?: MarketSubjectRestrictionSnapshot,
   persistenceUnavailable = false,
+  /** What Customer Context answers once `prepare` has asked: the check before release. */
+  atRelease?: MarketSubjectRestrictionSnapshot,
 ) => {
   const persistence: MarketResolutionPersistence = {
     load: () =>
@@ -145,17 +148,31 @@ const run = (
           )
         : Effect.succeed(current),
   };
+  let questions = 0;
   const reader = {
-    current: () => Effect.succeed(restrictions ?? ownerRestrictions('subject:1')),
+    current: () =>
+      Effect.sync(() => {
+        questions += 1;
+        return questions > 1 && atRelease !== undefined ? atRelease : (restrictions ?? ownerRestrictions('subject:1'));
+      }),
   };
   const verifyInput = { observedProof, originalRequest: input };
   const steps = { readKey: 'commerce.market-catalog.api.verify-market-eligibility-v1', scope };
-  return prepareVerifyMarketEligibilityV1(verifyInput, steps, reader).pipe(
-    Effect.flatMap((prepared) =>
-      handleVerifyMarketEligibilityV1(verifyInput, { ...steps, prepared, services: persistence }),
-    ),
-    Effect.provide(NodeCrypto.layer),
-  );
+  // prepare, load, then finish (Customer Context asked again before release), as the runtime runs them.
+  return Effect.gen(function* verifyStages() {
+    const prepared = yield* prepareVerifyMarketEligibilityV1(verifyInput, steps, reader);
+    const loaded = yield* handleVerifyMarketEligibilityV1(verifyInput, { ...steps, prepared, services: persistence });
+    return yield* finishVerifyMarketEligibilityV1(
+      verifyInput,
+      {
+        ...steps,
+        loaded,
+        prepared,
+        transaction: () => Effect.die('The Market reads open no after-commit owner transaction'),
+      },
+      reader,
+    );
+  }).pipe(Effect.provide(NodeCrypto.layer));
 };
 
 describe('verify market eligibility owner read', () => {
@@ -226,6 +243,21 @@ describe('verify market eligibility owner read', () => {
       };
       const result = yield* run(request(), observedProof, current);
       expect(result.result.state).toBe('STALE');
+    }),
+  );
+
+  it.effect('refuses to report a proof current for a subject suspended between prepare and release', () =>
+    Effect.gen(function* verifySuspendedBeforeRelease() {
+      const observedProof = proof(at, undefined, 'subject:subject:1');
+      const current = snapshotFor(at, { subjectRevision: 'subject:1' });
+      const unchanged = yield* run(request(at, true), observedProof, current, ownerRestrictions('subject:1'));
+      expect(unchanged.result.state).toBe('CURRENT');
+      const suspended = yield* run(request(at, true), observedProof, current, ownerRestrictions('subject:1'), false, {
+        ...ownerRestrictions('subject:2'),
+        decision: 'DENIED',
+        profileState: 'SUSPENDED',
+      });
+      expect(suspended.result.state).toBe('UNAVAILABLE');
     }),
   );
 
