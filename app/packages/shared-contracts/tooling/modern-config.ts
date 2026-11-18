@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { AppUserConfig } from '@modern-js/app-tools';
@@ -13,6 +13,7 @@ import type { Option } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Array as ArraySchema,
+  Literal,
   Literals,
   OptionFromNullOr,
   OptionFromUndefinedOr,
@@ -21,6 +22,7 @@ import {
   Trim,
   check,
   decodeUnknownResult,
+  is,
   isMinLength,
   makeFilter,
 } from 'effect/Schema';
@@ -65,6 +67,8 @@ interface DevelopmentMiddlewareSetup {
 
 const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
 
+const isMissingFileError = is(Struct({ code: Literal('ENOENT') }));
+
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
   DEVELOPMENT_MCP_TOOL_CATALOG,
@@ -80,14 +84,18 @@ export const createDevelopmentContractMiddleware =
         next();
         return;
       }
-      const artifactPath = fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl));
-      // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
-      if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && !existsSync(artifactPath)) {
-        response.statusCode = 404;
-        response.end();
-        return;
+      let contract: Buffer;
+      try {
+        contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      } catch (error) {
+        // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
+        if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
+          response.statusCode = 404;
+          response.end();
+          return;
+        }
+        throw error;
       }
-      const contract = readFileSync(artifactPath);
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
