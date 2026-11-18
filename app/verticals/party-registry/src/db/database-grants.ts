@@ -277,7 +277,8 @@ export const PARTY_REGISTRY_WORKER_DATABASE_GRANTS: DatabaseRoleGrants = {
       table: 'core.action_invocations',
       privileges: ['select'],
       // Every lifecycle column, never `committed_reply_json`: the saved Action replies of every tenant
-      // stay out of this cross-tenant worker read.
+      // stay out of this cross-tenant worker read. Core's committed-reply migration replaces the
+      // table-wide SELECT an earlier bootstrap granted with this list, so an upgraded database matches.
       columns: {
         select: [
           'action_invocation_id',
