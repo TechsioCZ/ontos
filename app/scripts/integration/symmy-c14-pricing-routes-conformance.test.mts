@@ -631,8 +631,10 @@ it.live(
           }),
         );
         expect(lostAck.provenance.canonicalLink.priceRef.resourceId).toBe(newPriceId);
-        yield* fixture.worker.child.kill();
-        yield* fixture.worker.child.exitCode;
+        // The barrier holds this worker's reply until it is gone, so a graceful stop could wait on that
+        // request. This is the deliberate crash of the scenario: kill it and require only that it exited.
+        yield* fixture.worker.child.kill({ killSignal: 'SIGKILL' });
+        yield* Effect.result(fixture.worker.child.exitCode);
         yield* fixture.priceBarrier.releaseLostAck;
         expect(yield* fixture.priceBarrier.sourceReceiptReads).toBe(0);
         const beforeRestart = yield* readStatus(deferredJob.jobId);

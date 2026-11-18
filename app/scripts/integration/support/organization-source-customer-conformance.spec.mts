@@ -266,6 +266,12 @@ const verifyOrganizationOriginalReceipts = Effect.fn('OrganizationSourceCustomer
     // Both halves retain the same native membership/assignment and current recovery policies before ICO/name
     // work. Only the receipt transport/hold assertions run in the membership half; no business state is skipped.
     if (!input.verifyControls) {
+      // ICO and name work ran after both holds were set and released when this was one test. A release
+      // appends history, and that history must never read as an active hold, so this half repeats it.
+      for (const policy of recoveryPolicies) {
+        yield* policy.setHold(true);
+        yield* policy.setHold(false);
+      }
       return recoveryPolicies;
     }
     const readMembership = fixture.readOriginalReceipt({

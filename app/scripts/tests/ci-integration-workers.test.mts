@@ -133,7 +133,7 @@ it('launches package and root suites with the assigned lane and propagates failu
       ['whole:organization-identity', 'organization-source-customer-identity-conformance'],
       ['whole:customer-readback', 'symmy-c14-customer-owner-conformance'],
       ['whole:customer-roundtrip', 'symmy-c14-customer-roundtrip-conformance'],
-      ['whole:pricing-recovery', 'symmy-c14-pricing-routes-conformance'],
+      ['whole:pricing-routes', 'symmy-c14-pricing-routes-conformance'],
     ] as const) {
       execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });
       expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
