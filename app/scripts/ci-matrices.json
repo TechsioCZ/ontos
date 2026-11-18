@@ -142,7 +142,6 @@
       "native-composition": true,
       "lanes": 2,
       "tasks": [
-        "whole:pricing-revisions",
         "./apps/shell-super-app#2/8",
         "root:13/22",
         "./verticals/pricing#3/4",

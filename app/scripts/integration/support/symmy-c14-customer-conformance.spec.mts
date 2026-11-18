@@ -277,6 +277,12 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
     );
     yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb
     where tenant_id=${tenantId} and route_id=${readRouteId}`;
+    // The restored enrollment must export the same customer, not merely accept the configuration write.
+    const restored = yield* client.get(readbackUrl, { headers });
+    expect(restored.status).toBe(200);
+    expect(yield* restored.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)))).toEqual(
+      readback,
+    );
   }
   return { party: exportedCustomer.party, sourceRecordId: exportedCustomer.sourceRecordId };
 });
@@ -988,6 +994,18 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     if (scenario === 'readback') {
       return yield* Effect.void;
     }
+    const sourceBinding = admin`select source_occurrence_id,source_order
+          from commerce_customer_context.customer_profile_source_bindings
+          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and issuer=${sourceIdentity.issuer}
+          and namespace=${sourceIdentity.namespace} and record_type=${sourceIdentity.recordType} and record_id=${recordId}`.pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ source_occurrence_id: Schema.String, source_order: Schema.Number })]),
+        ),
+      ),
+    );
+    const [originalBinding] = yield* sourceBinding;
+    expect(originalBinding.source_order).toBeGreaterThan(0);
     // The GET source id is the public customerId: sent back to POST it matches the same Party and profile.
     const roundTripJob = yield* submitFor(
       roundTripKey,
@@ -1041,16 +1059,10 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           count(*) filter(where action_key='commerce.customer-context.ensure-retail-customer-profile' and status='succeeded')::integer as profile
           from core.action_invocations where tenant_id=${tenantId}`;
     expect(allWrites).toEqual({ party: 2, profile: 2 });
-    const [binding] = yield* admin<{
-      source_occurrence_id: string;
-      source_order: number;
-    }>`select source_occurrence_id,source_order
-          from commerce_customer_context.customer_profile_source_bindings
-          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and issuer=${sourceIdentity.issuer}
-          and namespace=${sourceIdentity.namespace} and record_type=${sourceIdentity.recordType} and record_id=${recordId}`;
+    const [binding] = yield* sourceBinding;
     // The source binding of the record moved to the newest observation, with a later order.
     expect(binding?.source_occurrence_id).toBe(roundTripSource.occurrenceId);
-    expect(binding?.source_order).toBeGreaterThan(0);
+    expect(binding?.source_order).toBeGreaterThan(originalBinding.source_order);
     yield* roundTripWorker.child.kill();
     yield* roundTripWorker.child.exitCode;
     // A second customer, so that paging and search are exercised over more than one customer.

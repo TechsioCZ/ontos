@@ -254,6 +254,25 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(unitCommands).not.toContain('--filter ./verticals/privacy');
 });
 
+it('selects extracted root conformance tasks only with root impact, on their original runners', () => {
+  const rootConformance = ['whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-recovery'];
+  const assignments = (entries: typeof templates.integration) =>
+    entries.flatMap((entry) =>
+      (entry.tasks ?? []).filter((task) => rootConformance.includes(task)).map((task) => ({ name: entry.name, task })),
+    );
+  for (const rootAffected of [false, true]) {
+    const plan = planCiChecks({
+      changedPaths: [CATALOG_SOURCE],
+      packages: [...packages, { dependencies: rootAffected ? [CATALOG] : [], directory: '.', name: 'app' }],
+      templates,
+    });
+    expect(plan.mode).toBe('affected');
+    expect(plan.affectedPackages.includes('app')).toBe(rootAffected);
+    expect(assignments(plan.integration)).toEqual(rootAffected ? assignments(templates.integration) : []);
+  }
+  expect(assignments(templates.integration)).toHaveLength(rootConformance.length);
+});
+
 it('plans affected selection by default and keeps the forced backstop on the complete suite', () => {
   const plan = planCiChecks({ changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(plan.mode).toBe('affected');

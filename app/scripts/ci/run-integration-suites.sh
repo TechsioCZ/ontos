@@ -42,9 +42,6 @@ if [[ "${1:-}" == --execute ]]; then
     whole:pricing-recovery)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --pool.maxWorkers 1 ;;
-    whole:pricing-revisions)
-      exec mise exec -- pnpm exec rstest --project integration \
-        scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts --pool.maxWorkers 1 ;;
     whole:privacy)
       exec mise exec -- pnpm --filter ./verticals/privacy run test:integration \
         tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1 \
@@ -68,7 +65,6 @@ if [[ "${1:-}" == --execute ]]; then
       --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts \
-      --exclude scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts \
       --exclude scripts/integration/scoped-owner-migrations.test.mts
   fi
   if [[ "$task" == ./verticals/party-registry#* ]]; then

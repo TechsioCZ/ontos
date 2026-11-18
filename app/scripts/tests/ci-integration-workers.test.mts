@@ -112,7 +112,7 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
@@ -134,7 +134,6 @@ it('launches package and root suites with the assigned lane and propagates failu
       ['whole:customer-readback', 'symmy-c14-customer-owner-conformance'],
       ['whole:customer-roundtrip', 'symmy-c14-customer-roundtrip-conformance'],
       ['whole:pricing-recovery', 'symmy-c14-pricing-routes-conformance'],
-      ['whole:pricing-revisions', 'symmy-c14-pricing-revisions-conformance'],
     ] as const) {
       execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });
       expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
@@ -142,25 +141,30 @@ it('launches package and root suites with the assigned lane and propagates failu
         `exec -- pnpm exec rstest --project integration scripts/integration/${file}.test.mts --pool.maxWorkers 1`,
       ]);
     }
-    const privacyPatterns: string[] = [];
-    for (const task of ['whole:privacy', 'whole:privacy-recovery']) {
+    const privacyAdmissionTask = 'whole:privacy';
+    const privacyRecoveryTask = 'whole:privacy-recovery';
+    const privacyPatterns = new Map<string, RegExp>();
+    for (const task of [privacyAdmissionTask, privacyRecoveryTask]) {
       execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });
       const command = readFileSync(output, 'utf-8');
       expect(command).toContain('tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1 -t ');
-      privacyPatterns.push(command.split(' -t ')[1]?.trim() ?? '');
+      privacyPatterns.set(task, new RegExp(command.split(' -t ')[1]?.trim() ?? '', 'u'));
     }
-    for (const name of [
-      'refuses foreign connection and elevated native identities before owned setup',
-      'owned bootstrap source contract > matches closed fixture privileges',
-      'Privacy private readiness transport > receives private Shell readiness',
-      'Privacy message-bound completion admission > rolls back failed dispatch',
-      'Privacy message-bound completion recovery > completes the real public BUSINESS_REJECTED receipt',
-      'Privacy message-bound completion recovery > retains exact debt across process loss',
-    ]) {
+    for (const [name, expectedTask] of [
+      ['refuses foreign connection and elevated native identities before owned setup', privacyAdmissionTask],
+      ['owned bootstrap source contract > matches closed fixture privileges', privacyAdmissionTask],
+      ['Privacy private readiness transport > receives private Shell readiness', privacyAdmissionTask],
+      ['Privacy message-bound completion admission > rolls back failed dispatch', privacyAdmissionTask],
+      [
+        'Privacy message-bound completion recovery > completes the real public BUSINESS_REJECTED receipt',
+        privacyRecoveryTask,
+      ],
+      ['Privacy message-bound completion recovery > retains exact debt across process loss', privacyRecoveryTask],
+    ] as const) {
       expect(
-        privacyPatterns.filter((pattern) => new RegExp(pattern, 'u').test(name)),
+        [...privacyPatterns].filter(([, pattern]) => pattern.test(name)).map(([task]) => task),
         name,
-      ).toHaveLength(1);
+      ).toEqual([expectedTask]);
     }
     // Both native proofs retain their package test entry and its lane environment setup.
     const timeout = path.join(directory, 'timeout');
