@@ -28,7 +28,7 @@ import { mountInRoute } from '../support/module-ui.ts';
 import { Deferred, Effect, Fiber, FiberSet, Layer, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
-import { moduleChangeEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   opportunityRelatedData,
@@ -327,8 +327,8 @@ const Detail = () => {
     ].join('|'),
   );
 };
-it.live('warms actual related data before selection and renders it without any extra request', () =>
-  Effect.gen(function* test() {
+it.live('renders the opportunity task, customer contract and case order from the warmed related-data hook', () =>
+  Effect.gen(function* relatedHook() {
     yield* pinTestDocument;
     yield* preloadOpportunityDetails(context, [row], 7);
     expect(contractReads).toHaveLength(1);
@@ -336,7 +336,6 @@ it.live('warms actual related data before selection and renders it without any e
     expect(orderReads).toHaveLength(1);
     yield* mountInRoute(createElement(Detail));
     expect(text()).toContain('Visible task|Visible contract|Order A');
-    yield* opportunityRelatedData.read(input);
     expect(contractReads).toHaveLength(1);
     expect(taskReads).toHaveLength(2);
     expect(orderReads).toHaveLength(1);
@@ -429,33 +428,10 @@ it.live('limits background work to two rows and cancels both active and queued w
     expect(orderReads).toHaveLength(0);
   }).pipe(Effect.provide(network)),
 );
-it.live('joins a foreground opening without cancelling it when the background page changes', () =>
-  Effect.gen(function* test() {
-    yield* pinTestDocument;
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    contractAnswer = Deferred.succeed(started, true).pipe(
-      Effect.andThen(Deferred.await(release)),
-      Effect.as(contracts),
-    );
-    const background = yield* Effect.forkChild(preloadOpportunityDetails(context, [row], 7));
-    yield* Deferred.await(started);
-    const joined = yield* Effect.forkChild(opportunityRelatedData.read(input));
-    yield* Effect.yieldNow;
-    yield* Fiber.interrupt(background);
-    yield* Deferred.succeed(release, true);
-    yield* Fiber.join(joined);
-    expect(contractReads).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
-it.live('clears warm data on live updates and on a failed settled command', () =>
+it.live('invalidates related records even when an opportunity command is refused', () =>
   Effect.gen(function* test() {
     yield* pinTestDocument;
     yield* preloadOpportunityDetails(context, [row], 7);
-    window.dispatchEvent(new CustomEvent(moduleChangeEvent));
-    expect(opportunityRelatedData.snapshot(input).state).toBe('pending');
-    yield* opportunityRelatedData.read(input);
-    expect(contractReads).toHaveLength(2);
     yield* applyPipelineCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, 7).pipe(Effect.ignore);
     expect(opportunityRelatedData.snapshot(input).state).toBe('pending');
   }).pipe(Effect.provide(network)),

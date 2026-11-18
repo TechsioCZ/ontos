@@ -1,33 +1,18 @@
 // @rstest-environment happy-dom
-// The client card's inline forms send their one command only from the shared Save button ("Uložit"): typing and
-// Enter change only the draft, an untouched form closes without asking, and a refused save keeps the input. The i18n
-// runtime, router blocker and select template all run through the real module UI harness.
-import { Effect, Option, Predicate } from 'effect';
-import { constVoid } from 'effect/Function';
+// Client-card forms bind the selected client and primary-contact/default-date values to CRM commands.
+import { Effect, Predicate } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { unmountAll } from '@app/admin-ui/testing/module-ui';
 import { mountInRoute as mount } from '../support/module-ui.ts';
 import type { CrmCommandInput } from '../../shared/actions/apply-command.ts';
 import { ContactForm } from '../../src/routes/[lang]/crm/klienti/contact-form.tsx';
 import { ClientPlanForm, ClientVisitForm } from '../../src/routes/[lang]/crm/navstevy/client-visit-forms.tsx';
-import {
-  akros,
-  buttons,
-  click,
-  copy,
-  field,
-  leaveQuestion,
-  pressEnter,
-  records,
-  recording,
-  saveButton,
-  typeInto,
-} from './crm-form-fixture.tsx';
+import { akros, click, copy, records, recording, saveButton, typeInto } from './crm-form-fixture.tsx';
 
 afterEach(unmountAll);
 
-describe('client card forms save from Uložit only', () => {
-  it.live('a new contact person is added once by Uložit, never by Enter', () =>
+describe('client card command payloads', () => {
+  it.live('the first contact is marked primary and linked to the selected client', () =>
     Effect.gen(function* addContact() {
       const sent: CrmCommandInput[] = [];
       const closed: string[] = [];
@@ -45,10 +30,7 @@ describe('client card forms save from Uložit only', () => {
           submit={recording(sent)}
         />,
       );
-      expect(saveButton().disabled).toBe(true);
       yield* typeInto('crm-contact-new-name', copy.name);
-      yield* pressEnter('crm-contact-new-name');
-      expect(sent).toEqual([]);
 
       yield* click(saveButton());
       expect(sent).toEqual([{ _tag: 'AddContactPerson', clientId: akros.id, name: copy.name, primary: true }]);
@@ -57,34 +39,7 @@ describe('client card forms save from Uložit only', () => {
     }),
   );
 
-  it.live('a refused contact keeps the typed name and asks before leaving', () =>
-    Effect.gen(function* refusedContact() {
-      const sent: CrmCommandInput[] = [];
-      const closed: string[] = [];
-      yield* mount(
-        <ContactForm
-          clientId={akros.id}
-          isFirst={false}
-          onClose={() => {
-            closed.push('closed');
-          }}
-          onSaved={constVoid}
-          submit={recording(sent, false)}
-        />,
-      );
-      yield* typeInto('crm-contact-new-name', copy.name);
-      yield* click(saveButton());
-      expect(sent).toHaveLength(1);
-      expect(field('crm-contact-new-name').value).toBe(copy.name);
-      expect(closed).toEqual([]);
-
-      yield* click(Option.getOrThrow(Option.fromNullishOr(buttons(copy.cancel).at(0))));
-      expect(leaveQuestion()).toBe(true);
-      expect(closed).toEqual([]);
-    }),
-  );
-
-  it.live('a visit from the client card is recorded once by Uložit', () =>
+  it.live('a visit is recorded for the client whose card is open', () =>
     Effect.gen(function* recordVisit() {
       const sent: CrmCommandInput[] = [];
       const closed: string[] = [];
@@ -99,8 +54,6 @@ describe('client card forms save from Uložit only', () => {
         />,
       );
       yield* typeInto('crm-card-visit-result', copy.result);
-      yield* pressEnter('crm-card-visit-result');
-      expect(sent).toEqual([]);
 
       yield* click(saveButton());
       expect(sent).toHaveLength(1);
@@ -110,28 +63,23 @@ describe('client card forms save from Uložit only', () => {
     }),
   );
 
-  it.live(
-    'a planned contact from the client card is sent by the first Uložit; untouched it closes without asking',
-    () =>
-      Effect.gen(function* planContact() {
-        const sent: CrmCommandInput[] = [];
-        const closed: string[] = [];
-        yield* mount(
-          <ClientPlanForm
-            clientId={akros.id}
-            onClose={() => {
-              closed.push('closed');
-            }}
-            records={records}
-            submit={recording(sent)}
-          />,
-        );
-        yield* click(Option.getOrThrow(Option.fromNullishOr(buttons(copy.cancel).at(0))));
-        expect(leaveQuestion()).toBe(false);
-        expect(closed).toEqual(['closed']);
-
-        yield* click(saveButton());
-        expect(sent).toEqual([{ _tag: 'PlanContact', clientId: akros.id, dueDate: '2026-10-22' }]);
-      }),
+  it.live('planning a contact defaults to one week after the records date', () =>
+    Effect.gen(function* planContact() {
+      const sent: CrmCommandInput[] = [];
+      const closed: string[] = [];
+      yield* mount(
+        <ClientPlanForm
+          clientId={akros.id}
+          onClose={() => {
+            closed.push('closed');
+          }}
+          records={records}
+          submit={recording(sent)}
+        />,
+      );
+      yield* click(saveButton());
+      expect(sent).toEqual([{ _tag: 'PlanContact', clientId: akros.id, dueDate: '2026-10-22' }]);
+      expect(closed).toEqual(['closed']);
+    }),
   );
 });

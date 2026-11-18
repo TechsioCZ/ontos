@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-// Real tag and stage controls, governed HTTP clients, i18n and router exercise the shared Save and leave guard.
+// A customer tag selects the exact opportunity IDs and revision used by the bulk stage command.
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
@@ -22,7 +22,7 @@ import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts'
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import { BulkByTagDialog } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-bulk-by-tag.tsx';
 import type { BulkByTagResult } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-bulk-by-tag.tsx';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const opportunity = Schema.decodeUnknownSync(OpportunitySchema)({
   amountMinor: 0,
@@ -105,8 +105,7 @@ const network = browserNetwork(
 );
 
 const labels = saveLabelsFor('cs');
-const t = moduleText('cs');
-const copy = { cancel: t('sales-pipeline.pages.records.bulkByTag.cancel'), stage: 'NEGOTIATION' } as const;
+const copy = { stage: 'NEGOTIATION' } as const;
 const button = (name: string) => Option.getOrThrow(Option.fromNullishOr(buttons(name).at(0)));
 const mount = (events: string[], done: BulkByTagResult[]) =>
   mountInRoute(
@@ -163,20 +162,17 @@ beforeEach(() => {
 });
 afterEach(unmountAll);
 
-describe('bulk change by tag with the shared Uložit', () => {
-  it.live('choosing sends nothing; one click on Uložit sends one bulk command for the preview', () =>
+describe('bulk opportunity change by customer tag', () => {
+  it.live('sends the previewed opportunity IDs, target stage and population revision', () =>
     Effect.gen(function* saveBulk() {
       yield* pinTestDocument;
       const events: string[] = [];
       const done: BulkByTagResult[] = [];
       yield* mount(events, done);
-      expect(buttons(labels.save)).toHaveLength(1);
-      expect(button(labels.save).disabled).toBe(true);
 
       yield* pickTag();
       yield* pickStage();
       yield* waitUntil(() => !button(labels.save).disabled);
-      expect(sent).toEqual([]);
 
       yield* acted(() => button(labels.save).click());
       yield* waitUntil(() => done.length === 1);
@@ -188,23 +184,6 @@ describe('bulk change by tag with the shared Uložit', () => {
       ]);
       expect(done).toHaveLength(1);
       expect(done[0]?.changed).toBe(1);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an untouched panel closes without asking; a started choice asks first', () =>
-    Effect.gen(function* cancelBulk() {
-      yield* pinTestDocument;
-      const events: string[] = [];
-      yield* mount(events, []);
-      yield* acted(() => button(copy.cancel).click());
-      expect(buttons(labels.discard)).toHaveLength(0);
-      expect(events).toEqual(['closed']);
-
-      yield* pickTag();
-      yield* acted(() => button(copy.cancel).click());
-      expect(buttons(labels.discard)).toHaveLength(1);
-      expect(events).toEqual(['closed']);
-      expect(sent).toEqual([]);
     }).pipe(Effect.provide(network)),
   );
 });

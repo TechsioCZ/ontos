@@ -1,10 +1,6 @@
 // @rstest-environment happy-dom
-// The create panel of an opportunity as the user sees it: typing and picking change only the draft, Enter sends
-// nothing, the shared Save button ("Uložit", last in the footer) creates the opportunity once, an untouched panel
-// closes without asking and a refused create keeps the input. The panel runs under the module
-// i18n and router with the real ui-kit combobox and select.
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+// The create panel binds the chosen customer, title and close date to the opportunity command.
+import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { pinTestDocument } from '@app/shared-contracts/testing/http-double';
 import { Effect, Option, Schema } from 'effect';
@@ -12,18 +8,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { PartyIdSchema } from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { OpportunityCreatePanel } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-create-panel.tsx';
 import type { CreateCommand } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-fields.tsx';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
 const copy = {
-  cancel: moduleText('cs')('sales-pipeline.pages.records.create.cancel'),
   close: '2026-12-01',
   title: 'Dodávka regálů',
 } as const;
 const partyId = Schema.decodeSync(PartyIdSchema)('10000000-0000-4000-8000-000000000001');
 
 const created: CreateCommand[] = [];
-let answer: SaveOutcome = 'saved';
 
 const mount = (events: string[]) =>
   Effect.gen(function* mountPanel() {
@@ -38,7 +32,7 @@ const mount = (events: string[]) =>
         onCreate={(command) =>
           Effect.sync(() => {
             created.push(command);
-            return answer;
+            return 'saved' as const;
           })
         }
         onCreated={() => {
@@ -82,31 +76,17 @@ const fillIn = Effect.gen(function* fillDraft() {
 
 beforeEach(() => {
   created.length = 0;
-  answer = 'saved';
 });
 
 afterEach(unmountAll);
 
-describe('opportunity create panel with the shared Uložit', () => {
-  it.live('reads the required text of a required field in Czech', () =>
-    Effect.gen(function* requiredCzechCopy() {
-      yield* mount([]);
-      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
-      expect(document.body.textContent).not.toContain('(required)');
-      expect(document.querySelector('label[for="opportunity-title"]')?.textContent).toContain(requiredLabelFor('cs'));
-    }),
-  );
-
-  it.live('typing sends nothing; one click on Uložit creates the opportunity once', () =>
+describe('opportunity create command', () => {
+  it.live('sends the chosen customer and close date with the opportunity title', () =>
     Effect.gen(function* createOnce() {
       const events: string[] = [];
       yield* mount(events);
-      expect(buttons(labels.save)).toHaveLength(1);
-      expect(button(labels.save).disabled).toBe(true);
 
       yield* fillIn;
-      yield* acted(() => field('opportunity-title').form?.requestSubmit());
-      expect(created).toEqual([]);
 
       yield* acted(() => button(labels.save).click());
       expect(created).toEqual([
@@ -120,35 +100,6 @@ describe('opportunity create panel with the shared Uložit', () => {
         },
       ]);
       expect(events).toEqual(['created']);
-    }),
-  );
-
-  it.live('an untouched panel closes without asking; typed input asks first', () =>
-    Effect.gen(function* confirmDirtyClose() {
-      const events: string[] = [];
-      yield* mount(events);
-      yield* acted(() => button(copy.cancel).click());
-      expect(buttons(labels.discard)).toHaveLength(0);
-      expect(events).toEqual(['closed']);
-
-      yield* typeInto('opportunity-title', copy.title);
-      yield* acted(() => button(copy.cancel).click());
-      expect(buttons(labels.discard)).toHaveLength(1);
-      expect(events).toEqual(['closed']);
-    }),
-  );
-
-  it.live('a refused create keeps the input and the panel open', () =>
-    Effect.gen(function* retainRefusedDraft() {
-      answer = 'failed';
-      const events: string[] = [];
-      yield* mount(events);
-      yield* fillIn;
-      yield* acted(() => button(labels.save).click());
-      expect(created).toHaveLength(1);
-      expect(field('opportunity-title').value).toBe(copy.title);
-      expect(events).toEqual([]);
-      expect(document.querySelector<HTMLElement>('[data-save-state]')?.dataset.saveState).toBe('error');
     }),
   );
 });

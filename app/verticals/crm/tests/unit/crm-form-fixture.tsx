@@ -1,10 +1,7 @@
-// Shared fixtures of the mounted CRM form tests: records with two clients and one unpaired order, a recording
-// submit, and user-like typing, picking and clicking. The test files replace the runtime modules themselves.
+// Shared records, recording submit and input helpers for the mounted CRM command tests.
 import { saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { act } from 'react';
-import type { ReactElement } from 'react';
-import { createRoot } from 'react-dom/client';
 import type { CrmCommandInput } from '../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { CrmViewerSchema } from '../../shared/domain/access.ts';
@@ -17,7 +14,6 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 export const labels = saveLabelsFor('cs');
 export const copy = {
-  cancel: 'Zrušit',
   name: 'Jana Nováková',
   reason: 'Ověřeno telefonicky',
   result: 'Objednají v pondělí',
@@ -84,20 +80,6 @@ const step = (run: () => void) =>
     });
   }).pipe(Effect.andThen(settle));
 
-export const views: (() => void)[] = [];
-
-export const mount = (element: ReactElement) =>
-  Effect.suspend(() => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    views.push(() => {
-      act(() => root.unmount());
-      container.remove();
-    });
-    return step(() => root.render(element));
-  });
-
 export const recording =
   (sent: CrmCommandInput[], ok = true): CrmCommandSubmit =>
   (command) =>
@@ -124,26 +106,4 @@ export const typeInto = (id: string, value: string) =>
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-export const pick = (name: string, value: string) =>
-  step(() => {
-    const select = Option.getOrThrow(
-      Option.fromNullOr(document.querySelector<HTMLSelectElement>(`select[name="${name}"]`)),
-    );
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-
-/** Enter in a field: the browser submits its form. */
-export const pressEnter = (id: string) => step(() => field(id).form?.requestSubmit());
-
 export const click = (target: HTMLElement) => step(() => target.click());
-
-/** Whether the Uložit / Zahodit změny / Zůstat question is up. */
-export const leaveQuestion = (): boolean => document.querySelector('[role="alertdialog"]') !== null;
-
-/** Unmounts every view a test mounted. */
-export const unmountAll = () => {
-  for (const unmount of views.splice(0)) {
-    unmount();
-  }
-};

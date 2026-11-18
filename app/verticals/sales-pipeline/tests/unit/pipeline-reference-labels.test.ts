@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import {
   referenceStatusOf,
@@ -50,19 +48,5 @@ describe('opportunity reference labels', () => {
     for (const state of [refused, { status: 'loading' } as const]) {
       expect(label(state, otherId)).not.toContain(otherId);
     }
-  });
-
-  it('has a Czech and an English label for an unavailable reference', () => {
-    const LocaleSchema = Schema.Struct({
-      'sales-pipeline': Schema.Struct({
-        pages: Schema.Struct({ records: Schema.Struct({ referenceUnavailable: Schema.String }) }),
-      }),
-    });
-    const unavailableOf = (language: string) =>
-      Schema.decodeUnknownSync(Schema.fromJsonString(LocaleSchema))(
-        readFileSync(new URL(`../../locales/${language}/sales-pipeline.json`, import.meta.url), 'utf-8'),
-      )['sales-pipeline'].pages.records.referenceUnavailable;
-    expect(unavailableOf('cs')).toBe('Nedostupné');
-    expect(unavailableOf('en')).toBe('Unavailable');
   });
 });

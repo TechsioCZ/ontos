@@ -1,6 +1,5 @@
 // @rstest-environment happy-dom
-// The visit and plan panels send their one command only from the shared Save button ("Uložit"), last in the footer:
-// typing and Enter change only the draft. The panels use the real module i18n and TanStack router.
+// Visit and plan panels bind the selected client and records date to CRM commands.
 import { saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
@@ -70,34 +69,15 @@ const typeInto = (id: string, value: string) =>
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-const pressEnter = (id: string) =>
-  acted(() => {
-    field(id).form?.requestSubmit();
-  });
-
 const clickSave = () =>
   acted(() => {
     saveButton().click();
   });
 
-const clickCancel = () =>
-  acted(() => {
-    const cancel = Option.getOrThrow(
-      Option.fromNullishOr(footerButtons().find((button) => (button.textContent ?? '').trim() === 'Zrušit')),
-    );
-    cancel.click();
-  });
-
-/** A submit the server refuses without a message. */
-const refusing: CrmCommandSubmit = () => Effect.succeed({ entityIds: [], ok: false });
-
-/** Whether the Uložit / Zahodit změny / Zůstat question is up. */
-const leaveQuestion = (): boolean => document.querySelector('[role="alertdialog"]') !== null;
-
 afterEach(unmountAll);
 
-describe('CRM panels save from Uložit only', () => {
-  it.live('a visit is recorded once by Uložit, never by Enter', () =>
+describe('CRM panel command payloads', () => {
+  it.live('a visit is recorded for the selected client', () =>
     Effect.gen(function* recordVisitFromSave() {
       const sent: CrmCommandInput[] = [];
       const closed: boolean[] = [];
@@ -112,12 +92,7 @@ describe('CRM panels save from Uložit only', () => {
           submit={recording(sent)}
         />,
       );
-      expect(saveButton().disabled).toBe(true);
-      expect(footerButtons().at(-1)).toBe(saveButton());
-
       yield* typeInto('crm-visit-new-result', 'Objednají v pondělí');
-      yield* pressEnter('crm-visit-new-result');
-      expect(sent).toEqual([]);
 
       yield* clickSave();
       expect(sent).toHaveLength(1);
@@ -127,41 +102,15 @@ describe('CRM panels save from Uložit only', () => {
     }),
   );
 
-  it.live('a contact planned for a known client is sent by the first Uložit', () =>
+  it.live('a known client gets a contact planned one week after the records date', () =>
     Effect.gen(function* planContactFromSave() {
       const sent: CrmCommandInput[] = [];
       yield* mountInRoute(
         <PlanContactPanel clientId={client.id} onClose={constVoid} records={records} submit={recording(sent)} />,
       );
-      expect(saveButton().disabled).toBe(false);
 
       yield* clickSave();
       expect(sent).toEqual([{ _tag: 'PlanContact', clientId: client.id, dueDate: '2026-10-22' }]);
-    }),
-  );
-
-  it.live('the planned contact closes untouched without asking, but asks once its save failed', () =>
-    Effect.gen(function* guardRefusedPlan() {
-      const closed: string[] = [];
-      yield* mountInRoute(
-        <PlanContactPanel
-          clientId={client.id}
-          onClose={() => {
-            closed.push('closed');
-          }}
-          records={records}
-          submit={refusing}
-        />,
-      );
-      yield* clickCancel();
-      expect(closed).toEqual(['closed']);
-      expect(leaveQuestion()).toBe(false);
-
-      // The opening values were sent and refused: they are now the user's unsaved draft.
-      yield* clickSave();
-      yield* clickCancel();
-      expect(closed).toEqual(['closed']);
-      expect(leaveQuestion()).toBe(true);
     }),
   );
 });

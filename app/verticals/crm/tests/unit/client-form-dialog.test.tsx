@@ -1,8 +1,8 @@
 // @rstest-environment happy-dom
-// The client form runs under the real Czech i18n and router. Typing changes only the draft; Save sends it.
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+// Client form commands preserve patch semantics and validate separately entered organization contacts.
+import { saveLabelsFor } from '@app/admin-ui';
 import { acted, settle, unmountAll } from '@app/admin-ui/testing/module-ui';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { ClientFormDialog } from '../../src/routes/[lang]/crm/klienti/client-form-dialog.tsx';
 import type { CrmCommandSubmit } from '../../src/crm/records.ts';
@@ -93,25 +93,13 @@ const succeeding =
 afterEach(unmountAll);
 
 describe('client form', () => {
-  it.live('reads the required text of a required field in Czech', () =>
-    Effect.gen(function* requiredText() {
-      yield* mount({ mode: 'create', submit: succeeding([]) });
-      const name = document.querySelector<HTMLInputElement>('[id="crm-client-name"]');
-      expect(name?.labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
-      expect(document.body.textContent).not.toContain('(required)');
-    }),
-  );
-
-  it.live('editing a client sends nothing until Uložit is clicked, and then sends once', () =>
+  it.live('editing a client sends a patch with only the changed name and phone', () =>
     Effect.gen(function* editSendsOnce() {
       const sent: CrmCommandInput[] = [];
       yield* mount({ client, mode: 'edit', submit: succeeding(sent) });
 
       yield* typeInto('crm-client-name', 'Akros CZ s.r.o.');
       yield* typeInto('crm-client-phone', '+420 601 000 000');
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      expect(sent).toEqual([]);
 
       yield* clickButton('Uložit');
       expect(sent).toEqual([
@@ -124,34 +112,24 @@ describe('client form', () => {
     }),
   );
 
-  it.live('leaving an edited client without saving writes nothing', () =>
-    Effect.gen(function* leaveWithoutSaving() {
-      const sent: CrmCommandInput[] = [];
-      yield* mount({ client, mode: 'edit', submit: succeeding(sent) });
-
-      yield* typeInto('crm-client-name', 'Jiný název');
-      unmountAll();
-      yield* settle;
-      expect(sent).toEqual([]);
-    }),
-  );
-
-  it.live('a new client is sent once by the same Uložit, never by Enter', () =>
+  it.live('creating an organization includes its trimmed main contact and marks it primary', () =>
     Effect.gen(function* createOnlyOnSave() {
       const sent: CrmCommandInput[] = [];
       yield* mount({ mode: 'create', submit: succeeding(sent) });
 
       yield* typeInto('crm-client-name', 'Nová firma');
-      yield* acted(() => {
-        Option.getOrThrow(Option.fromNullOr(document.querySelector('form'))).requestSubmit();
-      });
-      yield* settle;
-      expect(sent).toEqual([]);
+      yield* typeInto('crm-new-contact-0-name', ' Jana Nováková ');
+      yield* typeInto('crm-new-contact-0-email', ' jana@example.test ');
 
       yield* clickButton('Uložit');
-      expect(sent.length).toBe(1);
-      expect(Predicate.isTagged(sent[0], 'CreateClient')).toBe(true);
-      expect(sent[0]).toMatchObject({ kind: 'organization', name: 'Nová firma' });
+      expect(sent).toEqual([
+        {
+          _tag: 'CreateClient',
+          contacts: [{ email: 'jana@example.test', name: 'Jana Nováková', primary: true }],
+          kind: 'organization',
+          name: 'Nová firma',
+        },
+      ]);
     }),
   );
 

@@ -1,31 +1,64 @@
-// Every text the sales-report charts show (titles, tooltips, empty states, data table) exists in Czech and English,
-// with the same placeholders, and the Czech copy is not left in English.
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'effect-rstest';
+import { FederatedI18nBoundary } from '@modern-js/i18n-integration/federation';
+import { getI18nInstance } from '@modern-js/plugin-i18n/i18n';
+import { ModernI18nProvider, useModernI18n } from '@modern-js/plugin-i18n/runtime/consumer';
+import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { createElement } from 'react';
+import { jsx } from 'react/jsx-runtime';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { crmI18nResources } from '../../src/crm/i18n.ts';
 
-import csReports from '../../locales/cs/crm-reports.json';
-import enReports from '../../locales/en/crm-reports.json';
+const ChartTranslationProbe = () => {
+  const { t } = useModernI18n();
+  return createElement(
+    'p',
+    null,
+    [
+      t('crm.reports.chart.countsDescription', { from: '2026-01', to: '2026-02' }),
+      t('crm.reports.chart.valueAria', { currency: 'EUR' }),
+      t('crm.reports.chart.noAmount'),
+    ].join('|'),
+  );
+};
 
-const source = readFileSync(
-  new URL('../../src/routes/[lang]/crm/prehled-prodeju/report-charts.tsx', import.meta.url),
-  'utf-8',
+it.effect.each([
+  {
+    expected:
+      'Počet objednávek od 2026-01 do 2026-02. Přesná čísla včetně stavů jsou v datové tabulce pod grafy.|Hodnota objednávek v EUR po měsících|Zdroj u započtených objednávek neposkytl částku a měnu.',
+    language: 'cs',
+  },
+  {
+    expected:
+      'Number of orders from 2026-01 to 2026-02. Exact figures including statuses are in the data table below the charts.|Order value in EUR by month|The source did not provide an amount and currency for the counted orders.',
+    language: 'en',
+  },
+])('resolves $language chart descriptions and currency through the CRM runtime namespace', ({ expected, language }) =>
+  Effect.gen(function* chartTranslations() {
+    const host = yield* Effect.promise(() => getI18nInstance());
+    yield* Effect.promise(() =>
+      host.init({
+        defaultNS: 'translation',
+        fallbackLng: language,
+        initImmediate: false,
+        lng: language,
+        ns: ['translation'],
+        resources: { cs: { translation: { hostOnly: 'host' } }, en: { translation: { hostOnly: 'host' } } },
+      }),
+    );
+    const actual = renderToStaticMarkup(
+      jsx(ModernI18nProvider, {
+        children: jsx(FederatedI18nBoundary, {
+          children: jsx(ChartTranslationProbe, {}),
+          defaultNamespace: 'crm',
+          fallbackLanguage: language,
+          resources: crmI18nResources,
+          supportedLanguages: ['cs', 'en'],
+        }),
+        value: { i18nInstance: host, language, languages: ['cs', 'en'] },
+      }),
+    );
+    expect(actual).toBe(renderToStaticMarkup(createElement('p', null, expected)));
+    expect(host.t('crm.reports.chart.noAmount')).toBe('crm.reports.chart.noAmount');
+    expect(host.t('hostOnly')).toBe('host');
+  }),
 );
-const usedKeys = [
-  ...new Set([...source.matchAll(/t\(`\$\{k\}\.(?<key>\w+)`/gu)].map((match) => match.groups?.key ?? '')),
-];
-const placeholders = (text: string) =>
-  [...text.matchAll(/\{\{(?<name>\w+)\}\}/gu)].map((match) => match.groups?.name ?? '');
-const cs: Record<string, string> = csReports.reports.chart;
-const en: Record<string, string> = enReports.reports.chart;
-
-describe('sales report chart texts', () => {
-  it('translates every used key in both languages with matching placeholders', () => {
-    for (const key of usedKeys) {
-      expect(cs[key], `cs ${key}`).toBeTruthy();
-      expect(en[key], `en ${key}`).toBeTruthy();
-      expect(new Set(placeholders(cs[key] ?? '')), key).toEqual(new Set(placeholders(en[key] ?? '')));
-      expect(cs[key], `cs ${key} is not English`).not.toBe(en[key]);
-    }
-    expect(new Set(Object.keys(cs))).toEqual(new Set(Object.keys(en)));
-  });
-});

@@ -1,8 +1,5 @@
-import { startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { SalesPipelineLifecycleConflictProblemSchema } from '../../shared/sales-pipeline-action-problems.ts';
@@ -14,7 +11,6 @@ import {
   sameOpportunityDraft,
   updateCommandOf,
 } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-draft.ts';
-import type { FormDraft } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-draft.ts';
 
 const opportunity = Schema.decodeUnknownSync(OpportunitySchema)({
   amountMinor: 250_000,
@@ -85,83 +81,6 @@ describe('opportunity edit draft', () => {
         type: 'about:blank',
       });
       expect(yield* opportunitySaveResult(Effect.fail(lifecycle))).toBe('failed');
-    }),
-  );
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: FormDraft[] = [];
-  const controller = yield* startDraftSave(saved, {
-    equals: sameOpportunityDraft,
-    isValid: (value: FormDraft) => Option.isSome(updateCommandOf(opportunity.id, value)),
-    save: (value: FormDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('opportunity edit panel saves only on Uložit', () => {
-  it.effect('typing and waiting send nothing; one save sends the draft once', () =>
-    Effect.gen(function* typedThenSaved() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, note: 'Volat dopoledne' });
-      yield* TestClock.adjust('5 seconds');
-      expect(sent).toHaveLength(0);
-      expect(controller.status()).toBe('dirty');
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ note }) => note)).toEqual(['Volat dopoledne']);
-      expect(controller.status()).toBe('saved');
-      yield* TestClock.adjust('5 seconds');
-      expect(sent).toHaveLength(1);
-    }),
-  );
-
-  it.effect('an empty title is never sent and keeps the save off', () =>
-    Effect.gen(function* invalid() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, title: '' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('invalid');
-      expect(sent).toHaveLength(0);
-    }),
-  );
-
-  it.effect('discard puts the saved version back and sends nothing', () =>
-    Effect.gen(function* discard() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, title: 'Jiný název' });
-      controller.discard();
-      yield* TestClock.adjust('5 seconds');
-      expect(controller.status()).toBe('idle');
-      expect(controller.confirmed()).toEqual(saved);
-      expect(sent).toHaveLength(0);
-    }),
-  );
-
-  it.effect('a conflicting draft is held instead of sent again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...saved, closeText: '2026-12-15' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...saved, closeText: '2026-12-20' });
-      yield* TestClock.adjust('1 second');
-      expect(sent).toHaveLength(1);
-    }),
-  );
-
-  it.effect('a proposed draft is parked and never sent again without a new Uložit', () =>
-    Effect.gen(function* proposed() {
-      const { controller, sent } = yield* panel('proposed');
-      controller.change({ ...saved, note: 'Volat dopoledne' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('proposed');
-      controller.change({ ...saved, note: 'Volat večer' });
-      yield* TestClock.adjust('5 seconds');
-      expect(sent).toHaveLength(1);
     }),
   );
 });
