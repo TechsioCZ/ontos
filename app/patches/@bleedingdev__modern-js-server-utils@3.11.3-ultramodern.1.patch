@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/compilers/rslib.js b/dist/cjs/compilers/rslib.js
-index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f0117ac1411a 100644
+index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..e359dffcf2cf46863bcd73ae34a5e79237072793 100644
 --- a/dist/cjs/compilers/rslib.js
 +++ b/dist/cjs/compilers/rslib.js
 @@ -131,6 +131,29 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, ass
@@ -32,17 +32,18 @@ index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f011
  const compileServerSources = async (appDirectory, config, options)=>{
      const { sourceDirs, distDir, tsconfigPath, moduleType, excludeFiles = [] } = options;
      const sources = new Set(await collectSources(sourceDirs, excludeFiles));
-@@ -147,7 +170,8 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -147,7 +170,9 @@ const compileServerSources = async (appDirectory, config, options)=>{
          if (checked && !roots.has(external_path_default().resolve(file))) sources.delete(file);
      }
      const failOnTypeError = false !== compilerOptions.noEmitOnError;
 -    const declaration = true === compilerOptions.declaration;
 +    const separateTypecheck = process.env.ONTOS_CI_TYPECHECK_SEPARATE === '1';
-+    const declaration = !separateTypecheck && true === compilerOptions.declaration;
++    const skipServerTypecheck = separateTypecheck || process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK === '1';
++    const declaration = !skipServerTypecheck && true === compilerOptions.declaration;
      const formats = {
          '.js': 'module' === moduleType ? 'esm' : 'cjs',
          '.mjs': 'esm',
-@@ -187,6 +211,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -187,6 +212,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
          return libs;
      };
      const alias = resolveAlias(appDirectory, config.alias);
@@ -50,7 +51,7 @@ index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f011
      const assets = new Set();
      const build = async ()=>{
          if (0 === sources.size) return;
-@@ -196,13 +221,12 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -196,13 +222,12 @@ const compileServerSources = async (appDirectory, config, options)=>{
          const nodeRange = 'string' == typeof nodeEngine ? utils_namespaceObject.semver.validRange(nodeEngine) : null;
          const nodeVersion = nodeRange ? utils_namespaceObject.semver.minVersion(nodeRange) : null;
          const nodeTarget = nodeVersion?.major ? `node${nodeVersion.major}.${nodeVersion.minor}` : void 0;
@@ -66,7 +67,7 @@ index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f011
                      source: {
                          tsconfigPath: resolvedConfigPath,
                          ...compilerOptions.experimentalDecorators ? {
-@@ -220,12 +244,15 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -220,12 +245,15 @@ const compileServerSources = async (appDirectory, config, options)=>{
                              root: distDir
                          },
                          cleanDistPath: false,
@@ -84,7 +85,7 @@ index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f011
                      },
                      tools: {
                          rspack: (rspackConfig)=>{
-@@ -248,13 +275,11 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -248,13 +276,11 @@ const compileServerSources = async (appDirectory, config, options)=>{
                  }
              });
              await rslib.build();
@@ -96,7 +97,7 @@ index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f011
      };
      const typeCheck = async ()=>{
 -        if (0 === roots.size) return;
-+        if (separateTypecheck || 0 === roots.size) return;
++        if (skipServerTypecheck || 0 === roots.size) return;
          const result = await (0, external_tsgo_js_namespaceObject.runTsgo)(tsgoBinPath, [
              '-p',
              resolvedConfigPath,
@@ -145,7 +146,7 @@ index 356ff21f6b9163f58fbb30d5e9d7eac6122af0cc..4a97ebf95d4628c8f552045a4e9ecfc0
      return {
          config,
 diff --git a/dist/esm-node/compilers/rslib.mjs b/dist/esm-node/compilers/rslib.mjs
-index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e63e3fd144 100644
+index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..f9825b0bd44121fe2f32a53d8efdf8fd8b2a3579 100644
 --- a/dist/esm-node/compilers/rslib.mjs
 +++ b/dist/esm-node/compilers/rslib.mjs
 @@ -90,6 +90,29 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, ass
@@ -178,17 +179,18 @@ index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e6
  const compileServerSources = async (appDirectory, config, options)=>{
      const { sourceDirs, distDir, tsconfigPath, moduleType, excludeFiles = [] } = options;
      const sources = new Set(await collectSources(sourceDirs, excludeFiles));
-@@ -106,7 +129,8 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -106,7 +129,9 @@ const compileServerSources = async (appDirectory, config, options)=>{
          if (checked && !roots.has(path.resolve(file))) sources.delete(file);
      }
      const failOnTypeError = false !== compilerOptions.noEmitOnError;
 -    const declaration = true === compilerOptions.declaration;
 +    const separateTypecheck = process.env.ONTOS_CI_TYPECHECK_SEPARATE === '1';
-+    const declaration = !separateTypecheck && true === compilerOptions.declaration;
++    const skipServerTypecheck = separateTypecheck || process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK === '1';
++    const declaration = !skipServerTypecheck && true === compilerOptions.declaration;
      const formats = {
          '.js': 'module' === moduleType ? 'esm' : 'cjs',
          '.mjs': 'esm',
-@@ -146,6 +170,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -146,6 +171,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
          return libs;
      };
      const alias = resolveAlias(appDirectory, config.alias);
@@ -196,7 +198,7 @@ index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e6
      const assets = new Set();
      const build = async ()=>{
          if (0 === sources.size) return;
-@@ -155,13 +180,12 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -155,13 +181,12 @@ const compileServerSources = async (appDirectory, config, options)=>{
          const nodeRange = 'string' == typeof nodeEngine ? semver.validRange(nodeEngine) : null;
          const nodeVersion = nodeRange ? semver.minVersion(nodeRange) : null;
          const nodeTarget = nodeVersion?.major ? `node${nodeVersion.major}.${nodeVersion.minor}` : void 0;
@@ -212,7 +214,7 @@ index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e6
                      source: {
                          tsconfigPath: resolvedConfigPath,
                          ...compilerOptions.experimentalDecorators ? {
-@@ -179,12 +203,15 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -179,12 +204,15 @@ const compileServerSources = async (appDirectory, config, options)=>{
                              root: distDir
                          },
                          cleanDistPath: false,
@@ -230,7 +232,7 @@ index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e6
                      },
                      tools: {
                          rspack: (rspackConfig)=>{
-@@ -207,13 +234,11 @@ const compileServerSources = async (appDirectory, config, options)=>{
+@@ -207,13 +235,11 @@ const compileServerSources = async (appDirectory, config, options)=>{
                  }
              });
              await rslib.build();
@@ -242,7 +244,7 @@ index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e6
      };
      const typeCheck = async ()=>{
 -        if (0 === roots.size) return;
-+        if (separateTypecheck || 0 === roots.size) return;
++        if (skipServerTypecheck || 0 === roots.size) return;
          const result = await runTsgo(tsgoBinPath, [
              '-p',
              resolvedConfigPath,

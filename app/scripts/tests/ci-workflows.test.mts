@@ -3012,6 +3012,11 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   const run = step?.run ?? 'exit 1';
   // The hook sees the selected files, and a file it fixes fails the gate.
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
+  // Effect's tsgolint emits no Effect language-service diagnostics: a sweep gets them from `pnpm lint`, which
+  // chains them, and a changed-file run must run them itself.
+  expect(readRootScripts().scripts.lint?.endsWith(' && pnpm lint:effect-diagnostics')).toBe(true);
+  const changedFileRun = run.slice(run.indexOf('\nelse\n', run.indexOf('if [[ "$LINT_SWEEP" == all ]]')));
+  expect(changedFileRun).toContain('mise exec --cd app -- pnpm lint:effect-diagnostics');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
   const select = run.slice(0, run.indexOf('if [[ "$LINT_SWEEP" == all ]]; then\n  # Directory arguments'));
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
