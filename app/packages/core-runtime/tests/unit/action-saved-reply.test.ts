@@ -1,6 +1,8 @@
 import type { AnyActionRegistration } from '../../src/actions/definition.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
-import { DateTime, Deferred, Effect, Fiber, Predicate, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Match, Predicate, Schema } from 'effect';
+import { ActionTransactionError } from '../../src/actions/errors.ts';
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { expect, it } from 'effect-rstest';
 
 import { commitActionThenReject } from '../../src/actions/context.ts';
@@ -11,7 +13,10 @@ import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoin
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeActionTestHarness } from '../../src/testing/actions.ts';
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '../../src/testing/module-contract.ts';
 import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = {
@@ -46,16 +51,19 @@ const counterAction = (
   probe: CounterProbe,
   options: {
     readonly beforeReply?: (run: number) => Effect.Effect<void>;
+    /** The owning module; a composition fixture names its modules `<app>.module`. */
+    readonly moduleKey?: string;
     /** `protected` puts the Action behind the access gate instead of the action-execution permission. */
     readonly protectedAccess?: boolean;
     readonly reject?: boolean;
   } = {},
-) =>
-  defineAction(
+) => {
+  const moduleKey = options.moduleKey ?? 'test.saved-reply';
+  return defineAction(
     {
-      accessDeclaration: fixtureActionAccess('test.saved-reply'),
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.saved-reply.read.v1' },
-      actionKey: 'test.saved-reply.increment',
+      accessDeclaration: fixtureActionAccess(moduleKey),
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${moduleKey}.read.v1` },
+      actionKey: `${moduleKey}.increment`,
       auditProfile: 'standard',
       domainErrorSchema: CounterRejected,
       domainEvents: { 'test.saved-reply.incremented.v1': Schema.Struct({ amount: Schema.Finite }) },
@@ -65,13 +73,13 @@ const counterAction = (
           options.protectedAccess === true
             ? { kind: 'protected' }
             : { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-        entrypointKey: 'test.saved-reply.increment',
-        moduleKey: 'test.saved-reply',
+        entrypointKey: `${moduleKey}.increment`,
+        moduleKey,
         role: 'action',
       }),
       idempotency: 'required',
       legalEntityScope: 'optional',
-      owningModuleKey: 'test.saved-reply',
+      owningModuleKey: moduleKey,
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [
         defineGlobalPolicy({
@@ -92,14 +100,14 @@ const counterAction = (
       const event = yield* context.addDomainEvent({
         eventType: 'test.saved-reply.incremented.v1',
         payloadJson: { amount: payload.amount },
-        producerModuleKey: 'test.saved-reply',
-        subjectModuleKey: 'test.saved-reply',
+        producerModuleKey: moduleKey,
+        subjectModuleKey: moduleKey,
         subjectResourceId: 'primary',
         subjectResourceType: 'counter',
       });
       yield* context.addOutboxMessage(event, {
         payloadJson: { amount: payload.amount },
-        producerModuleKey: 'test.saved-reply',
+        producerModuleKey: moduleKey,
         topic: 'test.saved-reply.incremented.v1',
       });
       if (options.reject === true) {
@@ -108,6 +116,7 @@ const counterAction = (
       return { at: DateTime.makeUnsafe(Date.UTC(2026, 10, 18, 12, run)), run, total: payload.amount };
     }),
   );
+};
 
 const fixtureOwner = (action: AnyActionRegistration) => {
   const moduleId = action.descriptor.owningModuleKey;
@@ -127,7 +136,11 @@ const request = <Registration>(
   options: {
     readonly amount?: number;
     readonly idempotencyKey?: string;
-    readonly who?: typeof otherPrincipal | typeof otherTenantPrincipal | typeof principal;
+    readonly who?: Omit<typeof principal, 'authBindingId' | 'principalId' | 'tenantId'> & {
+      readonly authBindingId: string;
+      readonly principalId: string;
+      readonly tenantId: string;
+    };
   } = {},
 ) => ({
   payload: { amount: options.amount ?? 2 },
@@ -325,9 +338,213 @@ it.effect('answers the saved reply to a retry that waited while the first attemp
 
     expect(replayed).toEqual(original);
     expect(probe.handlerRuns).toBe(1);
+    // Policies run before the invocation lock, so the request that waited evaluated them too; only the
+    // winning transaction wrote anything.
+    expect(probe.policyRuns).toBe(2);
     expect(snapshot.committed).toHaveLength(1);
     expect(snapshot.invocations).toHaveLength(1);
     expect(snapshot.transactionCount).toBe(2);
     expect(snapshot.stages.filter((stage) => stage === 'handler_executed')).toHaveLength(1);
+  }),
+);
+
+/** A gate the test switches between allowing and denying, counting every decision it makes. */
+const switchableGate = () => {
+  const allowed = makeScriptedBoundAccessGate('allowed').bound;
+  const denied = makeScriptedBoundAccessGate('denied').bound;
+  const state = { allow: true, decisions: 0 };
+  const gate: BoundAccessGate = {
+    ...allowed,
+    decide: (gateInput, transaction) =>
+      Effect.suspend(() => {
+        state.decisions += 1;
+        return (state.allow ? allowed : denied).decide(gateInput, transaction);
+      }),
+  };
+  return { gate, state };
+};
+
+it.effect('refuses the saved reply when the grant is withdrawn while the retry waits on the invocation lock', () =>
+  Effect.gen(function* withdrawnWhileWaiting() {
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const firstEntered = Deferred.makeUnsafe<null>();
+    const releaseFirst = Deferred.makeUnsafe<null>();
+    const action = counterAction(probe, {
+      beforeReply: (run) =>
+        run === 1
+          ? Deferred.succeed(firstEntered, null).pipe(Effect.andThen(Deferred.await(releaseFirst)))
+          : Effect.void,
+      protectedAccess: true,
+    });
+    const { gate, state } = switchableGate();
+    const harness = yield* makeActionTestHarness({
+      accessDecision: gate,
+      actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(action),
+    });
+    const runningStages = () => harness.snapshot().stages.filter((stage) => stage === 'invocation_running').length;
+
+    const first = yield* harness.runtime.runAction(request(action)).pipe(Effect.forkChild);
+    yield* Deferred.await(firstEntered);
+    const retry = yield* harness.runtime.runAction(request(action)).pipe(Effect.forkChild);
+    for (let turn = 0; turn < 1000 && runningStages() < 2; turn += 1) {
+      yield* Effect.yieldNow;
+    }
+    // The retry was allowed before it waited; the grant goes away while it waits on the lock.
+    expect(runningStages()).toBe(2);
+    state.allow = false;
+    yield* Deferred.succeed(releaseFirst, null);
+
+    const original = yield* Fiber.join(first);
+    const refused = yield* Fiber.join(retry).pipe(Effect.flip);
+
+    expect(original.run).toBe(1);
+    expect(Predicate.isTagged(refused, 'ActionAlreadyCommitted')).toBe(true);
+    expect(refused).toMatchObject({ invocationId: harness.snapshot().invocations[0]?.actionInvocationId });
+    expect(probe.handlerRuns).toBe(1);
+    expect(harness.snapshot().committed).toHaveLength(1);
+
+    // With the grant back, the same retry answers the saved reply.
+    state.allow = true;
+    expect(yield* harness.runtime.runAction(request(action))).toEqual(original);
+  }),
+);
+
+it.effect('refuses the saved reply to a request admitted under a stale composition revision', () =>
+  Effect.gen(function* staleCompositionReplay() {
+    const appId = 'test-replay';
+    const buildMarker = 'test-replay-build';
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = counterAction(probe, { moduleKey: 'test.replay.module' });
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture([appId], buildMarker);
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      applicationComposition: { load: Effect.succeed(snapshot) },
+      expectedDeployment: { appId, buildMarker },
+      ownerRegistration: fixtureOwner(action),
+    });
+
+    const original = yield* harness.runtime.runAction(request(action));
+    const stale = yield* harness.runtime
+      .runAction(request(action, { who: trustVerifiedGatewayPrincipalContext({ ...principal }, 'b'.repeat(64)) }))
+      .pipe(Effect.flip);
+    const current = yield* harness.runtime.runAction(
+      request(action, { who: trustVerifiedGatewayPrincipalContext({ ...principal }, snapshot.composition.revision) }),
+    );
+
+    // The stale request gets what a first attempt under that revision gets; the current one the reply.
+    expect(Schema.is(ActionTransactionError)(stale)).toBe(true);
+    expect(current).toEqual(original);
+    expect(probe).toEqual({ handlerRuns: 1, policyRuns: 1 });
+    expect(harness.snapshot().committed).toHaveLength(1);
+  }),
+);
+
+it.effect('keeps a refused replay refused whatever the post-attempt hook answers', () =>
+  Effect.gen(function* refusedReplayIsTerminal() {
+    for (const recovery of ['recovered', 'hook-fails'] as const) {
+      const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+      const outcomes: string[] = [];
+      // What the owner hook answers when it sees the replay: a recovered value, or a failure.
+      const onReplay =
+        recovery === 'recovered'
+          ? Effect.succeed({ _tag: 'Recovered' as const, result: { at: DateTime.makeUnsafe(0), run: 99, total: 99 } })
+          : Effect.fail(new CounterRejected({ reason: 'hook' }));
+      const action = defineAction(
+        counterAction(probe, { protectedAccess: true }).descriptor,
+        (payload) =>
+          Effect.sync(() => {
+            probe.handlerRuns += 1;
+            return { at: DateTime.makeUnsafe(0), run: probe.handlerRuns, total: payload.amount };
+          }),
+        () => Effect.succeed({}),
+        undefined,
+        (context) => {
+          outcomes.push(context.outcome._tag);
+          return Match.value(context.outcome).pipe(
+            Match.tag('AlreadyCommitted', () => onReplay),
+            Match.orElse(() => Effect.succeed({ _tag: 'Settled' as const })),
+          );
+        },
+      );
+      const { gate, state } = switchableGate();
+      const harness = yield* makeActionTestHarness({
+        accessDecision: gate,
+        actionPermission: 'allowed',
+        ownerRegistration: fixtureOwner(action),
+      });
+
+      const original = yield* harness.runtime.runAction(request(action));
+      state.allow = false;
+      const refused = yield* harness.runtime.runAction(request(action)).pipe(Effect.flip);
+      state.allow = true;
+      const replayed = yield* harness.runtime.runAction(request(action)).pipe(Effect.exit);
+
+      expect(Predicate.isTagged(refused, 'ActionAlreadyCommitted')).toBe(true);
+      expect(outcomes).toEqual(['Committed', 'AlreadyCommitted', 'AlreadyCommitted']);
+      // An allowed replay answers the saved reply after a recovering hook; a failing hook still fails it.
+      if (recovery === 'recovered') {
+        expect(replayed).toEqual(Exit.succeed(original));
+      } else {
+        expect(Exit.isFailure(replayed)).toBe(true);
+      }
+      expect(probe.handlerRuns).toBe(1);
+    }
+  }),
+);
+
+it.effect('answers a saved reply inside the recovery window and withholds it after', () =>
+  Effect.gen(function* recoveryWindow() {
+    const day = 24 * 60 * 60 * 1000;
+    const committedAt = Date.UTC(2026, 10, 1, 12, 0);
+    let now = committedAt;
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = counterAction(probe);
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      databaseTime: () => DateTime.toDateUtc(DateTime.makeUnsafe(now)),
+      ownerRegistration: fixtureOwner(action),
+    });
+
+    const inside = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'inside-window' }));
+    const outside = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'outside-window' }));
+    now = committedAt + 7 * day - 60_000;
+    const insideRetry = yield* harness.runtime.runAction(request(action, { idempotencyKey: 'inside-window' }));
+    now = committedAt + 7 * day + 60_000;
+    const outsideRetry = yield* harness.runtime
+      .runAction(request(action, { idempotencyKey: 'outside-window' }))
+      .pipe(Effect.flip);
+
+    expect(insideRetry).toEqual(inside);
+    expect(outside.run).toBe(2);
+    expect(Predicate.isTagged(outsideRetry, 'ActionAlreadyCommitted')).toBe(true);
+    expect(probe.handlerRuns).toBe(2);
+    expect(harness.snapshot().committed).toHaveLength(2);
+  }),
+);
+
+it.effect('saves no reply for an invocation without an idempotency key', () =>
+  Effect.gen(function* keylessInvocation() {
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = defineAction({ ...counterAction(probe).descriptor, idempotency: 'optional' }, (payload) =>
+      Effect.sync(() => {
+        probe.handlerRuns += 1;
+        return { at: DateTime.makeUnsafe(0), run: probe.handlerRuns, total: payload.amount };
+      }),
+    );
+    const harness = yield* harnessFor(action);
+
+    const result = yield* harness.runtime.runAction({
+      payload: { amount: 2 },
+      principal,
+      registration: action,
+      transport: { correlationId: 'saved-reply-keyless' },
+    });
+    const snapshot = harness.snapshot();
+
+    expect(result.run).toBe(1);
+    expect(snapshot.committed).toHaveLength(1);
+    expect(snapshot.committed[0]?.committedReply).toBeNull();
+    expect(snapshot.invocations[0]?.idempotencyKey).toBeUndefined();
   }),
 );
