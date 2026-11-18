@@ -19,7 +19,7 @@
 import { DateTime, Match, Option, Schema } from 'effect';
 import type { Effect } from 'effect';
 
-import { ActionInvocationIdSchema, TenantIdSchema } from '../auth/external-identity-contracts.ts';
+import { ActionInvocationIdSchema } from '../auth/external-identity-contracts.ts';
 import { AccessKeySyntaxSchema } from '../authorization/access-key-syntax.ts';
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -108,18 +108,24 @@ export const moduleOperation = <
 /* ------------------------------------------------------------------------------------------------ */
 
 /**
- * The caller identities a manifest requirement permits for its call (`requirements.operations[].callers`).
- * Core selects exactly the one that matches the execution identity and fails closed when that one is
- * not listed; it never substitutes another.
+ * The caller identities a manifest requirement on a vertical's operation permits for its call
+ * (`requirements.operations[].callers`). Core selects exactly the one that matches the execution
+ * identity and fails closed when that one is not listed; it never substitutes another. A requirement
+ * on a Core operation (`provider.moduleId` starting with `core.`) declares no callers: Core runs it
+ * in-process with the execution's own principal and the Core operation's own gate decides.
  *
- * - `person`: the execution's own principal, relayed. Over HTTP this is the gateway `Assertion`; for a
- *   Core operation it is the same principal in-process. The receiver sees the person through the
- *   calling module.
- * - `registered`: the calling module acting for the identified person under its registered declaration
- *   (gateway `RegisteredAssertion`). Required when the execution is a workload or recovery request;
- *   for recovery Core adds the canonical hash of the decoded call input.
+ * - `person`: the execution's own principal, relayed (gateway `Assertion`). The receiver sees the
+ *   person through the calling module.
+ * - `registered`: the calling module acting for the identified principal under its registered
+ *   declaration (gateway `RegisteredAssertion`). The one kind for a request whose principal is a
+ *   verified workload, a recovery or a Core system principal; for recovery Core adds the canonical
+ *   hash of the decoded call input. `pinPrincipal` sends `expectedPrincipalId` (the execution's
+ *   principal), as the privacy module does today. It must match an entry of the module's
+ *   `registeredWorkloadCalls` with the same `declarationKey` and the provider's `entrypointKey`, so the
+ *   two declarations cannot drift.
  * - `workload`: the calling module as a registered workload (gateway `RegisteredWorkload`), for a
- *   worker delivery. Reserved until workers run on this kernel.
+ *   worker delivery. Reserved until workers run on this kernel; matched against
+ *   `registeredWorkloadCalls` the same way.
  *
  * `legalEntityScope` is the scope the delegated credential carries: the subject's selected Legal
  * Entity, or the tenant only.
@@ -133,6 +139,7 @@ export const RequirementCallerSchema = Schema.Union([
     declarationKey: CallerDeclarationKeySchema,
     kind: Schema.Literal('registered'),
     legalEntityScope: CallerLegalEntityScopeSchema,
+    pinPrincipal: Schema.Boolean,
   }),
   Schema.Struct({
     declarationKey: CallerDeclarationKeySchema,
@@ -147,10 +154,13 @@ export type RequirementCaller = typeof RequirementCallerSchema.Type;
  * module's own manifest that covers it. Declared as data on the operation's descriptor (`calls`), so
  * Core and the gate see every call an operation can make without running it.
  */
-export interface DeclaredCall<Ref extends AnyOperationRef> {
+export interface DeclaredCall<Ref extends AnyOperationRef, Recovery extends string = string> {
   readonly operation: Ref;
-  /** A write call names the read that recovers an indeterminate outcome. Absent for a read. */
-  readonly recovery?: AnyReadOperationRef;
+  /**
+   * A write call names, by its name in the same `calls` object, the declared read call that recovers an
+   * indeterminate outcome with the same idempotency key. Absent for a read call.
+   */
+  readonly recovery?: Recovery;
   readonly requirementKey: string;
 }
 
@@ -161,17 +171,34 @@ export type DeclaredCalls = Readonly<Record<string, AnyDeclaredCall>>;
 export const declaredCall = <Ref extends AnyReadOperationRef>(
   operation: Ref,
   requirementKey: string,
-): DeclaredCall<Ref> => Object.freeze({ operation, requirementKey });
+): DeclaredCall<Ref, never> => Object.freeze({ operation, requirementKey });
 
 /**
- * Declares a write call: covered by `requirementKey`, recovered by `recovery` when its outcome is
- * indeterminate. Reserved for Actions and workers; a read refuses it at definition.
+ * Declares a write call: covered by `requirementKey`, recovered by the read call named `recovery` in the
+ * same `calls` object when its outcome is indeterminate (`RecoveriesDeclared` checks the name). Reserved
+ * for Actions and workers: a read refuses it at definition, and the kernel dies `write_call_reserved`
+ * until the Action adapter exists.
  */
-export const declaredWriteCall = <Ref extends AnyWriteOperationRef>(
+export const declaredWriteCall = <Ref extends AnyWriteOperationRef, const Recovery extends string>(
   operation: Ref,
   requirementKey: string,
-  recovery: AnyReadOperationRef,
-): DeclaredCall<Ref> => Object.freeze({ operation, recovery, requirementKey });
+  recovery: Recovery,
+): DeclaredCall<Ref, Recovery> & { readonly recovery: Recovery } =>
+  Object.freeze({ operation, recovery, requirementKey });
+
+/**
+ * `Calls` itself when every write call's `recovery` names a read call of the same object, else `never`.
+ * The Action and worker authoring forms will constrain their `calls` with it; a type test asserts it.
+ */
+export type RecoveriesDeclared<Calls extends DeclaredCalls> = {
+  readonly [Name in keyof Calls]: Calls[Name] extends { readonly recovery: infer Recovery }
+    ? Recovery extends keyof Calls
+      ? Calls[Recovery]['operation']['kind'] extends 'read'
+        ? Calls[Name]
+        : never
+      : never
+    : Calls[Name];
+};
 
 /* ------------------------------------------------------------------------------------------------ */
 /* Typed outcomes                                                                                   */
@@ -182,8 +209,9 @@ export const declaredWriteCall = <Ref extends AnyWriteOperationRef>(
  *
  * - `Ok`: the provider's success answer, decoded by its own response schema.
  * - `NotFound`: the provider answered 404.
- * - `Forbidden`: the provider refused this caller (401, 403), or the requirement does not permit the
- *   caller identity this execution has.
+ * - `Forbidden`: the provider refused this caller (401, 403), the requirement does not permit the
+ *   caller identity this execution has, or the owner rule already denied this execution (then the call
+ *   never leaves the process).
  * - `Rejected`: the provider refused the request by its own rule (409, 422); `code` is its problem code.
  * - `Unavailable`: anything else: no route, no credential, composition revision mismatch, budget
  *   exhausted, transport failure, an undecodable answer, 5xx. `retryable` is true exactly for 503 and
@@ -264,10 +292,13 @@ export const callAnswer = <Output>(outcome: CallOutcome<Output>): Option.Option<
  * itself is on the kind's context (`context.scope`), as today.
  *
  * - `Request`: a read (and later an Action) served for a request principal. `via` is the verified
- *   provenance of that principal: a person, a registered workload acting for one, a recovery request,
- *   or a Core system principal.
+ *   provenance of that principal, computed by Core from the decoded trusted principal in this order:
+ *   `recovery` when `readVerifiedGatewayRecovery(principal)` is defined, `workload` when
+ *   `readVerifiedGatewayWorkload(principal)` is defined, `system` when `authMethod === 'system'`,
+ *   otherwise `person`.
  * - `ActionInvocation`: reserved for Actions: the admitted invocation.
- * - `WorkerDelivery`: reserved for workers: the attested claim of one outbox delivery.
+ * - `WorkerDelivery`: reserved for workers: the attested claim of one outbox delivery. Tenant, Legal
+ *   Entity and composition revision are not repeated here: they are the scope and the facts.
  */
 export const RequestExecutionSchema = Schema.TaggedStruct('Request', {
   via: Schema.Literals(['person', 'recovery', 'system', 'workload']),
@@ -284,10 +315,7 @@ export const ActionInvocationExecutionSchema = Schema.TaggedStruct('ActionInvoca
 export const WorkerDeliveryExecutionSchema = Schema.TaggedStruct('WorkerDelivery', {
   attempt: Schema.Finite.check(Schema.isInt()),
   claimId: Schema.String.pipe(Schema.brand('OutboxClaimId')),
-  compositionRevision: Schema.NonEmptyString,
   deliveryId: Schema.String.pipe(Schema.brand('OutboxDeliveryId')),
-  legalEntityId: Schema.optionalKey(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'))),
-  tenantId: TenantIdSchema,
   workerKey: ExecutionOperationKeySchema,
 });
 export const ExecutionIdentitySchema = Schema.Union([
@@ -334,7 +362,14 @@ export type CallCapability<Calls extends DeclaredCalls> = <Name extends keyof Ca
 
 /** Facts Core establishes at the start of one owner transaction. */
 export interface TransactionFacts {
-  /** PostgreSQL `transaction_timestamp()`: the trusted "now" of this transaction. */
+  /**
+   * The trusted "now" of this transaction: PostgreSQL `statement_timestamp()` of one statement Core
+   * issues after the fence wait and the scope install, before the owner rule and the module function.
+   * It is never earlier than the fence wait, and every statement the module runs afterwards reads a
+   * READ COMMITTED snapshot taken at or after it. A verdict computed against it is a statement about
+   * that instant: Core releases it as computed, so an answer that must still hold later carries its
+   * own limit (as the Market proof carries `nextApplicabilityBoundary`) for the consumer to check.
+   */
   readonly operationAt: DateTime.Utc;
   /** 1 for the first transaction of the execution, then 2, 3, ... */
   readonly sequence: number;
@@ -343,11 +378,14 @@ export interface TransactionFacts {
 /**
  * Why Core ended a transaction without running, or without committing, the module function.
  *
- * - `owner_denied`: the owner rule denied this execution. Core answers the operation as denied.
- * - `owner_unavailable`, `composition_changed`, `database_unavailable`: retryable unavailability.
+ * - `owner_denied`: the owner rule denied this execution. The denial is sticky: Core records it in the
+ *   execution, answers the operation as denied whatever the module does with this failure, fails every
+ *   later `transaction` with it again, and answers every later `call` `Forbidden` without leaving the
+ *   process. Catching it changes nothing.
+ * - `owner_unavailable`: the owner rule could not answer; for a read, Core answers permission
+ *   unavailable.
+ * - `composition_changed`, `database_unavailable`: retryable unavailability.
  * - `budget_exhausted`: the execution opened more transactions than its budget allows.
- *
- * A module lets it pass: it is in the error channel only so the module's own type stays honest.
  */
 export class TransactionAborted extends Schema.TaggedError<TransactionAborted>()('TransactionAborted', {
   reason: Schema.Literals([
@@ -385,6 +423,3 @@ export interface ExecutionCapabilities<Services, Calls extends DeclaredCalls> {
  */
 export const isUnexpired = (now: DateTime.Utc, notAfter: DateTime.Utc | undefined): boolean =>
   notAfter === undefined || DateTime.toEpochMillis(now) < DateTime.toEpochMillis(notAfter);
-
-export { coreOperations } from './core-operations.ts';
-export type { CoreOperations } from './core-operations.ts';

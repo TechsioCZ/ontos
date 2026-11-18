@@ -27,10 +27,10 @@ import type { ReadServiceFactory } from '../../src/reads/definition.ts';
 import { ReadHandlerNotFound } from '../../src/reads/read-handler-not-found.ts';
 import { ReadHandlerUnavailable } from '../../src/reads/read-handler-unavailable.ts';
 import { ReadPermissionDenied } from '../../src/reads/read-permission-denied.ts';
+import { coreOperations } from '../../src/sdk/core-operations.ts';
 import {
   IdempotencyKeySchema,
   callAnswer,
-  coreOperations,
   declaredCall,
   declaredWriteCall,
   isUnexpired,
@@ -41,6 +41,7 @@ import type {
   DeclaredCalls,
   ExecutionCapabilities,
   OperationOutput,
+  RecoveriesDeclared,
   TransactionAborted,
   WriteCallOutcome,
 } from '../../src/sdk/index.ts';
@@ -769,9 +770,23 @@ const retirementCalls = {
   reserve: declaredWriteCall(
     reserveRetirementOperation,
     'commerce.market-catalog.requirement.retirement-reserve',
-    recoverReservationOperation,
+    'recover',
   ),
 } as const satisfies DeclaredCalls;
+
+/* The write call's recovery names a declared read call of the same object; a wrong name is `never`. */
+export const retirementCallsChecked: RecoveriesDeclared<typeof retirementCalls> = retirementCalls;
+const misnamedRecoveryCalls = {
+  reserve: declaredWriteCall(
+    reserveRetirementOperation,
+    'commerce.market-catalog.requirement.retirement-reserve',
+    'nope',
+  ),
+} as const;
+/** `nope` is not a declared call, so the checked type of `reserve` is `never`. */
+export const misnamedRecoveryRefused: RecoveriesDeclared<typeof misnamedRecoveryCalls>['reserve'] extends never
+  ? true
+  : false = true;
 
 type Market = typeof ProofIdSchema.Type;
 interface RetirementServices {
