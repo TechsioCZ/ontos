@@ -20,6 +20,7 @@ import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-ru
 import { NodeHttpServer } from '@effect/platform-node';
 import {
   Array as EffectArray,
+  Clock,
   Config,
   Duration,
   Effect,
@@ -344,6 +345,7 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
     | '/commerce-market-catalog-api'
     | '/storefront-registry-api';
 }) {
+  const started = yield* Clock.monotonicTimeNanos;
   // These owner fixtures use native business routes against a clone without a Portal Auth realm.
   const portalEnvironmentKeys = [
     'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL',
@@ -410,6 +412,11 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
   ) {
     return yield* unavailable('The compiled owner receiver differs from its published deployment contract');
   }
+  yield* Effect.logInfo({
+    appId: input.contract.deployment.appId,
+    event: 'native-product-owner-ready',
+    startupSeconds: Number((yield* Clock.monotonicTimeNanos) - started) / 1e9,
+  });
   return { child, diagnostic: Ref.get(diagnostic), origin: `http://127.0.0.1:${ready.port}`, output };
 });
 

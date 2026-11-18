@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
+import { stderr } from 'node:process';
 
 import { NodeServices } from '@effect/platform-node';
 import { expect, test as base } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { ConsoleMessage, Page } from '@playwright/test';
 import { Config, Effect, Predicate, Schema } from 'effect';
 
 import { decodeActiveApplicationCompositionSnapshot } from '../../../../scripts/active-application-composition.mts';
@@ -102,6 +103,16 @@ const login = async (page: Page, language: 'cs' | 'en', credentials: Authenticat
 // timeouts stay enabled. Foreign operations retain their real server deadlines.
 const workerFixtureAcquisitionTimeout = '25 seconds';
 
+// One shared listener for both browser failure channels; Playwright retains stderr per test.
+const reportBrowserError = (event: ConsoleMessage | Error) => {
+  if (Predicate.isError(event)) {
+    stderr.write(`[browser pageerror] ${event.stack ?? event.message}\n`);
+  } else if (event.type() === 'error' || event.text().includes('Remote module entrypoint failed')) {
+    // Effect's default logger uses console.log even for ERROR-level records.
+    stderr.write(`[browser console.${event.type()}] ${event.text()}\n`);
+  }
+};
+
 const test = base.extend<Record<never, never>, { authentication: AuthenticationFixture }>({
   authentication: [
     async ({ browserName: _browserName }, use) => {
@@ -114,6 +125,16 @@ const test = base.extend<Record<never, never>, { authentication: AuthenticationF
     },
     { scope: 'worker', timeout: 0 },
   ],
+  page: async ({ page }, runTest) => {
+    page.on('console', reportBrowserError);
+    page.on('pageerror', reportBrowserError);
+    try {
+      await runTest(page);
+    } finally {
+      page.off('console', reportBrowserError);
+      page.off('pageerror', reportBrowserError);
+    }
+  },
 });
 
 test('renders the exact anonymous English and Czech home states', async ({ page }) => {

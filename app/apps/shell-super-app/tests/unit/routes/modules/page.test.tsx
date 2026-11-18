@@ -357,6 +357,7 @@ it.live('maps an unreachable approved remote to its safe local diagnostic', () =
 
 it.live('contains a remote render exception while the Shell framing and healthy exposed page remain mounted', () =>
   Effect.gen(function* containsOnlyTheFailedRemoteTree() {
+    const diagnostics = rstest.spyOn(console, 'log');
     const healthyModel: ResolvedPageModel = {
       ...resolvedModel,
       routeParams: { id: 'healthy-owner' },
@@ -380,6 +381,11 @@ it.live('contains a remote render exception while the Shell framing and healthy 
     expect(shellSidebars()).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'shell.moduleTarget.reload_page' }).getAttribute('type')).toBe('button');
     expect(document.body.textContent).not.toContain('1296_PRIVATE_RENDER_SENTINEL');
+    const output = JSON.stringify(diagnostics.mock.calls);
+    expect(output).toContain('Remote module entrypoint failed');
+    expect(output).toContain('contacts.core');
+    expect(output).toContain('1296_PRIVATE_RENDER_SENTINEL');
+    expect(output).toContain('render');
   }),
 );
 

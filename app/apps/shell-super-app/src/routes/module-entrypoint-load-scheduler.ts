@@ -1,6 +1,8 @@
 import type { InstalledDeploymentFailureReason } from '@app/core-runtime';
 import { Cause, Clock, Deferred, Duration, Effect, Schema } from 'effect';
 
+import { reportModuleEntrypointFailure } from '../module-diagnostics.ts';
+
 type SettledModuleEntrypointLoad<Value> =
   | {
       readonly reason: InstalledDeploymentFailureReason;
@@ -71,6 +73,7 @@ interface PendingModuleCaller<Identity, Value> {
 const validateCallerResult = <Value>(
   raw: RawModuleLoadResult,
   contract: Schema.Decoder<Value>,
+  loadIdentity: ModuleEntrypointLoadIdentity,
 ): Effect.Effect<SettledModuleEntrypointLoad<Value>> => {
   if (raw.state === 'unavailable') {
     return Effect.succeed(raw);
@@ -82,6 +85,7 @@ const validateCallerResult = <Value>(
   }).pipe(
     Effect.flatMap(Effect.fromResult),
     Effect.map((value): SettledModuleEntrypointLoad<Value> => ({ state: 'ready', value })),
+    Effect.tapError((failure) => reportModuleEntrypointFailure(loadIdentity.owner, 'contract', failure)),
     Effect.catchTags({
       SchemaError: () => Effect.succeed(incompatibleResult),
       UnknownError: () => Effect.succeed(incompatibleResult),
@@ -218,6 +222,7 @@ class BrowserModuleLoadScheduler {
         live
           ? Effect.suspend(job.load).pipe(
               Effect.map((value): RawModuleLoadResult => ({ state: 'ready', value })),
+              Effect.tapError((failure) => reportModuleEntrypointFailure(job.identity.owner, 'load', failure)),
               Effect.catchTags({
                 SchemaError: () => Effect.succeed(incompatibleResult),
                 UnknownError: () => Effect.succeed(unavailableResult),
@@ -270,7 +275,9 @@ class BrowserModuleLoadScheduler {
           Effect.flatMap((raw) =>
             Clock.currentTimeMillis.pipe(
               Effect.flatMap((settledAt) =>
-                settledAt >= deadline ? Effect.succeed(timeoutResult) : validateCallerResult(raw, request.contract),
+                settledAt >= deadline
+                  ? Effect.succeed(timeoutResult)
+                  : validateCallerResult(raw, request.contract, request.loadIdentity),
               ),
             ),
           ),
@@ -280,6 +287,15 @@ class BrowserModuleLoadScheduler {
           }),
         );
       }),
+      Effect.tap((result) =>
+        result.state === 'unavailable' && result.reason === 'timeout'
+          ? reportModuleEntrypointFailure(
+              request.loadIdentity.owner,
+              'timeout',
+              new Cause.TimeoutError('Remote module entrypoint load deadline elapsed'),
+            )
+          : Effect.void,
+      ),
       Effect.map((result) => ({ ...result, identity: request.identity })),
       Effect.ensuring(
         joined === undefined

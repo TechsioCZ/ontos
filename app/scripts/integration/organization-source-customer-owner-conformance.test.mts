@@ -1267,11 +1267,16 @@ it.live(
         const ico = yield* verifyOrganizationZeroLegacyIco(fixture, targets, known).pipe(
           Effect.tapCause(() => fixture.writeDiagnostics()),
         );
+        yield* Effect.logInfo({ phase: 'organization-ico-controls-accepted' });
         yield* verifyOrganizationBusinessNameUpdate(fixture, targets, known, ico).pipe(
           Effect.tapCause(() => fixture.writeDiagnostics()),
         );
+        yield* Effect.logInfo({ phase: 'organization-scenario-complete' });
         return yield* Effect.void;
       }),
-    ).pipe(Effect.provide(services)),
+    ).pipe(
+      Effect.tap(() => Effect.logInfo({ phase: 'organization-teardown-complete' })),
+      Effect.provide(services),
+    ),
   1_200_000,
 );

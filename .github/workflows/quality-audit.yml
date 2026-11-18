@@ -48,7 +48,8 @@ concurrency:
 jobs:
   quality-audit:
     name: Quality Audit Guardrails
-    runs-on: ubuntu-24.04
+    # The same image as the gates: the installed-workspace cache this job restores is keyed on the runner image.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Harden Runner
