@@ -5160,3 +5160,42 @@ it.effect('settles an owner transaction still in flight when finish returns befo
     expect(events.lastIndexOf('BEGIN')).toBeGreaterThan(rolledBack);
   }),
 );
+
+for (const deniedAt of ['load', 'finish'] as const) {
+  it.effect(
+    `writes no denial evidence under a revision that replaced the one an owner ${deniedAt} denial ran under`,
+    () =>
+      Effect.gen(function* deniedThenReplaced() {
+        const events: string[] = [];
+        const authority: StagedReadAuthority = {};
+        const denyAndReplace = () =>
+          Effect.sync(() => {
+            // Publication wins between the owner denial and its evidence write.
+            authority.replace?.();
+            return 'denied' as const;
+          });
+        const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events), {
+          authority,
+          ownerAuthorizationOverlay: decisionsInTurn(
+            deniedAt === 'load' ? [denyAndReplace] : [allowDecision, denyAndReplace],
+          ),
+          verified: true,
+        });
+        // The fence refuses the denial write: no evidence row under the replacement revision or any other.
+        expect(harness.evidence()).toBe(0);
+        expect(harness.evidenceParameterRows()).toEqual([]);
+        // No owner result reaches the caller, and the failed evidence write leads while the denial is kept.
+        expect(visibleOutcome(exit)).not.toContain('prepared-owner-value');
+        expect(stagedFailureTag(exit)).toBe('ReadHandlerUnavailable');
+        const failures = Exit.isFailure(exit)
+          ? exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)
+          : [];
+        expect(failures).toHaveLength(2);
+        expect(Schema.is(ReadHandlerUnavailable)(failures[0])).toBe(true);
+        expect(Schema.is(ReadPermissionDenied)(failures[1])).toBe(true);
+        expect(events.filter((event) => ['load', 'finish'].includes(event))).toEqual(
+          deniedAt === 'load' ? [] : ['load', 'finish'],
+        );
+      }),
+  );
+}
