@@ -81,6 +81,7 @@ export const workspaceClosure = (directory: string, packages: readonly Workspace
  * - every file below a directory or matching a glob a build scans: a Tailwind `@source` or `source(…)` (tests
  *   included, Tailwind reads them), and a directory a string literal in code names (a locale, migration or asset
  *   folder; tests and documentation excluded);
+ * - what the installed tools of the unit's `build` script read across the workspace (TOOL_READS);
  * - for a workspace package named by a bare specifier, its manifest and the targets of that subpath in its `exports`
  *   under every condition (packageEntries): the bundler, TypeScript, the deploy trace and Node all resolve the
  *   specifier through that map. The deploy trace also resolves the subpath the legacy way and carries what it finds
@@ -572,7 +573,47 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
 };
 export type UnitInputGraph = ReturnType<typeof unitInputGraph>;
 
-/** The scripts a unit's own `build` script runs, following `pnpm run` into its other scripts. */
+/** The topology apps' directories, or more: every workspace package directly below app/apps or app/verticals. */
+const appDirectories = (graph: UnitInputGraph) =>
+  graph.workspace.packages
+    .map((entry) => entry.directory)
+    .filter((directory) => /^app\/(?:apps|verticals)\/[^/]+$/u.test(directory));
+/**
+ * What an installed tool a unit's `build` script runs reads across the workspace, before or besides selecting the unit
+ * (read in node_modules/@bleedingdev/modern-js-ultramodern-create; topology, overlays and root manifests are root
+ * inputs already). Each read is followed through its imports.
+ */
+const TOOL_READS: readonly {
+  readonly command: RegExp;
+  readonly reads: (graph: UnitInputGraph) => readonly string[];
+}[] = [
+  {
+    // templates/workspace-scripts/generate-public-surface-assets.mjs imports and validates every topology app's
+    // route.meta.ts (tsImport, imports included) before it selects --app, and throws on a symbolic link or a missing
+    // src/routes; the first file below each app's src/routes witnesses that directory.
+    command: /\bultramodern-create\s+ultramodern\s+public-surface\b/u,
+    reads: (graph) => {
+      const symlinks = new Set(
+        graph.workspace.entries.filter((entry) => entry.identity.startsWith('120000 ')).map((entry) => entry.path),
+      );
+      return appDirectories(graph).flatMap((directory) => {
+        const routes = graph.under(`${directory}/src/routes`);
+        return [
+          ...routes.slice(0, 1),
+          ...routes.filter((file) => file.endsWith('/route.meta.ts') || symlinks.has(file)),
+        ];
+      });
+    },
+  },
+  {
+    // dist/esm-node/ultramodern-tooling/config (readUltramodernWorkspaceInputs) reads and checks every topology app's
+    // package.json before routes-generate selects --app.
+    command: /\bultramodern-create\s+ultramodern\s+routes-generate\b/u,
+    reads: (graph) => appDirectories(graph).map((directory) => `${directory}/package.json`),
+  },
+];
+
+/** The scripts a unit's own `build` script runs, following `pnpm run` into its other scripts, and its commands. */
 const buildScriptFiles = (directory: string, graph: UnitInputGraph) =>
   Effect.gen(function* readBuildScripts() {
     const text = graph.workspace.sources.get(`${directory}/package.json`);
@@ -593,10 +634,13 @@ const buildScriptFiles = (directory: string, graph: UnitInputGraph) =>
         }
       }
     }
-    return names
-      .flatMap((name) => matches(SCRIPT_TOKEN, scripts[name] ?? ''))
-      .map((token) => path.posix.normalize(path.posix.join(directory, token)))
-      .filter((candidate) => graph.tracked.has(candidate));
+    return {
+      commands: names.map((name) => scripts[name] ?? '').join('\n'),
+      files: names
+        .flatMap((name) => matches(SCRIPT_TOKEN, scripts[name] ?? ''))
+        .map((token) => path.posix.normalize(path.posix.join(directory, token)))
+        .filter((candidate) => graph.tracked.has(candidate)),
+    };
   });
 
 const exclusionReason = (filepath: string, directory: string, graph: UnitInputGraph) => {
@@ -679,9 +723,16 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
     for (const project of prebuilt.split(/\s+/u).filter((value) => value.length > 0)) {
       addPackage(`app/${project}`);
     }
-    runs.push(...(yield* buildScriptFiles(directory, graph)));
+    const build = yield* buildScriptFiles(directory, graph);
+    runs.push(...build.files);
     for (const script of runs) {
       add(script);
+    }
+    for (const tool of TOOL_READS.filter((entry) => entry.command.test(build.commands))) {
+      current = `(installed tool: ${tool.command.source})`;
+      for (const file of tool.reads(graph)) {
+        add(file);
+      }
     }
     const walksExports = runs.some((script) => EXPORT_WALKING_STEPS.has(script));
     for (const filepath of pending) {

@@ -312,6 +312,32 @@ it.effect('counts every file below a Tailwind @source directory, even one that h
   }),
 );
 
+it.effect('counts the route metadata of every app for a unit whose build generates its public surface', () =>
+  Effect.gen(function* publicSurface() {
+    const meta = `${OTHER}/src/routes/[lang]/route.meta.ts`;
+    const metaImport = `${OTHER}/src/routes/route-ids.ts`;
+    const page = `${OTHER}/src/routes/[lang]/page.tsx`;
+    const manifest = JSON.stringify({
+      name: '@app/crm',
+      scripts: { build: 'modern build && ultramodern-create ultramodern public-surface --app crm --target dist' },
+    });
+    const added = [
+      [`${CRM}/package.json`, manifest],
+      [meta, "import { id } from '../route-ids.ts';\nexport const routeMeta = { id };"],
+      [metaImport, "export const id = 'other';"],
+      [page, 'export const Page = () => null;'],
+    ] as const;
+    const baseline = yield* identity(graphOf([], added));
+    // The generator imports and validates every topology app's route metadata before it selects --app.
+    expect(yield* identity(graphOf([meta], added))).not.toBe(baseline);
+    expect(yield* identity(graphOf([metaImport], added))).not.toBe(baseline);
+    // A new app route metadata file counts; another route file's text does not.
+    const added2 = [...added, [`${OTHER}/src/routes/[lang]/about/route.meta.ts`, EMPTY_MODULE]] as const;
+    expect(yield* identity(graphOf([], added2))).not.toBe(baseline);
+    expect(yield* identity(graphOf([page], added))).toBe(baseline);
+  }),
+);
+
 it('reads a package as its manifest and every export target, or whole when its exports are not plain files', () => {
   const manifest = `${PARTY}/package.json`;
   const index = `${PARTY}/src/index.ts`;
