@@ -95,14 +95,18 @@ const execute = Effect.fn('AdmitSymmySyncActionServer.execute')(function* execut
     },
     (principal) => Ref.set(authenticated, Option.some(principal)),
   );
+  const replayedAdmission = yield* Ref.make<Option.Option<string>>(Option.none());
   const result = yield* runActionHttp({
     endpointHeaders,
     internalProblem: admitSymmySyncActionProblem.internal,
     invalidCorrelationProblem: admitSymmySyncActionProblem.invalid,
     mapError: mapAdmitSymmySyncActionProblem,
+    // The admission result is not a fixed reply: whether the original admission may still run (its route is
+    // active, its fence open, no retention receipt) and which owner calls already happened are read at
+    // answer time. A same-key resend of a committed admission, answered by Core's saved reply or by
+    // AlreadyCommitted, is therefore always reread through the private admission read.
+    onReplay: (replay) => Ref.set(replayedAdmission, Option.some(replay.invocationId)),
     payload: decoded,
-    // A same-key resend of a committed admission gets Core's saved result. AlreadyCommitted only answers an
-    // admission committed before Core saved replies; it is then reread through the private admission read.
     recoverAlreadyCommitted: (failure) => ({
       admissionId: failure.invocationId,
       recovery: 'already_committed' as const,
@@ -118,19 +122,27 @@ const execute = Effect.fn('AdmitSymmySyncActionServer.execute')(function* execut
     return yield* Effect.fail(operationUnavailable('verified_principal_unavailable'));
   }
   const runtime = yield* ReadRuntime;
+  const readCommittedAdmission = Effect.fn('AdmitSymmySyncActionServer.readCommittedAdmission')(
+    function* readCommittedAdmission(admissionId: string) {
+      const input = yield* Schema.decodeUnknownEffect(SymmySyncAdmissionRequestSchema)({ admissionId }).pipe(
+        Effect.mapError(operationUnavailable),
+      );
+      return yield* capturePrivateSymmySyncAdmission(
+        runtime.runRead({
+          input,
+          principal: principal.value,
+          registration: symmySyncAdmissionRead,
+          transport: { correlationId },
+        }),
+      ).pipe(Effect.mapError(operationUnavailable));
+    },
+  );
+  const replayed = yield* Ref.get(replayedAdmission);
   let admitted: typeof admitSymmySyncAction.descriptor.resultSchema.Type;
   if ('recovery' in result) {
-    const input = yield* Schema.decodeUnknownEffect(SymmySyncAdmissionRequestSchema)({
-      admissionId: result.admissionId,
-    }).pipe(Effect.mapError(operationUnavailable));
-    admitted = yield* capturePrivateSymmySyncAdmission(
-      runtime.runRead({
-        input,
-        principal: principal.value,
-        registration: symmySyncAdmissionRead,
-        transport: { correlationId },
-      }),
-    ).pipe(Effect.mapError(operationUnavailable));
+    admitted = yield* readCommittedAdmission(result.admissionId);
+  } else if (Option.isSome(replayed)) {
+    admitted = yield* readCommittedAdmission(replayed.value);
   } else {
     admitted = result;
   }
