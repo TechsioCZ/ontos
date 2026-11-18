@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -14,7 +15,7 @@ const WORKSPACE_FILE = 'pnpm-workspace.yaml';
 /** The only programs the listing step runs (sha256sum is in /sbin on macOS); a fixed PATH keeps the run hermetic. */
 const STEP_PATH = '/usr/bin:/bin:/sbin';
 const KEY_STEP = 'Name the installed workspace';
-const APP = new URL('../..', import.meta.url).pathname;
+const APP = fileURLToPath(new URL('../..', import.meta.url));
 const expression = (body: string) => `\${{ ${body} }}`;
 const DERIVED_PATHS = expression('steps.packages.outputs.paths');
 const DERIVED_MANIFESTS = expression('steps.packages.outputs.manifests');
