@@ -56,6 +56,7 @@
       "default": "./src/modules/active-application-composition-source.node.ts"
     },
     "./modules/manifest": "./src/modules/manifest.ts",
+    "./modules/mcp-contribution": "./src/modules/mcp-contribution.ts",
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
     "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",

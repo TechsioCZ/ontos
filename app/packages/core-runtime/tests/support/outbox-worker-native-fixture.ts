@@ -51,10 +51,14 @@ export const makeNativeOutboxWorkerFixture = (
     const workers = registrations.filter(
       ({ descriptor }) => descriptor.consumerModuleKey === contract.manifest.module.id,
     );
+    // The decoded contract's `mcp` is the generated tool catalog, not an authored
+    // `OntosMcpContributionInput` (the catalog has no `reads`). A synthetic Core-owned worker module
+    // contributes no MCP tools, so the authored surface names none.
+    const { mcp: _serializedMcp, ...serializedSurface } = contract.manifest.publicSurface;
     const manifest = defineOntosModuleManifest({
       ...contract.manifest,
       publicSurface: {
-        ...contract.manifest.publicSurface,
+        ...serializedSurface,
         actions: [],
         api: {},
         components: {},

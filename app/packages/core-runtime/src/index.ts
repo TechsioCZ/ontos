@@ -830,6 +830,35 @@ export type {
   RegisteredWorkloadCallReceiver,
 } from './modules/registered-workload-calls.ts';
 export {
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+  OntosMcpCommandActionsSchema,
+  OntosMcpContributionSchema,
+  OntosMcpHidden,
+  OntosMcpRevisionSchema,
+  OntosMcpTextSchema,
+  OntosMcpToolCatalogJsonSchema,
+  OntosMcpToolCatalogReferenceSchema,
+  OntosMcpToolCatalogSchema,
+  OntosMcpToolSchema,
+  commandActionSlugOf,
+  commandActionSlugsOf,
+  defineOntosMcpContribution,
+  isCommandUnionAction,
+  isNamedActionPayload,
+  isProposableModuleCommand,
+} from './modules/mcp-contribution.ts';
+export type {
+  OntosMcpCommandActions,
+  OntosMcpCommandInput,
+  OntosMcpContribution,
+  OntosMcpContributionInput,
+  OntosMcpRevision,
+  OntosMcpText,
+  OntosMcpTool,
+  OntosMcpToolTextInput,
+  OntosMcpWriteInput,
+} from './modules/mcp-contribution.ts';
+export {
   OntosShellContributionsSchema,
   ShellMediaAttachmentContributionSchema,
   ShellNavigationContributionSchema,

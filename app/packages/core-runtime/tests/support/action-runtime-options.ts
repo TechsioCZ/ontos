@@ -76,10 +76,14 @@ export const makeTestOperationOwner = ({
       ])[0],
     ),
   );
+  // `base` is a decoded deployment contract, so its `publicSurface` carries the serialized `mcp`
+  // contribution, which is not an authored `OntosMcpContributionInput`. These fixtures test Action
+  // mechanics, so the serialized contribution is dropped rather than re-authored.
+  const { mcp: _serializedMcp, ...baseSurface } = base.manifest.publicSurface;
   const authored = {
     ...base.manifest,
     publicSurface: {
-      ...base.manifest.publicSurface,
+      ...baseSurface,
       actions,
       api: {},
       components: {},
