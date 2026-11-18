@@ -47,6 +47,7 @@ import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
 import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
 // </generated-module-manifest-imports>
+import { pricingMcpContribution } from './shared/mcp/contribution.ts';
 import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
 import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
@@ -134,6 +135,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: pricingMcpContribution,
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       { apiKey: 'price-definition', operationKey: 'priceDefinition.execute', registration: priceDefinitionRead },

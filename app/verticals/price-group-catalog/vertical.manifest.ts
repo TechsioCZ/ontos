@@ -22,6 +22,7 @@ import { retirePriceGroupAction } from './src/actions/retire-price-group.action.
 import { ValidatePriceGroupCompatibilityApi } from './shared/apis/validate-price-group-compatibility.ts';
 import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-manifest-imports>
+import { priceGroupCatalogMcpContribution } from './shared/mcp/contribution.ts';
 import { pricingPriceGroupCreatePermission } from './shared/permissions/pricing-price-group-create.ts';
 import { pricingPriceGroupReadPermission } from './shared/permissions/pricing-price-group-read.ts';
 import { pricingPriceGroupRetirePermission } from './shared/permissions/pricing-price-group-retire.ts';
@@ -73,6 +74,7 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: priceGroupCatalogMcpContribution,
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       {
