@@ -3,7 +3,9 @@ description: Install the app/.mise.toml toolchain and the frozen app/ dependency
 
 inputs:
   install-args:
-    description: Extra `pnpm install` arguments.
+    description: >-
+      Extra `pnpm install` arguments. A caller that passes any installs from the pnpm store and never takes the
+      installed workspace, which only a complete `pnpm install --frozen-lockfile` produces.
     default: ''
   mise-env:
     description: Export the app/.mise.toml environment.
@@ -13,15 +15,9 @@ inputs:
       Save a missed pnpm store on a trunk push. Exactly one job of a workflow sets this, so parallel jobs never race to
       save.
     default: 'false'
-  restore-node-modules:
-    description: >-
-      Restore the installed workspace saved for this exact toolchain, lockfile and set of manifests instead of
-      installing. Only callers whose own install is a complete `pnpm install --frozen-lockfile` opt in, so an install
-      with other arguments never takes their tree.
-    default: 'false'
   save-node-modules:
     description: >-
-      Save a missed complete installed workspace; implies restore-node-modules, so an exact hit is never saved again.
+      Save a missed complete installed workspace; an exact hit is never saved again.
       The typecheck row saves a missed PR install; the main cache warmer publishes it for future pull requests and
       merge groups. GitHub scopes pull-request caches to that pull request; they cannot replace main caches.
     default: 'false'
@@ -75,7 +71,7 @@ runs:
     # app/*/*/package.json, which the key hashes.
     - name: List the workspace packages
       id: packages
-      if: inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'
+      if: inputs.install-args == ''
       shell: bash
       working-directory: app
       run: |
@@ -93,7 +89,7 @@ runs:
           [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
           [[ "$line" =~ $entry ]] || break
           pattern="${BASH_REMATCH[1]}"
-          if [[ ! "$pattern" =~ ^[A-Za-z0-9._-]+(/\*)?$ ]]; then
+          if [[ ! "$pattern" =~ ^[A-Za-z0-9._-]+(/\*)?$ || "$pattern" == .* ]]; then
             echo "::error::app/pnpm-workspace.yaml lists '$pattern'; the installed-workspace cache supports only 'dir' and 'dir/*'."
             exit 1
           fi
@@ -117,7 +113,7 @@ runs:
 
     - name: Restore the installed workspace
       id: workspace
-      if: inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'
+      if: inputs.install-args == ''
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.packages.outputs.paths }}
@@ -129,7 +125,7 @@ runs:
     # that missed a workspace package passed it and failed every job (353b91df5).
     - name: Verify the restored workspace resolves
       id: restored
-      if: inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'
+      if: inputs.install-args == ''
       shell: bash
       working-directory: app
       env:

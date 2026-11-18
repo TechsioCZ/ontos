@@ -12,10 +12,10 @@ const expression = (body: string) => `\${{ ${body} }}`;
 const DERIVED_PATHS = expression('steps.packages.outputs.paths');
 /** The only programs the listing step runs; a fixed PATH keeps the fixture independent of this machine. */
 const STEP_PATH = '/usr/bin:/bin';
-const OPTED_IN = "inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'";
+const COMPLETE_INSTALL = "inputs.install-args == ''";
 /** The node_modules globs the installed-workspace cache once spelled out, which missed root-level packages. */
 const LITERAL_PATTERNS = ['apps/*', 'packages/*', 'verticals/*'];
-const ROOT_PACKAGE = 'akros-storefront';
+const ROOT_PACKAGE = 'root-package';
 
 const StepSchema = Schema.Struct({
   id: Schema.optional(Schema.String),
@@ -93,7 +93,7 @@ const LISTING = [
   '',
   'packages:',
   '  - apps/*',
-  '  # Storefronts live at the workspace root.',
+  '  # A package at the workspace root.',
   '  - verticals/*',
   '  - packages/*',
   `  - '${ROOT_PACKAGE}'`,
@@ -118,29 +118,30 @@ it('caches the node_modules of every package the workspace lists, root-level pac
   });
 });
 
-it('reports a root-level package that a hand-written cache path list leaves out', () => {
-  withWorkspace(LISTING, (workspace) => {
-    const literal = manifestDirectories(workspace).filter((directory) =>
-      LITERAL_PATTERNS.some((pattern) => directory.startsWith(pattern.replace('*', ''))),
-    );
-    expect(uncovered(workspace, literal)).toEqual([ROOT_PACKAGE]);
+it('leaves out a root-level package the workspace does not list, which the uncovered check reports', () => {
+  withWorkspace(LISTING.replace(`  - '${ROOT_PACKAGE}'\n`, ''), (workspace) => {
+    const derived = derive(workspace);
+    if (derived === 'failed') {
+      throw new Error('the package listing failed on a supported workspace');
+    }
+    expect(uncovered(workspace, derived.directories)).toEqual([ROOT_PACKAGE]);
   });
 });
 
 it('refuses a workspace pattern the cache key does not hash', () => {
-  for (const pattern of ['apps/**', '!apps/notes', 'apps/*/nested']) {
+  for (const pattern of ['apps/**', '!apps/notes', 'apps/*/nested', '..', '.']) {
     withWorkspace(`packages:\n  - apps/*\n  - '${pattern}'\n`, (workspace) => {
       expect(derive(workspace), pattern).toBe('failed');
     });
   }
 });
 
-it('restores and saves only the derived paths, only for callers that opt in, and never re-saves an exact hit', () => {
-  expect(step('packages').if).toBe(OPTED_IN);
-  expect(step('workspace').if).toBe(OPTED_IN);
+it('restores and saves only the derived paths, only for complete installs, and never re-saves an exact hit', () => {
+  expect(step('packages').if).toBe(COMPLETE_INSTALL);
+  expect(step('workspace').if).toBe(COMPLETE_INSTALL);
   expect(step('workspace').with?.path).toBe(DERIVED_PATHS);
   expect(step('workspace').with?.key).toContain("'app/*/package.json', 'app/*/*/package.json'");
-  expect(step('restored').if).toBe(OPTED_IN);
+  expect(step('restored').if).toBe(COMPLETE_INSTALL);
   const save = steps.find(({ name }) => name === 'Save the installed workspace');
   expect(save?.with?.path).toBe(DERIVED_PATHS);
   expect(save?.if).toContain("steps.workspace.outputs.cache-hit != 'true'");
