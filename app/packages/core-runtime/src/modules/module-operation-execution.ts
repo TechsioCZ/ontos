@@ -1,11 +1,12 @@
-import { selfApiKeyBindingsRead } from '../auth/principal-administration-reads.ts';
+import { selfApiKeyBindingsRead, managedPrincipalsRead } from '../auth/principal-administration-reads.ts';
 import {
   bindingSubjectRead,
   readPrincipalBinding,
   resolveExternalSubjectRead,
 } from '../auth/external-identity/read.ts';
-import { coreOperationRegistrations } from '../execution/core-operations.ts';
-import type { RequirementCaller } from '../sdk/index.ts';
+import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
+import { coreOperations } from '../sdk/core-operations.ts';
+import type { AnyReadOperationRef, RequirementCaller } from '../sdk/index.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import {
   isVerifiedGatewayPrincipalContext,
@@ -175,6 +176,20 @@ const readActiveExecutionLease = Effect.fn('ModuleOperation.readActiveLease')(fu
   return lease;
 });
 
+/** One Core operation a module may `call`: its public reference and the governed Core read that answers it. */
+export interface CoreOperationRegistration {
+  readonly operation: AnyReadOperationRef;
+  readonly registration: AnyReadRegistration;
+}
+
+/**
+ * The Core operations a module may `call`. A Core requirement is satisfied only by one of them, and
+ * Core's in-process route (`execution/core-route.ts`) answers each through its read.
+ */
+export const coreOperationRegistrations: readonly CoreOperationRegistration[] = Object.freeze([
+  Object.freeze({ operation: coreOperations.legalEntityDetail, registration: legalEntityDetailRead }),
+]);
+
 const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequirement')(
   function* resolveExecutingRequirement(lease: ModuleOperationExecutionLease, requirementKey: string) {
     const { registration } = lease.input;
@@ -274,12 +289,13 @@ export const readBoundOperationOwner = Effect.fn('ModuleOperation.readBoundOwner
   return owner;
 });
 
-const coreReads: readonly AnyReadRegistration[] = Object.freeze([
+const coreReads = Object.freeze([
   selfApiKeyBindingsRead,
+  managedPrincipalsRead,
+  legalEntityDetailRead,
   readPrincipalBinding,
   bindingSubjectRead,
   resolveExternalSubjectRead,
-  ...coreOperationRegistrations.map(({ registration }) => registration),
 ]);
 /** Exact existing Core registration identities, independent of caller-chosen strings. */
 export const isGenuineCoreOperation = (registration: ModuleOperationRegistration): boolean =>

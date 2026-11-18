@@ -3,31 +3,15 @@ import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { CallRouteRequest, CoreRunRead, RouteAnswer } from '../../src/execution/contract.ts';
-import {
-  actionCommitStateRead,
-  assignablePrincipalsRead,
-  classifyActionCommitState,
-  classifyAssignablePrincipals,
-  coreOperationRegistrations,
-} from '../../src/execution/core-operations.ts';
 import { coreCallRouteFor, readErrorProblem } from '../../src/execution/core-route.ts';
 import { RouteAnswerSchema } from '../../src/execution/module-call-route.ts';
 import { legalEntityDetailRead } from '../../src/generated-reads/legal-entity-detail.ts';
-import { isGenuineCoreOperation } from '../../src/modules/module-operation-execution.ts';
+import { coreOperationRegistrations, isGenuineCoreOperation } from '../../src/modules/module-operation-execution.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { governedReadRegistration } from '../../src/reads/definition.ts';
-import {
-  ReadHandlerNotFound,
-  ReadHandlerUnavailable,
-  ReadInputValidationError,
-  ReadPolicyDenied,
-} from '../../src/reads/errors.ts';
+import { ReadHandlerNotFound, ReadInputValidationError, ReadPolicyDenied } from '../../src/reads/errors.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import {
-  ASSIGNABLE_PRINCIPAL_NAMES_FIELD_GROUP,
-  AssignablePrincipalsRequestSchema,
-  coreOperations,
-} from '../../src/sdk/core-operations.ts';
+import { coreOperations } from '../../src/sdk/core-operations.ts';
 import type { AnyReadOperationRef } from '../../src/sdk/index.ts';
 import { makeTestBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeTestDatabase } from '../support/database.ts';
@@ -41,10 +25,6 @@ import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-g
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const principalId = '00000000-0000-4000-8000-000000000004';
-const invocationId = '00000000-0000-4000-8000-0000000000aa';
-const colleagueId = '00000000-0000-4000-8000-0000000000c1';
-const departedId = '00000000-0000-4000-8000-0000000000c2';
-const serviceId = '00000000-0000-4000-8000-0000000000c3';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -70,31 +50,7 @@ const legalEntityAnswer = Schema.encodeSync(coreOperations.legalEntityDetail.res
   legalName: 'Example Manufacturing',
   status: 'active',
 });
-const repeatedCandidate = Schema.decodeUnknownSync(AssignablePrincipalsRequestSchema)({
-  candidatePrincipalIds: [colleagueId, colleagueId],
-  capabilityKey: 'commerce.pricing.task.assign',
-});
 const operationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-11-03T09:00:00.000Z')));
-
-const ownerRows = (text: string): readonly object[] | undefined => {
-  if (text.includes('"legal_entities"')) {
-    return [{ legalName: 'Example Manufacturing', status: 'active' }];
-  }
-  if (text.includes('"action_invocations"')) {
-    return [{ completedAt: null, status: 'succeeded' }];
-  }
-  if (text.includes('"access_memberships"')) {
-    return [{ principalId: colleagueId }];
-  }
-  if (text.includes('"principals"')) {
-    return [
-      { displayName: 'Ada Colleague', kind: 'human', principalId: colleagueId, status: 'active' },
-      { displayName: 'Bob Departed', kind: 'human', principalId: departedId, status: 'disabled' },
-      { displayName: 'Robot', kind: 'service', principalId: serviceId, status: 'active' },
-    ];
-  }
-  return undefined;
-};
 
 const makeRuntime = Effect.fn('CoreRouteSuite.makeRuntime')(function* makeRuntime(
   accessDecision: ReturnType<typeof makeTestBoundAccessGate>['bound'],
@@ -110,9 +66,8 @@ const makeRuntime = Effect.fn('CoreRouteSuite.makeRuntime')(function* makeRuntim
       if (text.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: operationAt }]);
       }
-      const rows = ownerRows(text);
-      if (rows !== undefined) {
-        return Effect.succeed(rows);
+      if (text.includes('"legal_entities"')) {
+        return Effect.succeed([{ legalName: 'Example Manufacturing', status: 'active' }]);
       }
       return text.includes('current_setting')
         ? Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }])
@@ -183,21 +138,19 @@ const requestOf = (operation: AnyReadOperationRef, encodedInput: Schema.Json): C
 
 const allowAll = () => makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } }).bound;
 
-it('derives the route registry and the genuine Core reads from the same registrations', () => {
-  expect(coreOperationRegistrations.map(({ operation }) => operation.provider.entrypointKey).toSorted()).toEqual([
-    'core.identity.api.assignable-principals',
-    'core.identity.api.legal-entity-detail',
-    'core.identity.managed-principals',
-    'core.modules.api.action-commit-state',
+it('pairs each Core operation with the genuine Core read that answers it, by the same wire schemas', () => {
+  expect(coreOperationRegistrations).toEqual([
+    { operation: coreOperations.legalEntityDetail, registration: legalEntityDetailRead },
   ]);
-  for (const { operation, registration } of coreOperationRegistrations) {
-    expect(isGenuineCoreOperation(registration)).toBe(true);
-    expect(registration.descriptor.entrypoint.entrypointKey).toBe(operation.provider.entrypointKey);
-  }
-  expect(assignablePrincipalsRead.descriptor.accessFieldGroups?.map(({ fields, key }) => [key, fields])).toEqual([
-    [ASSIGNABLE_PRINCIPAL_NAMES_FIELD_GROUP, ['eligible.displayName']],
-  ]);
-  expect(actionCommitStateRead.descriptor.accessDeclaration?.key).toBe('core.modules.action-commit-state.read');
+  expect(isGenuineCoreOperation(legalEntityDetailRead)).toBe(true);
+  const { descriptor } = legalEntityDetailRead;
+  expect({
+    entrypointKey: descriptor.entrypoint.entrypointKey,
+    moduleId: descriptor.owningModuleKey,
+    schemaVersion: descriptor.schemaVersion,
+  }).toEqual(coreOperations.legalEntityDetail.provider);
+  expect(descriptor.inputSchema).toBe(coreOperations.legalEntityDetail.request);
+  expect(descriptor.resultSchema).toBe(coreOperations.legalEntityDetail.response);
 });
 
 it.effect('runs the Core read with the execution principal and encodes its answer by the response schema', () =>
@@ -264,76 +217,5 @@ it.effect('answers 404 for an unknown Core operation without running anything', 
     };
     expect(statusOf(yield* coreCallRouteFor(runRead).send(requestOf(otherVersion, { legalEntityRef })))).toBe(404);
     expect(seen).toHaveLength(0);
-  }),
-);
-
-it.effect('answers the commit state of an own Action and refuses an Action key of another module', () =>
-  Effect.gen(function* commitState() {
-    const runtime = yield* makeRuntime(allowAll());
-    const { runRead, seen } = recordingRunRead(runtime);
-    const route = coreCallRouteFor(runRead);
-    const foreign = yield* route.send(
-      requestOf(coreOperations.actionCommitState, { actionKey: 'commerce.order.place-order', invocationId }),
-    );
-    expect(statusOf(foreign)).toBe(403);
-    expect(foreign).toMatchObject({ code: 'core_operation_foreign_key' });
-    expect(seen).toHaveLength(0);
-    const own = yield* route.send(
-      requestOf(coreOperations.actionCommitState, { actionKey: 'commerce.pricing.change-price', invocationId }),
-    );
-    expect(isAnswered(own)).toBe(true);
-    expect(own).toMatchObject({
-      encoded: { actionKey: 'commerce.pricing.change-price', invocationId, state: 'COMMITTED' },
-    });
-  }),
-);
-
-it.effect('omits displayName without the names field group and keeps it with the grant', () =>
-  Effect.gen(function* names() {
-    const input = {
-      candidatePrincipalIds: [colleagueId, departedId, serviceId, '00000000-0000-4000-8000-0000000000ff'],
-      capabilityKey: 'commerce.pricing.task.assign',
-    };
-    const withoutNames = yield* makeRuntime(
-      makeTestBoundAccessGate({
-        answers: {
-          [ASSIGNABLE_PRINCIPAL_NAMES_FIELD_GROUP]: { outcome: 'DENIED' },
-          'core.identity.assignable-principal.read': { outcome: 'ALLOWED' },
-        },
-      }).bound,
-    );
-    const unnamed = yield* coreCallRouteFor(coreRunReadOf(withoutNames)).send(
-      requestOf(coreOperations.assignablePrincipals, input),
-    );
-    expect(isAnswered(unnamed) ? unnamed.encoded : undefined).toEqual({
-      departedPrincipalIds: [departedId],
-      eligible: [{ principalId: colleagueId }],
-    });
-    const withNames = yield* makeRuntime(allowAll());
-    const named = yield* coreCallRouteFor(coreRunReadOf(withNames)).send(
-      requestOf(coreOperations.assignablePrincipals, input),
-    );
-    expect(isAnswered(named) ? named.encoded : undefined).toEqual({
-      departedPrincipalIds: [departedId],
-      eligible: [{ displayName: 'Ada Colleague', principalId: colleagueId }],
-    });
-    const foreign = yield* coreCallRouteFor(coreRunReadOf(withNames)).send(
-      requestOf(coreOperations.assignablePrincipals, { ...input, capabilityKey: 'commerce.order.task.assign' }),
-    );
-    expect(statusOf(foreign)).toBe(403);
-  }),
-);
-
-it.effect('classifies commit states and assignable principals exactly', () =>
-  Effect.gen(function* classifiers() {
-    expect(yield* classifyActionCommitState([])).toBe('ABSENT');
-    expect(yield* classifyActionCommitState([{ completedAt: null, status: 'succeeded' }])).toBe('COMMITTED');
-    expect(yield* classifyActionCommitState([{ completedAt: null, status: 'running' }])).toBe('OPEN');
-    const terminal = yield* Effect.flip(classifyActionCommitState([{ completedAt: operationAt, status: 'failed' }]));
-    expect(Schema.is(ReadHandlerUnavailable)(terminal)).toBe(true);
-    const result = yield* classifyAssignablePrincipals(repeatedCandidate, [
-      { displayName: 'Ada', kind: 'agent', member: true, principalId: colleagueId, status: 'active' },
-    ]);
-    expect(result).toEqual({ departedPrincipalIds: [], eligible: [{ displayName: 'Ada', principalId: colleagueId }] });
   }),
 );

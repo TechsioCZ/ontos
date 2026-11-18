@@ -30,10 +30,8 @@ import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
-import {
-  legalEntityDetailRead,
-  LegalEntityDetailRequestSchema,
-} from '../../src/generated-reads/legal-entity-detail.ts';
+import { legalEntityDetailRead } from '../../src/generated-reads/legal-entity-detail.ts';
+import { LegalEntityDetailRequestSchema } from '../../src/sdk/core-operations.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
