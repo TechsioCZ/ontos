@@ -11,7 +11,6 @@ import {
   CiTemplatesSchema,
   ciPlanOutputs,
   filterPaths,
-  buildJobPrefix,
   integrationPhases,
   knownTask,
   unitPhases,
@@ -27,20 +26,24 @@ const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSche
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
 );
 
-/** Every owner row is one build shard, numbered in row order. */
-const ALL_SHARDS = templates.integration.flatMap((entry, index) =>
-  entry.suite === 'integration'
-    ? [index - templates.integration.findIndex(({ suite }) => suite === 'integration') + 1]
-    : [],
-);
+/** Every build shard, numbered 1..n. */
+const ALL_SHARDS = templates.build.map((_entry, index) => index + 1);
 
 it('prepares the database even when browser tests are not selected, without adding unrelated browser work', () => {
-  const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
-  expect(phases.setup).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
+  const phases = integrationPhases(
+    templates.integration.filter(({ suite }) => suite !== 'browser'),
+    templates.build,
+  );
+  // The database producer only migrates, exports and uploads; the browser checks are a job of their own.
+  expect(phases.database).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
+  expect(phases.browser).toEqual([]);
   expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
+  expect(phases.owners).toEqual(templates.integration.filter(({ suite }) => suite === 'integration'));
   expect(phases.build.map(({ shard }) => shard)).toEqual(ALL_SHARDS);
-  expect(phases.build.map(({ suite }) => suite)).toEqual(ALL_SHARDS.map(() => 'integration'));
-  expect(integrationPhases([])).toEqual({ build: [], setup: [], topology: [] });
+  expect(integrationPhases(templates.integration, templates.build).browser).toEqual(
+    templates.integration.filter(({ suite }) => suite === 'browser'),
+  );
+  expect(integrationPhases([], [])).toEqual({ browser: [], build: [], database: [], owners: [], topology: [] });
 });
 
 /** The workspace directories whose integration files a row's tasks run. */
@@ -100,9 +103,7 @@ const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) =>
 const selectedDirectories = (filters: string) =>
   matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
 
-const WAIT_FOR_BUILDS = "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11";
-
-it('builds every delivery unit in exactly one owner row, and names each building job as a build shard', () => {
+it('builds every delivery unit in exactly one build shard, and names each build job by its shard', () => {
   const topology = Schema.decodeUnknownSync(
     Schema.fromJsonString(
       Schema.Struct({
@@ -111,40 +112,38 @@ it('builds every delivery unit in exactly one owner row, and names each building
       }),
     ),
   )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
-  const building = templates.integration.filter((entry) => entry.shard !== undefined);
-  expect(building.every(({ suite }) => suite === 'integration')).toBe(true);
-  const units = building.flatMap(({ units: shardUnits }) => (shardUnits ?? '').split(/\s+/u).filter(Boolean));
+  const units = templates.build.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
   expect(EffectArray.sort(units, Order.String)).toEqual(
     EffectArray.sort(
       [topology.shell, ...topology.verticals].map((unit) => unit.path),
       Order.String,
     ),
   );
-  const { build } = integrationPhases(templates.integration);
-  // Every consumer waits for this many uploads under this prefix; a seventh shard would never be awaited.
-  expect(WAIT_FOR_BUILDS).toContain(`${buildJobPrefix}' ${String(build.length)}`);
+  const { build } = integrationPhases(templates.integration, templates.build);
   expect(build.map(({ name }) => name)).toEqual(
-    building.map(
-      (entry, index) => `${buildJobPrefix}${String(index + 1)}/${String(building.length)}) and ${entry.name}`,
-    ),
+    ALL_SHARDS.map((shard) => `Build node artifacts (${String(shard)}/${String(ALL_SHARDS.length)})`),
   );
-  expect(new Set(building.map(({ shard }) => shard))).toEqual(new Set(building.map((_entry, index) => index + 1)));
+  expect(templates.build.map(({ shard }) => shard)).toEqual(ALL_SHARDS);
+  // Build shards and owner rows are separate jobs: an owner row names no units of its own.
+  for (const row of templates.integration) {
+    expect(Object.keys(row), row.name).not.toContain('units');
+  }
 });
 
-it('keeps building every shard in an affected plan that selects none of its owner tasks', () => {
+it('keeps building every shard in an affected plan and runs only the owner rows with selected tasks', () => {
   for (const owner of workspacePackages) {
     const plan = planCiChecks({
       changedPaths: [`app/${owner.directory}/src/service.ts`],
       packages: workspacePackages,
       templates,
     });
-    const { build } = integrationPhases(plan.integration);
+    const { integrationBuild, integrationOwners } = ciPlanOutputs(plan, 'changed');
     expect(
-      build.map(({ shard }) => shard),
+      integrationBuild.map(({ shard }) => shard),
       owner.name,
     ).toEqual(ALL_SHARDS);
-    for (const row of build) {
-      expect(row.suite === 'build' || (row.tasks?.length ?? 0) > 0, `${owner.name}: ${row.name}`).toBe(true);
+    for (const row of integrationOwners) {
+      expect(row.tasks?.length ?? 0, `${owner.name}: ${row.name}`).toBeGreaterThan(0);
     }
   }
   const promotion = planCiChecks({
@@ -153,7 +152,11 @@ it('keeps building every shard in an affected plan that selects none of its owne
     templates,
   });
   expect(promotion.mode).toBe('affected');
-  expect(integrationPhases(promotion.integration).build.some(({ suite }) => suite === 'build')).toBe(true);
+  const outputs = ciPlanOutputs(promotion, 'changed');
+  expect(outputs.integrationOwners.length).toBeLessThan(
+    templates.integration.filter(({ suite }) => suite === 'integration').length,
+  );
+  expect(outputs.integrationBuild.map(({ shard }) => shard)).toEqual(ALL_SHARDS);
 });
 
 it('preserves the authored worker budget when affected selection narrows package filters', () => {
@@ -560,11 +563,13 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       for (const helper of [
         'source',
         'unit',
-        'unitAfterDatabase',
         'unitAfterLint',
-        'unitAfterTopology',
+        'unitAfterStatic',
+        'unitAfterTooling',
         'integration',
+        'integrationBrowser',
         'integrationBuild',
+        'integrationOwners',
         'integrationTopology',
       ]) {
         expect(documentationPlan).toContain(`${helper}=[]\n`);
@@ -737,13 +742,13 @@ it('plans with no installed dependencies using the same tested impact algorithm'
 });
 
 it('promotes a lone affected deferred unit row instead of expanding an empty required matrix', () => {
-  const none = { afterDatabase: [], afterLint: [], afterTopology: [] };
+  const none = { afterLint: [], afterStatic: [], afterTooling: [] };
   for (const deferred of templates.unit.filter((row) => row['after-check'] !== undefined)) {
     expect(unitPhases([deferred], 'changed')).toEqual({ ...none, work: [deferred] });
   }
   const full = unitPhases(templates.unit, 'changed');
   expect(full.work).toEqual(templates.unit.filter((row) => row['after-check'] === undefined));
-  expect([...full.work, ...full.afterDatabase, ...full.afterLint, ...full.afterTopology]).toHaveLength(
+  expect([...full.work, ...full.afterLint, ...full.afterStatic, ...full.afterTooling]).toHaveLength(
     templates.unit.length,
   );
   expect(unitPhases([], 'changed')).toEqual({ ...none, work: [] });
@@ -754,21 +759,21 @@ it('promotes only one deferred unit row so the others keep their bounded runner 
   expect(selected.length).toBeGreaterThan(1);
   const phases = unitPhases(selected, 'changed');
   expect(phases.work).toEqual(selected.slice(0, 1));
-  expect([...phases.afterDatabase, ...phases.afterLint, ...phases.afterTopology]).toHaveLength(selected.length - 1);
+  expect([...phases.afterLint, ...phases.afterStatic, ...phases.afterTooling]).toHaveLength(selected.length - 1);
 });
 
-it('moves the row behind lint to the topology slot when ci-plan sweeps every file', () => {
+it('moves the row behind lint to the static contracts slot when ci-plan sweeps every file', () => {
   const lint = templates.unit.filter((row) => row['after-check'] === 'lint');
   expect(lint).toHaveLength(1);
   const changed = unitPhases(templates.unit, 'changed');
   const all = unitPhases(templates.unit, 'all');
   expect(changed.afterLint).toEqual(lint);
   expect(all.afterLint).toEqual([]);
-  expect(all.afterTopology).toEqual(
-    templates.unit.filter((row) => changed.afterTopology.includes(row) || lint.includes(row)),
+  expect(all.afterStatic).toEqual(
+    templates.unit.filter((row) => changed.afterStatic.includes(row) || lint.includes(row)),
   );
   expect(all.work).toEqual(changed.work);
-  expect(all.afterDatabase).toEqual(changed.afterDatabase);
+  expect(all.afterTooling).toEqual(changed.afterTooling);
 });
 
 /** Every owner task a list of integration rows runs, sorted. */
@@ -797,13 +802,15 @@ it('gives each gate-id job at least one row for every single-owner change and ei
         expect(outputs.integration.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
         expect(outputs.integrationTopology.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
       }
-      expect(outputs.integrationBuild.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
+      // Every consumer of the Node artifacts needs the build shards, so every planned run builds all of them.
+      expect(outputs.integrationBuild, `${owner.name} ${lintSweep}`).toHaveLength(templates.build.length);
+      expect(plan.expected['node-artifact-build'], owner.name).toBe('success');
       expect(
-        [...outputs.unit, ...outputs.unitAfterDatabase, ...outputs.unitAfterLint, ...outputs.unitAfterTopology],
+        [...outputs.unit, ...outputs.unitAfterLint, ...outputs.unitAfterStatic, ...outputs.unitAfterTooling],
         owner.name,
       ).toHaveLength(plan.unit.length);
-      // Every selected owner task runs on a building owner row.
-      expect(ownerTasks(outputs.integrationBuild), owner.name).toEqual(ownerTasks(plan.integration));
+      // Every selected owner task runs on an owner row.
+      expect(ownerTasks(outputs.integrationOwners), owner.name).toEqual(ownerTasks(plan.integration));
     }
   }
 });

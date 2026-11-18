@@ -10,62 +10,48 @@ export interface CiWorkspacePackage {
   readonly uncertain?: boolean;
 }
 
-/** A building owner row whose tasks an affected plan left out: it still builds and uploads its shard. */
-export interface BuildOnlyEntry {
-  readonly name: string;
-  readonly shard: number;
-  readonly suite: 'build';
-  readonly tasks?: undefined;
-  readonly units: string;
-}
-export type PlannedIntegrationEntry = IntegrationEntry | BuildOnlyEntry;
-
-/** The job-name prefix of every build shard; consumers wait for these jobs' upload steps by this prefix. */
-export const buildJobPrefix = 'Build node artifacts (';
-
 /**
- * Partition selected integration work by the job that runs it; every job starts with the run. Every owner
- * row is a build shard: the node-artifact-build job builds and uploads its shard of the delivery units and
- * then runs its own owner tasks, so no owner row waits for a build job to end. An affected plan keeps a
- * shard whose owner tasks it leaves out as a build-only row. The service-integration job is the database
- * producer, with the browser checks when selected, so it is never empty while integration work is
- * selected; the deployment bootstrap runs in its own job.
+ * Partition selected work by the job that runs it. No job holds a runner while it waits for another job of
+ * the run: producers only produce, and every consumer names its producers in `needs`, so GitHub starts it
+ * once their artifacts exist. Producers start with the run: the build shards (node-artifact-build) build
+ * and upload every delivery unit on every run, and the database producer (service-integration) migrates,
+ * exports and uploads this run's database whenever integration work is selected, so neither gate job ever
+ * expands an empty matrix. The browser checks migrate their own database and need nobody. The deployment
+ * bootstrap and the owner rows consume the build shards; the owner rows also restore the database archive.
  */
-export const integrationPhases = (entries: readonly PlannedIntegrationEntry[]) => {
-  const browser = entries.filter(({ suite }) => suite === 'browser');
-  const build = entries.filter((entry) => entry.shard !== undefined);
-  return {
-    build: build.map((entry) => {
-      const shard = `${buildJobPrefix}${String(entry.shard)}/${String(build.length)})`;
-      return { ...entry, name: entry.suite === 'build' ? shard : `${shard} and ${entry.name}` };
-    }),
-    setup:
-      entries.length === 0 || browser.length > 0
-        ? browser
-        : [{ name: 'Prepare integration database', suite: 'database' as const }],
-    topology: entries.filter(({ suite }) => suite === 'bootstrap'),
-  };
-};
+export const integrationPhases = (entries: readonly IntegrationEntry[], build: Templates['build']) => ({
+  browser: entries.filter(({ suite }) => suite === 'browser'),
+  build: build.map(({ shard, units }) => ({
+    name: `Build node artifacts (${String(shard)}/${String(build.length)})`,
+    shard,
+    units,
+  })),
+  database: entries.length === 0 ? [] : [{ name: 'Prepare integration database', suite: 'database' as const }],
+  owners: entries.filter(({ suite }) => suite === 'integration'),
+  topology: entries.filter(({ suite }) => suite === 'bootstrap'),
+});
 
 export const lintSweeps = ['all', 'changed'] as const;
 export type LintSweep = (typeof lintSweeps)[number];
 
 /**
- * Unit rows reuse the slot of the check they follow, and wait inside the job for this run's build uploads.
- * The work job carries the workspace-unit gate id and follows the source contracts; when none of its rows
- * is selected, the first selected row is promoted into it. A whole-tree lint keeps the lint slot busy for
- * minutes, so the row that follows lint follows the deployment bootstrap instead.
+ * Unit rows read the build shards' uploads, so each needs the build shards, and each also takes the slot of
+ * the check it follows. The work job carries the workspace-unit gate id and follows the source contracts;
+ * when none of its rows is selected, the first selected row is promoted into it. The other rows follow the
+ * changed-file lint, the static contracts and the repository tooling tests, which free their runners after
+ * the owner rows and the bootstrap have taken the build shards' and the database producer's. A whole-tree
+ * lint keeps the lint slot busy for minutes, so the row that follows lint follows the static contracts.
  */
 export const unitPhases = (entries: Templates['unit'], lintSweep: LintSweep) => {
   const phase = (row: Templates['unit'][number]) =>
-    row['after-check'] === 'lint' && lintSweep === 'all' ? 'topology' : row['after-check'];
+    row['after-check'] === 'lint' && lintSweep === 'all' ? 'static' : row['after-check'];
   const work = entries.filter((row) => phase(row) === undefined);
   const promoted = work.length === 0 ? entries[0] : undefined;
   const deferred = entries.filter((row) => row !== promoted);
   return {
-    afterDatabase: deferred.filter((row) => phase(row) === 'database'),
     afterLint: deferred.filter((row) => phase(row) === 'lint'),
-    afterTopology: deferred.filter((row) => phase(row) === 'topology'),
+    afterStatic: deferred.filter((row) => phase(row) === 'static'),
+    afterTooling: deferred.filter((row) => phase(row) === 'tooling'),
     work: promoted === undefined ? work : [promoted],
   };
 };
@@ -266,7 +252,7 @@ export const planCiChecks = (input: {
   const affectedDirectories = new Set(affected.map(({ directory }) => directory));
   const rootAffected = affectedDirectories.has('.');
   // Each task names its owner, so the task list alone decides what an affected plan keeps.
-  const selectedIntegration = templates.integration.flatMap((entry): readonly PlannedIntegrationEntry[] => {
+  const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
     // A row that is neither a package suite nor the browser suite proves the deployment bootstrap or the
     // build outputs themselves: it reads no matrix input and has nothing to narrow, so affected selection
     // always keeps it.
@@ -293,13 +279,7 @@ export const planCiChecks = (input: {
       const directory = taskDirectory(task);
       return directory !== undefined && affectedDirectories.has(directory);
     });
-    if (tasks.length > 0) {
-      return [{ ...entry, tasks }];
-    }
-    // Every run builds every delivery unit, so a building row stays even when none of its tasks is selected.
-    return entry.shard === undefined || entry.units === undefined
-      ? []
-      : [{ name: entry.name, shard: entry.shard, suite: 'build', units: entry.units }];
+    return tasks.length > 0 ? [{ ...entry, tasks }] : [];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
     const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
@@ -316,7 +296,7 @@ export const planCiChecks = (input: {
   });
   // Affected selection is the default; a malformed or empty unit mapping never becomes a green no-op.
   const effectiveMode = !broad && selectedUnit.length > 0 ? 'affected' : 'full';
-  const integration: readonly PlannedIntegrationEntry[] =
+  const integration: readonly IntegrationEntry[] =
     effectiveMode === 'full' ? templates.integration : selectedIntegration;
   const expected = Object.fromEntries(
     gateIds.map((gate) => [gate, gate === 'service-integration' && integration.length === 0 ? 'skipped' : 'success']),
@@ -327,6 +307,8 @@ export const planCiChecks = (input: {
       : 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   return {
     affectedPackages,
+    // Every run builds every delivery unit from this commit, whatever it selects.
+    build: templates.build,
     expected,
     integration,
     mode: effectiveMode,
@@ -338,17 +320,19 @@ export const planCiChecks = (input: {
 
 /** Every ci-plan job output except `mode`, keyed exactly as the workflow reads them. */
 export const ciPlanOutputs = (plan: ReturnType<typeof planCiChecks>, lintSweep: LintSweep) => {
-  const phases = integrationPhases(plan.integration);
+  const phases = integrationPhases(plan.integration, plan.build);
   const units = unitPhases(plan.unit, lintSweep);
   return {
     expected: plan.expected,
-    integration: phases.setup,
+    integration: phases.database,
+    integrationBrowser: phases.browser,
     integrationBuild: phases.build,
+    integrationOwners: phases.owners,
     integrationTopology: phases.topology,
     source: plan.source,
     unit: units.work,
-    unitAfterDatabase: units.afterDatabase,
     unitAfterLint: units.afterLint,
-    unitAfterTopology: units.afterTopology,
+    unitAfterStatic: units.afterStatic,
+    unitAfterTooling: units.afterTooling,
   };
 };

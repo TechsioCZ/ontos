@@ -6,7 +6,7 @@ import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const CommandEntrySchema = Schema.Struct({
-  'after-check': Schema.optionalKey(Schema.Literals(['database', 'lint', 'topology'])),
+  'after-check': Schema.optionalKey(Schema.Literals(['lint', 'static', 'tooling'])),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -18,23 +18,13 @@ const IntegrationEntrySchema = Schema.Struct({
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
-  // A row with a shard builds those delivery units and uploads them as node-units-<shard> before its own tests.
-  shard: Schema.optionalKey(Schema.Int),
   tasks: Schema.optionalKey(Schema.Array(Schema.String)),
-  units: Schema.optionalKey(Schema.String),
   // The bootstrap row proves deployment and federation independently of package selection.
   suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' && (entry.tasks === undefined || entry.tasks.length === 0)
       ? 'Integration templates must list the tasks they run'
-      : undefined,
-  ),
-  // Every owner row builds and uploads its shard of the delivery units before its own tasks.
-  Schema.makeFilter((entry) =>
-    (entry.suite === 'integration') !== (entry.shard !== undefined && entry.units !== undefined) ||
-    (entry.shard === undefined) !== (entry.units === undefined)
-      ? 'Every owner row, and only an owner row, names both its build shard and its units'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
@@ -49,7 +39,11 @@ const IntegrationEntrySchema = Schema.Struct({
       : undefined,
   ),
 );
+// A build shard builds these delivery units and uploads them as node-units-<shard>; it does nothing else, so
+// every consumer can name the shards in `needs` and start only once their uploads exist.
+const BuildShardSchema = Schema.Struct({ shard: Schema.Int, units: Schema.String });
 export const CiTemplatesSchema = Schema.Struct({
+  build: Schema.Array(BuildShardSchema),
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
   unit: Schema.Array(CommandEntrySchema),
@@ -75,7 +69,6 @@ export const CiTopologySchema = Schema.Struct({
 });
 
 export {
-  buildJobPrefix,
   ciPlanOutputs,
   filterPaths,
   integrationPhases,

@@ -26,7 +26,6 @@ const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh'
 const RESTORE_INTEGRATION_WORKERS = 'bash scripts/ci/restore-integration-workers.sh';
 const INTEGRATION_WORKERS_STEP_ID = 'integration-workers';
 const INTEGRATION_DATABASE_ARTIFACT = 'integration-database';
-const BOOTSTRAP_ARTIFACT_STEP_ID = 'bootstrap-node-artifacts';
 const BROWSER_TEST_COMMAND = 'mise exec -- pnpm --filter @app/shell-super-app test:e2e';
 const BASELINE_CAPTURE_JOB = 'capture-application-baseline';
 const DEPLOY_PLAN_JOB = 'deploy-plan';
@@ -65,25 +64,27 @@ const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}
 const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
+const OWNER_INTEGRATION_JOB = 'owner-integration';
+const BROWSER_INTEGRATION_JOB = 'browser-integration';
 const STATIC_CONTRACTS_JOB = 'static-contracts';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const SOURCE_CONTRACTS_JOB = 'workspace-source-contracts';
-const UNIT_AFTER_DATABASE_JOB = 'workspace-unit-after-database';
 const UNIT_AFTER_LINT_JOB = 'workspace-unit-after-lint';
-const UNIT_AFTER_TOPOLOGY_JOB = 'workspace-unit-after-topology';
+const UNIT_AFTER_STATIC_JOB = 'workspace-unit-after-static';
+const UNIT_AFTER_TOOLING_JOB = 'workspace-unit-after-tooling';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
-/** Every consumer of the Node build shards waits for all six uploads by the shards' job-name prefix. */
-const WAIT_FOR_BUILDS = "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11";
 
 /** Every job that receives a planner matrix, with the ci-plan output it expands. */
 const PLANNED_MATRIX_JOBS = [
   [WORKSPACE_GATE_JOB, 'source'],
   [WORKSPACE_UNIT_JOB, 'unit'],
-  [UNIT_AFTER_DATABASE_JOB, 'unitAfterDatabase'],
   [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
-  [UNIT_AFTER_TOPOLOGY_JOB, 'unitAfterTopology'],
+  [UNIT_AFTER_STATIC_JOB, 'unitAfterStatic'],
+  [UNIT_AFTER_TOOLING_JOB, 'unitAfterTooling'],
   [SERVICE_INTEGRATION_JOB, 'integration'],
+  [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+  [OWNER_INTEGRATION_JOB, 'integrationOwners'],
   [NODE_ARTIFACT_BUILD_JOB, 'integrationBuild'],
   [TOPOLOGY_PROOF_JOB, 'integrationTopology'],
 ] as const;
@@ -116,12 +117,10 @@ const readGateWorkflow = () => {
 };
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
-/** The step after which a build shard's outputs are downloadable by the target's proving shards. */
 const INSTALL_APP_STEP = 'Install the app workspace';
+/** The last step of a build shard: its consumers need the shard, so they start once this upload exists. */
 const UPLOAD_STEP = "Upload the shard's build outputs";
 const NODE_BUILD_STEP = "Build the shard's Node artifacts";
-/** The steps that build, pack and upload a shard run only on a row that names units. */
-const BUILDING_ROW_CONDITION = 'matrix.units';
 const UNIT_ARTIFACTS_CONDITION = 'matrix.node-artifacts == true';
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
@@ -1679,6 +1678,7 @@ const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 const NODE_PROOF_SUITE = BOOTSTRAP_SUITE;
 const NODE_PROOF_CONDITION = `matrix.suite == '${NODE_PROOF_SUITE}'`;
 const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
+const CLOUDFLARE_ARTIFACT_PROOF_JOB = 'cloudflare-artifact-proof';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
 /** Gate jobs rooted at the merge queue proof. */
 const ROOT_GATE_JOBS = [
@@ -1696,10 +1696,18 @@ const GATE_JOB_NEEDS = {
   [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB],
   [STATIC_CONTRACTS_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
-  [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, SOURCE_CONTRACTS_JOB],
+  [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SOURCE_CONTRACTS_JOB],
 } satisfies Readonly<Record<string, readonly string[]>>;
-/** Every gate job; each target's artifact proofs run inside its own build shards. */
 const GATE_JOBS = ROOT_GATE_JOBS;
+/**
+ * A unit job's condition on one job it needs. A unit row reads the build shards only when it asks for Node
+ * artifacts, so the shards must have reached what the plan expected of them: a planned skip lets the row
+ * decide for itself, a failure or cancellation never does. Every other job it follows must have succeeded.
+ */
+const neededResult = (job: string) =>
+  job === NODE_ARTIFACT_BUILD_JOB
+    ? `needs.${job}.result == fromJSON(needs.ci-plan.outputs.expected)['${job}']`
+    : `needs.${job}.result == 'success'`;
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
@@ -1710,9 +1718,11 @@ const GatedJobsSchema = Schema.Struct({
 it('disables retired Cloudflare builds, proofs and deployment without gating Node delivery', () => {
   const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
-  expect(jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB]?.if).toBe(expression('false'));
+  for (const job of [CLOUDFLARE_ARTIFACT_BUILD_JOB, CLOUDFLARE_ARTIFACT_PROOF_JOB]) {
+    expect(jobs[job]?.if, job).toBe(expression('false'));
+    expect(jobs['workspace-gates']?.needs).not.toContain(job);
+  }
   expect(jobs[EDGE_READINESS_JOB]?.if).toBe(expression('false'));
-  expect(jobs['workspace-gates']?.needs).not.toContain(CLOUDFLARE_ARTIFACT_BUILD_JOB);
   // The workerd regression guard for the whole Catalog client barrel carried `if: false` and therefore
   // never ran; its target is the retired Cloudflare delivery path, so the step is gone.
   expect(readFileSync(GATES_WORKFLOW_URL, 'utf-8')).not.toContain('cloudflare:build:full-catalog-client-guard');
@@ -1743,11 +1753,11 @@ it('selects work before gates and starts source checks without waiting for artif
   for (const gate of ROOT_GATE_JOBS) {
     const needed = GATE_JOB_NEEDS[gate] ?? [];
     expect(jobs[gate]?.needs, gate).toEqual(needed);
-    // Every producer this gate waits for must have succeeded: a failed producer leaves the gate
-    // 'skipped' against an expected 'success', which check-ci-gates.sh rejects.
+    // Every producer this gate needs must have reached what the plan expected of it: a failed producer
+    // leaves the gate 'skipped' against an expected 'success', which check-ci-gates.sh rejects.
     const producers = needed
       .filter((job) => job !== CI_PLAN_JOB)
-      .map((job) => `needs.${job}.result == 'success' && `)
+      .map((job) => `${neededResult(job)} && `)
       .join('');
     expect(jobs[gate]?.if, gate).toBe(
       expression(
@@ -1825,6 +1835,15 @@ it('plans without app dependencies and publishes only the exact changed paths', 
   });
 });
 
+/** Helper jobs that run a planned list, with the ci-plan output that lists their rows. */
+const PLANNED_HELPERS = [
+  [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
+  [UNIT_AFTER_STATIC_JOB, 'unitAfterStatic'],
+  [UNIT_AFTER_TOOLING_JOB, 'unitAfterTooling'],
+  [OWNER_INTEGRATION_JOB, 'integrationOwners'],
+  [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+] as const;
+
 it('requires the exact CI plan and rejects missing, failed or unplanned skipped gates', () => {
   const gates = readTargetWorkflow().jobs['workspace-gates'];
   expect(gates.name).toBe('Workspace gates');
@@ -1835,40 +1854,39 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_GATE_JOB,
     SOURCE_CONTRACTS_JOB,
     WORKSPACE_UNIT_JOB,
-    UNIT_AFTER_DATABASE_JOB,
     UNIT_AFTER_LINT_JOB,
-    UNIT_AFTER_TOPOLOGY_JOB,
+    UNIT_AFTER_STATIC_JOB,
+    UNIT_AFTER_TOOLING_JOB,
     STATIC_CONTRACTS_JOB,
     FORMAT_AND_LINT_JOB,
     SERVICE_INTEGRATION_JOB,
+    BROWSER_INTEGRATION_JOB,
+    OWNER_INTEGRATION_JOB,
     NODE_ARTIFACT_BUILD_JOB,
     TOPOLOGY_PROOF_JOB,
   ]);
   expect(gates.steps.at(-1)?.run).toBe('bash app/scripts/check-ci-gates.sh');
   const script = readFileSync(new URL('../check-ci-gates.sh', import.meta.url), 'utf-8');
-  const needs = (mode: string, results: readonly string[], proof = 'skipped', proven?: string) => ({
-    [CI_PLAN_JOB]: {
-      outputs: {
-        expected: JSON.stringify(
-          Object.fromEntries(
-            GATE_JOBS.map((gate) => [gate, ['docs', 'proven'].includes(mode) ? 'skipped' : 'success']),
-          ),
-        ),
-        mode,
-        unitAfterDatabase: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
-        unitAfterLint: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
-        unitAfterTopology: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
-      },
-      result: 'success',
-    },
-    [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
-    [SOURCE_CONTRACTS_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [UNIT_AFTER_DATABASE_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [UNIT_AFTER_LINT_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [UNIT_AFTER_TOPOLOGY_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
-  });
+  const needs = (mode: string, results: readonly string[], proof = 'skipped', proven?: string) => {
+    const nothing = ['docs', 'proven'].includes(mode);
+    // Every ci-plan output the verifier reads; a test may replace or drop any of them.
+    const outputs: Record<string, string | undefined> = Object.fromEntries<string>([
+      [
+        'expected',
+        JSON.stringify(Object.fromEntries(GATE_JOBS.map((gate) => [gate, nothing ? 'skipped' : 'success']))),
+      ],
+      ['mode', mode],
+      ...PLANNED_HELPERS.map(([, output]): [string, string] => [output, nothing ? '[]' : '[{}]']),
+    ]);
+    return {
+      [CI_PLAN_JOB]: { outputs, result: 'success' },
+      [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
+      [SOURCE_CONTRACTS_JOB]: { result: nothing ? 'skipped' : 'success' },
+      [TOPOLOGY_PROOF_JOB]: { result: nothing ? 'skipped' : 'success' },
+      ...Object.fromEntries(PLANNED_HELPERS.map(([helper]) => [helper, { result: nothing ? 'skipped' : 'success' }])),
+      ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
+    };
+  };
   const passed = GATE_JOBS.map(() => 'success');
   const skipped = GATE_JOBS.map(() => 'skipped');
   const passes = (
@@ -1883,16 +1901,13 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     >,
   ) => stepPasses(script, { NEEDS_JSON: JSON.stringify(value) });
   expect(passes(needs('full', passed))).toBe(true);
-  for (const [helper, output] of [
-    [UNIT_AFTER_DATABASE_JOB, 'unitAfterDatabase'],
-    [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
-    [UNIT_AFTER_TOPOLOGY_JOB, 'unitAfterTopology'],
-  ] as const) {
-    expect(passes({ ...needs('full', passed), [helper]: { result: 'failure' } })).toBe(false);
-    expect(passes({ ...needs('full', passed), [helper]: { result: 'skipped' } })).toBe(false);
-    expect(passes(Object.fromEntries(Object.entries(needs('full', passed)).filter(([job]) => job !== helper)))).toBe(
-      false,
-    );
+  for (const [helper, output] of PLANNED_HELPERS) {
+    expect(passes({ ...needs('full', passed), [helper]: { result: 'failure' } }), helper).toBe(false);
+    expect(passes({ ...needs('full', passed), [helper]: { result: 'skipped' } }), helper).toBe(false);
+    expect(
+      passes(Object.fromEntries(Object.entries(needs('full', passed)).filter(([job]) => job !== helper))),
+      helper,
+    ).toBe(false);
     const valid = needs('full', passed);
     for (const value of [undefined, '{}']) {
       expect(
@@ -1903,8 +1918,14 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
             outputs: { ...valid[CI_PLAN_JOB].outputs, [output]: value },
           },
         }),
+        helper,
       ).toBe(false);
     }
+    // A helper whose list the plan left empty must be skipped, never run.
+    const empty = needs('affected', passed);
+    empty[CI_PLAN_JOB].outputs[output] = '[]';
+    expect(passes({ ...empty, [helper]: { result: 'skipped' } }), helper).toBe(true);
+    expect(passes({ ...empty, [helper]: { result: 'success' } }), helper).toBe(false);
   }
   expect(passes({ ...needs('full', passed), [TOPOLOGY_PROOF_JOB]: { result: 'failure' } })).toBe(false);
   expect(passes({ ...needs('full', passed), [SOURCE_CONTRACTS_JOB]: { result: 'failure' } })).toBe(false);
@@ -1921,20 +1942,23 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(passes(needs('full', passed, 'failure'))).toBe(false);
   const affected = needs('affected', passed);
   expect(passes(affected)).toBe(true);
+  // An affected plan without integration work skips the database producer and every integration consumer.
   const noIntegration = needs('affected', passed);
   const selected = Object.fromEntries(
     GATE_JOBS.map((gate) => [gate, gate === SERVICE_INTEGRATION_JOB ? 'skipped' : 'success']),
   );
   noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
-  noIntegration[CI_PLAN_JOB].outputs.unitAfterTopology = '[]';
-  expect(
-    passes({
-      ...noIntegration,
-      [SERVICE_INTEGRATION_JOB]: { result: 'skipped' },
-      [TOPOLOGY_PROOF_JOB]: { result: 'skipped' },
-      [UNIT_AFTER_TOPOLOGY_JOB]: { result: 'skipped' },
-    }),
-  ).toBe(true);
+  noIntegration[CI_PLAN_JOB].outputs.integrationOwners = '[]';
+  noIntegration[CI_PLAN_JOB].outputs.integrationBrowser = '[]';
+  const integrationSkipped = {
+    ...noIntegration,
+    [BROWSER_INTEGRATION_JOB]: { result: 'skipped' },
+    [OWNER_INTEGRATION_JOB]: { result: 'skipped' },
+    [SERVICE_INTEGRATION_JOB]: { result: 'skipped' },
+    [TOPOLOGY_PROOF_JOB]: { result: 'skipped' },
+  };
+  expect(passes(integrationSkipped)).toBe(true);
+  expect(passes({ ...integrationSkipped, [TOPOLOGY_PROOF_JOB]: { result: 'success' } })).toBe(false);
   expect(passes(needs('affected', skipped))).toBe(false);
   expect(passes(needs('invented', passed))).toBe(false);
   const missing = needs('docs', skipped);
@@ -1961,10 +1985,21 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
   }
 });
 
+const ArtifactStepsSchema = Schema.Array(
+  Schema.Struct({
+    env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    id: Schema.optional(Schema.String),
+    if: Schema.optional(Schema.String),
+    name: Schema.String,
+    run: Schema.optional(Schema.String),
+    uses: Schema.optional(Schema.String),
+    with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  }),
+);
 const ArtifactBuildJobSchema = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number])),
   name: Schema.String,
-  // Only a job whose shards read their siblings' results needs `actions: read`.
+  needs: Schema.Array(Schema.String),
   permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   steps: Schema.Array(
     Schema.Struct({
@@ -1990,10 +2025,11 @@ const ArtifactBuildJobSchema = Schema.Struct({
     }),
   }),
 });
-/** The Node build shards are owner rows: their matrix carries units and shards beside owner tasks. */
+/** The Node build shards only build: their matrix carries a shard and its units, and nothing else. */
 const NodeBuildJobSchema = Schema.Struct({
+  env: Schema.Record(Schema.String, Schema.String),
   needs: Schema.Array(Schema.String),
-  permissions: Schema.Record(Schema.String, Schema.String),
+  permissions: Schema.optional(Schema.Unknown),
   steps: Schema.Array(
     Schema.Struct({
       env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -2001,6 +2037,7 @@ const NodeBuildJobSchema = Schema.Struct({
       if: Schema.optional(Schema.String),
       name: Schema.String,
       run: Schema.optional(Schema.String),
+      'timeout-minutes': Schema.optional(Schema.Number),
       uses: Schema.optional(Schema.String),
       wait: Schema.optional(Schema.String),
       with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -2011,10 +2048,16 @@ const NodeBuildJobSchema = Schema.Struct({
       include: Schema.Array(Schema.Struct({ name: Schema.String, shard: Schema.Number, units: Schema.String })),
     }),
   }),
+  'timeout-minutes': Schema.Number,
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     [CLOUDFLARE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
+    [CLOUDFLARE_ARTIFACT_PROOF_JOB]: Schema.Struct({
+      needs: Schema.Array(Schema.String),
+      steps: ArtifactStepsSchema,
+      strategy: Schema.Struct({ matrix: Schema.Struct({ proof: Schema.Array(Schema.String) }) }),
+    }),
     [NODE_ARTIFACT_BUILD_JOB]: NodeBuildJobSchema,
   }),
 });
@@ -2050,11 +2093,11 @@ it('supplies a placeholder public URL for every unit in Cloudflare builds and ou
   const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
   );
-  for (const name of [
-    "Build the shard's Cloudflare artifacts one unit at a time",
-    'Generate federated types, verify the Worker outputs and prove their SSR',
-  ]) {
-    const step = jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB].steps.find((candidate) => candidate.name === name);
+  for (const [job, name] of [
+    [CLOUDFLARE_ARTIFACT_BUILD_JOB, "Build the shard's Cloudflare artifacts one unit at a time"],
+    [CLOUDFLARE_ARTIFACT_PROOF_JOB, 'Generate federated types, verify the Worker outputs and prove their SSR'],
+  ] as const) {
+    const step = jobs[job].steps.find((candidate) => candidate.name === name);
     expect(step, name).toBeDefined();
     for (const { id } of [topology.shell, ...topology.verticals]) {
       const variable = `ULTRAMODERN_PUBLIC_URL_${id.replaceAll('-', '_').toUpperCase()}`;
@@ -2065,27 +2108,26 @@ it('supplies a placeholder public URL for every unit in Cloudflare builds and ou
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
-it('uploads each Node build shard before its row waits for, downloads or tests anything', () => {
-  const { needs, permissions, steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  // The shards start with the run and read the run's jobs while their owner tasks wait for the others.
+it('builds, packs and uploads each Node build shard and does nothing else', () => {
+  const { needs, permissions, steps, 'timeout-minutes': jobTimeout } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  // A producer starts with the run and never waits for anything, so its runner frees as soon as it uploaded.
   expect(needs).toEqual([CI_PLAN_JOB]);
-  expect(permissions).toEqual({ actions: 'read', contents: 'read' });
-  const build = steps.findIndex(({ name }) => name === NODE_BUILD_STEP);
-  const upload = steps.findIndex(({ name }) => name === UPLOAD_STEP);
-  const firstConsumer = steps.findIndex(
-    ({ run, uses }) =>
-      (run ?? '').includes('wait-for-build-shards.sh') ||
-      (uses ?? '').includes(DOWNLOAD_ARTIFACT) ||
-      (run ?? '').includes('pnpm db:migrate') ||
-      (run ?? '').includes('pnpm node:proof'),
-  );
-  expect(build).toBeGreaterThan(steps.findIndex(({ name }) => name === INSTALL_APP_STEP));
-  expect(upload).toBeGreaterThan(build);
-  expect(firstConsumer).toBeGreaterThan(upload);
-  // The upload still fails rather than publishing an empty archive the suites would silently trust, and a
-  // re-run of a failed row replaces its own archive instead of failing on the existing name.
-  expect(steps[upload]?.if).toBe(BUILDING_ROW_CONDITION);
-  expect(steps[upload]?.with).toEqual({
+  expect(permissions).toBeUndefined();
+  expect(steps.map(({ name }) => name)).toEqual([
+    'Harden Runner',
+    'Checkout',
+    'Sample runner pressure until the job ends',
+    INSTALL_APP_STEP,
+    NODE_BUILD_STEP,
+    "Pack the shard's build outputs",
+    UPLOAD_STEP,
+    'Print the runner pressure samples',
+  ]);
+  const upload = steps.find(({ name }) => name === UPLOAD_STEP);
+  // The upload still fails rather than publishing an empty archive the consumers would silently trust, and a
+  // re-run of a failed shard replaces its own archive instead of failing on the existing name.
+  expect(upload?.if).toBeUndefined();
+  expect(upload?.with).toEqual({
     'compression-level': 0,
     'if-no-files-found': 'error',
     name: `node-units-${expression(MATRIX_SHARD)}`,
@@ -2093,26 +2135,76 @@ it('uploads each Node build shard before its row waits for, downloads or tests a
     path: `${RUNNER_TEMP_EXPRESSION}/units.tar.zst`,
     'retention-days': 1,
   });
+  expect(jobTimeout).toBeLessThanOrEqual(20);
+  // A shard row names its units and nothing an owner row runs.
+  for (const row of fullPlanMatrices().integrationBuild) {
+    expect(sorted(Object.keys(row))).toEqual(['name', 'shard', 'units']);
+  }
 });
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const { env, steps, 'timeout-minutes': jobTimeout } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const build = steps.findIndex(({ name }) => name === NODE_BUILD_STEP);
   const pack = steps.findIndex(({ name }) => name === "Pack the shard's build outputs");
   const upload = steps.findIndex(({ name }) => name === UPLOAD_STEP);
   expect(build).toBeGreaterThan(-1);
   expect(build < pack && pack < upload).toBe(true);
-  expect(steps[build]?.if).toBe(BUILDING_ROW_CONDITION);
-  expect(steps[pack]?.if).toBe(BUILDING_ROW_CONDITION);
+  // Every consumer starts once every shard uploaded, so a slow build fails on its own bound instead of
+  // holding back the run until the job's limit.
+  expect(steps[build]?.['timeout-minutes']).toBe(10);
+  expect(jobTimeout).toBeGreaterThan(10);
   expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
   // The integration lanes' single-thread cap must not reach the compilers.
-  expect(steps[build]?.run).toContain('unset RAYON_NUM_THREADS\n');
+  expect(env.RAYON_NUM_THREADS).toBeUndefined();
   expect(steps[build]?.env).toMatchObject({
     NODE_OPTIONS: '--max-old-space-size=2048',
     ONTOS_CI_TYPECHECK_SEPARATE: '1',
     ULTRAMODERN_SOURCE_REVISION: CURRENT_SOURCE_REVISION,
   });
   expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
+});
+
+// The integration jobs share their steps and number their rows from 0. A failure upload under a name the run
+// already holds fails instead of keeping its evidence, so a second failing job or a failing re-run lost it.
+it('names every failure-diagnostics upload per job, row and attempt', () => {
+  const { jobs } = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          steps: Schema.optional(
+            Schema.Array(
+              Schema.Struct({
+                if: Schema.optional(Schema.String),
+                uses: Schema.optional(Schema.String),
+                with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+              }),
+            ),
+          ),
+        }),
+      ),
+    }),
+  )(readGateWorkflow());
+  const names = new Map<string, string>();
+  for (const [job, { steps = [] }] of Object.entries(jobs)) {
+    for (const step of steps) {
+      if (step.uses?.startsWith('actions/upload-artifact@') === true && step.if?.includes('failure()') === true) {
+        names.set(`${job}: ${String(step.with?.name)}`, String(step.with?.name));
+      }
+    }
+  }
+  expect(names.size).toBeGreaterThanOrEqual(4);
+  for (const [where, name] of names) {
+    expect(name, where).toContain(expression('github.run_attempt'));
+  }
+  for (const job of [OWNER_INTEGRATION_JOB, SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB]) {
+    expect(
+      names.get(
+        `${job}: native-startup-${expression('github.job')}-${expression('strategy.job-index')}-${expression('github.run_attempt')}`,
+      ),
+      job,
+    ).toBeDefined();
+  }
 });
 
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
@@ -2137,171 +2229,6 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
   });
   expect(warm.steps.some(({ run }) => (run ?? '').includes('run build'))).toBe(false);
   expect(warm.steps.some(({ run }) => (run ?? '').includes(TYPECHECK_COMMAND))).toBe(true);
-});
-
-/** The shard a test wait runs on, in a three-shard target named `Build x (`. */
-const WAITING_SHARD = 'Build x (1/3)';
-/** One answer of the run's artifacts API: these names, an expired artifact under the pattern and an unrelated one. */
-const artifactListing = (names: readonly string[]) =>
-  JSON.stringify({
-    artifacts: [
-      ...names.map((name) => ({ expired: false, name })),
-      { expired: true, name: 'x-9' },
-      { expired: false, name: 'unrelated' },
-    ],
-  });
-
-/**
- * Runs the shard wait with a `gh` that answers the jobs API with these jobs, and the artifacts API with
- * these artifact names in turn, as `gh api --jq` would. Expired and unrelated artifacts never count.
- * With `failAfterArtifactReads`, the jobs API reports a failed shard once the artifacts were read that many
- * times, so a wait that keeps waiting ends by itself: killing it on a timeout would leave its running `gh`
- * writing into the directory while it is removed.
- */
-const waitForBuildShards = (
-  jobs: readonly { conclusion: string | null; name: string }[],
-  own = WAITING_SHARD,
-  listings: readonly (readonly string[])[] = [own ? ['x-1', 'x-2', 'x-3'] : ['x-2', 'x-3']],
-  failAfterArtifactReads = 0,
-) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
-  try {
-    const gh = path.join(directory, 'gh');
-    for (const [index, names] of listings.entries()) {
-      writeFileSync(path.join(directory, `artifacts-${String(index)}.json`), artifactListing(names));
-    }
-    writeFileSync(path.join(directory, 'artifacts-last.json'), artifactListing(listings.at(-1) ?? []));
-    // The first jobs read fails the way a truncated API answer does; the wait must read the jobs again.
-    writeFileSync(
-      gh,
-      [
-        '#!/bin/sh',
-        '[ "$1" = api ] && [ "$3" = --jq ] || exit 2',
-        'case "$2" in',
-        String.raw`*/artifacts\?*)`,
-        `  n="$(cat "${directory}/artifact-reads" 2>/dev/null || echo 0)"`,
-        `  echo "$((n + 1))" >"${directory}/artifact-reads"`,
-        `  file="${directory}/artifacts-$n.json"`,
-        `  [ -e "$file" ] || file="${directory}/artifacts-last.json"`,
-        '  jq -r "$4" "$file" ;;',
-        '*)',
-        `  if [ ! -e "${directory}/read" ]; then : >"${directory}/read"; echo 'unexpected end of JSON input' >&2; exit 1; fi`,
-        `  n="$(cat "${directory}/artifact-reads" 2>/dev/null || echo 0)"`,
-        '  if [ "$FAIL_AFTER_ARTIFACT_READS" -gt 0 ] && [ "$n" -ge "$FAIL_AFTER_ARTIFACT_READS" ]; then',
-        `    printf %s '{"jobs":[{"conclusion":"failure","name":"Build x (2/3)"}]}' | jq -r "$4"; exit 0`,
-        '  fi',
-        '  printf %s "$FAKE_JOBS" | jq -r "$4" ;;',
-        'esac',
-        '',
-      ].join('\n'),
-    );
-    chmodSync(gh, 0o755);
-    execFileSync(
-      '/bin/bash',
-      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', own ? '3' : '2', own],
-      {
-        env: {
-          FAIL_AFTER_ARTIFACT_READS: String(failAfterArtifactReads),
-          FAKE_JOBS: JSON.stringify({ jobs }),
-          GITHUB_REPOSITORY: 'owner/repository',
-          GITHUB_RUN_ID: '1',
-          PATH: `${directory}:${STEP_PATH}`,
-          WAIT_FOR_ARTIFACT_PATTERN: 'x-*',
-          WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
-      },
-    );
-    return true;
-  } catch {
-    return false;
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-};
-
-it('waits for the other build shards of its own target and fails when one does not succeed', () => {
-  const last = 'Build x (3/3)';
-  const others = [
-    { conclusion: 'success', name: 'Build x (2/3)' },
-    { conclusion: 'success', name: last },
-  ];
-  const unrelated = [
-    { conclusion: null, name: WAITING_SHARD },
-    { conclusion: 'failure', name: 'Static Contracts' },
-  ];
-  expect(waitForBuildShards([...others, ...unrelated])).toBe(true);
-  expect(waitForBuildShards(others, '')).toBe(true);
-  expect(waitForBuildShards([{ ...others[0], conclusion: 'failure' }, others[1]], '')).toBe(false);
-  // Another proving shard of the target is still running its proof, but its outputs are uploaded.
-  const proving = {
-    conclusion: null,
-    name: last,
-    steps: [
-      { conclusion: 'success', name: UPLOAD_STEP },
-      { conclusion: null, name: 'Wait for the other build shards' },
-    ],
-  };
-  expect(waitForBuildShards([others[0], proving, ...unrelated])).toBe(true);
-  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped']) {
-    expect(waitForBuildShards([others[0], { conclusion, name: last }, ...unrelated])).toBe(false);
-    // A building owner row that failed its own tasks after its upload still published whole outputs.
-    expect(waitForBuildShards([others[0], { ...proving, conclusion }, ...unrelated])).toBe(true);
-    // One that ended before its upload published nothing.
-    const unpublished = { conclusion, name: last, steps: [{ conclusion: 'failure', name: UPLOAD_STEP }] };
-    expect(waitForBuildShards([others[0], unpublished, ...unrelated])).toBe(false);
-  }
-});
-
-// Run 44176588644: the last shard's upload step had just succeeded, the download listed the run's artifacts
-// a moment later without that shard's, and the bootstrap went on without two delivery units.
-it('ends the wait only once the run lists every shard artifact the next download reads', () => {
-  const uploaded = [
-    { conclusion: 'success', name: 'Build x (2/3)' },
-    { conclusion: 'success', name: 'Build x (3/3)' },
-  ];
-  expect(
-    waitForBuildShards(uploaded, WAITING_SHARD, [
-      ['x-1', 'x-2'],
-      ['x-1', 'x-2', 'x-3'],
-    ]),
-  ).toBe(true);
-  // Three reads of an incomplete list do not end the wait; only the failed shard reported afterwards does.
-  expect(waitForBuildShards(uploaded, WAITING_SHARD, [['x-1', 'x-2']], 3)).toBe(false);
-  // An expired artifact under the pattern never stands in for a missing one.
-  expect(waitForBuildShards(uploaded, '', [['x-2']], 3)).toBe(false);
-});
-
-it('makes every shard wait name the artifacts its next download reads', () => {
-  const WaitingStepSchema = Schema.Struct({
-    env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    run: Schema.optional(Schema.String),
-    uses: Schema.optional(Schema.String),
-    with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  });
-  const { jobs } = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Record(Schema.String, Schema.Struct({ steps: Schema.optional(Schema.Array(WaitingStepSchema)) })),
-    }),
-  )(readGateWorkflow());
-  let waits = 0;
-  for (const [job, { steps = [] }] of Object.entries(jobs)) {
-    for (const [index, step] of steps.entries()) {
-      if (step.run?.includes('scripts/wait-for-build-shards.sh') !== true) {
-        continue;
-      }
-      waits += 1;
-      // The bootstrap prefetch and the worker restore download in the same step; every other wait is followed
-      // by a download step.
-      const inline = /gh run download .* --(?:pattern|name) '?(?<artifact>[^'\s]+)'?/u.exec(step.run)?.groups?.artifact;
-      const next = steps.slice(index + 1).find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
-      const downloaded = inline ?? next?.with?.pattern ?? next?.with?.name;
-      expect(downloaded, job).toBeDefined();
-      expect(step.env?.WAIT_FOR_ARTIFACT_PATTERN, job).toBe(downloaded);
-    }
-  }
-  expect(waits).toBeGreaterThanOrEqual(5);
 });
 
 const CommandMatrixJobSchema = Schema.Struct({
@@ -2355,15 +2282,15 @@ const GateCommandsWorkflowSchema = Schema.Struct({
       ),
       strategy: Schema.Struct({ matrix: Schema.Struct({ row: Schema.Array(Schema.String) }) }),
     }),
-    [UNIT_AFTER_DATABASE_JOB]: CommandMatrixJobSchema,
     [UNIT_AFTER_LINT_JOB]: CommandMatrixJobSchema,
-    [UNIT_AFTER_TOPOLOGY_JOB]: CommandMatrixJobSchema,
+    [UNIT_AFTER_STATIC_JOB]: CommandMatrixJobSchema,
+    [UNIT_AFTER_TOOLING_JOB]: CommandMatrixJobSchema,
     [WORKSPACE_GATE_JOB]: CommandMatrixJobSchema,
     [WORKSPACE_UNIT_JOB]: CommandMatrixJobSchema,
   }),
 });
-/** Every unit job: the row behind the source contracts and the rows that take the lint, topology and database slots. */
-const UNIT_JOBS = [WORKSPACE_UNIT_JOB, UNIT_AFTER_LINT_JOB, UNIT_AFTER_DATABASE_JOB, UNIT_AFTER_TOPOLOGY_JOB] as const;
+/** Every unit job: the row behind the source contracts and the rows that take the lint, static and tooling slots. */
+const UNIT_JOBS = [WORKSPACE_UNIT_JOB, UNIT_AFTER_LINT_JOB, UNIT_AFTER_STATIC_JOB, UNIT_AFTER_TOOLING_JOB] as const;
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
 /** A workspace package manifest, whose scripts a package may omit entirely. */
 const PackageScriptsSchema = Schema.Struct({
@@ -2596,10 +2523,8 @@ const IntegrationRunnerSchema = Schema.Struct({
           name: Schema.String,
           'native-composition': Schema.optional(Schema.Boolean),
           'proof-packages': Schema.optional(Schema.Array(Schema.String)),
-          shard: Schema.optional(Schema.Number),
-          suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser', 'database', 'build']),
+          suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser', 'database']),
           tasks: Schema.optional(Schema.Array(Schema.String)),
-          units: Schema.optional(Schema.String),
         }),
       ),
     }),
@@ -2607,7 +2532,8 @@ const IntegrationRunnerSchema = Schema.Struct({
 });
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [NODE_ARTIFACT_BUILD_JOB]: IntegrationRunnerSchema,
+    [BROWSER_INTEGRATION_JOB]: IntegrationRunnerSchema,
+    [OWNER_INTEGRATION_JOB]: IntegrationRunnerSchema,
     [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema,
     [TOPOLOGY_PROOF_JOB]: IntegrationRunnerSchema,
   }),
@@ -2691,7 +2617,7 @@ it('uses the reviewed membership for worker drift checks during deployment and r
 
 it('runs retained-release browser recovery separately with one worker and its publication flag enabled', () => {
   const source: unknown = readGateWorkflow();
-  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[SERVICE_INTEGRATION_JOB];
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[BROWSER_INTEGRATION_JOB];
   const normal = steps.findIndex(({ run }) => run === BROWSER_TEST_COMMAND);
   const recovery = steps.findIndex(({ env }) => env?.ONTOS_E2E_RETAINED_PARTY_R2 !== undefined);
   expect(normal).toBeGreaterThan(-1);
@@ -2704,40 +2630,56 @@ it('runs retained-release browser recovery separately with one worker and its pu
   expect(steps[recovery]?.run).toContain('--workers 1');
 });
 
-it('publishes the verified database before browser writes and restores it before isolated workers start', () => {
+it('publishes the verified database from its own producer and restores it only in jobs that need that producer', () => {
   const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
-  const producer = jobs[SERVICE_INTEGRATION_JOB].steps;
-  const consumer = jobs[NODE_ARTIFACT_BUILD_JOB].steps;
-  const migrated = producer.findIndex(({ run }) => run?.includes('pnpm db:verify') === true);
-  const exported = producer.findIndex(({ run }) => run === 'bash scripts/ci/export-integration-database.sh');
-  const uploaded = producer.findIndex(({ with: inputs }) => inputs?.name === INTEGRATION_DATABASE_ARTIFACT);
-  const browser = producer.findIndex(({ run }) => run === BROWSER_TEST_COMMAND);
+  const producer = jobs[SERVICE_INTEGRATION_JOB];
+  const consumer = jobs[OWNER_INTEGRATION_JOB];
+  // The producer only migrates, verifies, exports and uploads; the browser checks migrate their own database.
+  expect(producer.needs).toEqual([CI_PLAN_JOB]);
+  expect(producer.strategy.matrix.include.map(({ suite }) => suite)).toEqual(['database']);
+  expect(jobs[BROWSER_INTEGRATION_JOB].needs).toEqual([CI_PLAN_JOB]);
+  expect(jobs[BROWSER_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
+  const { steps } = producer;
+  const migrated = steps.findIndex(({ run }) => run?.includes('pnpm db:verify') === true);
+  const exported = steps.findIndex(({ run }) => run === 'bash scripts/ci/export-integration-database.sh');
+  const uploaded = steps.findIndex(({ with: inputs }) => inputs?.name === INTEGRATION_DATABASE_ARTIFACT);
   expect(migrated).toBeGreaterThan(-1);
-  expect(migrated < exported && exported < uploaded && uploaded < browser).toBe(true);
-  // Empty clusters start before the archive exists; only the restore reads this run's archive, and the
-  // tests wait for that restore.
-  const workers = consumer.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
-  const restore = consumer.findIndex(({ id }) => id === INTEGRATION_WORKERS_STEP_ID);
-  const restored = consumer.findIndex(({ wait }) => wait === INTEGRATION_WORKERS_STEP_ID);
-  const tests = consumer.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(migrated < exported && exported < uploaded).toBe(true);
+  for (const step of [steps[exported], steps[uploaded]]) {
+    expect(step?.if).toBe("matrix.suite == 'database'");
+  }
+  expect(steps[uploaded]?.with?.overwrite).toBe(true);
+  // The owner rows need the producer, so the archive exists when they start. Empty clusters start first;
+  // only the restore reads the archive, and the tests wait for that restore.
+  expect(consumer.needs).toContain(SERVICE_INTEGRATION_JOB);
+  const workers = consumer.steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
+  const restore = consumer.steps.findIndex(({ id }) => id === INTEGRATION_WORKERS_STEP_ID);
+  const restored = consumer.steps.findIndex(({ wait }) => wait === INTEGRATION_WORKERS_STEP_ID);
+  const tests = consumer.steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
   expect(workers).toBeGreaterThan(-1);
   expect(workers < restore && restore < restored && restored < tests).toBe(true);
-  expect(consumer[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBeUndefined();
-  expect(consumer[restore]?.background).toBe(true);
-  expect(consumer[restore]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(consumer[restore]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(`${RUNNER_TEMP_EXPRESSION}/integration-database`);
-  expect(consumer[restore]?.env?.WAIT_FOR_ARTIFACT_PATTERN).toBe(INTEGRATION_DATABASE_ARTIFACT);
+  expect(consumer.steps[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBeUndefined();
+  expect(consumer.steps[restore]?.background).toBe(true);
+  expect(consumer.steps[restore]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  // Nothing tells the restore to wait: the archive exists when the row starts.
+  expect(sorted(Object.keys(consumer.steps[restore]?.env ?? {}))).toEqual([
+    'GH_TOKEN',
+    'INTEGRATION_DATABASE_ARCHIVE',
+    'ONTOS_CI_ISOLATED_WORKERS',
+  ]);
+  expect(consumer.steps[restore]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(
+    `${RUNNER_TEMP_EXPRESSION}/integration-database`,
+  );
   // The download names this run's id, so it reads only this workflow run's archive.
-  expect(consumer[restore]?.run).toBe(
+  expect(consumer.steps[restore]?.run).toBe(
     [
-      "bash scripts/wait-for-build-shards.sh 'Prepare integration database' 1",
       `gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name ${INTEGRATION_DATABASE_ARTIFACT} --dir "$INTEGRATION_DATABASE_ARCHIVE"`,
       RESTORE_INTEGRATION_WORKERS,
       '',
     ].join('\n'),
   );
   expect(
-    consumer.some(
+    consumer.steps.some(
       ({ uses, with: inputs }) =>
         uses?.startsWith('actions/download-artifact@') === true && inputs?.name === INTEGRATION_DATABASE_ARTIFACT,
     ),
@@ -2761,9 +2703,9 @@ it('supplies same-run built Composition to selected native owner integration sha
   const source: unknown = readGateWorkflow();
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
   const integrationJobs = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs;
-  const integration = integrationJobs[NODE_ARTIFACT_BUILD_JOB];
-  // Every owner row starts with the run and waits for this run's uploads inside the job.
-  expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
+  const integration = integrationJobs[OWNER_INTEGRATION_JOB];
+  // Every owner row starts only once every build shard and the database producer uploaded.
+  expect(jobs[OWNER_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB]);
   const rows = integration.strategy.matrix.include;
   const selected = rows.filter((shard) => shard['native-composition'] === true);
   const rootShards = rows.filter((shard) => rootRow(shard));
@@ -2780,15 +2722,15 @@ it('supplies same-run built Composition to selected native owner integration sha
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
-  const wait = steps.findIndex(({ run }) => run === WAIT_FOR_BUILDS);
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   expect(workers).toBeGreaterThan(-1);
-  expect(workers < wait && wait < download).toBe(true);
+  expect(workers < download).toBe(true);
   expect(rows.flatMap((row) => row.tasks ?? []).filter((task) => task === 'whole:migrations')).toHaveLength(1);
-  // Every integration job runs the same steps; the build steps run only on a row with units.
-  expect(integrationJobs[SERVICE_INTEGRATION_JOB].steps).toEqual(integration.steps);
+  // Every integration job runs the same steps, each selecting its own by the row's suite.
+  for (const job of [SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB] as const) {
+    expect(integrationJobs[job].steps, job).toEqual(integration.steps);
+  }
   expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(false);
-  expect(steps[wait]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
@@ -2799,7 +2741,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  expect(steps[download]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(steps[derive]?.if).toBe('matrix.native-composition == true');
   expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(1);
@@ -2809,8 +2751,9 @@ it('proves the built topology of every delivery unit in one row of the integrati
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     TOPOLOGY_PROOF_JOB
   ];
-  // One prerequisite row proves all built outputs before late-wave admission;
-  // its success is required by the unchanged service-integration gate.
+  // One row proves all built outputs once every build shard uploaded; check-ci-gates.sh requires its success
+  // whenever the service-integration gate is expected.
+  expect(integration.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
   const rows = integration.strategy.matrix.include.filter(({ suite }) => suite === NODE_PROOF_SUITE);
   expect(rows).toHaveLength(1);
   expect(rows[0]?.tasks).toBeUndefined();
@@ -2847,84 +2790,26 @@ it('proves the built topology of every delivery unit in one row of the integrati
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
 });
 
-it('overlaps bootstrap artifact transfer with the independent fresh-database proofs', () => {
-  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+it('downloads the bootstrap Node artifacts after its fresh-database proofs, from shards it needs', () => {
+  const { needs, steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     TOPOLOGY_PROOF_JOB
   ];
   const named = (name: string) => steps.findIndex((step) => step.name === name);
-  const prefetch = steps.findIndex(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID);
-  const fetched = steps.findIndex(({ wait }) => wait === BOOTSTRAP_ARTIFACT_STEP_ID);
+  const download = named(BACKEND_ARTIFACT_DOWNLOAD_STEP);
   const unpack = named(BACKEND_ARTIFACT_UNPACK_STEP);
-  expect(prefetch).toBeGreaterThan(-1);
-  expect(steps[prefetch]?.if).toBe(BOOTSTRAP_CONDITION);
-  expect(steps[prefetch]?.background).toBe(true);
-  // Bootstrap starts with the builds, so the transfer first waits for every shard of this run.
-  expect(steps[prefetch]?.run).toBe(
-    'bash scripts/wait-for-build-shards.sh \'Build node artifacts (\' 11\ngh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern \'node-units-*\' --dir "$RUNNER_TEMP/native-composition-units"\n',
-  );
-  expect(prefetch).toBeLessThan(named(BOOTSTRAP_MIGRATOR_STEP));
-  expect(steps[fetched]?.if).toBeUndefined();
-  expect(fetched).toBeGreaterThan(prefetch);
-  expect(fetched).toBeLessThan(unpack);
+  // The bootstrap needs the build shards, so the artifacts exist when it starts and it never waits for them.
+  expect(needs).toContain(NODE_ARTIFACT_BUILD_JOB);
+  expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[download]?.with).toEqual({
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
+    pattern: NODE_BUILD_ARTIFACT_PATTERN,
+  });
+  expect(named(BOOTSTRAP_MIGRATOR_STEP)).toBeLessThan(download);
+  expect(download).toBeLessThan(unpack);
   for (const step of steps) {
     if (step.wait !== undefined) {
       expect(step.if, step.name).toBeUndefined();
     }
-  }
-});
-
-it('prefetches only this run and propagates a failed shard or artifact download', () => {
-  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    TOPOLOGY_PROOF_JOB
-  ];
-  const script = steps.find(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID)?.run ?? 'exit 0';
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-bootstrap-download-'));
-  try {
-    // The jobs API answers with every shard's state and the artifacts API lists all 11 shard artifacts;
-    // the download records its arguments.
-    const executable = path.join(directory, 'gh');
-    writeFileSync(
-      executable,
-      [
-        '#!/bin/bash',
-        'if [ "$1" = api ]; then',
-        String.raw`  case "$2" in */artifacts\?*) echo 11; exit 0 ;; esac`,
-        String.raw`  for shard in $(seq 1 11); do printf "%s\tBuild node artifacts (%s/11)\n" "$SHARD_STATE" "$shard"; done`,
-        '  exit 0',
-        'fi',
-        String.raw`printf "%s\n" "$@" > "$GH_ARGUMENTS"`,
-        'exit "$GH_EXIT"',
-        '',
-      ].join('\n'),
-    );
-    chmodSync(executable, 0o755);
-    const argumentsFile = path.join(directory, 'arguments');
-    const environment = {
-      GH_ARGUMENTS: argumentsFile,
-      GITHUB_REPOSITORY: 'TechsioCZ/ontos',
-      GITHUB_RUN_ID: '12345',
-      PATH: `${directory}:${STEP_PATH}`,
-      RUNNER_TEMP: directory,
-      WAIT_FOR_ARTIFACT_PATTERN: NODE_BUILD_ARTIFACT_PATTERN,
-    };
-    expect(stepPasses(script, { ...environment, GH_EXIT: '0', SHARD_STATE: 'failure' })).toBe(false);
-    expect(existsSync(argumentsFile)).toBe(false);
-    for (const exitCode of ['0', '9']) {
-      expect(stepPasses(script, { ...environment, GH_EXIT: exitCode, SHARD_STATE: 'success' })).toBe(exitCode === '0');
-      expect(readFileSync(argumentsFile, 'utf-8').trimEnd().split('\n')).toEqual([
-        'run',
-        'download',
-        '12345',
-        '--repo',
-        'TechsioCZ/ontos',
-        '--pattern',
-        'node-units-*',
-        '--dir',
-        path.join(directory, 'native-composition-units'),
-      ]);
-    }
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
   }
 });
 
@@ -3013,10 +2898,10 @@ const NATIVE_TOPOLOGY_PROOFS = [
   'whole:preproposal-approval',
 ] as const;
 const WHOLE_PROOFS = [...NATIVE_TOPOLOGY_PROOFS, 'whole:migrations', 'whole:party-worker'];
-/** Every owner row; each one is a build shard. */
+/** Every owner row of the complete plan. */
 const integrationRows = () => {
   const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
-  return jobs[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.include.filter(({ suite }) => suite === 'integration');
+  return jobs[OWNER_INTEGRATION_JOB].strategy.matrix.include.filter(({ suite }) => suite === 'integration');
 };
 /** Each sharded family's `k/n` shards, keyed by `root` or the package selector. */
 const shardFamilies = (tasks: readonly string[]) => {
@@ -3212,7 +3097,7 @@ const IdentityGateJobSchema = Schema.Struct({
 });
 const IdentityGateJobsSchema = Schema.Struct({
   jobs: Schema.Struct({
-    'cloudflare-artifact-build': IdentityGateJobSchema,
+    [CLOUDFLARE_ARTIFACT_PROOF_JOB]: IdentityGateJobSchema,
     [SERVICE_INTEGRATION_JOB]: IdentityGateJobSchema,
   }),
 });
@@ -3221,7 +3106,7 @@ it('gives every CI database tool a separate login per runtime identity and audit
   const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
   const integration = jobs[SERVICE_INTEGRATION_JOB];
-  const proofValues = jobs['cloudflare-artifact-build'].steps.find(
+  const proofValues = jobs[CLOUDFLARE_ARTIFACT_PROOF_JOB].steps.find(
     ({ name }) => name === 'Set the development-only service values of the Worker proofs',
   );
   for (const environment of [integration.env, proofValues?.env]) {
@@ -3284,8 +3169,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
   expect(migrations?.if).toBe(NON_BOOTSTRAP_CONDITION);
   expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
-  expect(steps.find(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID)?.if).toBe(BOOTSTRAP_CONDITION);
-  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP)?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_UNPACK_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
 });
 
@@ -3323,7 +3207,7 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
 
 it('gives the workerd SSR proof every dedicated Hyperdrive connection from the canonical identity URL', () => {
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
-  const outputs = jobs['cloudflare-artifact-build'].steps.find(
+  const outputs = jobs[CLOUDFLARE_ARTIFACT_PROOF_JOB].steps.find(
     ({ run }) => run?.includes('pnpm cloudflare:ssr-proof') === true,
   );
   expect(outputs).toBeDefined();
@@ -3394,8 +3278,8 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const source: unknown = readGateWorkflow();
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
   const integrationJobs = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs;
-  const integration = integrationJobs[NODE_ARTIFACT_BUILD_JOB];
-  expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
+  const integration = integrationJobs[OWNER_INTEGRATION_JOB];
+  expect(jobs[OWNER_INTEGRATION_JOB]?.needs).toContain(NODE_ARTIFACT_BUILD_JOB);
   const ownerRows = integrationRows();
   const roots = ownerRows.filter((shard) => rootRow(shard));
   // Shard counts are reshard-dependent and their completeness is proved where the shard ids are checked
@@ -3405,8 +3289,13 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const customerContext = ownerRows.filter((shard) => shardFilters(shard).includes(CUSTOMER_CONTEXT_SELECTOR));
   expect(customerContext.length).toBeGreaterThan(0);
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
-  const setup = integrationJobs[SERVICE_INTEGRATION_JOB];
-  expect(setup.strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
+  expect(integrationJobs[SERVICE_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual([
+    'database',
+  ]);
+  expect(integrationJobs[BROWSER_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual([
+    'browser',
+  ]);
+  expect(ownerRows).toEqual(integration.strategy.matrix.include);
   const { steps } = integration;
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
@@ -3423,9 +3312,9 @@ it('restores same-run Node artifacts for every backend integration fixture and e
     pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
-  expect(steps[download]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  // Every owner row restores the same artifacts after waiting for the builds inside the job.
+  // Every owner row restores the same artifacts, which exist when it starts.
   const preproposal = ownerRows.filter((shard) =>
     (shard.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')),
   );
@@ -3468,105 +3357,354 @@ it('starts at most 17 gate jobs and hands every finished slot to at most one lat
     const plan = fullPlanMatrices(lintSweep);
     const lint = 1;
     const sourceContracts = 1;
-    const first =
-      plan.integrationBuild.length +
-      plan.integration.length +
-      plan.integrationTopology.length +
-      plan.source.length +
-      sourceContracts +
-      staticRows +
-      lint;
+    const producers = plan.integrationBuild.length + plan.integration.length;
+    const first = producers + plan.integrationBrowser.length + plan.source.length + sourceContracts + staticRows + lint;
     expect(first, lintSweep).toBeLessThanOrEqual(17);
+    // The owner rows and the bootstrap need the producers, so they take the producers' slots.
+    expect(plan.integrationOwners.length + plan.integrationTopology.length, lintSweep).toBeLessThanOrEqual(producers);
     expect(plan.unit.length, lintSweep).toBeLessThanOrEqual(sourceContracts);
     expect(plan.unitAfterLint.length, lintSweep).toBeLessThanOrEqual(lint);
-    expect(plan.unitAfterDatabase.length, lintSweep).toBeLessThanOrEqual(plan.integration.length);
-    // A whole-tree lint keeps its slot for minutes, so its row follows the topology proof too. By then the
+    expect(plan.unitAfterTooling.length, lintSweep).toBeLessThanOrEqual(plan.source.length);
+    // A whole-tree lint keeps its slot for minutes, so its row follows the static contracts too. By then the
     // Quality Audit has ended, so the gates hold at most 18.
-    expect(plan.unitAfterTopology.length, lintSweep).toBeLessThanOrEqual(
-      plan.integrationTopology.length + (lintSweep === 'all' ? 1 : 0),
-    );
+    expect(plan.unitAfterStatic.length, lintSweep).toBeLessThanOrEqual(staticRows + (lintSweep === 'all' ? 1 : 0));
   }
   expect(fullPlanMatrices('all').unitAfterLint).toEqual([]);
+});
+
+it('starts the producers with the run and every consumer in the slot its producers or predecessor free', () => {
   const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
   for (const job of [
+    BROWSER_INTEGRATION_JOB,
     FORMAT_AND_LINT_JOB,
     NODE_ARTIFACT_BUILD_JOB,
     SERVICE_INTEGRATION_JOB,
     SOURCE_CONTRACTS_JOB,
     STATIC_CONTRACTS_JOB,
-    TOPOLOGY_PROOF_JOB,
     WORKSPACE_GATE_JOB,
   ]) {
     expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB]);
   }
+  // The bootstrap and the owner rows always read what they need, so each of their producers must have succeeded.
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  expect(all[OWNER_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB]);
+  for (const job of [TOPOLOGY_PROOF_JOB, OWNER_INTEGRATION_JOB]) {
+    for (const producer of all[job]?.needs ?? []) {
+      expect(all[job]?.if, `${job} needs ${producer}`).toContain(`needs.${producer}.result == 'success'`);
+    }
+  }
   for (const [job, predecessor, output] of [
     [WORKSPACE_UNIT_JOB, SOURCE_CONTRACTS_JOB, undefined],
     [UNIT_AFTER_LINT_JOB, FORMAT_AND_LINT_JOB, 'unitAfterLint'],
-    [UNIT_AFTER_DATABASE_JOB, SERVICE_INTEGRATION_JOB, 'unitAfterDatabase'],
-    [UNIT_AFTER_TOPOLOGY_JOB, TOPOLOGY_PROOF_JOB, 'unitAfterTopology'],
+    [UNIT_AFTER_STATIC_JOB, STATIC_CONTRACTS_JOB, 'unitAfterStatic'],
+    [UNIT_AFTER_TOOLING_JOB, WORKSPACE_GATE_JOB, 'unitAfterTooling'],
   ] as const) {
-    expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB, predecessor]);
-    expect(all[job]?.if).toContain(`needs.${predecessor}.result == 'success'`);
+    expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, predecessor]);
+    expect(all[job]?.if).toContain(`${neededResult(predecessor)} && `);
     if (output !== undefined) {
       expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
     }
+  }
+  for (const [job, output] of [
+    [OWNER_INTEGRATION_JOB, 'integrationOwners'],
+    [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+  ] as const) {
+    expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
   }
   // The source contracts belong to the workspace-gate check and run whenever it does.
   expect(all[SOURCE_CONTRACTS_JOB]?.if).toBe(all[WORKSPACE_GATE_JOB]?.if);
 });
 
-// Unit rows and owner rows no longer wait for the build jobs to end: each waits inside the job for the
-// upload step of every build shard of this run, and a shard that ends without uploading fails the wait.
-it('waits inside every unit row for this run’s build uploads before downloading them', () => {
+it('starts every unit row only once the build shards uploaded and gives it no Actions API access', () => {
   const jobs = readGateCommandJobs();
-  for (const job of UNIT_JOBS) {
-    const { steps } = jobs[job];
-    const wait = steps.findIndex(({ run }) => run === WAIT_FOR_BUILDS);
-    const download = steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
-    expect(wait, job).toBeGreaterThan(-1);
-    expect(wait < download, job).toBe(true);
-    expect(steps[wait]?.if, job).toBe(UNIT_ARTIFACTS_CONDITION);
-  }
   const gated = Schema.decodeUnknownSync(
     Schema.Struct({
-      jobs: Schema.Record(Schema.String, Schema.Struct({ permissions: Schema.optional(Schema.Unknown) })),
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          needs: Schema.optional(Schema.Array(Schema.String)),
+          permissions: Schema.optional(Schema.Unknown),
+        }),
+      ),
     }),
   )(readGateWorkflow()).jobs;
   for (const job of UNIT_JOBS) {
-    expect(gated[job]?.permissions, job).toEqual({ actions: 'read', contents: 'read' });
+    const { steps } = jobs[job];
+    const download = steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+    expect(download, job).toBeGreaterThan(-1);
+    expect(steps[download]?.if, job).toBe(UNIT_ARTIFACTS_CONDITION);
+    expect(gated[job]?.needs, job).toContain(NODE_ARTIFACT_BUILD_JOB);
+    // A same-run download needs no API access; only a job that lists or polls the run would.
+    expect(gated[job]?.permissions, job).toBeUndefined();
   }
 });
 
-it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
+it('proves the Cloudflare outputs in jobs that need every build shard, never in a shard', () => {
   const jobs = readArtifactBuildJobs();
-  for (const [job, proofs, artifacts] of [
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
-  ] as const) {
-    const { name, permissions, steps, strategy } = jobs[job];
-    // Each proof runs on exactly one shard; the other shards only build.
-    const hosted = strategy.matrix.include.map(({ proof }) => proof).filter((proof) => proof !== 'none');
-    expect(sorted(hosted.map((proof) => proof ?? ''))).toEqual([...proofs]);
-    expect(permissions).toEqual({ actions: 'read', contents: 'read' });
-    // The proving shard waits for every other shard of this job, by the job's own name, before it
-    // downloads them; every step after the shard's own upload runs only on a proving shard.
-    const prefix = name.slice(0, name.indexOf('${{'));
-    const upload = steps.findIndex((step) => step.name === UPLOAD_STEP);
-    const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh') === true);
-    const download = steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
-    expect(steps[wait]?.run).toBe(
-      `bash scripts/wait-for-build-shards.sh '${prefix}' ${strategy.matrix.shard.length} '${name}'`,
-    );
-    expect(upload).toBeGreaterThan(-1);
-    expect(upload < wait && wait < download).toBe(true);
-    for (const step of steps.slice(upload + 1)) {
-      expect(`${step.name}: ${step.if ?? ''}`).toMatch(/matrix\.proof (?:!= 'none'|== '[a-z]+')$/u);
-    }
-    // This target proves on more than one shard, so its download compares by `!= 'none'` rather than
-    // naming a single proof.
-    expect(proofs.length).toBeGreaterThan(1);
-    expect(steps[download]?.if).toBe("matrix.proof != 'none'");
-    expect(steps[download]?.with?.pattern).toBe(artifacts);
+  const build = jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB];
+  const proof = jobs[CLOUDFLARE_ARTIFACT_PROOF_JOB];
+  // The shards only build, pack and upload; the proofs need them and read every shard's outputs.
+  expect(build.needs).toEqual([CI_PLAN_JOB]);
+  expect(build.permissions).toBeUndefined();
+  expect(build.steps.at(-1)?.name).toBe(UPLOAD_STEP);
+  expect(build.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true)).toBe(false);
+  expect(build.strategy.matrix.include.every(({ proof: hosted }) => hosted === undefined)).toBe(true);
+  expect(proof.needs).toEqual([CI_PLAN_JOB, CLOUDFLARE_ARTIFACT_BUILD_JOB]);
+  expect(sorted(proof.strategy.matrix.proof)).toEqual(['outputs', 'topology']);
+  const download = proof.steps.find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+  expect(download?.if).toBeUndefined();
+  expect(download?.with?.pattern).toBe('cloudflare-units-*');
+  for (const step of proof.steps) {
+    expect(`${step.name}: ${step.if ?? ''}`).not.toContain("matrix.proof != 'none'");
   }
+});
+
+/** A step as the run-wait rule reads it. */
+const RuleStepSchema = Schema.Struct({
+  if: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(
+    Schema.Struct({
+      name: Schema.optional(Schema.String),
+      pattern: Schema.optional(Schema.String),
+      'run-id': Schema.optional(Schema.String),
+    }),
+  ),
+});
+const RuleJobSchema = Schema.Struct({
+  needs: Schema.optional(Schema.Array(Schema.String)),
+  steps: Schema.optional(Schema.Array(RuleStepSchema)),
+  // A planner matrix is an expression until readGateWorkflow expands it; only expanded rows name a suite.
+  strategy: Schema.optional(
+    Schema.Struct({ matrix: Schema.optional(Schema.Struct({ include: Schema.optional(Schema.Unknown) })) }),
+  ),
+});
+const RuleWorkflowSchema = Schema.Struct({ jobs: Schema.Record(Schema.String, RuleJobSchema) });
+type RuleWorkflow = typeof RuleWorkflowSchema.Type;
+type RuleStep = typeof RuleStepSchema.Type;
+const isSuiteRows = Schema.is(Schema.Array(Schema.Struct({ suite: Schema.optional(Schema.String) })));
+const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
+/** A step that waits for jobs, or reads the jobs or artifacts of the run it runs in. */
+const RUN_POLLING = [
+  /wait-for-[\w-]+\.sh/u,
+  /actions\/runs\/(?:\$\{?GITHUB_RUN_ID\}?|\$\{\{\s*github\.run_id\s*\}\})\/(?:artifacts|jobs|attempts)/u,
+  /gh run (?:watch|view)\b/u,
+];
+/** This run's id as a step script names it. */
+const SAME_RUN_ID = /^["']?(?:\$\{?GITHUB_RUN_ID\}?|\$\{\{\s*github\.run_id\s*\}\})["']?$/u;
+const GH_RUN_DOWNLOAD = /gh run download\s+(?<run>\S+)(?<options>[^\n]*)/gu;
+const DOWNLOAD_SELECTOR = /(?:--name|--pattern|-n|-p)[\s=]+["']?(?<selector>[^"'\s]+)/gu;
+const SUITE_CLAUSE = /^matrix\.suite (?<operator>==|!=) '(?<suite>[a-z]+)'$/u;
+
+/** An artifact name split at its wildcards and expressions; a name without any is exact. */
+const artifactName = (name: string) => {
+  const parts = name.split(/\$\{\{.*?\}\}|\*/u);
+  return { exact: parts.length === 1, prefix: parts[0] ?? '', suffix: parts.at(-1) ?? '' };
+};
+/** Whether an uploaded artifact name can be a name that a download selector reads. */
+const artifactMayMatch = (uploaded: string, selector: string) => {
+  const upload = artifactName(uploaded);
+  const download = artifactName(selector);
+  if (upload.exact && download.exact) {
+    return uploaded === selector;
+  }
+  return (
+    (upload.prefix.startsWith(download.prefix) || download.prefix.startsWith(upload.prefix)) &&
+    (upload.suffix.endsWith(download.suffix) || download.suffix.endsWith(upload.suffix))
+  );
+};
+/** The artifacts a script downloads with `gh run download` from the run it runs in; `*` for every one. */
+const scriptDownloads = (run: string) =>
+  [...run.matchAll(GH_RUN_DOWNLOAD)]
+    .filter(({ groups }) => SAME_RUN_ID.test(groups?.run ?? ''))
+    .flatMap(({ groups }) => {
+      const selectors = [...(groups?.options ?? '').matchAll(DOWNLOAD_SELECTOR)].map(
+        (match) => match.groups?.selector ?? '*',
+      );
+      return selectors.length === 0 ? ['*'] : selectors;
+    });
+/** The artifacts a step downloads from the run it runs in: names or patterns, `*` for every artifact. */
+const sameRunDownloads = (step: RuleStep): readonly string[] => {
+  if (step.uses?.startsWith(DOWNLOAD_ARTIFACT) !== true) {
+    return scriptDownloads(step.run ?? '');
+  }
+  return step.with?.['run-id'] === undefined ? [step.with?.name ?? step.with?.pattern ?? '*'] : [];
+};
+/** The scripts a step runs, read from the repository, so a wait cannot hide behind a script name. */
+const stepScripts = (run: string) =>
+  [...run.matchAll(/(?:^|\s)(?:bash|sh)\s+(?<script>(?:app\/)?scripts\/[\w./-]+\.sh)/gu)].flatMap(({ groups }) => {
+    const script = groups?.script ?? '';
+    const file = new URL(`../../${script.replace(/^app\//u, '')}`, import.meta.url);
+    return existsSync(file) ? [{ script, source: readFileSync(file, 'utf-8') }] : [];
+  });
+/**
+ * Whether a step runs on a job whose matrix rows have these suites. The integration jobs share one step list
+ * and pick their steps by `matrix.suite`; any other condition is assumed to hold.
+ */
+const stepRunsOnSuites = (condition: string | undefined, suites: readonly (string | undefined)[]) => {
+  if (condition === undefined) {
+    return true;
+  }
+  const clauses = condition
+    .replace(/^(?:failure|always)\(\) && /u, '')
+    .split(' || ')
+    .map((clause) => SUITE_CLAUSE.exec(clause)?.groups);
+  if (clauses.some((clause) => clause === undefined)) {
+    return true;
+  }
+  return suites.some((suite) => clauses.some((clause) => (clause?.operator === '==') === (suite === clause?.suite)));
+};
+/** The steps a job runs on at least one of its matrix rows. */
+const runningSteps = (jobs: RuleWorkflow['jobs'], job: string) => {
+  const include = jobs[job]?.strategy?.matrix?.include;
+  const suites = isSuiteRows(include) && include.length > 0 ? include.map(({ suite }) => suite) : [undefined];
+  return (jobs[job]?.steps ?? []).filter((step) => stepRunsOnSuites(step.if, suites));
+};
+/** Every job a job needs, directly or through a needed job. */
+const neededJobs = (jobs: RuleWorkflow['jobs'], job: string, needed = new Set<string>()): ReadonlySet<string> => {
+  for (const parent of jobs[job]?.needs ?? []) {
+    if (!needed.has(parent)) {
+      needed.add(parent);
+      neededJobs(jobs, parent, needed);
+    }
+  }
+  return needed;
+};
+interface RuleContext {
+  readonly jobs: RuleWorkflow['jobs'];
+  readonly uploads: readonly { readonly job: string; readonly name: string }[];
+}
+const pollViolations = (where: string, run: string) =>
+  [{ script: 'the step', source: run }, ...stepScripts(run)]
+    .filter(({ source }) => RUN_POLLING.some((pattern) => pattern.test(source)))
+    .map(({ script }) => `${where} waits for this run in ${script}`);
+const downloadViolations = (context: RuleContext, job: string, where: string, selector: string) => {
+  const producers = [
+    ...new Set(context.uploads.filter(({ name }) => artifactMayMatch(name, selector)).map((upload) => upload.job)),
+  ];
+  if (producers.length === 0) {
+    return [`${where} downloads ${selector}, which no job of this run uploads`];
+  }
+  const needed = neededJobs(context.jobs, job);
+  // A job may read back what it uploaded itself in an earlier attempt.
+  return producers
+    .filter((producer) => producer !== job && !needed.has(producer))
+    .map((producer) => `${where} downloads ${selector} from ${producer} without needing it`);
+};
+const stepViolations = (context: RuleContext, job: string, step: RuleStep) => {
+  const where = `${job}: ${step.name ?? step.uses ?? step.run ?? ''}`;
+  return [
+    ...pollViolations(where, step.run ?? ''),
+    ...sameRunDownloads(step).flatMap((selector) => downloadViolations(context, job, where, selector)),
+  ];
+};
+
+/**
+ * Every way a job could hold a runner while it waits for output of another job of the same run: a step (or a
+ * script it runs) that waits for jobs or reads the run's jobs or artifacts, and a same-run download whose
+ * producing job is not among the job's needs, directly or through a needed job. Only the jobs `inScope`
+ * accepts are checked; every job of the workflow counts as a producer.
+ */
+const runWaitViolations = ({ jobs }: RuleWorkflow, inScope: (job: string) => boolean): readonly string[] => {
+  const uploads = Object.keys(jobs).flatMap((job) =>
+    runningSteps(jobs, job).flatMap(({ uses, with: inputs }) =>
+      uses?.startsWith(UPLOAD_ARTIFACT) === true && inputs?.name !== undefined ? [{ job, name: inputs.name }] : [],
+    ),
+  );
+  return Object.keys(jobs)
+    .filter(inScope)
+    .flatMap((job) => runningSteps(jobs, job).flatMap((step) => stepViolations({ jobs, uploads }, job, step)));
+};
+const everyJob = () => true;
+
+// Run 44227243390 and its neighbours: on 20 hosted runners for the whole organisation, seven runs filled every
+// runner with jobs that had taken one and then polled for builds that had none, until the 30-minute limit.
+it('holds no runner while a job waits for output of another job of the same run', () => {
+  const workflow = Schema.decodeUnknownSync(RuleWorkflowSchema)(readGateWorkflow());
+  // The deploy chain hangs off deploy-target, is switched off on main and reads back its own uploads of
+  // earlier attempts; every other job of the workflow is in scope, the gates and the retired builds included.
+  const gates = (job: string) => job !== DEPLOY_TARGET_JOB && !neededJobs(workflow.jobs, job).has(DEPLOY_TARGET_JOB);
+  const scoped = Object.keys(workflow.jobs).filter(gates);
+  for (const job of [
+    NODE_ARTIFACT_BUILD_JOB,
+    OWNER_INTEGRATION_JOB,
+    TOPOLOGY_PROOF_JOB,
+    CLOUDFLARE_ARTIFACT_PROOF_JOB,
+  ]) {
+    expect(scoped).toContain(job);
+  }
+  expect(runWaitViolations(workflow, gates)).toEqual([]);
+  expect(existsSync(new URL('../wait-for-build-shards.sh', import.meta.url))).toBe(false);
+});
+
+const fixtureUpload = (name: string): RuleStep => ({ uses: 'actions/upload-artifact@pin', with: { name } });
+const fixtureDownload = (inputs: RuleStep['with']): RuleStep => ({
+  uses: 'actions/download-artifact@pin',
+  with: inputs,
+});
+const onSuite = (suite: string, step: RuleStep): RuleStep => ({ ...step, if: `matrix.suite == '${suite}'` });
+const suiteRow = (suite: string) => ({ matrix: { include: [{ suite }] } });
+const FIXTURE_DOWNLOAD_UNIT = `gh run download "$GITHUB_RUN_ID" --name units-1 --dir out`;
+
+it('finds every job that polls its own run or downloads an artifact its needs do not produce', () => {
+  // Two jobs share one step list, as the integration jobs do; each runs only the steps of its suites.
+  const shared = [
+    onSuite('database', fixtureUpload(INTEGRATION_DATABASE_ARTIFACT)),
+    onSuite('integration', fixtureDownload({ name: INTEGRATION_DATABASE_ARTIFACT })),
+  ];
+  const owners = { needs: ['plan'], steps: shared, strategy: suiteRow('integration') };
+  const workflow: RuleWorkflow = {
+    jobs: {
+      // Needs a job that does not need the shards.
+      around: { needs: ['early'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT }] },
+      build: { needs: ['plan'], steps: [fixtureUpload(`units-${expression('matrix.shard')}`)] },
+      database: { needs: ['plan'], steps: shared, strategy: suiteRow('database') },
+      // Needs only the plan, so it would start while the shards still build.
+      early: { needs: ['plan'], steps: [fixtureDownload({ pattern: 'units-*' })] },
+      // Another run's artifact is not this run's output.
+      elsewhere: {
+        steps: [fixtureDownload({ name: INTEGRATION_DATABASE_ARTIFACT, 'run-id': expression('inputs.run') })],
+      },
+      // Every artifact of the run, the database archive among them.
+      everything: { needs: ['build'], steps: [fixtureDownload({})] },
+      later: { needs: ['build'], steps: [fixtureDownload({ name: 'units-2' })] },
+      missing: { needs: ['build', 'database'], steps: [fixtureDownload({ name: 'never-uploaded' })] },
+      owners,
+      plan: { steps: [{ run: 'echo plan' }] },
+      // Takes a runner and then reads the run's jobs and artifacts until they are there.
+      poller: {
+        needs: ['plan'],
+        steps: [
+          { name: 'Wait', run: "bash scripts/wait-for-build-shards.sh 'Build x (' 3" },
+          { name: 'Poll', run: 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"' },
+          { name: 'Watch', run: 'gh run watch "$GITHUB_RUN_ID"' },
+        ],
+      },
+      // A job may read back its own upload of an earlier attempt.
+      retry: { steps: [fixtureDownload({ name: 'own-plan' }), fixtureUpload('own-plan')] },
+      // Needs a job that needs the shards: the artifacts exist when it starts.
+      through: { needs: ['later'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT }] },
+    },
+  };
+  const ownersWithoutDatabase =
+    'owners: actions/download-artifact@pin downloads integration-database from database without needing it';
+  expect(runWaitViolations(workflow, everyJob)).toEqual([
+    `around: ${FIXTURE_DOWNLOAD_UNIT} downloads units-1 from build without needing it`,
+    'early: actions/download-artifact@pin downloads units-* from build without needing it',
+    'everything: actions/download-artifact@pin downloads * from database without needing it',
+    'everything: actions/download-artifact@pin downloads * from retry without needing it',
+    'missing: actions/download-artifact@pin downloads never-uploaded, which no job of this run uploads',
+    ownersWithoutDatabase,
+    'poller: Wait waits for this run in the step',
+    'poller: Poll waits for this run in the step',
+    'poller: Watch waits for this run in the step',
+  ]);
+  // The owners of the shared step list are fine once they need the database producer.
+  expect(
+    runWaitViolations({ jobs: { ...workflow.jobs, owners: { ...owners, needs: ['database'] } } }, everyJob),
+  ).not.toContain(ownersWithoutDatabase);
 });
 
 it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
