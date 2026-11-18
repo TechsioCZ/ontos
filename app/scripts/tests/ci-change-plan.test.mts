@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -728,6 +729,196 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       git('merge', '--quiet', '--no-ff', '-m', 'Merge documentation', 'documentation');
       expect(run('pull_request', base)).toContain('mode=docs\n');
       expect(readFileSync(path.join(directory, 'paths'), 'utf-8')).toBe('docs/guide.md\0');
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }),
+);
+
+/** The workflow id and run id of the recorded push run that plans; the lookup reads only this workflow. */
+const PUSH_WORKFLOW_ID = 342_952_200;
+const PUSH_RUN_ID = 44_400_000_000;
+const PUSH_BRANCH = 'trunk';
+const RUN_LOOKUP = `api repos/TechsioCZ/ontos/actions/runs/${PUSH_RUN_ID} --jq .workflow_id`;
+const RUNS_LIST = `api repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs?branch=${PUSH_BRANCH}&event=push&per_page=100`;
+/** One recorded workflow run as the list endpoint returns it, newest first; only the fields the lookup reads. */
+interface RecordedRun {
+  readonly conclusion: string | null;
+  readonly event: string;
+  readonly head_branch: string;
+  readonly head_sha: string;
+  readonly status: string;
+  readonly workflow_id?: number;
+}
+const recordedRuns = (runs: readonly RecordedRun[]) =>
+  JSON.stringify({
+    total_count: runs.length,
+    workflow_runs: runs.map((run, index) => ({ id: PUSH_RUN_ID - index - 1, workflow_id: PUSH_WORKFLOW_ID, ...run })),
+  });
+const greenPush = (sha: string): RecordedRun => ({
+  conclusion: 'success',
+  event: 'push',
+  head_branch: PUSH_BRANCH,
+  head_sha: sha,
+  status: 'completed',
+});
+/** The recorded answers of a lookup that reads this run's workflow and then lists its push runs on the branch. */
+const listed = (runs: readonly RecordedRun[]) => ({
+  [RUN_LOOKUP]: { stdout: `${PUSH_WORKFLOW_ID}\n` },
+  [RUNS_LIST]: { stdout: recordedRuns(runs) },
+});
+
+it.live('compares a push without a merge queue with its newest green push, and runs everything without one', () =>
+  Effect.sync(() => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-push-base-'));
+    const repository = path.join(directory, 'repository');
+    const script = fileURLToPath(new URL('../plan-ci-changes.sh', import.meta.url));
+    mkdirSync(repository);
+    const git = (...args: string[]) =>
+      execFileSync('/usr/bin/git', ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
+        cwd: repository,
+        encoding: 'utf-8',
+      }).trim();
+    const commit = (file: string) => {
+      writeFileSync(path.join(repository, file), `${file}\n`);
+      git('add', file);
+      git('commit', '--quiet', '-m', file);
+      return git('rev-parse', 'HEAD');
+    };
+    /** Plans HEAD with a fake gh that answers each recorded invocation exactly and fails every other one. */
+    const plan = (
+      routes: Readonly<Record<string, { readonly exit?: number; readonly stderr?: string; readonly stdout?: string }>>,
+      environment: Readonly<Record<string, string>> = {},
+    ) => {
+      const bin = path.join(directory, 'bin');
+      rmSync(bin, { force: true, recursive: true });
+      mkdirSync(bin);
+      const calls = path.join(directory, 'calls');
+      const output = path.join(directory, 'outputs');
+      writeFileSync(calls, '');
+      writeFileSync(output, '');
+      const branches = Object.entries(routes).map(([args, { exit = 0, stderr = '', stdout = '' }], index) => {
+        writeFileSync(path.join(bin, `stdout-${index}`), stdout);
+        writeFileSync(path.join(bin, `stderr-${index}`), stderr);
+        return `  '${args}') cat '${bin}/stdout-${index}'; cat '${bin}/stderr-${index}' >&2; exit ${exit} ;;`;
+      });
+      writeFileSync(
+        path.join(bin, 'gh'),
+        [
+          '#!/bin/bash',
+          `printf '%s\\n' "$*" >> '${calls}'`,
+          'case "$*" in',
+          ...branches,
+          '  *) echo "unexpected gh $*" >&2; exit 97 ;;',
+          'esac',
+          '',
+        ].join('\n'),
+      );
+      chmodSync(path.join(bin, 'gh'), 0o755);
+      const log = execFileSync('/bin/bash', [script, path.join(directory, 'paths')], {
+        cwd: repository,
+        encoding: 'utf-8',
+        env: {
+          BASE_SHA: git('rev-parse', 'HEAD~1'),
+          GITHUB_EVENT_NAME: 'push',
+          GITHUB_OUTPUT: output,
+          GITHUB_REF_NAME: PUSH_BRANCH,
+          GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+          GITHUB_RUN_ID: String(PUSH_RUN_ID),
+          HEAD_SHA: git('rev-parse', 'HEAD'),
+          PATH: `${bin}:/usr/bin:/bin`,
+          QUEUE_PROOF: 'skipped',
+          ...environment,
+        },
+        stdio: 'pipe',
+      });
+      return {
+        calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean),
+        log,
+        mode: /^mode=(?<mode>\w+)$/mu.exec(readFileSync(output, 'utf-8'))?.groups?.mode,
+        paths: readFileSync(path.join(directory, 'paths'), 'utf-8').split('\0').filter(Boolean),
+      };
+    };
+    try {
+      git('init', '--quiet');
+      const green = commit('green.ts');
+      git('checkout', '--quiet', '-b', 'sibling');
+      const sibling = commit('sibling.ts');
+      git('checkout', '--quiet', '-');
+      const red = commit('red.ts');
+      const cancelled = commit('cancelled.ts');
+      commit('pushed.ts');
+      const head = git('rev-parse', 'HEAD');
+      const absent = 'f'.repeat(40);
+      const unproven = ['cancelled.ts', 'pushed.ts', 'red.ts'];
+
+      // (b) Only a completed, successful push run of this workflow on this branch proves a commit. Every newer run
+      // here is something else: a run of this very commit, live, red, cancelled, of another event, branch or
+      // workflow file. The diff therefore covers the red and cancelled pushes, not only this push's own commit.
+      const mixed = plan(
+        listed([
+          { ...greenPush(head), conclusion: null, status: 'in_progress' },
+          greenPush(head),
+          { ...greenPush(cancelled), conclusion: 'cancelled' },
+          { ...greenPush(cancelled), event: 'pull_request' },
+          { ...greenPush(cancelled), event: 'merge_group' },
+          { ...greenPush(cancelled), event: 'schedule' },
+          { ...greenPush(cancelled), event: 'workflow_dispatch' },
+          { ...greenPush(cancelled), head_branch: 'main' },
+          { ...greenPush(cancelled), workflow_id: PUSH_WORKFLOW_ID + 1 },
+          { ...greenPush(red), conclusion: 'failure' },
+          { ...greenPush(red), conclusion: null, status: 'queued' },
+          greenPush(green),
+        ]),
+      );
+      expect(mixed.calls).toEqual([RUN_LOOKUP, RUNS_LIST]);
+      expect(mixed.mode).toBe('affected');
+      expect(mixed.paths).toEqual(unproven);
+      expect(mixed.log).toContain(`Comparing with ${green},`);
+
+      // (c) A green commit that is no ancestor of this push, or absent from the checkout, is passed over.
+      const passedOver = plan(listed([greenPush(sibling), greenPush(absent), greenPush(green)]));
+      expect(passedOver.mode).toBe('affected');
+      expect(passedOver.paths).toEqual(unproven);
+      for (const runs of [[greenPush(sibling), greenPush(absent)], [{ ...greenPush(green), head_sha: 'abc' }]]) {
+        const unrelated = plan(listed(runs));
+        expect(unrelated.mode).toBe('full');
+        expect(unrelated.paths).toEqual([]);
+      }
+
+      // (d) Every failed lookup runs everything and never fails the planning step itself.
+      for (const routes of [
+        // The first push of a branch: no push run of it has succeeded yet.
+        listed([]),
+        // The run's own workflow is unreadable, so no list is requested.
+        { [RUN_LOOKUP]: { exit: 1, stderr: 'gh: Server Error (HTTP 502)\n' } },
+        { [RUN_LOOKUP]: { stdout: 'null\n' } },
+        {
+          ...listed([]),
+          [RUNS_LIST]: { exit: 1, stderr: 'gh: API rate limit exceeded for installation ID 1. (HTTP 403)\n' },
+        },
+        { ...listed([]), [RUNS_LIST]: { exit: 1, stderr: 'gh: Server Error (HTTP 500)\n' } },
+        { ...listed([]), [RUNS_LIST]: { stdout: '<html>unicorn</html>' } },
+        { ...listed([]), [RUNS_LIST]: { stdout: '{"message":"Not Found"}' } },
+      ]) {
+        const failed = plan(routes);
+        expect(failed.mode).toBe('full');
+        expect(failed.paths).toEqual([]);
+        expect(failed.log).toContain('::warning title=Complete suite::');
+      }
+
+      // A push the queue-proof job looked at (main, behind its merge queue) never enters the lookup: it compares
+      // with the commit before the push as it always did, whatever the proof found, and calls no API.
+      for (const result of ['success', 'failure']) {
+        const queued = plan(listed([greenPush(green)]), { QUEUE_PROOF: result });
+        expect(queued.calls, result).toEqual([]);
+        expect(queued.paths, result).toEqual(['pushed.ts']);
+      }
+      expect(plan({}, { QUEUE_PROOF: '' }).calls).toEqual([]);
+      // Nor does any other event without a queue proof.
+      for (const event of ['merge_group', 'pull_request', 'schedule', 'workflow_dispatch']) {
+        expect(plan({}, { GITHUB_EVENT_NAME: event }).calls, event).toEqual([]);
+      }
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

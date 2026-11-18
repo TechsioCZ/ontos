@@ -600,6 +600,40 @@ it('classifies documentation before installation and schedules full regression w
   expect(source).not.toContain('--apply-affected');
 });
 
+it('tells the planner whether a push has a merge queue from the queue-proof job, not from a branch name', () => {
+  const plan = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [CI_PLAN_JOB]: Schema.Struct({
+          permissions: Schema.Record(Schema.String, Schema.String),
+          steps: Schema.Array(
+            Schema.Struct({
+              env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+              id: Schema.optional(Schema.String),
+              name: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(readGateWorkflow()).jobs[CI_PLAN_JOB];
+  // actions: read lists this workflow's push runs; nothing else is added to the read-only token.
+  expect(plan.permissions).toEqual({ actions: 'read', contents: 'read' });
+  const classify = plan.steps.find(({ id }) => id === 'changes');
+  expect(classify?.env?.QUEUE_PROOF).toBe(expression('needs.queue-proof.result'));
+  expect(classify?.env?.GH_TOKEN).toBe(expression('github.token'));
+  // Two commits for a pull request and a push behind the queue as before; a merge group and a push the
+  // queue-proof job skipped read the whole history, without file contents.
+  const checkout = plan.steps.find(({ name }) => name === 'Checkout the exact comparison history');
+  expect(checkout?.with?.['fetch-depth']).toBe(
+    expression(
+      "github.event_name != 'merge_group' && (github.event_name != 'push' || needs.queue-proof.result != 'skipped') && 2 || 0",
+    ),
+  );
+  expect(checkout?.with?.filter).toBe('blob:none');
+});
+
 it('plans without app dependencies and publishes only the exact changed paths', () => {
   const { steps } = Schema.decodeUnknownSync(
     Schema.Struct({
