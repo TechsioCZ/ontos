@@ -6727,12 +6727,15 @@ it.live(
   Effect.fn(function* privacyBackendRegistrationBinding() {
     const { accepts, context } = yield* readPrivacyRootProof();
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
-    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    const actual = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
     const binding =
       "import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';";
+    // The fixture binds the backend-only registration whether or not this Privacy source has moved to it yet.
+    const handler = actual.replace("import { privacyRegistration } from '../vertical.registration.ts';", binding);
     expect(handler).toContain(binding);
     expect(accepts(shared, handler)).toBe(true);
     for (const forged of [
+      "import { privacyBackendRegistration as privacyRegistration } from '../vertical.registration.ts';",
       "import { partyRegistryBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';",
       "import { privacyBackendRegistration as privacyRegistration } from '../foreign/vertical.runtime-declaration.ts';",
       "import { privacyBackendRegistration as privacyRegistration } from './vertical.runtime-declaration.ts';",
