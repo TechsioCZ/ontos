@@ -1,0 +1,2 @@
+ALTER TABLE "core"."action_invocations" ADD COLUMN "committed_reply_json" jsonb;--> statement-breakpoint
+ALTER TABLE "core"."action_invocations" ADD CONSTRAINT "core_action_invocations_committed_reply_ck" CHECK ("committed_reply_json" is null or ("status" = 'succeeded' and jsonb_typeof("committed_reply_json") = 'object' and "committed_reply_json" ->> 'kind' in ('result', 'rejection') and "committed_reply_json" -> 'encoded' is not null) is true);

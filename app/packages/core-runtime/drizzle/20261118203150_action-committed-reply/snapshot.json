@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "c81a701b-c3a3-4f9e-bea5-deddd96b8180",
+  "id": "836c69b6-7cd7-4353-afae-fe69bd738a6c",
   "prevIds": [
     "b20fd105-f2a2-47a6-976a-f5eb2e211f3f"
   ],
@@ -12655,7 +12655,7 @@
       "table": "action_invocations"
     },
     {
-      "value": "\"committed_reply_json\" is null or (\"status\" = 'succeeded' and jsonb_typeof(\"committed_reply_json\") = 'object' and \"committed_reply_json\" ->> 'kind' in ('result', 'rejection') and \"committed_reply_json\" -> 'encoded' is not null)",
+      "value": "\"committed_reply_json\" is null or (\"status\" = 'succeeded' and jsonb_typeof(\"committed_reply_json\") = 'object' and \"committed_reply_json\" ->> 'kind' in ('result', 'rejection') and \"committed_reply_json\" -> 'encoded' is not null) is true",
       "name": "core_action_invocations_committed_reply_ck",
       "entityType": "checks",
       "schema": "core",
