@@ -69,9 +69,8 @@ const authoredTemplates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTempl
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
 );
 const templates = { ...authoredTemplates, integration: packIntegrationRows(authoredTemplates.integration) };
-const LONGEST_TASK_SECONDS = Math.max(...Object.values(integrationTaskSeconds));
 
-it('packs the identical 154-task inventory into eleven measured two-lane rows no slower than its longest task', () => {
+it('packs the identical 154-task inventory into eleven measured two-lane rows at the 316-second bound', () => {
   const planned = planCiChecks({ changedPaths: [], forceFull: true, packages: [], templates: authoredTemplates });
   const before = EffectArray.sort(
     authoredTemplates.integration.flatMap((row) => row.tasks ?? []),
@@ -88,9 +87,10 @@ it('packs the identical 154-task inventory into eleven measured two-lane rows no
   expect(EffectArray.sort(Object.keys(integrationTaskSeconds), Order.String)).toEqual(before);
   expect(rows).toHaveLength(11);
   expect(rows.every(({ lanes }) => lanes === 2)).toBe(true);
-  // One task cannot be split, so the longest task is the floor for the slowest row. The packing must reach
-  // that floor for whichever run the cost table was last refreshed from.
-  expect(Math.max(...rows.map(({ tasks }) => integrationRowSeconds(tasks ?? [])))).toBe(LONGEST_TASK_SECONDS);
+  expect(rows.map(({ tasks }) => integrationRowSeconds(tasks ?? []))).toEqual([
+    251, 251, 250, 316, 288, 279, 250, 250, 250, 250, 250,
+  ]);
+  expect(Math.max(...Object.values(integrationTaskSeconds))).toBe(316);
   // Repacking and changing the inventory's prior order must not affect placement.
   expect(packIntegrationRows(planned.integration)).toEqual(planned.integration);
   expect(
@@ -339,7 +339,7 @@ it('does not start an integration row after its selected tasks move to another r
         expect(row.tasks.length, `${owner.name}: ${row.name}`).toBeGreaterThan(0);
         const full = templates.integration.find(({ name }) => name === row.name);
         expect(row.tasks).toEqual(full?.tasks?.filter((task) => row.tasks?.includes(task) === true));
-        expect(integrationRowSeconds(row.tasks)).toBeLessThanOrEqual(LONGEST_TASK_SECONDS);
+        expect(integrationRowSeconds(row.tasks)).toBeLessThanOrEqual(316);
         expect(row.lanes).toBe(2);
       }
     }
