@@ -29,6 +29,7 @@ import {
   cartEntryWithStock,
   hasInvalidCartDraft,
   issuesForCartEntry,
+  invalidCartQuantityText,
   quantityDraftForEntry,
   reconcileQuantityDrafts,
   removeQuantityDraft,
@@ -52,10 +53,7 @@ const quantityErrorText = (
 ) => {
   let error: string | undefined;
   if (invalid) {
-    error =
-      entry.minimumQuantity === undefined
-        ? d.shopping.invalidQuantity
-        : `${d.shopping.invalidQuantity} ${d.minimumQuantity}: ${entry.minimumQuantity} ${entry.unit}`;
+    error = invalidCartQuantityText(Number(draft?.value ?? entry.quantity), entry, d);
   } else if (saveError || draft?.saveError === true) {
     error = d.shopping.addFailed;
   }

@@ -6,6 +6,8 @@ import type { FocusEvent, PointerEvent } from "react";
 import { Effect, Exit, Schema } from "effect";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
+import { useToast } from "@techsio/ui-kit/molecules/toast";
+import { getDictionary } from "@/i18n";
 import type { ProductCardModel } from "@/ontos/catalog-model";
 import type { CardVariantsResult } from "@/ontos/card-variants";
 import { loadCardVariants } from "@/ontos/card-variants-client";
@@ -20,6 +22,7 @@ export const CardVariants = ({
   locale: string;
   product: ProductCardModel;
 }) => {
+  const toaster = useToast();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [restoreFocus, setRestoreFocus] = useState(false);
@@ -98,6 +101,12 @@ export const CardVariants = ({
       ) {
         setExpanded(exit.value);
         setOpen(expansionIntent().isActive());
+      } else if (expansionIntent().fail()) {
+        toaster.create({
+          duration: 10_000,
+          title: getDictionary(locale).variantsUnavailable,
+          type: "error",
+        });
       }
     });
   };
@@ -165,6 +174,13 @@ export const CardVariants = ({
       <Popover.Anchor
         onBlur={blur}
         onFocus={() => requestExpansion("focus")}
+        onKeyDown={(event) => {
+          // A pending read has no open Popover layer to handle Escape yet.
+          if (loading.current && !open && event.key === "Escape") {
+            event.preventDefault();
+            close();
+          }
+        }}
         onPointerEnter={() => requestExpansion("pointer")}
         onPointerLeave={leave}
         ref={anchor}

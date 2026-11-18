@@ -27,6 +27,7 @@ import {
   cartEntryWithStock,
   hasInvalidCartDraft,
   issuesForCartEntry,
+  invalidCartQuantityText,
   quantityDraftForEntry,
   reconcileQuantityDrafts,
   removeQuantityDraft,
@@ -234,13 +235,7 @@ const MiniCartLine = ({
         </div>
       </div>
       <div className="text-sm" id={`${inputId}-feedback`}>
-        {invalid && (
-          <p>
-            {d.shopping.invalidQuantity}
-            {entry.minimumQuantity !== undefined &&
-              ` ${d.minimumQuantity}: ${entry.minimumQuantity} ${entry.unit}`}
-          </p>
-        )}
+        {invalid && <p>{invalidCartQuantityText(Number(value), entry, d)}</p>}
         {draft?.saveError === true && <p>{d.shopping.addFailed}</p>}
         {issueMessages.map((message) => (
           <p key={message}>{message}</p>

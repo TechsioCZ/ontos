@@ -1,8 +1,21 @@
 import type { CartQuote } from "@/ontos/cart-quote";
 import { cartLineKey, cartQuantityMaximum, validCartQuantity } from "./cart-state";
 import type { CartEntry } from "./cart-state";
+import type { Dictionary } from "@/i18n";
 
 export { validCartQuantity } from "./cart-state";
+
+/** Minimum help only explains a real lower-bound failure, never an overflow/package draft. */
+export const invalidCartQuantityText = (
+  quantity: number,
+  entry: Pick<CartEntry, "minimumQuantity" | "unit">,
+  dictionary: Dictionary,
+) => {
+  const minimum = entry.minimumQuantity;
+  return minimum !== undefined && Number.isFinite(quantity) && quantity < minimum
+    ? `${dictionary.shopping.invalidQuantity} ${dictionary.minimumQuantity}: ${minimum} ${entry.unit}`
+    : dictionary.shopping.invalidQuantity;
+};
 
 /** Current scoped owner stock overrides a saved display hint, including an explicit unknown. */
 export const cartEntryWithStock = (

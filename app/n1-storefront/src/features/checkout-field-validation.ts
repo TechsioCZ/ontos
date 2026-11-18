@@ -18,7 +18,7 @@ export const checkoutFieldAttributes = {
 type Field = keyof typeof checkoutFieldAttributes;
 
 export const checkoutFieldError = (
-  field: Field,
+  field: Field | "country",
   validity: Pick<ValidityState, "valid" | "valueMissing" | "patternMismatch">,
   d: Dictionary,
 ): string | undefined => {

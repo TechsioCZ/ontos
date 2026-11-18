@@ -5,6 +5,7 @@ import {
   globalCartIssues,
   hasInvalidCartDraft,
   issuesForCartEntry,
+  invalidCartQuantityText,
   quantityDraftForEntry,
   reconcileQuantityDrafts,
   removeQuantityDraft,
@@ -12,6 +13,7 @@ import {
 } from "../src/features/cart-validation";
 import type { QuantityDrafts } from "../src/features/cart-validation";
 import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "../src/features/cart-state";
+import { getDictionary } from "../src/i18n";
 
 const entry = {
   expectedUnitPriceMinor: 12_100,
@@ -30,6 +32,18 @@ const blankDraft = (): QuantityDrafts => ({
 });
 
 describe("cart quantity draft lifecycle", () => {
+  it.each(["cs", "en"])(
+    "does not blame minimum quantity for an overflow or malformed draft in %s",
+    (locale) => {
+      const d = getDictionary(locale);
+      const selected = { ...entry, minimumQuantity: 1 };
+      for (const quantity of [56, Number.NaN, 1.5]) {
+        expect(invalidCartQuantityText(quantity, selected, d)).toBe(d.shopping.invalidQuantity);
+      }
+      expect(invalidCartQuantityText(0, selected, d)).toContain(d.minimumQuantity);
+      expect(invalidCartQuantityText(0, entry, d)).toBe(d.shopping.invalidQuantity);
+    },
+  );
   it("gates both saved overstock and manual overflow against current per-variant stock", () => {
     const stocks = [{ productId: entry.productId, stockQuantity: 2, variantId: entry.variantId }];
     const selected = cartEntryWithStock(entry, stocks);

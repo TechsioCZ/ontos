@@ -244,6 +244,8 @@ const cs = {
     fullName: "Jméno a příjmení",
     invalid: "Zkontrolujte prosím jméno, e-mail a zprávu.",
     message: "Zpráva",
+    messageInvalid: "Napište zprávu.",
+    nameInvalid: "Vyplňte jméno a příjmení.",
     office: "Kancelář",
     phone: "Telefon",
     premises: "Provozovna",
@@ -441,6 +443,7 @@ const cs = {
   terms: "Obchodní podmínky",
   unavailable: "Katalog je dočasně nedostupný",
   unavailableDescription: "Nabídku nyní nelze načíst. Zkuste to prosím později.",
+  variantsUnavailable: "Další varianty se nepodařilo načíst. Zkuste to prosím znovu.",
   watchProduct: "Hlídat produkt",
 };
 
@@ -691,6 +694,8 @@ const en: typeof cs = {
     fullName: "Full name",
     invalid: "Please check your name, email and message.",
     message: "Message",
+    messageInvalid: "Enter your message.",
+    nameInvalid: "Enter your full name.",
     office: "Office",
     phone: "Phone",
     premises: "Shop address",
@@ -888,6 +893,7 @@ const en: typeof cs = {
   terms: "Terms and conditions",
   unavailable: "The catalogue is temporarily unavailable",
   unavailableDescription: "We cannot load the catalogue right now. Please try again later.",
+  variantsUnavailable: "More variants could not be loaded. Please try again.",
   watchProduct: "Watch this product",
 };
 

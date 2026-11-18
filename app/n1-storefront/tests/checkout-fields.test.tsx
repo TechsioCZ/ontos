@@ -34,6 +34,34 @@ const render = (locale: string, countryCodes: readonly string[]) =>
   );
 
 describe("checkout field validation", () => {
+  it.effect(
+    "reports a missing required country using existing field feedback in both locales",
+    () =>
+      Effect.sync(() => {
+        for (const locale of ["cs", "en"]) {
+          const d = getDictionary(locale);
+          expect(
+            checkoutFieldError(
+              "country",
+              { patternMismatch: false, valid: false, valueMissing: true },
+              d,
+            ),
+          ).toBe(d.checkout.invalidField);
+          expect(
+            checkoutFieldError(
+              "country",
+              { patternMismatch: false, valid: true, valueMissing: false },
+              d,
+            ),
+          ).toBeUndefined();
+          const html = render(locale, ["CZ", "GB"]);
+          const select = /<select\b[^>]*name="country"[^>]*>/u.exec(html)?.[0];
+          expect(select).toContain('required=""');
+          expect(html).toContain(d.checkout.countryPlaceholder);
+          expect(html).not.toContain('aria-invalid="true"');
+        }
+      }),
+  );
   it.effect("does not describe an admitted customer as a guest or guess contact names", () =>
     Effect.sync(() => {
       const d = getDictionary("en");

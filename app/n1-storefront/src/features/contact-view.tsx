@@ -18,6 +18,7 @@ import { contactActionFeedback } from "./action-feedback";
 import type { ContactFeedbackState } from "./action-feedback";
 
 type ContactState = ContactFeedbackState;
+type ContactField = "email" | "message" | "name";
 type BarrierState = "loading" | "clear" | "blocked" | "unavailable";
 const observeBarrier = (accept: (value: BarrierState) => void) =>
   readInquiryBarrier().pipe(
@@ -62,6 +63,11 @@ const visibleContactState = (state: ContactState, barrier: BarrierState): Contac
   return barrier === "unavailable" ? "unavailable" : state;
 };
 
+const contactFieldFeedback = (message: string, invalid = false) =>
+  invalid
+    ? { helpText: message, validateStatus: "error" as const }
+    : { validateStatus: "default" as const };
+
 /** N1 contact composition with owner-confirmed submission and explicit uncertain outcomes. */
 export const ContactView = ({
   dictionary: d,
@@ -91,6 +97,7 @@ export const ContactView = ({
           "",
         ].join("\n");
   const [localState, setLocalState] = useState<ContactState>("idle");
+  const [invalidFields, setInvalidFields] = useState<Partial<Record<ContactField, boolean>>>({});
   const { barrier, refresh } = useInquiryBarrier();
   const state = visibleContactState(localState, barrier);
   const active = useRef<Fiber.Fiber<InquiryOutcome> | null>(null);
@@ -114,9 +121,15 @@ export const ContactView = ({
     ? d.contact.formUnavailable
     : contactActionFeedback(state, d.contact).statusText;
   const buttonText = { pending: d.contact.submitting, unavailable: d.contact.retry };
+  const editField = (field: ContactField) => {
+    setInvalidFields((previous) => ({ ...previous, [field]: false }));
+    setLocalState((previous) => (previous === "invalid" ? "idle" : previous));
+  };
+  const invalidField = (field: ContactField) =>
+    setInvalidFields((previous) => ({ ...previous, [field]: true }));
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (active.current !== null || locked) {
+    if (active.current !== null || locked || !event.currentTarget.checkValidity()) {
       return;
     }
     const fields = new FormData(event.currentTarget);
@@ -199,7 +212,17 @@ export const ContactView = ({
             {statusText}
           </output>
         )}
-        <form onSubmit={submit}>
+        <form
+          onInvalidCapture={(event) => {
+            event.preventDefault();
+            event.currentTarget
+              .querySelector<HTMLInputElement | HTMLTextAreaElement>(
+                "input:invalid, textarea:invalid",
+              )
+              ?.focus();
+          }}
+          onSubmit={submit}
+        >
           <fieldset
             aria-busy={state === "pending"}
             aria-describedby={statusText === "" ? undefined : "contact-form-status"}
@@ -211,10 +234,14 @@ export const ContactView = ({
               <FormInput
                 autoComplete="name"
                 disabled={locked}
+                {...contactFieldFeedback(d.contact.nameInvalid, invalidFields.name)}
                 id="contact-name"
                 label={d.contact.fullName}
                 maxLength={120}
                 name="name"
+                onChange={() => editField("name")}
+                onInvalid={() => invalidField("name")}
+                pattern={String.raw`.*\S.*`}
                 required
                 size="md"
               />
@@ -225,16 +252,23 @@ export const ContactView = ({
                 label={d.contact.phone}
                 maxLength={40}
                 name="phone"
+                onChange={() =>
+                  setLocalState((previous) => (previous === "invalid" ? "idle" : previous))
+                }
                 size="md"
                 type="tel"
               />
               <FormInput
                 autoComplete="email"
                 disabled={locked}
+                {...contactFieldFeedback(d.auth.errors.email, invalidFields.email)}
                 id="contact-email"
                 label={d.contact.email}
                 maxLength={254}
                 name="email"
+                onChange={() => editField("email")}
+                onInvalid={() => invalidField("email")}
+                pattern={String.raw`[^\s@]+@[^\s@]+\.[^\s@]+`}
                 required
                 size="md"
                 type="email"
@@ -244,10 +278,18 @@ export const ContactView = ({
               <FormTextarea
                 defaultValue={defaultMessage}
                 disabled={locked}
+                {...contactFieldFeedback(d.contact.messageInvalid, invalidFields.message)}
                 id="contact-message"
                 label={d.contact.message}
                 maxLength={inquiryMessageMaximum(product, locale)}
                 name="message"
+                onChange={(event) => {
+                  event.currentTarget.setCustomValidity(
+                    event.currentTarget.value.trim().length === 0 ? d.contact.messageInvalid : "",
+                  );
+                  editField("message");
+                }}
+                onInvalid={() => invalidField("message")}
                 required
                 resize="none"
                 rows={5}

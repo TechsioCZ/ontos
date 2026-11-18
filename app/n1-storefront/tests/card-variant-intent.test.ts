@@ -2,6 +2,30 @@ import { describe, expect, it } from "@rstest/core";
 import { makeCardVariantIntent } from "../src/features/card-variant-intent";
 
 describe("card variant dismissal and fresh interaction", () => {
+  it("announces a failed explicit activation even if loading started on hover", () => {
+    const intent = makeCardVariantIntent();
+    intent.request("pointer");
+    intent.request("activation");
+    intent.request("focus");
+    expect(intent.fail()).toBe(true);
+    expect(intent.fail()).toBe(false);
+    intent.request("activation");
+    expect(intent.fail()).toBe(true);
+  });
+  it("keeps passive preview failures quiet and cancels announcements after leaving", () => {
+    for (const source of ["pointer", "focus"] as const) {
+      const intent = makeCardVariantIntent();
+      intent.request(source);
+      expect(intent.fail()).toBe(false);
+    }
+    const intent = makeCardVariantIntent();
+    intent.request("activation");
+    intent.leave();
+    expect(intent.fail()).toBe(false);
+    intent.request("activation");
+    intent.dismiss(true);
+    expect(intent.fail()).toBe(false);
+  });
   it("keeps one Escape closed when Popover restores the trigger focus", () => {
     const intent = makeCardVariantIntent();
     expect(intent.request("pointer")).toBe(true);
