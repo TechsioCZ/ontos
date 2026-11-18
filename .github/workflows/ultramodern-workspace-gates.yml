@@ -42,18 +42,30 @@ jobs:
   # A push to main or a dispatch on main carries a commit the merge queue may already have proven: its
   # merge_group run of this workflow ran every gate on this exact commit and succeeded. Such a commit skips
   # the gates and deploys. Any other commit (pushed before the queue, or by a ruleset bypass) runs them.
+  #
+  # A merge queue entry can carry the exact bytes a pull request run already tested: the queue rebased the
+  # pull request onto a main whose tree equals the base that run merged onto, so the queue's commit has the
+  # tree of that run's merge commit. Equal base and head trees give the same diff, so the same plan, and the
+  # same files, so the same results; the queue then accepts that run as its proof. Only a completed green
+  # pull request run of this workflow, from this repository, on the queued head, from the last 24 hours and
+  # green on its first attempt counts, and only through the one 'Tested trees' notice its plan job recorded.
+  # Any other entry, and every lookup that fails, runs every gate as before. This job runs no repository code.
   queue-proof:
     name: Find the merge queue proof of this commit
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true
+    if: ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true) || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read
+      checks: read
+      contents: read
+      pull-requests: read
     outputs:
-      proven: ${{ steps.proof.outputs.proven }}
+      proven: ${{ steps.proof.outputs.proven || steps.tree-proof.outputs.proven }}
     steps:
       - name: Look up a successful merge group run of this workflow on this commit
         id: proof
+        if: github.event_name != 'merge_group'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -65,6 +77,60 @@ jobs:
             echo 'proven=true' >>"$GITHUB_OUTPUT"
           else
             echo "No merge group run proved $GITHUB_SHA; the gates run before the deploy."
+            echo 'proven=false' >>"$GITHUB_OUTPUT"
+          fi
+      - name: Look up a green pull request run that tested this exact tree on this exact base
+        id: tree-proof
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          sha='^[0-9a-f]{40}$'
+          # Prints the proving run's link, or fails: every call is checked, and an empty or malformed tree
+          # never matches, because each of the four trees must be 40 hexadecimal characters first.
+          find_proof() {
+            local number head queue_head_tree queue_base_tree workflow_id runs run plan notes
+            [[ "$GITHUB_REF" =~ ^refs/heads/gh-readonly-queue/[^/]+/pr-([0-9]+)-[0-9a-f]{40}$ ]] || return 1
+            number="${BASH_REMATCH[1]}"
+            [[ "$GITHUB_SHA" =~ $sha && "$QUEUE_BASE_SHA" =~ $sha ]] || return 1
+            queue_head_tree="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq '.tree.sha')" || return 1
+            queue_base_tree="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$QUEUE_BASE_SHA" --jq '.tree.sha')" || return 1
+            [[ "$queue_head_tree" =~ $sha && "$queue_base_tree" =~ $sha ]] || return 1
+            echo "Queue trees: base $queue_base_tree head $queue_head_tree" >&2
+            head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq '.head.sha')" || return 1
+            [[ "$head" =~ $sha ]] || return 1
+            workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')" || return 1
+            [[ "$workflow_id" =~ ^[0-9]+$ ]] || return 1
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?event=pull_request&head_sha=$head&status=success&per_page=100")" || return 1
+            runs="$(jq -r --arg head "$head" --arg repository "$GITHUB_REPOSITORY" --argjson workflow "$workflow_id" '
+              [.workflow_runs[]
+                | select(.event == "pull_request" and .workflow_id == $workflow and .head_sha == $head
+                  and .head_repository.full_name == $repository and .status == "completed"
+                  and .conclusion == "success" and .run_attempt == 1
+                  and (.created_at | fromdateiso8601) >= now - 86400)
+                | .id]
+              | sort | reverse | .[]' <<<"$runs")" || return 1
+            for run in $runs; do
+              plan="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+                --jq '[.jobs[] | select(.name == "Select required checks from changed inputs") | .id]')" || return 1
+              [[ "$(jq 'length' <<<"$plan")" == 1 ]] || continue
+              notes="$(gh api "repos/$GITHUB_REPOSITORY/check-runs/$(jq '.[0]' <<<"$plan")/annotations?per_page=100" \
+                --jq '[.[] | select(.title == "Tested trees") | .message]')" || return 1
+              [[ "$(jq 'length' <<<"$notes")" == 1 ]] || continue
+              if [[ "$(jq -r '.[0]' <<<"$notes")" == "base $queue_base_tree head $queue_head_tree" ]]; then
+                echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run"
+                return 0
+              fi
+            done
+            return 1
+          }
+          if proof="$(find_proof)"; then
+            echo "$proof tested this exact tree on this exact base; the gates are skipped."
+            printf '## Merge queue proof\n\n%s tested this exact tree on this exact base.\n' "$proof" >>"$GITHUB_STEP_SUMMARY"
+            echo 'proven=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'No green pull request run tested this exact tree on this exact base; every gate runs.'
             echo 'proven=false' >>"$GITHUB_OUTPUT"
           fi
 
@@ -252,6 +318,17 @@ jobs:
           fetch-depth: ${{ github.event_name != 'merge_group' && 2 || 0 }}
           filter: blob:none
           persist-credentials: false
+      # What this run tested, for a merge queue run that may accept it as its proof (queue-proof): the base the
+      # pull request merged onto and the merge result. Recorded before any repository script runs here. A run
+      # that did not test a merge commit records nothing.
+      - name: Record the tested trees
+        if: github.event_name == 'pull_request'
+        run: |
+          if git rev-parse --verify --quiet 'HEAD^2^{commit}' >/dev/null; then
+            base="$(git rev-parse --verify 'HEAD^1^{tree}')"
+            head="$(git rev-parse --verify 'HEAD^{tree}')"
+            echo "::notice title=Tested trees::base $base head $head"
+          fi
       - name: Classify the complete diff without app dependencies
         id: changes
         env:

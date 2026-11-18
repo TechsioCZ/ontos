@@ -203,6 +203,8 @@ const TargetWorkflowSchema = Schema.Struct({
 const readTargetWorkflow = () => Schema.decodeUnknownSync(TargetWorkflowSchema)(readGateWorkflow());
 
 const QUEUE_PROOF_JOB = 'queue-proof';
+/** What queue-proof reads: runs and their jobs, their plan jobs' notices, the queued pull request and Git trees. */
+const QUEUE_PROOF_PERMISSIONS = { actions: 'read', checks: 'read', contents: 'read', 'pull-requests': 'read' };
 /** The integration matrix row that proves the stage-shaped deployment bootstrap from a scratch cluster. */
 const BOOTSTRAP_SUITE = 'bootstrap';
 const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
@@ -274,8 +276,8 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 it('selects work before gates and starts source checks without waiting for artifacts', () => {
   const proof = readTargetWorkflow().jobs[QUEUE_PROOF_JOB];
   expect(proof.if).toContain('inputs.force-ci-full != true');
-  expect(proof.permissions).toEqual({ actions: 'read' });
-  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven'));
+  expect(proof.permissions).toEqual(QUEUE_PROOF_PERMISSIONS);
+  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven || steps.tree-proof.outputs.proven'));
   const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
@@ -315,6 +317,8 @@ const STOPPED_CHECKS = {
   'stop-red-queue-run-after-static-contracts': STATIC_CONTRACTS_JOB,
   'stop-red-queue-run-after-tooling': WORKSPACE_GATE_JOB,
 } as const satisfies Readonly<Record<string, string>>;
+/** A condition that holds in merge queue runs only. */
+const IN_MERGE_GROUP = "github.event_name == 'merge_group'";
 const CancelWorkflowSchema = Schema.Struct({
   concurrency: Schema.Struct({ 'cancel-in-progress': Schema.String, group: Schema.String }),
   jobs: Schema.Record(
@@ -340,7 +344,7 @@ it('cancels the runs of replaced merge queue entries from a job that runs no rep
     group: `ultramodern-workspace-${expression('github.workflow')}-${expression('github.ref')}`,
   });
   const cancel = jobs[CANCEL_REPLACED_QUEUE_RUNS_JOB];
-  expect(cancel?.if).toBe("github.event_name == 'merge_group'");
+  expect(cancel?.if).toBe(IN_MERGE_GROUP);
   expect(cancel?.needs).toBeUndefined();
   // The write token sits in one step that checks out nothing and runs no action.
   expect(cancel?.permissions).toEqual({ actions: 'write' });
@@ -569,6 +573,257 @@ it('cancels only its own run and accepts a run that another stop already cancell
     environment,
   );
   expect(refused).toMatchObject({ calls: [cancel], passed: false });
+});
+
+const TESTED_TREES_STEP = 'Record the tested trees';
+const TreeProofStepSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  if: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+});
+const TreeProofWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    [CI_PLAN_JOB]: Schema.Struct({ steps: Schema.Array(TreeProofStepSchema) }),
+    [QUEUE_PROOF_JOB]: Schema.Struct({
+      if: Schema.String,
+      needs: Schema.optional(Schema.Array(Schema.String)),
+      permissions: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(TreeProofStepSchema),
+    }),
+  }),
+});
+const readTreeProofJobs = () =>
+  Schema.decodeUnknownSync(TreeProofWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
+/** The standard output of a step script run with these variables in this directory. */
+const stepOutput = (script: string, environment: Readonly<Record<string, string>>, cwd: string) =>
+  execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
+    cwd,
+    encoding: 'utf-8',
+    env: { PATH: STEP_PATH, ...environment },
+  });
+
+it('records the trees each pull request run tested before any repository script runs', () => {
+  const { steps } = readTreeProofJobs()[CI_PLAN_JOB];
+  const record = steps.findIndex(({ name }) => name === TESTED_TREES_STEP);
+  const checkout = steps.findIndex(({ uses }) => uses?.startsWith('actions/checkout@') === true);
+  const firstScript = steps.findIndex(({ run }) => (run ?? '').includes('scripts/'));
+  expect(checkout).toBeLessThan(record);
+  expect(record).toBeLessThan(firstScript);
+  expect(steps[record]?.if).toBe("github.event_name == 'pull_request'");
+  const script = steps[record]?.run ?? 'exit 1';
+
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-tested-trees-'));
+  try {
+    const git = (...args: string[]) =>
+      execFileSync('/usr/bin/git', ['-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', ...args], {
+        cwd: directory,
+        encoding: 'utf-8',
+      }).trim();
+    git('init', '--quiet', '--initial-branch=main');
+    writeFileSync(path.join(directory, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'base');
+    git('switch', '--quiet', '-c', 'change');
+    writeFileSync(path.join(directory, 'change.txt'), 'change\n');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'change');
+    // A pull request's head alone, without a merge, tested no base: nothing is recorded.
+    expect(stepOutput(script, {}, directory)).toBe('');
+    git('switch', '--quiet', 'main');
+    writeFileSync(path.join(directory, 'main.txt'), 'main moved\n');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'main moved');
+    git('merge', '--quiet', '--no-ff', '-m', 'merge', 'change');
+    expect(stepOutput(script, {}, directory)).toBe(
+      `::notice title=Tested trees::base ${git('rev-parse', 'HEAD^1^{tree}')} head ${git('rev-parse', 'HEAD^{tree}')}\n`,
+    );
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+const hex40 = (digit: string) => digit.repeat(40);
+/** The message of a plan job's 'Tested trees' notice. */
+const trees = (base: string, head: string) => `base ${base} head ${head}`;
+const TREE_PROOF = {
+  baseSha: hex40('a'),
+  baseTree: hex40('c'),
+  headTree: hex40('d'),
+  jobId: 134_600_000_001,
+  number: 1492,
+  pullHead: hex40('e'),
+  queueSha: hex40('b'),
+  runId: 44_200_000_010,
+} as const;
+const TREE_PROOF_JOBS_FILTER = '[.jobs[] | select(.name == "Select required checks from changed inputs") | .id]';
+const TREE_PROOF_NOTES_FILTER = '[.[] | select(.title == "Tested trees") | .message]';
+/** jq compares created_at with the real clock: a run created in 2100 is within the last day, one in 2000 is not. */
+const RECENT_RUN = '2100-01-01T00:00:00Z';
+interface TreeProofRun {
+  readonly conclusion: string;
+  readonly created_at: string;
+  readonly event: string;
+  readonly head_repository: { readonly full_name: string };
+  readonly head_sha: string;
+  readonly id: number;
+  readonly run_attempt: number;
+  readonly status: string;
+  readonly workflow_id: number;
+}
+const treeProofRun = (overrides: Partial<TreeProofRun> = {}): TreeProofRun => ({
+  conclusion: 'success',
+  created_at: RECENT_RUN,
+  event: 'pull_request',
+  head_repository: { full_name: 'TechsioCZ/ontos' },
+  head_sha: TREE_PROOF.pullHead,
+  id: TREE_PROOF.runId,
+  run_attempt: 1,
+  status: 'completed',
+  workflow_id: QUEUE_WORKFLOW_ID,
+  ...overrides,
+});
+interface TreeProofCase {
+  readonly baseTree?: string;
+  readonly fail?: string;
+  readonly headTree?: string;
+  readonly jobs?: readonly number[];
+  readonly notes?: readonly string[];
+  readonly runs?: readonly TreeProofRun[];
+}
+const treeProofCalls = {
+  base: `api repos/TechsioCZ/ontos/git/commits/${TREE_PROOF.baseSha} --jq .tree.sha`,
+  head: `api repos/TechsioCZ/ontos/git/commits/${TREE_PROOF.queueSha} --jq .tree.sha`,
+  jobs: (run: number) =>
+    `api repos/TechsioCZ/ontos/actions/runs/${run}/jobs?per_page=100 --jq ${TREE_PROOF_JOBS_FILTER}`,
+  notes: (job: number) =>
+    `api repos/TechsioCZ/ontos/check-runs/${job}/annotations?per_page=100 --jq ${TREE_PROOF_NOTES_FILTER}`,
+  pull: `api repos/TechsioCZ/ontos/pulls/${TREE_PROOF.number} --jq .head.sha`,
+  runs: `api repos/TechsioCZ/ontos/actions/workflows/${QUEUE_WORKFLOW_ID}/runs?event=pull_request&head_sha=${TREE_PROOF.pullHead}&status=success&per_page=100`,
+  workflow: `api repos/TechsioCZ/ontos/actions/runs/${QUEUE_RUN_ID} --jq .workflow_id`,
+};
+const LOOKUP_CALLS = [
+  treeProofCalls.head,
+  treeProofCalls.base,
+  treeProofCalls.pull,
+  treeProofCalls.workflow,
+  treeProofCalls.runs,
+];
+/** Runs the merge queue's tree-proof step against a fake GitHub API and returns its verdict. */
+const runTreeProof = (
+  {
+    baseTree = TREE_PROOF.baseTree,
+    fail,
+    headTree = TREE_PROOF.headTree,
+    jobs = [TREE_PROOF.jobId],
+    notes = [trees(TREE_PROOF.baseTree, TREE_PROOF.headTree)],
+    runs = [treeProofRun()],
+  }: TreeProofCase,
+  environment: Readonly<Record<string, string>> = {},
+) => {
+  const step = readTreeProofJobs()[QUEUE_PROOF_JOB].steps.find(({ id }) => id === 'tree-proof');
+  const answers: FakeGhRoute[] = [
+    { args: treeProofCalls.head, stdout: `${headTree}\n` },
+    { args: treeProofCalls.base, stdout: `${baseTree}\n` },
+    { args: treeProofCalls.pull, stdout: `${TREE_PROOF.pullHead}\n` },
+    { args: treeProofCalls.workflow, stdout: `${QUEUE_WORKFLOW_ID}\n` },
+    { args: treeProofCalls.runs, stdout: JSON.stringify({ total_count: runs.length, workflow_runs: runs }) },
+    ...runs.map(({ id }) => ({ args: treeProofCalls.jobs(id), stdout: JSON.stringify(jobs) })),
+    ...jobs.map((job) => ({ args: treeProofCalls.notes(job), stdout: JSON.stringify(notes) })),
+  ].map((route) =>
+    route.args === fail ? { args: route.args, exit: 1, stderr: 'gh: Server Error (HTTP 502)\n' } : route,
+  );
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-tree-proof-'));
+  try {
+    const output = path.join(directory, 'output');
+    writeFileSync(output, '');
+    const result = runWithFakeGh(step?.run ?? 'exit 1', answers, {
+      GITHUB_OUTPUT: output,
+      GITHUB_REF: `refs/heads/gh-readonly-queue/main/pr-${TREE_PROOF.number}-${TREE_PROOF.baseSha}`,
+      GITHUB_RUN_ID: String(QUEUE_RUN_ID),
+      GITHUB_SHA: TREE_PROOF.queueSha,
+      QUEUE_BASE_SHA: TREE_PROOF.baseSha,
+      ...environment,
+    });
+    return { ...result, output: readFileSync(output, 'utf-8') };
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+it('accepts a pull request run as the merge queue proof only through its own tested trees', () => {
+  const proof = readTreeProofJobs()[QUEUE_PROOF_JOB];
+  expect(proof.if).toContain(IN_MERGE_GROUP);
+  // It runs no repository code: no checkout and no action, only the lookups its permissions allow.
+  expect(proof.needs).toBeUndefined();
+  expect(proof.steps.map(({ uses }) => uses)).toEqual([undefined, undefined]);
+  expect(proof.permissions).toEqual(QUEUE_PROOF_PERMISSIONS);
+  expect(proof.steps.map(({ id, if: condition }) => [id, condition])).toEqual([
+    ['proof', "github.event_name != 'merge_group'"],
+    ['tree-proof', IN_MERGE_GROUP],
+  ]);
+
+  const accepted = runTreeProof({});
+  expect(accepted.passed).toBe(true);
+  expect(accepted.output).toBe('proven=true\n');
+  expect(accepted.calls).toEqual([
+    ...LOOKUP_CALLS,
+    treeProofCalls.jobs(TREE_PROOF.runId),
+    treeProofCalls.notes(TREE_PROOF.jobId),
+  ]);
+  expect(accepted.summary).toContain(`https://github.com/TechsioCZ/ontos/actions/runs/${TREE_PROOF.runId}`);
+
+  // The newest candidate tested other trees; an older one on the same head proves this entry.
+  const older = 44_200_000_003;
+  const newest = runTreeProof({
+    jobs: [TREE_PROOF.jobId],
+    runs: [treeProofRun({ id: older }), treeProofRun()],
+  });
+  expect(newest.output).toBe('proven=true\n');
+  expect(newest.calls.filter((call) => call.includes('/jobs?'))).toEqual([treeProofCalls.jobs(TREE_PROOF.runId)]);
+
+  const otherTree = hex40('f');
+  const refused: readonly (readonly [string, TreeProofCase])[] = [
+    ['a base that moved since the pull request run', { baseTree: otherTree }],
+    ['a cancelled run', { runs: [treeProofRun({ conclusion: 'cancelled' })] }],
+    ['a failed run', { runs: [treeProofRun({ conclusion: 'failure' })] }],
+    ['a fork', { runs: [treeProofRun({ head_repository: { full_name: 'someone/ontos' } })] }],
+    ['a merge group run', { runs: [treeProofRun({ event: 'merge_group' })] }],
+    ['a push run', { runs: [treeProofRun({ event: 'push' })] }],
+    ['a queue commit that is not the tested merge', { headTree: otherTree }],
+    ['a run of another head', { runs: [treeProofRun({ head_sha: hex40('9') })] }],
+    ['a run of another workflow', { runs: [treeProofRun({ workflow_id: QUEUE_WORKFLOW_ID + 1 })] }],
+    ['a run older than 24 hours', { runs: [treeProofRun({ created_at: '2000-01-01T00:00:00Z' })] }],
+    ['a run that is not complete', { runs: [treeProofRun({ status: 'in_progress' })] }],
+    ['a second attempt', { runs: [treeProofRun({ run_attempt: 2 })] }],
+    ['an empty queue tree', { headTree: '' }],
+    ['a null queue tree', { baseTree: 'null' }],
+    // A lookup that returns nothing must not match a notice that recorded nothing either.
+    ['an empty queue tree the notice repeats', { headTree: '', notes: [trees(TREE_PROOF.baseTree, '')] }],
+    ['a null queue tree the notice repeats', { baseTree: 'null', notes: [trees('null', TREE_PROOF.headTree)] }],
+    ['no plan job', { jobs: [] }],
+    ['two plan jobs', { jobs: [TREE_PROOF.jobId, TREE_PROOF.jobId + 1] }],
+    ['no recorded trees', { notes: [] }],
+    ['recorded trees of another base', { notes: [trees(otherTree, TREE_PROOF.headTree)] }],
+    ['recorded trees of another head', { notes: [trees(TREE_PROOF.baseTree, otherTree)] }],
+    [
+      'two recorded trees',
+      { notes: [trees(TREE_PROOF.baseTree, TREE_PROOF.headTree), trees(TREE_PROOF.baseTree, TREE_PROOF.headTree)] },
+    ],
+    // Every call that fails is no proof, never a red check.
+    ...[...LOOKUP_CALLS, treeProofCalls.jobs(TREE_PROOF.runId), treeProofCalls.notes(TREE_PROOF.jobId)].map(
+      (call) => [`a failed ${call.split(' ')[1] ?? call}`, { fail: call }] as const,
+    ),
+  ];
+  for (const [label, refusal] of refused) {
+    const result = runTreeProof(refusal);
+    expect(result.passed, label).toBe(true);
+    expect(result.output, label).toBe('proven=false\n');
+  }
+  // Only a pull request's queue entry ref names a pull request: anything else is no proof before any call.
+  const notQueued = runTreeProof({}, { GITHUB_REF: 'refs/heads/main' });
+  expect(notQueued).toMatchObject({ calls: [], output: 'proven=false\n', passed: true });
 });
 
 it('classifies documentation before installation and schedules full regression without enabling deployment', () => {
@@ -2107,7 +2362,11 @@ const RUN_WAITS = [/wait-for-[\w-]+\.sh/u, /gh run (?:watch|view)\b/u];
  * A step that reads the jobs or artifacts of a run, or the repository's artifacts: what a poll for this run's
  * output reads. A run id held in a variable cannot be told apart from this run's, so any run counts.
  */
-const RUN_READS = [/actions\/(?:artifacts\b|runs\/[^/\s"']+\/(?:artifacts|jobs|attempts))/u];
+const RUN_READS = [
+  /actions\/(?:artifacts\b|runs\/[^/\s"']+\/(?:artifacts|jobs|attempts))/u,
+  // The same jobs, read as the check runs of a check suite, with their annotations.
+  /check-(?:suites\/[^/\s"']+\/check-runs|runs\/[^/\s"']+\/annotations)/u,
+];
 /** This run's id as a step script or an action input names it. */
 const SAME_RUN_ID = /^["']?(?:\$\{?GITHUB_RUN_ID\}?|\$\{\{\s*github\.run_id\s*\}\})["']?$/u;
 /** A `gh run download`; its run id may come before or after the options. */
@@ -2249,11 +2508,22 @@ const everyJob = () => true;
 // runner with jobs that had taken one and then polled for builds that had none, until the 30-minute limit.
 it('holds no runner while a job waits for output of another job of the same run', () => {
   const workflow = Schema.decodeUnknownSync(RuleWorkflowSchema)(readGateWorkflow());
-  // No job waits for jobs: every job is checked for reads and downloads too.
+  // No job waits for jobs: every job is checked for reads and downloads too, except queue-proof, which reads the
+  // jobs of another run. Every gate needs it through ci-plan, so no gate has started while it runs, and it reads
+  // only runs listed as completed and green, which this run, in progress, never is.
   for (const job of [NODE_ARTIFACT_BUILD_JOB, OWNER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB]) {
     expect(Object.keys(workflow.jobs)).toContain(job);
   }
-  expect(runWaitViolations(workflow, everyJob)).toEqual([]);
+  const proof = workflow.jobs[QUEUE_PROOF_JOB];
+  expect(proof?.needs).toBeUndefined();
+  const listings = (proof?.steps ?? []).flatMap(({ run }) => [
+    ...(run ?? '').matchAll(/actions\/workflows\/[^"\s]+\/runs\?[^"\s]*/gu),
+  ]);
+  expect(listings.length).toBeGreaterThan(1);
+  for (const [listing] of listings) {
+    expect(listing).toContain('status=success');
+  }
+  expect(runWaitViolations(workflow, (job) => job !== QUEUE_PROOF_JOB)).toEqual([]);
   expect(existsSync(new URL('../wait-for-build-shards.sh', import.meta.url))).toBe(false);
 });
 
@@ -2302,6 +2572,7 @@ it('finds every job that polls its own run or downloads an artifact its needs do
           // The repository's artifact list filtered by this run, and this run's id held in a variable.
           { name: 'Repository', run: 'gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=units-1"' },
           { name: 'Variable', run: 'run="$GITHUB_RUN_ID"\ngh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs"' },
+          { name: 'Checks', run: 'gh api "repos/$GITHUB_REPOSITORY/check-runs/$check/annotations"' },
         ],
       },
       // Names this run's id after the options.
@@ -2331,6 +2602,7 @@ it('finds every job that polls its own run or downloads an artifact its needs do
     'poller: Watch waits for this run in the step',
     'poller: Repository waits for this run in the step',
     'poller: Variable waits for this run in the step',
+    'poller: Checks waits for this run in the step',
     `reordered: ${FIXTURE_DOWNLOAD_UNIT_LAST} downloads units-1 from build without needing it`,
     'sameRun: actions/download-artifact@pin downloads units-1 from build without needing it',
   ]);

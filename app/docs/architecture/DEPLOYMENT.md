@@ -925,6 +925,18 @@ check failed and cancels the run. `Workspace gates` still runs on the cancelled 
 queue removes the entry without waiting for the owner rows. Pull request runs still run every job, so
 their authors see every failure.
 
+A merge-group run accepts a pull request run as its proof when both ran on the same bytes: the plan job
+of every pull request run records the tree of the base it merged onto and the tree of the merge result
+as one `Tested trees` notice, and `queue-proof` compares them with the trees of the queue's base and
+commit. It accepts only a completed, green, first-attempt `pull_request` run of this workflow from this
+repository, on the queued pull request's head, created in the last 24 hours, with exactly one such
+notice. Then every gate job is skipped and `Workspace gates` passes on that proof, as on a proven push.
+This holds for the first entry of a pull request that was tested on the current `main`; an entry built
+on another entry, or on a `main` that moved since the pull request run, runs every gate. Caches do not
+change what was tested: the pull request run may restore the toolchain and the installed workspace
+saved by an earlier run of the same pull request, and both entries are keyed by every input of their
+content, so they equal what the queue run installs.
+
 The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
 run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
 passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
