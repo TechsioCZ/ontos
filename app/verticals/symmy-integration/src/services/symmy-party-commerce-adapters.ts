@@ -1063,33 +1063,6 @@ const sendPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.PartyCreate')(func
   yield* recordCreatedParty(input, result, actionInvocationId);
   return yield* outcome(input, createdPartyStatus(result.outcome));
 });
-/**
- * Core keeps the reply of a committed Action and answers a retry with the same key, principal and request with it;
- * nothing runs again. So a create-party whose reply was lost is settled by sending the pinned request once more.
- * The resend repeats only the pinned identity: freshOwnerContext requires the pinned executor and recomputes the
- * request hash against the pinned one. Every failure here, including a Core without a saved reply, stays unavailable.
- */
-const replayCommittedPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.replayCommittedPartyCreate')(
-  function* replayCommittedPartyCreate(
-    crypto: Crypto.Crypto,
-    input: SymmyEffectAdapterInput,
-    intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCreate' }>,
-  ) {
-    const { originalInvocationId } = input;
-    if (
-      originalInvocationId === undefined ||
-      input.originalExecutorPrincipalId === undefined ||
-      input.originalRequestHash === undefined ||
-      input.originalAuthContextRef === undefined
-    ) {
-      return unavailableRecovery;
-    }
-    const selected = operationForIntent(intent);
-    const context = yield* freshOwnerContext(crypto, input, selected.declaration, selected.moduleId, true, intent);
-    const replayed = yield* sendPartyCreate(input, intent, context, originalInvocationId);
-    return { outcome: replayed, status: 'settled' as const };
-  },
-);
 const recordMatchedParty = Effect.fn('SymmyPartyCommerceAdapters.recordMatchedParty')(function* recordMatchedParty(
   input: SymmyEffectAdapterInput,
   result: typeof MatchPartyResultSchema.Type,
@@ -1112,8 +1085,7 @@ const recordMatchedParty = Effect.fn('SymmyPartyCommerceAdapters.recordMatchedPa
 const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(function* recoverParty(
   crypto: Crypto.Crypto,
   input: SymmyEffectAdapterInput,
-  // A created Party is settled by Core's saved reply (replayCommittedPartyCreate), never by its receipt Read.
-  operation: Exclude<(typeof PartySourceEffectReceiptRequestSchema.Type)['operation'], 'CREATE'>,
+  operation: (typeof PartySourceEffectReceiptRequestSchema.Type)['operation'],
   intent: SymmyPartyCommerceIntent,
 ) {
   const request = yield* Schema.decodeUnknownEffect(PartySourceEffectReceiptRequestSchema)({
@@ -1143,6 +1115,9 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     return unavailableRecovery;
   }
   yield* Match.value(receipt).pipe(
+    Match.when({ operation: 'CREATE' }, (original) =>
+      recordCreatedParty(input, original.result, original.actionInvocationId),
+    ),
     Match.when({ operation: 'MATCH' }, (original) =>
       recordMatchedParty(input, original.result, original.actionInvocationId),
     ),
@@ -1168,6 +1143,7 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     Match.orElse(() => Effect.void),
   );
   const status = Match.value(receipt).pipe(
+    Match.when({ operation: 'CREATE' }, (created) => createdPartyStatus(created.result.outcome)),
     Match.when({ operation: 'MATCH' }, (matched) => matchedPartyStatus(matched.result.outcome)),
     Match.when({ operation: 'ONBOARD_COUNTERPARTY_CUSTOMER' }, (original) =>
       changedStatus(original.result.counterpartyCreated || original.result.rolePeriodCreated),
@@ -1180,11 +1156,43 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
   return { outcome: yield* outcome(input, status), status: 'settled' as const };
 });
 
+/**
+ * Core keeps the reply of a committed Action and answers a retry with the same key, principal and request with it;
+ * nothing runs again. So a create-party whose reply was lost is settled by sending the pinned request once more.
+ * The resend repeats only the pinned identity: freshOwnerContext requires the pinned executor and recomputes the
+ * request hash against the pinned one. A commit Core holds no saved reply for (made before Core saved replies,
+ * past the recovery window, with an unstorable reply, or a replay Core refuses) answers ActionAlreadyCommitted; the
+ * Party receipt Read for the pinned invocation then settles it. Every other failure stays unavailable.
+ */
+const replayCommittedPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.replayCommittedPartyCreate')(
+  function* replayCommittedPartyCreate(
+    crypto: Crypto.Crypto,
+    input: SymmyEffectAdapterInput,
+    intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCreate' }>,
+  ) {
+    const { originalInvocationId } = input;
+    if (
+      originalInvocationId === undefined ||
+      input.originalExecutorPrincipalId === undefined ||
+      input.originalRequestHash === undefined ||
+      input.originalAuthContextRef === undefined
+    ) {
+      return unavailableRecovery;
+    }
+    const selected = operationForIntent(intent);
+    const context = yield* freshOwnerContext(crypto, input, selected.declaration, selected.moduleId, true, intent);
+    return yield* sendPartyCreate(input, intent, context, originalInvocationId).pipe(
+      Effect.map((replayed) => ({ outcome: replayed, status: 'settled' as const })),
+      Effect.catchTag('PartyCommandAlreadyCommittedProblem', () => recoverParty(crypto, input, 'CREATE', intent)),
+    );
+  },
+);
+
 const contactReceiptAfterAcknowledgement = Effect.fn('SymmyPartyCommerceAdapters.contactReceiptAfterAcknowledgement')(
   function* contactReceiptAfterAcknowledgement(
     crypto: Crypto.Crypto,
     input: SymmyEffectAdapterInput,
-    operation: Exclude<(typeof PartySourceEffectReceiptRequestSchema.Type)['operation'], 'CREATE'>,
+    operation: (typeof PartySourceEffectReceiptRequestSchema.Type)['operation'],
     intent: SymmyPartyCommerceIntent,
   ) {
     const recovered = yield* recoverParty(crypto, input, operation, intent).pipe(
