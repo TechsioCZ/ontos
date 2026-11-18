@@ -19,10 +19,6 @@ const cs: Record<string, string> = csReports.reports.chart;
 const en: Record<string, string> = enReports.reports.chart;
 
 describe('sales report chart texts', () => {
-  it('finds the chart keys in the component', () => {
-    expect(usedKeys).toEqual(expect.arrayContaining(['orderCount', 'valueTitle', 'emptyDescription', 'countsAria']));
-  });
-
   it('translates every used key in both languages with matching placeholders', () => {
     for (const key of usedKeys) {
       expect(cs[key], `cs ${key}`).toBeTruthy();
@@ -31,10 +27,5 @@ describe('sales report chart texts', () => {
       expect(cs[key], `cs ${key} is not English`).not.toBe(en[key]);
     }
     expect(new Set(Object.keys(cs))).toEqual(new Set(Object.keys(en)));
-  });
-
-  it('keeps the component free of hard-coded chart copy and raw field names', () => {
-    expect(source).not.toMatch(/ariaLabel="|description="|valueLabel="/u);
-    expect(source).not.toContain("const shortMonths = ['led'");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Exit, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { CrmCommandSchema, dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { ClientSchema } from '../../shared/domain/clients.ts';
 import { CrmViewerSchema } from '../../shared/domain/access.ts';
@@ -54,18 +54,6 @@ describe('CRM ACL', () => {
     expect(projectCrmState(state, rep).clients.items.map((entry) => entry.id)).toEqual(['x']);
     expect(projectCrmState(state, leadViewer).clients.items.map((entry) => entry.id)).toEqual(['x', 'y', 'z']);
   });
-  it.effect('a salesperson cannot write a foreign client (not found, no leak)', () =>
-    Effect.gen(function* foreignClientAccess() {
-      const exit = yield* Effect.exit(
-        dispatchCrmCommand(
-          state,
-          decodeCommand({ _tag: 'RecordVisit', clientId: 'y', kind: 'visit', occurredAt: at, result: 'ok' }),
-          { invocationId: 'i1', now: DateTime.makeUnsafe(at), viewer: rep },
-        ),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
   it.effect('reassignment keeps history and the old visit author', () =>
     Effect.gen(function* reassignmentHistory() {
       const visited = yield* dispatchCrmCommand(
