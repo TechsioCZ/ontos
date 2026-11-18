@@ -145,9 +145,9 @@ const repositoryEsbuildPath = (): string => {
 
 /**
  * Source-only React workspace packages ship `.tsx`, which Node's ESM loader cannot import, so the owner bundle carries
- * them instead of leaving them external. Each resolves through the owner's own install, as its package's `exports`
- * name it, so only an owner that installs one reads it. A package root is aliased to its entry's directory, not the
- * entry: esbuild appends a subpath import such as `@app/admin-ui/visible-text` to an alias target.
+ * them instead of leaving them external. Each resolves through the owner's module resolution (hoisted installs
+ * included), as its package's `exports` name it. A package root is aliased to its entry's directory, not the entry:
+ * esbuild appends a subpath import such as `@app/admin-ui/visible-text` to an alias target.
  */
 const sourceOnlyReactPackages = [
   '@app/admin-ui',

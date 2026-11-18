@@ -258,6 +258,25 @@ it.effect('changes the units that reach a change and keeps every other unit', ()
   }),
 );
 
+it.effect('counts what the deploy trace carries and esbuild reads of an imported package', () =>
+  Effect.gen(function* carriedFiles() {
+    const shadow = `${PARTY}/api/index.ts`;
+    const shadowImport = `${PARTY}/src/server.ts`;
+    const tsconfig = `${PARTY}/tsconfig.json`;
+    const added = [
+      [shadow, "import { server } from '../src/server.ts';"],
+      [shadowImport, 'export const server = 1;'],
+      [tsconfig, '{"extends":"../../tsconfig.base.json"}'],
+    ] as const;
+    const baseline = yield* identity(graphOf([], added));
+    // The trace copies `<package>/api/index.ts` beside the `./api` target, and esbuild reads the package's tsconfig.
+    expect(yield* identity(graphOf([shadow], added))).not.toBe(baseline);
+    expect(yield* identity(graphOf([tsconfig], added))).not.toBe(baseline);
+    // The carried file is copied, not traced: what only it imports stays out.
+    expect(yield* identity(graphOf([shadowImport], added))).toBe(baseline);
+  }),
+);
+
 it('reads a package as its manifest and every export target, or whole when its exports are not plain files', () => {
   const manifest = `${PARTY}/package.json`;
   const index = `${PARTY}/src/index.ts`;

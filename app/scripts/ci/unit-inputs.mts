@@ -76,12 +76,14 @@ export const workspaceClosure = (directory: string, packages: readonly Workspace
  * - every file of the unit's own package, except tests, fixtures and documentation;
  * - every file reached from an included file by a static reference: imports, re-exports, `require`, `import()`,
  *   `new URL(…, import.meta.url)`, CSS `@import`/`@source`/`@plugin`/`url()`, tsconfig `extends` and the tsconfig of
- *   each `references` project, the nearest package.json, and every string literal outside comments that names a
- *   tracked file (the paths code reads);
+ *   each `references` project, the nearest package.json, the nearest tsconfig.json of code (esbuild reads it for
+ *   every file it bundles), and every string literal outside comments that names a tracked file (the paths code
+ *   reads);
  * - for a workspace package named by a bare specifier, its manifest and the targets of that subpath in its `exports`
  *   under every condition (packageEntries): the bundler, TypeScript, the deploy trace and Node all resolve the
- *   specifier through that map. A unit whose build walks every export of the packages it carries counts all of them
- *   (EXPORT_WALKING_STEPS). A package whose `exports` cannot be read that way (none, an unexported subpath, a pattern,
+ *   specifier through that map. The deploy trace also copies the subpath's legacy resolution (`<package><subpath>`
+ *   with an extension, or its `index`), so that file counts too, without its references. A unit whose build walks
+ *   every export of the packages it carries counts all of them (EXPORT_WALKING_STEPS). A package whose `exports` cannot be read that way (none, an unexported subpath, a pattern,
  *   a directory or an untracked target) counts whole. A declared dependency the unit never names is no input: no
  *   build step reads it (Module Federation shares only npm packages);
  * - the build driver, every script it names (except its tools), its extra inputs and every script the unit's own
@@ -227,6 +229,8 @@ interface UnitWorkspace {
   readonly sources: ReadonlyMap<string, string>;
 }
 interface Reach {
+  /** Files the deploy trace copies without following their references (the legacy resolution of a bare subpath). */
+  readonly carried: readonly string[];
   /** Every tracked file below these directories: a Tailwind `@source` scan, tests included. */
   readonly directories: readonly string[];
   readonly files: readonly string[];
@@ -235,7 +239,7 @@ interface Reach {
   /** Whole workspace packages, without their tests and documentation. */
   readonly packages: readonly string[];
 }
-const NOTHING: Reach = { directories: [], files: [], named: [], packages: [] };
+const NOTHING: Reach = { carried: [], directories: [], files: [], named: [], packages: [] };
 /**
  * Code without its comments, for the path-literal scan only: a comment that names a file is prose, not a read.
  * A regex literal can confuse this scanner, so import references are always read from the full text.
@@ -417,13 +421,19 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     if (named === undefined) {
       return NOTHING;
     }
+    const subpath = specifier.slice(named.name.length);
     const entries = packageEntries(
       named.directory,
       workspace.sources.get(`${named.directory}/package.json`),
-      `.${specifier.slice(named.name.length)}`,
+      `.${subpath}`,
     );
     return entries.length > 0 && entries.every((file) => tracked.has(file))
-      ? { ...NOTHING, files: entries, named: [named.directory] }
+      ? {
+          ...NOTHING,
+          carried: resolvePath(`${named.directory}${subpath}`).files,
+          files: entries,
+          named: [named.directory],
+        }
       : { ...NOTHING, packages: [named.directory] };
   };
   /** In code, a string naming a tracked file (from the file or from app/) is taken as a path the code reads. */
@@ -460,9 +470,13 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
       ? matches(PATH_LITERAL, withoutComments(text)).flatMap((literal) => resolveLiteral(filepath, literal))
       : [];
     const stepReads = BUILD_STEP_READS.get(filepath);
-    const manifest = ancestors(filepath)
-      .map((directory) => `${directory}/package.json`)
-      .find((candidate) => tracked.has(candidate));
+    const nearest = (name: string) =>
+      ancestors(filepath)
+        .map((directory) => `${directory}/${name}`)
+        .find((candidate) => tracked.has(candidate));
+    const manifest = nearest('package.json');
+    // esbuild reads the nearest tsconfig.json of every file it bundles (jsx, decorators, class fields, paths).
+    const tsconfig = code ? nearest('tsconfig.json') : undefined;
     const style = filepath.endsWith('.css');
     const named = resolved.flatMap((entry) => entry.directories);
     const owner = owningPackage(filepath);
@@ -477,6 +491,7 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
             !byName.some((entry) => specifier === entry.name || specifier.startsWith(`${entry.name}/`)),
         ));
     const result: Reach = {
+      carried: resolved.flatMap((entry) => entry.carried),
       // A stylesheet's directories are Tailwind scans, which read every file below them, tests included.
       directories: style ? [...named, ...(scansProject ? [owner] : [])] : [],
       files: [
@@ -491,6 +506,7 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
         ...literals,
         ...(stepReads === undefined ? [] : [...tracked].filter((candidate) => stepReads.test(candidate))),
         ...(manifest === undefined ? [] : [manifest]),
+        ...(tsconfig === undefined ? [] : [tsconfig]),
       ],
       named: resolved.flatMap((entry) => entry.named),
       packages: resolved.flatMap((entry) => entry.packages),
@@ -555,10 +571,17 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
     const pending: string[] = [];
     const reachedFrom = new Map<string, string>();
     let current = '';
-    const add = (filepath: string) => {
-      if (!included.has(filepath) && graph.tracked.has(filepath)) {
+    const followed = new Set<string>();
+    const add = (filepath: string, follow = true) => {
+      if (!graph.tracked.has(filepath)) {
+        return;
+      }
+      if (!included.has(filepath)) {
         reachedFrom.set(filepath, current);
         included.add(filepath);
+      }
+      if (follow && !followed.has(filepath)) {
+        followed.add(filepath);
         pending.push(filepath);
       }
     };
@@ -619,6 +642,9 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       const reached = graph.reach(filepath);
       for (const file of [...reached.files, ...reached.directories.flatMap((root) => graph.under(root))]) {
         add(file);
+      }
+      for (const file of reached.carried) {
+        add(file, false);
       }
       for (const root of reached.packages) {
         addPackage(root);
