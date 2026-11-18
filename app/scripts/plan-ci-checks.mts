@@ -192,9 +192,6 @@ const cli = Command.make(
         packages,
         templates,
       });
-      if ('invalid' in plan) {
-        return yield* new WorkspaceUnreadable({ reason: plan.invalid });
-      }
       const lintSweep = yield* Config.Literals(lintSweeps, 'LINT_SWEEP');
       const encoded = yield* Effect.forEach(Object.entries(ciPlanOutputs(plan, lintSweep)), ([key, value]) =>
         Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(Effect.map((json) => `${key}=${json}`)),
@@ -218,7 +215,7 @@ const cli = Command.make(
         ].join('\n'),
         { flag: 'a' },
       );
-      return yield* Console.log(plan.reason);
+      yield* Console.log(plan.reason);
     }),
 );
 
