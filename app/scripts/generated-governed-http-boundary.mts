@@ -3244,8 +3244,15 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
+  // `defineRead` also takes the handler written as `{ load: handler }`. That object must hold exactly the
+  // one `load` entry, and the handler it holds is judged by the rule a bare handler gets; any other object
+  // (a `prepare` or `finish` step, an extra key, a spread) is no read handler.
+  let loadHandler = handler;
+  if (handler !== undefined && topLevelObjectEntries(handler) !== undefined) {
+    loadHandler = topLevelObjectEntries(handler)?.length === 1 ? objectPropertyValue(handler, 'load') : undefined;
+  }
   return (
-    (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
+    (isReadHandlerCallback(loadHandler, source) || isOwnerLocalImportedFactoryResult(loadHandler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are

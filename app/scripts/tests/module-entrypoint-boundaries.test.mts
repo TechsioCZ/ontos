@@ -998,6 +998,30 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     expect(
       hasCompleteGeneratedModuleApiSeam(new Map([...sources, [readPath, withPlaceholders]]), shared, 'pricing'),
     ).toBe(true);
+    // The handler may be written `{ load: handler }`: the one `load` entry is judged by the rule the bare
+    // handler gets, and an object with any other key (a staged `prepare` or `finish`, a spread) is refused.
+    const bareHandler = '  readVerification,\n  servicesForScope,';
+    expect(read).toContain(bareHandler);
+    const withHandler = (readHandler: string) =>
+      new Map([...sources, [readPath, read.replace(bareHandler, `  ${readHandler},\n  servicesForScope,`)]]);
+    const accepts = (readHandler: string) =>
+      hasCompleteGeneratedModuleApiSeam(withHandler(readHandler), shared, 'pricing');
+    expect(accepts('{ load: readVerification }')).toBe(true);
+    expect(accepts('{ load: undefined }')).toBe(false);
+    for (const candidate of ['readVerification', 'undefined', 'servicesForScope', '() => 1', 'Effect.void']) {
+      expect(accepts(`{ load: ${candidate} }`), candidate).toBe(accepts(candidate));
+    }
+    for (const refused of [
+      '{ load: readVerification, finish: readVerification }',
+      '{ prepare: readVerification, load: readVerification }',
+      '{ prepared: readVerification, load: readVerification }',
+      '{ load: readVerification, extra: readVerification }',
+      '{ ...readVerification }',
+      '{ readVerification }',
+      '{}',
+    ]) {
+      expect(accepts(refused), refused).toBe(false);
+    }
     // Negative control: a legacy classification still has to name the permission target it is decided by,
     // so the same removal on a non-`protected` entrypoint is refused.
     const legacyRead = withoutResolver.replace(PROTECTED_READ_AUTHORIZATION, NON_PROTECTED_READ_AUTHORIZATION);
