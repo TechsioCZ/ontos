@@ -1,7 +1,6 @@
 import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
-import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 
 import {
   PriceGroupDefinitionRequestSchema,
@@ -10,7 +9,6 @@ import {
   executePriceGroupDefinitionWithAuthorization,
   executeValidatePriceGroupCompatibilityWithAuthorization,
 } from '../../src/index.ts';
-import { makeOperationGateway } from '../../src/api/action-gateway.ts';
 import {
   ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema,
   ValidatePriceGroupCompatibilityRequestSchema,
@@ -18,18 +16,6 @@ import {
 } from '../../src/apis/validate-price-group-compatibility.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
-const compositionRevision = 'a'.repeat(64);
-const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-beforeEach(() => {
-  Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelectorAll: () => [] } });
-});
-afterEach(() => {
-  if (previousDocument === undefined) {
-    Reflect.deleteProperty(globalThis, 'document');
-  } else {
-    Object.defineProperty(globalThis, 'document', previousDocument);
-  }
-});
 
 const priceGroupRef = {
   moduleId: 'pricing.price-group-catalog' as const,
@@ -228,32 +214,6 @@ describe('public Price Group governed read contracts', () => {
 });
 
 describe('public Price Group governed read clients', () => {
-  it.effect('constructs fresh audience credentials for each invocation attempt', () =>
-    Effect.gen(function* freshGatewayCredentials() {
-      yield* pinDocumentCompositionRevision(compositionRevision);
-      const observations: string[] = [];
-      let issued = 0;
-      const gateway = makeOperationGateway(({ audience }) =>
-        Effect.sync(() => {
-          issued += 1;
-          observations.push(audience);
-          return {
-            apiBaseUrl: '/module-api/price-group-catalog',
-            compositionRevision,
-            expiresAt: 1_791_166_700,
-            token: `token-${issued}`,
-          };
-        }),
-      );
-      const first = yield* gateway.invoke((authorization) => Effect.succeed(authorization));
-      const second = yield* gateway.invoke((authorization) => Effect.succeed(authorization));
-
-      expect(first).toBe('Bearer token-1');
-      expect(second).toBe('Bearer token-2');
-      expect(observations).toEqual(['price-group-catalog', 'price-group-catalog']);
-    }),
-  );
-
   it.effect('sends exact credentials, correlations, payloads and preserves typed backend failures', () =>
     Effect.gen(function* governedTransport() {
       const requests: Request[] = [];

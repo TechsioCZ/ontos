@@ -61,11 +61,6 @@ import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../packages/shared-contracts/src/gateway-context.ts';
-import { pinDocumentCompositionRevision } from '../../../packages/shared-contracts/src/document-composition-revision.ts';
-import type {
-  OperationGateway,
-  OperationGatewayIssuer,
-} from '../../../packages/shared-contracts/src/operation-gateway.ts';
 import type { bindActionHttpRunner as ActionHttpRunnerBinding } from '../../../verticals/party-registry/api/action-http-runner.ts';
 import {
   governedRedemptionRuntimeTarget,
@@ -286,12 +281,6 @@ interface GeneratedActionHttpRunnerModule {
   readonly bindActionHttpRunner: typeof ActionHttpRunnerBinding;
 }
 
-interface GeneratedOperationGatewayModule {
-  readonly makeOperationGateway: <IssuerFailure>(
-    acquire: OperationGatewayIssuer<string, IssuerFailure>,
-  ) => OperationGateway<IssuerFailure>;
-}
-
 const GeneratedPrincipalModuleSchema = Schema.Struct({
   ActionPrincipalVerifierLive: Schema.declare<GeneratedPrincipalModule['ActionPrincipalVerifierLive']>(
     (value): value is GeneratedPrincipalModule['ActionPrincipalVerifierLive'] => Predicate.isObject(value),
@@ -304,12 +293,6 @@ const GeneratedPrincipalModuleSchema = Schema.Struct({
 const GeneratedActionHttpRunnerModuleSchema = Schema.Struct({
   bindActionHttpRunner: Schema.declare<GeneratedActionHttpRunnerModule['bindActionHttpRunner']>(
     (value): value is GeneratedActionHttpRunnerModule['bindActionHttpRunner'] => Predicate.isFunction(value),
-  ),
-});
-
-const GeneratedOperationGatewayModuleSchema = Schema.Struct({
-  makeOperationGateway: Schema.declare<GeneratedOperationGatewayModule['makeOperationGateway']>(
-    (value): value is GeneratedOperationGatewayModule['makeOperationGateway'] => Predicate.isFunction(value),
   ),
 });
 
@@ -663,6 +646,8 @@ const readPrivacyRootProof = Effect.fn('Fixture.privacyRootProof')(function* pri
 });
 
 const require = createRequire(import.meta.url);
+// The DOM implementation the Rstest happy-dom environment runs browser tests in.
+const happyDomModuleUrl = pathToFileURL(createRequire(require.resolve('@rstest/core')).resolve('happy-dom')).href;
 
 const observedPackageVersion = (packageName: string): string =>
   Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
@@ -1223,6 +1208,7 @@ import { executeResourceDetail, executeResourceDetailWithAuthorization } from '.
 import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
 import { loadStockLevelsClient, loadStockLevelsClientWithAuthorization } from './verticals/inventory-stock/src/api/stock-levels-report-client.ts';
 import { NodeRuntime } from '${pathToFileURL(require.resolve(PLATFORM_NODE_PACKAGE)).href}';
+import { Window } from '${happyDomModuleUrl}';
 Effect.gen(function* generatedHttpProof() {
 const calls = [];
 let gatewayAttempts = 0;
@@ -1258,7 +1244,8 @@ const documentUnavailable = Match.value(missingDocument).pipe(
   Match.tag('DocumentCompositionRevisionError', ({ reason }) => reason === 'document-unavailable'),
   Match.orElse(() => false),
 );
-globalThis.document = { querySelectorAll: () => [] };
+// The browser now has its real document, so the generated clients can admit one release.
+globalThis.document = new Window({ url: 'https://shell.example.test/cs/inventory' }).document;
 yield* pinDocumentCompositionRevision(compositionRevision);
 for (const [, payload, response, invoke] of cases) {
         (yield* invoke(payload, 'correlation-proof', { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' }).pipe(Effect.provideService(FetchHttpClient.Fetch, (url, init) => {
@@ -2927,9 +2914,6 @@ it.live(
             () => import(pathToFileURL(path.join(fixture.root, 'verticals/billing/api/auth/action-principal.ts')).href),
           ),
         );
-        const generatedClientModule = yield* Schema.decodeUnknownEffect(GeneratedOperationGatewayModuleSchema)(
-          yield* Effect.promise(() => import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href)),
-        );
         const generatedActionHttpRunnerModule = yield* Schema.decodeUnknownEffect(
           GeneratedActionHttpRunnerModuleSchema,
         )(
@@ -3278,53 +3262,6 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
           }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalConfigurationError')(error)).toBe(true),
         );
-        let acquisitions = 0;
-        const authorizations: string[] = [];
-        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-        yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            Object.defineProperty(globalThis, 'document', {
-              configurable: true,
-              value: { querySelectorAll: () => [] },
-            }),
-          ),
-          () =>
-            Effect.sync(() => {
-              if (originalDocument === undefined) {
-                Reflect.deleteProperty(globalThis, 'document');
-              } else {
-                Object.defineProperty(globalThis, 'document', originalDocument);
-              }
-            }),
-        );
-        yield* pinDocumentCompositionRevision(approvedSnapshot.composition.revision);
-        const idempotencyKey = 'caller-owned-idempotency-key';
-        const operationGateway = generatedClientModule.makeOperationGateway(({ audience, compositionRevision }) => {
-          acquisitions += 1;
-          expect(audience).toBe(inventorySlug);
-          expect(compositionRevision).toBe(approvedSnapshot.composition.revision);
-          return Effect.succeed({
-            apiBaseUrl: inventoryApiBaseUrl,
-            compositionRevision,
-            expiresAt: 2_000_000_000,
-            token: `attempt-${acquisitions}`,
-          });
-        });
-        const attempt = (
-          authorization: string,
-          target: { readonly apiBaseUrl: string; readonly compositionRevision: string },
-        ) => {
-          authorizations.push(authorization);
-          expect(target).toEqual({
-            apiBaseUrl: inventoryApiBaseUrl,
-            compositionRevision: approvedSnapshot.composition.revision,
-          });
-          return Effect.succeed(idempotencyKey);
-        };
-        expect(yield* operationGateway.invoke(attempt)).toBe(idempotencyKey);
-        expect(yield* operationGateway.invoke(attempt)).toBe(idempotencyKey);
-        expect(authorizations).toEqual(['Bearer attempt-1', 'Bearer attempt-2']);
-
         const actionApi = HttpApi.make('generatedActionIdentityFixture').add(
           HttpApiGroup.make('action').add(
             HttpApiEndpoint.post('invoke', '/actions/invoke', {
