@@ -395,3 +395,38 @@ it('exports the contribution authoring vocabulary from the focused worker entryp
   expect(entrypoint.has('defineOntosMcpContribution')).toBe(true);
   expect(entrypoint.has('OntosMcpHidden')).toBe(true);
 });
+
+it.each(['inventory/commands', 'InventoryCommands'])(
+  'resolves a command union whose definition identifier is %s',
+  (identifier) => {
+    const command = Schema.Union([
+      Schema.Struct({ _tag: Schema.Literal('CancelBooking') }),
+      Schema.Struct({ _tag: Schema.Literal('KeepBooking') }),
+    ]).annotate({ identifier });
+    const { catalog, contribution } = catalogOf({
+      actions: [commandAction('execute', command)],
+      authored: { ...authored, commands: { CancelBooking: { title }, KeepBooking: OntosMcpHidden } },
+    });
+    expect(catalog.tools.map((tool) => tool.id)).toEqual(['booking/command/CancelBooking']);
+    expect(contribution.commandActions).toEqual({ CancelBooking: ['execute'], KeepBooking: ['execute'] });
+  },
+);
+
+it('adds a definition named like an Object prototype member and still rejects its conflicting redefinition', () => {
+  const payloadSchema = Schema.Struct({ value: Schema.String }).annotate({ identifier: 'constructor' });
+  const contribution = { ...authored, actions: { alpha: { title }, beta: { title } } };
+  const first = { descriptor: { actionKey: 'booking.alpha', payloadSchema } };
+  expect(
+    catalogOf({
+      actions: [first, { descriptor: { actionKey: 'booking.beta', payloadSchema } }],
+      authored: contribution,
+    }).catalog.definitions,
+  ).toHaveProperty('constructor');
+  const incompatible = Schema.Struct({ value: Schema.Boolean }).annotate({ identifier: 'constructor' });
+  expect(() =>
+    derive({
+      actions: [first, { descriptor: { actionKey: 'booking.beta', payloadSchema: incompatible } }],
+      authored: contribution,
+    }),
+  ).toThrow('JSON Schema definition constructor differs between two schemas of the module');
+});
