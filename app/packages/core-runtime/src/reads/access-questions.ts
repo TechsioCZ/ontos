@@ -177,15 +177,11 @@ const materializeAccessQuestion = (
 
 /**
  * Definition time: every descriptor question becomes one concrete gate question, or the read is refused
- * (an empty record, a target of another module, no protected carrier, a scope-wide question on a
+ * (a target of another module, no protected carrier, a scope-wide question on a
  * record-scoped declaration, an unknown field group, more than {@link MAX_ACCESS_QUESTIONS}).
  */
 export const materializeAccessQuestions: MaterializeAccessQuestions = (read, questions) => {
   const entries = Object.entries(questions);
-  if (entries.length === 0) {
-    // A declared record promises `access` to the module; an empty one would promise nothing.
-    return refuseAccessQuestions('accessQuestions is empty; a read without questions declares none');
-  }
   if (entries.length > MAX_ACCESS_QUESTIONS) {
     return refuseAccessQuestions(
       `A read asks at most ${MAX_ACCESS_QUESTIONS} access questions; this one asks ${entries.length}`,

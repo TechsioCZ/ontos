@@ -41,10 +41,10 @@ export interface MaterializedAccessQuestion {
 
 /**
  * Definition time (`reads/access-questions.ts`), called by `defineRead`: turns `accessQuestions` into
- * concrete questions once. Refuses (throws `ReadDefinitionInvariantError`) an empty record, a target of
- * another module than the asking read's `moduleKey`, a target without a protected carrier, a `can_run`
- * whose declaration has record selectors, a `can_see_fields` naming a group the target does not
- * declare, and more than 16 questions.
+ * concrete questions once. Refuses (throws `ReadDefinitionInvariantError`) a target of another module
+ * than the asking read's `moduleKey`, a target without a protected carrier, a `can_run` whose
+ * declaration has record selectors, a `can_see_fields` naming a group the target does not declare, and
+ * more than 16 questions. An empty record asks nothing and answers `access: {}`.
  */
 export type MaterializeAccessQuestions = (
   read: Readonly<{ readonly accessKind: string; readonly carrier: GateCarrier; readonly moduleKey: string }>,

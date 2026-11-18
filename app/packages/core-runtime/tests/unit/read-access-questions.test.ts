@@ -258,7 +258,7 @@ describe('materializeAccessQuestions', () => {
     expect(listOwnList?.sameAsOwnDecision).toBe(true);
   });
 
-  it("refuses a question about another module's operation and an empty question record", () => {
+  it("refuses a question about another module's operation", () => {
     const foreign = target(
       'billing.invoices.api.records',
       { accessDeclaration: declaration(RECORDS_READ_KEY) },
@@ -266,7 +266,8 @@ describe('materializeAccessQuestions', () => {
     );
     expect(refusal({ foreign: canRun(foreign) })).toContain("not to the asking read's module facility.operations");
     expect(refusal({ foreign: canList(foreign) })).toContain('belongs to billing.invoices');
-    expect(refusal({})).toContain('accessQuestions is empty');
+    // An empty record is what its type allows: it asks nothing.
+    expect(materializeAccessQuestions(ownRead, {})).toStrictEqual([]);
   });
 
   it('refuses a target without a protected carrier', () => {
