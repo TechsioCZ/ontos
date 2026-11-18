@@ -805,56 +805,65 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         },
       },
     ];
-    const prepared = [];
-    for (const input of inputs) {
-      const governanceSelector = yield* Schema.decodeUnknownEffect(
-        SymmySourceOrganizationFactsGovernanceSelectorSchema,
-      )({
-        effectKey: input.effectKey,
-        execution: { jobId: accepted.jobId, kind: 'JOB' },
-        purpose: 'GOVERNANCE',
-        sourceReference,
-      });
-      const intent = yield* Schema.decodeUnknownEffect(OrganizationBusinessSourceIntentSchema)(input.intent);
-      prepared.push(
-        yield* seedOrganizationBusinessSourceNativeFixture({
-          callers: [
-            { authMethod: 'session', principalId: integration.issuerPrincipalId },
-            { authMethod: 'system', principalId: systemId },
-          ],
-          connections: isolated.connections,
-          governancePrincipalId: integration.issuerPrincipalId,
-          governanceSelector,
-          intent,
-          legalEntityId,
-          ownedDatabase: isolated,
-          purpose,
-          tenantId,
+    // Each source policy has its own purpose/policy/decision UUIDs; no native worker runs until all are recorded.
+    const prepared = yield* Effect.forEach(
+      inputs,
+      (input) =>
+        Effect.gen(function* prepareSourcePolicy() {
+          const governanceSelector = yield* Schema.decodeUnknownEffect(
+            SymmySourceOrganizationFactsGovernanceSelectorSchema,
+          )({
+            effectKey: input.effectKey,
+            execution: { jobId: accepted.jobId, kind: 'JOB' },
+            purpose: 'GOVERNANCE',
+            sourceReference,
+          });
+          const intent = yield* Schema.decodeUnknownEffect(OrganizationBusinessSourceIntentSchema)(input.intent);
+          return yield* seedOrganizationBusinessSourceNativeFixture({
+            callers: [
+              { authMethod: 'session', principalId: integration.issuerPrincipalId },
+              { authMethod: 'system', principalId: systemId },
+            ],
+            connections: isolated.connections,
+            governancePrincipalId: integration.issuerPrincipalId,
+            governanceSelector,
+            intent,
+            legalEntityId,
+            ownedDatabase: isolated,
+            purpose,
+            tenantId,
+          });
         }),
-      );
-    }
+      { concurrency: 2 },
+    );
     yield* start('privacy', {
       ONTOS_PRIVACY_ORGANIZATION_BUSINESS_CONTEXTS: yield* json(prepared.flatMap((value) => value.contexts)),
     });
-    for (const decision of prepared) {
-      if (Option.isSome((yield* decision.observe()).decision)) {
-        return yield* unavailable('Source policy setup unexpectedly created a governance decision');
-      }
-      const gateway = yield* shell.issueFixtureSetupGateway({ audience: 'privacy', legalEntityId });
-      yield* executeRecordPrivacyApplicabilityWithAuthorization(
-        decision.recordPayload,
-        `Bearer ${gateway.token}`,
-        randomUUID(),
-        {
-          baseUrl: new URL(prefixes.privacy, `http://127.0.0.1:${ports.get('privacy')}/`),
-          compositionRevision: snapshot.composition.revision,
-          idempotencyKey: randomUUID(),
-        },
-      ).pipe(Effect.tapCause(() => writeDiagnostics()));
-      if (Option.isNone((yield* decision.observe()).decision)) {
-        return yield* unavailable('Actual source governance did not persist through the public Action');
-      }
-    }
+    yield* Effect.forEach(
+      prepared,
+      (decision) =>
+        Effect.gen(function* recordSourcePolicy() {
+          if (Option.isSome((yield* decision.observe()).decision)) {
+            return yield* unavailable('Source policy setup unexpectedly created a governance decision');
+          }
+          const gateway = yield* shell.issueFixtureSetupGateway({ audience: 'privacy', legalEntityId });
+          yield* executeRecordPrivacyApplicabilityWithAuthorization(
+            decision.recordPayload,
+            `Bearer ${gateway.token}`,
+            randomUUID(),
+            {
+              baseUrl: new URL(prefixes.privacy, `http://127.0.0.1:${ports.get('privacy')}/`),
+              compositionRevision: snapshot.composition.revision,
+              idempotencyKey: randomUUID(),
+            },
+          ).pipe(Effect.tapCause(() => writeDiagnostics()));
+          if (Option.isNone((yield* decision.observe()).decision)) {
+            return yield* unavailable('Actual source governance did not persist through the public Action');
+          }
+          return yield* Effect.void;
+        }),
+      { concurrency: 2, discard: true },
+    );
     const startWorker = Effect.fn('OrganizationSourceCustomerOwner.startWorker')(function* startWorker() {
       const started = yield* startProductWorker(
         workerArtifact,

@@ -51,6 +51,12 @@ const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
 const pricingModule = 'commerce.pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
+// Current-read controls must cross the real start boundary, so each caller waits this long once per
+// scheduled Group. In queue run 44367482839, job 135026610683, one create answered `conflict` instead of
+// `accepted_change` while a second heavy task shared the runner; the largest request then took 5.3s. Whether
+// that create reached the owner after its own start is not proven, so the lead stays at the 15s that every
+// other run met, and a refusal now fails with the owner's native reason instead of a bare status.
+export const internalC14CurrentGroupLeadTime = { seconds: 15 } as const;
 /** One authority-only enrollment: an owner operation the route may use, never an intent. */
 const enrolled = (
   entityKind: 'PRICE' | 'PRICE_GROUP',

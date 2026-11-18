@@ -28,6 +28,7 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
         Extract<typeof DefinePriceResultSchema.Type, { readonly outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED' }>
       >();
     const released = yield* Deferred.make<boolean>();
+    const lostAckReleased = yield* Deferred.make<boolean>();
     const revocationArrived = yield* Deferred.make<typeof DefinePricePayloadSchema.Type>();
     const revocationReleased = yield* Deferred.make<boolean>();
     const revocationReply = yield* Deferred.make<{ readonly code?: string; readonly status: number }>();
@@ -163,7 +164,9 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
         });
         if (assessment.outcome === 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED') {
           yield* Deferred.succeed(committedReplyLost, assessment);
-          // The real owner has committed; only its successful transport ACK is deliberately lost.
+          // Do not expose a retryable response until the test has stopped the original worker.
+          // Otherwise that process can recover the receipt before the restart being proved.
+          yield* Deferred.await(lostAckReleased);
           return HttpServerResponse.empty({ status: 503 });
         }
       }
@@ -175,6 +178,7 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* closeBarrier() {
         yield* Deferred.succeed(released, false);
+        yield* Deferred.succeed(lostAckReleased, false);
         yield* Deferred.succeed(revocationReleased, false);
         httpServer.closeAllConnections();
       }),
@@ -190,6 +194,7 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
       committedReplyLost: Deferred.await(committedReplyLost),
       diagnostic: Ref.get(diagnostic),
       release: Deferred.succeed(released, true),
+      releaseLostAck: Deferred.succeed(lostAckReleased, true),
       revocation: {
         armForNextPrice: Ref.set(revocationNextPrice, true),
         armForPrice: (priceId: string) =>

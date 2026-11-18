@@ -2635,7 +2635,14 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
         }),
       120_000,
     );
+  },
+);
 
+// Each case allocates its own database and native processes. Separate runner tasks keep the
+// admission and durable recovery proofs bounded without sharing live state between them.
+it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, timeout: '30 seconds' })(
+  'Privacy message-bound completion recovery',
+  (suite) => {
     suite.effect(
       'completes the real public BUSINESS_REJECTED receipt/execute/report before ACK permits Core-only drain and seal',
       () =>

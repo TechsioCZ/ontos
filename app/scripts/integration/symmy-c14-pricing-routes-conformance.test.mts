@@ -19,14 +19,14 @@ import {
   decodeInternalC14PriceGrantFor,
 } from './support/symmy-c14-pricing-routes-plan.mts';
 import { assertInternalC14PriceRecovery } from './support/symmy-c14-pricing-routes-recovery.mts';
-import { makeInternalC14PricingRouteFixture } from './support/symmy-c14-pricing-routes-runtime.mts';
+import {
+  internalC14CurrentGroupLeadTime as groupScheduleLeadTime,
+  makeInternalC14PricingRouteFixture,
+} from './support/symmy-c14-pricing-routes-runtime.mts';
 import { startProductWorker, SymmyC14ProductFixtureUnavailable } from './support/symmy-c14-product-runtime.mts';
 
 const firstPageQuery = 'limit=1&offset=0';
 const pricingFixturePurpose = 'implementation-1096-registered-workload-gateway';
-// The native Group Action rejects a start before its own operation time. Allow for Shell admission,
-// durable delivery and the protected owner request before checking the definition at its actual boundary.
-const groupScheduleLeadTime = { seconds: 15 } as const;
 const waitUntil = Effect.fn('InternalC14PricingRoutes.waitUntil')(function* waitUntil(
   at: Parameters<typeof DateTime.toEpochMillis>[0],
 ) {
@@ -202,7 +202,10 @@ const assertExistingListDoesNotBlockNewOne = Effect.fn('InternalC14PricingRoutes
         purpose: 'Explicit INTERNAL_C14 existing list followed by a new list',
       }),
     ]);
-    expect(outcomesOf(settled)).toEqual(['conflict', 'accepted_change']);
+    expect(
+      outcomesOf(settled),
+      `Mixed lists starting ${startsAt}; native Group: ${yield* fixture.groupOwner.diagnostic}`,
+    ).toEqual(['conflict', 'accepted_change']);
     expect((yield* groupCount)[0]?.count).toBe((before?.count ?? 0) + 1);
     // A list is readable once its definition starts, so the projections that follow wait for it.
     yield* waitUntil(DateTime.makeUnsafe(startsAt));
@@ -250,7 +253,10 @@ const assertForeignTenantPrices = Effect.fn('InternalC14PricingRoutes.foreignTen
         purpose: 'Explicit INTERNAL_C14 list after prices of another tenant',
       }),
     ]);
-    expect(outcomesOf(foreign)).toEqual(['accepted_change', 'unsupported', 'unsupported', 'accepted_change']);
+    expect(
+      outcomesOf(foreign),
+      `Foreign-tenant lists starting ${startsAt}; native Group: ${yield* fixture.groupOwner.diagnostic}`,
+    ).toEqual(['accepted_change', 'unsupported', 'unsupported', 'accepted_change']);
     const [prices] = yield* fixture.admin<{
       count: number;
     }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
@@ -265,6 +271,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* nativePriceListRoutes() {
         const fixture = yield* makeInternalC14PricingRouteFixture();
+        let currentWorker = fixture.worker;
         yield* Effect.logInfo({ phase: 'pricing-fixture-ready' });
         yield* Effect.addFinalizer((exit) =>
           Exit.isFailure(exit)
@@ -284,7 +291,7 @@ it.live(
                       pricing: fixture.pricingOwner.diagnostic,
                       release: fixture.shell.releaseDiagnostics(),
                       requests: fixture.shell.requestDiagnostics(),
-                      worker: fixture.worker.diagnostic,
+                      worker: currentWorker.diagnostic,
                     },
                     { concurrency: 1 },
                   ).pipe(
@@ -370,7 +377,7 @@ it.live(
                 ),
               );
               const diagnostic = yield* fixture.symmyOwner.diagnostic;
-              const workerDiagnostic = yield* fixture.worker.diagnostic;
+              const workerDiagnostic = yield* currentWorker.diagnostic;
               const gateway = yield* fixture.shell.gatewayDiagnostics();
               const release = yield* fixture.shell.releaseDiagnostics();
               return yield* new SymmyC14ProductFixtureUnavailable({
@@ -386,7 +393,7 @@ it.live(
             value.status.startsWith('completed_') || value.status === 'blocked' || value.status === 'indeterminate',
         ).pipe(
           Effect.catchTag('SymmyC14ProductFixtureUnavailable', (failure) =>
-            fixture.worker.diagnostic.pipe(
+            currentWorker.diagnostic.pipe(
               Effect.flatMap((diagnostic) =>
                 Effect.fail(new SymmyC14ProductFixtureUnavailable({ message: `${failure.message}; ${diagnostic}` })),
               ),
@@ -395,7 +402,7 @@ it.live(
         );
         if (completed.status !== 'completed_all') {
           const groupDiagnostic = yield* fixture.groupOwner.diagnostic;
-          const workerDiagnostic = yield* fixture.worker.diagnostic;
+          const workerDiagnostic = yield* currentWorker.diagnostic;
           const gateway = yield* fixture.shell.gatewayDiagnostics();
           return yield* new SymmyC14ProductFixtureUnavailable({
             message: `Actual group job: ${JSON.stringify(completed)}; group: ${groupDiagnostic}; worker: ${workerDiagnostic}; gateway: ${JSON.stringify(gateway)}`,
@@ -526,10 +533,10 @@ it.live(
           });
         }
         expect(held.status).toBe('completed_partial');
-        expect((held.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
-          'accepted_change',
-          'unresolved',
-        ]);
+        expect(
+          (held.items ?? []).flatMap((item) => item.effects).map(({ status }) => status),
+          `Held list starting ${heldEffectiveAt}; native Group: ${yield* fixture.groupOwner.diagnostic}`,
+        ).toEqual(['accepted_change', 'unresolved']);
         expect(yield* submit('INTERNAL_C14_MISSING_PRICE_AUTHORITY', missingAuthority)).toEqual(heldJob);
         const [afterHeld] = yield* fixture.admin<{
           count: number;
@@ -561,11 +568,12 @@ it.live(
             orElse: () =>
               Effect.gen(function* describeMissingNativePriceDispatch() {
                 const status = yield* readStatus(deferredJob.jobId);
-                const worker = yield* fixture.worker.diagnostic;
+                const worker = yield* currentWorker.diagnostic;
+                const group = yield* fixture.groupOwner.diagnostic;
                 const pricing = yield* fixture.pricingOwner.diagnostic;
                 const proxy = yield* fixture.priceBarrier.diagnostic;
                 return yield* new SymmyC14ProductFixtureUnavailable({
-                  message: `The deferred Price never reached its actual dispatch boundary; status: ${JSON.stringify(status)}; worker: ${worker}; pricing: ${pricing}; proxy: ${proxy}`,
+                  message: `The deferred Price never reached its actual dispatch boundary; status: ${JSON.stringify(status)}; native Group: ${group}; worker: ${worker}; pricing: ${pricing}; proxy: ${proxy}`,
                 });
               }),
           }),
@@ -623,8 +631,11 @@ it.live(
           }),
         );
         expect(lostAck.provenance.canonicalLink.priceRef.resourceId).toBe(newPriceId);
-        yield* fixture.worker.child.kill();
-        yield* fixture.worker.child.exitCode;
+        // The barrier holds this worker's reply until it is gone, so a graceful stop could wait on that
+        // request. This is the deliberate crash of the scenario: kill it and require only that it exited.
+        yield* fixture.worker.child.kill({ killSignal: 'SIGKILL' });
+        yield* Effect.result(fixture.worker.child.exitCode);
+        yield* fixture.priceBarrier.releaseLostAck;
         expect(yield* fixture.priceBarrier.sourceReceiptReads).toBe(0);
         const beforeRestart = yield* readStatus(deferredJob.jobId);
         expect(beforeRestart.status.startsWith('completed_')).toBe(false);
@@ -637,6 +648,7 @@ it.live(
           { ...fixture.environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_RESTARTED_PROCESS' },
           fixture.moduleKey.secret,
         );
+        currentWorker = restarted;
         const defined = yield* Effect.raceFirst(
           observe(
             'The restarted worker did not recover the committed Price receipt',
@@ -816,6 +828,18 @@ it.live(
         const withPrices = yield* withPricesResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
+        // The unfiltered page must still include every scheduled independent-list control once Current.
+        for (const code of [
+          'INTERNAL_C14_MIXED_NEW_LIST',
+          'INTERNAL_C14_FOREIGN_PRICE_LIST',
+          'INTERNAL_C14_AFTER_FOREIGN_LIST',
+        ]) {
+          const effectiveList = withPrices.priceLists.find((list) => list.code === code);
+          assert.isOk(effectiveList);
+          expect(DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveList.startsAt))).toBeLessThanOrEqual(
+            DateTime.toEpochMillis(yield* DateTime.now),
+          );
+        }
         const priced = withPrices.priceLists.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(priced?.prices);
         expect(priced.prices.count).toBe(1);
@@ -937,7 +961,20 @@ it.live(
         yield* revocation.armForNextPrice;
         const revokedJob = yield* submit('INTERNAL_C14_REVOKE_DURING_PRICE_DISPATCH', revokedLists);
         yield* Effect.logInfo({ phase: 'pricing-revisions-accepted' });
-        const heldPrice = yield* revocation.arrived.pipe(Effect.timeout('20 seconds'));
+        const heldPrice = yield* revocation.arrived.pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(20),
+            orElse: () =>
+              Effect.gen(function* describeMissingRevocationDispatch() {
+                const status = yield* readStatus(revokedJob.jobId);
+                const group = yield* fixture.groupOwner.diagnostic;
+                const worker = yield* currentWorker.diagnostic;
+                return yield* new SymmyC14ProductFixtureUnavailable({
+                  message: `The revocation Price never reached dispatch; status: ${JSON.stringify(status)}; native Group: ${group}; worker: ${worker}`,
+                });
+              }),
+          }),
+        );
         const readSettledEffects = () =>
           fixture.admin<{
             action_key: string;

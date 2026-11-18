@@ -2455,9 +2455,11 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
             ].join(','),
           }
         : environment;
-    for (const owner of owners) {
-      yield* startNativeOwner(owner, environmentFor(owner.appId), moduleCredentialOf);
-    }
+    // Receivers bind distinct placements and do no peer calls during local readiness.
+    yield* Effect.forEach(owners, (owner) => startNativeOwner(owner, environmentFor(owner.appId), moduleCredentialOf), {
+      concurrency: 3,
+      discard: true,
+    });
     const storefrontId = `native-preproposal-${randomUUID()}`;
     const intent = `native-preproposal:${randomUUID()}`;
     const scopeGrantArtifact = yield* buildOwnerExecutable(
@@ -3203,6 +3205,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
                 ['pricingQuantityPreparation', 'quantityPreparation'].includes(step),
                 false,
               ).pipe(Effect.map((credential) => [step, Redacted.value(credential)])),
+            { concurrency: 3 },
           ),
         );
         const stage = `catalog-registered-producer:${ordinal}`;
@@ -3414,7 +3417,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       );
       return price;
     });
-    const prices = [yield* definePrice(products[0], '100', 1), yield* definePrice(products[1], '250', 2)] as const;
+    const prices = yield* Effect.all([definePrice(products[0], '100', 1), definePrice(products[1], '250', 2)], {
+      concurrency: 2,
+    });
     const { entries } = cart.observed.cart;
     const sameSelection = Schema.toEquivalence(CatalogSelectionSchema);
     yield* requireProtocol(
