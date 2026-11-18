@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +29,7 @@ import {
   unknownFilters,
   withCiTopologyDependencies,
 } from '../plan-ci-checks.mts';
+import { workspacePackageDirectories, workspacePackageGlobs } from '../ci-impact.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 
 const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
@@ -87,18 +97,32 @@ const packages = [
 const PACKAGE_MANIFEST = 'package.json';
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const ManifestNameFromJson = Schema.fromJsonString(Schema.Struct({ name: Schema.String }));
-/** Every pnpm workspace member the planner can see, read from disk rather than restated here. */
-const workspacePackages = ['apps', 'packages', 'verticals'].flatMap((area) =>
-  readdirSync(path.join(appRoot, area), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(path.join(appRoot, area, entry.name, PACKAGE_MANIFEST)))
-    .map((entry) => ({
-      dependencies: [],
-      directory: `${area}/${entry.name}`,
-      name: Schema.decodeUnknownSync(ManifestNameFromJson)(
-        readFileSync(path.join(appRoot, area, entry.name, PACKAGE_MANIFEST), 'utf-8'),
-      ).name,
-    })),
-);
+/** The package directories a workspace file declares below `root`, read as both planners read them. */
+const declaredDirectories = (root: string, workspace: string) => {
+  const declared = workspacePackageDirectories(
+    workspace,
+    (directory) =>
+      existsSync(path.join(root, directory)) && statSync(path.join(root, directory)).isDirectory()
+        ? readdirSync(path.join(root, directory))
+        : [],
+    (directory) => existsSync(path.join(root, directory, PACKAGE_MANIFEST)),
+  );
+  if ('unreadable' in declared) {
+    throw new Error(declared.unreadable);
+  }
+  return EffectArray.sort(declared.directories, Order.String);
+};
+/** Every pnpm workspace member the planner can see, read from this trunk's workspace file rather than restated here. */
+const workspacePackages = declaredDirectories(
+  appRoot,
+  readFileSync(path.join(appRoot, 'pnpm-workspace.yaml'), 'utf-8'),
+).map((directory) => ({
+  dependencies: [],
+  directory,
+  name: Schema.decodeUnknownSync(ManifestNameFromJson)(
+    readFileSync(path.join(appRoot, directory, PACKAGE_MANIFEST), 'utf-8'),
+  ).name,
+}));
 const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) => directory)]);
 const selectedDirectories = (filters: string) =>
   matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
@@ -469,6 +493,75 @@ it('widens changed shared infrastructure, unknown paths and package metadata to 
   }
 });
 
+it('plans a further package root by its own rows, honours negated globs and widens outside every root', () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-workspace-'));
+  try {
+    for (const directory of ['apps/shell', 'sites/web', 'sites/legacy', 'tools/script']) {
+      mkdirSync(path.join(fixture, directory), { recursive: true });
+      writeFileSync(path.join(fixture, directory, PACKAGE_MANIFEST), '{}');
+    }
+    writeFileSync(path.join(fixture, 'sites/notes.md'), 'not a package\n');
+    const directories = declaredDirectories(
+      fixture,
+      [
+        'catalogs:',
+        '  default:',
+        '    packages: nested-key-is-not-the-list',
+        'packages:',
+        '  - apps/*',
+        '  - "sites/*" # a further package root',
+        "  - '!sites/legacy'",
+        'enableGlobalVirtualStore: false',
+      ].join('\n'),
+    );
+    expect(directories).toEqual(['apps/shell', 'sites/web']);
+    const fixturePackages = directories.map((directory) => ({
+      dependencies: [],
+      directory,
+      name: `@app/${path.basename(directory)}`,
+    }));
+    const rows = {
+      build: [],
+      integration: [],
+      source: [],
+      unit: [
+        { commands: 'pnpm --filter ./apps/shell run test', name: 'Shell' },
+        { commands: 'pnpm --filter ./sites/web run test', name: 'Web' },
+      ],
+    };
+    const plan = (changedPath: string) =>
+      planCiChecks({ changedPaths: [changedPath], packages: fixturePackages, templates: rows });
+    expect(plan('app/sites/web/src/page.ts')).toMatchObject({
+      affectedPackages: ['@app/web'],
+      mode: 'affected',
+      unit: [{ commands: 'pnpm --filter ./sites/web run test', name: 'Web' }],
+    });
+    for (const changedPath of [
+      'app/sites/legacy/src/page.ts',
+      'app/sites/notes.md',
+      'app/tools/script/src/run.ts',
+      'app/src/index.ts',
+    ]) {
+      expect(plan(changedPath).mode, changedPath).toBe('full');
+    }
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});
+
+it('refuses a workspace file whose package globs it cannot expand exactly', () => {
+  for (const workspace of [
+    'packages:\n  - apps/**',
+    'packages: [apps/*]',
+    'packages:\n  - "!apps/legacy"',
+    'packages:\n  - ../outside/*',
+    'packages:\n  - {apps,sites}/*',
+  ]) {
+    const read = workspacePackageGlobs(workspace);
+    expect('unreadable' in read ? read.unreadable : read.globs, workspace).toMatch(/app\/pnpm-workspace\.yaml/u);
+  }
+});
+
 // In affected mode the planner rewrites a unit entry's commands from the FIRST line's selectors alone.
 // Any other flag on that line is discarded, so these three properties are the unit matrix's contract.
 it('builds every unit entry from literal workspace selectors on its first command line', () => {
@@ -668,6 +761,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
   try {
     for (const file of [
       PACKAGE_MANIFEST,
+      'pnpm-workspace.yaml',
       'topology/ownership.json',
       'topology/reference-topology.json',
       'scripts/ci-matrices.json',

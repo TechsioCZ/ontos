@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Hosted Ubuntu 24.04 supplies Node with native type stripping. Planning needs only authored JSON
-# and the pure impact algorithm, never node_modules, code generation, mise or an installed compiler.
+# Hosted Ubuntu 24.04 supplies Node with native type stripping. Planning needs only authored JSON, the
+# packages: globs of pnpm-workspace.yaml read as plain text, and the pure impact algorithm, never
+# node_modules, code generation, mise or an installed compiler.
 set -euo pipefail
 node --input-type=module - "$@" <<'JS'
-import { readFileSync, readdirSync, existsSync, appendFileSync } from 'node:fs';
-import { ciPlanOutputs, ciWorkspacePackages, lintSweeps, planCiChecks } from './scripts/ci-impact.mts';
+import { readFileSync, readdirSync, existsSync, appendFileSync, statSync } from 'node:fs';
+import {
+  ciPlanOutputs, ciWorkspacePackages, lintSweeps, planCiChecks, workspacePackageDirectories,
+} from './scripts/ci-impact.mts';
 
 const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const lintSweep = process.env.LINT_SWEEP;
@@ -16,8 +19,16 @@ const bootstrapMode = process.env.BOOTSTRAP_MODE;
 if (bootstrapMode !== 'affected' && bootstrapMode !== 'full') {
   throw new Error('BOOTSTRAP_MODE must be affected or full');
 }
-const directories = ['.', ...['apps', 'packages', 'verticals'].flatMap(area =>
-  readdirSync(area).map(entry => `${area}/${entry}`).filter(directory => existsSync(`${directory}/package.json`)))];
+// A glob segment that lists a missing directory or a file matches nothing, as in the shell.
+const workspace = workspacePackageDirectories(
+  readFileSync('pnpm-workspace.yaml', 'utf8'),
+  directory => existsSync(directory) && statSync(directory).isDirectory() ? readdirSync(directory) : [],
+  directory => existsSync(`${directory}/package.json`),
+);
+if ('unreadable' in workspace) {
+  throw new Error(workspace.unreadable);
+}
+const directories = ['.', ...[...workspace.directories].sort()];
 const plan = planCiChecks({
   changedPaths: readFileSync(process.argv[2], 'utf8').split('\0').filter(Boolean),
   forceFull: bootstrapMode === 'full',

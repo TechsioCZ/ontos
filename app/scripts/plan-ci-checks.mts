@@ -1,7 +1,17 @@
-import { Console, Config, Effect, FileSystem, Path, Schema } from 'effect';
+import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
-import { ciPlanOutputs, ciWorkspacePackages, knownTask, lintSweeps, planCiChecks } from './ci-impact.mts';
+import {
+  ciPlanOutputs,
+  ciWorkspacePackages,
+  knownTask,
+  lintSweeps,
+  planCiChecks,
+  workspaceDirectories,
+  workspaceGlobChildren,
+  workspaceGlobLists,
+  workspacePackageGlobs,
+} from './ci-impact.mts';
 import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
@@ -90,19 +100,45 @@ const ManifestSchema = Schema.Struct({
   peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
+class WorkspaceUnreadable extends Schema.TaggedError<WorkspaceUnreadable>()('WorkspaceUnreadable', {
+  reason: Schema.String,
+}) {}
+
 const readWorkspace = Effect.gen(function* readCiWorkspace() {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const app = yield* path.fromFileUrl(new URL('..', import.meta.url));
-  const directories = ['.'];
-  for (const area of ['apps', 'packages', 'verticals']) {
-    const entries = yield* fs.readDirectory(path.join(app, area));
-    for (const entry of entries) {
-      if (yield* fs.exists(path.join(app, area, entry, 'package.json'))) {
-        directories.push(`${area}/${entry}`);
+  // A glob segment that lists a missing directory or a file matches nothing, as in the shell.
+  const entries = (directory: string) =>
+    fs.stat(path.join(app, directory)).pipe(
+      Effect.flatMap((info) =>
+        info.type === 'Directory' ? fs.readDirectory(path.join(app, directory)) : Effect.succeed([]),
+      ),
+      Effect.catchReason('PlatformError', 'NotFound', () => Effect.succeed([])),
+    );
+  const workspace = workspacePackageGlobs(yield* fs.readFileString(path.join(app, 'pnpm-workspace.yaml')));
+  if ('unreadable' in workspace) {
+    return yield* new WorkspaceUnreadable({ reason: workspace.unreadable });
+  }
+  const expanded: { readonly directories: readonly string[]; readonly exclude: boolean }[] = [];
+  for (const { exclude, glob } of workspace.globs) {
+    let level: readonly string[] = ['.'];
+    for (const segment of glob.split('/')) {
+      const next: string[] = [];
+      for (const parent of level) {
+        next.push(...workspaceGlobChildren(parent, segment, workspaceGlobLists(segment) ? yield* entries(parent) : []));
+      }
+      level = next;
+    }
+    const directories: string[] = [];
+    for (const directory of level) {
+      if (yield* fs.exists(path.join(app, directory, 'package.json'))) {
+        directories.push(directory);
       }
     }
+    expanded.push({ directories, exclude });
   }
+  const directories = ['.', ...EffectArray.sort(workspaceDirectories(expanded), Order.String)];
   const manifests = yield* Effect.forEach(
     directories,
     (directory) =>
