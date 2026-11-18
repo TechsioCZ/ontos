@@ -276,6 +276,32 @@ export const PARTY_REGISTRY_WORKER_DATABASE_GRANTS: DatabaseRoleGrants = {
     {
       table: 'core.action_invocations',
       privileges: ['select'],
+      // Every lifecycle column, never `committed_reply_json`: the saved Action replies of every tenant
+      // stay out of this cross-tenant worker read.
+      columns: {
+        select: [
+          'action_invocation_id',
+          'tenant_id',
+          'legal_entity_id',
+          'principal_id',
+          'auth_binding_id',
+          'auth_context_ref',
+          'impersonated_by_principal_id',
+          'auth_method',
+          'anonymous_session_ref',
+          'trace_id',
+          'correlation_id',
+          'action_key',
+          'idempotency_key',
+          'target_module_key',
+          'target_resource_type',
+          'target_resource_id',
+          'status',
+          'request_hash',
+          'started_at',
+          'completed_at',
+        ],
+      },
       reason: 'Core outbox/completion-publication reads the originating action invocation',
     },
     {

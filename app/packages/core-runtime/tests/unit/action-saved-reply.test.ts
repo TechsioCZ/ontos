@@ -1,4 +1,5 @@
 import type { AnyActionRegistration } from '../../src/actions/definition.ts';
+import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { DateTime, Deferred, Effect, Fiber, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -8,6 +9,7 @@ import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeActionTestHarness } from '../../src/testing/actions.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
@@ -44,6 +46,8 @@ const counterAction = (
   probe: CounterProbe,
   options: {
     readonly beforeReply?: (run: number) => Effect.Effect<void>;
+    /** `protected` puts the Action behind the access gate instead of the action-execution permission. */
+    readonly protectedAccess?: boolean;
     readonly reject?: boolean;
   } = {},
 ) =>
@@ -57,7 +61,10 @@ const counterAction = (
       domainEvents: { 'test.saved-reply.incremented.v1': Schema.Struct({ amount: Schema.Finite }) },
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization:
+          options.protectedAccess === true
+            ? { kind: 'protected' }
+            : { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'test.saved-reply.increment',
         moduleKey: 'test.saved-reply',
         role: 'action',
@@ -155,6 +162,45 @@ it.effect('answers a same-key retry with the saved reply and runs nothing again'
     // The owner transaction, then the retry's scoped read of the saved reply.
     expect(snapshot.transactionCount).toBe(2);
     expect(snapshot.stages.filter((stage) => stage === 'invocation_locked')).toHaveLength(1);
+    expect(snapshot.stages.filter((stage) => stage === 'handler_executed')).toHaveLength(1);
+  }),
+);
+
+it.effect('answers the saved reply only to a caller the access gate still allows', () =>
+  Effect.gen(function* savedReplyNeedsAccess() {
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const action = counterAction(probe, { protectedAccess: true });
+    const allowed = makeScriptedBoundAccessGate('allowed').bound;
+    const denied = makeScriptedBoundAccessGate('denied').bound;
+    let gate: BoundAccessGate = allowed;
+    let decisions = 0;
+    const harness = yield* makeActionTestHarness({
+      accessDecision: {
+        ...allowed,
+        decide: (gateInput, transaction) =>
+          Effect.suspend(() => {
+            decisions += 1;
+            return gate.decide(gateInput, transaction);
+          }),
+      },
+      actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(action),
+    });
+
+    const original = yield* harness.runtime.runAction(request(action));
+    gate = denied;
+    const decisionsBeforeRefusedRetry = decisions;
+    const refused = yield* harness.runtime.runAction(request(action)).pipe(Effect.flip);
+    expect(decisions).toBeGreaterThan(decisionsBeforeRefusedRetry);
+    gate = allowed;
+    const replayed = yield* harness.runtime.runAction(request(action));
+    const snapshot = harness.snapshot();
+
+    expect(Predicate.isTagged(refused, 'ActionAlreadyCommitted')).toBe(true);
+    expect(replayed).toEqual(original);
+    expect(probe).toEqual({ handlerRuns: 1, policyRuns: 1 });
+    expect(snapshot.committed).toHaveLength(1);
+    expect(snapshot.invocations[0]?.status).toBe('succeeded');
     expect(snapshot.stages.filter((stage) => stage === 'handler_executed')).toHaveLength(1);
   }),
 );

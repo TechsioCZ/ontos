@@ -1320,7 +1320,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ).pipe(Effect.map((rejection) => Result.fail(rejection)));
           return decoded.pipe(
             Effect.matchEffect({
-              onFailure: (cause) => Effect.logWarning('A saved Action reply no longer decodes', cause),
+              // The schema error quotes the saved values, which can be personal data: log only its kind.
+              onFailure: (failure) => Effect.logWarning('A saved Action reply no longer decodes', failure._tag),
               onSuccess: (reply) =>
                 Effect.sync(() => {
                   attempt.savedReply = { invocationId, reply };
@@ -1801,10 +1802,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         if (acceptsParkedProposal && transport.intent === 'propose') {
           const parked = yield* findParkedProposal(invocation.actionInvocationId, scope);
           if (Option.isSome(parked)) {
-            return { invocation, normalizedPayload, parked, requestHash };
+            return { invocation, normalizedPayload, parked, replay: false, requestHash };
           }
         }
-        yield* verifyInvocation(
+        // A staged saved reply is not answered here: this lookup runs before the access gate, so the
+        // request goes on to `answerReplayAfterAccess`, which answers it only to a caller the gate
+        // still allows. Every other outcome of the check fails here exactly as before.
+        const replay = yield* verifyInvocation(
           invocation,
           requestHash,
           loadRecordedRejectionInScope(scope, invocation.actionInvocationId),
@@ -1816,8 +1820,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             }),
             invocation.actionInvocationId,
           ),
+        ).pipe(
+          Effect.as(false),
+          Effect.catchTag('ActionAlreadyCommitted', (committed) =>
+            attempt.savedReply?.invocationId === committed.invocationId ? Effect.succeed(true) : Effect.fail(committed),
+          ),
         );
-        return { invocation, normalizedPayload, parked: Option.none<ActionProposalAccepted>(), requestHash };
+        return { invocation, normalizedPayload, parked: Option.none<ActionProposalAccepted>(), replay, requestHash };
       });
 
       const prepareInvocation = (...invocationArguments: Parameters<typeof prepareInvocationInFence>) =>
@@ -1828,7 +1837,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           const { deniedAuditEvidence, mandatePrepared, payload, principal, scope, transport } =
             yield* prepareTrustedInputAndContext();
           const authorizationContext = yield* prepareAuthorizationContext(payload, principal, scope, transport);
-          const { invocation, normalizedPayload, parked, requestHash } = yield* prepareInvocation(
+          const { invocation, normalizedPayload, parked, replay, requestHash } = yield* prepareInvocation(
             payload,
             principal,
             transport,
@@ -1848,6 +1857,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             normalizedPayload,
             payload,
             principal,
+            replay,
             requestHash,
             scope,
             transport,
@@ -1875,6 +1885,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         ownerPermissionTargets,
         payload,
         principal,
+        replay,
         requestHash,
         resourcePermissionTarget,
         scope,
@@ -2096,6 +2107,62 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
        */
       const reducesOwnAuthority =
         usesAccessGate && getActionReducesAuthorityResolver(input.registration)?.(payload) === true;
+
+      /**
+       * Whether this request's own scope may still run this Action, asked read-only for a replay: the
+       * same gate, field-write and permission questions the first request answered, but nothing is
+       * recorded and no preflight, Policy or owner transaction runs. An unreadable answer is the
+       * retryable 503, never a silent allow.
+       */
+      const replayAccessAllowed = Effect.fn('ActionRuntime.replayAccessAllowed')(function* replayAccessAllowedEffect() {
+        if (!usesAccessGate) {
+          return !(yield* hasPermissionDenial(false));
+        }
+        if (reducesOwnAuthority) {
+          return true;
+        }
+        const now = yield* DateTime.nowAsDate;
+        const decision = yield* decideAccessThroughGate(now);
+        if (decision.outcome === 'UNAVAILABLE') {
+          return yield* permissionUnavailable();
+        }
+        if (decision.outcome !== 'ALLOWED') {
+          return false;
+        }
+        const groups = declaredCarrier.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
+        if (groups.length === 0) {
+          return true;
+        }
+        const declaration = declaredCarrier.accessDeclaration;
+        if (accessDecision === undefined || declaration === undefined) {
+          return yield* permissionUnavailable();
+        }
+        const fieldWrites = yield* authorizeDeclaredFieldWrites({
+          accessDecision,
+          declaration,
+          groups,
+          legalEntityScope: input.registration.descriptor.legalEntityScope,
+          now,
+          payload,
+          scope,
+          ...withOptionalProperty({}, Option.isSome(accessAmount), 'amount', Option.getOrUndefined(accessAmount), {}),
+          ...withOptionalProperty({}, Option.isSome(accessTarget), 'target', Option.getOrUndefined(accessTarget), {}),
+        });
+        if (fieldWrites.outcome === 'unavailable') {
+          return yield* permissionUnavailable();
+        }
+        return fieldWrites.failure === undefined;
+      });
+
+      // A replay found a saved reply before any access decision ran. It is answered only to a caller
+      // the gate still allows; a refused caller keeps the answer it had before replies were saved,
+      // ActionAlreadyCommitted without the reply. Either way nothing runs again.
+      if (replay) {
+        if (!(yield* replayAccessAllowed())) {
+          attempt.savedReply = undefined;
+        }
+        return yield* Effect.fail(alreadyCommitted(invocation.actionInvocationId));
+      }
 
       const authorizePermissions = Effect.fn('ActionRuntime.authorizePermissions')(
         function* authorizePermissionsEffect() {

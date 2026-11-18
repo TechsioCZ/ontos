@@ -6182,7 +6182,32 @@ it.effect('answers a saved reply only for the exact invocation, principal and re
     expect(harness.committedReplyLoads[0]?.principal.tenantId).toBe(principal.tenantId);
     expect(harness.committedReplyLoads[0]?.principal.principalId).toBe(principal.principalId);
     expect(harness.counts()).toMatchObject({ lockCount: 0, transactionCount: 1, transitionCount: 0 });
-    expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+    // The replay is answered only after this request's own permission was decided, and records nothing.
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 0 });
+    expect(harness.flushed).toHaveLength(0);
+  }),
+);
+
+it.effect('keeps ActionAlreadyCommitted without the saved reply for a caller that lost the permission', () =>
+  Effect.gen(function* savedReplyNeedsPermission() {
+    const harness = yield* makeHarness({
+      createRecord: succeededRecord,
+      permissionDecision: 'denied',
+      savedReply: { encoded: { total: 7 }, kind: 'result' },
+    });
+    const failure = yield* harness.runtime
+      .runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('saved-reply-permission'),
+      })
+      .pipe(Effect.flip);
+
+    expect(Predicate.isTagged(failure, 'ActionAlreadyCommitted')).toBe(true);
+    expect(failure).toMatchObject({ invocationId: 'invocation-1' });
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 0 });
+    expect(harness.counts()).toMatchObject({ lockCount: 0, transitionCount: 0 });
     expect(harness.flushed).toHaveLength(0);
   }),
 );
