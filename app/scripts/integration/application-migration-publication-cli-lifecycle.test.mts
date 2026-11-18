@@ -292,7 +292,7 @@ it.live(
       const expectVerifierOnlyDeployment = Effect.fn(function* expectVerifierOnlyDeployment(
         run: Effect.Success<ReturnType<typeof runMigrateCli>>,
       ) {
-        expect(run.exit._tag).toBe('Success');
+        expect(Exit.isSuccess(run.exit)).toBe(true);
         const [deployment] = run.deployments;
         expect(run.deployments).toHaveLength(1);
         if (deployment === undefined) {
