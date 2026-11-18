@@ -123,6 +123,100 @@ jobs:
             echo 'No older run of this pull request was still running.' >>"$GITHUB_STEP_SUMMARY"
           fi
 
+  # A merge queue entry with a red check can never merge, yet the queue removes it only once Workspace gates
+  # reports, after every job it needs has ended: 44260932910 failed lint at 07:48:53 on 18 Nov and left the
+  # queue at 08:00:52, 85 runner-minutes later, and 44253133070 ran 35 minutes past its red lint. Each check
+  # that ends while the owner rows still run gets a job that cancels its merge group run as soon as that check
+  # fails. A cancelled run's Workspace gates still runs (if: always()) and fails within seconds (44255882801,
+  # 44256527279, 44257056977, 44257059192), so the queue removes the entry at once. A job starts through
+  # needs, so it holds no runner while it waits, and it runs no repository code. The owner rows have no such
+  # job: a matrix need waits for every row, by when the run is done. Pull request, push and scheduled runs
+  # still run every job, so a red pull request shows every failure.
+  stop-red-queue-run-after-lint:
+    name: Stop this red merge queue run (Format and Lint)
+    needs: [format-and-lint]
+    if: ${{ !cancelled() && needs.format-and-lint.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: &stop-red-queue-run-permissions
+      actions: write
+    steps: &stop-red-queue-run-steps
+      - name: Cancel this merge group run, whose entry can no longer merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 409: another stop job cancelled the run first.
+          if ! response="$(gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/cancel" 2>&1)"; then
+            if [[ "$response" != *'(HTTP 409)'* ]]; then
+              echo "::error title=Red queue run not stopped::$response"
+              exit 1
+            fi
+          fi
+          echo 'Cancelled this red merge group run; Workspace gates reports it and the queue removes the entry.'
+
+  stop-red-queue-run-after-tooling:
+    name: Stop this red merge queue run (Repository Tooling Tests)
+    needs: [workspace-gate]
+    if: ${{ !cancelled() && needs.workspace-gate.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
+  stop-red-queue-run-after-source-contracts:
+    name: Stop this red merge queue run (Source, Generation, and Deployment Contracts)
+    needs: [workspace-source-contracts]
+    if: ${{ !cancelled() && needs.workspace-source-contracts.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
+  stop-red-queue-run-after-static-contracts:
+    name: Stop this red merge queue run (Static Contracts)
+    needs: [static-contracts]
+    if: ${{ !cancelled() && needs.static-contracts.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
+  stop-red-queue-run-after-build:
+    name: Stop this red merge queue run (Build node artifacts)
+    needs: [node-artifact-build]
+    if: ${{ !cancelled() && needs.node-artifact-build.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
+  stop-red-queue-run-after-database:
+    name: Stop this red merge queue run (Prepare integration database)
+    needs: [service-integration]
+    if: ${{ !cancelled() && needs.service-integration.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
+  stop-red-queue-run-after-browser:
+    name: Stop this red merge queue run (Authenticated browser checks)
+    needs: [browser-integration]
+    if: ${{ !cancelled() && needs.browser-integration.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
+  stop-red-queue-run-after-bootstrap:
+    name: Stop this red merge queue run (Deployment Bootstrap and Node Federation Proof)
+    needs: [node-topology-proof]
+    if: ${{ !cancelled() && needs.node-topology-proof.result == 'failure' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: *stop-red-queue-run-permissions
+    steps: *stop-red-queue-run-steps
+
   ci-plan:
     name: Select required checks from changed inputs
     needs: [queue-proof]
