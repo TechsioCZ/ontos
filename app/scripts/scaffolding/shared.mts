@@ -1681,7 +1681,13 @@ export const validRuntimeDeclarationViews = (
     ownerImport(backend, 'VerticalRuntimeRegistrationInput', CORE_RUNTIME_PACKAGE, true),
     ownerAnnotation(backend, manifestName, "VerticalRuntimeRegistrationInput['manifest']"),
     ownerAnnotation(backend, declarationName, 'VerticalRuntimeRegistrationInput'),
-    ownerObjectView(fullManifest, manifest, manifestName, ['activation', 'publicSurface'], ['originatorActions']),
+    ownerObjectView(
+      fullManifest,
+      manifest,
+      manifestName,
+      ['activation', 'publicSurface'],
+      ['originatorActions', 'registeredWorkloadCalls'],
+    ),
     ownerObjectView(
       fullPublicSurface,
       manifest,
