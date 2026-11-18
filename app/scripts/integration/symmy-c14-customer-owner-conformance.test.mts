@@ -319,7 +319,15 @@ const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(func
   const { client, headers, recordId, secondRecordId, shell } = input;
   // These reads assert keys and counts only, so they ask for the key alone: the Party, name and IČO owner reads per
   // customer would add several owner calls to each request and push a loaded runner past the fixture's deadline.
-  const read = (query: string) => readCustomerPage(input, `${query}${query === '' ? '?' : '&'}fields=sourceRecordId`);
+  // Each read logs its own duration: the 18 reads below took 226 s together in two runs, and a green log did not
+  // say which request or which owner call holds that time.
+  const read = (query: string) =>
+    Effect.timed(readCustomerPage(input, `${query}${query === '' ? '?' : '&'}fields=sourceRecordId`)).pipe(
+      Effect.tap(([elapsed]) =>
+        Effect.logInfo({ ms: Duration.toMillis(elapsed), phase: 'customer-search-read', query }),
+      ),
+      Effect.map(([, page]) => page),
+    );
   const all = yield* read('');
   expect(all).toMatchObject({ count: 2, limit: 50, offset: 0 });
   expect(sourceKeysOf(all)).toEqual([recordId, secondRecordId]);
