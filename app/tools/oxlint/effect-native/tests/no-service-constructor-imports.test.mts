@@ -741,6 +741,34 @@ it('proves own Record entries without admitting inherited Object members as data
   );
 });
 
+/** A factory that decodes `input` through `schema`, by default a caller's open `{ text }` object as `query`. */
+const jsonCodecFactory = (schema: string, input = '{ query: value }', parameter = 'value: { text: string }'): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(${schema}); export const makeData = (${parameter}) => decode(${input});`;
+
+it('decodes Json only from closed input, because Effect returns the very object it validated', () => {
+  expectDataFactoryProofs(
+    [
+      jsonCodecFactory('Schema.Struct({ query: Schema.Json })', '{ query: { text: value } }', 'value: string'),
+      // A Struct builds a new object of its own fields, so an open caller object may still go in.
+      jsonCodecFactory('Schema.Struct({ query: Schema.Struct({ text: Schema.String }) })'),
+      jsonCodecFactory(
+        'Schema.Struct({ query: Schema.Json, owner: Schema.Struct({ text: Schema.String }) })',
+        '{ query: [value.text], owner: value }',
+      ),
+    ],
+    [
+      // A caller object may carry a non-enumerable function that Json keeps.
+      jsonCodecFactory('Schema.Struct({ query: Schema.Json })'),
+      jsonCodecFactory('Schema.Struct({ query: Schema.Union([Schema.String, Schema.Json]) })'),
+      jsonCodecFactory('Schema.Struct({ query: Schema.Union([Schema.Struct({ id: Schema.String }), Schema.Json]) })'),
+      jsonCodecFactory(
+        'Schema.Struct({ queries: Schema.Record(Schema.String, Schema.Json) })',
+        '{ queries: { key: value } }',
+      ),
+    ],
+  );
+});
+
 /** A data factory beside a module-level declaration that runs during initialisation. */
 const initialisedFactory = (declaration: string): string =>
   `import { DateTime, Option, Schema, SchemaGetter } from "effect"; ${declaration} export const makeData = () => ({ id: "data" });`;
