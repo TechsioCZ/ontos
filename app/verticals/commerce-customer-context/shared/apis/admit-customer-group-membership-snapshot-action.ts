@@ -34,6 +34,7 @@ export const AdmitCustomerGroupMembershipSnapshotActionForbiddenProblemSchema = 
       'operation_context_invalid',
       'SOURCE_SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const AdmitCustomerGroupMembershipSnapshotActionNotFoundProblemSchema = makeProblemDetailsSchema(

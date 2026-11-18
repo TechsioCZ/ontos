@@ -81,10 +81,12 @@ export const upsertRetentionRuleActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'UpsertRetentionRuleActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'UpsertRetentionRuleActionForbiddenProblem'> =>
     UpsertRetentionRuleActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -195,7 +197,8 @@ const mapCoreProblem = (error: ActionCoreError): UpsertRetentionRuleActionProble
       ActionInvocationStateError: (failure) => upsertRetentionRuleActionProblem.conflict(failure.code),
       ActionPayloadValidationError: upsertRetentionRuleActionProblem.invalid,
       ActionPermissionCheckError: (failure) => upsertRetentionRuleActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => upsertRetentionRuleActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        upsertRetentionRuleActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => upsertRetentionRuleActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => upsertRetentionRuleActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => upsertRetentionRuleActionProblem.conflict(failure.code),

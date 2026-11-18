@@ -33,6 +33,7 @@ export const AssignCustomerPriceGroupActionForbiddenProblemSchema = makeProblemD
       'customer_price_group_source_authority_denied',
       'customer_price_group_source_privacy_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const AssignCustomerPriceGroupActionNotFoundProblemSchema = makeProblemDetailsSchema(

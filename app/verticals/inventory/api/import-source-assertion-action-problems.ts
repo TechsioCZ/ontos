@@ -61,10 +61,12 @@ export const importSourceAssertionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ImportSourceAssertionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ImportSourceAssertionActionForbiddenProblem'> =>
     ImportSourceAssertionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): ImportSourceAssertionActionProb
       ActionInvocationStateError: (failure) => importSourceAssertionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: importSourceAssertionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => importSourceAssertionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => importSourceAssertionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        importSourceAssertionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => importSourceAssertionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => importSourceAssertionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => importSourceAssertionActionProblem.conflict(failure.code),

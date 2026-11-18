@@ -61,10 +61,12 @@ export const declareSellerVatRegimeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'DeclareSellerVatRegimeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'DeclareSellerVatRegimeActionForbiddenProblem'> =>
     DeclareSellerVatRegimeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,8 @@ const mapCoreProblem = (error: ActionCoreError): DeclareSellerVatRegimeActionPro
       ActionInvocationStateError: (failure) => declareSellerVatRegimeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: declareSellerVatRegimeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => declareSellerVatRegimeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => declareSellerVatRegimeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        declareSellerVatRegimeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => declareSellerVatRegimeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => declareSellerVatRegimeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => declareSellerVatRegimeActionProblem.conflict(failure.code),

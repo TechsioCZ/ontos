@@ -76,10 +76,12 @@ export const admitSymmySyncActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AdmitSymmySyncActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AdmitSymmySyncActionForbiddenProblem'> =>
     AdmitSymmySyncActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -187,7 +189,7 @@ const mapCoreProblem = (error: ActionCoreError): AdmitSymmySyncActionProblem =>
       ActionInvocationStateError: (failure) => admitSymmySyncActionProblem.conflict(failure.code),
       ActionPayloadValidationError: admitSymmySyncActionProblem.invalid,
       ActionPermissionCheckError: (failure) => admitSymmySyncActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => admitSymmySyncActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => admitSymmySyncActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => admitSymmySyncActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => admitSymmySyncActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => admitSymmySyncActionProblem.conflict(failure.code),

@@ -76,10 +76,12 @@ export const publishProductConfigurationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'PublishProductConfigurationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'PublishProductConfigurationActionForbiddenProblem'> =>
     PublishProductConfigurationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -196,7 +198,8 @@ const mapCoreProblem = (error: ActionCoreError): PublishProductConfigurationActi
       ActionInvocationStateError: (failure) => publishProductConfigurationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: publishProductConfigurationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => publishProductConfigurationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => publishProductConfigurationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        publishProductConfigurationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => publishProductConfigurationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => publishProductConfigurationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => publishProductConfigurationActionProblem.conflict(failure.code),

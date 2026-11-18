@@ -61,10 +61,12 @@ export const assertSizeEquivalenceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AssertSizeEquivalenceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AssertSizeEquivalenceActionForbiddenProblem'> =>
     AssertSizeEquivalenceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -174,7 +176,8 @@ const mapCoreProblem = (error: ActionCoreError): AssertSizeEquivalenceActionProb
       ActionInvocationStateError: (failure) => assertSizeEquivalenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assertSizeEquivalenceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => assertSizeEquivalenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => assertSizeEquivalenceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        assertSizeEquivalenceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => assertSizeEquivalenceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => assertSizeEquivalenceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => assertSizeEquivalenceActionProblem.conflict(failure.code),

@@ -81,10 +81,12 @@ export const recordLegalHoldActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordLegalHoldActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordLegalHoldActionForbiddenProblem'> =>
     RecordLegalHoldActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -193,7 +195,7 @@ const mapCoreProblem = (error: ActionCoreError): RecordLegalHoldActionProblem =>
       ActionInvocationStateError: (failure) => recordLegalHoldActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordLegalHoldActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordLegalHoldActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordLegalHoldActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => recordLegalHoldActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordLegalHoldActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordLegalHoldActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordLegalHoldActionProblem.conflict(failure.code),

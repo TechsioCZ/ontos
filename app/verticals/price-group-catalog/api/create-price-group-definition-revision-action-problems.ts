@@ -61,10 +61,12 @@ export const createPriceGroupDefinitionRevisionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreatePriceGroupDefinitionRevisionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreatePriceGroupDefinitionRevisionActionForbiddenProblem'> =>
     CreatePriceGroupDefinitionRevisionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -174,7 +176,8 @@ const mapCoreProblem = (
       ActionPayloadValidationError: createPriceGroupDefinitionRevisionActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         createPriceGroupDefinitionRevisionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createPriceGroupDefinitionRevisionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createPriceGroupDefinitionRevisionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createPriceGroupDefinitionRevisionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         createPriceGroupDefinitionRevisionActionProblem.unavailable(failure.code),

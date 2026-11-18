@@ -61,10 +61,12 @@ export const endTaxRuleRevisionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EndTaxRuleRevisionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EndTaxRuleRevisionActionForbiddenProblem'> =>
     EndTaxRuleRevisionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,8 @@ const mapCoreProblem = (error: ActionCoreError): EndTaxRuleRevisionActionProblem
       ActionInvocationStateError: (failure) => endTaxRuleRevisionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: endTaxRuleRevisionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => endTaxRuleRevisionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => endTaxRuleRevisionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        endTaxRuleRevisionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => endTaxRuleRevisionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => endTaxRuleRevisionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => endTaxRuleRevisionActionProblem.conflict(failure.code),

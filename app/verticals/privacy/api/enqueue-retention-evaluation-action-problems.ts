@@ -81,10 +81,12 @@ export const enqueueRetentionEvaluationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EnqueueRetentionEvaluationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EnqueueRetentionEvaluationActionForbiddenProblem'> =>
     EnqueueRetentionEvaluationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): EnqueueRetentionEvaluationActio
       ActionInvocationStateError: (failure) => enqueueRetentionEvaluationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: enqueueRetentionEvaluationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => enqueueRetentionEvaluationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => enqueueRetentionEvaluationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        enqueueRetentionEvaluationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => enqueueRetentionEvaluationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => enqueueRetentionEvaluationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => enqueueRetentionEvaluationActionProblem.conflict(failure.code),

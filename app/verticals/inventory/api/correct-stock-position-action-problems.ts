@@ -61,10 +61,12 @@ export const correctStockPositionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CorrectStockPositionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CorrectStockPositionActionForbiddenProblem'> =>
     CorrectStockPositionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -165,7 +167,8 @@ const mapCoreProblem = (error: ActionCoreError): CorrectStockPositionActionProbl
       ActionInvocationStateError: (failure) => correctStockPositionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: correctStockPositionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => correctStockPositionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => correctStockPositionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        correctStockPositionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => correctStockPositionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => correctStockPositionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => correctStockPositionActionProblem.conflict(failure.code),

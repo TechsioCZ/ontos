@@ -61,10 +61,12 @@ export const bindInitialVariantSourceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'BindInitialVariantSourceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'BindInitialVariantSourceActionForbiddenProblem'> =>
     BindInitialVariantSourceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): BindInitialVariantSourceActionP
       ActionInvocationStateError: (failure) => bindInitialVariantSourceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: bindInitialVariantSourceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => bindInitialVariantSourceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => bindInitialVariantSourceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        bindInitialVariantSourceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => bindInitialVariantSourceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => bindInitialVariantSourceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => bindInitialVariantSourceActionProblem.conflict(failure.code),

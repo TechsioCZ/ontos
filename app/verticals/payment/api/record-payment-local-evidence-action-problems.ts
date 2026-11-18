@@ -132,10 +132,12 @@ export const recordPaymentLocalEvidenceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordPaymentLocalEvidenceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordPaymentLocalEvidenceActionForbiddenProblem'> =>
     RecordPaymentLocalEvidenceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -257,7 +259,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordPaymentLocalEvidenceActio
       ActionInvocationStateError: (failure) => recordPaymentLocalEvidenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordPaymentLocalEvidenceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordPaymentLocalEvidenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordPaymentLocalEvidenceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordPaymentLocalEvidenceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordPaymentLocalEvidenceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordPaymentLocalEvidenceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordPaymentLocalEvidenceActionProblem.conflict(failure.code),

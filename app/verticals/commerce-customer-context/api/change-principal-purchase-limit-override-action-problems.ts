@@ -61,10 +61,12 @@ export const changePrincipalPurchaseLimitOverrideActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangePrincipalPurchaseLimitOverrideActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangePrincipalPurchaseLimitOverrideActionForbiddenProblem'> =>
     ChangePrincipalPurchaseLimitOverrideActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangePrincipalPurchaseLimitOve
       ActionPayloadValidationError: changePrincipalPurchaseLimitOverrideActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),

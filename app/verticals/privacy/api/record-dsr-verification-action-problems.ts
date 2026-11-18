@@ -81,10 +81,12 @@ export const recordDsrVerificationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordDsrVerificationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordDsrVerificationActionForbiddenProblem'> =>
     RecordDsrVerificationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -197,7 +199,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordDsrVerificationActionProb
       ActionInvocationStateError: (failure) => recordDsrVerificationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordDsrVerificationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordDsrVerificationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordDsrVerificationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordDsrVerificationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordDsrVerificationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordDsrVerificationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordDsrVerificationActionProblem.conflict(failure.code),

@@ -76,10 +76,12 @@ export const configureGatewayEnablementActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConfigureGatewayEnablementActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConfigureGatewayEnablementActionForbiddenProblem'> =>
     ConfigureGatewayEnablementActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -196,7 +198,8 @@ const mapCoreProblem = (error: ActionCoreError): ConfigureGatewayEnablementActio
       ActionInvocationStateError: (failure) => configureGatewayEnablementActionProblem.conflict(failure.code),
       ActionPayloadValidationError: configureGatewayEnablementActionProblem.invalid,
       ActionPermissionCheckError: (failure) => configureGatewayEnablementActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => configureGatewayEnablementActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        configureGatewayEnablementActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => configureGatewayEnablementActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => configureGatewayEnablementActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => configureGatewayEnablementActionProblem.conflict(failure.code),

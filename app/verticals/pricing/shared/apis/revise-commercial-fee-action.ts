@@ -33,6 +33,7 @@ export const ReviseCommercialFeeActionForbiddenProblemSchema = makeProblemDetail
       'operation_context_invalid',
       'revise_commercial_fee_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ReviseCommercialFeeActionNotFoundProblemSchema = makeProblemDetailsSchema(

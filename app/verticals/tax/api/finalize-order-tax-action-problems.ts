@@ -61,10 +61,12 @@ export const finalizeOrderTaxActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'FinalizeOrderTaxActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'FinalizeOrderTaxActionForbiddenProblem'> =>
     FinalizeOrderTaxActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,7 @@ const mapCoreProblem = (error: ActionCoreError): FinalizeOrderTaxActionProblem =
       ActionInvocationStateError: (failure) => finalizeOrderTaxActionProblem.conflict(failure.code),
       ActionPayloadValidationError: finalizeOrderTaxActionProblem.invalid,
       ActionPermissionCheckError: (failure) => finalizeOrderTaxActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => finalizeOrderTaxActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => finalizeOrderTaxActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => finalizeOrderTaxActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => finalizeOrderTaxActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => finalizeOrderTaxActionProblem.conflict(failure.code),

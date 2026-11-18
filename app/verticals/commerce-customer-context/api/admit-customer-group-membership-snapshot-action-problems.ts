@@ -80,10 +80,12 @@ export const admitCustomerGroupMembershipSnapshotActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AdmitCustomerGroupMembershipSnapshotActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AdmitCustomerGroupMembershipSnapshotActionForbiddenProblem'> =>
     AdmitCustomerGroupMembershipSnapshotActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -205,7 +207,8 @@ const mapCoreProblem = (error: ActionCoreError): AdmitCustomerGroupMembershipSna
       ActionPayloadValidationError: admitCustomerGroupMembershipSnapshotActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         admitCustomerGroupMembershipSnapshotActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => admitCustomerGroupMembershipSnapshotActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        admitCustomerGroupMembershipSnapshotActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => admitCustomerGroupMembershipSnapshotActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         admitCustomerGroupMembershipSnapshotActionProblem.unavailable(failure.code),

@@ -95,10 +95,12 @@ export const ensureRetailCustomerProfileActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EnsureRetailCustomerProfileActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EnsureRetailCustomerProfileActionForbiddenProblem'> =>
     EnsureRetailCustomerProfileActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -212,7 +214,8 @@ const mapCoreProblem = (error: ActionCoreError): EnsureRetailCustomerProfileActi
       ActionInvocationStateError: (failure) => ensureRetailCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: ensureRetailCustomerProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        ensureRetailCustomerProfileActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => ensureRetailCustomerProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => ensureRetailCustomerProfileActionProblem.conflict(failure.code),

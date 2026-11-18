@@ -61,10 +61,12 @@ export const createInventoryReservationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateInventoryReservationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateInventoryReservationActionForbiddenProblem'> =>
     CreateInventoryReservationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateInventoryReservationActio
       ActionInvocationStateError: (failure) => createInventoryReservationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createInventoryReservationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createInventoryReservationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createInventoryReservationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createInventoryReservationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createInventoryReservationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createInventoryReservationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createInventoryReservationActionProblem.conflict(failure.code),

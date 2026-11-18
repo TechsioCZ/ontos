@@ -129,10 +129,12 @@ export const requestPaymentRefundActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RequestPaymentRefundActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RequestPaymentRefundActionForbiddenProblem'> =>
     RequestPaymentRefundActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -246,7 +248,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestPaymentRefundActionProbl
       ActionInvocationStateError: (failure) => requestPaymentRefundActionProblem.conflict(failure.code),
       ActionPayloadValidationError: requestPaymentRefundActionProblem.invalid,
       ActionPermissionCheckError: (failure) => requestPaymentRefundActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => requestPaymentRefundActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        requestPaymentRefundActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => requestPaymentRefundActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => requestPaymentRefundActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => requestPaymentRefundActionProblem.conflict(failure.code),

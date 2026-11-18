@@ -29,6 +29,7 @@ export const ImportSymmyRuleActionForbiddenProblemSchema = makeProblemDetailsSch
       'operation_context_invalid',
       'assortment_symmy_fixture_access_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ImportSymmyRuleActionNotFoundProblemSchema = makeProblemDetailsSchema(

@@ -36,6 +36,7 @@ export const ManageZeroFloorAuthorizationActionForbiddenProblemSchema = makeProb
       'operation_context_invalid',
       'manage_zero_floor_authorization_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ManageZeroFloorAuthorizationActionNotFoundProblemSchema = makeProblemDetailsSchema(

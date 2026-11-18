@@ -155,7 +155,7 @@ const mapCoreProblem = (error: ActionCoreError): BootstrapCounterpartyAccessAdmi
       ActionPermissionCheckError: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) =>
-        bootstrapCounterpartyAccessAdministratorActionProblem.forbidden(failure.code),
+        bootstrapCounterpartyAccessAdministratorActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => bootstrapCounterpartyAccessAdministratorActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(failure.code),

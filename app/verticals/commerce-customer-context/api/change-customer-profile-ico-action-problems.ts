@@ -83,10 +83,12 @@ export const changeCustomerProfileIcoActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangeCustomerProfileIcoActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangeCustomerProfileIcoActionForbiddenProblem'> =>
     ChangeCustomerProfileIcoActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -202,7 +204,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeCustomerProfileIcoActionP
       ActionInvocationStateError: (failure) => changeCustomerProfileIcoActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeCustomerProfileIcoActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeCustomerProfileIcoActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeCustomerProfileIcoActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeCustomerProfileIcoActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeCustomerProfileIcoActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => changeCustomerProfileIcoActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => changeCustomerProfileIcoActionProblem.conflict(failure.code),

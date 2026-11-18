@@ -32,6 +32,7 @@ export const AdmitSymmySyncActionForbiddenProblemSchema = makeProblemDetailsSche
       'operation_context_invalid',
       'symmy_sync_stock_assertion_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const AdmitSymmySyncActionNotFoundProblemSchema = makeProblemDetailsSchema(

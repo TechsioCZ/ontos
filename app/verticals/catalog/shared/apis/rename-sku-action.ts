@@ -23,6 +23,7 @@ export const RenameSkuActionForbiddenProblemSchema = makeProblemDetailsSchema('R
     'operation_context_denied',
     'operation_context_invalid',
   ]),
+  reasons: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export const RenameSkuActionNotFoundProblemSchema = makeProblemDetailsSchema('RenameSkuActionNotFoundProblem', 404, {
   code: Schema.Literals(['action_invocation_not_found', 'sku_action_not_found']),

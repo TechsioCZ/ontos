@@ -127,7 +127,8 @@ const mapCoreProblem = (error: ActionCoreError): SuspendCustomerProfileActionPro
       ActionInvocationStateError: (failure) => suspendCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: suspendCustomerProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => suspendCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        suspendCustomerProfileActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => suspendCustomerProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => suspendCustomerProfileActionProblem.conflict(failure.code),

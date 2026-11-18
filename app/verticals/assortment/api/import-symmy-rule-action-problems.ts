@@ -61,10 +61,12 @@ export const importSymmyRuleActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ImportSymmyRuleActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ImportSymmyRuleActionForbiddenProblem'> =>
     ImportSymmyRuleActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,7 @@ const mapCoreProblem = (error: ActionCoreError): ImportSymmyRuleActionProblem =>
       ActionInvocationStateError: (failure) => importSymmyRuleActionProblem.conflict(failure.code),
       ActionPayloadValidationError: importSymmyRuleActionProblem.invalid,
       ActionPermissionCheckError: (failure) => importSymmyRuleActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => importSymmyRuleActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => importSymmyRuleActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => importSymmyRuleActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => importSymmyRuleActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => importSymmyRuleActionProblem.conflict(failure.code),
