@@ -91,7 +91,7 @@
     {
       "name": "Typecheck and OntOS API Boundary Rules",
       "typescript-build": true,
-      "commands": "pnpm typecheck\npnpm lint:effect-diagnostics\npnpm api:check:ontos\npnpm handler-services:check\npnpm --filter ./packages/shared-contracts test:types\n"
+      "commands": "pnpm typecheck\npnpm lint:effect-diagnostics\npnpm lint:effect-diagnostics:demo\npnpm api:check:ontos\npnpm handler-services:check\npnpm --filter ./packages/shared-contracts test:types\n"
     },
     {
       "name": "Repository Tooling Tests (1/3)",

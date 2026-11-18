@@ -231,6 +231,12 @@ const skippedCommandInputs = new Map<string, readonly string[]>([
       programInputs(groups?.project ?? '.'),
     ),
   ],
+  [
+    'pnpm lint:effect-diagnostics:demo',
+    [...(scripts['lint:effect-diagnostics:demo'] ?? '').matchAll(/--project (?<project>\S+)/gu)].flatMap(({ groups }) =>
+      programInputs(groups?.project ?? '.'),
+    ),
+  ],
   ['pnpm module-entrypoints:check', [...WORKSPACE, 'scripts/zerops/module-credential-callers.generated.mts']],
   ['pnpm shell:ui-candidates:check', ['apps/shell-super-app/', VERTICALS]],
   ['pnpm test:generation', ['scripts/scaffolding/', ...WORKSPACE]],
@@ -251,6 +257,7 @@ it('skips no source command that reads a scoped file, whether it names the file 
   // The derived TS-Go inputs are the packages' own trees, so a program that compiles a scoped file is caught.
   expect(skippedCommandInputs.get('pnpm typecheck')?.length).toBeGreaterThan(40);
   expect(skippedCommandInputs.get('pnpm lint:effect-diagnostics')).toContain('scripts/scaffolding/');
+  expect(skippedCommandInputs.get('pnpm lint:effect-diagnostics:demo')).toContain('scripts/demo/email-dispatcher/');
   const reads = scopes.flatMap((entry) => {
     const scoped = tracked.filter((file) => inScope(entry, file));
     return skipped(entry).flatMap((command) =>
