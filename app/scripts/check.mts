@@ -20,6 +20,7 @@ const parallelLanes = [
   ['api:check'],
   ['api:check:ontos'],
   ['handler-services:check'],
+  ['lint:effect-diagnostics:demo'],
   ['module-entrypoints:check'],
   ['contract:check'],
   ['database-access:check'],

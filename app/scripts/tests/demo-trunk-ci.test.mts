@@ -274,6 +274,14 @@ it('skips no source command that reads a scoped file, whether it names the file 
   expect(scopes.flatMap(skipped)).not.toContain('pnpm lint:repository-policy');
 });
 
+it('runs the demo-only Effect diagnostics in pnpm check, beside the shared ones that lint runs', () => {
+  // The shared `lint` line stays identical to main's, so the demo projects get their own lane of scripts/check.mts.
+  expect(scripts.lint).toMatch(/&& pnpm lint:effect-diagnostics$/u);
+  expect(readFileSync(new URL('../check.mts', import.meta.url), 'utf-8')).toContain(
+    "['lint:effect-diagnostics:demo'],",
+  );
+});
+
 /** A push run as the run list returns it; a run without a conclusion is still running. */
 const run = (sha: string, conclusion: string | null) => ({
   conclusion,
