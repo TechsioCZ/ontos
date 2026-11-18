@@ -67,8 +67,7 @@ if [[ "${1:-}" == --execute ]]; then
   exec mise exec -- pnpm --filter "$task" run test:integration --pool.maxWorkers 1
 fi
 
-# The planner packs ci-matrices.json's task inventory by measured two-lane cost, then removes unaffected
-# tasks. Keep that queue order: xargs admits the next task whenever either isolated lane becomes free.
+# ci-matrices.json lists every row's tasks explicitly; the planner only removes unaffected ones.
 tasks=()
 task_lines="$(jq -er '.[]' <<<"${INTEGRATION_TASKS:?}")"
 while IFS= read -r task; do tasks+=("$task"); done <<<"$task_lines"
