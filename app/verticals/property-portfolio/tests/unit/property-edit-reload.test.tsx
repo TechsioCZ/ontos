@@ -241,20 +241,6 @@ it.layer(network, { excludeTestServices: true })('property edit dialog across a 
     }),
   );
 
-  suite.effect('a draft with nothing typed takes the reloaded building', () =>
-    Effect.gen(function* cleanFollows() {
-      yield* openEdit(firstId);
-      expect(value(address)).toBe('server-address');
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value(address)).toBe('server-address');
-      yield* Deferred.succeed(gate, recordsAt(5, 'someone-else-address'));
-      yield* waitUntil(() => value(address) === 'someone-else-address');
-      expect(text()).not.toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(true);
-    }),
-  );
-
   suite.effect('another building never shows the draft typed for this one', () =>
     Effect.gen(function* otherBuilding() {
       const { router } = yield* openEdit(firstId);

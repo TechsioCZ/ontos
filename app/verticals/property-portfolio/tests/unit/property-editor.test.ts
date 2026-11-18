@@ -1,9 +1,13 @@
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { PropertyCommandSchema } from '../../shared/actions/apply-command.ts';
 import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { propertyDraftErrors } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
+import {
+  createCommandOf,
+  editCommandOf,
+  propertyDraftErrors,
+} from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
 
 type Draft = Parameters<typeof propertyDraftErrors>[0];
 const emptyDraft: Draft = {
@@ -124,18 +128,41 @@ it.effect('validates a unit edit without employees or property fields and ignore
     expect(propertyDraftErrors(draft, records)).toEqual({});
     expect(propertyDraftErrors({ ...draft, code: '' }, records)).toEqual({});
     expect(propertyDraftErrors(draft)).toEqual({});
-    const command = yield* Schema.decodeUnknownEffect(PropertyCommandSchema.cases.UpdateUnit)({
-      _tag: 'UpdateUnit',
-      name: draft.name,
-      note: draft.note,
-      unitRef: unit.unitRef,
-    });
-    expect(Schema.is(PropertyCommandSchema.cases.UpdateUnit)(command)).toBe(true);
-    expect(command).toMatchObject({
-      name: 'Updated floor name',
-      note: 'Updated note',
-      unitRef: unit.unitRef,
-    });
+    expect(editCommandOf(draft, records)).toEqual(
+      Option.some({
+        _tag: 'UpdateUnit',
+        name: draft.name,
+        note: draft.note,
+        unitRef: unit.unitRef,
+      }),
+    );
+  }),
+);
+
+it.effect('creates a building with its responsible employees, but creates a unit under its selected property', () =>
+  Effect.gen(function* creationCommands() {
+    const records = yield* recordsEffect;
+    const property = yield* Effect.fromNullishOr(records.properties[0]);
+    const employeeId = yield* Schema.decodeUnknownEffect(EmployeeIdSchema)('75000000-0000-4000-8000-000000000001');
+    expect(createCommandOf({ ...propertyDraft, note: '  Reception  ', responsibleEmployeeIds: [employeeId] })).toEqual(
+      PropertyCommandSchema.cases.CreateProperty.make({
+        address: '12 Park Street',
+        code: 'NEW-PROPERTY',
+        lifecycleState: 'PLANNED',
+        name: 'Park House',
+        note: 'Reception',
+        propertyType: 'Residential',
+        responsibleEmployeeIds: [employeeId],
+      }),
+    );
+    expect(createCommandOf({ ...emptyDraft, code: 'NEW-UNIT', name: 'Second Floor', unitFor: property })).toEqual(
+      PropertyCommandSchema.cases.CreateUnit.make({
+        capacity: null,
+        code: 'NEW-UNIT',
+        name: 'Second Floor',
+        propertyRef: property.propertyRef,
+      }),
+    );
   }),
 );
 

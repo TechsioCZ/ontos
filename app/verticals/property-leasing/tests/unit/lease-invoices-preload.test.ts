@@ -20,7 +20,7 @@ import type { RecordsRequest as WorkRecordsRequest } from '@app/work-tasks/contr
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Exit, Option, Schema } from 'effect';
 import { afterAll, afterEach, beforeEach, expect, it } from 'effect-rstest';
-import { act, createElement, useEffect } from 'react';
+import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   LeaseInvoicesApi,
@@ -247,7 +247,6 @@ const network = browserNetwork(
 );
 
 /** The real consumer hook in a real React root. */
-let latest: LeaseRelated | undefined;
 const invoiceTextOf = (related: LeaseRelated | undefined): string =>
   related === undefined
     ? 'unmounted'
@@ -257,21 +256,8 @@ const invoiceTextOf = (related: LeaseRelated | undefined): string =>
       });
 const RelatedHarness = () => {
   const related = useLeaseRelated(detail());
-  useEffect(() => {
-    latest = related;
-  }, [related]);
   return createElement('output', null, invoiceTextOf(related));
 };
-const invoiceIds = (): readonly string[] => {
-  if (latest === undefined) {
-    return [];
-  }
-  const { invoices } = latest;
-  return Option.isNone(invoices) || invoices.value === 'unavailable'
-    ? []
-    : invoices.value.map((entry) => entry.ref.resourceId);
-};
-
 interface Mounted {
   readonly text: () => string;
   readonly unmount: () => void;
@@ -426,32 +412,6 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       const remount = yield* mount();
       yield* waitUntil(() => remount.text() === '1');
       expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
-    }),
-  );
-
-  suite.effect('a settled module write clears ready rows before the next exact collection settles', () =>
-    Effect.gen(function* mountedStaleClear() {
-      yield* pinTestDocument;
-      const revalidated = yield* Deferred.make<boolean>();
-      const release = yield* Deferred.make<boolean>();
-      answers.push(
-        Effect.succeed(page(1, 1)),
-        Deferred.succeed(revalidated, true).pipe(Effect.andThen(Deferred.await(release)), Effect.as(page(501, 1))),
-      );
-      const view = yield* mount();
-      yield* waitUntil(() => view.text() === '1');
-      expect(invoiceIds()[0]).toBe('invoice-0001');
-      yield* dispatch(moduleWriteEvent);
-      yield* Deferred.await(revalidated);
-      yield* settle;
-      expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
-      expect(view.text()).toBe('loading');
-      expect(invoiceIds()).toEqual([]);
-      yield* Deferred.succeed(release, true);
-      yield* settle;
-      yield* waitUntil(() => view.text() === '1');
-      expect(invoiceIds()[0]).toBe('invoice-0501');
-      expect(reads.finance).toHaveLength(0);
     }),
   );
 

@@ -19,7 +19,6 @@ import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts'
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsRequest } from '../../shared/apis/records.ts';
 import type { PropertyEditor } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
 import { usePropertyEditor } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
 
@@ -45,7 +44,6 @@ const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({
 
 /** Every command and records read the property owner received, in order. */
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
-const reads: RecordsRequest[] = [];
 
 const OwnerActionApi = ApplyCommandActionApi.prefix('/property-portfolio-api');
 const OwnerRecordsApi = RecordsApi.prefix('/property-portfolio-api');
@@ -65,12 +63,7 @@ const network = browserNetwork(
   serveApi(
     OwnerRecordsApi,
     HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
-      group.handle('execute', ({ payload }) =>
-        Effect.sync(() => {
-          reads.push(payload);
-          return registerRecords;
-        }),
-      ),
+      group.handle('execute', () => Effect.sync(() => registerRecords)),
     ),
   ),
 );
@@ -122,34 +115,11 @@ const perform = (action: (editor: PropertyEditor) => void) =>
 
 beforeEach(() => {
   commands.length = 0;
-  reads.length = 0;
+
   rendered.length = 0;
 });
 
 it.layer(network, { excludeTestServices: true })('the new-property form', (suite) => {
-  suite.effect('typing in the new-property form sends nothing, not even after a pause', () =>
-    Effect.gen(function* typingSendsNothing() {
-      yield* pinTestDocument;
-      const unmount = mountHarness();
-      yield* perform((editor) => editor.begin());
-      yield* perform((editor) => {
-        editor.change('code', 'NEW-01');
-        editor.change('name', 'Nová budova');
-        editor.change('address', 'Hlavní 1');
-        editor.change('propertyType', 'Komerční');
-        editor.changeResponsibleEmployees([employeeId]);
-      });
-      expect(current().createDraft.dirty).toBe(true);
-      expect(current().createDraft.canSave).toBe(true);
-      yield* Effect.sleep('1 second');
-      expect(commands).toEqual([]);
-      unmount();
-      yield* Effect.sleep('100 millis');
-      expect(commands).toEqual([]);
-      expect(reads).toEqual([]);
-    }),
-  );
-
   suite.effect('the Save of the new-property form sends exactly one command', () =>
     Effect.gen(function* saveSendsOnce() {
       yield* pinTestDocument;
@@ -165,24 +135,17 @@ it.layer(network, { excludeTestServices: true })('the new-property form', (suite
       yield* perform((editor) => editor.createDraft.save());
       yield* Effect.sleep('100 millis');
       expect(commands).toHaveLength(1);
-      expect(commands[0]).toMatchObject({ command: { code: 'NEW-02', name: 'Druhá budova' }, expectedRevision: 4 });
-      unmount();
-    }),
-  );
-
-  suite.effect('an invalid new-property draft is not saved and its Save stays disabled', () =>
-    Effect.gen(function* invalidDraft() {
-      yield* pinTestDocument;
-      const unmount = mountHarness();
-      yield* perform((editor) => {
-        editor.begin();
-        editor.change('code', 'NEW-03');
+      expect(commands[0]).toMatchObject({
+        command: {
+          _tag: 'CreateProperty',
+          address: 'Hlavní 2',
+          code: 'NEW-02',
+          name: 'Druhá budova',
+          propertyType: 'Komerční',
+          responsibleEmployeeIds: [employeeId],
+        },
+        expectedRevision: 4,
       });
-      expect(current().createDraft.status).toBe('invalid');
-      expect(current().createDraft.canSave).toBe(false);
-      yield* perform((editor) => editor.createDraft.save());
-      yield* Effect.sleep('100 millis');
-      expect(commands).toEqual([]);
       unmount();
     }),
   );

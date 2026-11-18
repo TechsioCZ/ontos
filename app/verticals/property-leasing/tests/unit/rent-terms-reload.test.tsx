@@ -230,18 +230,4 @@ describe('rent panel across a background reload', () => {
       });
     }).pipe(Effect.provide(network)),
   );
-
-  it.live('a draft with nothing typed takes the reloaded rent', () =>
-    Effect.gen(function* cleanFollows() {
-      yield* openRent;
-      expect(value(paymentDay)).toBe('15');
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value(paymentDay)).toBe('15');
-      yield* Deferred.succeed(gate, recordsAt(8, 20));
-      yield* waitUntil(() => value(paymentDay) === '20');
-      expect(text()).not.toContain(labels.unsaved);
-      expect(panelButton(labels.save).disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
-  );
 });

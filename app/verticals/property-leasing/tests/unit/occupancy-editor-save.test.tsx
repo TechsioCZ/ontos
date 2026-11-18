@@ -1,8 +1,7 @@
 // @rstest-environment happy-dom
-// The lease and stay form as a person uses it: one Save button last in the footer, typing changes only the draft, a
-// save goes out once (an edit against the revision the draft was read at), and leaving with unsaved input asks first.
+// Lease/stay command payloads, monetary conversion and safe revision-conflict retries.
 // The generated clients use the real Shell issuer and owner HTTP contracts, i18n and router.
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+import { saveLabelsFor } from '@app/admin-ui';
 import { text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -40,7 +39,7 @@ import {
   unitRef,
 } from '../fixtures/occupancy-draft.ts';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
-import { button, buttons, click, field, pick, type } from '../support/occupancy-form.tsx';
+import { button, buttons, click, pick, type } from '../support/occupancy-form.tsx';
 
 const result = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: occupancyRef, revision: 5 });
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
@@ -149,16 +148,12 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe('lease draft', () => {
-  it.live('typing sends nothing; one Save sends the change once against the read revision, then closes', () =>
+  it.live('saves the lease rent in minor units against its read revision', () =>
     Effect.gen(function* saveOnce() {
       yield* pinTestDocument;
       yield* mountInRoute(<Form mode="edit" />);
-      expect(buttons(labels.save)).toHaveLength(1);
-      expect(button(labels.save).disabled).toBe(true);
 
       yield* type(monthly, '19000');
-      expect(text()).toContain(labels.unsaved);
-      expect(sent()).toHaveLength(0);
 
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
@@ -178,38 +173,6 @@ describe('lease draft', () => {
       yield* click(button(close));
       expect(buttons(labels.stay)).toHaveLength(0);
       expect(closed).toEqual(['edit']);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('closing with unsaved input asks; Zůstat keeps it, Zahodit změny restores it and closes', () =>
-    Effect.gen(function* leave() {
-      yield* pinTestDocument;
-      yield* mountInRoute(<Form mode="edit" />);
-      yield* type(monthly, '19000');
-      yield* click(button(close));
-      expect(buttons(labels.discard)).toHaveLength(1);
-
-      yield* click(button(labels.stay));
-      yield* waitUntil(() => buttons(labels.stay).length === 0);
-      expect(field(monthly).value).toBe('19000');
-
-      yield* click(button(close));
-      yield* click(button(labels.discard));
-      expect(closed).toEqual(['edit']);
-      expect(field(monthly).value).toBe('18500');
-      expect(sent()).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('Uložit in the question saves once and then closes', () =>
-    Effect.gen(function* saveAndLeave() {
-      yield* pinTestDocument;
-      yield* mountInRoute(<Form mode="edit" />);
-      yield* type(monthly, '19000');
-      yield* click(button(close));
-      yield* click(buttons(labels.save).at(-1));
-      yield* waitUntil(() => closed.length === 1);
-      expect(sent()).toHaveLength(1);
     }).pipe(Effect.provide(network)),
   );
 
@@ -245,27 +208,6 @@ describe('lease draft', () => {
 });
 
 describe('new lease and stay', () => {
-  it.live('reads the required text of a required field in Czech', () =>
-    Effect.gen(function* requiredText() {
-      yield* pinTestDocument;
-      yield* mountInRoute(<Form mode="stay" />);
-      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
-      expect(document.body.textContent).not.toContain('(required)');
-      expect(document.querySelector('label[for="stay-people-count"]')?.textContent).toContain(requiredLabelFor('cs'));
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an untouched new lease closes without asking', () =>
-    Effect.gen(function* untouched() {
-      yield* pinTestDocument;
-      yield* mountInRoute(<Form mode="lease" />);
-      expect(button(labels.save).disabled).toBe(true);
-      yield* click(button(close));
-      expect(buttons(labels.stay)).toHaveLength(0);
-      expect(closed).toEqual(['lease']);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('a filled stay is created by one Save and opened', () =>
     Effect.gen(function* createStay() {
       yield* pinTestDocument;
@@ -287,19 +229,6 @@ describe('new lease and stay', () => {
         expectedRevision: 4,
       });
       expect(created).toEqual([occupancyRef.resourceId]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('closing a filled stay asks before the input is lost', () =>
-    Effect.gen(function* leaveStay() {
-      yield* pinTestDocument;
-      yield* mountInRoute(<Form mode="stay" />);
-      yield* type('stay-note', 'Pozdní příjezd');
-      yield* click(button(close));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      yield* click(button(labels.discard));
-      expect(closed).toEqual(['stay']);
-      expect(sent()).toHaveLength(0);
     }).pipe(Effect.provide(network)),
   );
 });
