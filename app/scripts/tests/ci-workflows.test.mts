@@ -1766,8 +1766,6 @@ const WHOLE_FILES = {
   root: [
     'scripts/integration/organization-source-customer-owner-conformance.test.mts',
     'scripts/integration/organization-source-customer-identity-conformance.test.mts',
-    'scripts/integration/symmy-c14-customer-owner-conformance.test.mts',
-    'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
     'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
     'scripts/integration/scoped-owner-migrations.test.mts',
   ],
@@ -1781,8 +1779,6 @@ const familyFiles = (family: string) =>
 const NATIVE_TOPOLOGY_PROOFS = [
   'whole:organization',
   'whole:organization-identity',
-  'whole:customer-readback',
-  'whole:customer-roundtrip',
   'whole:pricing-routes',
   'whole:privacy',
   'whole:privacy-recovery',
@@ -1819,6 +1815,7 @@ it('covers every integration file exactly once across the owner rows', () => {
   );
   const tasks = integrationRows().flatMap((row) => row.tasks ?? []);
   expect(new Set(tasks).size).toBe(tasks.length);
+  expect(familyFiles('root')).toContain('scripts/integration/symmy-c14-customer-owner-conformance.test.mts');
   const families = shardFamilies(tasks);
   expect([...families.keys()]).toContain('root');
   for (const [family, shards] of families) {

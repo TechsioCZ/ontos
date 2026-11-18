@@ -112,7 +112,7 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
@@ -131,8 +131,6 @@ it('launches package and root suites with the assigned lane and propagates failu
     for (const [task, file] of [
       ['whole:organization', 'organization-source-customer-owner-conformance'],
       ['whole:organization-identity', 'organization-source-customer-identity-conformance'],
-      ['whole:customer-readback', 'symmy-c14-customer-owner-conformance'],
-      ['whole:customer-roundtrip', 'symmy-c14-customer-roundtrip-conformance'],
       ['whole:pricing-routes', 'symmy-c14-pricing-routes-conformance'],
     ] as const) {
       execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });

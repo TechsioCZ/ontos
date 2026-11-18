@@ -33,12 +33,6 @@ if [[ "${1:-}" == --execute ]]; then
     whole:organization-identity)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/organization-source-customer-identity-conformance.test.mts --pool.maxWorkers 1 ;;
-    whole:customer-readback)
-      exec mise exec -- pnpm exec rstest --project integration \
-        scripts/integration/symmy-c14-customer-owner-conformance.test.mts --pool.maxWorkers 1 ;;
-    whole:customer-roundtrip)
-      exec mise exec -- pnpm exec rstest --project integration \
-        scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --pool.maxWorkers 1 ;;
     whole:pricing-routes)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --pool.maxWorkers 1 ;;
@@ -62,8 +56,6 @@ if [[ "${1:-}" == --execute ]]; then
     exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}" \
       --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts \
       --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts \
-      --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts \
-      --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts \
       --exclude scripts/integration/scoped-owner-migrations.test.mts
   fi

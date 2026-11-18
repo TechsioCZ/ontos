@@ -254,8 +254,17 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(unitCommands).not.toContain('--filter ./verticals/privacy');
 });
 
-it('selects extracted root conformance tasks only with root impact, on their original runners', () => {
-  const rootConformance = ['whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-routes'];
+/** The root integration work an integration matrix runs. */
+const rootTasks = (entries: readonly { readonly tasks?: readonly string[] | undefined }[]) =>
+  EffectArray.sort(
+    entries
+      .flatMap((entry) => entry.tasks ?? [])
+      .filter((task) => task.startsWith('root:') || task === 'whole:migrations'),
+    Order.String,
+  );
+
+it('selects root shards and the extracted pricing proof only with root impact, on their original runners', () => {
+  const rootConformance = ['whole:pricing-routes'];
   const assignments = (entries: typeof templates.integration) =>
     entries.flatMap((entry) =>
       (entry.tasks ?? []).filter((task) => rootConformance.includes(task)).map((task) => ({ name: entry.name, task })),
@@ -269,6 +278,7 @@ it('selects extracted root conformance tasks only with root impact, on their ori
     expect(plan.mode).toBe('affected');
     expect(plan.affectedPackages.includes('app')).toBe(rootAffected);
     expect(assignments(plan.integration)).toEqual(rootAffected ? assignments(templates.integration) : []);
+    expect(rootTasks(plan.integration)).toEqual(rootAffected ? rootTasks(templates.integration) : []);
   }
   expect(assignments(templates.integration)).toHaveLength(rootConformance.length);
 });
@@ -408,15 +418,6 @@ it('rejects incomplete full matrices and widens an unrunnable task form', () => 
     ).toBe('full');
   }
 });
-
-/** The root integration work an integration matrix runs. */
-const rootTasks = (entries: readonly { readonly tasks?: readonly string[] | undefined }[]) =>
-  EffectArray.sort(
-    entries
-      .flatMap((entry) => entry.tasks ?? [])
-      .filter((task) => task.startsWith('root:') || task === 'whole:migrations'),
-    Order.String,
-  );
 
 it('selects browser checks and all root integration shards when they consume a changed package', () => {
   const plan = planCiChecks({
