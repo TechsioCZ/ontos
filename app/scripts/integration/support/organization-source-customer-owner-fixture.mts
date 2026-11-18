@@ -876,9 +876,19 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       runtimes.set(app, runtime);
       return runtime;
     });
-    for (const app of appIds) {
-      yield* start(app);
+    // Initial receivers have distinct ports, artifacts and already-bound module credentials.
+    // Their local readiness does not call peers. Later policy restarts remain ordered with their writes.
+    const symmyContract = contracts.find((value) => value.deployment.appId === symmyApp);
+    if (symmyContract === undefined) {
+      return yield* unavailable('The actual Symmy worker contract is missing');
     }
+    const [, workerArtifact] = yield* Effect.all(
+      [
+        Effect.forEach(appIds, (app) => start(app), { concurrency: 3, discard: true }),
+        buildProductWorker(symmyContract),
+      ],
+      { concurrency: 2 },
+    );
     let workerDiagnostic = Effect.succeed('Worker has not started');
     const writeDiagnostics = Effect.fn('OrganizationSourceCustomerOwner.diagnostics')(function* writeDiagnostics() {
       for (const [app, runtime] of runtimes) {
@@ -1071,11 +1081,6 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         return yield* unavailable('Actual source governance did not persist through the public Action');
       }
     }
-    const symmyContract = contracts.find((value) => value.deployment.appId === symmyApp);
-    if (symmyContract === undefined) {
-      return yield* unavailable('The actual Symmy worker contract is missing');
-    }
-    const workerArtifact = yield* buildProductWorker(symmyContract);
     const startWorker = Effect.fn('OrganizationSourceCustomerOwner.startWorker')(function* startWorker() {
       const started = yield* startProductWorker(workerArtifact, {
         ...environment,

@@ -679,11 +679,33 @@ it.live(
         } as const;
         const ownerDiagnostics = new Map<string, Effect.Effect<string>>();
         const ownerRuntimes = new Map<string, OwnerRuntime>();
-        yield* Effect.forEach(
-          appIds,
-          (appId) =>
-            startOwner({ appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes }),
-          { discard: true },
+        const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
+        const moduleKey = moduleKeys.get(symmyAppId);
+        assert.isOk(symmy);
+        if (moduleKey === undefined) {
+          return yield* unavailable('The actual independent module credential is missing');
+        }
+        // Each receiver owns a distinct map key, port and artifact; readiness makes no peer requests.
+        const [, workerArtifact] = yield* Effect.all(
+          [
+            Effect.forEach(
+              appIds,
+              (appId) =>
+                startOwner({
+                  appId,
+                  contracts,
+                  environment,
+                  moduleKeys,
+                  ownerDiagnostics,
+                  ownerRuntimes,
+                  ports,
+                  prefixes,
+                }),
+              { concurrency: 3, discard: true },
+            ),
+            buildProductWorker(symmy),
+          ],
+          { concurrency: 2 },
         );
         const client = yield* HttpClient.HttpClient;
         yield* Effect.logInfo({ phase: 'customer-fixture-ready' });
@@ -710,13 +732,7 @@ it.live(
         const submit = submitFor('INTERNAL_C14_CUSTOMER_JOB');
         const accepted = yield* submit;
         expect(yield* submit).toEqual(accepted);
-        const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
-        const moduleKey = moduleKeys.get(symmyAppId);
-        assert.isOk(symmy);
-        if (moduleKey === undefined) {
-          return yield* unavailable('The actual independent module credential is missing');
-        }
-        const workerArtifact = yield* buildProductWorker(symmy);
+        // Admission replay is checked before dispatch; the worker stops before owners at scope exit.
         const worker = yield* startProductWorker(workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',
