@@ -686,6 +686,7 @@ it.live(
           { discard: true },
         );
         const client = yield* HttpClient.HttpClient;
+        yield* Effect.logInfo({ phase: 'customer-fixture-ready' });
         const headers = { 'idempotency-key': 'INTERNAL_C14_CUSTOMER_JOB', 'x-api-key': Redacted.value(key.secret) };
         const customerBody = customersBody({
           customerId: recordId,
@@ -977,6 +978,7 @@ it.live(
             lastName: exportedCustomer.party.lastName ?? '',
           }),
         );
+        yield* Effect.logInfo({ phase: 'customer-readback-controls-accepted' });
         const roundTripWorker = yield* startProductWorker(workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: roundTripKey,
@@ -1194,6 +1196,7 @@ it.live(
         yield* admin`insert into party.party_contact_points(tenant_id,party_id,contact_point_type,display_value,normalized_value,normalization_version,privacy_classification,valid_from,provenance_source,provenance_method,accepted_by_action_invocation_id,accepted_by_principal_id,policy_version)
           values(${tenantId},${secondParty.partyRef.resourceId},'EMAIL','Grace.Hopper@Example.test','grace.hopper@example.test','email.v1','PERSONAL','2020-01-01T00:00:00Z','internal-fixture','DECLARATION',${Option.getOrThrow(secondPartyEffect.owner_invocation_id)},${systemId},'fixture')`;
         yield* searchTwoCustomers({ client, headers, recordId, secondRecordId, shell });
+        yield* Effect.logInfo({ phase: 'customer-roundtrip-and-search-accepted' });
         const admittedBeforeDisable = yield* submitFor(beforeDisableKey);
         expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);
         yield* admin`update core.principals set status='disabled',disabled_at=current_timestamp where principal_id=${integration.principalId} and tenant_id=${tenantId}`;
@@ -1219,8 +1222,12 @@ it.live(
         expect(afterDisableWrites?.count).toBe(6);
         yield* disabledWorker.child.kill();
         yield* disabledWorker.child.exitCode;
+        yield* Effect.logInfo({ phase: 'customer-scenario-complete' });
         return yield* Effect.void;
       }),
-    ).pipe(Effect.provide(services)),
+    ).pipe(
+      Effect.tap(() => Effect.logInfo({ phase: 'customer-teardown-complete' })),
+      Effect.provide(services),
+    ),
   480_000,
 );
