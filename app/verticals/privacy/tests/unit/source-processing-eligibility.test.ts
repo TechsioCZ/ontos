@@ -13,6 +13,7 @@ import {
 import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
 import {
   evaluateSourceProcessingEligibility,
+  sourceCreatedPartyPersonsMatch,
   sourceSubjectMatchesRequest,
 } from '../../src/api/source-processing-eligibility.read.ts';
 import type { SourceProcessingEligibilityServices } from '../../src/api/source-processing-eligibility.read.ts';
@@ -80,8 +81,80 @@ const services = (input = trustedInputs): SourceProcessingEligibilityServices =>
   },
   subjectExists: () => Effect.succeed(true),
 });
-const run = (value = services(), request: SourceProcessingEligibilityRequest = fixture.request) =>
-  evaluateSourceProcessingEligibility(request, scope, value, fixture.evaluatedAt);
+const run = (
+  value = services(),
+  request: SourceProcessingEligibilityRequest = fixture.request,
+  callerAppId?: string,
+  requestScope: typeof scope = scope,
+) => evaluateSourceProcessingEligibility(request, requestScope, value, fixture.evaluatedAt, callerAppId);
+
+/** Party Registry's recovery context for the original create of the fixture's exact source occurrence. */
+const sourceCreatedPartyRecovery = () => {
+  const recoveryRequest: SourceProcessingEligibilityRequest = { ...fixture.request, operation: 'RECOVER_CREATE' };
+  const intendedScope = { ...fixture.context.intendedScope, operation: 'RECOVER_CREATE' };
+  const authority = fixture.context.applicabilityAuthority;
+  const applicabilityScope = { ...authority.scope, operation: intendedScope.operation };
+  const policy = Schema.decodeUnknownSync(PrivacyApplicabilityPolicySchema)({
+    ...fixture.policy,
+    policyKey: 'source:internal-recovery',
+    scopeKey: fixture.policy.scopeKey.replace(/:CREATE$/u, ':RECOVER_CREATE'),
+  });
+  const decision = resolvePrivacyApplicability({
+    authority: authority.authority,
+    authorityEvidenceRefs: authority.evidenceRefs,
+    authorityReceiptRef: authority.receiptRef,
+    evaluatedAt: fixture.from,
+    policies: [policy],
+    proposedActivity: true,
+    scope: applicabilityScope,
+  });
+  const context = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+    ...fixture.context,
+    applicabilityAuthority: { ...authority, scope: applicabilityScope },
+    authorityIncarnation: 'fixture:incarnation:recovery',
+    intendedScope,
+    request: recoveryRequest,
+    targetAdmission: 'SOURCE_CREATED_PARTY',
+  });
+  const inputs: ResolvePrivacyEligibilityInputsInput = {
+    ...trustedInputs,
+    applicability: decision,
+    applicabilityScope,
+    intendedScope,
+    legalBasis: {
+      basisRef: 'legal-basis:contract',
+      basisVersion: 'fixture:recovery',
+      currentness,
+      scope: intendedScope,
+    },
+    objection: { currentness, objectionRef: 'fixture:recovery-objection', scope: intendedScope, status: 'ABSENT' },
+    restriction: {
+      currentness,
+      restrictionRef: 'fixture:recovery-restriction',
+      scope: intendedScope,
+      status: 'ABSENT',
+    },
+  };
+  const sourceSubject = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+    createdAt: fixture.from,
+    subject: { kind: 'SOURCE_ASSERTED', source: fixture.request.source },
+    subjectRef: fixture.context.intendedScope.subjectRef,
+    updatedAt: fixture.from,
+  });
+  const value: SourceProcessingEligibilityServices = {
+    ...services(inputs),
+    contexts: [fixture.context, context],
+    repository: {
+      ...services(inputs).repository,
+      listApplicabilityDecisions: () => Effect.succeed([fixture.decision, decision]),
+      listApplicabilityPolicies: () => Effect.succeed([fixture.policy, policy]),
+    },
+    // The stored subject is the exact source-asserted one; the real rule decides whether it may serve this request.
+    subjectExists: (_subject, observed, mode) =>
+      Effect.succeed(sourceSubjectMatchesRequest(sourceSubject, observed, mode)),
+  };
+  return { context, recoveryRequest, sourceSubject, value };
+};
 
 describe('current exact source processing eligibility', () => {
   it.effect('binds a recovery hash to the decoded native request and rejects extra control fields', () =>
@@ -370,6 +443,170 @@ describe('current exact source processing eligibility', () => {
         false,
       );
     }
+  });
+  it.effect('admits Party Registry recovering the Party its exact source occurrence created, and nothing wider', () =>
+    Effect.gen(function* sourceCreatedParty() {
+      const { context, recoveryRequest, value } = sourceCreatedPartyRecovery();
+      const partyId = '20000000-0000-4000-8000-000000000031';
+      const request: SourceProcessingEligibilityRequest = {
+        ...recoveryRequest,
+        target: { kind: 'PARTY', resourceId: partyId },
+      };
+      const caller = 'party-registry';
+      expect((yield* run(value, request, caller)).outcome).toBe('ALLOWED');
+      const signedCaller = { appId: caller };
+      const refused = (
+        variant: SourceProcessingEligibilityRequest,
+        recoveryServices: SourceProcessingEligibilityServices = value,
+        callerAppId: { readonly appId: string | undefined } = signedCaller,
+        requestScope: typeof scope = scope,
+      ) => run(recoveryServices, variant, callerAppId.appId, requestScope).pipe(Effect.map(({ outcome }) => outcome));
+      // Another source: another occurrence, record or issuer of the same route.
+      for (const source of [
+        { ...fixture.request.source, occurrenceId: 'occurrence:two' },
+        { ...fixture.request.source, recordId: 'client:two' },
+        { ...fixture.request.source, issuer: 'internal:other-issuer' },
+      ]) {
+        expect(yield* refused({ ...request, source })).toBe('DENIED');
+      }
+      // A native request has no source occurrence to recover.
+      expect(yield* refused({ ...request, source: null })).toBe('DENIED');
+      // Another tenant.
+      const foreignScope = {
+        ...scope,
+        ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+          ...ids,
+          authBindingId: '10000000-0000-4000-8000-000000000004',
+          authContextRef: 'fixture:source-processing',
+          authenticationNamespaceId: 'core.staff',
+          authMethod: 'session',
+          tenantId: '10000000-0000-4000-8000-000000000099',
+        }),
+      };
+      expect(yield* refused(request, value, signedCaller, foreignScope)).toBe('DENIED');
+      // Another consumer module: neither its word nor its signed calling module may use the admission.
+      expect(yield* refused({ ...request, consumerModuleId: 'commerce.customer-context' })).toBe('DENIED');
+      for (const appId of ['commerce-customer-context', 'symmy-integration', undefined]) {
+        expect(yield* refused(request, value, { appId })).toBe('DENIED');
+      }
+      // Another operation with the same Party target, and a duplicate-candidate target.
+      for (const operation of ['CREATE', 'EVIDENCE_READ', 'MATCH', 'PROFILE_EXPORT']) {
+        expect(yield* refused({ ...request, operation })).toBe('DENIED');
+      }
+      expect(yield* refused({ ...request, target: { kind: 'DUPLICATE_CANDIDATE', resourceId: partyId } })).toBe(
+        'DENIED',
+      );
+      // Privacy's own record of the original create must exist for the same subject and principal.
+      expect(yield* refused(request, { ...value, contexts: [context] })).toBe('DENIED');
+      const otherSubject = {
+        ...fixture.context,
+        intendedScope: {
+          ...fixture.context.intendedScope,
+          subjectRef: {
+            ...fixture.context.intendedScope.subjectRef,
+            resourceId: '10000000-0000-4000-8000-000000000099',
+          },
+        },
+      };
+      expect(yield* refused(request, { ...value, contexts: [otherSubject, context] })).toBe('DENIED');
+      const otherPrincipal = { ...fixture.context, principalId: '10000000-0000-4000-8000-000000000098' };
+      expect(yield* refused(request, { ...value, contexts: [otherPrincipal, context] })).toBe('DENIED');
+      // A Party whose persons Privacy did not admit from this exact source subject.
+      expect(yield* refused(request, { ...value, subjectExists: () => Effect.succeed(false) })).toBe('DENIED');
+    }),
+  );
+  it('binds the source created Party admission to the exact source-asserted subject and its own persons', () => {
+    const { recoveryRequest, sourceSubject } = sourceCreatedPartyRecovery();
+    const partyRef = {
+      moduleId: 'party.registry',
+      resourceId: '20000000-0000-4000-8000-000000000031',
+      resourceType: 'party.registry.party',
+      tenantId: ids.tenantId,
+    };
+    const request: SourceProcessingEligibilityRequest = {
+      ...recoveryRequest,
+      target: { kind: 'PARTY', resourceId: partyRef.resourceId },
+    };
+    expect(sourceSubjectMatchesRequest(sourceSubject, request, 'SOURCE_CREATED_PARTY')).toBe(true);
+    const otherSource = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+      ...sourceSubject,
+      subject: { kind: 'SOURCE_ASSERTED', source: { ...fixture.request.source, recordId: 'client:two' } },
+    });
+    const anonymous = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+      ...sourceSubject,
+      subject: {
+        anonymousContext: {
+          addressability: 'SESSION',
+          contextRef: 'session:actual',
+          createdAt: fixture.from,
+          expiresAt: fixture.until,
+          kind: 'ANONYMOUS_PRIVACY_CONTEXT',
+          provenance: { method: 'SESSION', source: 'test' },
+        },
+        kind: 'ANONYMOUS',
+      },
+    });
+    const dataSubject = (sourceSubjectId: string) =>
+      Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+        ...sourceSubject,
+        subject: {
+          kind: 'DATA_SUBJECT',
+          partyRef,
+          sourceAdmission: {
+            occurrenceId: 'occurrence:one',
+            sourceSubjectRef: { ...sourceSubject.subjectRef, resourceId: sourceSubjectId },
+          },
+        },
+        subjectRef: { ...sourceSubject.subjectRef, resourceId: '10000000-0000-4000-8000-000000000041' },
+      });
+    for (const subject of [otherSource, anonymous, dataSubject(sourceSubject.subjectRef.resourceId)]) {
+      expect(sourceSubjectMatchesRequest(subject, request, 'SOURCE_CREATED_PARTY')).toBe(false);
+    }
+    for (const variant of [
+      { ...request, consumerModuleId: 'commerce.customer-context' as const },
+      { ...request, operation: 'EVIDENCE_READ' },
+      { ...request, target: { kind: 'DUPLICATE_CANDIDATE' as const, resourceId: partyRef.resourceId } },
+      { ...request, target: null },
+    ]) {
+      expect(sourceSubjectMatchesRequest(sourceSubject, variant, 'SOURCE_CREATED_PARTY')).toBe(false);
+    }
+    // Privacy's own persons on the Party: none yet, or only those admitted from this exact source subject.
+    expect(sourceCreatedPartyPersonsMatch([], sourceSubject.subjectRef)).toBe(true);
+    expect(
+      sourceCreatedPartyPersonsMatch([dataSubject(sourceSubject.subjectRef.resourceId)], sourceSubject.subjectRef),
+    ).toBe(true);
+    expect(
+      sourceCreatedPartyPersonsMatch(
+        [dataSubject(sourceSubject.subjectRef.resourceId), dataSubject('10000000-0000-4000-8000-000000000042')],
+        sourceSubject.subjectRef,
+      ),
+    ).toBe(false);
+    // The ordinary Party-target rule is unchanged: without the admission only a linked Data Subject serves it.
+    expect(sourceSubjectMatchesRequest(sourceSubject, request)).toBe(false);
+    expect(sourceSubjectMatchesRequest(dataSubject(sourceSubject.subjectRef.resourceId), request)).toBe(true);
+    expect(
+      sourceSubjectMatchesRequest(dataSubject(sourceSubject.subjectRef.resourceId), {
+        ...request,
+        target: { kind: 'PARTY', resourceId: '20000000-0000-4000-8000-000000000032' },
+      }),
+    ).toBe(false);
+  });
+  it('limits the source created Party admission to Party Registry recovering one exact source create', () => {
+    const { context } = sourceCreatedPartyRecovery();
+    const decode = Schema.decodeUnknownResult(SourceProcessingContextSchema);
+    const encoded = Schema.encodeSync(SourceProcessingContextSchema)(context);
+    expect(Result.isSuccess(decode(encoded))).toBe(true);
+    for (const request of [
+      { ...encoded.request, consumerModuleId: 'commerce.customer-context' },
+      { ...encoded.request, operation: 'EVIDENCE_READ' },
+      { ...encoded.request, target: { kind: 'PARTY', resourceId: 'party:fixed' } },
+      { ...encoded.request, source: null },
+    ]) {
+      expect(Result.isFailure(decode({ ...encoded, request }))).toBe(true);
+    }
+    expect(
+      Result.isFailure(decode({ ...encoded, intendedScope: { ...encoded.intendedScope, operation: 'CREATE' } })),
+    ).toBe(true);
   });
   it.effect('evaluates explicit current owner facts without fabricating consent', () =>
     run().pipe(Effect.map((result) => expect(result.outcome).toBe('ALLOWED'))),

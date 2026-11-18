@@ -61,7 +61,7 @@ const PlanSchema = Schema.Struct({
   authMethod: Ref,
   principalId: PrincipalId,
   request: SourceProcessingEligibilityRequestSchema,
-  targetAdmission: Schema.optionalKey(Schema.Literal('CURRENT_SOURCE_PERSON')),
+  targetAdmission: SourceProcessingContextSchema.fields.targetAdmission,
 });
 const SeedSchema = Schema.Struct({
   contexts: Schema.Array(PlanSchema).check(Schema.isMinLength(1), Schema.isMaxLength(64)),

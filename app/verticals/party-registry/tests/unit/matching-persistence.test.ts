@@ -1462,16 +1462,16 @@ it.effect('an ambiguous source Create replay rechecks retained Party Privacy eve
           [duplicateCandidateCaseParties, [retained]],
         ]),
       );
-      const seenTargets: PartySourceCreateTarget[] = [];
+      const seenTargets: { readonly operation: string; readonly target: PartySourceCreateTarget }[] = [];
       const denied = yield* createOrMatchParty(replay.transaction, input).pipe(
         Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
         Effect.provideService(PartyClientSourcePrivacy, {
           checkImport: ({ intent }) =>
             Effect.sync(() => {
-              if (intent.operation !== 'RECOVER_CREATE') {
+              if (!('target' in intent) || intent.target === undefined) {
                 return 'ALLOWED';
               }
-              seenTargets.push(intent.target);
+              seenTargets.push({ operation: intent.operation, target: intent.target });
               return intent.target.kind === 'PARTY' ? 'DENIED' : 'ALLOWED';
             }),
         }),
@@ -1480,9 +1480,100 @@ it.effect('an ambiguous source Create replay rechecks retained Party Privacy eve
       expect(denied).toMatchObject(
         retained.length === 0 ? { code: 'party_persistence_unavailable' } : { reason: 'client_source_privacy_denied' },
       );
-      expect(seenTargets[0]).toEqual({ kind: 'DUPLICATE_CANDIDATE', caseId: candidateCaseId });
-      expect(seenTargets[1]).toEqual(retained.length === 0 ? undefined : { kind: 'PARTY', partyId: partyA });
+      expect(seenTargets[0]).toEqual({
+        operation: 'RECOVER_CREATE',
+        target: { kind: 'DUPLICATE_CANDIDATE', caseId: candidateCaseId },
+      });
+      // Case Parties are other subjects: never a source create recovery target, only an ordinary evidence read.
+      expect(seenTargets[1]).toEqual(
+        retained.length === 0 ? undefined : { operation: 'EVIDENCE_READ', target: { kind: 'PARTY', partyId: partyA } },
+      );
       expect(replay.inserts).toEqual([]);
+    }
+  }),
+);
+
+it.effect('a lost source Create reply replays the Party its stored decision created and nothing else', () =>
+  Effect.gen(function* replayCreatedSourceParty() {
+    const { input, sourceConfig } = yield* sourceAmbiguityInput;
+    const first = sourceAmbiguityHarness();
+    yield* createOrMatchParty(first.transaction, input).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+      Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('ALLOWED') }),
+    );
+    // The stored decision of this exact source occurrence and content, as the original create committed it.
+    const created = {
+      ...recordedRow(first.inserts.find(({ table }) => table === partyMatchDecisions)?.values),
+      candidateCaseId: null,
+      committedCreateOutcome: 'CREATED',
+      matchDecisionId: decisionId,
+      outcome: 'CREATED',
+      partyId: partyA,
+    };
+    const replay = (
+      candidateInput: typeof input,
+      queues: { readonly aliases?: Rows; readonly parties: readonly Rows[] },
+      privacy: 'ALLOWED' | 'DENIED' = 'ALLOWED',
+    ) => {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyMatchDecisions, [[], [created]]],
+          [partyAliases, [queues.aliases ?? []]],
+          [parties, queues.parties],
+        ]),
+      );
+      const recoveries: PartySourceCreateTarget[] = [];
+      const result = createOrMatchParty(subject.transaction, candidateInput).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+        Effect.provideService(PartyClientSourcePrivacy, {
+          checkImport: ({ intent }) =>
+            Effect.sync(() => {
+              if (intent.operation !== 'RECOVER_CREATE') {
+                return 'ALLOWED';
+              }
+              recoveries.push(intent.target);
+              return privacy;
+            }),
+        }),
+      );
+      return { recoveries, result, subject };
+    };
+    const currentParty = { archivedAt: null, partyType: 'ORGANIZATION' };
+    const current = { parties: [[{ partyId: partyA }], [currentParty]] };
+    const admitted = replay(input, current);
+    expect(yield* admitted.result).toEqual({
+      decisionRef: expect.objectContaining({ resourceId: decisionId }),
+      outcome: 'CREATED',
+      partyRef: makePartyRef(tenantId, partyA),
+      replayed: true,
+    });
+    // Privacy is asked for exactly the stored Party, never a Party named by the retry.
+    expect(admitted.recoveries).toEqual([{ kind: 'PARTY', partyId: partyA }]);
+    expect(admitted.subject.inserts).toEqual([]);
+    // Changed content under the same source occurrence never reaches Privacy or a write.
+    const changed = replay({ ...input, candidate: { ...input.candidate, evidenceRefs: ['registry:other'] } }, current);
+    expect(yield* Effect.flip(changed.result)).toMatchObject({ reason: 'client_source_occurrence_conflict' });
+    expect(changed.recoveries).toEqual([]);
+    expect(changed.subject.inserts).toEqual([]);
+    // Privacy refusal stays a refusal.
+    const refused = replay(input, current, 'DENIED');
+    expect(yield* Effect.flip(refused.result)).toMatchObject({ reason: 'client_source_privacy_denied' });
+    expect(refused.subject.inserts).toEqual([]);
+    // A Party that is no longer that Party: archived, or merged into another survivor.
+    const archived = replay(input, {
+      parties: [
+        [{ partyId: partyA }],
+        [{ ...currentParty, archivedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)) }],
+      ],
+    });
+    expect(yield* Effect.flip(archived.result)).toMatchObject({ reason: 'client_source_party_no_longer_eligible' });
+    const merged = replay(input, {
+      aliases: [{ aliasPartyId: partyA, canonicalPartyId: partyB, tenantId }],
+      parties: [[{ partyId: partyB }]],
+    });
+    expect(yield* Effect.flip(merged.result)).toMatchObject({ reason: 'client_source_party_no_longer_eligible' });
+    for (const failed of [archived, merged]) {
+      expect(failed.subject.inserts).toEqual([]);
     }
   }),
 );

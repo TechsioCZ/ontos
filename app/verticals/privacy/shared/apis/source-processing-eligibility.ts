@@ -90,24 +90,39 @@ export const SourceProcessingContextSchema = Schema.Struct({
   ),
   request: SourceProcessingEligibilityRequestSchema,
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
-  targetAdmission: Schema.optionalKey(Schema.Literal('CURRENT_SOURCE_PERSON')),
+  /**
+   * CURRENT_SOURCE_PERSON: Retail profile creation for the Party the Party owner proves for the source person.
+   * SOURCE_CREATED_PARTY: Party Registry recovering its own committed create of this exact source occurrence.
+   */
+  targetAdmission: Schema.optionalKey(Schema.Literals(['CURRENT_SOURCE_PERSON', 'SOURCE_CREATED_PARTY'])),
   tenantId: Schema.String.check(Schema.isUUID()).pipe(
     Schema.brand('PrivacySourceTenantId'),
     Schema.decodeTo(Schema.String),
   ),
   validUntil: PrivacyIsoTimestampSchema,
 }).check(
-  Schema.makeFilter((context) =>
-    context.targetAdmission === undefined ||
-    (context.request.consumerModuleId === 'commerce.customer-context' &&
-      context.request.operation === 'PROFILE_CREATE' &&
-      context.request.source !== null &&
-      context.request.partySourceReference !== undefined &&
-      context.request.target === null &&
-      context.intendedScope.operation === 'PROFILE_CREATE')
+  Schema.makeFilter(({ intendedScope, request, targetAdmission }) => {
+    if (targetAdmission === 'SOURCE_CREATED_PARTY') {
+      return request.consumerModuleId === 'party.registry' &&
+        request.operation === 'RECOVER_CREATE' &&
+        request.source !== null &&
+        request.partySourceReference === undefined &&
+        request.organizationBusinessUse === undefined &&
+        request.target === null &&
+        intendedScope.operation === 'RECOVER_CREATE'
+        ? undefined
+        : 'Source created Party admission is limited to Party Registry recovering the create of one exact source occurrence';
+    }
+    return targetAdmission === undefined ||
+      (request.consumerModuleId === 'commerce.customer-context' &&
+        request.operation === 'PROFILE_CREATE' &&
+        request.source !== null &&
+        request.partySourceReference !== undefined &&
+        request.target === null &&
+        intendedScope.operation === 'PROFILE_CREATE')
       ? undefined
-      : 'Current source person target admission is limited to the exact approved Retail profile creation source context',
-  ),
+      : 'Current source person target admission is limited to the exact approved Retail profile creation source context';
+  }),
 );
 export type SourceProcessingContext = typeof SourceProcessingContextSchema.Type;
 

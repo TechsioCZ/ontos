@@ -980,10 +980,12 @@ const authorizeSourceCreateRecovery = Effect.fn('PartyMatchingPersistenceService
     if (partyIds.length === 0) {
       return yield* unavailable();
     }
+    // RECOVER_CREATE on a Party means the Party this source's create resolved to; case Parties are other subjects,
+    // so their recheck stays an evidence read under Privacy's ordinary Data Subject rule.
     yield* authorizeSourceTargets(
       assertion,
       scope,
-      'RECOVER_CREATE',
+      'EVIDENCE_READ',
       partyIds.map((partyId) => ({ kind: 'PARTY', partyId })),
     );
   },

@@ -7,7 +7,10 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  readVerifiedGatewayActor,
+  readVerifiedGatewayWorkload,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
@@ -105,8 +108,55 @@ const correlatedSourcePersonTarget = (
   request.source !== null &&
   request.partySourceReference !== undefined &&
   requestEquivalent(context.request, { ...request, target: null });
-const sourceRequestMatches = (context: SourceProcessingContext, request: SourceProcessingEligibilityRequest): boolean =>
-  requestEquivalent(context.request, request) || correlatedSourcePersonTarget(context, request);
+/** Party Registry recovering the reply of its committed create of exactly this source occurrence. The Party
+ * target is the Party Registry's own stored decision; Privacy binds it to its own records in `evaluate` and
+ * `sourceSubjectExists`. */
+const sourceCreatedPartyRequest = (request: SourceProcessingEligibilityRequest): boolean =>
+  request.target?.kind === 'PARTY' &&
+  request.consumerModuleId === 'party.registry' &&
+  request.operation === 'RECOVER_CREATE' &&
+  request.source !== null &&
+  request.partySourceReference === undefined &&
+  request.organizationBusinessUse === undefined;
+const sourceCreatedPartyTarget = (
+  context: SourceProcessingContext,
+  request: SourceProcessingEligibilityRequest,
+): boolean =>
+  context.targetAdmission === 'SOURCE_CREATED_PARTY' &&
+  context.request.target === null &&
+  sourceCreatedPartyRequest(request) &&
+  requestEquivalent(context.request, { ...request, target: null });
+const sourceRequestMatches = (
+  context: SourceProcessingContext,
+  request: SourceProcessingEligibilityRequest,
+): boolean =>
+  context.targetAdmission === 'SOURCE_CREATED_PARTY'
+    ? sourceCreatedPartyTarget(context, request)
+    : requestEquivalent(context.request, request) || correlatedSourcePersonTarget(context, request);
+
+export const sourceCreatedPartyCaller = 'party-registry';
+
+/** Privacy's own record that it governs the original create of this exact source occurrence for the same subject,
+ * principal and company. A recovery context alone never stands in for it. */
+const originalSourceCreateGoverned = (
+  contexts: readonly SourceProcessingContext[],
+  recovery: SourceProcessingContext,
+  request: SourceProcessingEligibilityRequest,
+  evaluatedAt: string,
+): boolean =>
+  contexts.some(
+    (context) =>
+      context.targetAdmission === undefined &&
+      context.tenantId === recovery.tenantId &&
+      context.legalEntityId === recovery.legalEntityId &&
+      context.principalId === recovery.principalId &&
+      context.authMethod === recovery.authMethod &&
+      context.intendedScope.operation === 'CREATE' &&
+      context.intendedScope.subjectRef.tenantId === recovery.intendedScope.subjectRef.tenantId &&
+      context.intendedScope.subjectRef.resourceId === recovery.intendedScope.subjectRef.resourceId &&
+      isPrivacyInstantAtOrBefore(context.effectiveFrom, evaluatedAt) &&
+      requestEquivalent(context.request, { ...request, operation: 'CREATE', target: null }),
+  );
 
 const currentContextMatches = (
   context: SourceProcessingContext,
@@ -131,8 +181,43 @@ const currentContextMatches = (
     applicabilityAuthority.status === 'CURRENT' &&
     (request.target === null ||
       correlatedSourcePersonTarget(context, request) ||
+      sourceCreatedPartyTarget(context, request) ||
       context.resourceRefs.includes(request.target.resourceId))
   );
+};
+
+/** The one current context for this exact request. The source created Party admission also needs the Shell-signed
+ * Party Registry caller and Privacy's own record of the original create. */
+const currentExactContext = (
+  contexts: readonly SourceProcessingContext[],
+  request: SourceProcessingEligibilityRequest,
+  scope: OperationalScope,
+  evaluatedAt: string,
+  callerAppId: string | undefined,
+): SourceProcessingContext | undefined => {
+  const exactContexts = contexts.filter(
+    (context) =>
+      sourceRequestMatches(context, request) &&
+      context.tenantId === scope.tenantId &&
+      context.legalEntityId === scope.legalEntityId &&
+      context.principalId === scope.principalId &&
+      context.authMethod === scope.authMethod,
+  );
+  const [context] = exactContexts;
+  if (
+    exactContexts.length !== 1 ||
+    context === undefined ||
+    !currentContextMatches(context, request, scope, evaluatedAt)
+  ) {
+    return undefined;
+  }
+  if (
+    context.targetAdmission === 'SOURCE_CREATED_PARTY' &&
+    (callerAppId !== sourceCreatedPartyCaller || !originalSourceCreateGoverned(contexts, context, request, evaluatedAt))
+  ) {
+    return undefined;
+  }
+  return context;
 };
 
 /** Exact subject and use are resolved from current owner configuration, never request metadata. */
@@ -142,27 +227,16 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
     scope: OperationalScope,
     services: SourceProcessingEligibilityServices,
     evaluatedAt: string,
+    /** The calling module the Shell signed for this request, never a request field. */
+    callerAppId: string | undefined,
   ): Effect.fn.Return<SourceProcessingEligibilityResponse, ReadHandlerUnavailable> {
     const denied = (reason: 'AUTHORITY_NOT_CURRENT' | 'PROCESSING_NOT_ALLOWED' | 'PROTECTED_MATERIAL') => ({
       evaluatedAt,
       outcome: 'DENIED' as const,
       reason,
     });
-    const exactContexts = services.contexts.filter(
-      (context) =>
-        sourceRequestMatches(context, request) &&
-        context.tenantId === scope.tenantId &&
-        context.legalEntityId === scope.legalEntityId &&
-        context.principalId === scope.principalId &&
-        context.authMethod === scope.authMethod,
-    );
-    const [context] = exactContexts;
-    if (
-      exactContexts.length !== 1 ||
-      context === undefined ||
-      scope.legalEntityId === undefined ||
-      !currentContextMatches(context, request, scope, evaluatedAt)
-    ) {
+    const context = currentExactContext(services.contexts, request, scope, evaluatedAt, callerAppId);
+    if (context === undefined || scope.legalEntityId === undefined) {
       return denied('AUTHORITY_NOT_CURRENT');
     }
     const { applicabilityAuthority, intendedScope } = context;
@@ -467,6 +541,12 @@ const exactAssertedSource = (
   subject.kind === 'SOURCE_ASSERTED' &&
   privacySourceSubjectIdentityKey(subject.source) === privacySourceSubjectIdentityKey(source);
 
+const currentSourcePersonRequest = (request: SourceProcessingEligibilityRequest): boolean =>
+  request.consumerModuleId === 'commerce.customer-context' &&
+  request.operation === 'PROFILE_CREATE' &&
+  request.target?.kind === 'PARTY' &&
+  request.partySourceReference !== undefined;
+
 /** Party targets must be the actual local subject Party. Source subjects match a complete
  * source locator and remain distinct from anonymous session contexts and Party identity. */
 export const sourceSubjectMatchesRequest = (
@@ -476,13 +556,10 @@ export const sourceSubjectMatchesRequest = (
 ): boolean => {
   const { subject } = record;
   if (targetAdmission === 'CURRENT_SOURCE_PERSON') {
-    return (
-      request.consumerModuleId === 'commerce.customer-context' &&
-      request.operation === 'PROFILE_CREATE' &&
-      request.target?.kind === 'PARTY' &&
-      request.partySourceReference !== undefined &&
-      exactAssertedSource(subject, request.source)
-    );
+    return currentSourcePersonRequest(request) && exactAssertedSource(subject, request.source);
+  }
+  if (targetAdmission === 'SOURCE_CREATED_PARTY') {
+    return sourceCreatedPartyRequest(request) && exactAssertedSource(subject, request.source);
   }
   if (request.organizationBusinessUse !== undefined || (request.source !== null && request.target === null)) {
     return exactAssertedSource(subject, request.source);
@@ -506,6 +583,51 @@ export const sourceSubjectMatchesRequest = (
   }
   return subject.kind === 'DATA_SUBJECT' || request.target === null;
 };
+
+/** Privacy's own records of persons on a source created Party: each must have been admitted from this exact
+ * source subject. A Party Privacy links to any other person was not created by this source. */
+export const sourceCreatedPartyPersonsMatch = (
+  linked: readonly PrivacySubjectRecord[],
+  sourceSubject: PrivacySubjectRecord['subjectRef'],
+): boolean =>
+  linked.every(
+    ({ subject }) =>
+      subject.kind === 'DATA_SUBJECT' &&
+      subject.sourceAdmission !== undefined &&
+      subject.sourceAdmission.sourceSubjectRef.tenantId === sourceSubject.tenantId &&
+      subject.sourceAdmission.sourceSubjectRef.resourceId === sourceSubject.resourceId,
+  );
+
+/** Reads Privacy's own persons on the recovered Party and admits only those from this exact source subject. */
+const sourceCreatedPartyPersonsCurrent = Effect.fn('Privacy.sourceCreatedPartyPersonsCurrent')(function* persons(
+  transaction: SourceTransaction,
+  scope: OperationalScope,
+  sourceSubject: PrivacySubjectRecord['subjectRef'],
+  request: SourceProcessingEligibilityRequest,
+) {
+  if (request.target?.kind !== 'PARTY') {
+    return false;
+  }
+  const linked = yield* transaction
+    .select({ record: privacySubjects.subjectRecord })
+    .from(privacySubjects)
+    .where(
+      and(
+        eq(privacySubjects.tenantId, scope.tenantId),
+        eq(privacySubjects.legalEntityId, scope.legalEntityId ?? ''),
+        eq(privacySubjects.subjectKind, 'DATA_SUBJECT'),
+        eq(
+          sql<string>`${privacySubjects.subjectRecord}->'subject'->'partyRef'->>'resourceId'`,
+          request.target.resourceId,
+        ),
+      ),
+    )
+    .pipe(Effect.mapError(unavailable));
+  const records = yield* Schema.decodeUnknownEffect(Schema.Array(PrivacySubjectRecordSchema))(
+    linked.map(({ record }) => record),
+  ).pipe(Effect.mapError(unavailable));
+  return sourceCreatedPartyPersonsMatch(records, sourceSubject);
+});
 
 const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* subjectExists(
   transaction: SourceTransaction,
@@ -544,6 +666,9 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
   }
   if (request.organizationBusinessUse !== undefined) {
     return yield* hasCurrentCustomerIntakeOrganizationProof(request, scope, crypto);
+  }
+  if (targetAdmission === 'SOURCE_CREATED_PARTY') {
+    return yield* sourceCreatedPartyPersonsCurrent(transaction, scope, subject.subjectRef, request);
   }
   if (
     targetAdmission === 'CURRENT_SOURCE_PERSON' &&
@@ -669,9 +794,16 @@ export const sourceProcessingEligibilityRead = defineRead(
         result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
       };
     }
-    const result = yield* evaluateSourceProcessingEligibility(input, context.scope, context.services, evaluatedAt).pipe(
-      Effect.tapError(() => traceSourceStage('eligibility-unavailable')),
-    );
+    // Shell signs the calling module: a delegated call names it as actor, a registered workload as its source app.
+    const callerAppId =
+      readVerifiedGatewayActor(context.scope)?.appId ?? readVerifiedGatewayWorkload(context.scope)?.sourceAppId;
+    const result = yield* evaluateSourceProcessingEligibility(
+      input,
+      context.scope,
+      context.services,
+      evaluatedAt,
+      callerAppId,
+    ).pipe(Effect.tapError(() => traceSourceStage('eligibility-unavailable')));
     return { evidence: { resultCount: 1 }, result };
   }),
   Effect.fn('Privacy.sourceProcessingEligibilityServices')(function* sourceServices(transaction, scope) {
