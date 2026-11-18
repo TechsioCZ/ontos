@@ -698,6 +698,27 @@ it.live('recognizes the actual Core ReadServiceFactory operational-scope paramet
   }),
 );
 
+it.live('rejects a later foreign private import after an approved public import', () =>
+  Effect.gen(function* rejectsPrivateOriginAfterApprovedImport() {
+    const root = yield* makeResolvedOwnerFixture();
+    const approved = `import { PartyRefSchema } from '${RENAMED_CONTRACTS_PACKAGE}/resources/party';\n`;
+    yield* write(root, RESOLVED_OWNER_CONSUMER, approved);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* write(
+      root,
+      RESOLVED_OWNER_CONSUMER,
+      `${approved}import { executePrivate } from '${RENAMED_CONTRACTS_PACKAGE}/contracts';\n`,
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const failure = Cause.pretty(result.cause);
+      expect(failure).toContain(RESOLVED_OWNER_CONSUMER);
+      expect(failure).toContain(`foreign private implementation ${RESOLVED_FOREIGN_HANDLER}`);
+    }
+  }),
+);
+
 for (const [form, source, leaf] of [
   [
     'sibling relative handler',
