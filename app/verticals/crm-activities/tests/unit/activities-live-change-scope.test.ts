@@ -34,11 +34,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('activities reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['crm-activities'],
-    input: { legalEntityId: 'company-a', resourceId: '10000000-0000-4000-8000-000000000001' },
-    reads: () => reads.length,
-    store: activities,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('activities reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['crm-activities'],
+      input: { legalEntityId: 'company-a', resourceId: '10000000-0000-4000-8000-000000000001' },
+      reads: () => reads.length,
+      store: activities,
+    }),
+  );
+});

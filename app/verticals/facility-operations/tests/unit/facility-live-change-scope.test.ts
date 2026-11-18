@@ -34,11 +34,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('agendaRecordsData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['facility-operations'],
-    input: ['assets'],
-    reads: () => reads.length,
-    store: agendaRecordsData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('agendaRecordsData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['facility-operations'],
+      input: ['assets'],
+      reads: () => reads.length,
+      store: agendaRecordsData,
+    }),
+  );
+});

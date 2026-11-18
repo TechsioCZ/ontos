@@ -65,11 +65,13 @@ const network = browserNetwork(
 
 const input = recordsInput({ legalEntityId: 'company-a', principalId: 'manager-a', tenantId: 'tenant-a' });
 
-it.live('propertyRecords reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['property-portfolio', 'workforce'],
-    input,
-    reads: () => reads.length,
-    store: propertyRecords,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('portfolio store app contract', (suite) => {
+  suite.effect('propertyRecords reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['property-portfolio', 'workforce'],
+      input,
+      reads: () => reads.length,
+      store: propertyRecords,
+    }),
+  );
+});

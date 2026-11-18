@@ -130,20 +130,22 @@ const network = browserNetwork(
   ),
 );
 
-it.live('customersData reloads only for its app list', () =>
-  assertPageDataAppList({
-    store: customersData,
-    input: 'company-a',
-    reads: () => listReads.length,
-    expectedApps: ['commerce-customer-context', 'party-registry'],
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('customer store app contracts', (suite) => {
+  suite.effect('customersData reloads only for its app list', () =>
+    assertPageDataAppList({
+      store: customersData,
+      input: 'company-a',
+      reads: () => listReads.length,
+      expectedApps: ['commerce-customer-context', 'party-registry'],
+    }),
+  );
 
-it.live('customerDetailData reloads only for its app list', () =>
-  assertPageDataAppList({
-    store: customerDetailData,
-    input: { customer, scope: 'company-a' },
-    reads: () => detailReads.length,
-    expectedApps: ['party-registry'],
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('customerDetailData reloads only for its app list', () =>
+    assertPageDataAppList({
+      store: customerDetailData,
+      input: { customer, scope: 'company-a' },
+      reads: () => detailReads.length,
+      expectedApps: ['party-registry'],
+    }),
+  );
+});

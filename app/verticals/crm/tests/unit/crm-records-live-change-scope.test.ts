@@ -42,11 +42,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('crmRecordsData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['crm', 'shell'],
-    input: {},
-    reads: () => reads.length,
-    store: crmRecordsData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('crmRecordsData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['crm', 'shell'],
+      input: {},
+      reads: () => reads.length,
+      store: crmRecordsData,
+    }),
+  );
+});

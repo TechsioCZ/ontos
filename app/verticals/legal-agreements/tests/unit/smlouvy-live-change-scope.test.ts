@@ -87,11 +87,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('agreementCustomerData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['legal-agreements', 'party-registry'],
-    input,
-    reads: () => reads.length,
-    store: agreementCustomerData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('agreementCustomerData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['legal-agreements', 'party-registry'],
+      input,
+      reads: () => reads.length,
+      store: agreementCustomerData,
+    }),
+  );
+});

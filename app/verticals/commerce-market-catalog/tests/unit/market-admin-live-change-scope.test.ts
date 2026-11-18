@@ -127,47 +127,49 @@ const network = browserNetwork(
   ),
 );
 
-it.live('marketCatalogData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['commerce-market-catalog'],
-    input: legalEntityId,
-    reads: () => catalogReads.length,
-    store: marketCatalogData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('marketCatalogData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['commerce-market-catalog'],
+      input: legalEntityId,
+      reads: () => catalogReads.length,
+      store: marketCatalogData,
+    }),
+  );
 
-it.live('storefrontsData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['commerce-market-catalog', 'storefront-registry'],
-    input: legalEntityId,
-    reads: () => storefrontReads.length,
-    store: storefrontsData,
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('storefrontsData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['commerce-market-catalog', 'storefront-registry'],
+      input: legalEntityId,
+      reads: () => storefrontReads.length,
+      store: storefrontsData,
+    }),
+  );
 
-it.live('administrationData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['commerce-market-catalog'],
-    input: market,
-    reads: () => administrationReads.length,
-    store: administrationData,
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('administrationData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['commerce-market-catalog'],
+      input: market,
+      reads: () => administrationReads.length,
+      store: administrationData,
+    }),
+  );
 
-it.live('creationGrantData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['commerce-market-catalog'],
-    input: legalEntityId,
-    reads: () => administrationReads.length,
-    store: creationGrantData,
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('creationGrantData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['commerce-market-catalog'],
+      input: legalEntityId,
+      reads: () => administrationReads.length,
+      store: creationGrantData,
+    }),
+  );
 
-it.live('marketHistoryData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['commerce-market-catalog'],
-    input: market,
-    reads: () => historyReads.length,
-    store: marketHistoryData,
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('marketHistoryData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['commerce-market-catalog'],
+      input: market,
+      reads: () => historyReads.length,
+      store: marketHistoryData,
+    }),
+  );
+});

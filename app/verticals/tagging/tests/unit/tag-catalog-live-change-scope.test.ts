@@ -32,11 +32,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('tagCatalogData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['tagging'],
-    input: 'all',
-    reads: () => reads.length,
-    store: tagCatalogData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('tagCatalogData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['tagging'],
+      input: 'all',
+      reads: () => reads.length,
+      store: tagCatalogData,
+    }),
+  );
+});

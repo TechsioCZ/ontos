@@ -47,11 +47,13 @@ const network = browserNetwork(
 
 const input = allRecordsInput('company-a');
 
-it.live('pipelineRecords reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['sales-pipeline'],
-    input,
-    reads: () => reads.length,
-    store: pipelineRecords,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('pipelineRecords reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['sales-pipeline'],
+      input,
+      reads: () => reads.length,
+      store: pipelineRecords,
+    }),
+  );
+});

@@ -44,11 +44,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('aiActivityData reloads for every app', () =>
-  assertPageDataAppList({
-    expectedApps: 'all',
-    input: 'company-a',
-    reads: () => reads.length,
-    store: aiActivityData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('aiActivityData reloads for every app', () =>
+    assertPageDataAppList({
+      expectedApps: 'all',
+      input: 'company-a',
+      reads: () => reads.length,
+      store: aiActivityData,
+    }),
+  );
+});

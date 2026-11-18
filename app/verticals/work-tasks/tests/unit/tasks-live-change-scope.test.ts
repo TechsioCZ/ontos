@@ -62,11 +62,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('taskRecords reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['work-tasks', 'shell'],
-    input,
-    reads: () => reads.length,
-    store: taskRecords,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('taskRecords reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['work-tasks', 'shell'],
+      input,
+      reads: () => reads.length,
+      store: taskRecords,
+    }),
+  );
+});

@@ -57,11 +57,13 @@ const network = browserNetwork(
 
 const input = leaseInputOf({ legalEntityId: 'company-a', principalId: 'manager-a', tenantId: 'tenant-a' });
 
-it.live('leaseRecords reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['legal-agreements', 'party-registry', 'property-leasing', 'property-portfolio'],
-    input,
-    reads: () => reads.length,
-    store: leaseRecords,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('leaseRecords reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['legal-agreements', 'party-registry', 'property-leasing', 'property-portfolio'],
+      input,
+      reads: () => reads.length,
+      store: leaseRecords,
+    }),
+  );
+});

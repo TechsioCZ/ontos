@@ -37,11 +37,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('marketSettingsData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['commerce-market-catalog', 'merchandise'],
-    input: legalEntityId,
-    reads: () => reads.length,
-    store: marketSettingsData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('marketSettingsData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['commerce-market-catalog', 'merchandise'],
+      input: legalEntityId,
+      reads: () => reads.length,
+      store: marketSettingsData,
+    }),
+  );
+});

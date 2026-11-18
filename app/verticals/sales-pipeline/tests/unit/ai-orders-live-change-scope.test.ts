@@ -38,11 +38,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('aiOrders reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['merchandise', 'sales-pipeline'],
-    input: 'company-a',
-    reads: () => reads.length,
-    store: aiOrders,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('aiOrders reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['merchandise', 'sales-pipeline'],
+      input: 'company-a',
+      reads: () => reads.length,
+      store: aiOrders,
+    }),
+  );
+});

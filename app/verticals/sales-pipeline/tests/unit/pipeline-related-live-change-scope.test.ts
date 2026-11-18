@@ -94,21 +94,23 @@ const network = browserNetwork(
   ),
 );
 
-it.live('opportunityRelatedData reloads only for its app list', () =>
-  Effect.gen(function* relatedApps() {
-    pinDocumentNavigationModules(['work.tasks', 'demo.merchandise', 'legal.agreements'], document);
-    yield* assertPageDataAppList({
-      expectedApps: ['legal-agreements', 'merchandise', 'sales-pipeline', 'work-tasks'],
-      input: {
-        counterpartyId: '30000000-0000-4000-8000-000000000001',
-        opportunity: Schema.decodeUnknownSync(
-          Schema.Struct({ id: OpportunitySchema.fields.id, partyId: OpportunitySchema.fields.partyId }),
-        )({ id: '10000000-0000-4000-8000-000000000001', partyId: '10000000-0000-4000-8000-000000000002' }),
-        revision: 7,
-        scope: 'company-a',
-      },
-      reads: () => reads.length,
-      store: opportunityRelatedData,
-    });
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('opportunityRelatedData reloads only for its app list', () =>
+    Effect.gen(function* relatedApps() {
+      pinDocumentNavigationModules(['work.tasks', 'demo.merchandise', 'legal.agreements'], document);
+      yield* assertPageDataAppList({
+        expectedApps: ['legal-agreements', 'merchandise', 'sales-pipeline', 'work-tasks'],
+        input: {
+          counterpartyId: '30000000-0000-4000-8000-000000000001',
+          opportunity: Schema.decodeUnknownSync(
+            Schema.Struct({ id: OpportunitySchema.fields.id, partyId: OpportunitySchema.fields.partyId }),
+          )({ id: '10000000-0000-4000-8000-000000000001', partyId: '10000000-0000-4000-8000-000000000002' }),
+          revision: 7,
+          scope: 'company-a',
+        },
+        reads: () => reads.length,
+        store: opportunityRelatedData,
+      });
+    }),
+  );
+});

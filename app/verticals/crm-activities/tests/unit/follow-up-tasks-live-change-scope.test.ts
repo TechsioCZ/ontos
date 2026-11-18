@@ -55,11 +55,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('followUpTasks reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['crm-activities', 'work-tasks'],
-    input: 'company-a',
-    reads: () => reads.length,
-    store: followUpTasks,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('followUpTasks reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['crm-activities', 'work-tasks'],
+      input: 'company-a',
+      reads: () => reads.length,
+      store: followUpTasks,
+    }),
+  );
+});

@@ -34,11 +34,13 @@ const network = browserNetwork(
   ),
 );
 
-it.live('employeeTagsData reloads only for its app list', () =>
-  assertPageDataAppList({
-    expectedApps: ['tagging', 'workforce'],
-    input: 'company-a',
-    reads: () => reads.length,
-    store: employeeTagsData,
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('employeeTagsData reloads only for its app list', () =>
+    assertPageDataAppList({
+      expectedApps: ['tagging', 'workforce'],
+      input: 'company-a',
+      reads: () => reads.length,
+      store: employeeTagsData,
+    }),
+  );
+});
