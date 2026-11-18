@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 import { createInstance } from 'i18next';
+import type { ReactNode } from 'react';
 
 import cs from '../../locales/cs/shell.json';
 import en from '../../locales/en/shell.json';
@@ -31,14 +32,23 @@ import {
   whyReasonKey,
 } from '../../src/routes/access-admin/why/why-view-model.ts';
 import type { WhySearchDraft } from '../../src/routes/access-admin/why/why-view-model.ts';
-import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
+import { AuthenticationUnavailableProblemSchema, CurrentSessionSchema } from '../../shared/browser-api.ts';
+import { adaSelectingCompany, adaSignedIn, makeShellBff, signedInShellReads } from '../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../support/shell-bff-double.ts';
+import { ShellI18n, shellLocaleCopy } from '../support/shell-i18n.tsx';
+import type { ShellLanguage } from '../support/shell-i18n.tsx';
 
-const { explainMock, homeMock, locale, peopleMock } = rstest.hoisted(() => ({
-  explainMock: rstest.fn(),
-  homeMock: rstest.fn(),
-  locale: { value: 'en' },
-  peopleMock: rstest.fn(),
-}));
+/** The language a test selects before rendering. */
+interface SelectedLanguage {
+  value: ShellLanguage;
+}
+const locale: SelectedLanguage = { value: 'en' };
+const copies = { cs: shellLocaleCopy('cs'), en: shellLocaleCopy('en') };
+/** The Shell's real i18n context, in whichever language the test selected before rendering. */
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={copies[locale.value]}>{children}</ShellI18n>
+);
+const renderCopy = (ui: Parameters<typeof render>[0]) => render(ui, { wrapper: ShellCopy });
 const i18n = createInstance();
 await i18n.init({
   fallbackLng: false,
@@ -46,15 +56,6 @@ await i18n.init({
   lng: 'en',
   resources: { cs: { translation: cs }, en: { translation: en } },
 });
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: locale.value, t: i18n.getFixedT(locale.value) }),
-}));
-rstest.mock('../../src/api/auth-client.ts', () => ({ explainAccess: explainMock, listAccessPeople: peopleMock }));
-rstest.mock('../../src/routes/[lang]/home-page-model.ts', () => ({ loadHomePageModel: homeMock }));
-rstest.mock('../../src/routes/shell-authentication-client-options.ts', () => ({
-  shellAuthenticationClientOptionsFromRequest: () => Effect.succeed({}),
-}));
 
 const noop = () => {};
 const query: WhySearchDraft = {
@@ -83,29 +84,41 @@ const response = (
     reasonCodes: [outcomeReasons[outcome]],
   });
 
+/**
+ * The Shell BFF of Ada signed in with her company selected: explanations answer ALLOWED and the
+ * governed people list refuses, unless a test scripts otherwise.
+ */
+const whyBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    ...signedInShellReads(adaSignedIn),
+    explainAccess: () => Effect.succeed(response()),
+    listAccessPeople: () =>
+      Effect.fail(
+        Schema.decodeUnknownSync(AccessAdminForbiddenProblemSchema)({
+          _tag: 'AccessAdminForbidden',
+          detail: 'redacted',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
+      ),
+    ...overrides,
+  });
+const explanations = (bff: ReturnType<typeof whyBff>) =>
+  bff.requests.filter((received) => received.endpoint === 'explainAccess').map((received) => received.body);
+const peopleReads = (bff: ReturnType<typeof whyBff>) =>
+  bff.requests.filter((received) => received.endpoint === 'listAccessPeople').map((received) => received.body);
+
 beforeEach(() => {
   locale.value = 'en';
-  explainMock.mockReset().mockReturnValue(Effect.succeed(response()));
-  homeMock.mockReset().mockReturnValue(Effect.succeed(authenticatedShellFixture()));
-  peopleMock.mockReset().mockReturnValue(
-    Effect.fail(
-      Schema.decodeUnknownSync(AccessAdminForbiddenProblemSchema)({
-        _tag: 'AccessAdminForbidden',
-        detail: 'redacted',
-        status: 403,
-        title: 'Forbidden',
-        type: 'about:blank',
-      }),
-    ),
-  );
 });
 afterEach(cleanup);
 
-for (const language of ['en', 'cs']) {
+for (const language of ['en', 'cs'] as const) {
   test(`renders four distinct outcomes with localized text in ${language}`, () => {
     locale.value = language;
     for (const outcome of ['ALLOWED', 'DENIED', 'NEEDS_APPROVAL'] as const) {
-      render(<WhyResult onRetry={noop} result={whyDecisionView(response(outcome), query)} />);
+      renderCopy(<WhyResult onRetry={noop} result={whyDecisionView(response(outcome), query)} />);
       expect(
         screen.getByText(i18n.getFixedT(language)(`shell.accessAdmin.outcome.${outcomeKeys[outcome]}`)),
       ).toBeTruthy();
@@ -115,7 +128,7 @@ for (const language of ['en', 'cs']) {
       expect(document.body.textContent).not.toContain('shell.accessAdmin');
       cleanup();
     }
-    render(<WhyResult onRetry={noop} result={{ state: 'unavailable' }} />);
+    renderCopy(<WhyResult onRetry={noop} result={{ state: 'unavailable' }} />);
     expect(screen.getByText(i18n.getFixedT(language)('shell.accessAdmin.outcome.unavailable'))).toBeTruthy();
     expect(
       screen.getByRole('button', { name: i18n.getFixedT(language)('shell.accessAdmin.common.retry') }),
@@ -138,11 +151,13 @@ test('projects withheld metadata to no people or roles, even from an inconsisten
     ],
     grantableBy: [{ displayName: 'Secret administrator', principalId: '20000000-0000-4000-8000-000000000001' }],
   });
-  render(<WhyResult onRetry={noop} result={whyDecisionView(detailed, query)} />);
+  renderCopy(<WhyResult onRetry={noop} result={whyDecisionView(detailed, query)} />);
   expect(document.body.textContent).not.toContain('Secret');
   expect(screen.queryByRole('region', { name: en.shell.accessAdmin.why.grantableBy })).toBeNull();
   cleanup();
-  render(<WhyResult onRetry={noop} result={whyDecisionView({ ...detailed, authorityMetadata: 'included' }, query)} />);
+  renderCopy(
+    <WhyResult onRetry={noop} result={whyDecisionView({ ...detailed, authorityMetadata: 'included' }, query)} />,
+  );
   expect(screen.getByText('Secret role')).toBeTruthy();
   expect(screen.getByText('Secret administrator')).toBeTruthy();
 });
@@ -150,7 +165,7 @@ test('projects withheld metadata to no people or roles, even from an inconsisten
 it.effect('keeps metadata loading failure separate from the actual decision and permits retry', () =>
   Effect.gen(function* metadataRetry() {
     const retry = rstest.fn<() => void>();
-    render(<WhyResult onRetry={retry} result={whyDecisionView(response('ALLOWED', 'unavailable'), query)} />);
+    renderCopy(<WhyResult onRetry={retry} result={whyDecisionView(response('ALLOWED', 'unavailable'), query)} />);
     expect(screen.getByText(en.shell.accessAdmin.outcome.allowed)).toBeTruthy();
     yield* Effect.promise(() =>
       userEvent.setup().click(screen.getByRole('button', { name: en.shell.accessAdmin.common.retry })),
@@ -168,7 +183,7 @@ test('never renders raw unknown reason codes or diagnostics', () => {
 });
 
 test('request access remains disabled', () => {
-  render(<WhyView draft={query} onCheck={noop} onRetry={noop} pending={false} result={{ state: 'idle' }} />);
+  renderCopy(<WhyView draft={query} onCheck={noop} onRetry={noop} pending={false} result={{ state: 'idle' }} />);
   const request = screen.getByRole('button', { name: en.shell.accessAdmin.why.requestAccess });
   expect(request.hasAttribute('disabled')).toBe(true);
   expect(request.getAttribute('aria-describedby')).toBe('why-request-unavailable');
@@ -176,7 +191,9 @@ test('request access remains disabled', () => {
 });
 
 test('pending checks hide the previous decision and authority metadata', () => {
-  render(<WhyView draft={query} onCheck={noop} onRetry={noop} pending result={whyDecisionView(response(), query)} />);
+  renderCopy(
+    <WhyView draft={query} onCheck={noop} onRetry={noop} pending result={whyDecisionView(response(), query)} />,
+  );
   expect(screen.queryByText(en.shell.accessAdmin.outcome.allowed)).toBeNull();
   expect(screen.getByRole('button', { name: en.shell.accessAdmin.common.loading }).hasAttribute('disabled')).toBe(true);
 });
@@ -184,7 +201,7 @@ test('pending checks hide the previous decision and authority metadata', () => {
 it.effect('submits a bounded exact context with no administrator or subject flags', () =>
   Effect.gen(function* submitContext() {
     const check = rstest.fn<(draft: WhySearchDraft) => void>();
-    render(<WhyView draft={query} onCheck={check} onRetry={noop} pending={false} result={{ state: 'idle' }} />);
+    renderCopy(<WhyView draft={query} onCheck={check} onRetry={noop} pending={false} result={{ state: 'idle' }} />);
     yield* Effect.promise(() =>
       userEvent.setup().click(screen.getByRole('button', { name: en.shell.accessAdmin.why.submit })),
     );
@@ -194,8 +211,9 @@ it.effect('submits a bounded exact context with no administrator or subject flag
 
 it.effect(
   'refuses partial records, partial amounts, unsafe integers and unsupported modes before calling the BFF',
-  () =>
-    Effect.gen(function* invalidContexts() {
+  () => {
+    const bff = whyBff();
+    return Effect.gen(function* invalidContexts() {
       for (const invalid of [
         { ...query, targetModule: '' },
         { ...query, recordKey: '' },
@@ -210,39 +228,42 @@ it.effect(
         expect(Option.isNone(decodeWhySearch(invalid))).toBe(true);
         expect(yield* checkWhySearch(invalid)).toEqual({ state: 'invalid' });
       }
-      expect(explainMock).not.toHaveBeenCalled();
+      expect(bff.requests).toEqual([]);
       expect(Option.isSome(decodeWhySearch({ ...emptyWhySearch, capabilityKey: query.capabilityKey }))).toBe(true);
       expect(Option.isSome(decodeWhySearch({ ...query, minor: '0' }))).toBe(true);
-    }),
+    }).pipe(Effect.provide(bff.layer));
+  },
 );
 
 it.effect('maps a 503 to unavailable and 403 surface refusal to forbidden, without retaining an old result', () =>
   Effect.gen(function* transportFailures() {
-    explainMock.mockReturnValue(
-      Effect.fail(
-        Schema.decodeUnknownSync(AccessAdminUnavailableProblemSchema)({
-          _tag: 'AccessAdminUnavailable',
-          detail: 'redacted',
-          retryable: true,
-          status: 503,
-          title: 'Unavailable',
-          type: 'about:blank',
-        }),
-      ),
-    );
-    expect(yield* checkWhySearch(query)).toEqual({ state: 'unavailable' });
-    explainMock.mockReturnValue(
-      Effect.fail(
-        Schema.decodeUnknownSync(AccessAdminForbiddenProblemSchema)({
-          _tag: 'AccessAdminForbidden',
-          detail: 'redacted',
-          status: 403,
-          title: 'Forbidden',
-          type: 'about:blank',
-        }),
-      ),
-    );
-    expect(yield* checkWhySearch(query)).toEqual({ state: 'forbidden' });
+    const unavailable = whyBff({
+      explainAccess: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(AccessAdminUnavailableProblemSchema)({
+            _tag: 'AccessAdminUnavailable',
+            detail: 'redacted',
+            retryable: true,
+            status: 503,
+            title: 'Unavailable',
+            type: 'about:blank',
+          }),
+        ),
+    });
+    expect(yield* checkWhySearch(query).pipe(Effect.provide(unavailable.layer))).toEqual({ state: 'unavailable' });
+    const forbidden = whyBff({
+      explainAccess: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(AccessAdminForbiddenProblemSchema)({
+            _tag: 'AccessAdminForbidden',
+            detail: 'redacted',
+            status: 403,
+            title: 'Forbidden',
+            type: 'about:blank',
+          }),
+        ),
+    });
+    expect(yield* checkWhySearch(query).pipe(Effect.provide(forbidden.layer))).toEqual({ state: 'forbidden' });
   }),
 );
 
@@ -250,28 +271,49 @@ it.effect(
   'loads contextual explanations without a selected company and never substitutes the selected company into tenant scope',
   () =>
     Effect.gen(function* tenantContext() {
-      const { selectedLegalEntityId, ...shell } = authenticatedShellFixture();
-      expect(selectedLegalEntityId).toBeDefined();
-      homeMock.mockReturnValue(Effect.succeed({ ...shell, contextState: 'selection_required' }));
+      const bff = whyBff(signedInShellReads(adaSelectingCompany));
       const model = yield* loadWhyPageModel(
         new Request(`https://example.test/en/access/why?capabilityKey=${query.capabilityKey}`),
-      );
+      ).pipe(Effect.provide(bff.layer));
+      expect(model.shell).toMatchObject({ contextState: 'selection_required', state: 'authenticated' });
       expect(model.result.state).toBe('decision');
-      expect(explainMock.mock.calls[0]?.[0]).toEqual({
-        capabilityKey: query.capabilityKey,
-        mode: 'run',
-        scope: { kind: 'tenant' },
-      });
+      expect(explanations(bff)).toEqual([
+        {
+          capabilityKey: query.capabilityKey,
+          mode: 'run',
+          scope: { kind: 'tenant' },
+        },
+      ]);
     }),
 );
 
 it.effect('never requests an explanation for an anonymous or unavailable session', () =>
   Effect.gen(function* unauthenticatedContexts() {
-    for (const state of ['anonymous', 'unavailable'] as const) {
-      homeMock.mockReturnValue(Effect.succeed({ state }));
-      yield* loadWhyPageModel(new Request(`https://example.test/en/access/why?capabilityKey=${query.capabilityKey}`));
+    const anonymous = whyBff({
+      currentSession: () => Effect.succeed(Schema.decodeUnknownSync(CurrentSessionSchema)({ state: 'anonymous' })),
+    });
+    const unavailable = whyBff({
+      currentSession: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)({
+            _tag: 'AuthenticationUnavailableProblem',
+            detail: 'redacted',
+            status: 503,
+            title: 'Unavailable',
+            type: 'about:blank',
+          }),
+        ),
+    });
+    for (const [state, bff] of [
+      ['anonymous', anonymous],
+      ['unavailable', unavailable],
+    ] as const) {
+      const model = yield* loadWhyPageModel(
+        new Request(`https://example.test/en/access/why?capabilityKey=${query.capabilityKey}`),
+      ).pipe(Effect.provide(bff.layer));
+      expect(model.shell.state).toBe(state);
+      expect(explanations(bff)).toEqual([]);
     }
-    expect(explainMock).not.toHaveBeenCalled();
   }),
 );
 
@@ -309,44 +351,44 @@ const peopleResponse = () =>
 
 it.effect('hides the person picker on a governed list denial and does not guess administrator status', () =>
   Effect.gen(function* forbiddenPicker() {
-    const options = yield* loadWhySubjects();
+    const options = yield* loadWhySubjects().pipe(Effect.provide(whyBff().layer));
     expect(options).toEqual({ state: 'hidden' });
-    render(<WhySubjectPicker onChange={noop} options={options} pending={false} value="" />);
+    renderCopy(<WhySubjectPicker onChange={noop} options={options} pending={false} value="" />);
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByText(en.shell.accessAdmin.why.subjectPickerLabel)).toBeNull();
   }),
 );
 
 test('unbacked person lookup shows unavailability, not an enabled picker or fake directory', () => {
-  render(<WhySubjectPicker onChange={noop} options={{ state: 'unavailable' }} pending={false} value="" />);
+  renderCopy(<WhySubjectPicker onChange={noop} options={{ state: 'unavailable' }} pending={false} value="" />);
   expect(screen.getByText(en.shell.accessAdmin.why.subjectPickerUnavailable)).toBeTruthy();
   expect(screen.queryByRole('combobox')).toBeNull();
 });
 
 it.effect('admin picker uses only governed tenant members and loads another page only on explicit request', () =>
   Effect.gen(function* memberPicker() {
-    peopleMock.mockReturnValue(Effect.succeed(peopleResponse()));
-    const options = yield* loadWhySubjects();
+    const bff = whyBff({ listAccessPeople: () => Effect.succeed(peopleResponse()) });
+    const options = yield* loadWhySubjects().pipe(Effect.provide(bff.layer));
     const more = rstest.fn<() => void>();
-    render(<WhySubjectPicker onChange={noop} onMore={more} options={options} pending={false} value="" />);
+    renderCopy(<WhySubjectPicker onChange={noop} onMore={more} options={options} pending={false} value="" />);
     expect(screen.getByRole('combobox', { name: en.shell.accessAdmin.why.subjectPickerLabel })).toBeTruthy();
-    expect(peopleMock).toHaveBeenCalledWith({ limit: 100 }, undefined);
+    expect(peopleReads(bff)).toEqual([{ limit: 100 }]);
     expect(more).not.toHaveBeenCalled();
     yield* Effect.promise(() =>
       userEvent.setup().click(screen.getByRole('button', { name: en.shell.accessAdmin.why.morePeople })),
     );
     expect(more).toHaveBeenCalledTimes(1);
-    yield* loadWhySubjects(undefined, 'next-page');
-    expect(peopleMock.mock.calls.at(-1)?.[0]).toEqual({ cursor: 'next-page', limit: 100 });
+    yield* loadWhySubjects(undefined, 'next-page').pipe(Effect.provide(bff.layer));
+    expect(peopleReads(bff).at(-1)).toEqual({ cursor: 'next-page', limit: 100 });
   }),
 );
 
 it.effect('selects a tenant member by keyboard and preserves the entered context after submit', () =>
   Effect.gen(function* selectSubject() {
-    peopleMock.mockReturnValue(Effect.succeed(peopleResponse()));
-    const subjects = yield* loadWhySubjects();
+    const bff = whyBff({ listAccessPeople: () => Effect.succeed(peopleResponse()) });
+    const subjects = yield* loadWhySubjects().pipe(Effect.provide(bff.layer));
     const check = rstest.fn<(draft: WhySearchDraft) => void>();
-    render(
+    renderCopy(
       <WhyView
         draft={query}
         onCheck={check}
@@ -378,24 +420,22 @@ it.effect('selects a tenant member by keyboard and preserves the entered context
 
 it.effect('binds admin checks to a returned person id and rejects a fabricated or unavailable subject', () =>
   Effect.gen(function* boundSubject() {
-    peopleMock.mockReturnValue(Effect.succeed(peopleResponse()));
-    const subjects = yield* loadWhySubjects();
-    const result = yield* checkWhySearch({ ...query, subject: personId }, undefined, subjects);
-    expect(explainMock.mock.calls[0]?.[0]).toMatchObject({ subjectPrincipalId: personId });
+    const bff = whyBff({ listAccessPeople: () => Effect.succeed(peopleResponse()) });
+    const subjects = yield* loadWhySubjects().pipe(Effect.provide(bff.layer));
+    const result = yield* checkWhySearch({ ...query, subject: personId }, undefined, subjects).pipe(
+      Effect.provide(bff.layer),
+    );
+    expect(explanations(bff)).toEqual([expect.objectContaining({ subjectPrincipalId: personId })]);
     expect(result.state).toBe('decision');
-    render(<WhyResult onRetry={noop} result={result} />);
+    renderCopy(<WhyResult onRetry={noop} result={result} />);
     expect(screen.getByText(en.shell.accessAdmin.why.checkingPerson.replace('{{name}}', 'Ada Lovelace'))).toBeTruthy();
-    explainMock.mockClear();
-    expect(
-      yield* checkWhySearch({ ...query, subject: '20000000-0000-4000-8000-000000000099' }, undefined, subjects),
-    ).toEqual({ state: 'invalid' });
-    expect(yield* checkWhySearch({ ...query, subject: personId }, undefined, { state: 'unavailable' })).toEqual({
-      state: 'unavailable',
-    });
-    expect(yield* checkWhySearch({ ...query, subject: personId }, undefined, { state: 'hidden' })).toEqual({
-      state: 'forbidden',
-    });
-    expect(explainMock).not.toHaveBeenCalled();
+    const refusedBff = whyBff();
+    const refusedCheck = (subject: string, options: typeof subjects) =>
+      checkWhySearch({ ...query, subject }, undefined, options).pipe(Effect.provide(refusedBff.layer));
+    expect(yield* refusedCheck('20000000-0000-4000-8000-000000000099', subjects)).toEqual({ state: 'invalid' });
+    expect(yield* refusedCheck(personId, { state: 'unavailable' })).toEqual({ state: 'unavailable' });
+    expect(yield* refusedCheck(personId, { state: 'hidden' })).toEqual({ state: 'forbidden' });
+    expect(refusedBff.requests).toEqual([]);
   }),
 );
 
@@ -404,7 +444,7 @@ test('a subject-question 403 clears the selection and keeps the picker hidden un
   const refused = completeWhyCheck(previous, { ...query, subject: personId }, { state: 'forbidden' });
   expect(refused.draft.subject).toBe('');
   expect(refused.subjectsDenied).toBe(true);
-  render(
+  renderCopy(
     <WhyView
       draft={refused.draft}
       onCheck={noop}

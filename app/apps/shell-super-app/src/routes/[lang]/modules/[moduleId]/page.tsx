@@ -1,10 +1,11 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { CatchBoundary, useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { reportModuleEntrypointFailure } from '../../../../module-diagnostics.ts';
 import { moduleEntrypointLoadIdentity } from '../../../module-entrypoint-loader.ts';
 import { ModulePageSkeleton } from '../../../module-page-skeleton.tsx';
 import { ModuleRenderFailure } from '../../../module-render-failure.tsx';
@@ -87,7 +88,7 @@ interface ModuleTargetViewProps {
   readonly initialModel: ModuleTargetPageModel;
 }
 
-// Framework integration adapter: raw error and boundary.reset are intentionally unused.
+// Framework integration adapter: the boundary reports the error through onCatch.
 const ModuleRenderError = () => {
   const navigate = useNavigate();
   const handleReload = () => {
@@ -127,6 +128,15 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
       <CatchBoundary
         errorComponent={ModuleRenderError}
         getResetKey={() => moduleEntrypointLoadIdentity(model.target).result}
+        onCatch={(error) => {
+          void browserRuntime.runPromiseExit(
+            reportModuleEntrypointFailure(
+              moduleEntrypointLoadIdentity(model.target).owner,
+              'render',
+              Schema.is(Schema.ErrorInstance())(error) ? error : { message: 'Remote render threw a non-Error value' },
+            ),
+          );
+        }}
       >
         <ResolvedTarget model={model} />
       </CatchBoundary>

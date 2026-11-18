@@ -2442,8 +2442,21 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: randomBytes(32).toString('hex'),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.origin}/shell-super-app-api`,
     };
+    // Module keys go only on each hosted owner's private channel; the environment carries none.
+    const environmentFor = (appId: string): Readonly<Record<string, string>> =>
+      appId === pricingAudience
+        ? {
+            ...environment,
+            // A Quotation 503 carries no cause: Pricing reports which authority refused it, innermost first, and when.
+            ONTOS_PREPROPOSAL_PRICING_FAILURE_SPANS: [
+              'makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.verifyPurchaseSingleton',
+              'ManageQuotationFreshCurrentAuthority.resolveFresh',
+              'ManageQuotationAction.apply',
+            ].join(','),
+          }
+        : environment;
     for (const owner of owners) {
-      yield* startNativeOwner(owner, environment, moduleCredentialOf);
+      yield* startNativeOwner(owner, environmentFor(owner.appId), moduleCredentialOf);
     }
     const storefrontId = `native-preproposal-${randomUUID()}`;
     const intent = `native-preproposal:${randomUUID()}`;

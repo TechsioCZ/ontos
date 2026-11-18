@@ -1037,6 +1037,9 @@ importers:
         specifier: 4.0.7
         version: 4.0.7
     devDependencies:
+      '@grpc/grpc-js':
+        specifier: 1.14.5
+        version: 1.14.5
       '@rstest/core':
         specifier: 0.12.6
         version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))

@@ -8,6 +8,7 @@ const projectionUnitSchema = Schema.String.check(Schema.isMinLength(1), Schema.i
  * half-written scope behind, because nothing is written until the whole plan validates.
  */
 export class AccessProjectionError extends Schema.TaggedError<AccessProjectionError>()('AccessProjectionError', {
+  cause: Schema.optionalKey(Schema.Unknown),
   code: Schema.Literals([
     'access_projection_ambiguous_role_revision',
     'access_projection_caveat_context_too_large',
@@ -26,9 +27,18 @@ export class AccessProjectionError extends Schema.TaggedError<AccessProjectionEr
     'access_projection_unknown_role_revision',
     'access_projection_verification_failed',
   ]),
+  grpcStatus: Schema.optionalKey(Schema.String),
+  operation: Schema.optionalKey(Schema.String),
   reason: Schema.String,
   unit: Schema.optionalKey(projectionUnitSchema),
-}) {}
+}) {
+  // Effect's Cause.pretty retains Error.message and native causes, not arbitrary schema fields.
+  override get message(): string {
+    return this.operation === undefined
+      ? super.message
+      : `${this.operation} (${this.grpcStatus ?? 'UNKNOWN'}): ${this.reason}`;
+  }
+}
 
 /**
  * A refusal names the unit it refused. The label is bounded, because a unit whose identifier is

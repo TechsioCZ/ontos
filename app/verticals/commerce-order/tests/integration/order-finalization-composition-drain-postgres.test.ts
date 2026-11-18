@@ -33,7 +33,6 @@ import {
   Effect,
   Exit,
   Layer,
-  Match,
   Option,
   Redacted,
   Result,
@@ -42,46 +41,34 @@ import {
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
-import { afterAll, expect, it, rs } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { createPrepareOrderCommitmentCommerceOrderFinalizationWorkOutboxMessage } from '../../src/actions/prepare-order-commitment-commerce-order-finalization-work.outbox-message.ts';
 import type { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
-import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
 import { OrderFinalizationWorker } from '../../src/services/order-finalization-worker.service.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
+import { gatewayQuotation, makeGatewayRevalidationState } from '../support/order-approval-gateway-state.ts';
+import {
+  completeOrderPreparationPath,
+  failedOrderPreparationAnswer,
+  failedPreparationProgressAnswer,
+  makeOrderOwnerTransport,
+  orderProofAnswers,
+  orderWorkPath,
+  ownerTransportLayer,
+  pendingOrderPreparationAnswer,
+  recordOrderProofSetPath,
+} from '../support/order-owner-transport.ts';
+import type { OwnerReply } from '../support/order-owner-transport.ts';
 import {
   expiredOrderQuotation,
-  failedOrderPreparationWork,
   orderPreparationPayload,
   orderPreparationWorkerLayer,
-  pendingOrderPreparationWork,
-  pricingTransportFailure,
-  failedOrderProofWork,
   orderProofPayload,
   orderProofWorkerLayer,
-  pendingOrderProofWork,
+  pricingTransportFailure,
 } from '../support/order-preparation-work.ts';
-import type { OrderPreparationWorkObservation } from '../support/order-preparation-work.ts';
 import { orderTenantId, runOrderRevalidation } from '../support/order-revalidation-work.ts';
-
-const owners = rs.hoisted(() => ({
-  complete: rs.fn<() => Effect.Effect<unknown>>(),
-  issueGateway: rs.fn<(request: GatewayDelegationRequest) => Effect.Effect<unknown>>(),
-  load: rs.fn<() => Effect.Effect<unknown>>(),
-}));
-// The genuine Order worker runs under Core delivery; only its owner HTTP transport is replaced.
-rs.mock('@app/shared-contracts/gateway-context-server', () => ({
-  acquireDelegatedGatewayContext: owners.issueGateway,
-}));
-rs.mock('../../src/api/order-finalization-work-client.ts', () => ({
-  executeOrderFinalizationWorkWithAuthorization: owners.load,
-}));
-rs.mock('../../src/api/complete-order-preparation-action-client.ts', () => ({
-  executeCompleteOrderPreparationWithAuthorization: owners.complete,
-}));
-rs.mock('../../src/api/record-order-proof-set-action-client.ts', () => ({
-  executeRecordOrderProofSetWithAuthorization: owners.complete,
-}));
 
 const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
 // The invocation that enqueued every delivered event; asynchronous work acts for it (DESIGN D7).
@@ -237,6 +224,16 @@ const OrderDrainAuthoredWork = Context.Service<Effect.Success<typeof openAuthore
   'OrderFinalizationDrain.authoredWork',
 );
 
+type OrderOwnerTransport = ReturnType<typeof makeOrderOwnerTransport>;
+const overHttp = (transport: OrderOwnerTransport) =>
+  ownerTransportLayer(async (input, init) => transport.answer(input, init));
+
+/** Completes the observed delivery cycle with the exact exit the native cycle produced. */
+const settle =
+  (completed: Deferred.Deferred<OutboxCycleResult, OutboxCycleError>) =>
+  (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) =>
+    Deferred.done(completed, exit);
+
 const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixture() {
   const { collected, event, snapshot } = yield* OrderDrainAuthoredWork;
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -324,62 +321,68 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
     Layer.provide(OutboxRepositoryLive),
     Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, { executor }), NodeCrypto.layer)),
   );
-  // The real Order worker registration is delivered by Core; only its owner business work is inert.
-  const cycle = Effect.gen(function* deliverOrderWork() {
-    yield* matchOutboxMessages({ compositionRevision: revision });
-    const outboxRuntime = yield* OutboxRuntime;
-    const worker = yield* OrderFinalizationWorker;
-    const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
-    const entry = defineOutboxWorkerEntry({
-      claimOwnerPrefix: claimOwner,
-      expectedDeployment: ultramodernApiMarker,
-      layer: Layer.mergeAll(
-        Layer.succeed(OrderFinalizationWorker, worker),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-        Layer.succeed(OutboxRuntime, {
-          ...outboxRuntime,
-          // Preserve the exact native cycle; the public entry owns genuine receiving admission.
-          runCycle: () =>
-            outboxRuntime
-              .runCycle({
-                claimOwner,
-                compositionRevision: revision,
-                registrations: outboxWorkers,
-                subscriptions,
-              })
-              .pipe(
-                Effect.provideService(OrderFinalizationWorker, worker),
-                Effect.onExit((exit) => Deferred.done(completed, exit)),
-              ),
-        }),
-      ),
-      ownerRegistration: commerceOrderRegistration,
-      registrations: outboxWorkers,
-      subscriptions,
-    });
-    return yield* Deferred.await(completed).pipe(
-      Effect.raceFirst(
-        entry
-          .runLoop({ config: { claimOwner, maxDeliveries: 1, pollIntervalMs: 1000 } })
-          .pipe(Effect.andThen(Effect.never)),
-      ),
-    );
-  }).pipe(Effect.scoped);
-  const deliver = cycle.pipe(
+  // The real Order worker registration is delivered by Core over its actual owner HTTP clients; only their
+  // peers are fakes, provided where the delivered worker runs.
+  const cycle = <Transport>(transport: Layer.Layer<Transport>) =>
+    Effect.gen(function* deliverOrderWork() {
+      yield* matchOutboxMessages({ compositionRevision: revision });
+      const outboxRuntime = yield* OutboxRuntime;
+      const worker = yield* OrderFinalizationWorker;
+      const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+      const entry = defineOutboxWorkerEntry({
+        claimOwnerPrefix: claimOwner,
+        expectedDeployment: ultramodernApiMarker,
+        layer: Layer.mergeAll(
+          Layer.succeed(OrderFinalizationWorker, worker),
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(OutboxRuntime, {
+            ...outboxRuntime,
+            // Preserve the exact native cycle; the public entry owns genuine receiving admission.
+            runCycle: () =>
+              outboxRuntime
+                .runCycle({
+                  claimOwner,
+                  compositionRevision: revision,
+                  registrations: outboxWorkers,
+                  subscriptions,
+                })
+                .pipe(
+                  Effect.provideService(OrderFinalizationWorker, worker),
+                  Effect.provide(transport),
+                  Effect.onExit(settle(completed)),
+                ),
+          }),
+        ),
+        ownerRegistration: commerceOrderRegistration,
+        registrations: outboxWorkers,
+        subscriptions,
+      });
+      return yield* Deferred.await(completed).pipe(
+        Effect.raceFirst(
+          entry
+            .runLoop({ config: { claimOwner, maxDeliveries: 1, pollIntervalMs: 1000 } })
+            .pipe(Effect.andThen(Effect.never)),
+        ),
+      );
+    }).pipe(Effect.scoped);
+  const deliver = cycle(Layer.empty).pipe(
     Effect.provideService(OrderFinalizationWorker, { execute: () => Effect.void }),
     Effect.provide(outbox),
   );
-  const deliverPreparation = (prepare: () => Effect.Effect<typeof expiredOrderQuotation, OrderCommitmentRejected>) =>
-    cycle.pipe(Effect.provide(orderPreparationWorkerLayer(prepare)), Effect.provide(outbox));
-  const deliverExpiredProof = cycle.pipe(
-    Effect.provide(
-      orderProofWorkerLayer(
-        () => Effect.succeed(Option.some(expiredOrderQuotation)),
-        () => Effect.die('Expired proof work never revalidates its approval'),
+  const deliverPreparation = (
+    prepare: () => Effect.Effect<typeof expiredOrderQuotation, OrderCommitmentRejected>,
+    transport: OrderOwnerTransport,
+  ) => cycle(overHttp(transport)).pipe(Effect.provide(orderPreparationWorkerLayer(prepare)), Effect.provide(outbox));
+  const deliverExpiredProof = (transport: OrderOwnerTransport) =>
+    cycle(overHttp(transport)).pipe(
+      Effect.provide(
+        orderProofWorkerLayer(
+          () => Effect.succeed(Option.some(expiredOrderQuotation)),
+          () => Effect.die('Expired proof work never revalidates its approval'),
+        ),
       ),
-    ),
-    Effect.provide(outbox),
-  );
+      Effect.provide(outbox),
+    );
   return {
     accept,
     composition: isolated.composition,
@@ -401,31 +404,17 @@ const services = NodeChildProcessSpawner.layer.pipe(
 );
 const drainLayer = Layer.effect(OrderDrainAuthoredWork, openAuthoredWork).pipe(Layer.provideMerge(services));
 
-const ownerTransport = (
-  observedAfterCompletion: OrderPreparationWorkObservation | typeof failedOrderProofWork,
-  pending: typeof pendingOrderPreparationWork | typeof pendingOrderProofWork = pendingOrderPreparationWork,
-) => {
-  owners.issueGateway.mockReset();
-  // A fixed far-future assertion expiry (2099-01-01) keeps this live test independent of its clock.
-  // Originator subjects carry their release; the stub echoes it as the Shell would.
-  owners.issueGateway.mockImplementation((request) =>
-    Effect.succeed({
-      apiBaseUrl: '/order-api',
-      authorization: 'Bearer drain-token',
-      compositionRevision: Match.value(request.subject).pipe(
-        Match.tag('Originator', (originator) => originator.compositionRevision),
-        Match.orElse(() => null),
-      ),
-      expiresAt: 4_070_908_800,
-    }),
-  );
-  owners.load.mockReset();
-  owners.load.mockReturnValueOnce(Effect.succeed(pending));
-  owners.load.mockReturnValue(Effect.succeed(observedAfterCompletion));
-  owners.complete.mockReset();
-  owners.complete.mockReturnValue(
-    Effect.succeed({ binding: null, intentRef: orderPreparationPayload.intentRef, status: 'FAILED' }),
-  );
+/**
+ * The Shell and Order owner peers of one delivery. The Shell binds its assertion to the release the
+ * originating invocation was admitted under, with a fixed far-future expiry (2099-01-01) so this live
+ * test stays independent of its clock; the Order read answers the pending work, then what it observes
+ * after a completion attempt.
+ */
+const ownerTransport = (compositionRevision: string, pending: OwnerReply, observedAfterCompletion: OwnerReply) => {
+  const transport = makeOrderOwnerTransport({ compositionRevision, expiresAt: 4_070_908_800, token: 'drain-token' });
+  transport.reply(orderWorkPath, pending, observedAfterCompletion);
+  transport.reply(completeOrderPreparationPath, failedPreparationProgressAnswer);
+  return transport;
 };
 
 it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) => {
@@ -466,7 +455,7 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
 
   nativeTest('acknowledges an expired preparation delivery done so composition drain completes', (test) =>
     Effect.gen(function* expiredPreparationWork() {
-      ownerTransport(failedOrderPreparationWork);
+      const transport = ownerTransport(test.revision, pendingOrderPreparationAnswer, failedOrderPreparationAnswer);
       const id = yield* test.accept(test.preparationWork);
       const workId = `outbox:${id}:commerce.order`;
       expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
@@ -474,23 +463,19 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
       ]);
       yield* test.composition.closeAdmission();
       expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
-      expect(yield* test.deliverPreparation(() => Effect.succeed(expiredOrderQuotation))).toMatchObject({
+      expect(yield* test.deliverPreparation(() => Effect.succeed(expiredOrderQuotation), transport)).toMatchObject({
         claimed: 1,
         dead: 0,
         succeeded: 1,
       });
-      expect(owners.complete).toHaveBeenCalledOnce();
-      // The delegation acts for the invocation that enqueued the delivered work, not for the worker.
-      expect(owners.issueGateway).toHaveBeenCalledWith(
+      expect(transport.sentTo(completeOrderPreparationPath)).toHaveLength(1);
+      // The delegation acts for the invocation that enqueued the delivered work, not for the worker, under the
+      // release that invocation was admitted in; the wire carries that release beside the subject.
+      expect(yield* transport.delegations()).toContainEqual(
         expect.objectContaining({
-          subject: {
-            _tag: 'Originator',
-            actionInvocationId: test.invocationId,
-            compositionRevision: test.revision,
-            tenantId: orderTenantId,
-          },
+          compositionRevision: test.revision,
+          subject: { _tag: 'Originator', actionInvocationId: test.invocationId, tenantId: orderTenantId },
         }),
-        expect.anything(),
       );
       expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
       yield* test.composition.drain();
@@ -500,15 +485,15 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
 
   nativeTest('keeps preparation debt pending while Pricing cannot prove expiry', (test) =>
     Effect.gen(function* unprovenPreparationWork() {
-      ownerTransport(pendingOrderPreparationWork);
+      const transport = ownerTransport(test.revision, pendingOrderPreparationAnswer, pendingOrderPreparationAnswer);
       const id = yield* test.accept(test.preparationWork);
       yield* test.composition.closeAdmission();
-      expect(yield* test.deliverPreparation(() => Effect.fail(pricingTransportFailure()))).toMatchObject({
+      expect(yield* test.deliverPreparation(() => Effect.fail(pricingTransportFailure()), transport)).toMatchObject({
         claimed: 1,
         dead: 0,
         succeeded: 0,
       });
-      expect(owners.complete).not.toHaveBeenCalled();
+      expect(transport.sentTo(completeOrderPreparationPath)).toHaveLength(0);
       expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
         { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId: `outbox:${id}:commerce.order` },
       ]);
@@ -518,29 +503,20 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
 
   nativeTest('acknowledges an expired proof delivery without a Confirmation so composition drain completes', (test) =>
     Effect.gen(function* expiredProofWork() {
-      ownerTransport(failedOrderProofWork, pendingOrderProofWork);
+      const proof = orderProofAnswers(makeGatewayRevalidationState(gatewayQuotation));
+      const transport = ownerTransport(test.revision, proof.pending, proof.failed);
+      transport.reply(recordOrderProofSetPath, proof.failedProgress);
       const id = yield* test.accept(test.expiredProofWork);
       expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
         { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId: `outbox:${id}:commerce.order` },
       ]);
       yield* test.composition.closeAdmission();
       expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
-      expect(yield* test.deliverExpiredProof).toMatchObject({ claimed: 1, dead: 0, succeeded: 1 });
-      expect(owners.complete).toHaveBeenCalledOnce();
+      expect(yield* test.deliverExpiredProof(transport)).toMatchObject({ claimed: 1, dead: 0, succeeded: 1 });
+      expect(transport.sentTo(recordOrderProofSetPath)).toHaveLength(1);
       expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
       yield* test.composition.drain();
       expect((yield* test.composition.observe()).phase).toBe('draining');
     }),
   );
-});
-
-// With `isolate: false` one module registry is shared by every file a worker runs, so these
-// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
-// modules they replaced, so the next file evaluates the real implementations.
-afterAll(() => {
-  rs.doUnmock('@app/shared-contracts/gateway-context-server');
-  rs.doUnmock('../../src/api/order-finalization-work-client.ts');
-  rs.doUnmock('../../src/api/complete-order-preparation-action-client.ts');
-  rs.doUnmock('../../src/api/record-order-proof-set-action-client.ts');
-  rs.resetModules();
 });

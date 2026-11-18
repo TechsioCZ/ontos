@@ -9,6 +9,7 @@ import { Effect, Result, Schema } from 'effect';
 
 import type { ResolvedModuleTarget } from '../../shared/browser-api.ts';
 
+import { reportModuleEntrypointFailure } from '../module-diagnostics.ts';
 import { ModuleEntrypointNamespaceSchema, settleModuleEntrypointLoads } from './module-entrypoint-load-scheduler.ts';
 import type { ModuleEntrypointLoadIdentity, SettledModuleEntrypointLoad } from './module-entrypoint-load-scheduler.ts';
 
@@ -143,7 +144,9 @@ export const loadBrowserModuleEntrypoint = <Value>(
         Effect.flatMap(({ getInstance }): Effect.Effect<SettledModuleEntrypointLoad<Value>> => {
           const host = getInstance((instance) => instance.name === 'shellSuperApp');
           if (host === undefined || host === null) {
-            return Effect.succeed({ reason: 'unavailable', state: 'unavailable' } as const);
+            return reportModuleEntrypointFailure(moduleEntrypointLoadIdentity(target).owner, 'initialization', {
+              message: 'Federation host shellSuperApp is unavailable',
+            }).pipe(Effect.as({ reason: 'unavailable', state: 'unavailable' } as const));
           }
           const { federation } = target;
           if (federation.remoteName === host.name) {
@@ -154,11 +157,15 @@ export const loadBrowserModuleEntrypoint = <Value>(
               contract,
               identity: target,
               load: () =>
-                Effect.tryPromise(() => {
-                  host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
-                  return host.loadRemote(`${federation.remoteName}/${federation.expose.slice(2)}`);
-                }).pipe(
-                  Effect.retry({ times: 1 }),
+                Effect.try(() =>
+                  host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]),
+                ).pipe(
+                  // A refused registration is final: only the code request itself is tried once more.
+                  Effect.andThen(
+                    Effect.tryPromise(() =>
+                      host.loadRemote(`${federation.remoteName}/${federation.expose.slice(2)}`),
+                    ).pipe(Effect.retry({ times: 1 })),
+                  ),
                   Effect.flatMap(Schema.decodeUnknownEffect(ModuleEntrypointNamespaceSchema)),
                 ),
               loadIdentity: moduleEntrypointLoadIdentity(target),
@@ -167,6 +174,9 @@ export const loadBrowserModuleEntrypoint = <Value>(
             Effect.map(([result]) => result ?? { reason: 'unavailable' as const, state: 'unavailable' as const }),
           );
         }),
+        Effect.tapError((failure) =>
+          reportModuleEntrypointFailure(moduleEntrypointLoadIdentity(target).owner, 'initialization', failure),
+        ),
       )
     : Effect.interrupt;
 

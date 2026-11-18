@@ -650,9 +650,19 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       runtimes.set(app, runtime);
       return runtime;
     });
-    for (const app of appIds) {
-      yield* start(app);
+    // Initial receivers have distinct ports, artifacts and already-bound module credentials.
+    // Their local readiness does not call peers. Later policy restarts remain ordered with their writes.
+    const symmyContract = contracts.find((value) => value.deployment.appId === symmyApp);
+    if (symmyContract === undefined) {
+      return yield* unavailable('The actual Symmy worker contract is missing');
     }
+    const [, workerArtifact] = yield* Effect.all(
+      [
+        Effect.forEach(appIds, (app) => start(app), { concurrency: 3, discard: true }),
+        buildProductWorker(symmyContract),
+      ],
+      { concurrency: 2 },
+    );
     let workerDiagnostic = Effect.succeed('Worker has not started');
     const writeDiagnostics = Effect.fn('OrganizationSourceCustomerOwner.diagnostics')(function* writeDiagnostics() {
       for (const [app, runtime] of runtimes) {
@@ -845,11 +855,6 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         return yield* unavailable('Actual source governance did not persist through the public Action');
       }
     }
-    const symmyContract = contracts.find((value) => value.deployment.appId === symmyApp);
-    if (symmyContract === undefined) {
-      return yield* unavailable('The actual Symmy worker contract is missing');
-    }
-    const workerArtifact = yield* buildProductWorker(symmyContract);
     const startWorker = Effect.fn('OrganizationSourceCustomerOwner.startWorker')(function* startWorker() {
       const started = yield* startProductWorker(
         workerArtifact,
@@ -984,13 +989,17 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         headers: { 'x-api-key': Redacted.value(key.secret) },
       });
     });
-    const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
-      function* originalReceipt(input: {
+    /**
+     * The real Shell's recovery authority for one Symmy write the worker delivered: it seals that exact original
+     * invocation for the current reader, or refuses when Symmy's manifest declares no call recovering that write by
+     * that read.
+     */
+    const issueOriginalRecovery = Effect.fn('OrganizationSourceCustomerOwner.originalRecovery')(
+      function* originalRecovery(input: {
         readonly actionInvocationId: string;
         readonly actionKey: string;
-        readonly body: Schema.Json;
+        readonly audience: typeof commerceApp | typeof partyApp;
         readonly declarationKey: string;
-        readonly endpoint: string;
         readonly readKey: string;
         readonly requestHash: string;
       }) {
@@ -1002,7 +1011,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
               actionInvocationId: Schema.String.check(Schema.isUUID()).pipe(
                 Schema.brand('OrganizationOriginalInvocationId'),
               ),
-              actionKey: Schema.Literals([MEMBERSHIP_WRITE_KEY, ASSIGN_ACTION]),
+              actionKey: Schema.String.pipe(Schema.brand('OrganizationOriginalActionKey')),
               authContextRef: Schema.String,
               idempotencyKey: Schema.String.pipe(Schema.brand('OrganizationOriginalIdempotencyKey')),
               principalId: TrustedPrincipalContextSchema.fields.principalId,
@@ -1041,7 +1050,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         );
         const issued = yield* issueDelegatedGatewayContext(
           {
-            audience: commerceApp,
+            audience: input.audience,
             compositionRevision: snapshot.composition.revision,
             exchangeId: randomUUID(),
             legalEntityScope: 'subject',
@@ -1068,6 +1077,20 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
             'Shell must independently seal the exact original native invocation and current reader',
           );
         }
+        return issued;
+      },
+    );
+    const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
+      function* originalReceipt(input: {
+        readonly actionInvocationId: string;
+        readonly actionKey: string;
+        readonly body: Schema.Json;
+        readonly declarationKey: string;
+        readonly endpoint: string;
+        readonly readKey: string;
+        readonly requestHash: string;
+      }) {
+        const issued = yield* issueOriginalRecovery({ ...input, audience: commerceApp });
         return yield* client.post(`${new URL(issued.apiBaseUrl, shell.baseUrl)}/reads/${input.endpoint}`, {
           body: yield* HttpBody.json(input.body),
           headers: {
@@ -1088,6 +1111,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       groupSource,
       integration,
       isolated,
+      issueOriginalRecovery,
       key,
       ledgerFor,
       legalEntityId,

@@ -2,6 +2,8 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
+import { RouterContextProvider } from '@modern-js/plugin-tanstack/runtime';
+import type { ReactNode } from 'react';
 
 import cs from '../../locales/cs/shell.json';
 import en from '../../locales/en/shell.json';
@@ -20,22 +22,47 @@ import type { PeopleMutationPort } from '../../src/routes/access-admin/people/pe
 import { toPeopleViewModel } from '../../src/routes/access-admin/people/people-presentation.ts';
 import { PeopleView } from '../../src/routes/access-admin/people/people-view.tsx';
 import type { PeopleCommand, PeopleFeedback } from '../../src/routes/access-admin/people/people-view-model.ts';
+import { ShellI18n, shellLocaleCopy } from '../support/shell-i18n.tsx';
+import type { ShellLanguage } from '../support/shell-i18n.tsx';
+import { makeShellRouter } from '../support/shell-router.tsx';
+import type { ShellRouter } from '../support/shell-router.tsx';
 import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
 
-interface Navigation {
-  shouldBlock: () => boolean;
+/** The language a test selects before rendering. */
+interface SelectedLanguage {
+  current: ShellLanguage;
 }
-const { locale, navigation } = rstest.hoisted(() => {
-  const state: Navigation = { shouldBlock: () => false };
-  return { locale: { current: 'en' }, navigation: state };
-});
-// Every form of the page registers its leave guard with the router; the newest registration is checked.
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
-    navigation.shouldBlock = options.shouldBlockFn;
-    return { status: 'idle' };
-  },
-}));
+const locale: SelectedLanguage = { current: 'en' };
+const copies = { cs: shellLocaleCopy('cs'), en: shellLocaleCopy('en') };
+const peoplePath = '/en/access/people';
+/**
+ * The Shell's real i18n context, in whichever language the test selected before rendering, and a real router
+ * standing on the people page: every form of the page registers its leave guard with that router.
+ */
+const ShellContext = ({ children, router }: { readonly children: ReactNode; readonly router: ShellRouter }) => (
+  <ShellI18n translations={copies[locale.current]}>
+    <RouterContextProvider router={router}>{children}</RouterContextProvider>
+  </ShellI18n>
+);
+/** A Shell link out of the page, as the router performs it: every registered leave guard is asked first. */
+const leavePage = (router: ShellRouter) => router.history.push('/en');
+/** Leaving the page goes through at once: no form holds unsaved input. */
+const leavesFreely = (router: ShellRouter) =>
+  Effect.gen(function* leaveFreely() {
+    leavePage(router);
+    yield* Effect.promise(() => waitFor(() => expect(router.history.location.pathname).toBe('/en')));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    router.history.push(peoplePath);
+  });
+/** Leaving the page is held while the shared leave question asks; Zůstat keeps the page and its input. */
+const leaveIsHeld = (router: ShellRouter) =>
+  Effect.gen(function* leaveHeld() {
+    leavePage(router);
+    const question = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(question).getByRole('button', { name: saveLabelsFor('en').stay }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull()));
+    expect(router.history.location.pathname).toBe(peoplePath);
+  });
 const flatten = (node: typeof Schema.Json.Type, prefix = ''): [string, string][] => {
   if (Predicate.isString(node)) {
     return [[prefix, node]];
@@ -54,10 +81,6 @@ const translate = (key: string, values?: Record<string, string | number>) => {
   }
   return label;
 };
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: locale.current, t: translate }),
-}));
 
 const personId = '00000000-0000-4000-8000-000000000001';
 const managerId = '00000000-0000-4000-8000-000000000002';
@@ -207,8 +230,14 @@ const renderPeople = (snapshot = fixture().snapshot, feedback: PeopleFeedback = 
     onNextPage: rstest.fn<() => void>(),
     onRefresh: rstest.fn<() => void>(),
   };
-  const rendered = render(<PeopleView feedback={feedback} model={model(snapshot)} {...callbacks} />);
-  return { ...rendered, ...callbacks };
+  const router = makeShellRouter({ page: { component: () => null, path: 'access/people' }, url: peoplePath });
+  const PeopleContext = ({ children }: { readonly children: ReactNode }) => (
+    <ShellContext router={router}>{children}</ShellContext>
+  );
+  const rendered = render(<PeopleView feedback={feedback} model={model(snapshot)} {...callbacks} />, {
+    wrapper: PeopleContext,
+  });
+  return { ...rendered, ...callbacks, router };
 };
 
 afterEach(() => {
@@ -619,13 +648,13 @@ it.effect('typed delegation input blocks leaving until it is cleared; Enter open
     const form = yield* Effect.promise(() =>
       screen.findByRole('form', { name: translate('shell.accessAdmin.people.delegationCreate') }),
     );
-    expect(navigation.shouldBlock()).toBe(false);
+    yield* leavesFreely(view.router);
     const amount = within(form).getByLabelText(translate('shell.accessAdmin.people.amountMinor'));
     fireEvent.change(amount, { target: { value: '5000' } });
     fireEvent.submit(form);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(view.onCommand).not.toHaveBeenCalled();
-    expect(navigation.shouldBlock()).toBe(true);
+    yield* leaveIsHeld(view.router);
     // Incomplete: the one Save button stays disabled until every required choice is made.
     expect(
       within(form)
@@ -633,7 +662,7 @@ it.effect('typed delegation input blocks leaving until it is cleared; Enter open
         .hasAttribute('disabled'),
     ).toBe(true);
     fireEvent.change(amount, { target: { value: '' } });
-    expect(navigation.shouldBlock()).toBe(false);
+    yield* leavesFreely(view.router);
   }),
 );
 
@@ -801,7 +830,7 @@ it.effect('closing the end confirmation with a typed reason asks the shared leav
     // Untouched: Cancel closes without asking and nothing is sent.
     fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
     const untouched = yield* Effect.promise(() => screen.findByRole('dialog'));
-    expect(navigation.shouldBlock()).toBe(false);
+    yield* leavesFreely(view.router);
     fireEvent.click(within(untouched).getByRole('button', { name: cancelName }));
     yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -811,7 +840,7 @@ it.effect('closing the end confirmation with a typed reason asks the shared leav
     const typed = yield* Effect.promise(() => screen.findByRole('dialog'));
     const reasonLabel = translate(`${people}.endMembershipReason`);
     fireEvent.change(within(typed).getByLabelText(reasonLabel, { exact: false }), { target: { value: 'Left' } });
-    expect(navigation.shouldBlock()).toBe(true);
+    yield* leaveIsHeld(view.router);
     // Escape, the way the reason used to be lost, asks too.
     fireEvent.keyDown(typed, { key: 'Escape' });
     const escaped = yield* Effect.promise(() => screen.findByRole('alertdialog'));
@@ -975,7 +1004,7 @@ test('every admission and end-membership key exists in Czech and English', () =>
 });
 
 test('English and Czech presentation use real locale keys without untranslated output', () => {
-  for (const language of ['en', 'cs']) {
+  for (const language of ['en', 'cs'] as const) {
     locale.current = language;
     const rendered = renderPeople();
     expect(screen.getByRole('region', { name: translate('shell.accessAdmin.people.title') })).toBeTruthy();

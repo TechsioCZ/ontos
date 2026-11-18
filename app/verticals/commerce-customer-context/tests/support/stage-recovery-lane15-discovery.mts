@@ -43,7 +43,7 @@ const nativeChild = Effect.gen(function* lane15NativeChild() {
   const input = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(InputSchema))(process.argv[2]);
   const transactions = yield* CommerceEnrollmentOwnerTransactionRunner;
   const { transition } = input;
-  let attemptIds: readonly (typeof EnrollmentAttemptIdSchema.Type)[] = [];
+  let attemptIds: readonly (typeof EnrollmentAttemptIdSchema.Type)[];
   if (input.mode === 'claim') {
     const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: transition.tenantId }, transactions.run);
     const claimed = yield* store.claimTransition(

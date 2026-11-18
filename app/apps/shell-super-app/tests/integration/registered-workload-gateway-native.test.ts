@@ -475,10 +475,8 @@ const processingRuntimeFixture = (
     read,
   };
 };
-
-// The registered-workload calls of the three calling modules, verbatim from origin/main 5608aae1d
-// apps/shell-super-app/tests/integration/registered-workload-gateway-native.test.ts (then its ONTOS_GATEWAY_MODULE_BINDINGS);
-// each calling module now declares them in its own contract (demo divergence exception 8).
+// The registered-workload calls of the three calling modules. Each calling module declares them in its own contract,
+// the only source of these rules; the Shell keeps a call only while the installed receiver declares it.
 const rule = {
   audience: 'party-registry',
   declarationKey: targetCapability,
@@ -1290,7 +1288,9 @@ it.live(
         // The calling module's own contract is the only source of its calls (demo divergence exception 8). One exact
         // call issues, and explicit paired modes are two calls; a repeated mode never passes the contract schema and,
         // carried anyway, is as refused as a wrong mode, workload, declaration or provider version, a receiver that does
-        // not declare the workload, or a key whose attested build is not the installed one.
+        // not declare the workload, a caller whose contract does not declare the call, or a key whose attested build is
+        // not the installed one. Another scope for a read is not refused here, because a read's carrier publishes no
+        // scope; see the tenant-only case below.
         const nestedWith = (catalog: typeof installed) =>
           refusalOf(issue(nestedSubject, 'privacy', partyProviderKey, 'subject', catalog));
         expect(yield* nestedWith(declaring('party-registry', [privacyNormalRule]))).toBe('issued');
@@ -1328,6 +1328,7 @@ it.live(
               declaring('party-registry', [{ ...privacyNormalRule, schemaVersion: '2' }]),
               'registered_workload_unmatched',
             ],
+            [declaring('party-registry', []), 'registered_workload_unmatched'],
             [undeclaredBy('privacy', privacyKey), 'registered_workload_unmatched'],
             [
               replacing('party-registry', () => ({
@@ -1339,6 +1340,15 @@ it.live(
           ([catalog, reason]) => nestedWith(catalog).pipe(Effect.map((refusal) => expect(refusal).toBe(reason))),
           { discard: true },
         );
+        // A module cannot present a source assertion addressed to another module: Party's assertion in Privacy's hands
+        // is not authenticated at all. With an assertion that is its own, a module whose contract does not declare
+        // the call is refused by the call policy.
+        expect(yield* refusalOf(issue(nestedSubject, 'privacy', privacyProviderKey))).toBe(
+          'subject_assertion_unverified',
+        );
+        expect(
+          yield* refusalOf(issue({ ...nestedSubject, sourceAssertion: nested.token }, 'privacy', privacyProviderKey)),
+        ).toBe('registered_workload_unmatched');
         expect(
           Exit.isFailure(
             yield* Effect.exit(issue({ ...nestedSubject, sourceAssertion: 'not-a-jwt' }, 'privacy', partyProviderKey)),
@@ -1374,6 +1384,7 @@ it.live(
             ),
           ),
         ).toBe(true);
+        // A required-scope call without a company is refused.
         expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey, 'tenant')))).toBe(
           true,
         );
@@ -1478,6 +1489,39 @@ it.live(
           })).outcome,
         ).toBe('ALLOWED');
         expect(scope.legalEntityId).toBe(legalEntityId);
+        // A caller that declares the company-scoped Privacy read as tenant-only gets exactly what it declared and no
+        // more: the Shell issues a capability without a company (the read's carrier publishes its declaration and
+        // workloads, never a scope, so only an Action's scope can be compared at issuance), and the receiver, which
+        // requires a company for this read, refuses that capability.
+        const declaredTenantOnly = yield* issue(
+          nestedSubject,
+          'privacy',
+          partyProviderKey,
+          'subject',
+          declaring('party-registry', [{ ...privacyNormalRule, legalEntityScope: 'forbidden' }]),
+        );
+        const declaredTenantOnlyPrincipal = yield* privacyVerifier
+          .verifyAndRedeem(Redacted.make(`Bearer ${declaredTenantOnly.token}`), {
+            environment: {
+              ONTOS_GATEWAY_ISSUER: issuer,
+              ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+                keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
+              }),
+            },
+            redemption: nativeRedemption(runtime),
+          })
+          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+        expect(declaredTenantOnlyPrincipal.legalEntityId).toBeUndefined();
+        expect(readVerifiedGatewayWorkload(declaredTenantOnlyPrincipal)?.legalEntityId).toBeUndefined();
+        const companyReadRefusal = yield* Effect.flip(
+          scopeResolver.resolve({
+            audience: 'privacy',
+            correlationId: 'native-nested-declared-tenant-only',
+            legalEntityScope: 'required',
+            principal: declaredTenantOnlyPrincipal,
+          }),
+        );
+        expect(companyReadRefusal.code).toBe('operation_context_denied');
 
         expect(
           Exit.isFailure(

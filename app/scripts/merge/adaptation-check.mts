@@ -12,16 +12,16 @@ import {
   checkAccessCatalogArtifact,
   readAccessCatalogArtifact,
 } from '../authorization-catalog-artifact.mts';
-import {
-  assertRegisteredWorkloadCallers,
-  assertRegisteredWorkloadCallsReceived,
-} from '../check-ontos-module-contracts.mts';
 import { policyReleaseEntries } from '../demo/access-policy.mts';
 import { demoModuleIds } from '../demo/permissions.mts';
 import type { DesiredState } from '../demo/reviewed-people-plan.mts';
 import { desiredState } from '../demo/reviewed-people-plan.mts';
 import { deriveOntosModuleRelease } from '../generate-ontos-module-contract.mts';
-import { registeredWorkloadCallDrift } from '../scaffolding/registered-workload-calls.mts';
+import {
+  registeredWorkloadCallDrift,
+  registeredWorkloadCallerIssues,
+  registeredWorkloadCallReceiptIssues,
+} from '../registered-workload-callers.mts';
 
 /**
  * `node scripts/merge/adaptation-check.mts --base <40-hex demo commit> [--json <path>]`, from app/.
@@ -31,7 +31,7 @@ import { registeredWorkloadCallDrift } from '../scaffolding/registered-workload-
  * - every vertical's contract derivation; an MCP coverage gap gives one finding per key. A module's commands and
  *   actions gaps appear only after its reads gap is fixed, because the coverage check stops at the first group.
  * - every derived caller's registered-workload calls against the reviewed inventory the generation test pins
- *   (scripts/scaffolding/registered-workload-calls.mts), so a lost or unreviewed call is a finding by caller; and
+ *   (scripts/registered-workload-callers.mts), so a lost or unreviewed call is a finding by caller; and
  *   every call, one at a time, against the reviewed callers and its receiver. A call whose receiver failed to
  *   derive is checked against the reviewed callers only (a note counts them), so a derivation gap gives no false
  *   call finding. The calls of a caller that failed to derive are unknown and not checked.
@@ -204,13 +204,10 @@ const deriveAll = Effect.fn(function* deriveAll() {
 type Derived = Effect.Success<ReturnType<typeof deriveAll>>['derived'][number];
 
 /**
- * Both registered-workload assertions stop at their first failure, so each call is asserted alone: the caller
- * carries only that call and every other contract carries none, which keeps every receiver in reach.
+ * Each call is checked alone: the caller carries only that call and every other contract carries none, so each
+ * finding names the one call it is about while every receiver stays in reach.
  */
-const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFindings(
-  derived: readonly Derived[],
-  failedAppIds: ReadonlySet<string>,
-) {
+const registeredWorkloadFindings = (derived: readonly Derived[], failedAppIds: ReadonlySet<string>) => {
   const findings: Finding[] = [];
   let skipped = 0;
   for (const caller of derived) {
@@ -232,25 +229,16 @@ const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFinding
       if (receiverMissing) {
         skipped += 1;
       }
-      const exits = yield* Effect.all(
-        [
-          Effect.exit(assertRegisteredWorkloadCallers([alone])),
-          ...(receiverMissing ? [] : [Effect.exit(assertRegisteredWorkloadCallsReceived([alone, ...others]))]),
-        ],
-        { concurrency: 1 },
-      );
-      for (const exit of exits.filter(Exit.isFailure)) {
-        findings.push({
-          key: call.workloadKey,
-          kind: REGISTERED_WORKLOAD_CALL,
-          message: innermost(messageChain(exit.cause)),
-          owner: caller.owner,
-        });
+      for (const message of [
+        ...registeredWorkloadCallerIssues([alone]),
+        ...(receiverMissing ? [] : registeredWorkloadCallReceiptIssues([alone, ...others])),
+      ]) {
+        findings.push({ key: call.workloadKey, kind: REGISTERED_WORKLOAD_CALL, message, owner: caller.owner });
       }
     }
   }
   return { findings, skipped };
-});
+};
 
 /** Each role's granted capability that the base release lacks, once per role and key. */
 export const roleCellGrowth = (
@@ -365,7 +353,7 @@ export const checkMergeAdaptation = Effect.fn(function* checkMergeAdaptation(opt
   yield* git(['cat-file', '-e', `${options.base}^{commit}`]);
   const head = (yield* git(['rev-parse', 'HEAD'])).trim();
   const { derived, failed } = yield* deriveAll();
-  const registered = yield* registeredWorkloadFindings(derived, new Set(failed.map(({ appId }) => appId)));
+  const registered = registeredWorkloadFindings(derived, new Set(failed.map(({ appId }) => appId)));
   const catalog = yield* Effect.exit(checkAccessCatalogArtifact(APP_ROOT));
   const roles = yield* reviewedRoles(options.base);
   const findings: readonly Finding[] = [

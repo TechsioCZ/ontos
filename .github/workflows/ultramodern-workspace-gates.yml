@@ -1533,6 +1533,9 @@ jobs:
         run: |
           docker compose ps
           docker compose logs --no-color --tail 200
+          # SpiceDB writes thousands of info lines a second, so the tail above covered 13 ms of a failed
+          # browser run and nothing from the second of the failure. Keep its warnings and errors of the whole job.
+          docker compose logs --no-color --timestamps ontos-spicedb | awk '!/"level":"info"/' | tail --lines 400
 
       - name: Remove isolated service containers and volumes
         if: always()

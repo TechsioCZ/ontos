@@ -562,12 +562,14 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
 /** The workflow id and run id of the recorded push run that plans; the lookup reads only this workflow. */
 const PUSH_WORKFLOW_ID = 342_952_200;
 const PUSH_RUN_ID = 44_400_000_000;
-const PUSH_BRANCH = 'trunk';
+/** A branch name that would end the query parameter early if pasted into the URL. */
+const PUSH_BRANCH = 'release/fix&docs';
 const RUN_LOOKUP = `api repos/TechsioCZ/ontos/actions/runs/${PUSH_RUN_ID} --jq .workflow_id`;
-const RUNS_LIST = `api repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs?branch=${PUSH_BRANCH}&event=push&per_page=100`;
+const RUNS_LIST = `api --method GET repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs -f branch=${PUSH_BRANCH} -f event=push -f per_page=100`;
 /** One recorded workflow run as the list endpoint returns it, newest first; only the fields the lookup reads. */
 interface RecordedRun {
   readonly conclusion: string | null;
+  readonly created_at?: string;
   readonly event: string;
   readonly head_branch: string;
   readonly head_sha: string;
@@ -577,7 +579,12 @@ interface RecordedRun {
 const recordedRuns = (runs: readonly RecordedRun[]) =>
   JSON.stringify({
     total_count: runs.length,
-    workflow_runs: runs.map((run, index) => ({ id: PUSH_RUN_ID - index - 1, workflow_id: PUSH_WORKFLOW_ID, ...run })),
+    workflow_runs: runs.map((run, index) => ({
+      created_at: new Date(Date.UTC(2026, 10, 18, 12) - index * 60_000).toISOString().replace('.000', ''),
+      id: PUSH_RUN_ID - index - 1,
+      workflow_id: PUSH_WORKFLOW_ID,
+      ...run,
+    })),
   });
 const greenPush = (sha: string): RecordedRun => ({
   conclusion: 'success',
@@ -699,6 +706,16 @@ it.live('compares a push without a merge queue with its newest green push, and r
       expect(mixed.mode).toBe('affected');
       expect(mixed.paths).toEqual(unproven);
       expect(mixed.log).toContain(`Comparing with ${green},`);
+
+      // Of two eligible green pushes the newer one by creation time is the base, whatever order the list has.
+      const newest = plan(
+        listed([
+          { ...greenPush(green), created_at: '2026-11-18T11:00:00Z' },
+          { ...greenPush(cancelled), created_at: '2026-11-18T12:00:00Z' },
+        ]),
+      );
+      expect(newest.log).toContain(`Comparing with ${cancelled},`);
+      expect(newest.paths).toEqual(['pushed.ts']);
 
       // (c) A green commit that is no ancestor of this push, or absent from the checkout, is passed over.
       const passedOver = plan(listed([greenPush(sibling), greenPush(absent), greenPush(green)]));

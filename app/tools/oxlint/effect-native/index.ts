@@ -16,6 +16,8 @@ import { rule as noEffectRunInScripts } from './rules/no-effect-run-in-scripts.t
 import { rule as noEffectRunInTests } from './rules/no-effect-run-in-tests.ts';
 import { rule as noEnvironmentRecordType } from './rules/no-environment-record-type.ts';
 import { rule as noFailureDiscardingErrorCallback } from './rules/no-failure-discarding-error-callback.ts';
+import { rule as noFocusedTests } from './rules/no-focused-tests.ts';
+import { rule as noGlobalTestReplacements } from './rules/no-global-test-replacements.ts';
 import { rule as noHandBuiltHttpServerInTests } from './rules/no-hand-built-http-server-in-tests.ts';
 import { rule as noHandBuiltProblemDetails } from './rules/no-hand-built-problem-details.ts';
 import { rule as noHandParsedEnvironmentValue } from './rules/no-hand-parsed-environment-value.ts';
@@ -65,6 +67,7 @@ import { rule as noUnbrandedIdentifierSchema } from './rules/no-unbranded-identi
 import { rule as noUnjustifiedFileWideLintSuppression } from './rules/no-unjustified-file-wide-lint-suppression.ts';
 import { rule as noUnmanagedMutableState } from './rules/no-unmanaged-mutable-state.ts';
 import { rule as noUnredactedSecretField } from './rules/no-unredacted-secret-field.ts';
+import { rule as noUnsignaledSpyPoll } from './rules/no-unsignaled-spy-poll.ts';
 import { rule as noWideFactorySignature } from './rules/no-wide-factory-signature.ts';
 import { rule as preferEffectFnForOperations } from './rules/prefer-effect-fn-for-operations.ts';
 import { rule as preferMatchOverTagSwitch } from './rules/prefer-match-over-tag-switch.ts';
@@ -95,6 +98,8 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-effect-run-in-tests': noEffectRunInTests,
     'no-environment-record-type': noEnvironmentRecordType,
     'no-failure-discarding-error-callback': noFailureDiscardingErrorCallback,
+    'no-focused-tests': noFocusedTests,
+    'no-global-test-replacements': noGlobalTestReplacements,
     'no-hand-built-http-server-in-tests': noHandBuiltHttpServerInTests,
     'no-hand-built-problem-details': noHandBuiltProblemDetails,
     'no-hand-parsed-environment-value': noHandParsedEnvironmentValue,
@@ -143,6 +148,7 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-unjustified-file-wide-lint-suppression': noUnjustifiedFileWideLintSuppression,
     'no-unmanaged-mutable-state': noUnmanagedMutableState,
     'no-unredacted-secret-field': noUnredactedSecretField,
+    'no-unsignaled-spy-poll': noUnsignaledSpyPoll,
     'no-wide-factory-signature': noWideFactorySignature,
     'prefer-effect-fn-for-operations': preferEffectFnForOperations,
     'prefer-match-over-tag-switch': preferMatchOverTagSwitch,

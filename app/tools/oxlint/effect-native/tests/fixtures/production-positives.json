@@ -63,6 +63,14 @@
     "count": 6,
     "file": "apps/demo-app/api/auth/gateway-issuer.ts"
   },
+  "no-focused-tests": {
+    "count": 4,
+    "file": "apps/demo/tests/unit/focused-registrations.test.ts"
+  },
+  "no-global-test-replacements": {
+    "count": 3,
+    "file": "apps/demo/tests/unit/fabricated-globals.test.ts"
+  },
   "no-hand-built-http-server-in-tests": {
     "count": 3,
     "file": "aliased-and-reassigned.test.tsx"
@@ -258,6 +266,10 @@
   "no-unredacted-secret-field": {
     "count": 3,
     "file": "apps/shell-super-app/api/auth/evasion-decorators.ts"
+  },
+  "no-unsignaled-spy-poll": {
+    "count": 2,
+    "file": "apps/demo/tests/unit/spy-polling.test.tsx"
   },
   "no-wide-factory-signature": {
     "count": 12,

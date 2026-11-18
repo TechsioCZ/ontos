@@ -1,5 +1,4 @@
-import { OntosRegisteredWorkloadCallSchema, registeredWorkloadCallReceiverIssue } from '@app/core-runtime';
-import type { OntosRegisteredWorkloadCall, RegisteredWorkloadCallReceiver } from '@app/core-runtime';
+import { OntosRegisteredWorkloadCallSchema } from '@app/core-runtime';
 import type { ModuleEntrypointAccess } from '@app/core-runtime/module-entrypoint';
 import type { FiniteGatewayOperationTarget } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
@@ -10,6 +9,7 @@ import { Effect, Option, Schema } from 'effect';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { GatewayDelegationPolicyUnavailable } from './gateway-delegation-policy-unavailable.ts';
+import { withRegisteredWorkloadCalls } from './gateway-registered-workload-calls.ts';
 import { ModuleCredentialEnrolmentSource } from './module-credential-enrolment.service.ts';
 import type { AttestedModuleCredential } from './module-credential-enrolment.service.ts';
 
@@ -43,30 +43,6 @@ const bindingsSchema = Schema.Array(GatewayModuleBindingSchema).check(
   ),
 );
 
-/** The parts of an installed contract the derivation reads: its deployment and, when present, its manifest. */
-interface DerivationContract {
-  readonly deployment: { readonly appId: string; readonly buildMarker: string };
-  readonly manifest?: RegisteredWorkloadCallReceiver['manifest'] & {
-    readonly registeredWorkloadCalls?: readonly OntosRegisteredWorkloadCall[];
-  };
-}
-
-/**
- * The calls the attested source contract declares that its receiver, as installed now, still takes. A call is dropped
- * unless the installed receiver publishes its exact operation version with that declaration and that workload, so a
- * receiver that was removed, replaced or changed never inherits a caller's earlier declaration.
- */
-const receivedCalls = (source: DerivationContract, contracts: readonly DerivationContract[]) =>
-  (source.manifest?.registeredWorkloadCalls ?? []).filter((call) => {
-    const receiver = contracts.find((candidate) => candidate.deployment.appId === call.audience);
-    return (
-      registeredWorkloadCallReceiverIssue(
-        call,
-        receiver?.manifest === undefined ? undefined : { deployment: receiver.deployment, manifest: receiver.manifest },
-      ) === undefined
-    );
-  });
-
 /**
  * The bindings of the installed release. A credential binds only what its issuing host attested with the key: its
  * module, that module's build marker and the composition revision of the issuing host's release. It binds while the
@@ -78,10 +54,7 @@ const receivedCalls = (source: DerivationContract, contracts: readonly Derivatio
  */
 export const deriveGatewayModuleBindings = (
   enrolment: readonly Pick<AttestedModuleCredential, 'appId' | 'attestation' | 'providerKeyId'>[],
-  installed: {
-    readonly composition: { readonly revision: string };
-    readonly contracts: readonly DerivationContract[];
-  },
+  installed: Parameters<typeof withRegisteredWorkloadCalls>[1],
 ) =>
   Schema.decodeUnknownEffect(bindingsSchema)(
     enrolment.flatMap((credential) => {
@@ -104,9 +77,7 @@ export const deriveGatewayModuleBindings = (
         sourceAppId: credential.appId,
         sourceBuildMarker: attested.buildMarker,
       };
-      return contract.manifest?.registeredWorkloadCalls === undefined
-        ? [binding]
-        : [{ ...binding, registeredWorkloads: receivedCalls(contract, installed.contracts) }];
+      return [withRegisteredWorkloadCalls(binding, installed)];
     }),
   ).pipe(Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })));
 

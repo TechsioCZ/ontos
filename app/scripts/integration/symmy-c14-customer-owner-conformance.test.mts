@@ -118,9 +118,10 @@ const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({
 const observeUntil = <Value, Failure, Requirements>(
   observe: Effect.Effect<Value, Failure, Requirements>,
   ready: (value: Value) => boolean,
+  attempts = 600,
 ) =>
   Effect.gen(function* observeCustomerJob() {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       const value = yield* observe;
       if (ready(value)) {
         return value;
@@ -676,13 +677,36 @@ it.live(
         } as const;
         const ownerDiagnostics = new Map<string, Effect.Effect<string>>();
         const ownerRuntimes = new Map<string, OwnerRuntime>();
-        yield* Effect.forEach(
-          appIds,
-          (appId) =>
-            startOwner({ appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes }),
-          { discard: true },
+        const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
+        const moduleKey = moduleKeys.get(symmyAppId);
+        assert.isOk(symmy);
+        if (moduleKey === undefined) {
+          return yield* unavailable('The actual independent module credential is missing');
+        }
+        // Each receiver owns a distinct map key, port and artifact; readiness makes no peer requests.
+        const [, workerArtifact] = yield* Effect.all(
+          [
+            Effect.forEach(
+              appIds,
+              (appId) =>
+                startOwner({
+                  appId,
+                  contracts,
+                  environment,
+                  moduleKeys,
+                  ownerDiagnostics,
+                  ownerRuntimes,
+                  ports,
+                  prefixes,
+                }),
+              { concurrency: 3, discard: true },
+            ),
+            buildProductWorker(symmy),
+          ],
+          { concurrency: 2 },
         );
         const client = yield* HttpClient.HttpClient;
+        yield* Effect.logInfo({ phase: 'customer-fixture-ready' });
         const headers = { 'idempotency-key': 'INTERNAL_C14_CUSTOMER_JOB', 'x-api-key': Redacted.value(key.secret) };
         const customerBody = customersBody({
           customerId: recordId,
@@ -711,13 +735,7 @@ it.live(
         const submit = submitFor('INTERNAL_C14_CUSTOMER_JOB');
         const accepted = yield* submit;
         expect(yield* submit).toEqual(accepted);
-        const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
-        const moduleKey = moduleKeys.get(symmyAppId);
-        assert.isOk(symmy);
-        if (moduleKey === undefined) {
-          return yield* unavailable('The actual independent module credential is missing');
-        }
-        const workerArtifact = yield* buildProductWorker(symmy);
+        // Admission replay is checked before dispatch; the worker stops before owners at scope exit.
         const worker = yield* startProductWorker(
           workerArtifact,
           {
@@ -988,6 +1006,7 @@ it.live(
             lastName: exportedCustomer.party.lastName ?? '',
           }),
         );
+        yield* Effect.logInfo({ phase: 'customer-readback-controls-accepted' });
         const roundTripWorker = yield* startProductWorker(
           workerArtifact,
           { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: roundTripKey },
@@ -1208,6 +1227,7 @@ it.live(
         yield* admin`insert into party.party_contact_points(tenant_id,party_id,contact_point_type,display_value,normalized_value,normalization_version,privacy_classification,valid_from,provenance_source,provenance_method,accepted_by_action_invocation_id,accepted_by_principal_id,policy_version)
           values(${tenantId},${secondParty.partyRef.resourceId},'EMAIL','Grace.Hopper@Example.test','grace.hopper@example.test','email.v1','PERSONAL','2020-01-01T00:00:00Z','internal-fixture','DECLARATION',${Option.getOrThrow(secondPartyEffect.owner_invocation_id)},${systemId},'fixture')`;
         yield* searchTwoCustomers({ client, headers, recordId, secondRecordId, shell });
+        yield* Effect.logInfo({ phase: 'customer-roundtrip-and-search-accepted' });
         const admittedBeforeDisable = yield* submitFor(beforeDisableKey);
         expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);
         yield* admin`update core.principals set status='disabled',disabled_at=current_timestamp where principal_id=${integration.principalId} and tenant_id=${tenantId}`;
@@ -1236,8 +1256,12 @@ it.live(
         expect(afterDisableWrites?.count).toBe(6);
         yield* disabledWorker.child.kill();
         yield* disabledWorker.child.exitCode;
+        yield* Effect.logInfo({ phase: 'customer-scenario-complete' });
         return yield* Effect.void;
       }),
-    ).pipe(Effect.provide(services)),
+    ).pipe(
+      Effect.tap(() => Effect.logInfo({ phase: 'customer-teardown-complete' })),
+      Effect.provide(services),
+    ),
   480_000,
 );

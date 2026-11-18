@@ -1,4 +1,3 @@
-import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect, Match, Redacted, Result, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
@@ -12,51 +11,21 @@ import {
   partyRegistryCommandRecoveryApi,
   partyRegistryCommandsApi,
 } from '../../shared/command-api.ts';
-import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyCreateRecoveryUnavailable } from '../../shared/domain/matching-contracts.ts';
 import {
   requestSearchRebuildWithAuthorization,
-  resolvePartyCommandCommit,
-  recoverPartyCreate,
   recoverPartyCreateWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 import { makeCommandAssertionFetch } from '../support/command-assertion-fetch.ts';
+import {
+  compositionRevision,
+  createResult,
+  invocationId,
+  makeSingleUseOwnerResponse,
+  recoveryCredential,
+} from '../support/party-command-recovery.ts';
 
-const invocationId = Schema.decodeSync(ActionInvocationIdSchema)('10000000-0000-4000-8000-000000000001');
-const compositionRevision = 'a'.repeat(64);
 const approvedApiBaseUrl = 'https://party.example/party-registry-api';
-const approvedBrowserApiBasePath = '/module-api/party-registry/build-approved/party-registry-api';
-
-const recoveryCredential = (jti: string, signature = 'signature') =>
-  `Bearer ${btoa('{"alg":"HS256"}')}.${btoa(JSON.stringify({ jti }))}.${signature}`;
-
-const makeSingleUseOwnerResponse = (ownerResponse: (request: Request) => Response) => {
-  const consumedJtis = new Set<string>();
-  const rejectedJtis: string[] = [];
-  const respond = (request: Request) => {
-    const encodedPayload = request.headers.get('authorization')?.split('.')[1];
-    if (encodedPayload === undefined) {
-      throw new Error('Expected a JWT credential');
-    }
-    const { jti } = Schema.decodeUnknownSync(Schema.Struct({ jti: Schema.String }))(JSON.parse(atob(encodedPayload)));
-    if (consumedJtis.has(jti)) {
-      rejectedJtis.push(jti);
-      return Response.json(
-        {
-          _tag: 'PartyMatchDecisionAuthenticationProblem',
-          detail: 'This single-use credential was already consumed.',
-          status: 401,
-          title: 'Credential already consumed',
-          type: 'urn:ontos:party:credential-consumed',
-        },
-        { headers: { 'content-type': 'application/problem+json' }, status: 401 },
-      );
-    }
-    consumedJtis.add(jti);
-    return ownerResponse(request);
-  };
-  return { consumedJtis, rejectedJtis, respond };
-};
 
 const makeNativeRecoveryFetch = (ownerResponse: (request: Request) => Response) => {
   const singleUse = makeSingleUseOwnerResponse(ownerResponse);
@@ -74,70 +43,6 @@ const makeNativeRecoveryAcquirer = (baseUrl: string | URL = approvedApiBaseUrl) 
       };
     });
   return { acquire, acquisitions: () => acquisitions };
-};
-
-const pinRecoveryDocument = Effect.gen(function* pinTestDocument() {
-  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (previousDocument === undefined) {
-        Reflect.deleteProperty(globalThis, 'document');
-      } else {
-        Object.defineProperty(globalThis, 'document', previousDocument);
-      }
-      if (previousLocation === undefined) {
-        Reflect.deleteProperty(globalThis, 'location');
-      } else {
-        Object.defineProperty(globalThis, 'location', previousLocation);
-      }
-    }),
-  );
-  Object.defineProperty(globalThis, 'document', {
-    configurable: true,
-    value: { querySelectorAll: () => [] },
-  });
-  Object.defineProperty(globalThis, 'location', {
-    configurable: true,
-    value: { origin: 'https://shell.example', pathname: '/en' },
-  });
-  yield* pinDocumentCompositionRevision(compositionRevision);
-});
-
-const makeRecoveryAssertionFetch = (ownerResponse: (request: Request) => Response) => {
-  const singleUse = makeSingleUseOwnerResponse(ownerResponse);
-  const requests: Request[] = [];
-  let assertions = 0;
-  const fakeFetch: typeof fetch = (input, init) => {
-    const request = new Request(input, init);
-    requests.push(request);
-    if (new URL(request.url).pathname !== '/shell-super-app-api/auth/gateway-context') {
-      return Promise.resolve(singleUse.respond(request));
-    }
-    assertions += 1;
-    return Promise.resolve(
-      Response.json({
-        apiBaseUrl: approvedBrowserApiBasePath,
-        compositionRevision,
-        expiresAt: 2_000_000_000,
-        token: recoveryCredential(`fresh-${assertions}`).slice('Bearer '.length),
-      }),
-    );
-  };
-  return { assertions: () => assertions, fakeFetch, requests };
-};
-
-const createResult = (outcome: 'CREATED' | 'MATCHED_EXISTING' | 'AMBIGUOUS') => {
-  const partyRef = {
-    moduleId: 'party.registry',
-    resourceId: invocationId,
-    resourceType: 'party.registry.party',
-    tenantId: invocationId,
-  };
-  const decisionRef = { ...partyRef, resourceType: 'party.registry.party-match-decision' };
-  return outcome === 'AMBIGUOUS'
-    ? { outcome, decisionRef, caseRef: { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' } }
-    : { outcome, decisionRef, partyRef };
 };
 
 const recoveryProblems = [
@@ -301,47 +206,6 @@ for (const { name, is, problem } of [
   );
 }
 
-it.effect('recovery acquires a fresh assertion without submitting an idempotency key or re-running a command', () =>
-  Effect.gen(function* testProgram3() {
-    yield* pinRecoveryDocument;
-    const { requests, assertions, fakeFetch } = makeRecoveryAssertionFetch(() =>
-      Response.json({
-        _tag: 'PartyCommandCommitResolution',
-        invocationId,
-        retryCommand: false,
-        state: 'COMMITTED',
-      }),
-    );
-    const result = yield* resolvePartyCommandCommit(
-      { invocationId },
-      {
-        baseUrl: 'https://party.example/party-registry-api',
-        correlationId: 'recovery',
-        gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-        traceId: 'trace',
-      },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(result.state).toBe('COMMITTED');
-    expect(assertions()).toBe(1);
-    expect(requests.length).toBe(2);
-    const [, request] = requests;
-    expect(Boolean(request)).toBe(true);
-    if (request === undefined) {
-      throw new Error('Expected truthy value');
-    }
-    expect(request.url).toBe(
-      `https://shell.example${approvedBrowserApiBasePath}/party-registry/action-commits/resolve`,
-    );
-    expect(request.headers.get('authorization')).toBe(recoveryCredential('fresh-1'));
-    expect(request.headers.get('idempotency-key')).toBe(null);
-    expect(request.headers.get('x-correlation-id')).toBe('recovery');
-    expect(request.headers.get('x-trace-id')).toBe('trace');
-    expect(yield* Effect.promise(() => request.json())).toEqual({
-      invocationId,
-    });
-  }),
-);
-
 for (const outcome of ['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const) {
   it.effect(`native owned recovery returns ${outcome} without reviewer-only reads or resubmission`, () =>
     Effect.gen(function* recoverOwnedResult() {
@@ -384,34 +248,6 @@ for (const outcome of ['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const) {
     }),
   );
 }
-
-it.effect('browser recovery uses the same owned invocation result, not reviewer authority', () =>
-  Effect.gen(function* browserOwned() {
-    yield* pinRecoveryDocument;
-    const { requests, assertions, fakeFetch } = makeRecoveryAssertionFetch(() =>
-      Response.json({
-        _tag: 'PartyCommandCommitResolution',
-        invocationId,
-        retryCommand: false,
-        state: 'COMMITTED',
-        createResult: createResult('CREATED'),
-      }),
-    );
-    const recovered = yield* recoverPartyCreate(
-      { invocationId },
-      { correlationId: 'browser-owned', gateway: { baseUrl: 'https://shell.example/shell-super-app-api' } },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(
-      Match.value(recovered).pipe(
-        Match.tag('PartyCreateRecovered', () => true),
-        Match.orElse(() => false),
-      ),
-    ).toBe(true);
-    expect(assertions()).toBe(1);
-    expect(requests).toHaveLength(2);
-    expect(requests.every((request) => !request.url.includes('party-match-decision'))).toBe(true);
-  }),
-);
 
 for (const state of ['RUNNING', 'COMMITTED'] as const) {
   it.effect(

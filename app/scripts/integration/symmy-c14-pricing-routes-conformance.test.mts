@@ -265,6 +265,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* nativePriceListRoutes() {
         const fixture = yield* makeInternalC14PricingRouteFixture();
+        yield* Effect.logInfo({ phase: 'pricing-fixture-ready' });
         yield* Effect.addFinalizer((exit) =>
           Exit.isFailure(exit)
             ? Effect.logError(
@@ -405,6 +406,7 @@ it.live(
           'accepted_change',
         ]);
         const inputs = yield* bootstrapInternalC14PricingRouteInputs(fixture);
+        yield* Effect.logInfo({ phase: 'pricing-groups-and-inputs-ready' });
         expect(inputs.readiness.evidence).toBeDefined();
         yield* waitUntil(DateTime.makeUnsafe(fixture.at));
         const get = (query: string, expectedStatus = 200) =>
@@ -705,6 +707,7 @@ it.live(
         ]);
         expect(yield* fixture.priceBarrier.armedPriceCommandCount).toBe(1);
         expect(yield* fixture.priceBarrier.sourceReceiptReads).toBeGreaterThanOrEqual(1);
+        yield* Effect.logInfo({ phase: 'pricing-committed-price-recovered' });
 
         // An existing business code ends conflict for its list and its price is not accepted, nothing is written.
         const duplicateJob = yield* submit('INTERNAL_C14_EXISTING_LIST_WITH_PRICE', deferred);
@@ -740,6 +743,7 @@ it.live(
         const otherGroup = all.find(({ code }) => code === fixture.secondRecordId);
         assert.isOk(otherGroup);
         yield* assertPriceBatchRefusals(fixture, { priceGroupRef: originalGroupRef }, batchPrice);
+        yield* Effect.logInfo({ phase: 'pricing-independent-list-controls-accepted' });
         const submitPrices = (
           idempotencyKey: string,
           priceGroupRef: typeof PriceGroupRefSchema.Type,
@@ -932,6 +936,7 @@ it.live(
         const { revocation } = fixture.priceBarrier;
         yield* revocation.armForNextPrice;
         const revokedJob = yield* submit('INTERNAL_C14_REVOKE_DURING_PRICE_DISPATCH', revokedLists);
+        yield* Effect.logInfo({ phase: 'pricing-revisions-accepted' });
         const heldPrice = yield* revocation.arrived.pipe(Effect.timeout('20 seconds'));
         const readSettledEffects = () =>
           fixture.admin<{
@@ -1047,8 +1052,12 @@ it.live(
         const unavailable = yield* get(firstPageQuery, 503);
         expect(unavailable.status).toBe(503);
         assert.isTrue(all.every(({ code }) => code.length > 0));
+        yield* Effect.logInfo({ phase: 'pricing-scenario-complete' });
         return yield* Effect.void;
       }),
-    ).pipe(Effect.provide(services)),
+    ).pipe(
+      Effect.tap(() => Effect.logInfo({ phase: 'pricing-teardown-complete' })),
+      Effect.provide(services),
+    ),
   900_000,
 );

@@ -2648,10 +2648,12 @@ describe('recognizes the real legacy receiver process protocol without weakening
   ]);
 });
 
-const actualPrivacySource = readFileSync(nodePath.join(appRoot, privacyCompletionProcess), 'utf-8');
-const privacyControl = actualPrivacySource.slice(
-  actualPrivacySource.indexOf('export const makeReportResponseLossControl'),
-  actualPrivacySource.indexOf('// Immutable historical TEST producer'),
+const actualPrivacyControl = readFileSync(
+  nodePath.join(appRoot, 'verticals/privacy/tests/support/report-response-loss-control.ts'),
+  'utf-8',
+);
+const privacyControl = actualPrivacyControl.slice(
+  actualPrivacyControl.indexOf('export const makeReportResponseLossControl'),
 );
 
 it('extracts the actual Privacy response-loss control', () => {

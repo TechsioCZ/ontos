@@ -16,7 +16,11 @@ import type {
   verifyNodeReleaseEnvelopeStaging,
 } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
-import { Cause, Effect, Predicate, Schema } from 'effect';
+import { NodeHttpServer } from '@effect/platform-node';
+import { Cause, Context, Effect, Layer, Predicate, Schema } from 'effect';
+import type { Scope } from 'effect';
+import { HttpEffect, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
 import { transform } from 'esbuild';
 
@@ -35,6 +39,19 @@ import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/stri
 import { ReleaseUiSchema } from './release-envelope-ui.fixture.mts';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+/** Serves an HTTP app on a native loopback listener for the surrounding scope and returns its origin. */
+const serveOnLoopback = <E,>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, HttpServerRequest.HttpServerRequest | Scope.Scope>,
+) =>
+  Effect.gen(function* serveOnLoopbackEffect() {
+    const context = yield* Layer.build(HttpServer.serve(app).pipe(Layer.provideMerge(NodeHttpServer.layerTest)));
+    const { address } = Context.get(context, HttpServer.HttpServer);
+    if (NetAddress.isUnixPathAddress(address)) {
+      return yield* Effect.die(new Error('The loopback test server must use an Internet socket'));
+    }
+    return `http://127.0.0.1:${address.port}`;
+  });
 
 const packageJsonFile = 'package.json';
 
@@ -2561,14 +2578,16 @@ it.live(
         ),
       ),
     );
-    rs.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      const request = new Request(input, init);
-      const stem = new URL(request.url).pathname.split('/').find((segment) => segment.length > 0);
-      const handler = stem === undefined ? undefined : handlers.get(stem);
-      return handler === undefined
-        ? Promise.resolve(new Response(undefined, { status: 503 }))
-        : handler.handler(request);
-    });
+    // The generated clients reach their generated handlers over a real loopback HTTP listener.
+    const ownerOrigin = yield* serveOnLoopback(
+      HttpEffect.fromWebHandler((request) => {
+        const stem = new URL(request.url).pathname.split('/').find((segment) => segment.length > 0);
+        const handler = stem === undefined ? undefined : handlers.get(stem);
+        return handler === undefined
+          ? Promise.resolve(new Response(undefined, { status: 503 }))
+          : handler.handler(request);
+      }),
+    );
     const readinessValues = yield* Effect.all(
       generatedProofs.map(
         Effect.fn(function* verifyGeneratedReadiness({ fixture, getReadiness }) {
@@ -2585,7 +2604,7 @@ it.live(
             yield* Effect.promise(() => directResponse.json()),
           );
           const clientReadiness = yield* Schema.decodeUnknownEffect(MicroVerticalReadinessSchema)(
-            yield* getReadiness({ baseUrl: 'http://localhost' }),
+            yield* getReadiness({ baseUrl: ownerOrigin }),
           );
           expect(clientReadiness).toEqual(directReadiness);
           return clientReadiness;
@@ -3200,8 +3219,6 @@ const validateModuleFederationTypes = (input: {
   return Schema.decodeUnknownSync(ModuleFederationValidationResultSchema)(output);
 };
 
-const publicUrl = 'https://party.example.test';
-
 const buildMarker = 'party-build';
 
 interface ApiOnlyAppFixture {
@@ -3245,36 +3262,34 @@ const apiOnlyApp = (): ApiOnlyAppFixture => ({
   marker: { build: buildMarker },
 });
 
-const mockPublicResponses = (failedPath?: string) => {
-  const requested: string[] = [];
-  rs.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-    let address: string;
-    if (Schema.is(Schema.String)(input)) {
-      address = input;
-    } else if ('url' in input) {
-      address = input.url;
-    } else {
-      address = input.href;
-    }
-    const route = new URL(address).pathname;
-    requested.push(route);
-    if (route === failedPath) {
-      return Promise.resolve(new Response('unavailable', { status: 503 }));
-    }
-    const body =
-      route === mfManifestPath
-        ? { metaData: { publicPath: `${publicUrl}/` } }
-        : { marker: { build: buildMarker }, status: 'ready' };
-    return Promise.resolve(Response.json(body, { headers: { 'access-control-allow-origin': '*' } }));
+/** The deployed application's public surface, served on a native loopback listener for the surrounding scope. */
+const servePublicResponses = (failedPath?: string) =>
+  Effect.gen(function* servePublicResponsesEffect() {
+    const requested: string[] = [];
+    let origin = '';
+    origin = yield* serveOnLoopback(
+      Effect.gen(function* publicResponse() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const route = new URL(request.url, origin).pathname;
+        requested.push(route);
+        if (route === failedPath) {
+          return HttpServerResponse.text('unavailable', { status: 503 });
+        }
+        const body =
+          route === mfManifestPath
+            ? { metaData: { publicPath: `${origin}/` } }
+            : { marker: { build: buildMarker }, status: 'ready' };
+        return HttpServerResponse.jsonUnsafe(body, { headers: { 'access-control-allow-origin': '*' } });
+      }),
+    );
+    return { publicUrl: origin, requested };
   });
-  return requested;
-};
 
 it.live(
   'API-only proof keeps manifest, readiness, service-binding and JSON proofs without invented pages/locales',
   Effect.fn(function* scenario29() {
-    const requested = mockPublicResponses();
-    const evidence = yield* validateApp(apiOnlyApp(), publicUrl);
+    const { publicUrl: servedPublicUrl, requested } = yield* servePublicResponses();
+    const evidence = yield* validateApp(apiOnlyApp(), servedPublicUrl);
     expect(requested).toEqual([mfManifestPath, readinessPath, '/binding', apiSmokePath]);
     for (const proof of [
       'mf-manifest',
@@ -3286,7 +3301,7 @@ it.live(
       expect(evidence.assertions.some((entry) => entry.type === proof && entry.status === 'pass')).toBe(true);
     }
     expect(evidence.assertions.some((entry) => entry.type === 'ssr' || entry.type === 'i18n-marker')).toBe(false);
-  }),
+  }, Effect.scoped),
 );
 
 for (const [route, error] of [
@@ -3298,50 +3313,50 @@ for (const [route, error] of [
   it.live(
     `API-only proof still fails closed for ${route}`,
     Effect.fn(function* scenario30() {
-      mockPublicResponses(route);
-      const failureCause8 = yield* Effect.flip(Effect.sandbox(validateApp(apiOnlyApp(), publicUrl)));
+      const { publicUrl: servedPublicUrl } = yield* servePublicResponses(route);
+      const failureCause8 = yield* Effect.flip(Effect.sandbox(validateApp(apiOnlyApp(), servedPublicUrl)));
       expect(String(Cause.squash(failureCause8))).toMatch(error);
-    }),
+    }, Effect.scoped),
   );
 }
 
 it.live(
   'full-stack declared SSR remains mandatory',
   Effect.fn(function* scenario31() {
-    const requested = mockPublicResponses('/en');
+    const { publicUrl: servedPublicUrl, requested } = yield* servePublicResponses('/en');
     const app = apiOnlyApp();
     Object.assign(app.deploy.cloudflare.routes, {
       locale: localePath,
       ssr: '/en',
     });
-    const failureCause9 = yield* Effect.flip(Effect.sandbox(validateApp(app, publicUrl)));
+    const failureCause9 = yield* Effect.flip(Effect.sandbox(validateApp(app, servedPublicUrl)));
     expect(String(Cause.squash(failureCause9))).toMatch(/SSR route returned HTTP 503/u);
     expect(requested).toEqual(['/en']);
-  }),
+  }, Effect.scoped),
 );
 
 it.live(
   'declared namespace locale remains mandatory independently of SSR',
   Effect.fn(function* scenario32() {
-    const requested = mockPublicResponses(localePath);
+    const { publicUrl: servedPublicUrl, requested } = yield* servePublicResponses(localePath);
     const app = apiOnlyApp();
     Object.assign(app.deploy.cloudflare.routes, { locale: localePath });
-    const failureCause10 = yield* Effect.flip(Effect.sandbox(validateApp(app, publicUrl)));
+    const failureCause10 = yield* Effect.flip(Effect.sandbox(validateApp(app, servedPublicUrl)));
     expect(String(Cause.squash(failureCause10))).toMatch(/locale JSON returned HTTP 503/u);
     expect(requested).toEqual([mfManifestPath, localePath]);
-  }),
+  }, Effect.scoped),
 );
 
 for (const field of ['ssr', 'locale']) {
   it.live(
     `an invalid declared ${field} route cannot disable its proof`,
     Effect.fn(function* scenario33() {
-      mockPublicResponses();
+      const { publicUrl: servedPublicUrl } = yield* servePublicResponses();
       const app = apiOnlyApp();
       Object.assign(app.deploy.cloudflare.routes, { [field]: '' });
-      const failureCause11 = yield* Effect.flip(Effect.sandbox(validateApp(app, publicUrl)));
+      const failureCause11 = yield* Effect.flip(Effect.sandbox(validateApp(app, servedPublicUrl)));
       expect(String(Cause.squash(failureCause11))).toMatch(/declared .* route must be a root-relative path/u);
-    }),
+    }, Effect.scoped),
   );
 }
 
