@@ -1,4 +1,4 @@
-import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
+import { commerceMarketCatalogBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import type { MarketRevisionNativeCustomerContextState } from '../support/market-revision-native-protocol.ts';
 import {
   DatabaseConfig,
@@ -687,13 +687,13 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       Layer.provide(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration)),
       Layer.provide(NodeCrypto.layer),
     );
-    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
       Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
     );
     const base = Context.get(yield* Layer.build(coreFactory), ActionRuntime);
     const readRuntime = Context.get(
       yield* Layer.build(
-        makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+        makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
           Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
         ),
       ),
