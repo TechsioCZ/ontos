@@ -55,7 +55,7 @@
     "eslint/no-use-before-define": 5,
     "eslint/prefer-const": 1,
     "eslint/prefer-destructuring": 6,
-    "github/filenames-match-regex": 19,
+    "github/filenames-match-regex": 18,
     "import/no-duplicates": 1,
     "import/no-namespace": 1,
     "max-classes-per-file": 5,

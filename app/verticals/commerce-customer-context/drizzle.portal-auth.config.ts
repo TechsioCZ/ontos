@@ -1,4 +1,3 @@
-// oxlint-disable-next-line github/filenames-match-regex -- Drizzle Kit requires this provider-specific config filename; expires: 2027-03-01.
 import { defineConfig } from 'drizzle-kit';
 import { Redacted } from 'effect';
 
