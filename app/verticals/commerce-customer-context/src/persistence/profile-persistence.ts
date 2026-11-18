@@ -285,7 +285,7 @@ interface RetailPortalProfileBindingReadServices {
     tenantId: string,
   ) => Effect.Effect<RetailPortalProfileBindingReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
-interface RetailPrincipalResolutionServices {
+export interface RetailPrincipalResolutionServices {
   readonly resolvePrincipal: (
     input: RetailPrincipalResolutionRequest,
     principalId: string,

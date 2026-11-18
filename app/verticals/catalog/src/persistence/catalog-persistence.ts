@@ -45,7 +45,7 @@ type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, n
 
 const ProductIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CatalogProductId'));
 
-interface CreateProductPersistenceInput {
+export interface CreateProductPersistenceInput {
   readonly actionInvocationId: string;
   readonly description: string | undefined;
   readonly name: string | undefined;
@@ -55,7 +55,7 @@ interface CreateProductPersistenceInput {
   readonly variantId: string | undefined;
 }
 
-interface UpdateProductPersistenceInput {
+export interface UpdateProductPersistenceInput {
   readonly actionInvocationId: string;
   readonly activateVariantId: string | undefined;
   readonly description?: string;
@@ -68,7 +68,7 @@ interface UpdateProductPersistenceInput {
   readonly tenantId: string;
 }
 
-interface RetireProductPersistenceInput {
+export interface RetireProductPersistenceInput {
   readonly actionInvocationId: string;
   readonly effectiveAt: Date;
   readonly expectedRevision: number;
@@ -78,7 +78,7 @@ interface RetireProductPersistenceInput {
   readonly tenantId: string;
 }
 
-interface ReactivateProductPersistenceInput {
+export interface ReactivateProductPersistenceInput {
   readonly actionInvocationId: string;
   readonly expectedRevision: number;
   readonly principalId: string;
@@ -87,7 +87,7 @@ interface ReactivateProductPersistenceInput {
   readonly tenantId: string;
 }
 
-interface CorrectProductPersistenceInput {
+export interface CorrectProductPersistenceInput {
   readonly actionInvocationId: string;
   readonly description: string | undefined;
   readonly evidenceRefs: readonly string[];

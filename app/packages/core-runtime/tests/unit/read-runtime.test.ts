@@ -4490,6 +4490,9 @@ const stagedFailureTag = <Failure>(exit: Exit.Exit<readonly string[], Failure>):
   return Predicate.hasProperty(failure, '_tag') && Predicate.isString(failure._tag) ? failure._tag : undefined;
 };
 
+/** Everything a caller can see of a read's outcome, as text. */
+const visibleOutcome = <Failure>(exit: Exit.Exit<readonly string[], Failure>): string => JSON.stringify(exit);
+
 it.effect('runs prepare before the read transaction, load inside it, and finish after its commit', () =>
   Effect.gen(function* stagedReadPhases() {
     const events: string[] = [];
@@ -4565,7 +4568,7 @@ it.effect('never releases prepared owner output when the owner-local rule denies
     });
     expect(stagedFailureTag(exit)).toBe('ReadPermissionDenied');
     expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual(['prepare']);
-    expect(JSON.stringify(exit)).not.toContain('prepared-owner-value');
+    expect(visibleOutcome(exit)).not.toContain('prepared-owner-value');
     expect(harness.evidenceParameterRows().flat()).not.toContain('prepared-owner-value');
   }),
 );
