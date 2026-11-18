@@ -181,6 +181,14 @@ it('excludes only the directory a negation names, not one its name begins', () =
   });
 });
 
+it('caches a package whose directory name holds glob characters under a literal path', () => {
+  withWorkspace('packages:\n  - sites/*\n', ['sites/web[1]', 'sites/a*b?'], (workspace) => {
+    const { directories, paths } = deriveOrThrow(workspace);
+    expect(directories).toEqual(['sites/a*b?', 'sites/web[1]']);
+    expect(paths.slice(2)).toEqual(['app/sites/a[*]b[?]/node_modules', 'app/sites/web[[]1]/node_modules']);
+  });
+});
+
 it('covers a package directory added to the workspace in the cached paths and the key', () => {
   withWorkspace(LISTING, FIXTURE, (workspace) => {
     const before = deriveOrThrow(workspace);

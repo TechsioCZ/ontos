@@ -140,7 +140,8 @@ runs:
           echo 'EOF'
           echo 'paths<<EOF'
           printf '%s\n' app/node_modules '!app/node_modules/.cache'
-          sed 's|.*|app/&/node_modules|' <<<"$packages"
+          # actions/cache reads each path as a glob: [ * ? in a directory name are bracketed to match literally.
+          sed -e 's/[[*?]/[&]/g' -e 's|.*|app/&/node_modules|' <<<"$packages"
           echo 'EOF'
           echo "manifests=${manifests%% *}"
         } >>"$GITHUB_OUTPUT"
