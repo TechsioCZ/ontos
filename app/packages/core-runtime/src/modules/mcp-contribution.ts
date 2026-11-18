@@ -82,11 +82,11 @@ const shellPagePath = Schema.String.check(Schema.isPattern(/^\/[a-z0-9/-]*$/u));
 
 /**
  * Shell page where people review the module's own AI changes (its `ownProposalEngine` batches). The approval queue
- * („Ke schválení“) links each such batch there with `label`, e.g. „Otevřít v CRM“.
+ * („Ke schválení“) links each such batch there with `label`, e.g. „Otevřít v modulu“.
  */
 export const OntosMcpApprovalsPageSchema = Schema.Struct({
   label: OntosMcpTextSchema,
-  /** Shell page below `/<lang>`, e.g. `/ukoly/schvalovani-ai`. */
+  /** Shell page below `/<lang>`, e.g. `/<page>/schvalovani-ai`. */
   path: shellPagePath,
 });
 export type OntosMcpApprovalsPage = typeof OntosMcpApprovalsPageSchema.Type;
@@ -247,7 +247,7 @@ export const OntosMcpContributionSchema = Schema.Struct({
   ),
   /** The module keeps its own AI change engine (`aiChanges`, AiDecideChanges, AiRevertBatch) the queue also shows. */
   ownProposalEngine: Schema.optionalKey(Schema.Boolean),
-  /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
+  /** Shell page of the module below `/<lang>`, e.g. `/<page>`. */
   page: Schema.optionalKey(shellPagePath),
   recordLinks: Schema.optionalKey(Schema.Array(OntosMcpRecordLinkSchema)),
   revision: Schema.optionalKey(OntosMcpRevisionSchema),
@@ -280,7 +280,7 @@ export interface OntosMcpCommandInput extends OntosMcpWriteInput {
   readonly actionSlug?: string;
 }
 
-/** Explicitly not offered to agents (approval plumbing, demo maintenance, internal recovery). */
+/** Explicitly not offered to agents (approval plumbing, maintenance, internal recovery). */
 export const OntosMcpHidden = 'hidden' as const;
 
 /**
