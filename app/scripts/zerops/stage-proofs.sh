@@ -11,8 +11,9 @@
 # app, and a kept service deploys nothing and is verified all the same.
 #
 # The warm-up keeps its full persona and destination coverage, and its personas sweep side by side, one browser context
-# each (scripts/ops/stage-warmup.mts). Its budget there is a wall-clock cap, not an expected cost: when it expires with
-# any declared persona or destination unread, the warm-up fails, so the visible-identifier gate never passes unread.
+# each (scripts/ops/stage-warmup.mts). Its budget there is a wall-clock cap, not an expected cost. However the sweep
+# ends, a declared persona or destination left unread fails the warm-up, so the visible-identifier gate never passes
+# unread.
 # The warm-up accounts, the OAuth proof's sessions and the verification account are independent and read-only, so
 # all three run together. No result is ignored.
 set -euo pipefail
