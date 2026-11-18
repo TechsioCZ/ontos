@@ -1,5 +1,4 @@
 import { defineConfig } from '@rstest/core';
-import { fileURLToPath } from 'node:url';
 
 const root = import.meta.dirname;
 
