@@ -1,24 +1,21 @@
-import { Effect } from 'effect';
-import { beforeEach, expect, rstest, it } from 'effect-rstest';
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
+import {
+  ShellReloadRequiredProblemSchema,
+  ShellResourceResponseSchema,
+  ShellSearchResponseSchema,
+} from '../../../shared/browser-api.ts';
 import { loader as resourceLoader } from '../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data.client.ts';
 import { loader as searchLoader } from '../../../src/routes/[lang]/search/page.data.client.ts';
-import { authenticatedShellFixture } from './authenticated-shell-fixture.ts';
-
-const { loadHomePageModelMock, resourceDetailMock, searchResourcesMock } = rstest.hoisted(() => ({
-  loadHomePageModelMock: rstest.fn(),
-  resourceDetailMock: rstest.fn(),
-  searchResourcesMock: rstest.fn(),
-}));
-
-rstest.mock('../../../src/routes/[lang]/home-page-model.ts', () => ({
-  loadHomePageModel: loadHomePageModelMock,
-}));
-
-rstest.mock('../../../src/api/auth-client.ts', () => ({
-  resourceDetail: resourceDetailMock,
-  searchResources: searchResourcesMock,
-}));
+import {
+  adaSelectingCompany,
+  adaSignedIn,
+  makeShellBff,
+  shellCompositionRevision,
+  signedInShellReads,
+} from '../../support/shell-bff-double.ts';
+import type { ShellBffEndpoint, ShellBffScript } from '../../support/shell-bff-double.ts';
 
 const request = () => new Request('https://shell.example.test/en/search?q=invoice');
 const resourceRef = {
@@ -27,73 +24,90 @@ const resourceRef = {
   resourceType: 'invoice',
 };
 
-beforeEach(() => {
-  loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShellFixture()));
-  searchResourcesMock.mockReturnValue(Effect.succeed({ partial: false, results: [] }));
-  resourceDetailMock.mockReturnValue(Effect.succeed({ detail: { fields: [], title: 'Invoice 42' } }));
+const reloadRequired = Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)({
+  _tag: 'ShellReloadRequiredProblem',
+  detail: 'This document belongs to a previous application release.',
+  status: 409,
+  title: 'Application reload required',
+  type: 'about:blank',
 });
 
-it.live('does not read a search or resource owner for a stale document', () =>
-  Effect.gen(function* staleDocumentStopsOwnerReads() {
-    loadHomePageModelMock.mockReturnValue(Effect.succeed({ state: 'reload_required' }));
+/** The Shell BFF of a signed-in Ada whose search and resource owners answer, unless a test scripts otherwise. */
+const ownerBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    ...signedInShellReads(adaSignedIn),
+    resourceDetail: (payload) =>
+      Effect.succeed(
+        Schema.decodeUnknownSync(ShellResourceResponseSchema)({
+          detail: { fields: [], title: 'Invoice 42' },
+          media: { enabled: false, reason: 'absent' },
+          projectionLagging: false,
+          ref: { moduleId: payload.moduleId, resourceId: payload.resourceId, resourceType: payload.resourceType },
+          timeline: [],
+        }),
+      ),
+    search: () => Effect.succeed(Schema.decodeUnknownSync(ShellSearchResponseSchema)({ partial: false, results: [] })),
+    ...overrides,
+  });
+const sent = (bff: ReturnType<typeof ownerBff>, endpoint: ShellBffEndpoint) =>
+  bff.requests.filter((received) => received.endpoint === endpoint).map((received) => received.body);
 
+it.live('does not read a search or resource owner for a stale document', () => {
+  const bff = ownerBff({ shellComposition: () => Effect.fail(reloadRequired) });
+  return Effect.gen(function* staleDocumentStopsOwnerReads() {
     expect(yield* Effect.promise(() => searchLoader({ request: request() }))).toMatchObject({
       state: 'reload_required',
     });
     expect(yield* Effect.promise(() => resourceLoader({ params: resourceRef, request: request() }))).toMatchObject({
       state: 'reload_required',
     });
-    expect(searchResourcesMock).not.toHaveBeenCalled();
-    expect(resourceDetailMock).not.toHaveBeenCalled();
-  }),
-);
+    expect(sent(bff, 'search')).toEqual([]);
+    expect(sent(bff, 'resourceDetail')).toEqual([]);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.live('includes the captured release in each search and resource request', () =>
-  Effect.gen(function* everyOwnerRequestCarriesTheRelease() {
-    const shell = authenticatedShellFixture();
-
+it.live('includes the captured release in each search and resource request', () => {
+  const bff = ownerBff();
+  return Effect.gen(function* everyOwnerRequestCarriesTheRelease() {
     expect(yield* Effect.promise(() => searchLoader({ request: request() }))).toMatchObject({ state: 'ready' });
     expect(yield* Effect.promise(() => resourceLoader({ params: resourceRef, request: request() }))).toMatchObject({
       state: 'ready',
     });
-    expect(searchResourcesMock.mock.calls[0]?.[0]).toEqual({
-      compositionRevision: shell.compositionRevision,
-      query: 'invoice',
-    });
-    expect(resourceDetailMock.mock.calls[0]?.[0]).toEqual({
-      ...resourceRef,
-      compositionRevision: shell.compositionRevision,
-    });
-  }),
-);
+    expect(sent(bff, 'search')).toEqual([{ compositionRevision: shellCompositionRevision, query: 'invoice' }]);
+    expect(sent(bff, 'resourceDetail')).toEqual([{ ...resourceRef, compositionRevision: shellCompositionRevision }]);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.live('does not read an owner before a release has been admitted', () =>
-  Effect.gen(function* missingAdmissionStopsOwnerReads() {
-    const { compositionRevision, ...shell } = authenticatedShellFixture();
-    expect(compositionRevision).toHaveLength(64);
-    loadHomePageModelMock.mockReturnValue(Effect.succeed(shell));
-
+it.live('does not read an owner before a release has been admitted', () => {
+  // A session that still has to select its company is never given a composition release.
+  const bff = ownerBff({ currentSession: () => Effect.succeed(adaSelectingCompany) });
+  return Effect.gen(function* missingAdmissionStopsOwnerReads() {
     expect(yield* Effect.promise(() => searchLoader({ request: request() }))).toMatchObject({
+      shell: { contextState: 'selection_required', state: 'authenticated' },
       state: 'selection_required',
     });
     expect(yield* Effect.promise(() => resourceLoader({ params: resourceRef, request: request() }))).toMatchObject({
       state: 'selection_required',
     });
-    expect(searchResourcesMock).not.toHaveBeenCalled();
-    expect(resourceDetailMock).not.toHaveBeenCalled();
-  }),
-);
+    expect(sent(bff, 'shellComposition')).toEqual([]);
+    expect(sent(bff, 'search')).toEqual([]);
+    expect(sent(bff, 'resourceDetail')).toEqual([]);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.live('preserves reload-required responses from search and resource owners', () =>
-  Effect.gen(function* changedReleaseRequiresANewDocument() {
-    searchResourcesMock.mockReturnValue(Effect.fail({ _tag: 'ShellReloadRequiredProblem' }));
-    resourceDetailMock.mockReturnValue(Effect.fail({ _tag: 'ShellReloadRequiredProblem' }));
-
+it.live('preserves reload-required responses from search and resource owners', () => {
+  const bff = ownerBff({
+    resourceDetail: () => Effect.fail(reloadRequired),
+    search: () => Effect.fail(reloadRequired),
+  });
+  return Effect.gen(function* changedReleaseRequiresANewDocument() {
     expect(yield* Effect.promise(() => searchLoader({ request: request() }))).toMatchObject({
       state: 'reload_required',
     });
     expect(yield* Effect.promise(() => resourceLoader({ params: resourceRef, request: request() }))).toMatchObject({
       state: 'reload_required',
     });
-  }),
-);
+    expect(sent(bff, 'search')).toHaveLength(1);
+    expect(sent(bff, 'resourceDetail')).toHaveLength(1);
+  }).pipe(Effect.provide(bff.browser));
+});

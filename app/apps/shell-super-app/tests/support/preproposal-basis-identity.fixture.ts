@@ -11,8 +11,14 @@ import {
   makeActionRuntimeLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
-import type { LegalEntityContextService, OperationalScope } from '@app/core-runtime';
+import type {
+  ActionRuntimeService,
+  LegalEntityContextService,
+  OperationalScope,
+  PrincipalResolverService,
+} from '@app/core-runtime';
 import { makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import {
@@ -22,6 +28,7 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import type { AuthenticationNamespaceRegistry } from '@app/core-runtime/auth/external-identity-admission';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
@@ -43,6 +50,9 @@ import { Cause, Config, Context, Crypto, Effect, Layer, Logger, Redacted, Schema
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
+import type { ApiKeyServiceContract } from '../../api/auth/api-key-service.ts';
+import type { IdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
+import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
 const protocol = 'ontos.shell.preproposal-basis.identity.v1' as const;
@@ -131,6 +141,278 @@ const describe = Effect.sync(() =>
     })}\n`,
   ),
 );
+
+/** The services the identity protocol drives; `serve` builds them over the owned database. */
+export interface PreproposalIdentityParticipants {
+  readonly authentication: Pick<
+    AuthenticationServiceContract,
+    'createFixtureUser' | 'resolveShellContext' | 'resolveTenantContext' | 'signIn'
+  >;
+  readonly keys: Pick<ApiKeyServiceContract, 'verify'>;
+  readonly lifecycle: Pick<IdentityLifecycleService, 'createNonHumanPrincipal' | 'issue'>;
+  /** The Shell origin every sign-in and session read presents. */
+  readonly origin: string;
+  readonly resolver: Pick<PrincipalResolverService, 'resolveBetterAuthApiKey'>;
+}
+
+/** The private command lines in and response lines out; `serve` binds them to fd 4 and fd 3. */
+export interface PreproposalIdentityTransport<InputError, OutputError> {
+  readonly commands: Stream.Stream<string, InputError>;
+  readonly write: (line: string) => Effect.Effect<void, OutputError>;
+}
+
+type IdentityCommand = typeof CommandSchema.Type;
+/** A response frame as the participants produce it; the response schema checks it as it is written. */
+type IdentityFrame = Pick<typeof ResponseSchema.Type, 'operation' | 'protocol'>;
+
+/** What one protocol run shares across its commands: the participants, the buyer and the writer. */
+interface IdentitySetup<OutputError> {
+  readonly email: string;
+  readonly participants: PreproposalIdentityParticipants;
+  readonly password: Redacted.Redacted;
+  readonly send: <Frame extends IdentityFrame>(
+    response: Frame,
+  ) => Effect.Effect<void, OutputError | Schema.SchemaError>;
+  readonly suffix: string;
+}
+
+/** The session cookies a sign-in set, as the browser sends them back. */
+const sessionCookie = (setCookieHeaders: readonly string[]) =>
+  setCookieHeaders.map((value) => value.split(';')[0]).join('; ');
+
+/** The authenticated operator the buyer's own session resolves to, with a selected Legal Entity. */
+type BuyerPrincipal = Extract<
+  Effect.Success<ReturnType<PreproposalIdentityParticipants['authentication']['resolveShellContext']>>,
+  { readonly state: 'authenticated' }
+>['principal'];
+
+/** One managed service principal with its own verified key, issued by the buyer. */
+const produceService = Effect.fn('PreproposalIdentity.produceService')(function* produceService<OutputError>(
+  setup: IdentitySetup<OutputError>,
+  operator: { readonly headers: Headers; readonly principal: BuyerPrincipal },
+  name: string,
+) {
+  const { keys, lifecycle } = setup.participants;
+  const { headers, principal } = operator;
+  const createdService = yield* lifecycle.createNonHumanPrincipal({
+    correlationId: `${setup.suffix}:${name}:create`,
+    idempotencyKey: `${setup.suffix}:${name}:create`,
+    payload: { displayName: `Preproposal ${name}`, kind: 'service' },
+    principal,
+  });
+  const key = yield* lifecycle.issue({
+    correlationId: `${setup.suffix}:${name}:key`,
+    idempotencyKey: `${setup.suffix}:${name}:key`,
+    managedPrincipalId: createdService.principalId,
+    name,
+    principal,
+    requestHeaders: headers,
+  });
+  if (createdService.principalId === principal.principalId || key.cleanupPending) {
+    return yield* unavailable('managed-service-binding');
+  }
+  const verified = yield* keys.verify(Redacted.value(key.secret));
+  return {
+    authBindingId: key.authBindingId,
+    principalId: createdService.principalId,
+    providerKeyId: verified.providerKeyId,
+    secret: key.secret,
+  };
+});
+
+/** Answers the one CREATE_SERVICE_KEYS command with the buyer's own key and four managed service keys. */
+const createServiceKeys = <OutputError>(
+  setup: IdentitySetup<OutputError>,
+  command: Extract<IdentityCommand, { readonly operation: 'CREATE_SERVICE_KEYS' }>,
+) =>
+  Effect.gen(function* createIdentityServiceKeys() {
+    const { authentication, keys, lifecycle, origin, resolver } = setup.participants;
+    const { email, password, suffix } = setup;
+    const session = yield* authentication.signIn(email, password, new Headers({ origin }));
+    if (session.identity.principalId !== command.buyerPrincipalId || session.identity.tenantId !== command.tenantId) {
+      return yield* unavailable('actual-human-session');
+    }
+    const headers = new Headers({ cookie: sessionCookie(session.setCookieHeaders), origin });
+    const resolved = yield* authentication.resolveShellContext(headers);
+    if (resolved.state !== 'authenticated' || resolved.principal.principalId !== command.buyerPrincipalId) {
+      return yield* unavailable('actual-operator-context');
+    }
+    const { principal } = resolved;
+    if (principal.authContextRef === undefined || principal.legalEntityId === undefined) {
+      return yield* unavailable('actual-operator-session');
+    }
+    const buyerKey = yield* lifecycle.issue({
+      correlationId: `${suffix}:buyer:key`,
+      idempotencyKey: `${suffix}:buyer:key`,
+      name: 'Preproposal original buyer',
+      principal,
+      requestHeaders: headers,
+    });
+    if (buyerKey.cleanupPending) {
+      return yield* unavailable('buyer-self-binding');
+    }
+    const verifiedBuyer = yield* keys.verify(Redacted.value(buyerKey.secret));
+    const boundBuyer = yield* resolver.resolveBetterAuthApiKey(verifiedBuyer.providerKeyId);
+    if (
+      boundBuyer.principalId !== principal.principalId ||
+      boundBuyer.tenantId !== principal.tenantId ||
+      boundBuyer.authBindingId !== buyerKey.authBindingId
+    ) {
+      return yield* unavailable('original-buyer-provider-binding');
+    }
+    const operator = { headers, principal };
+    const cccReader = yield* produceService(setup, operator, 'ccc-reader');
+    const pricingIssuer = yield* produceService(setup, operator, 'pricing-issuer');
+    const catalog = yield* produceService(setup, operator, 'catalog');
+    const marketRelay = yield* produceService(setup, operator, 'market-relay');
+    // A second sign-in stays in the Tenant: no Legal Entity is selected on that session.
+    const tenantSession = yield* authentication.signIn(email, password, new Headers({ origin }));
+    const tenantContext = yield* authentication.resolveTenantContext(
+      new Headers({ cookie: sessionCookie(tenantSession.setCookieHeaders), origin }),
+    );
+    if (
+      tenantContext.state !== 'authenticated' ||
+      tenantContext.principal.principalId !== principal.principalId ||
+      tenantContext.principal.legalEntityId !== undefined ||
+      tenantContext.principal.authContextRef === undefined
+    ) {
+      return yield* unavailable('actual-tenant-session');
+    }
+    const servicePrincipals = [
+      cccReader.principalId,
+      pricingIssuer.principalId,
+      catalog.principalId,
+      marketRelay.principalId,
+    ];
+    if (new Set([principal.principalId, ...servicePrincipals]).size !== servicePrincipals.length + 1) {
+      return yield* unavailable('distinct-service-identities');
+    }
+    return yield* setup.send({
+      buyer: {
+        authBindingId: buyerKey.authBindingId,
+        principalId: principal.principalId,
+        secret: buyerKey.secret,
+      },
+      buyerPrincipalId: principal.principalId,
+      buyerSessions: {
+        legalEntity: { authContextRef: principal.authContextRef, legalEntityId: principal.legalEntityId },
+        tenant: { authContextRef: tenantContext.principal.authContextRef },
+      },
+      catalog,
+      cccReader,
+      marketRelay,
+      operation: 'SERVICE_KEYS_CREATED',
+      pricingIssuer,
+      protocol,
+      tenantId: principal.tenantId,
+    });
+  });
+
+/** One command line as the protocol admits it: bounded, then decoded by the command schema. */
+const decodeCommand = (line: string) =>
+  line.length > 65_536
+    ? Effect.fail(unavailable('command-size'))
+    : Schema.decodeUnknownEffect(Schema.fromJsonString(CommandSchema))(line).pipe(
+        Effect.mapError(() => unavailable('command-codec')),
+      );
+
+/**
+ * The identity protocol: it creates the buyer's provider user, answers exactly one CREATE_SERVICE_KEYS
+ * command with the buyer's own key and four managed service keys, and ends only on STOP.
+ */
+export const runPreproposalIdentityProtocol = <InputError, OutputError>(
+  participants: PreproposalIdentityParticipants,
+  transport: PreproposalIdentityTransport<InputError, OutputError>,
+) =>
+  Effect.gen(function* runPreproposalIdentity() {
+    const crypto = yield* Crypto.Crypto;
+    const suffix = yield* crypto.randomUUIDv4();
+    const email = `preproposal-${suffix}@fixture.invalid`;
+    const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+    const providerUserId = yield* participants.authentication.createFixtureUser(
+      email,
+      'Preproposal native human buyer',
+      password,
+    );
+    const setup: IdentitySetup<OutputError> = {
+      email,
+      participants,
+      password,
+      send: (response) =>
+        Schema.encodeUnknownEffect(Schema.fromJsonString(ResponseSchema))(response).pipe(
+          Effect.flatMap((line) => transport.write(`${line}\n`)),
+        ),
+      suffix,
+    };
+    yield* setup.send({ operation: 'PROVIDER_USER_CREATED', protocol, providerUserId });
+    let created = false;
+    let stopped = false;
+    yield* transport.commands.pipe(
+      Stream.mapEffect(decodeCommand),
+      Stream.takeUntil((command) => command.operation === 'STOP'),
+      Stream.runForEach((command) => {
+        if (command.operation === 'STOP') {
+          stopped = true;
+          return setup.send({ operation: 'STOPPED', protocol });
+        }
+        if (created) {
+          return Effect.fail(unavailable('single-setup-command'));
+        }
+        created = true;
+        return createServiceKeys(setup, command);
+      }),
+    );
+    if (!stopped) {
+      return yield* unavailable('stop-required');
+    }
+    return yield* Effect.void;
+  });
+
+/** What the identity runtime takes from Core, built over the owned database. */
+type PreproposalIdentityCore = AccessDecisionGate | ActionRuntime | LegalEntityContext | PrincipalResolver;
+
+/** The services every identity construction and command runs in. */
+export type PreproposalIdentityRuntime = AuthenticationNamespaceRegistry | PreproposalIdentityCore;
+
+/**
+ * Builds the identity runtime and runs the protocol in it. Core's Actions and principal resolver
+ * are built with the staff authentication registry the Shell admits, and that one runtime is the
+ * context of the authentication service's construction and of every lifecycle command: Core
+ * Actions read the registry from the fiber's context, so it must be there when a command runs.
+ */
+export const runPreproposalIdentityRuntime = <
+  CoreError,
+  CoreRequirements,
+  AuthenticationError,
+  InputError,
+  OutputError,
+>(options: {
+  readonly authentication: Effect.Effect<
+    PreproposalIdentityParticipants['authentication'],
+    AuthenticationError,
+    PreproposalIdentityRuntime
+  >;
+  /** Core's Actions, access gate, companies and principal resolver, without the registry. */
+  readonly core: Layer.Layer<PreproposalIdentityCore, CoreError, CoreRequirements>;
+  readonly keys: ApiKeyServiceContract;
+  readonly lifecycle: (
+    ...dependencies: readonly [ActionRuntimeService, ApiKeyServiceContract, PrincipalResolverService]
+  ) => PreproposalIdentityParticipants['lifecycle'];
+  readonly origin: string;
+  readonly transport: PreproposalIdentityTransport<InputError, OutputError>;
+}) =>
+  Effect.gen(function* runInIdentityRuntime() {
+    const runtime = yield* Layer.build(
+      options.core.pipe(Layer.provideMerge(staffAuthenticationNamespaceRegistryLayer(['shell-super-app']))),
+    );
+    const authentication = yield* options.authentication.pipe(Effect.provideContext(runtime));
+    const resolver = Context.get(runtime, PrincipalResolver);
+    const lifecycle = options.lifecycle(Context.get(runtime, ActionRuntime), options.keys, resolver);
+    return yield* runPreproposalIdentityProtocol(
+      { authentication, keys: options.keys, lifecycle, origin: options.origin, resolver },
+      options.transport,
+    ).pipe(Effect.provideContext(runtime));
+  });
 
 /**
  * Parent must create the disposable database through Core's creator-owned native fixture and
@@ -244,7 +526,6 @@ export const serve = Effect.scoped(
       accessEnforcement,
       LegalEntityContextLive.pipe(Layer.provide(persistence)),
       composition,
-      staffAuthenticationNamespaceRegistryLayer(['shell-super-app']),
     );
     const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
       Layer.provide(
@@ -257,30 +538,13 @@ export const serve = Effect.scoped(
           accessEnforcement,
           ActionPermissionLive,
           ActionRepositoryLive,
-          staffAuthenticationNamespaceRegistryLayer(['shell-super-app']),
         ),
       ),
-    );
-    const runtime = yield* Layer.build(Layer.mergeAll(actions.pipe(Layer.provide(common)), resolver, common));
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-      Effect.provideService(AuthConfig, authConfiguration),
-      Effect.provideService(AuthDatabase, authDatabase),
-      Effect.provideContext(runtime),
     );
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, authConfiguration),
       Effect.provideService(AuthDatabase, authDatabase),
     );
-    const lifecycle = makeIdentityLifecycleService(
-      Context.get(runtime, ActionRuntime),
-      keys,
-      Context.get(runtime, PrincipalResolver),
-    );
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
-    const email = `preproposal-${suffix}@fixture.invalid`;
-    const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
-    const providerUserId = yield* authentication.createFixtureUser(email, 'Preproposal native human buyer', password);
     const output = yield* Effect.acquireRelease(
       Effect.sync(() => createWriteStream('', { autoClose: false, fd: 3 })),
       (stream) =>
@@ -290,173 +554,33 @@ export const serve = Effect.scoped(
           await completion;
         }).pipe(Effect.orDie, Effect.ensuring(Effect.sync(() => stream.destroy()))),
     );
-    const send = <Frame extends Pick<typeof ResponseSchema.Type, 'operation' | 'protocol'>>(response: Frame) =>
-      Schema.encodeUnknownEffect(Schema.fromJsonString(ResponseSchema))(response).pipe(
-        Effect.flatMap((line) =>
-          Stream.make(`${line}\n`).pipe(
-            Stream.run(
-              NodeSink.fromWritable({
-                endOnDone: false,
-                evaluate: () => output,
-                onError: () => unavailable('private-output'),
-              }),
-            ),
-          ),
+    const send = (line: string) =>
+      Stream.make(line).pipe(
+        Stream.run(
+          NodeSink.fromWritable({
+            endOnDone: false,
+            evaluate: () => output,
+            onError: () => unavailable('private-output'),
+          }),
         ),
       );
-    yield* send({ operation: 'PROVIDER_USER_CREATED', protocol, providerUserId });
-    let created = false;
-    let stopped = false;
-    yield* NodeStream.fromReadable({
-      evaluate: () => createReadStream('', { autoClose: false, fd: 4 }),
-      onError: () => unavailable('private-input'),
-    }).pipe(
-      Stream.decodeText(),
-      Stream.splitLines,
-      Stream.mapEffect((line) =>
-        line.length > 65_536
-          ? Effect.fail(unavailable('command-size'))
-          : Schema.decodeUnknownEffect(Schema.fromJsonString(CommandSchema))(line).pipe(
-              Effect.mapError(() => unavailable('command-codec')),
-            ),
+    return yield* runPreproposalIdentityRuntime({
+      authentication: makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+        Effect.provideService(AuthConfig, authConfiguration),
+        Effect.provideService(AuthDatabase, authDatabase),
       ),
-      Stream.takeUntil((command) => command.operation === 'STOP'),
-      Stream.runForEach((command) =>
-        Effect.gen(function* executeIdentityCommand() {
-          if (command.operation === 'STOP') {
-            stopped = true;
-            return yield* send({ operation: 'STOPPED', protocol });
-          }
-          if (created) {
-            return yield* unavailable('single-setup-command');
-          }
-          created = true;
-          const session = yield* authentication
-            .signIn(email, password, new Headers({ origin: authConfiguration.baseUrl }))
-            .pipe(Effect.provideContext(runtime));
-          if (
-            session.identity.principalId !== command.buyerPrincipalId ||
-            session.identity.tenantId !== command.tenantId
-          ) {
-            return yield* unavailable('actual-human-session');
-          }
-          const headers = new Headers({
-            cookie: session.setCookieHeaders.map((value) => value.split(';')[0]).join('; '),
-            origin: authConfiguration.baseUrl,
-          });
-          const resolved = yield* authentication.resolveShellContext(headers).pipe(Effect.provideContext(runtime));
-          if (resolved.state !== 'authenticated' || resolved.principal.principalId !== command.buyerPrincipalId) {
-            return yield* unavailable('actual-operator-context');
-          }
-          const { principal } = resolved;
-          if (principal.authContextRef === undefined || principal.legalEntityId === undefined) {
-            return yield* unavailable('actual-operator-session');
-          }
-          const buyerKey = yield* lifecycle.issue({
-            correlationId: `${suffix}:buyer:key`,
-            idempotencyKey: `${suffix}:buyer:key`,
-            name: 'Preproposal original buyer',
-            principal,
-            requestHeaders: headers,
-          });
-          if (buyerKey.cleanupPending) {
-            return yield* unavailable('buyer-self-binding');
-          }
-          const verifiedBuyer = yield* keys.verify(Redacted.value(buyerKey.secret));
-          const boundBuyer = yield* Context.get(runtime, PrincipalResolver).resolveBetterAuthApiKey(
-            verifiedBuyer.providerKeyId,
-          );
-          if (
-            boundBuyer.principalId !== principal.principalId ||
-            boundBuyer.tenantId !== principal.tenantId ||
-            boundBuyer.authBindingId !== buyerKey.authBindingId
-          ) {
-            return yield* unavailable('original-buyer-provider-binding');
-          }
-          const produceService = Effect.fn('PreproposalIdentity.produceService')(function* produceService(
-            name: string,
-          ) {
-            const createdService = yield* lifecycle.createNonHumanPrincipal({
-              correlationId: `${suffix}:${name}:create`,
-              idempotencyKey: `${suffix}:${name}:create`,
-              payload: { displayName: `Preproposal ${name}`, kind: 'service' },
-              principal,
-            });
-            const key = yield* lifecycle.issue({
-              correlationId: `${suffix}:${name}:key`,
-              idempotencyKey: `${suffix}:${name}:key`,
-              managedPrincipalId: createdService.principalId,
-              name,
-              principal,
-              requestHeaders: headers,
-            });
-            if (createdService.principalId === principal.principalId || key.cleanupPending) {
-              return yield* unavailable('managed-service-binding');
-            }
-            const verified = yield* keys.verify(Redacted.value(key.secret));
-            return {
-              authBindingId: key.authBindingId,
-              principalId: createdService.principalId,
-              providerKeyId: verified.providerKeyId,
-              secret: key.secret,
-            };
-          });
-          const cccReader = yield* produceService('ccc-reader');
-          const pricingIssuer = yield* produceService('pricing-issuer');
-          const catalog = yield* produceService('catalog');
-          const marketRelay = yield* produceService('market-relay');
-          // A second sign-in stays in the Tenant: no Legal Entity is selected on that session.
-          const tenantSession = yield* authentication.signIn(
-            email,
-            password,
-            new Headers({ origin: authConfiguration.baseUrl }),
-          );
-          const tenantContext = yield* authentication.resolveTenantContext(
-            new Headers({
-              cookie: tenantSession.setCookieHeaders.map((value) => value.split(';')[0]).join('; '),
-              origin: authConfiguration.baseUrl,
-            }),
-          );
-          if (
-            tenantContext.state !== 'authenticated' ||
-            tenantContext.principal.principalId !== principal.principalId ||
-            tenantContext.principal.legalEntityId !== undefined ||
-            tenantContext.principal.authContextRef === undefined
-          ) {
-            return yield* unavailable('actual-tenant-session');
-          }
-          const servicePrincipals = [cccReader, pricingIssuer, catalog, marketRelay].map(
-            (service) => service.principalId,
-          );
-          if (new Set([principal.principalId, ...servicePrincipals]).size !== servicePrincipals.length + 1) {
-            return yield* unavailable('distinct-service-identities');
-          }
-          return yield* send({
-            buyer: {
-              authBindingId: buyerKey.authBindingId,
-              principalId: principal.principalId,
-              secret: buyerKey.secret,
-            },
-            buyerPrincipalId: principal.principalId,
-            buyerSessions: {
-              legalEntity: { authContextRef: principal.authContextRef, legalEntityId: principal.legalEntityId },
-              tenant: { authContextRef: tenantContext.principal.authContextRef },
-            },
-            catalog,
-            cccReader,
-            marketRelay,
-            operation: 'SERVICE_KEYS_CREATED',
-            pricingIssuer,
-            protocol,
-            tenantId: principal.tenantId,
-          });
-        }).pipe(Effect.provideContext(runtime)),
-      ),
-    );
-    if (!stopped) {
-      return yield* unavailable('stop-required');
-    }
-    return yield* Effect.void;
+      core: Layer.mergeAll(actions.pipe(Layer.provide(common)), resolver, common),
+      keys,
+      lifecycle: makeIdentityLifecycleService,
+      origin: authConfiguration.baseUrl,
+      transport: {
+        commands: NodeStream.fromReadable({
+          evaluate: () => createReadStream('', { autoClose: false, fd: 4 }),
+          onError: () => unavailable('private-input'),
+        }).pipe(Stream.decodeText(), Stream.splitLines),
+        write: send,
+      },
+    });
   }),
 );
 

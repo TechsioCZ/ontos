@@ -20,7 +20,7 @@ const documents = () => contract('documents-center', 'documents.center');
 it.effect('loads the complete approved documents without contacting module deployments', () =>
   Effect.gen(function* approvedDocuments() {
     const snapshot = yield* makeCompositionSnapshot([property(), documents()]);
-    const fetch = rstest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('module deployments are offline'));
+    const fetch = rstest.spyOn(globalThis, 'fetch');
     try {
       const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
       expect(catalog.moduleIds).toEqual(['documents.center', 'property.registry']);

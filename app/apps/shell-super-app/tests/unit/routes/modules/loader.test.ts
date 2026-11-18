@@ -1,48 +1,27 @@
 import { Cause, ConfigProvider, Deferred, Effect, Fiber, Schema } from 'effect';
-import { beforeEach, expect, rstest, it } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
-  rstest: 'importActual',
-};
-import { ResolvedModuleTargetSchema } from '../../../../shared/browser-api.ts';
+import {
+  ResolvedModuleTargetSchema,
+  ShellCapabilityUnavailableProblemSchema,
+  ShellSelectionRequiredProblemSchema,
+  ShellTargetForbiddenProblemSchema,
+  ShellTargetNotFoundProblemSchema,
+} from '../../../../shared/browser-api.ts';
+import type { CurrentSession } from '../../../../shared/browser-api.ts';
 import {
   BrowserModuleRevisionConflict,
   pinBrowserModuleTarget,
 } from '../../../../src/routes/module-entrypoint-loader.ts';
 import { loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
-
-const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
-  loadHomePageModelMock: rstest.fn(),
-  resolveModuleTargetMock: rstest.fn(),
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  ...actualAuthClient,
-  resolveModuleTarget: resolveModuleTargetMock,
-}));
-
-rstest.mock('../../../../src/routes/[lang]/home-page-model.ts', () => ({
-  loadHomePageModel: loadHomePageModelMock,
-}));
-
-const authenticatedShell = {
-  compositionRevision: 'c'.repeat(64),
-  contextState: 'authenticated' as const,
-  identity: {
-    displayName: 'Ada Lovelace',
-    email: 'ada@example.test',
-    legalEntityId: 'legal-1',
-    legalName: 'Alpha company',
-    principalId: 'principal-1',
-    tenantId: 'tenant-1',
-  },
-  legalEntities: { items: [], state: 'available' as const },
-  navigation: { items: [], state: 'available' as const },
-  selectedLegalEntityId: 'legal-1',
-  state: 'authenticated' as const,
-  tenants: { items: [], state: 'available' as const },
-};
+import {
+  adaSignedIn,
+  makeShellBff,
+  shellCompositionRevision,
+  signedInShellReads,
+} from '../../../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
 const request = () => {
   const value = new Request('https://shell.example.test/en/contacts');
@@ -52,14 +31,10 @@ const request = () => {
   return value;
 };
 
-/** The module program reads its origin from config; pin an empty provider so every case is identical. */
-const moduleModel = (input: Parameters<typeof loadModulePageModel>[0]) =>
-  loadModulePageModel(input).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})));
-
 const approvedTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   appId: 'party-registry',
   componentKey: 'party.registry.page-contacts',
-  compositionRevision: 'c'.repeat(64),
+  compositionRevision: shellCompositionRevision,
   entrypointKey: 'party.registry.page.contacts',
   federation: {
     expose: './PageContacts',
@@ -71,33 +46,56 @@ const approvedTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   writable: false,
 });
 
-beforeEach(() => {
-  loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShell));
-  resolveModuleTargetMock.mockReturnValue(
-    Effect.succeed({
-      appId: 'party-registry',
-      componentKey: 'party.registry.page-contacts',
-      compositionRevision: 'c'.repeat(64),
-      entrypointKey: 'party.registry.page.contacts',
-      federation: {
-        expose: './PageContacts',
-        manifest: { sha256: 'a'.repeat(64), url: 'https://assets.example.test/party/release-a/mf-manifest.json' },
-        remoteName: 'partyRegistryReleaseA',
-      },
-      moduleId: 'party.registry',
-      routeParameters: {},
-      writable: false,
-    }),
+const problem = { detail: 'redacted', title: 'redacted', type: 'about:blank' } as const;
+/** The Problem Details the Shell BFF answers when it refuses a module target. */
+const targetRefusals = {
+  ShellCapabilityUnavailableProblem: Schema.decodeUnknownSync(ShellCapabilityUnavailableProblemSchema)({
+    ...problem,
+    _tag: 'ShellCapabilityUnavailableProblem',
+    retryable: true,
+    status: 503,
+  }),
+  ShellSelectionRequiredProblem: Schema.decodeUnknownSync(ShellSelectionRequiredProblemSchema)({
+    ...problem,
+    _tag: 'ShellSelectionRequiredProblem',
+    status: 409,
+  }),
+  ShellTargetForbiddenProblem: Schema.decodeUnknownSync(ShellTargetForbiddenProblemSchema)({
+    ...problem,
+    _tag: 'ShellTargetForbiddenProblem',
+    status: 403,
+  }),
+  ShellTargetNotFoundProblem: Schema.decodeUnknownSync(ShellTargetNotFoundProblemSchema)({
+    ...problem,
+    _tag: 'ShellTargetNotFoundProblem',
+    status: 404,
+  }),
+};
+
+/** The Shell BFF of a signed-in Ada that approves the party registry target unless a test scripts otherwise. */
+const moduleBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    ...signedInShellReads(adaSignedIn),
+    resolveModuleTarget: () => Effect.succeed(approvedTarget),
+    ...overrides,
+  });
+
+/** The module program reads its origin from config; pin an empty provider so every case is identical. */
+const moduleModel = (bff: ReturnType<typeof moduleBff>, input: Parameters<typeof loadModulePageModel>[0]) =>
+  loadModulePageModel(input).pipe(
+    Effect.provide(bff.layer),
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
   );
-});
+const targetRequests = (bff: ReturnType<typeof moduleBff>) =>
+  bff.requests.filter((received) => received.endpoint === 'resolveModuleTarget').map((received) => received.body);
 
 it.effect('retains only route parameters selected by the authenticated server target', () =>
   Effect.gen(function* retainsServerSelectedRouteParameters() {
-    resolveModuleTargetMock.mockReturnValueOnce(
-      Effect.succeed({ ...approvedTarget, routeParameters: { id: 'party-1' } }),
-    );
+    const bff = moduleBff({
+      resolveModuleTarget: () => Effect.succeed({ ...approvedTarget, routeParameters: { id: 'party-1' } }),
+    });
     expect(
-      yield* moduleModel({
+      yield* moduleModel(bff, {
         canonicalPath: '/contacts/party-1',
         request: request(),
       }),
@@ -111,33 +109,33 @@ it.effect('retains only route parameters selected by the authenticated server ta
         moduleId: 'party.registry',
       },
     });
-    expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-      { canonicalPath: '/contacts/party-1', compositionRevision: 'c'.repeat(64) },
-      expect.any(Object),
-    );
+    expect(targetRequests(bff)).toEqual([
+      { canonicalPath: '/contacts/party-1', compositionRevision: shellCompositionRevision },
+    ]);
   }),
 );
 
 it.effect('retains module landing behavior when no exact page entrypoint is supplied', () =>
   Effect.gen(function* retainsModuleLandingBehaviorWhenNo() {
+    const bff = moduleBff();
     expect(
-      yield* moduleModel({
+      yield* moduleModel(bff, {
         params: { moduleId: 'party.registry' },
         request: request(),
       }),
     ).toMatchObject({ routeParams: {} });
-    expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-      { compositionRevision: 'c'.repeat(64), moduleId: 'party.registry' },
-      expect.any(Object),
-    );
+    expect(targetRequests(bff)).toEqual([
+      { compositionRevision: shellCompositionRevision, moduleId: 'party.registry' },
+    ]);
   }),
 );
 
 it.effect('does not request or load a private target before authentication', () =>
   Effect.gen(function* doesNotRequestOrLoadA() {
-    loadHomePageModelMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
+    const anonymous: CurrentSession = { state: 'anonymous' };
+    const bff = moduleBff({ currentSession: () => Effect.succeed(anonymous) });
     expect(
-      yield* moduleModel({
+      yield* moduleModel(bff, {
         params: {
           entrypointKey: 'party.registry.page.contacts',
           moduleId: 'party.registry',
@@ -145,7 +143,7 @@ it.effect('does not request or load a private target before authentication', () 
         request: request(),
       }),
     ).toMatchObject({ state: 'selection_required' });
-    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(targetRequests(bff)).toEqual([]);
   }),
 );
 
@@ -156,25 +154,25 @@ it.effect.each([
   ['ShellCapabilityUnavailableProblem', 'unavailable'],
 ] as const)('maps %s without returning a resolved private target', ([_tag, state]) =>
   Effect.gen(function* ShellSelectionRequiredProblem() {
-    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag }));
-    expect(
-      yield* moduleModel({
-        params: {
-          entrypointKey: 'party.registry.page.contacts',
-          moduleId: 'party.registry',
-        },
-        request: request(),
-      }),
-    ).toMatchObject({ state });
+    const bff = moduleBff({ resolveModuleTarget: () => Effect.fail(targetRefusals[_tag]) });
+    const model = yield* moduleModel(bff, {
+      params: {
+        entrypointKey: 'party.registry.page.contacts',
+        moduleId: 'party.registry',
+      },
+      request: request(),
+    });
+    expect(model).toMatchObject({ state });
+    expect(model).not.toHaveProperty('target');
   }),
 );
 
 it.effect('fails with the typed timeout instead of hanging on an unresponsive shell read', () =>
   Effect.gen(function* failsWithTheTypedTimeout() {
     const entered = yield* Deferred.make<'entered'>();
-    loadHomePageModelMock.mockReturnValueOnce(Effect.andThen(Deferred.succeed(entered, 'entered'), Effect.never));
+    const bff = moduleBff({ currentSession: () => Effect.andThen(Deferred.succeed(entered, 'entered'), Effect.never) });
     const fiber = yield* Effect.forkChild(
-      moduleModel({
+      moduleModel(bff, {
         params: { moduleId: 'party.registry' },
         request: request(),
       }),
@@ -184,7 +182,7 @@ it.effect('fails with the typed timeout instead of hanging on an unresponsive sh
     yield* TestClock.adjust('30 seconds');
 
     expect(yield* Effect.flip(Fiber.join(fiber))).toBeInstanceOf(Cause.TimeoutError);
-    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(targetRequests(bff)).toEqual([]);
   }),
 );
 

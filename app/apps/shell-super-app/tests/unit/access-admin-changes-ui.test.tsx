@@ -1,24 +1,15 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Latch, Result, Schema } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
+import { createInstance } from 'i18next';
+import type { ReactNode } from 'react';
 
 import {
   DecideAccessChangesResponseSchema,
   ListAccessChangesResponseSchema,
   PreviewAccessChangesResponseSchema,
 } from '../../shared/access-admin-api.ts';
-import type {
-  decideAccessChanges as actualDecideAccessChanges,
-  previewAccessChanges as actualPreviewAccessChanges,
-} from '../../src/api/auth-client.ts';
-import {
-  availableLegalEntities,
-  availableTenants,
-  createAccessAdministrationIdempotencyKey,
-  currentSession,
-  shellComposition,
-} from '../../src/api/auth-client.ts' with { rstest: 'importActual' };
 import { SafeTenantIdentitySchema } from '../../shared/browser-api.ts';
 import { changeItemView, liveChangesClient } from '../../src/routes/access-admin/changes/changes-bff-adapter.ts';
 import { loadChangesPageModel } from '../../src/routes/[lang]/access/changes/changes-page-model.ts';
@@ -35,26 +26,25 @@ import {
   previewMatchesSelection,
 } from '../../src/routes/access-admin/changes/changes-model.ts';
 import type { ChangeItemView, ChangePreviewView } from '../../src/routes/access-admin/changes/changes-model.ts';
+import { makeShellBff } from '../support/shell-bff-double.ts';
+import { ShellI18n } from '../support/shell-i18n.tsx';
 
-const { decideMock, previewMock } = rstest.hoisted(() => ({
-  decideMock: rstest.fn<typeof actualDecideAccessChanges>(),
-  previewMock: rstest.fn<typeof actualPreviewAccessChanges>(),
-}));
-rstest.mock('../../src/api/auth-client.ts', () => ({
-  availableLegalEntities,
-  availableTenants,
-  createAccessAdministrationIdempotencyKey,
-  currentSession,
-  decideAccessChanges: decideMock,
-  previewAccessChanges: previewMock,
-  shellComposition,
-}));
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    t: (key: string, values?: { effect?: string; item?: string }) => `${key}${values?.effect ?? values?.item ?? ''}`,
-  }),
-}));
+/**
+ * Real i18next with no copy: every key renders as itself, followed by the named effect or item the
+ * view interpolates, so assertions name the exact key and value the view chose.
+ */
+const keyEcho = createInstance();
+void keyEcho
+  .use({
+    name: 'keyWithValue',
+    process: (value: string, _key: string | string[], options: { readonly effect?: string; readonly item?: string }) =>
+      `${value}${options.effect ?? options.item ?? ''}`,
+    type: 'postProcessor',
+  })
+  .init({ initAsync: false, lng: 'en', postProcess: ['keyWithValue'], resources: {} });
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={keyEcho}>{children}</ShellI18n>
+);
 
 const routine: ChangeItemView = {
   addedCells: [],
@@ -105,26 +95,18 @@ const show = (items: readonly ChangeItemView[], client: ChangesClient = makeClie
       initial={{ items, nextCursor: null, writeAvailability: { available, reason: '' } }}
       initialNotice={null}
     />,
+    { wrapper: ShellCopy },
   );
 const key = (suffix: string) => `shell.accessAdmin.changes.${suffix}`;
 
-afterEach(() => {
-  cleanup();
-  previewMock.mockReset();
-  decideMock.mockReset();
-});
+afterEach(cleanup);
 
 it.effect(
   'sends an explicit tenant target and retains the preview target echo without consulting Shell selection',
-  () =>
-    Effect.gen(function* bindTenantTarget() {
-      const item = {
-        ...routine,
-        catalogSnapshotId: '10000000-0000-4000-8000-000000000001',
-        id: '10000000-0000-4000-8000-000000000002',
-      };
-      const company = '10000000-0000-4000-8000-000000000005';
-      previewMock.mockReturnValue(
+  () => {
+    const company = '10000000-0000-4000-8000-000000000005';
+    const bff = makeShellBff({
+      previewAccessChanges: () =>
         Effect.succeed(
           Schema.decodeUnknownSync(PreviewAccessChangesResponseSchema)({
             affectedAgentCount: 0,
@@ -138,22 +120,29 @@ it.effect(
             skipped: [],
           }),
         ),
-      );
+    });
+    return Effect.gen(function* bindTenantTarget() {
+      const item = {
+        ...routine,
+        catalogSnapshotId: '10000000-0000-4000-8000-000000000001',
+        id: '10000000-0000-4000-8000-000000000002',
+      };
       const preview = yield* liveChangesClient.preview([item], 'adopt');
-      expect(previewMock).toHaveBeenCalledWith(expect.objectContaining({ legalEntityId: null }));
+      expect(bff.requests.map((received) => received.endpoint)).toEqual(['previewAccessChanges']);
+      expect(bff.requests[0]?.body).toMatchObject({ legalEntityId: null });
       expect(preview.legalEntityId).toBe(company);
       expect(previewMatchesSelection(preview, [item], 'adopt')).toBe(false);
       const refused = yield* Effect.result(liveChangesClient.decide(preview, 'tenant-command'));
       expect(Result.isFailure(refused)).toBe(true);
-      expect(decideMock).not.toHaveBeenCalled();
-    }),
+      expect(bff.requests.map((received) => received.endpoint)).not.toContain('decideAccessChanges');
+    }).pipe(Effect.provide(bff.layer));
+  },
 );
 
-it.effect('binds adopt, decline and undo commands to null and retains their receipt target echo', () =>
-  Effect.gen(function* bindDecisionTargets() {
-    const catalogSnapshotId = '10000000-0000-4000-8000-000000000001';
-    const item = { ...routine, catalogSnapshotId, id: '10000000-0000-4000-8000-000000000002' };
-    decideMock.mockReturnValue(
+it.effect('binds adopt, decline and undo commands to null and retains their receipt target echo', () => {
+  const catalogSnapshotId = '10000000-0000-4000-8000-000000000001';
+  const bff = makeShellBff({
+    decideAccessChanges: () =>
       Effect.succeed(
         Schema.decodeUnknownSync(DecideAccessChangesResponseSchema)({
           catalogSnapshotId,
@@ -162,19 +151,24 @@ it.effect('binds adopt, decline and undo commands to null and retains their rece
           skipped: [],
         }),
       ),
-    );
+  });
+  return Effect.gen(function* bindDecisionTargets() {
+    const item = { ...routine, catalogSnapshotId, id: '10000000-0000-4000-8000-000000000002' };
     for (const decision of ['adopt', 'decline', 'undo'] as const) {
       const receipt = yield* liveChangesClient.decide(
         { ...previewFor([item], decision), catalogSnapshotId },
         'tenant-command',
       );
       expect(receipt.legalEntityId).toBeNull();
-      expect(decideMock).toHaveBeenLastCalledWith(expect.objectContaining({ decision, legalEntityId: null }), {
+      expect(bff.requests.at(-1)).toMatchObject({
+        body: { decision, legalEntityId: null },
+        endpoint: 'decideAccessChanges',
         idempotencyKey: 'tenant-command',
       });
     }
-  }),
-);
+    expect(bff.requests).toHaveLength(3);
+  }).pipe(Effect.provide(bff.layer));
+});
 
 it('declares a private, non-indexable tenant system page with its own protected capability', () => {
   expect(routeMeta.public).toBe(false);
@@ -204,6 +198,7 @@ it('renders exact role revisions and before/after cells without claiming one rev
         },
       ]}
     />,
+    { wrapper: ShellCopy },
   );
   expect(screen.getByText('revision-1')).toBeTruthy();
   expect(screen.getByText('core.shell.before.read')).toBeTruthy();
@@ -212,7 +207,7 @@ it('renders exact role revisions and before/after cells without claiming one rev
   expect(screen.getByText('shell.accessAdmin.role.scopeAssigned')).toBeTruthy();
   expect(screen.getByText(key('amountCeiling'))).toBeTruthy();
   cleanup();
-  render(<ChangeRoleDiff changes={[]} />);
+  render(<ChangeRoleDiff changes={[]} />, { wrapper: ShellCopy });
   expect(screen.getByText(key('noRoleChanges'))).toBeTruthy();
 });
 
@@ -311,7 +306,8 @@ it('offers no bulk selection for sensitive, critical, widening or undone items',
 it.effect('requires preview then explicit named confirmation before the write, never one click', () =>
   Effect.gen(function* confirmNamedEffect() {
     const user = userEvent.setup();
-    const decide = rstest.fn(() => Effect.succeed({ legalEntityId: null, skipped: [] }));
+    const decided = yield* Latch.make();
+    const decide = rstest.fn(() => decided.open.pipe(Effect.as({ legalEntityId: null, skipped: [] })));
     show([sensitive], { ...makeClient([sensitive]), decide });
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: key('previewAdopt') })));
     expect(decide).not.toHaveBeenCalled();
@@ -320,8 +316,9 @@ it.effect('requires preview then explicit named confirmation before the write, n
     yield* Effect.promise(() => user.click(screen.getByRole('checkbox')));
     expect(confirm.hasAttribute('disabled')).toBe(false);
     yield* Effect.promise(() => user.click(confirm));
-    yield* Effect.promise(() => waitFor(() => expect(decide).toHaveBeenCalledTimes(1)));
-    expect(screen.queryByRole('button', { name: key('adopt') })).toBeNull();
+    yield* decided.await;
+    expect(decide).toHaveBeenCalledTimes(1);
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('button', { name: key('adopt') })).toBeNull()));
   }),
 );
 
