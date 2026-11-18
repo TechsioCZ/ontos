@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { pgSchema, uuid } from 'drizzle-orm/pg-core';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Cause, Crypto, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -16,6 +16,7 @@ import type {
   ReadPermissionDenied,
   ReadPermissionUnavailable,
 } from '../../src/reads/errors.ts';
+import { ReadHandlerExecutionError } from '../../src/reads/errors.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
@@ -231,7 +232,10 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
         expect(
           Schema.is(ScopedRoutineInvocationError)(writeFailure) ? writeFailure.postgresCode : Option.none(),
         ).toEqual(Option.some('25006'));
-        expect(Exit.isFailure(exit)).toBe(true);
+        // finish propagated the refused write; Core released it, as the owner's undeclared failure, only after
+        // the third (release) decision above allowed the Read under the final fence.
+        const callerFailure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(Option.exists(callerFailure, Schema.is(ReadHandlerExecutionError))).toBe(true);
         // No mutation survives, and the refused Read wrote no allowed evidence.
         const markers = yield* admin.unsafe<{ readonly count: string }>(
           'select count(*)::text as count from read_finish_owner.markers',
