@@ -92,6 +92,8 @@ export const createDevelopmentContractMiddleware =
         // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
         if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
           response.statusCode = 404;
+          // A catalog prepared later at the same URL must not be shadowed by a cached absence.
+          response.setHeader('Cache-Control', 'no-cache');
           response.end(Buffer.alloc(0));
           return;
         }
