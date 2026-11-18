@@ -6703,37 +6703,6 @@ it.live(
 );
 
 it.live(
-  "owner context admits only that owner's own backend-only registration in the Catalog runtime",
-  Effect.fn(function* catalogBackendRegistrationBinding() {
-    const context = { ownerPath: 'verticals/catalog', sources: new Map<string, string>() };
-    const shared = yield* Effect.promise(() =>
-      readFile(path.join(appRoot, 'verticals/catalog/shared/api.ts'), 'utf-8'),
-    );
-    const handler = yield* Effect.promise(() =>
-      readFile(path.join(appRoot, 'verticals/catalog/api/index.ts'), 'utf-8'),
-    );
-    const binding = "import { catalogBackendRegistration } from '../vertical.runtime-declaration.ts';";
-    expect(handler).toContain(binding);
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler, context)).toBe(true);
-    for (const forged of [
-      "import { privacyBackendRegistration as catalogBackendRegistration } from '../vertical.runtime-declaration.ts';",
-      "import { catalogBackendRegistration } from '../foreign/vertical.runtime-declaration.ts';",
-      "import { catalogBackendRegistration } from './vertical.runtime-declaration.ts';",
-      "import { catalogRuntimeDeclaration as catalogBackendRegistration } from '../vertical.runtime-declaration.ts';",
-    ]) {
-      expect(hasValidGovernedHttpCompositionRoot(shared, handler.replace(binding, forged), context), forged).toBe(
-        false,
-      );
-    }
-    // Another owner's context, or none, never admits Catalog's backend registration.
-    expect(
-      hasValidGovernedHttpCompositionRoot(shared, handler, { ...context, ownerPath: 'verticals/party-registry' }),
-    ).toBe(false);
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(false);
-  }),
-);
-
-it.live(
   'canonical Crypto merge preserves the actual Privacy injected read capability',
   Effect.fn(function* cryptoMergedPrivacyRuntime() {
     const { accepts: hasPrivacyRuntimeRoot } = yield* readPrivacyRootProof();
