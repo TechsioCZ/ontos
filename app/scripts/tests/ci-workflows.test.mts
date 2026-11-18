@@ -23,6 +23,8 @@ import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database
 import { CiTemplatesSchema, ciPlanOutputs, planCiChecks, taskDirectory } from '../plan-ci-checks.mts';
 
 const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
+const RESTORE_INTEGRATION_WORKERS = 'bash scripts/ci/restore-integration-workers.sh';
+const INTEGRATION_WORKERS_STEP_ID = 'integration-workers';
 const INTEGRATION_DATABASE_ARTIFACT = 'integration-database';
 const BOOTSTRAP_ARTIFACT_STEP_ID = 'bootstrap-node-artifacts';
 const BROWSER_TEST_COMMAND = 'mise exec -- pnpm --filter @app/shell-super-app test:e2e';
@@ -2290,8 +2292,9 @@ it('makes every shard wait name the artifacts its next download reads', () => {
         continue;
       }
       waits += 1;
-      // The bootstrap prefetch downloads in the same step; every other wait is followed by a download step.
-      const inline = /gh run download .* --pattern '(?<pattern>[^']+)'/u.exec(step.run)?.groups?.pattern;
+      // The bootstrap prefetch and the worker restore download in the same step; every other wait is followed
+      // by a download step.
+      const inline = /gh run download .* --(?:pattern|name) '?(?<artifact>[^'\s]+)'?/u.exec(step.run)?.groups?.artifact;
       const next = steps.slice(index + 1).find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
       const downloaded = inline ?? next?.with?.pattern ?? next?.with?.name;
       expect(downloaded, job).toBeDefined();
@@ -2711,18 +2714,47 @@ it('publishes the verified database before browser writes and restores it before
   const browser = producer.findIndex(({ run }) => run === BROWSER_TEST_COMMAND);
   expect(migrated).toBeGreaterThan(-1);
   expect(migrated < exported && exported < uploaded && uploaded < browser).toBe(true);
-  const downloaded = consumer.findIndex(
-    ({ uses, with: inputs }) =>
-      uses?.startsWith('actions/download-artifact@') === true && inputs?.name === INTEGRATION_DATABASE_ARTIFACT,
-  );
+  // Empty clusters start before the archive exists; only the restore reads this run's archive, and the
+  // tests wait for that restore.
   const workers = consumer.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
-  expect(downloaded).toBeGreaterThan(-1);
-  expect(downloaded).toBeLessThan(workers);
-  expect(consumer[downloaded]?.with).toEqual({
-    name: INTEGRATION_DATABASE_ARTIFACT,
-    path: `${RUNNER_TEMP_EXPRESSION}/integration-database`,
-  });
-  expect(consumer[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(`${RUNNER_TEMP_EXPRESSION}/integration-database`);
+  const restore = consumer.findIndex(({ id }) => id === INTEGRATION_WORKERS_STEP_ID);
+  const restored = consumer.findIndex(({ wait }) => wait === INTEGRATION_WORKERS_STEP_ID);
+  const tests = consumer.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(workers).toBeGreaterThan(-1);
+  expect(workers < restore && restore < restored && restored < tests).toBe(true);
+  expect(consumer[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBeUndefined();
+  expect(consumer[restore]?.background).toBe(true);
+  expect(consumer[restore]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(consumer[restore]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(`${RUNNER_TEMP_EXPRESSION}/integration-database`);
+  expect(consumer[restore]?.env?.WAIT_FOR_ARTIFACT_PATTERN).toBe(INTEGRATION_DATABASE_ARTIFACT);
+  // The download names this run's id, so it reads only this workflow run's archive.
+  expect(consumer[restore]?.run).toBe(
+    [
+      "bash scripts/wait-for-build-shards.sh 'Prepare integration database' 1",
+      `gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name ${INTEGRATION_DATABASE_ARTIFACT} --dir "$INTEGRATION_DATABASE_ARCHIVE"`,
+      RESTORE_INTEGRATION_WORKERS,
+      '',
+    ].join('\n'),
+  );
+  expect(
+    consumer.some(
+      ({ uses, with: inputs }) =>
+        uses?.startsWith('actions/download-artifact@') === true && inputs?.name === INTEGRATION_DATABASE_ARTIFACT,
+    ),
+  ).toBe(false);
+});
+
+it('restores the archive only into clusters that already accept connections, after checking it', () => {
+  const start = readFileSync(new URL('../ci/start-integration-workers.sh', import.meta.url), 'utf-8');
+  const restore = readFileSync(new URL('../ci/restore-integration-workers.sh', import.meta.url), 'utf-8');
+  // Starting needs no archive; every read of the archive happens in the restore.
+  expect(start).not.toContain('INTEGRATION_DATABASE_ARCHIVE');
+  expect(start).toContain('pg_isready');
+  const checked = restore.indexOf('sha256sum --check checksums.sha256');
+  const manifest = restore.indexOf('.revision == $revision');
+  const restored = restore.indexOf('pg_restore');
+  expect(checked).toBeGreaterThan(-1);
+  expect(checked < manifest && manifest < restored).toBe(true);
 });
 
 it('supplies same-run built Composition to selected native owner integration shards before their tests', () => {

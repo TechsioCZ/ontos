@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Run from app/, with this run's migrated and verified database archive.
+# Run from app/. Starts each integration worker's own empty PostgreSQL cluster and SpiceDB datastore and
+# waits until both accept connections; restore-integration-workers.sh then loads this run's migrated
+# and verified database archive into every cluster. Starting needs no archive, so an owner row starts
+# its clusters after its build and before the archive lands instead of after it.
 # Separate clusters, not merely separate databases: bootstrap proofs and role-boundary
 # tests issue ALTER ROLE, which is cluster-global. SpiceDB has a separate datastore too.
 set -euo pipefail
@@ -8,27 +11,10 @@ umask 077
 : "${RUNNER_TEMP:?}"
 : "${POSTGRES_USER:?}"
 : "${POSTGRES_PASSWORD:?}"
-: "${POSTGRES_DB:?}"
 : "${SPICEDB_PRESHARED_KEY:?}"
-: "${INTEGRATION_DATABASE_ARCHIVE:?}"
-: "${GITHUB_SHA:?}"
 : "${ONTOS_CI_ISOLATED_WORKERS:?}"
 [[ "$ONTOS_CI_ISOLATED_WORKERS" == 2 || "$ONTOS_CI_ISOLATED_WORKERS" == 4 ]]
 [[ "$POSTGRES_USER" =~ ^[a-z_][a-z0-9_]*$ ]]
-[[ "$POSTGRES_DB" =~ ^[a-z_][a-z0-9_]*$ ]]
-for file in roles.sql database.dump database.acl manifest.json checksums.sha256; do
-  [[ -s "$INTEGRATION_DATABASE_ARCHIVE/$file" ]] || {
-    echo "::error::The same-run integration database archive is missing $file."
-    exit 1
-  }
-done
-(
-  cd "$INTEGRATION_DATABASE_ARCHIVE"
-  sha256sum --check checksums.sha256 >/dev/null
-)
-jq -e --arg revision "$GITHUB_SHA" --arg database "$POSTGRES_DB" --arg user "$POSTGRES_USER" \
-  '.revision == $revision and .database == $database and .user == $user' \
-  "$INTEGRATION_DATABASE_ARCHIVE/manifest.json" >/dev/null
 
 scratch="$(mktemp -d "$RUNNER_TEMP/integration-workers.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
@@ -55,31 +41,18 @@ start_worker() {
     --grpc-tls-cert-path=/tls/cert.pem --grpc-tls-key-path=/tls/key.pem \
     --http-tls-cert-path=/tls/cert.pem --http-tls-key-path=/tls/key.pem >/dev/null
 
-  local ready=false
   for ((attempt = 0; attempt < 60; attempt++)); do
     # initdb's temporary server accepts Unix sockets before shutting down. Only
     # the final postmaster accepts TCP; restoring into the temporary one races its restart.
     if docker exec "$database" pg_isready --host 127.0.0.1 --username "$POSTGRES_USER" --dbname postgres >/dev/null 2>&1 \
       && docker exec "$spice" /usr/local/bin/grpc_health_probe -addr=localhost:50051 \
         -tls -tls-ca-cert=/tls/cert.pem >/dev/null 2>&1; then
-      ready=true
-      break
+      return 0
     fi
     sleep 1
   done
-  if [[ "$ready" != true ]]; then
-    echo "::error::Integration worker $worker did not become ready."
-    return 1
-  fi
-  # The initdb-created administrator already exists; its ALTER ROLE from the dump
-  # remains. All other login roles, role memberships, ownership and grants are restored.
-  docker exec --interactive "$database" psql --username "$POSTGRES_USER" --dbname postgres \
-    --set ON_ERROR_STOP=1 <"$INTEGRATION_DATABASE_ARCHIVE/roles.sql" >/dev/null
-  # Restoring into an existing database copies its contents, not its database-level ACL. Let the
-  # archive create the database too, including the source's REVOKE TEMPORARY FROM PUBLIC.
-  docker exec --interactive "$database" pg_restore --username "$POSTGRES_USER" --dbname postgres \
-    --create --exit-on-error <"$INTEGRATION_DATABASE_ARCHIVE/database.dump"
-  bash scripts/ci/prepare-schema-template.sh "$database" "$INTEGRATION_DATABASE_ARCHIVE/database.dump"
+  echo "::error::Integration worker $worker did not become ready."
+  return 1
 }
 
 pids=()
@@ -92,29 +65,4 @@ for pid in "${pids[@]}"; do
   wait "$pid" || failed=1
 done
 [[ "$failed" == 0 ]]
-
-# Assert that every worker owns a different cluster, not just a different port.
-identifiers=()
-acl_query="$(cat scripts/ci/integration-database-acl.sql)"
-source_acl="$(cat "$INTEGRATION_DATABASE_ARCHIVE/database.acl")"
-for ((worker = 1; worker <= ONTOS_CI_ISOLATED_WORKERS; worker++)); do
-  durability="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc     "select current_setting('fsync') || ':' || current_setting('synchronous_commit') || ':' || current_setting('full_page_writes')")"
-  [[ "$durability" == on:on:on ]]
-  identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
-  [[ -n "$identifier" ]]
-  for existing in "${identifiers[@]}"; do
-    [[ "$identifier" != "$existing" ]]
-  done
-  identifiers+=("$identifier")
-  worker_acl="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$acl_query")"
-  if [[ "$worker_acl" != "$source_acl" ]]; then
-    echo "::error::Integration worker $worker did not preserve the source database privileges."
-    exit 1
-  fi
-  docker exec -i "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
-    -v source="$POSTGRES_DB" -v baseline="${POSTGRES_DB}_baseline" <<'SQL'
-ALTER DATABASE :"source" RENAME TO :"baseline";
-ALTER DATABASE :"baseline" IS_TEMPLATE true ALLOW_CONNECTIONS false;
-SQL
-done
-echo "$ONTOS_CI_ISOLATED_WORKERS independent PostgreSQL clusters and SpiceDB datastores are ready."
+echo "$ONTOS_CI_ISOLATED_WORKERS empty PostgreSQL clusters and SpiceDB datastores accept connections."
