@@ -21,6 +21,7 @@ import { demoModuleIds } from '../demo/permissions.mts';
 import type { DesiredState } from '../demo/reviewed-people-plan.mts';
 import { desiredState } from '../demo/reviewed-people-plan.mts';
 import { deriveOntosModuleRelease } from '../generate-ontos-module-contract.mts';
+import { registeredWorkloadCallDrift } from '../scaffolding/registered-workload-calls.mts';
 
 /**
  * `node scripts/merge/adaptation-check.mts --base <40-hex demo commit> [--json <path>]`, from app/.
@@ -29,14 +30,21 @@ import { deriveOntosModuleRelease } from '../generate-ontos-module-contract.mts'
  * adaptation gap it can find at once, by owner and key, where the gates stop at the first vertical:
  * - every vertical's contract derivation; an MCP coverage gap gives one finding per key. A module's commands and
  *   actions gaps appear only after its reads gap is fixed, because the coverage check stops at the first group.
- * - every registered-workload call, one call at a time, against the reviewed callers and its receiver. A call whose
- *   receiver failed to derive is checked against the reviewed callers only (a note counts them), so a derivation
- *   gap gives no false call finding. The calls of a caller that failed to derive are unknown and not checked.
+ * - every derived caller's registered-workload calls against the reviewed inventory the generation test pins
+ *   (scripts/scaffolding/registered-workload-calls.mts), so a lost or unreviewed call is a finding by caller; and
+ *   every call, one at a time, against the reviewed callers and its receiver. A call whose receiver failed to
+ *   derive is checked against the reviewed callers only (a note counts them), so a derivation gap gives no false
+ *   call finding. The calls of a caller that failed to derive are unknown and not checked.
  * - the committed authorization catalog artifact against the workspace.
  * - the reviewed roles: a target policy that does not compile is a finding. The unreviewed and withdrawn cells of
  *   the reviewed-cell allowlist are information, never findings; an unreviewed cell says whether the base release
- *   lacked it. A commit from before the allowlist has no such cells, and a note says so.
- * Packaging gaps (an import that needs a new package export) need the node build; the gates prove those.
+ *   lacked it. A commit from before the allowlist grants every compiled cell, so there each role cell whose
+ *   capability the base release lacks is a `reviewed-role-cell` finding, and a base that cannot be compared is a
+ *   `reviewed-roles` finding.
+ * A clean report does not prove the node build: packaging gaps (an import that needs a new package export) and
+ * whether a new read or Action is registered in its owner's runtime declaration are left to the gates.
+ * Derivation is not read-only: it bundles owner source with esbuild into scoped `.ontos-contract-*` directories
+ * under each vertical and removes them afterwards.
  * Writes `ontos-merge-adaptation/1` JSON and exits non-zero when there is any finding.
  */
 
@@ -55,6 +63,7 @@ class AdaptationCheckError extends Schema.TaggedError<AdaptationCheckError>()('A
 const checkFailure = (message: string): AdaptationCheckError => new AdaptationCheckError({ message });
 
 const REVIEWED_ROLES = 'reviewed-roles';
+const REGISTERED_WORKLOAD_CALL = 'registered-workload-call';
 const FindingKindSchema = Schema.Literals([
   'authorization-catalog-stale',
   'contract',
@@ -62,7 +71,8 @@ const FindingKindSchema = Schema.Literals([
   'mcp-commands',
   'mcp-reads',
   'mcp-stale',
-  'registered-workload-call',
+  REGISTERED_WORKLOAD_CALL,
+  'reviewed-role-cell',
   REVIEWED_ROLES,
 ]);
 
@@ -205,6 +215,14 @@ const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFinding
   let skipped = 0;
   for (const caller of derived) {
     const calls = caller.contract.manifest.registeredWorkloadCalls ?? [];
+    for (const { built, call, reviewed } of registeredWorkloadCallDrift(caller.appId, calls)) {
+      findings.push({
+        key: call,
+        kind: REGISTERED_WORKLOAD_CALL,
+        message: `reviewed ${reviewed} declarations, built ${built}`,
+        owner: caller.owner,
+      });
+    }
     const others = derived
       .filter((other) => other !== caller)
       .map(({ contract }) => ({ ...contract, manifest: { ...contract.manifest, registeredWorkloadCalls: [] } }));
@@ -224,7 +242,7 @@ const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFinding
       for (const exit of exits.filter(Exit.isFailure)) {
         findings.push({
           key: call.workloadKey,
-          kind: 'registered-workload-call',
+          kind: REGISTERED_WORKLOAD_CALL,
           message: innermost(messageChain(exit.cause)),
           owner: caller.owner,
         });
@@ -233,6 +251,17 @@ const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFinding
   }
   return { findings, skipped };
 });
+
+/** Each role's granted capability that the base release lacks, once per role and key. */
+export const roleCellGrowth = (
+  roles: readonly { readonly cells: readonly { readonly capabilityKey: string }[]; readonly key: string }[],
+  baseKeys: ReadonlySet<string>,
+): readonly Finding[] =>
+  roles.flatMap((role) =>
+    [...new Set(role.cells.map(({ capabilityKey }) => capabilityKey))]
+      .filter((key) => !baseKeys.has(key))
+      .map((key) => ({ key, kind: 'reviewed-role-cell', owner: role.key }) as const),
+  );
 
 const decodeBaseArtifact = Schema.decodeUnknownEffect(Schema.fromJsonString(AccessCatalogArtifactSchema));
 
@@ -258,15 +287,6 @@ const reviewedRoles = Effect.fn(function* reviewedRoles(base: string) {
       notes: [],
     } as const;
   }
-  // A DesiredState from before the reviewed-cell allowlist has no diagnostics.
-  const { diagnostics: reviewed }: Partial<Pick<DesiredState, 'diagnostics'>> = desired.success;
-  if (reviewed === undefined) {
-    return {
-      diagnostics: [],
-      findings: [],
-      notes: ['this commit predates the reviewed-cell allowlist; role growth is not diagnosed'],
-    } as const;
-  }
   const baseArtifact = yield* Effect.exit(
     git(['show', `${base}:${BASE_CATALOG_PATH}`]).pipe(Effect.flatMap(decodeBaseArtifact)),
   );
@@ -276,6 +296,23 @@ const reviewedRoles = Effect.fn(function* reviewedRoles(base: string) {
   const baseKeys = Result.isSuccess(baseEntries)
     ? Option.some(new Set(baseEntries.success.map((entry) => String(entry.key))))
     : Option.none<ReadonlySet<string>>();
+  // A DesiredState from before the reviewed-cell allowlist has no diagnostics: it grants every compiled cell.
+  const { diagnostics: reviewed }: Partial<Pick<DesiredState, 'diagnostics'>> = desired.success;
+  if (reviewed === undefined) {
+    return {
+      diagnostics: [],
+      findings: Result.isFailure(baseEntries)
+        ? [
+            {
+              kind: REVIEWED_ROLES,
+              message: `role growth cannot be compared with the base release: ${baseEntries.failure}`,
+              owner: 'demo',
+            } as const,
+          ]
+        : roleCellGrowth(desired.success.roles, new Set(baseEntries.success.map((entry) => String(entry.key)))),
+      notes: [],
+    } as const;
+  }
   const diagnostics = reviewed.map(({ kind, roleKey, slot }): RoleDiagnostic => ({
     introduced:
       kind === 'unreviewed'

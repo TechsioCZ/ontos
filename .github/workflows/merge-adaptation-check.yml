@@ -68,15 +68,17 @@ jobs:
           fi
           echo "sha=$base" >> "$GITHUB_OUTPUT"
 
-      - name: Use this workflow's preflight when the checked-out commit predates it
+      - name: Use this workflow's preflight and reviewed call inventory when the checked-out commit predates them
         if: github.event_name == 'workflow_dispatch'
         env:
           TOOL_SHA: ${{ github.sha }}
         run: |
-          if [[ ! -f scripts/merge/adaptation-check.mts ]]; then
-            mkdir -p scripts/merge
-            git show "$TOOL_SHA:app/scripts/merge/adaptation-check.mts" > scripts/merge/adaptation-check.mts
-          fi
+          for tool in scripts/merge/adaptation-check.mts scripts/scaffolding/registered-workload-calls.mts; do
+            if [[ ! -f "$tool" ]]; then
+              mkdir -p "$(dirname "$tool")"
+              git show "$TOOL_SHA:app/$tool" > "$tool"
+            fi
+          done
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app

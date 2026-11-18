@@ -13,90 +13,12 @@ const { deriveOntosModuleDeploymentContract, registeredWorkloadCallTopologyIssue
   /* webpackIgnore: true */
   '../../generate-ontos-module-contract.mts'
 );
+const { registeredWorkloadCallDrift, REVIEWED_REGISTERED_WORKLOAD_CALLS } = await import(
+  /* webpackIgnore: true */
+  '../registered-workload-calls.mts'
+);
 
 const workspaceRoot = path.resolve(import.meta.dirname, '../../..');
-/**
- * The calling modules (demo divergence exception 8) and the reviewed calls each built contract records, as
- * 'workloadKey audience declarationKey schemaVersion' with the number of declarations that make it, so a new
- * cross-module credential call is a visible diff here.
- */
-const callers = {
-  assortment: {
-    'commerce.assortment.symmy-fixture-currentness catalog commerce.catalog.assortment-product-classification-v1.read 1': 1,
-    'commerce.assortment.symmy-fixture-currentness commerce-customer-context commerce.customer-context.customer-group.read 1': 1,
-    'commerce.assortment.symmy-fixture-currentness commerce-market-catalog commerce.market-catalog.assortment-fixture-market-association.read 1': 1,
-    'commerce.assortment.symmy-fixture-currentness storefront-registry commerce.storefront-registry.storefront-application.read-current 1': 1,
-  },
-  'commerce-customer-context': {
-    'party.registry.source-read party-registry party.registry.counterparty-organization-ico-facts.read 1': 2,
-    'party.registry.source-read party-registry party.registry.source-person-admission.read 1': 3,
-    'pricing.price-group-catalog.source-read price-group-catalog pricing.price-group-catalog.price-group.read.compatibility 1': 1,
-    'privacy.core.organization-business-check privacy privacy.core.organization-business-applicability.read 1': 3,
-    'privacy.core.organization-profile-ico-check privacy privacy.core.organization-profile-ico-applicability.read 1': 2,
-    'privacy.core.source-processing-check privacy privacy.core.source-processing-eligibility.read 1': 3,
-  },
-  'party-registry': {
-    'privacy.core.organization-business-check privacy privacy.core.organization-business-applicability.read 1': 1,
-    'privacy.core.source-processing-check privacy privacy.core.source-processing-eligibility.read 1': 3,
-  },
-  pricing: {
-    'commerce.catalog.symmy-product-read catalog commerce.catalog.selection-evidence.read 1': 1,
-    'commerce.market-catalog.source-read commerce-market-catalog commerce.market-catalog.market-catalog.read 1': 1,
-  },
-  privacy: {
-    'commerce.customer-context.organization-ico-facts.read commerce-customer-context commerce.customer-context.customer-profile-organization-ico-facts.read 1': 3,
-    'integration.symmy.source-organization-facts.read symmy-integration integration.symmy.symmy-source-organization-facts.read 1': 1,
-    'party.registry.source-read party-registry party.registry.organization-ico-facts.read 1': 1,
-    'party.registry.source-read party-registry party.registry.organization-record-facts.read 1': 2,
-    'party.registry.source-read party-registry party.registry.source-person-admission.read 1': 2,
-  },
-  'symmy-integration': {
-    'commerce.assortment.symmy-fixture-rule-import assortment commerce.assortment.symmy-fixture-rule.import 1': 1,
-    'commerce.catalog.symmy-product-import catalog commerce.catalog.product.create 2': 1,
-    'commerce.catalog.symmy-product-import catalog commerce.catalog.product.update 1': 1,
-    'commerce.catalog.symmy-product-import catalog commerce.catalog.variant.create 2': 1,
-    'commerce.catalog.symmy-product-read catalog commerce.catalog.catalog-source-product-page.read 1': 1,
-    'commerce.catalog.symmy-product-read catalog commerce.catalog.catalog-source-products.read 1': 1,
-    'commerce.catalog.symmy-product-read catalog commerce.catalog.create-product-recovery.read 1': 1,
-    'commerce.catalog.symmy-product-read catalog commerce.catalog.create-variant-recovery.read 1': 1,
-    'commerce.catalog.symmy-variant-localized-facts-recovery catalog commerce.catalog.set-variant-localized-facts-recovery.read 1': 1,
-    'commerce.catalog.symmy-variant-localized-facts catalog commerce.catalog.variant-localized-facts.set 1': 1,
-    'commerce.customer-context.source-read commerce-customer-context commerce.customer-context.customer-group-definition-source.read 1': 4,
-    'commerce.customer-context.source-read commerce-customer-context commerce.customer-context.customer-group-membership-source-receipt.read 1': 1,
-    'commerce.customer-context.source-read commerce-customer-context commerce.customer-context.customer-price-group-assignment-receipt.read 1': 2,
-    'commerce.customer-context.source-read commerce-customer-context commerce.customer-context.customer-profile-source.read 1': 2,
-    'commerce.customer-context.source-read commerce-customer-context commerce.customer-context.saved-address-source-receipt.read 1': 3,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.counterparty-price-group.assign 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.counterparty-purchasing-profile.create 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.customer-group-membership-source.apply 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.customer-group.create 1': 2,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.customer-group.update 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.customer-price-group.assign 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.organization-customer-profile-ico.change 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.retail-customer-profile.ensure 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.saved-address.add 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.saved-address.remove 1': 1,
-    'commerce.customer-context.source-write commerce-customer-context commerce.customer-context.saved-address.update 1': 1,
-    'commerce.inventory.source-read inventory commerce.inventory.inventory-source-import-receipt.read 1': 2,
-    'commerce.inventory.source-write inventory commerce.inventory.source-assertion.import 1': 1,
-    'commerce.pricing.source-read pricing commerce.pricing.price-source-result-lookup.read 1': 2,
-    'commerce.pricing.source-read pricing commerce.pricing.price.read-definition 1': 1,
-    'commerce.pricing.source-write pricing commerce.pricing.price.define 2': 1,
-    'commerce.pricing.source-write pricing commerce.pricing.price.revise 2': 1,
-    'commerce.tax.symmy-seller-vat-fixture-import tax commerce.tax.seller-vat-regime-declaration.import 1': 1,
-    'party.registry.source-read party-registry party.registry.party-source-effect-receipt.read 1': 1,
-    'party.registry.source-write party-registry party.registry.contact-point.add 1': 1,
-    'party.registry.source-write party-registry party.registry.counterparty.onboard 1': 1,
-    'party.registry.source-write party-registry party.registry.party.create 1': 1,
-    'party.registry.source-write party-registry party.registry.party.update 1': 1,
-    'pricing.price-group-catalog.source-read price-group-catalog pricing.price-group-catalog.price-group-catalog-head.read 1': 1,
-    'pricing.price-group-catalog.source-read price-group-catalog pricing.price-group-catalog.price-group-result-lookup.read 1': 2,
-    'pricing.price-group-catalog.source-read price-group-catalog pricing.price-group-catalog.price-group-source-associations.read 1': 1,
-    'pricing.price-group-catalog.source-write price-group-catalog pricing.price-group-catalog.price-group-definition-revision.create 1': 1,
-    'pricing.price-group-catalog.source-write price-group-catalog pricing.price-group-catalog.price-group.create 1': 1,
-    'privacy.core.source-processing-check privacy privacy.core.source-processing-eligibility.read 1': 1,
-  },
-} as const satisfies Readonly<Record<string, Readonly<Record<string, number>>>>;
 const receivers = [
   'catalog',
   'commerce-market-catalog',
@@ -159,6 +81,31 @@ it.effect('admits each registered workload only from its reviewed callers', () =
   }),
 );
 
+it('reports a reviewed call a caller lost and a call nobody reviewed', () => {
+  const read = {
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.selection-evidence.read',
+    schemaVersion: '1',
+    workloadKey: 'commerce.catalog.symmy-product-read',
+  };
+  const market = {
+    audience: 'commerce-market-catalog',
+    declarationKey: 'commerce.market-catalog.market-catalog.read',
+    schemaVersion: '1',
+    workloadKey: 'commerce.market-catalog.source-read',
+  };
+  expect(registeredWorkloadCallDrift('pricing', [read, market])).toEqual([]);
+  expect(registeredWorkloadCallDrift('pricing', [read])).toEqual([
+    { built: 0, call: `${market.workloadKey} ${market.audience} ${market.declarationKey} 1`, reviewed: 1 },
+  ]);
+  expect(registeredWorkloadCallDrift('pricing', [read, market, { ...read, schemaVersion: '2' }])).toEqual([
+    { built: 1, call: `${read.workloadKey} ${read.audience} ${read.declarationKey} 2`, reviewed: 0 },
+  ]);
+  expect(registeredWorkloadCallDrift('tax', [read])).toEqual([
+    { built: 1, call: `${read.workloadKey} ${read.audience} ${read.declarationKey} 1`, reviewed: 0 },
+  ]);
+});
+
 it('refuses at generation a call to a deployment the topology does not have', () => {
   expect(registeredWorkloadCallTopologyIssue([{ audience: 'privacy' }], ['privacy', 'party-registry'])).toBeUndefined();
   expect(registeredWorkloadCallTopologyIssue([{ audience: 'privacy-next' }], ['privacy'])).toMatch(
@@ -171,19 +118,14 @@ it.live(
   () =>
     Effect.gen(function* builtCalls() {
       const contracts: readonly Contract[] = yield* Effect.forEach(
-        [...Object.keys(callers), ...receivers],
+        [...Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS), ...receivers],
         (vertical) => deriveOntosModuleDeploymentContract({ vertical, workspaceRoot }),
         { concurrency: 2 },
       ).pipe(Effect.provide(NodeServices.layer));
-      for (const [appId, reviewed] of Object.entries(callers)) {
-        const contract = contracts.find((candidate) => candidate.deployment.appId === appId);
-        const built: Record<string, number> = {};
-        for (const { audience, declarationKey, schemaVersion, workloadKey } of contract?.manifest
-          .registeredWorkloadCalls ?? []) {
-          const call = [workloadKey, audience, declarationKey, schemaVersion].join(' ');
-          built[call] = (built[call] ?? 0) + 1;
-        }
-        expect(built).toEqual(reviewed);
+      for (const appId of Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS)) {
+        const calls =
+          contracts.find((candidate) => candidate.deployment.appId === appId)?.manifest.registeredWorkloadCalls ?? [];
+        expect(registeredWorkloadCallDrift(appId, calls)).toEqual([]);
       }
       for (const appId of receivers) {
         const contract = contracts.find((candidate) => candidate.deployment.appId === appId);
