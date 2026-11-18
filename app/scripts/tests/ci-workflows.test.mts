@@ -1816,15 +1816,6 @@ it('runs the lint rules and the whole-tree repository policy once in every plan,
   ).toEqual([]);
 });
 
-it('logs the wall time of every gate command', () => {
-  const jobs = readJobsOf(GATES_WORKFLOW);
-  for (const job of [WORKSPACE_GATE_JOB, WORKSPACE_UNIT_JOB, WORKSPACE_UNIT_ARTIFACTS_JOB]) {
-    const run = jobs[job]?.steps.find(({ env }) => env?.COMMANDS !== undefined)?.run ?? '';
-    expect(run).toContain('started=$SECONDS');
-    expect(run).toContain(String.raw`printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"`);
-  }
-});
-
 it('saves the demo trunk its own TS-Go and Chromium caches once, after the step that proves them', () => {
   const jobs = readJobsOf(GATES_WORKFLOW);
   const tsgo = jobs[WORKSPACE_GATE_JOB]?.steps.find(

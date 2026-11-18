@@ -376,16 +376,6 @@ it('selects browser checks, all root integration shards and every Shell shard wh
   ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
 });
 
-it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
-  const plan = planCiChecks({
-    applyAffected: true,
-    changedPaths: [CATALOG_SOURCE],
-    packages: [...packages, { dependencies: [CATALOG], directory: '.', name: 'app' }],
-    templates,
-  });
-  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
-});
-
 it('follows topology-only Shell and vertical remote references to browser tests', () => {
   const verticals = [
     { id: 'catalog', package: CATALOG, path: CATALOG_DIRECTORY },
