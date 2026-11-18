@@ -4640,6 +4640,80 @@ it.effect('refuses owner evidence that replaces a declared authorized resource',
   }),
 );
 
+/** The outcome code of every evidence row a read persisted, in order. */
+const evidenceOutcomeCodes = (rows: readonly (readonly unknown[])[]): readonly unknown[] =>
+  rows.map((row) => row.find((value) => value === 'read_allowed' || value === 'read_permission_denied'));
+
+const ONE_OF_PAIR_KEY = 'core.shell.pair.read';
+const ONE_OF_PAIR_PRIMARY_KEY = 'core.shell.pair.read-primary';
+/** Both fields are optional, yet a valid result carries at least one of them. */
+const OneOfPairSchema = Schema.Struct({
+  primary: Schema.optionalKey(Schema.String),
+  secondary: Schema.optionalKey(Schema.String),
+}).check(
+  Schema.makeFilter((pair) =>
+    pair.primary === undefined && pair.secondary === undefined ? 'A pair carries at least one value' : undefined,
+  ),
+);
+
+it.effect('releases no result and no allowed evidence when the projection breaks the result schema', () =>
+  Effect.gen(function* projectionMustValidate() {
+    const harness = yield* makeHarness({
+      accessDecision: makeScriptedBoundAccessGate({ [ONE_OF_PAIR_KEY]: 'allowed', [ONE_OF_PAIR_PRIMARY_KEY]: 'denied' })
+        .bound,
+    });
+    const read = defineRead(
+      {
+        accessDeclaration: { ...fixtureReadAccess('core.shell'), key: ONE_OF_PAIR_KEY },
+        accessFieldGroups: [
+          {
+            fieldClass: 'salaries',
+            fields: ['primary'],
+            key: ONE_OF_PAIR_PRIMARY_KEY,
+            kind: 'field_read',
+            modes: ['run'],
+            placement: { group: 'fixtures', level: 'extended' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+        ],
+        accessKind: 'detail',
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'protected' },
+          entrypointKey: ONE_OF_PAIR_KEY,
+          moduleKey: 'core.shell',
+          role: 'api',
+        }),
+        evidencePolicy: { captureMode: 'metadata_only', policyKey: `${ONE_OF_PAIR_KEY}.v1` },
+        inputSchema: Schema.Struct({}),
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'module',
+        policies: [],
+        readKey: ONE_OF_PAIR_KEY,
+        resultSchema: OneOfPairSchema,
+        schemaVersion: '1',
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: { primary: 'only-value' } }),
+      () => Effect.succeed(Object.freeze({})),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const exit = yield* Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    const failure = Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
+    expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+    expect(JSON.stringify(exit)).not.toContain('only-value');
+    expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
+  }),
+);
+
 const pipelineLoad = () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
 const pipelineServices = () => Effect.succeed({});
 const pipelineTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;

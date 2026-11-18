@@ -1861,5 +1861,7 @@ export const projectReadResultFields = <Result>(
   for (const path of deniedPaths) {
     inPlace = withoutFieldPathInPlace(inPlace, path);
   }
-  return Option.some(inPlace);
+  // Removing an optional field can still break a rule over the whole result (at least one of two
+  // fields, say), so a projection is released only when it is a valid result itself.
+  return Schema.is(Schema.toType(resultSchema))(inPlace) ? Option.some(inPlace) : Option.none();
 };

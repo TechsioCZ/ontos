@@ -2,7 +2,7 @@ import { fixtureOwnerContract, fixtureOwnerModule, ownerPermissionTarget } from 
 import { fileURLToPath } from 'node:url';
 
 import { NodeFileSystem } from '@effect/platform-node';
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { AccessDeclarationError } from '../../src/authorization/access-declaration-error.ts';
@@ -16,6 +16,7 @@ import {
   getReadAccessTargetResolver,
   getReadOwnerFactsResolver,
   getReadPermissionTargetResolver,
+  projectReadResultFields,
   validateReadDescriptorInput,
 } from '../../src/reads/definition.ts';
 import type { ReadDescriptorValidationInput } from '../../src/reads/definition.ts';
@@ -803,4 +804,21 @@ it('accepts a protected governed read that declares no legacy permission target 
       readServices,
     ),
   ).toThrow(/closed governed-read vocabulary/u);
+});
+
+it('never returns a field projection that fails the read result schema (O17)', () => {
+  // Both fields are optional, so a field group may govern either, yet a valid pair carries at least one.
+  const pair = Schema.Struct({
+    primary: Schema.optionalKey(Schema.String),
+    secondary: Schema.optionalKey(Schema.String),
+  }).check(
+    Schema.makeFilter((value) =>
+      value.primary === undefined && value.secondary === undefined ? 'A pair carries at least one value' : undefined,
+    ),
+  );
+  expect(projectReadResultFields({ primary: 'only' }, [['primary']], pair)).toEqual(Option.none());
+  // Negative control: a projection that keeps one value still validates and is released.
+  expect(projectReadResultFields({ primary: 'kept', secondary: 'other' }, [['secondary']], pair)).toEqual(
+    Option.some({ primary: 'kept' }),
+  );
 });
