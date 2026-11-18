@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseSync } from 'oxc-parser';
@@ -1028,12 +1029,20 @@ it.live(
             'utf-8',
           ),
         );
+        // A catalog left by an earlier release that offered MCP tools is not served by one that offers none.
+        const staleToolCatalog = path.join(
+          root,
+          'verticals/property-registry/dist/public/.well-known/ontos-module-mcp-tools.json',
+        );
+        yield* Effect.promise(() => mkdir(path.dirname(staleToolCatalog), { recursive: true }));
+        yield* Effect.promise(() => writeFile(staleToolCatalog, '{"tools":[]}', 'utf-8'));
         const first = yield* generateOntosModuleContract({
           target: 'dist',
           vertical: APP_ID,
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         const firstContent = yield* Effect.promise(() => readFile(first.path, 'utf-8'));
+        expect(existsSync(staleToolCatalog)).toBe(false);
         const packagePath = path.join(root, PROPERTY_PACKAGE_PATH);
         const packageContent = yield* Effect.promise(() => readFile(packagePath, 'utf-8'));
         const decodedPackage = yield* decodeModulePackage(packageContent);

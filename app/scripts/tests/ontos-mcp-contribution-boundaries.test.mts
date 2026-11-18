@@ -278,9 +278,18 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
   });
 });
 
-it('takes the first duplicate read slug, ignores other routes and omits absent optional fields', () => {
+it('rejects one read slug with different payload schemas in two APIs of the module', () => {
+  expect(() =>
+    derive({
+      api: { first: readApi(readPayload), second: readApi(Schema.Struct({ different: Schema.Boolean })) },
+      authored: { ...authored, reads: { state: { title } } },
+    }),
+  ).toThrow('second /reads/state: read state has a different payload schema in another API of the module');
+});
+
+it('keeps one tool for an identical duplicate read, ignores other routes and omits absent optional fields', () => {
   const result = catalogOf({
-    api: { first: readApi(readPayload), second: readApi(Schema.Struct({ different: Schema.Boolean })) },
+    api: { first: readApi(readPayload), second: readApi(readPayload) },
     authored: { ...authored, ownProposalEngine: false, reads: { state: { title } } },
   });
   expect(result.catalog.tools).toHaveLength(1);
@@ -320,6 +329,16 @@ it('accepts an executable payload Schema but rejects missing and unknown contrib
   );
   const result = catalogOf({ actions, authored: { ...authored, actions: { 'assign-code': { title } } } });
   expect(result.catalog.tools[0]?.id).toBe('booking/action/assign-code');
+});
+
+it('does not count an inherited entry as the module classification', () => {
+  const inheritedReads: OntosMcpContributionInput['reads'] = {};
+  Object.setPrototypeOf(inheritedReads, { state: { title } });
+  expect(() =>
+    derive({ api: { BookingApi: readApi(readPayload) }, authored: { ...authored, reads: inheritedReads } }),
+  ).toThrow('booking: MCP reads not contributed or hidden: state');
+  const actions = [{ descriptor: { actionKey: 'booking.constructor', payloadSchema: readPayload } }];
+  expect(() => derive({ actions })).toThrow('booking: MCP actions not contributed or hidden: constructor');
 });
 
 it('merges identical definitions and rejects conflicting definitions without changing the error', () => {
