@@ -126,13 +126,20 @@ const serve = Effect.scoped(
       Schema.Literals([
         'catalog-create-product',
         'catalog-set-variant-localized-facts',
+        'catalog-update-product',
         'customer-group-create',
         'inventory-import',
         'assortment-import',
         'tax-import',
+        'party-create',
+        'party-update',
+        'counterparty-onboard',
+        'counterparty-profile-create',
+        'organization-ico-change',
       ]),
       'ONTOS_C14_RESPONSE_LOSS_OPERATION',
     ).pipe(Config.withDefault('catalog-create-product'));
+    const partyReceiptRead = '/reads/party-source-effect-receipt';
     const faultPaths = {
       'assortment-import': { read: null, write: '/actions/import-symmy-rule' },
       'catalog-create-product': { read: '/reads/create-product-recovery', write: '/actions/create-product' },
@@ -140,11 +147,26 @@ const serve = Effect.scoped(
         read: '/reads/set-variant-localized-facts-recovery',
         write: '/actions/set-variant-localized-facts',
       },
+      'catalog-update-product': { read: '/reads/update-product-recovery', write: '/actions/update-product' },
+      'counterparty-onboard': {
+        read: partyReceiptRead,
+        write: '/actions/counterparty-customer-onboard',
+      },
+      'counterparty-profile-create': {
+        read: '/reads/customer-profile-source',
+        write: '/actions/create-counterparty-purchasing-profile',
+      },
       'customer-group-create': {
         read: '/reads/customer-group-definition-source',
         write: '/actions/create-customer-group',
       },
       'inventory-import': { read: '/reads/inventory-source-import-receipt', write: '/actions/import-source-assertion' },
+      'organization-ico-change': {
+        read: '/reads/organization-customer-profile-ico',
+        write: '/actions/change-organization-customer-profile-ico',
+      },
+      'party-create': { read: partyReceiptRead, write: '/actions/create-party' },
+      'party-update': { read: partyReceiptRead, write: '/actions/update-party' },
       'tax-import': { read: null, write: '/actions/import-seller-vat-regime-declarations' },
     } as const;
     const faultPath = faultPaths[faultOperation];

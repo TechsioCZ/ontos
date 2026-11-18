@@ -24,7 +24,7 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import { Config, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -111,9 +111,10 @@ const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({
 const observeUntil = <Value, Failure, Requirements>(
   observe: Effect.Effect<Value, Failure, Requirements>,
   ready: (value: Value) => boolean,
+  attempts = 600,
 ) =>
   Effect.gen(function* observeCustomerJob() {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       const value = yield* observe;
       if (ready(value)) {
         return value;
@@ -135,6 +136,8 @@ interface StartOwnerInput {
   readonly appId: string;
   readonly contracts: Effect.Success<ReturnType<typeof productComposition>>['contracts'];
   readonly environment: Readonly<Record<string, string>>;
+  /** Extra environment of one owner, such as the response-loss fault of its child. */
+  readonly extra?: Readonly<Record<string, string>>;
   readonly moduleKeys: ReadonlyMap<string, string>;
   readonly ownerDiagnostics: Map<string, Effect.Effect<string>>;
   readonly ownerRuntimes: Map<string, OwnerRuntime>;
@@ -159,7 +162,7 @@ const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner
   const receiver = yield* startProductOwner({
     artifacts,
     contract,
-    environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+    environment: { ...environment, ...input.extra, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
     port,
     prefix,
   });
@@ -674,10 +677,29 @@ it.live(
         } as const;
         const ownerDiagnostics = new Map<string, Effect.Effect<string>>();
         const ownerRuntimes = new Map<string, OwnerRuntime>();
+        // The Party owner commits the first job's create-party and loses its response; while the marker exists its
+        // receipt read is down too, so the worker can only recover the original effect once the marker is gone.
+        const fs = yield* FileSystem.FileSystem;
+        const faultMarker = `${yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_CUSTOMER_' })}/drop-party-response`;
+        yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after native Party commit');
+        const partyFault = {
+          ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
+          ONTOS_C14_RESPONSE_LOSS_OPERATION: 'party-create',
+        };
         yield* Effect.forEach(
           appIds,
           (appId) =>
-            startOwner({ appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes }),
+            startOwner({
+              appId,
+              contracts,
+              environment,
+              extra: appId === 'party-registry' ? partyFault : {},
+              moduleKeys,
+              ownerDiagnostics,
+              ownerRuntimes,
+              ports,
+              prefixes,
+            }),
           { discard: true },
         );
         const client = yield* HttpClient.HttpClient;
@@ -720,15 +742,22 @@ it.live(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
           );
-        const completed = yield* observeUntil(
-          ledger.pipe(
-            Effect.flatMap((rows) =>
-              rows.some(({ state }) => state === 'indeterminate')
-                ? Effect.fail(unavailable('An actual customer owner response was uncertain during the positive proof'))
-                : Effect.succeed(rows),
-            ),
+        const diagnoseWorker = Effect.all([
+          worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+          shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+          ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+            diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
           ),
+        ]);
+        yield* observeUntil(ledger, (rows) =>
+          rows.some(({ effect_key, state }) => effect_key === partyCreateEffectKey && state === 'indeterminate'),
+        ).pipe(Effect.tapError(() => diagnoseWorker));
+        yield* fs.remove(faultMarker);
+        // The worker retries the uncertain effect after its delivery backoff, at most 30 seconds.
+        const completed = yield* observeUntil(
+          ledger,
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
+          1800,
         ).pipe(
           Effect.tapError(() =>
             Effect.all([

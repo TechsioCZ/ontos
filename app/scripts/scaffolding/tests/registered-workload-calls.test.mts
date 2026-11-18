@@ -53,13 +53,61 @@ const declaring = (appId: string, ...workloadKeys: readonly string[]) => ({
 const sourceWrite = 'commerce.customer-context.source-write';
 const sourceProcessingCheck = 'privacy.core.source-processing-check';
 const symmyIntegration = 'symmy-integration';
+const partyRegistry = 'party-registry';
+const customerContext = 'commerce-customer-context';
+const partySourceEffectReceipt = 'party.registry.party-source-effect-receipt.read';
+const symmyJob = 'integration.symmy.execute-symmy-job';
+
+/**
+ * The Symmy worker recovers a lost write response by one receipt read. The Shell issues that read only for exactly one
+ * call naming the read and the write it recovers, so each write has one such call, also for a finished delivery; the
+ * receiver publishes the write as an action and the read as none.
+ */
+const expectOneRecoveryPerLostWrite = (
+  built: readonly Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>>[],
+) => {
+  const symmyCalls =
+    built.find(({ deployment }) => deployment.appId === symmyIntegration)?.manifest.registeredWorkloadCalls ?? [];
+  for (const [audience, declarationKey, write] of [
+    ['catalog', 'commerce.catalog.update-product-recovery.read', 'commerce.catalog.update-product'],
+    [partyRegistry, partySourceEffectReceipt, 'party.registry.create-party'],
+    [partyRegistry, partySourceEffectReceipt, 'party.registry.update-party'],
+    [partyRegistry, partySourceEffectReceipt, 'party.registry.counterparty-customer-onboard'],
+    [
+      customerContext,
+      'commerce.customer-context.customer-profile-source.read',
+      'commerce.customer-context.create-counterparty-purchasing-profile',
+    ],
+    [
+      customerContext,
+      'commerce.customer-context.organization-customer-profile-ico.read',
+      'commerce.customer-context.change-organization-customer-profile-ico',
+    ],
+  ] as const) {
+    const recoveries = symmyCalls.filter(
+      (call) =>
+        call.audience === audience &&
+        call.declarationKey === declarationKey &&
+        call.recoveryOf?.actionKey === write &&
+        call.workerKey === symmyJob,
+    );
+    expect(recoveries, write).toHaveLength(1);
+    expect(recoveries[0]?.allowHistoricalDeliveryRecovery, write).toBe(true);
+    expect(recoveries[0]?.recoveryOf?.jobKey, write).toBe(symmyJob);
+    const actions = (
+      built.find(({ deployment }) => deployment.appId === audience)?.manifest.publicSurface.actions ?? []
+    ).map(({ entrypoint }) => entrypoint.entrypointKey);
+    expect(actions, write).toContain(write);
+    expect(actions, write).not.toContain(recoveries[0]?.entrypointKey);
+  }
+};
 
 it('admits each registered workload only from its reviewed callers', () => {
   expect(REVIEWED_REGISTERED_WORKLOAD_CALLERS.get(sourceWrite)).toEqual([symmyIntegration]);
   expect(
     callerRefusal([
       declaring(symmyIntegration, sourceWrite, sourceProcessingCheck),
-      declaring('party-registry', sourceProcessingCheck),
+      declaring(partyRegistry, sourceProcessingCheck),
       declaring('catalog'),
     ]),
   ).toBe('accepted');
@@ -134,11 +182,12 @@ it.live(
   'records each calling module calls in its built contract, and the workspace check refuses any undeclared call',
   () =>
     Effect.gen(function* builtCalls() {
-      const contracts: readonly Contract[] = yield* Effect.forEach(
+      const built = yield* Effect.forEach(
         [...Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS), ...receivers],
         (vertical) => deriveOntosModuleDeploymentContract({ vertical, workspaceRoot }),
         { concurrency: 2 },
       ).pipe(Effect.provide(NodeServices.layer));
+      const contracts: readonly Contract[] = built;
       for (const appId of Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS)) {
         const calls =
           contracts.find((candidate) => candidate.deployment.appId === appId)?.manifest.registeredWorkloadCalls ?? [];
@@ -188,6 +237,8 @@ it.live(
           ]),
         ),
       ).toMatch(/symmy-integration .*party\.registry\.party\.create with scope optional, not required/u);
+
+      expectOneRecoveryPerLostWrite(built);
     }),
   { timeout: 600_000 },
 );
