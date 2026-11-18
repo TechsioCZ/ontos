@@ -127,13 +127,24 @@ const isClosedString = (value: Value): boolean =>
   !metadataOnly(value) && value.kind === 'data' && value.stringData !== false &&
   (value.stringData === true || ('literal' in value && typeof value.literal === 'string'));
 /**
- * The same data without string or exact literal evidence: a nullable or optional wrapper, or a record key that may be
- * absent, may yield null or undefined instead, so neither `entry === "ok"` nor a template part may rely on its value.
+ * The same value without string or exact literal evidence, at any depth: a nullable or optional wrapper, a record key
+ * or an array index that may be absent, may yield null or undefined instead, so neither `entry === "ok"`,
+ * `entry?.kind === "ok"` nor a template part may rely on a value inside it.
  */
-const possiblyAbsent = (value: Value | undefined): Value | undefined => {
-  if (value?.kind !== 'data' || (value.stringData !== true && !('literal' in value))) return value;
-  const { literal: _exact, ...widened } = value;
-  return { ...widened, stringData: false };
+const possiblyAbsent = (value: Value | undefined, depth = 0): Value | undefined => {
+  if (value === undefined || depth > 64) return value;
+  if (value.kind === 'data') {
+    if (value.stringData !== true && !('literal' in value)) return value;
+    const { literal: _exact, ...widened } = value;
+    return { ...widened, stringData: false };
+  }
+  if (value.kind !== 'record' && value.kind !== 'array') return value;
+  const fields = value.fields === undefined ? undefined
+    : new Map([...value.fields].map(([name, field]) => [name, possiblyAbsent(field, depth + 1) ?? field]));
+  const element = possiblyAbsent(value.element, depth + 1);
+  return element === value.element && [...(fields ?? [])].every(([name, field]) => value.fields?.get(name) === field)
+    ? value
+    : { ...value, ...(fields === undefined ? {} : { fields }), ...(element === undefined ? {} : { element }) };
 };
 /** A schema whose decoded and encoded values are both closed strings. */
 const isClosedStringSchema = (value: Value): boolean =>
@@ -734,14 +745,16 @@ class DataFactoryProof {
           callee.type === 'Identifier' ||
           (callee.type === 'CallExpression' &&
             ['deferred-effect', 'schema-class', 'deferred-runtime'].includes(origin ?? ''));
-        // A schema `.pipe` calls each stage now, during initialisation. `safe` admits a function or a bare name
-        // without its body, so a callback or a named stage takes the normal callback proof below instead.
+        // A schema `.pipe` calls each stage now, during initialisation. `safe` admits a function, a name or a member
+        // without its body, so every stage but a Schema combinator call takes the normal callback proof below instead.
         const eagerStage =
           origin === 'deferred-schema' &&
           callee.type === 'MemberExpression' &&
           !callee.computed &&
           callee.property.name === 'pipe' &&
-          node.arguments.some((argument: Node) => fnNode(unwrap(argument)) || unwrap(argument).type === 'Identifier');
+          node.arguments.some(
+            (argument: Node) => unwrap(argument).type !== 'CallExpression' || deferredOrigin(argument) !== 'deferred-schema',
+          );
         if (origin !== null && creation && !eagerStage) {
           const receiverSafe =
             callee.type === 'MemberExpression' ? safe(callee.object) : callee.type !== 'CallExpression' || safe(callee);
@@ -2041,7 +2054,7 @@ class DataFactoryProof {
       for (const [index, element] of pattern.elements.entries()) {
         if (
           element !== null &&
-          !this.bind(element, this.metadataProjection(input, input.fields?.get(String(index)) ?? input.element ?? BAD), model, env, local || this.strictSchemaExports)
+          !this.bind(element, this.metadataProjection(input, input.fields?.get(String(index)) ?? possiblyAbsent(input.element) ?? BAD), model, env, local || this.strictSchemaExports)
         )
           return false;
       }
@@ -2636,13 +2649,13 @@ class DataFactoryProof {
       if (node.property.type === 'Literal' && typeof node.property.value === 'string')
         return this.property(owner, node.property.value, model);
       if (['array', 'data'].includes(owner.kind) && this.expression(node.property, model, env).native === 'number')
-        return this.metadataProjection(owner, owner.kind === 'array' ? (owner.element ?? BAD) : DATA);
+        return this.metadataProjection(owner, owner.kind === 'array' ? (possiblyAbsent(owner.element) ?? BAD) : DATA);
       if (
         node.property.type === 'Literal' &&
         typeof node.property.value === 'number' &&
         ['array', 'data'].includes(owner.kind)
       )
-        return this.metadataProjection(owner, owner.kind === 'array' ? (owner.fields?.get(String(node.property.value)) ?? owner.element ?? BAD) : DATA);
+        return this.metadataProjection(owner, owner.kind === 'array' ? (owner.fields?.get(String(node.property.value)) ?? possiblyAbsent(owner.element) ?? BAD) : DATA);
       return BAD;
     }
     if (
@@ -3111,7 +3124,7 @@ class DataFactoryProof {
             : array(DATA, true);
       }
       if (operation === 'at' && owner.kind === 'array' && args.length === 1 && args.every(isData))
-        return owner.empty === true ? { kind: 'data', literal: undefined } : (owner.element ?? BAD);
+        return owner.empty === true ? { kind: 'data', literal: undefined } : (possiblyAbsent(owner.element) ?? BAD);
       if (
         operation === 'reduce' &&
         owner.kind === 'array' &&
