@@ -329,6 +329,8 @@ it('keeps a custom domain Problem out of the identities a multi-code error maps 
     "interface DomainProblemIdentity { readonly code: 'manual_rate_conflict' | 'manual_rate_superseded'; readonly kind: 'conflict' }",
   );
   expect(problems).not.toContain("'manual_rate_not_implemented'; readonly kind");
+  expect(problems).toContain("Match.when({ kind: 'conflict' as const }");
+  expect(problems).not.toContain("Match.when({ kind: 'ineligible'");
   expect(problems).toContain('ManualRateNotImplemented: (failure) => mapManualRateNotImplementedProblem(failure),');
 });
 
