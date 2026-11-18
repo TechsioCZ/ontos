@@ -301,6 +301,210 @@ it('selects work before gates and starts source checks without waiting for artif
   }
 });
 
+const CANCEL_REPLACED_QUEUE_RUNS_JOB = 'cancel-replaced-queue-runs';
+const CancelWorkflowSchema = Schema.Struct({
+  concurrency: Schema.Struct({ 'cancel-in-progress': Schema.String, group: Schema.String }),
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      if: Schema.optional(Schema.String),
+      needs: Schema.optional(Schema.Array(Schema.String)),
+      permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      steps: Schema.optional(
+        Schema.Array(Schema.Struct({ run: Schema.optional(Schema.String), uses: Schema.optional(Schema.String) })),
+      ),
+    }),
+  ),
+});
+const readCancelWorkflow = () =>
+  Schema.decodeUnknownSync(CancelWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+
+it('cancels the runs of replaced merge queue entries from a job that runs no repository code', () => {
+  const { concurrency, jobs } = readCancelWorkflow();
+  // Pull request, push, dispatch and schedule runs keep their group; a run on main is never cancelled by it.
+  expect(concurrency).toEqual({
+    'cancel-in-progress': expression("github.ref != 'refs/heads/main'"),
+    group: `ultramodern-workspace-${expression('github.workflow')}-${expression('github.ref')}`,
+  });
+  const cancel = jobs[CANCEL_REPLACED_QUEUE_RUNS_JOB];
+  expect(cancel?.if).toBe("github.event_name == 'merge_group'");
+  expect(cancel?.needs).toBeUndefined();
+  // The write token sits in one step that checks out nothing and runs no action.
+  expect(cancel?.permissions).toEqual({ actions: 'write' });
+  expect(cancel?.steps?.map(({ uses }) => uses)).toEqual([undefined]);
+  for (const [job, { needs, permissions }] of Object.entries(jobs)) {
+    if (job !== CANCEL_REPLACED_QUEUE_RUNS_JOB) {
+      expect(permissions?.actions, job).not.toBe('write');
+    }
+    // A cancel never decides the verdict, and nothing waits for it.
+    expect(needs ?? [], job).not.toContain(CANCEL_REPLACED_QUEUE_RUNS_JOB);
+  }
+});
+
+/** One exact `gh` invocation of a fake gh and its answer; any other invocation fails. */
+interface FakeGhRoute {
+  readonly args: string;
+  readonly exit?: number;
+  readonly stderr?: string;
+  readonly stdout?: string;
+}
+/** Runs a step script with a fake gh that answers only the given invocations and records every call. */
+const runWithFakeGh = (
+  script: string,
+  routes: readonly FakeGhRoute[],
+  environment: Readonly<Record<string, string>>,
+) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-fake-gh-'));
+  try {
+    const calls = path.join(directory, 'calls');
+    const summary = path.join(directory, 'summary');
+    writeFileSync(calls, '');
+    writeFileSync(summary, '');
+    const branches = routes.map(({ args, exit = 0, stderr = '', stdout = '' }, index) => {
+      writeFileSync(path.join(directory, `stdout-${index}`), stdout);
+      writeFileSync(path.join(directory, `stderr-${index}`), stderr);
+      return `  '${args}') cat '${directory}/stdout-${index}'; cat '${directory}/stderr-${index}' >&2; exit ${exit} ;;`;
+    });
+    const gh = path.join(directory, 'gh');
+    writeFileSync(
+      gh,
+      [
+        '#!/bin/bash',
+        `printf '%s\\n' "$*" >> '${calls}'`,
+        'case "$*" in',
+        ...branches,
+        '  *) echo "unexpected gh $*" >&2; exit 97 ;;',
+        'esac',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(gh, 0o755);
+    const passed = stepPasses(script, {
+      GH_TOKEN: 'test-token',
+      GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+      GITHUB_SERVER_URL: 'https://github.com',
+      GITHUB_STEP_SUMMARY: summary,
+      PATH: `${directory}:${STEP_PATH}`,
+      ...environment,
+    });
+    return {
+      calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean),
+      passed,
+      summary: readFileSync(summary, 'utf-8'),
+    };
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+const QUEUE_RUN_ID = 44_300_000_000;
+const QUEUE_ENTRY_PREFIX = 'gh-readonly-queue/main/pr-1492-';
+const QUEUE_BASES = ['2de699a1608eda1bdd847c1cd7e5f967b7d52218', '9292b97dccbb4c1b09fe8ea99c8d76a8fb282559'] as const;
+const QUEUE_WORKFLOW_ID = 342_952_200;
+const LIVE_RUN_STATUSES = ['queued', 'in_progress', 'waiting', 'requested', 'pending'] as const;
+const workflowRunsRoute = (status: string, runs: readonly { head_branch: string | null; id: number }[]) => ({
+  args: `api repos/TechsioCZ/ontos/actions/workflows/${QUEUE_WORKFLOW_ID}/runs?event=merge_group&status=${status}&per_page=100`,
+  stdout: JSON.stringify({ total_count: runs.length, workflow_runs: runs }),
+});
+const cancelArgs = (id: number) => `api -X POST repos/TechsioCZ/ontos/actions/runs/${id}/cancel`;
+const runUrl = (id: number) => `https://github.com/TechsioCZ/ontos/actions/runs/${id}`;
+
+// 07:12 UTC on 18 Nov: the queue rebuilt five entries, and the runs of the replaced ones kept 146 runner-minutes.
+it('cancels exactly the older live merge group runs of the same pull request', () => {
+  const script = readCancelWorkflow().jobs[CANCEL_REPLACED_QUEUE_RUNS_JOB]?.steps?.[0]?.run ?? 'exit 1';
+  const [base, otherBase] = QUEUE_BASES;
+  const environment = { GITHUB_REF: `refs/heads/${QUEUE_ENTRY_PREFIX}${base}`, GITHUB_RUN_ID: String(QUEUE_RUN_ID) };
+  const replaced = { head_branch: `${QUEUE_ENTRY_PREFIX}${otherBase}`, id: 44_200_000_001 };
+  const replacedOnThisBase = { head_branch: `${QUEUE_ENTRY_PREFIX}${base}`, id: 44_200_000_004 };
+  const endedBeforeCancel = { head_branch: `${QUEUE_ENTRY_PREFIX}${otherBase}`, id: 44_200_000_007 };
+  const lists = {
+    in_progress: [
+      // Listed again after it started: cancelled once.
+      replaced,
+      replacedOnThisBase,
+      { head_branch: 'main', id: 44_200_000_005 },
+      { head_branch: `gh-readonly-queue/release/pr-1492-${base}`, id: 44_200_000_006 },
+      { head_branch: `${QUEUE_ENTRY_PREFIX}abc`, id: 44_200_000_008 },
+      { head_branch: null, id: 44_200_000_009 },
+    ],
+    pending: [],
+    queued: [
+      replaced,
+      { head_branch: `gh-readonly-queue/main/pr-149-${base}`, id: 44_200_000_002 },
+      { head_branch: `gh-readonly-queue/main/pr-14920-${base}`, id: 44_200_000_003 },
+      // A newer run is a later entry of this pull request, never a replaced one.
+      { head_branch: `${QUEUE_ENTRY_PREFIX}${otherBase}`, id: QUEUE_RUN_ID + 1 },
+    ],
+    requested: [],
+    waiting: [endedBeforeCancel],
+  };
+  // Completed runs are never listed: the fake answers only the live statuses.
+  const routes = (cancelAnswer: FakeGhRoute, failedList?: string): FakeGhRoute[] => [
+    {
+      args: `api repos/TechsioCZ/ontos/actions/runs/${QUEUE_RUN_ID} --jq .workflow_id`,
+      stdout: `${QUEUE_WORKFLOW_ID}\n`,
+    },
+    ...LIVE_RUN_STATUSES.map((status) =>
+      status === failedList
+        ? { ...workflowRunsRoute(status, []), exit: 1, stderr: 'gh: Server Error (HTTP 502)\n', stdout: '' }
+        : workflowRunsRoute(status, lists[status]),
+    ),
+    { args: cancelArgs(replaced.id), stdout: '{}' },
+    cancelAnswer,
+    {
+      args: cancelArgs(endedBeforeCancel.id),
+      exit: 1,
+      stderr: 'gh: Cannot cancel a workflow run that is completed. (HTTP 409)\n',
+      stdout: '{"message":"Cannot cancel a workflow run that is completed."}',
+    },
+  ];
+  const lookups = [
+    `api repos/TechsioCZ/ontos/actions/runs/${QUEUE_RUN_ID} --jq .workflow_id`,
+    ...LIVE_RUN_STATUSES.map((status) => workflowRunsRoute(status, []).args),
+  ];
+  const cancels = [replaced, replacedOnThisBase, endedBeforeCancel].map(({ id }) => cancelArgs(id));
+
+  const done = runWithFakeGh(script, routes({ args: cancelArgs(replacedOnThisBase.id), stdout: '{}' }), environment);
+  expect(done.calls).toEqual([...lookups, ...cancels]);
+  expect(done.passed).toBe(true);
+  expect(done.summary).toContain(runUrl(replaced.id));
+  expect(done.summary).toContain(runUrl(replacedOnThisBase.id));
+  expect(done.summary).not.toContain(runUrl(endedBeforeCancel.id));
+
+  // Any refusal other than "already completed" is a failure, not a skipped cancel.
+  const refused = runWithFakeGh(
+    script,
+    routes({
+      args: cancelArgs(replacedOnThisBase.id),
+      exit: 1,
+      stderr: 'gh: Resource not accessible by integration (HTTP 403)\n',
+    }),
+    environment,
+  );
+  expect(refused.passed).toBe(false);
+  expect(refused.calls).toEqual([...lookups, ...cancels.slice(0, 2)]);
+
+  // A listing that fails cancels nothing and fails.
+  const unlisted = runWithFakeGh(script, routes({ args: cancelArgs(replacedOnThisBase.id) }, 'waiting'), environment);
+  expect(unlisted.passed).toBe(false);
+  expect(unlisted.calls).toEqual(lookups.slice(0, 4));
+
+  // Only a pull request's queue entry ref names a pull request: anything else fails before any call.
+  for (const ref of [
+    'refs/heads/main',
+    `refs/heads/${QUEUE_ENTRY_PREFIX}abc`,
+    'refs/pull/1492/merge',
+    `refs/heads/gh-readonly-queue/main/pr--${base}`,
+  ]) {
+    const rejected = runWithFakeGh(script, routes({ args: cancelArgs(replacedOnThisBase.id) }), {
+      ...environment,
+      GITHUB_REF: ref,
+    });
+    expect(rejected.passed, ref).toBe(false);
+    expect(rejected.calls, ref).toEqual([]);
+  }
+});
+
 it('classifies documentation before installation and schedules full regression without enabling deployment', () => {
   const schema = Schema.Struct({
     jobs: Schema.Struct({

@@ -68,6 +68,61 @@ jobs:
             echo 'proven=false' >>"$GITHUB_OUTPUT"
           fi
 
+  # The merge queue tests each entry on its own ref, gh-readonly-queue/<base>/pr-<number>-<base commit>, and
+  # builds an entry again on a new ref whenever an entry ahead of it leaves the queue. GitHub does not cancel
+  # the run of the replaced entry, and the workflow's concurrency group cannot cut the pull request number
+  # out of the ref (expressions have no substring), so that run kept the shared runners from the entries
+  # that can still merge: three of them used 146 runner-minutes after the 07:12 UTC rebuild on 18 Nov. The
+  # queue holds one live entry per pull request, so every older merge group run of the same pull request on
+  # the same base branch belongs to a replaced entry. An entry that leaves without a rebuild fires no event,
+  # so its run ends by itself. Nothing waits for this job and it runs no repository code.
+  cancel-replaced-queue-runs:
+    name: Cancel the runs of this pull request's replaced queue entries
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the older merge group runs of this pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/heads/(gh-readonly-queue/.+/pr-[0-9]+-)[0-9a-f]{40}$ ]]; then
+            echo "::error title=Not a queue entry ref::$GITHUB_REF names no pull request's merge queue entry."
+            exit 1
+          fi
+          # The trailing dash keeps pr-14 apart from pr-149; the exact suffix keeps every other branch out.
+          prefix="${BASH_REMATCH[1]}"
+          workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')"
+          replaced=''
+          for status in queued in_progress waiting requested pending; do
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?event=merge_group&status=$status&per_page=100")"
+            replaced+="$(jq -r --arg prefix "$prefix" --argjson run "$GITHUB_RUN_ID" '.workflow_runs[]
+              | select(.id < $run and ((.head_branch // "") | startswith($prefix) and (.[($prefix | length):] | test("^[0-9a-f]{40}$"))))
+              | .id' <<<"$runs")"$'\n'
+          done
+          printf '## Replaced queue entries of %s\n\n' "${prefix%-}" >>"$GITHUB_STEP_SUMMARY"
+          cancelled=0
+          for id in $(sort -nu <<<"$replaced"); do
+            # 409: the run ended between the listing and the cancel, which is what the cancel is for.
+            if ! response="$(gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/cancel" 2>&1)"; then
+              if [[ "$response" != *'(HTTP 409)'* ]]; then
+                echo "::error title=Replaced queue run not cancelled::Run $id: $response"
+                exit 1
+              fi
+              echo "Run $id ended before its cancel."
+              continue
+            fi
+            echo "Cancelled $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+            echo "- Cancelled $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id" >>"$GITHUB_STEP_SUMMARY"
+            cancelled=$((cancelled + 1))
+          done
+          echo "Cancelled $cancelled run(s) of replaced entries of ${prefix%-}."
+          if [[ "$cancelled" -eq 0 ]]; then
+            echo 'No older run of this pull request was still running.' >>"$GITHUB_STEP_SUMMARY"
+          fi
+
   ci-plan:
     name: Select required checks from changed inputs
     needs: [queue-proof]
