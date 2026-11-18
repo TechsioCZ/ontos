@@ -4,8 +4,9 @@
  * A read is still defined with `defineRead` from `@app/core-runtime`, with one of three spellings of
  * its second argument:
  *
- * - a bare handler, or `{ load: handler }`: one transaction, exactly as today. A descriptor may add
- *   `accessQuestions`; the handler then also receives `context.access`, and it stays one transaction.
+ * - a bare handler, or `{ load: handler }`: one transaction, exactly as today. A `{ load }` read's
+ *   descriptor may add `accessQuestions` (a bare handler may not); the handler then also receives
+ *   `context.access`, and it stays one transaction.
  * - `{ run }`: the new form, for a read that needs a call or more than one transaction. `run` receives
  *   the neutral capabilities (`call`, `transaction`) plus the read's own facts and answers, and returns
  *   the read's answer. The descriptor declares every call it can make in `calls`.
@@ -113,7 +114,7 @@ export interface ReadRunContext<
   Calls extends ReadCalls,
   Questions extends AccessQuestions,
 > extends ExecutionCapabilities<Services, Calls> {
-  /** Core's answers to the descriptor's `accessQuestions`, decided with the read's own decision. */
+  /** Core's answers to the descriptor's `accessQuestions`, asked after the read's own decision allowed it. */
   readonly access: AccessAnswers<Questions>;
   /** As on the one-transaction form: present exactly when the access gate decided this read. */
   readonly deniedFieldPaths?: readonly (readonly string[])[];

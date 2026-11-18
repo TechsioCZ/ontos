@@ -2,24 +2,26 @@ import { Context } from 'effect';
 import type { Effect } from 'effect';
 
 import type { TransactionAborted, TransactionFacts } from '../sdk/index.ts';
-import type { OwnerServicesBinding, TransactionRequest } from './contract.ts';
+import type { OwnerBinding, TransactionRequest } from './contract.ts';
 
 /**
  * Opens one owner transaction and runs a module function in it (`execution/transaction.ts`).
  * Obligations, in this order inside one `CoreDatabase` transaction:
  *
- * 1. The first statement sets the mode: `SET TRANSACTION READ ONLY` (or `READ WRITE`) with the
- *    isolation the fence requires (READ COMMITTED), before any other statement, so the fence, the
- *    clock, the scope install and the owner rule all run under it.
+ * 1. The mode is set by the driver's transaction config, which emits it as the first statements
+ *    after BEGIN: `executor.transaction(body, { accessMode: 'read only' | 'read write', isolationLevel:
+ *    'read committed' })`. The fence, the clock, the scope install (including
+ *    `trust.establish_gateway_scope` for a gateway-grant role), the seal and the owner rule all run
+ *    under it.
  * 2. Fence: when `admittedRevision` is defined, `lockApplicationCompositionAuthority(tx, revision,
  *    'read')`; a failure is `TransactionAborted('composition_changed')`.
- * 3. `installOperationalScope(tx, scope)`, then `bindScopedWorkloadAdmission` with
- *    `workloadAdmission`; its `close` runs when the body ends.
- * 4. `trustedTransactionTime(tx)` gives `TransactionFacts.operationAt`.
- * 5. Owner rule: `OwnerAuthorizationOverlay.authorize(scoped, { ...owner, operationAt })`. `denied`
- *    fails `TransactionAborted('owner_denied')`, `unavailable` fails `'owner_unavailable'`. Decided
- *    in every transaction, before services exist.
- * 6. Services: `owner.build(scoped, scope, admittedRevision, listAccess)`. A failure is
+ * 3. `installOperationalScope(tx, scope)`, then `owner.seal`; its `close` runs when the body ends.
+ * 4. Clock: `statement_timestamp()` of one statement issued now (a new helper next to
+ *    `trustedTransactionTime` in `operations/transaction-time.ts`) is `TransactionFacts.operationAt`:
+ *    after the fence wait, never earlier than it.
+ * 5. Owner rule: `owner.decide(sealed, operationAt)`. `denied` fails `TransactionAborted('owner_denied')`,
+ *    `unavailable` fails `'owner_unavailable'`. Decided in every transaction, before services exist.
+ * 6. Services: `owner.build(sealed, scope, admittedRevision)`. A failure is
  *    `TransactionAborted('database_unavailable')`.
  * 7. The body runs in a child scope; every fiber it forked is interrupted and awaited before the
  *    transaction settles, so no statement is in flight at COMMIT or ROLLBACK.
@@ -29,12 +31,17 @@ import type { OwnerServicesBinding, TransactionRequest } from './contract.ts';
  *    unchanged. An SQL error of the opener itself (BEGIN, fence, scope, clock, COMMIT) is
  *    `TransactionAborted('database_unavailable')`.
  *
- * The read's evidence is not written here: the read adapter settles it after `run` (`ExecutionEvidence`).
+ * `checkOwner` is steps 1 to 5 with nothing after them, then ROLLBACK: the opening owner check of a
+ * session. Neither writes evidence: the kind adapter settles it after the module's code.
  */
 export interface KernelTransactionsService {
+  readonly checkOwner: (
+    request: TransactionRequest,
+    owner: Pick<OwnerBinding<unknown, never>, 'decide' | 'seal'>,
+  ) => Effect.Effect<void, TransactionAborted>;
   readonly open: <Services, FactoryRequirements, A, E, R>(
     request: TransactionRequest,
-    owner: OwnerServicesBinding<Services, FactoryRequirements>,
+    owner: OwnerBinding<Services, FactoryRequirements>,
     body: (services: Services, facts: TransactionFacts) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | TransactionAborted, FactoryRequirements | R>;
 }
