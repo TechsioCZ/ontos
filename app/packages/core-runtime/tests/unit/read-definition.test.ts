@@ -963,6 +963,8 @@ it('refuses a prepared schema that admits a value carrying behaviour', () => {
     Schema.Option(Schema.instanceOf(URL)),
     Schema.Union([RecordSchema, Schema.instanceOf(URL)]),
     Schema.Tuple([Schema.String, Schema.Unknown]),
+    Schema.Symbol,
+    Schema.Struct({ marker: Schema.UniqueSymbol(Symbol.for('prepared-marker')) }),
     UnknownTree,
   ];
   for (const prepared of refused) {

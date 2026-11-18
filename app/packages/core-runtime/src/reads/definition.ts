@@ -1168,6 +1168,9 @@ const preparedSchemaNodeIssue = (ast: SchemaAST.AST): string | undefined => {
   if (SchemaAST.isDeclaration(ast) && !PREPARED_DATA_DECLARATIONS.has(declarationRepresentation(ast))) {
     return 'a declaration other than Option or DateTime admits whatever its guard accepts';
   }
+  if (SchemaAST.isSymbol(ast) || SchemaAST.isUniqueSymbol(ast)) {
+    return 'a symbol does not survive the data copy that load and finish receive';
+  }
   return undefined;
 };
 
@@ -1176,7 +1179,8 @@ const preparedSchemaNodeIssue = (ast: SchemaAST.AST): string | undefined => {
  * walked through every struct, record, tuple, array, union, Option and recursion: an `Any`, `Unknown` or
  * `ObjectKeyword` node, or a `Declaration` other than Effect's Option, DateTimeUtc and DateTimeZoned, is refused,
  * because each admits a value that carries behaviour (a function, an Effect, a class instance, an object with a
- * getter). Primitives (bigint included), literals, enums, template literals, brands and their checks are data.
+ * getter). A symbol is refused too: the copy cannot carry one. Other primitives (bigint included), literals, enums,
+ * template literals, brands and their checks are data.
  */
 export const preparedDataSchemaIssue = (schema: ReadPreparedSchema): string | undefined => {
   const visited = new Set<SchemaAST.AST>();
