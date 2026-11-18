@@ -1,7 +1,6 @@
 import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type { DatabaseIdentity } from '../../packages/core-runtime/src/db/database-identities.ts';
 
@@ -27,17 +26,6 @@ export const PARTY_REGISTRY_WORKER_SECRET: DatabaseIdentitySecret = {
   identity: PARTY_REGISTRY_WORKER_IDENTITY,
   secretKey: 'PARTY_REGISTRY_WORKER_DB_PASSWORD',
 };
-export const SHELL_GATEWAY_ISSUER_SECRET: DatabaseIdentitySecret = {
-  identity: SHELL_GATEWAY_ISSUER_IDENTITY,
-  secretKey: 'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
-};
-
-export const DATABASE_IDENTITY_SECRETS: readonly DatabaseIdentitySecret[] = [
-  PARTY_REGISTRY_REQUEST_SECRET,
-  PARTY_REGISTRY_WORKER_SECRET,
-  SHELL_GATEWAY_ISSUER_SECRET,
-];
-
 /** The `migrator_<KEY>` name that `${migrator_<KEY>}` references and `readZeropsValue` reads. */
 export const migratorSecretReference = (secretKey: string) => `${MIGRATOR_SERVICE_HOSTNAME}_${secretKey}`;
 
