@@ -2,7 +2,7 @@
 
 // This Node-only build entry sits outside the package's src-only TypeScript project.
 // @effect-diagnostics nodeBuiltinImport:off -- Build-time Modern config: Node's connect dev middleware, Rspack resolution and file URLs run outside any Effect runtime, and the effect barrel cannot load under jiti; expires: 2027-03-31.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { AppUserConfig } from '@modern-js/app-tools/cli-config';
@@ -33,9 +33,11 @@ type DevelopmentMiddlewareSetup = Pick<
   'unshift'
 >;
 
+const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
+
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
-  '/.well-known/ontos-module-mcp-tools.json',
+  DEVELOPMENT_MCP_TOOL_CATALOG,
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
@@ -48,7 +50,14 @@ export const createDevelopmentContractMiddleware =
         next();
         return;
       }
-      const contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      const artifactPath = fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl));
+      // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
+      if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && !existsSync(artifactPath)) {
+        response.statusCode = 404;
+        response.end();
+        return;
+      }
+      const contract = readFileSync(artifactPath);
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
