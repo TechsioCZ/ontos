@@ -226,6 +226,16 @@ it('refuses a workspace file it cannot expand exactly', () => {
       failed: '::error::The install action cannot read this packages: entry of app/pnpm-workspace.yaml:   -\n',
     });
   });
+  // A package pnpm reads from another manifest would be left out of the cached paths and the key.
+  for (const manifest of ['package.yaml', 'package.json5']) {
+    withWorkspace('packages:\n  - apps/*\n', FIXTURE, (workspace) => {
+      mkdirSync(path.join(workspace, 'apps/extra'));
+      writeFileSync(path.join(workspace, 'apps/extra', manifest), '');
+      expect(derive(workspace), manifest).toEqual({
+        failed: `::error::The install action reads only package.json manifests; app/pnpm-workspace.yaml matches apps/extra/${manifest}.\n`,
+      });
+    });
+  }
 });
 
 it('restores and saves exactly the derived paths under a key that names every package manifest', () => {

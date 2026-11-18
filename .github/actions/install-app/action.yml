@@ -123,6 +123,13 @@ runs:
         done
         directories=()
         for glob in ${positives[@]+"${positives[@]}"}; do
+          # pnpm also reads package.yaml and package.json5; this listing reads only package.json, so it refuses them.
+          for manifest in $glob/package.yaml $glob/package.json5; do
+            # A glob without a wildcard stays as written even when it names no file.
+            [[ -e "$manifest" ]] || continue
+            echo "::error::The install action reads only package.json manifests; app/pnpm-workspace.yaml matches $manifest."
+            exit 1
+          done
           for manifest in $glob/package.json; do
             directory="${manifest%/package.json}"
             [[ "$excluded" == *$'\n'"$directory"$'\n'* || "/$directory/" == */node_modules/* ]] || directories+=("$directory")
