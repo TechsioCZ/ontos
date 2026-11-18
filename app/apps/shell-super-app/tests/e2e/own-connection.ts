@@ -6,7 +6,7 @@
  * until the server's idle timer closes it, and a request written to it at that moment is lost unread: the server
  * logs nothing and the test sees `socket hang up` (run 43757038239, a POST to the module-target endpoint).
  * `Connection: close` makes the server close the socket after its response, so no socket is ever pooled and the race
- * cannot occur. Nothing is retried. `harness-connections.spec.ts` keeps every API call of the specs on it.
+ * cannot occur. Nothing is retried.
  */
 export const onOwnConnection = <Options extends { readonly headers?: Readonly<Record<string, string>> }>(
   options?: Options,
