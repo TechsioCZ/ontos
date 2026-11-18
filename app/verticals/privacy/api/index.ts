@@ -1,5 +1,5 @@
+import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';
 import { PrivacySubjectPartyCredentialsLive } from '../src/persistence/privacy-subject-party-credentials.ts';
-import { privacyRegistration } from '../vertical.registration.ts';
 import { PrivacySubjectPartyOwnerLive } from '../src/persistence/privacy-subject-party-owner.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
