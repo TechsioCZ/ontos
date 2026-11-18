@@ -2,9 +2,8 @@ import { GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Cause, Clock, DateTime, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
-import { afterAll, assert, expect, it, rs } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -13,19 +12,6 @@ import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/tes
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { gatewayAssertionRedemptions } from '../../src/database/schema.ts';
-
-rs.mock('../../src/database/schema.ts', () => {
-  const pricingSchema = pgSchema('pricing');
-  return {
-    gatewayAssertionRedemptions: pricingSchema.table('gateway_assertion_redemptions', {
-      audience: text('audience').notNull(),
-      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-      issuer: text('issuer').notNull(),
-      jti: uuid('jti').notNull(),
-      redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
-    }),
-  };
-});
 
 const assertion = {
   audience: 'pricing',
@@ -238,11 +224,3 @@ it.effect('fails with sanitized unavailability after five seconds', () =>
     expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(failure)).toBe(true);
   }),
 );
-
-// With `isolate: false` one module registry is shared by every file a worker runs, so these
-// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
-// modules they replaced, so the next file evaluates the real implementations.
-afterAll(() => {
-  rs.doUnmock('../../src/database/schema.ts');
-  rs.resetModules();
-});

@@ -1,4 +1,3 @@
-import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect, Match, Redacted, Result, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
@@ -17,47 +16,18 @@ import { PartyCreateRecoveryUnavailable } from '../../shared/domain/matching-con
 import { PartyMatchDecisionAuthenticationProblemSchema } from '../../shared/apis/party-match-decision.ts';
 import {
   requestSearchRebuildWithAuthorization,
-  resolvePartyCommandCommit,
-  recoverPartyCreate,
   recoverPartyCreateWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 import { makeCommandAssertionFetch } from '../support/command-assertion-fetch.ts';
+import {
+  compositionRevision,
+  createDecision,
+  invocationId,
+  makeSingleUseOwnerResponse,
+  recoveryCredential,
+} from '../support/party-command-recovery.ts';
 
-const invocationId = Schema.decodeSync(ActionInvocationIdSchema)('10000000-0000-4000-8000-000000000001');
-const compositionRevision = 'a'.repeat(64);
 const approvedApiBaseUrl = 'https://party.example/party-registry-api';
-const approvedBrowserApiBasePath = '/module-api/party-registry/build-approved/party-registry-api';
-
-const recoveryCredential = (jti: string, signature = 'signature') =>
-  `Bearer ${btoa('{"alg":"HS256"}')}.${btoa(JSON.stringify({ jti }))}.${signature}`;
-
-const makeSingleUseOwnerResponse = (ownerResponse: (request: Request) => Response) => {
-  const consumedJtis = new Set<string>();
-  const rejectedJtis: string[] = [];
-  const respond = (request: Request) => {
-    const encodedPayload = request.headers.get('authorization')?.split('.')[1];
-    if (encodedPayload === undefined) {
-      throw new Error('Expected a JWT credential');
-    }
-    const { jti } = Schema.decodeUnknownSync(Schema.Struct({ jti: Schema.String }))(JSON.parse(atob(encodedPayload)));
-    if (consumedJtis.has(jti)) {
-      rejectedJtis.push(jti);
-      return Response.json(
-        {
-          _tag: 'PartyMatchDecisionAuthenticationProblem',
-          detail: 'This single-use credential was already consumed.',
-          status: 401,
-          title: 'Credential already consumed',
-          type: 'urn:ontos:party:credential-consumed',
-        },
-        { headers: { 'content-type': 'application/problem+json' }, status: 401 },
-      );
-    }
-    consumedJtis.add(jti);
-    return ownerResponse(request);
-  };
-  return { consumedJtis, rejectedJtis, respond };
-};
 
 const makeNativeRecoveryFetch = (ownerResponse: (request: Request) => Response) => {
   const singleUse = makeSingleUseOwnerResponse(ownerResponse);
@@ -75,77 +45,6 @@ const makeNativeRecoveryAcquirer = (baseUrl: string | URL = approvedApiBaseUrl) 
       };
     });
   return { acquire, acquisitions: () => acquisitions };
-};
-
-const pinRecoveryDocument = Effect.gen(function* pinTestDocument() {
-  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (previousDocument === undefined) {
-        Reflect.deleteProperty(globalThis, 'document');
-      } else {
-        Object.defineProperty(globalThis, 'document', previousDocument);
-      }
-      if (previousLocation === undefined) {
-        Reflect.deleteProperty(globalThis, 'location');
-      } else {
-        Object.defineProperty(globalThis, 'location', previousLocation);
-      }
-    }),
-  );
-  Object.defineProperty(globalThis, 'document', {
-    configurable: true,
-    value: { querySelectorAll: () => [] },
-  });
-  Object.defineProperty(globalThis, 'location', {
-    configurable: true,
-    value: { origin: 'https://shell.example', pathname: '/en' },
-  });
-  yield* pinDocumentCompositionRevision(compositionRevision);
-});
-
-const makeRecoveryAssertionFetch = (ownerResponse: (request: Request) => Response) => {
-  const singleUse = makeSingleUseOwnerResponse(ownerResponse);
-  const requests: Request[] = [];
-  let assertions = 0;
-  const fakeFetch: typeof fetch = (input, init) => {
-    const request = new Request(input, init);
-    requests.push(request);
-    if (new URL(request.url).pathname !== '/shell-super-app-api/auth/gateway-context') {
-      return Promise.resolve(singleUse.respond(request));
-    }
-    assertions += 1;
-    return Promise.resolve(
-      Response.json({
-        apiBaseUrl: approvedBrowserApiBasePath,
-        compositionRevision,
-        expiresAt: 2_000_000_000,
-        token: recoveryCredential(`fresh-${assertions}`).slice('Bearer '.length),
-      }),
-    );
-  };
-  return { assertions: () => assertions, fakeFetch, requests };
-};
-
-const createDecision = (outcome: 'CREATED' | 'MATCHED_EXISTING' | 'AMBIGUOUS') => {
-  const partyRef = {
-    moduleId: 'party.registry',
-    resourceId: invocationId,
-    resourceType: 'party.registry.party',
-    tenantId: invocationId,
-  };
-  return {
-    caseRef: outcome === 'AMBIGUOUS' ? { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' } : null,
-    committedCreateOutcome: outcome,
-    decidedAt: '2026-09-04T00:00:00Z',
-    decisionRef: { ...partyRef, resourceType: 'party.registry.party-match-decision' },
-    evidenceExplanation: [],
-    matchRuleVersion: 'party-exact-claims.v1',
-    operation: 'CREATE',
-    outcome: outcome === 'MATCHED_EXISTING' ? 'MATCHED' : outcome,
-    partyRef: outcome === 'AMBIGUOUS' ? null : partyRef,
-  };
 };
 
 const recoveryProblems = [
@@ -267,98 +166,6 @@ for (const { name, is, problem } of [
     }),
   );
 }
-
-it.effect('recovery acquires a fresh assertion without submitting an idempotency key or re-running a command', () =>
-  Effect.gen(function* testProgram3() {
-    yield* pinRecoveryDocument;
-    const { requests, assertions, fakeFetch } = makeRecoveryAssertionFetch(() =>
-      Response.json({
-        _tag: 'PartyCommandCommitResolution',
-        invocationId,
-        retryCommand: false,
-        state: 'COMMITTED',
-      }),
-    );
-    const result = yield* resolvePartyCommandCommit(
-      { invocationId },
-      {
-        baseUrl: 'https://party.example/party-registry-api',
-        correlationId: 'recovery',
-        gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-        traceId: 'trace',
-      },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(result.state).toBe('COMMITTED');
-    expect(assertions()).toBe(1);
-    expect(requests.length).toBe(2);
-    const [, request] = requests;
-    expect(Boolean(request)).toBe(true);
-    if (request === undefined) {
-      throw new Error('Expected truthy value');
-    }
-    expect(request.url).toBe(
-      `https://shell.example${approvedBrowserApiBasePath}/party-registry/action-commits/resolve`,
-    );
-    expect(request.headers.get('authorization')).toBe(recoveryCredential('fresh-1'));
-    expect(request.headers.get('idempotency-key')).toBe(null);
-    expect(request.headers.get('x-correlation-id')).toBe('recovery');
-    expect(request.headers.get('x-trace-id')).toBe('trace');
-    expect(yield* Effect.promise(() => request.json())).toEqual({
-      invocationId,
-    });
-  }),
-);
-
-it.effect('Create recovery resolves commit and returns exact original operation result with fresh read authority', () =>
-  Effect.all(
-    (['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const).map((outcome) =>
-      Effect.gen(function* testProgram5() {
-        yield* pinRecoveryDocument;
-        const { requests, assertions, fakeFetch } = makeRecoveryAssertionFetch((request) => {
-          if (request.url.endsWith('/resolve')) {
-            return Response.json({
-              _tag: 'PartyCommandCommitResolution',
-              invocationId,
-              retryCommand: false,
-              state: 'COMMITTED',
-            });
-          }
-          return Response.json(createDecision(outcome));
-        });
-        const recovered = yield* recoverPartyCreate(
-          { invocationId },
-          {
-            baseUrl: 'https://party.example/party-registry-api',
-            correlationId: 'recover',
-            gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-          },
-        ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-        const recoveredResult = Match.value(recovered).pipe(
-          Match.tag('PartyCreateRecovered', ({ result }) => result),
-          Match.tag('PartyCreateRecoveryPending', ({ resolution }) =>
-            (() => {
-              throw new Error(`Expected committed recovery, received ${resolution.state}`);
-            })(),
-          ),
-          Match.exhaustive,
-        );
-        expect(recoveredResult.outcome).toBe(outcome);
-        expect(assertions()).toBe(2);
-        expect(requests.length).toBe(4);
-        expect(
-          requests
-            .filter((request) => new URL(request.url).pathname !== '/shell-super-app-api/auth/gateway-context')
-            .map((request) => request.headers.get('authorization')),
-        ).toEqual([recoveryCredential('fresh-1'), recoveryCredential('fresh-2')]);
-        expect(
-          requests.every(
-            (request) => !request.url.includes('/commands/') && request.headers.get('idempotency-key') === null,
-          ),
-        ).toBe(true);
-      }),
-    ),
-  ),
-);
 
 it.effect('native Create recovery acquires a fresh single-use credential for each read of the captured release', () =>
   Effect.gen(function* nativeCreateRecovery() {

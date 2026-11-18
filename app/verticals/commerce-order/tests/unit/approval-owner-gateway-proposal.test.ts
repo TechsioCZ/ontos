@@ -1,5 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { OrderServiceApprovalEvidenceResponseSchema } from '@app/commerce-customer-context/api/order-service-approval-evidence';
+import { ConsumeOrderPurchaseApprovalResultSchema } from '@app/commerce-customer-context/api/consume-order-purchase-approval-action';
 import {
   RevalidateOrderPurchaseApprovalActionConflictProblemSchema,
   RevalidateOrderPurchaseApprovalActionUnavailableProblemSchema,
@@ -14,7 +16,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 
 import {
   makeIssue788CommercialTotal,
@@ -33,28 +35,16 @@ import {
   recoveredRevalidationEvidence,
   retainedConsumptionProposal,
 } from '../support/order-approval-gateway-state.ts';
-
-const dependencies = rs.hoisted(() => ({
-  consume: rs.fn<() => Effect.Effect<unknown, unknown>>(),
-  evidence: rs.fn<() => Effect.Effect<unknown, unknown>>(),
-  issueGateway: rs.fn<() => Effect.Effect<unknown, unknown>>(),
-  revalidate: rs.fn<() => Effect.Effect<unknown, unknown>>(),
-}));
-
-// Only the owner transport, the Shell assertion issuer and the approval owner's two Action clients are
-// replaced. The gateway's own binding, decode, recovery and conflict mapping run as shipped.
-rs.mock('@app/shared-contracts/gateway-context-server', () => ({
-  acquireDelegatedGatewayContext: dependencies.issueGateway,
-}));
-rs.mock('@app/commerce-customer-context/api/order-service-approval-evidence/client', () => ({
-  executeOrderServiceApprovalEvidenceWithAuthorization: dependencies.evidence,
-}));
-rs.mock('@app/commerce-customer-context/api/revalidate-order-purchase-approval-action/client', () => ({
-  executeRevalidateOrderPurchaseApprovalWithAuthorization: dependencies.revalidate,
-}));
-rs.mock('@app/commerce-customer-context/api/consume-order-purchase-approval-action/client', () => ({
-  executeConsumeOrderPurchaseApprovalWithAuthorization: dependencies.consume,
-}));
+import {
+  approvalEvidencePath,
+  consumeApprovalPath,
+  makeOrderOwnerTransport,
+  ownerProblem,
+  ownerTransportLayer,
+  ownerWire,
+  revalidateApprovalPath,
+} from '../support/order-owner-transport.ts';
+import type { OwnerReply } from '../support/order-owner-transport.ts';
 
 const operationTime = '2026-10-24T12:00:00.000Z';
 const validUntil = '2026-10-24T13:00:00.000Z';
@@ -121,22 +111,39 @@ const testLayer = ApprovalOwnerGatewayLive.pipe(
   Layer.provide(NodeCrypto.layer),
 );
 
-/** A live gateway assertion that is exactly bound to the active composition and still unexpired. */
-const issueGatewayAssertion = Effect.gen(function* issueGatewayAssertion() {
+/**
+ * The actual gateway, its delegated Shell client and the approval owner's actual evidence and Action clients
+ * run over HTTP; only the Shell and approval owner peers are fakes. The Shell issues a live assertion exactly
+ * bound to the active composition; each owner route answers its scripted replies in order.
+ */
+const approvalOwner = Effect.fn('test.approvalOwner')(function* approvalOwner(routes: {
+  readonly consume?: readonly OwnerReply[];
+  readonly evidence: readonly OwnerReply[];
+  readonly revalidate?: readonly OwnerReply[];
+}) {
   yield* TestClock.setTime(Date.parse(operationTime));
-  dependencies.issueGateway.mockReset();
-  dependencies.issueGateway.mockReturnValue(
-    Effect.succeed({
-      apiBaseUrl: '/ccc-api',
-      authorization: 'Bearer unit-assertion',
-      compositionRevision: composition.revision,
-      expiresAt: Date.parse(validUntil) / 1000,
-    }),
-  );
-  dependencies.evidence.mockReset();
-  dependencies.revalidate.mockReset();
-  dependencies.consume.mockReset();
+  const transport = makeOrderOwnerTransport({
+    compositionRevision: composition.revision,
+    expiresAt: Date.parse(validUntil) / 1000,
+    token: 'unit-assertion',
+  });
+  transport.reply(approvalEvidencePath, ...routes.evidence);
+  transport.reply(revalidateApprovalPath, ...(routes.revalidate ?? []));
+  transport.reply(consumeApprovalPath, ...(routes.consume ?? []));
+  return transport;
 });
+const evidence = (answer: typeof OrderServiceApprovalEvidenceResponseSchema.Type) =>
+  ownerWire(OrderServiceApprovalEvidenceResponseSchema, answer);
+const parked = ownerWire(ActionProposalAcceptedSchema, parkedProposal, 202);
+const gatewayOver = <A, E>(
+  transport: ReturnType<typeof makeOrderOwnerTransport>,
+  use: (gateway: ApprovalOwnerGateway['Service']) => Effect.Effect<A, E>,
+) =>
+  ApprovalOwnerGateway.pipe(
+    Effect.flatMap(use),
+    Effect.provide(testLayer),
+    Effect.provide(ownerTransportLayer(async (input, init) => transport.answer(input, init))),
+  );
 
 /** The admissibility state built over a genuine owner-issued Pricing quotation. */
 const buildRevalidationState = Effect.fn('test.revalidationState')(function* buildRevalidationState() {
@@ -157,78 +164,82 @@ describe('Order approval owner gateway parked proposals', () => {
   it.effect('refuses a parked revalidation proposal that retained no genuine receipt', () =>
     Effect.gen(function* refuseParkedRevalidation() {
       const state = yield* buildRevalidationState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence.mockReturnValue(Effect.succeed(notFoundRevalidationEvidence(state)));
-      dependencies.revalidate.mockReturnValue(Effect.succeed(parkedProposal));
-      const gateway = yield* ApprovalOwnerGateway;
-      const failure = yield* gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope).pipe(Effect.flip);
+      const transport = yield* approvalOwner({
+        evidence: [evidence(notFoundRevalidationEvidence(state))],
+        revalidate: [parked],
+      });
+      const failure = yield* gatewayOver(transport, (gateway) =>
+        gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope),
+      ).pipe(Effect.flip);
       expect(Schema.is(OrderCommitmentRejected)(failure)).toBe(true);
       expect(failure.code).toBe('order_commitment_unavailable');
-      expect(dependencies.revalidate).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(revalidateApprovalPath)).toHaveLength(1);
+    }),
   );
 
   it.effect('settles a parked revalidation only when an exact durable receipt subsequently appears', () =>
     Effect.gen(function* recoverAfterParkedRevalidation() {
       const state = yield* buildRevalidationState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence
-        .mockReturnValueOnce(Effect.succeed(notFoundRevalidationEvidence(state)))
-        .mockReturnValueOnce(Effect.succeed(notFoundRevalidationEvidence(state)))
-        .mockReturnValue(Effect.succeed(recoveredRevalidationEvidence(state)));
-      dependencies.revalidate.mockReturnValue(Effect.succeed(parkedProposal));
-      const gateway = yield* ApprovalOwnerGateway;
-      const outcome = yield* gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope);
+      const notFound = evidence(notFoundRevalidationEvidence(state));
+      const transport = yield* approvalOwner({
+        evidence: [notFound, notFound, evidence(recoveredRevalidationEvidence(state))],
+        revalidate: [parked],
+      });
+      const outcome = yield* gatewayOver(transport, (gateway) =>
+        gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope),
+      );
       expect(outcome).toMatchObject({ kind: 'VALID', result: { outcome: 'APPROVAL_VALID' } });
-      expect(dependencies.revalidate).toHaveBeenCalledTimes(1);
-      expect(dependencies.evidence).toHaveBeenCalledTimes(3);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(revalidateApprovalPath)).toHaveLength(1);
+      expect(transport.sentTo(approvalEvidencePath)).toHaveLength(3);
+    }),
   );
 
   it.effect('accepts only a genuinely retained, exactly bound revalidation', () =>
     Effect.gen(function* acceptRetainedRevalidation() {
       const state = yield* buildRevalidationState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence.mockReturnValue(Effect.succeed(recoveredRevalidationEvidence(state)));
-      const gateway = yield* ApprovalOwnerGateway;
-      const outcome = yield* gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope);
+      const transport = yield* approvalOwner({ evidence: [evidence(recoveredRevalidationEvidence(state))] });
+      const outcome = yield* gatewayOver(transport, (gateway) =>
+        gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope),
+      );
       expect(outcome).toMatchObject({ kind: 'VALID', result: { outcome: 'APPROVAL_VALID' } });
-      expect(dependencies.revalidate).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(revalidateApprovalPath)).toHaveLength(0);
+    }),
   );
 
   it.effect('lets an exact retained revalidation settle an indeterminate Action failure', () =>
     Effect.gen(function* settleIndeterminateFailure() {
       const state = yield* buildRevalidationState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence
-        .mockReturnValueOnce(Effect.succeed(notFoundRevalidationEvidence(state)))
-        .mockReturnValueOnce(Effect.succeed(notFoundRevalidationEvidence(state)))
-        .mockReturnValue(Effect.succeed(recoveredRevalidationEvidence(state)));
-      dependencies.revalidate.mockReturnValue(Effect.fail(revalidationUnavailable));
-      const gateway = yield* ApprovalOwnerGateway;
-      const outcome = yield* gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope);
+      const notFound = evidence(notFoundRevalidationEvidence(state));
+      const transport = yield* approvalOwner({
+        evidence: [notFound, notFound, evidence(recoveredRevalidationEvidence(state))],
+        revalidate: [
+          ownerProblem(RevalidateOrderPurchaseApprovalActionUnavailableProblemSchema, revalidationUnavailable),
+        ],
+      });
+      const outcome = yield* gatewayOver(transport, (gateway) =>
+        gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope),
+      );
       expect(outcome).toMatchObject({ kind: 'VALID', result: { outcome: 'APPROVAL_VALID' } });
-      expect(dependencies.revalidate).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(revalidateApprovalPath)).toHaveLength(1);
+    }),
   );
 
   it.effect('keeps a published revalidation conflict a conflict and never settles it by recovery', () =>
     Effect.gen(function* keepPublishedConflict() {
       const state = yield* buildRevalidationState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence
-        .mockReturnValueOnce(Effect.succeed(notFoundRevalidationEvidence(state)))
-        .mockReturnValueOnce(Effect.succeed(notFoundRevalidationEvidence(state)))
-        .mockReturnValue(Effect.succeed(recoveredRevalidationEvidence(state)));
-      dependencies.revalidate.mockReturnValue(Effect.fail(revalidationConflict));
-      const gateway = yield* ApprovalOwnerGateway;
-      const failure = yield* gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope).pipe(Effect.flip);
+      const notFound = evidence(notFoundRevalidationEvidence(state));
+      const transport = yield* approvalOwner({
+        evidence: [notFound, notFound, evidence(recoveredRevalidationEvidence(state))],
+        revalidate: [ownerProblem(RevalidateOrderPurchaseApprovalActionConflictProblemSchema, revalidationConflict)],
+      });
+      const failure = yield* gatewayOver(transport, (gateway) =>
+        gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope),
+      ).pipe(Effect.flip);
       expect(Schema.is(OrderCommitmentRejected)(failure)).toBe(true);
       expect(failure.code).toBe('order_commitment_conflict');
-      expect(dependencies.revalidate).toHaveBeenCalledTimes(1);
-      expect(dependencies.evidence).toHaveBeenCalledTimes(2);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(revalidateApprovalPath)).toHaveLength(1);
+      expect(transport.sentTo(approvalEvidencePath)).toHaveLength(2);
+    }),
   );
 });
 
@@ -236,55 +247,50 @@ describe('Order approval owner gateway parked consumption proposals', () => {
   it.effect('refuses a parked consumption proposal for an approval that is not genuinely consumed', () =>
     Effect.gen(function* refuseParkedConsumption() {
       const state = yield* buildConsumptionState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence.mockReturnValue(Effect.succeed(approvedProposalEvidence));
-      dependencies.consume.mockReturnValue(Effect.succeed(parkedProposal));
-      const gateway = yield* ApprovalOwnerGateway;
-      const failure = yield* gateway.consume(state, gatewayScope).pipe(Effect.flip);
+      const transport = yield* approvalOwner({ consume: [parked], evidence: [evidence(approvedProposalEvidence)] });
+      const failure = yield* gatewayOver(transport, (gateway) => gateway.consume(state, gatewayScope)).pipe(
+        Effect.flip,
+      );
       expect(Schema.is(OrderCommitmentRejected)(failure)).toBe(true);
       expect(failure.code).toBe('order_commitment_unavailable');
-      expect(dependencies.consume).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(consumeApprovalPath)).toHaveLength(1);
+    }),
   );
 
   it.effect('settles a parked consumption only from the subsequently retained exact receipt', () =>
     Effect.gen(function* recoverAfterParkedConsumption() {
       const state = yield* buildConsumptionState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence
-        .mockReturnValueOnce(Effect.succeed(approvedProposalEvidence))
-        .mockReturnValue(Effect.succeed(retainedConsumptionProposal(state)));
-      dependencies.consume.mockReturnValue(Effect.succeed(parkedProposal));
-      const gateway = yield* ApprovalOwnerGateway;
-      const result = yield* gateway.consume(state, gatewayScope);
+      const transport = yield* approvalOwner({
+        consume: [parked],
+        evidence: [evidence(approvedProposalEvidence), evidence(retainedConsumptionProposal(state))],
+      });
+      const result = yield* gatewayOver(transport, (gateway) => gateway.consume(state, gatewayScope));
       expect(result.outcome).toBe('ALREADY_CONSUMED');
-      expect(dependencies.consume).toHaveBeenCalledTimes(1);
-      expect(dependencies.evidence).toHaveBeenCalledTimes(2);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(consumeApprovalPath)).toHaveLength(1);
+      expect(transport.sentTo(approvalEvidencePath)).toHaveLength(2);
+    }),
   );
 
   it.effect('resolves durable consumption debt from the exact retained receipt without another write', () =>
     Effect.gen(function* resolveRetainedConsumption() {
       const state = yield* buildConsumptionState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence.mockReturnValue(Effect.succeed(retainedConsumptionProposal(state)));
-      const gateway = yield* ApprovalOwnerGateway;
-      const result = yield* gateway.consume(state, gatewayScope);
+      const transport = yield* approvalOwner({ evidence: [evidence(retainedConsumptionProposal(state))] });
+      const result = yield* gatewayOver(transport, (gateway) => gateway.consume(state, gatewayScope));
       expect(result.outcome).toBe('ALREADY_CONSUMED');
-      expect(dependencies.consume).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(consumeApprovalPath)).toHaveLength(0);
+    }),
   );
 
   it.effect('accepts a genuine consumption result the owner Action answers', () =>
     Effect.gen(function* acceptGenuineConsumption() {
       const state = yield* buildConsumptionState();
-      yield* issueGatewayAssertion;
-      dependencies.evidence.mockReturnValue(Effect.succeed(approvedProposalEvidence));
-      dependencies.consume.mockReturnValue(Effect.succeed(genuineConsumptionResult(state)));
-      const gateway = yield* ApprovalOwnerGateway;
-      const result = yield* gateway.consume(state, gatewayScope);
+      const transport = yield* approvalOwner({
+        consume: [ownerWire(ConsumeOrderPurchaseApprovalResultSchema, genuineConsumptionResult(state))],
+        evidence: [evidence(approvedProposalEvidence)],
+      });
+      const result = yield* gatewayOver(transport, (gateway) => gateway.consume(state, gatewayScope));
       expect(result.outcome).toBe('CONSUMED');
-      expect(dependencies.consume).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(testLayer)),
+      expect(transport.sentTo(consumeApprovalPath)).toHaveLength(1);
+    }),
   );
 });

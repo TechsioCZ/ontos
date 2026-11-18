@@ -42,8 +42,6 @@ export const failedOrderPreparationWork = {
   stage: 'PREPARE',
   status: 'FAILED',
 } as const;
-/** What the worker's owner read observes after a completion attempt. */
-export type OrderPreparationWorkObservation = typeof failedOrderPreparationWork | typeof pendingOrderPreparationWork;
 
 /** Pricing's authenticated expiry of the exact retained Quotation, as decoded from its public read. */
 export const expiredOrderQuotation = Schema.decodeUnknownSync(QuotationExpiredResponseSchema)({
@@ -108,22 +106,6 @@ export const orderProofPayload = Schema.decodeUnknownSync(OutboxPayloadSchema)({
   legalEntityId: orderLegalEntityId,
   stage: 'PROOF',
 });
-/** Pending proof work whose Bundle retained the Quotation interval of `expiredOrderQuotation`. */
-export const pendingOrderProofWork = {
-  approvalIdempotencyKey: 'approval:original',
-  intentRef: orderProofPayload.intentRef,
-  pricingIdempotencyKey: 'pricing:proof:original',
-  stage: 'PROOF',
-  state: { bundle: { finalization: { pricing: { quotation: { validity: expiredOrderQuotation.expired.validity } } } } },
-  status: 'PENDING',
-  work: pendingOrderPreparationWork.work,
-} as const;
-export const failedOrderProofWork = {
-  intentRef: orderProofPayload.intentRef,
-  stage: 'PROOF',
-  status: 'FAILED',
-} as const;
-
 /** The registered worker for proof work; only the Quotation expiry read and approval owner are replaced. */
 export const orderProofWorkerLayer = (
   readRetainedQuotationExpiry: () => Effect.Effect<
