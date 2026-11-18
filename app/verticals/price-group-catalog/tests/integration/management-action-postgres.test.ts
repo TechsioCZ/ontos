@@ -4,7 +4,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
 import {
-  ActionAlreadyCommitted,
   ActionRequestHashConflict,
   getActionAccessTargetResolver,
   scopedRoutineInvokerFromTransaction,
@@ -260,16 +259,15 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
         },
       };
       // INTERNAL C14 response-loss proof: the first native result is deliberately unobserved by the
-      // recovering caller. Its saved original request and key resolve the same immutable invocation.
+      // recovering caller. Its saved original request and key resolve the same immutable invocation,
+      // and Core answers both concurrent retries with the reply it saved with that commit.
       const created = yield* runtime.runAction(createRequest);
       const originalInvocationId = created.initialDefinition.created.actionInvocationId;
-      const recoveries = yield* Effect.all(
-        [runtime.runAction(createRequest).pipe(Effect.flip), runtime.runAction(createRequest).pipe(Effect.flip)],
-        { concurrency: 2 },
-      );
+      const recoveries = yield* Effect.all([runtime.runAction(createRequest), runtime.runAction(createRequest)], {
+        concurrency: 2,
+      });
       for (const recovery of recoveries) {
-        expect(Schema.is(ActionAlreadyCommitted)(recovery)).toBe(true);
-        expect(recovery).toMatchObject({ invocationId: originalInvocationId });
+        expect(recovery).toEqual(created);
       }
       const intentMismatch = yield* runtime
         .runAction({
@@ -362,9 +360,8 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
       }
       expect(duplicateInvocation.actionInvocationId).not.toBe(originalInvocationId);
       expect(duplicateInvocation.status).toBe('succeeded');
-      const lostAck = yield* runtime.runAction(duplicateRequest).pipe(Effect.flip);
-      expect(lostAck).toMatchObject({ invocationId: duplicateInvocation.actionInvocationId });
-      expect(Schema.is(ActionAlreadyCommitted)(lostAck)).toBe(true);
+      const lostAck = yield* runtime.runAction(duplicateRequest);
+      expect(lostAck).toEqual(duplicate);
       const readDeliveryReceipt = (writer: string) =>
         database.transaction((transaction) =>
           Effect.gen(function* readImmutableDelivery() {

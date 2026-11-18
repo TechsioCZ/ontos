@@ -2,7 +2,6 @@ import { Crypto, Effect, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { executeSelectionEvidenceWithAuthorization } from '../../src/api/selection-evidence-client.ts';
-import { GovernVariantAllowedValuesActionAlreadyCommittedProblemSchema } from '../../shared/apis/govern-variant-allowed-values-action.ts';
 import {
   SelectionEvidenceAuthenticationProblemSchema,
   SelectionEvidenceForbiddenProblemSchema,
@@ -105,12 +104,9 @@ it.live(
         Schema.is(SelectionEvidenceAuthenticationProblemSchema)(yield* request(consumedAssertion).pipe(Effect.flip)),
       ).toBe(true);
       const key = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
-      expect(yield* owner.restrict([], 1, 1, key)).toMatchObject({ allowanceRevision: 2, changed: true });
-      expect(
-        Schema.is(GovernVariantAllowedValuesActionAlreadyCommittedProblemSchema)(
-          yield* owner.restrict([], 1, 1, key).pipe(Effect.flip),
-        ),
-      ).toBe(true);
+      const restricted = yield* owner.restrict([], 1, 1, key);
+      expect(restricted).toMatchObject({ allowanceRevision: 2, changed: true });
+      expect(yield* owner.restrict([], 1, 1, key)).toEqual(restricted);
       expect((yield* owner.observeAllowance()).events.map(({ allowanceRevision }) => allowanceRevision)).toEqual([
         1, 2,
       ]);

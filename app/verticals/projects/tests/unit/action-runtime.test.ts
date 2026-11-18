@@ -43,8 +43,8 @@ it.layer(NodeCrypto.layer)('Projects Action lifecycle', (test) => {
       const result = yield* harness.runtime.runAction(request);
       expect(result.createdByPrincipalId).toBe(creatorId);
       expect(result.ownerPrincipalId).toBe(ownerId);
-      const repeated = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      expect(Predicate.isTagged(repeated, 'ActionAlreadyCommitted')).toBe(true);
+      // Core answers a same-key, same-payload retry with the saved reply; the owner never writes again.
+      expect(yield* harness.runtime.runAction(request)).toEqual(result);
       expect(writes).toBe(1);
       const snapshot = harness.snapshot();
       expect(snapshot.committed).toHaveLength(1);

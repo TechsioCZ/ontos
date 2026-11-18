@@ -1,5 +1,4 @@
 import {
-  ActionAlreadyCommitted,
   ActionPermissionCheckError,
   ActionPermissionDenied,
   ActionTransactionError,
@@ -204,16 +203,15 @@ describe('Promotion native Core Action management', () => {
             promotionPersistenceFactory(transaction, scope).pipe(Effect.andThen((service) => service.generation())),
           );
           const evidenceBeforeReplay = yield* fixture.evidenceCount();
-          const replay = yield* Effect.flip(
-            runAction({
-              audience: 'promotion',
-              payload: { meaning: firstMeaning, promotionId: firstId, reason },
-              principal,
-              registration: createPromotionDraftAction,
-              transport: createTransport,
-            }),
-          );
-          expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
+          // The saved reply is the original creation result, even after later lifecycle changes.
+          const replay = yield* runAction({
+            audience: 'promotion',
+            payload: { meaning: firstMeaning, promotionId: firstId, reason },
+            principal,
+            registration: createPromotionDraftAction,
+            transport: createTransport,
+          });
+          expect(replay).toEqual(created);
           expect(yield* fixture.evidenceCount()).toBe(evidenceBeforeReplay);
           expect(
             yield* fixture.prepareOwner((transaction, scope) =>

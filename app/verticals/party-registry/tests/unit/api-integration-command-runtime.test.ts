@@ -1469,8 +1469,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     }),
   );
 
-  suite.effect('committed request replay stays a terminal 409 and does not execute or emit twice', () =>
-    Effect.gen(function* rejectCommittedCommandReplay() {
+  suite.effect('committed request replay returns the saved reply and does not execute or emit twice', () =>
+    Effect.gen(function* replayCommittedCommand() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
         access: 'allowed',
@@ -1495,13 +1495,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           'idempotency-key': 'replay-test',
         }),
       );
-      expect(replay.status).toBe(409);
-      const body = yield* Effect.promise(() => replay.json());
-      expect(Predicate.isTagged(body, 'PartyCommandAlreadyCommittedProblem')).toBe(true);
-      expect(body.code).toBe('action_already_committed');
-      expect(body.invocationId).toBe(harness.snapshot().invocations[0]?.actionInvocationId);
-      expect(body.retryCommand).toBe(false);
-      expect(body.resolution).toBe('REFRESH_GOVERNED_READS');
+      expect(replay.status).toBe(200);
+      expect(yield* Effect.promise(() => replay.json())).toEqual(result);
       expect(harness.snapshot().invocations.length).toBe(1);
       expect(harness.snapshot().committed).toEqual(committed);
     }),
@@ -1701,7 +1696,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   );
 
   suite.effect(
-    'actual Core commit acknowledgement loss resolves and the mounted governed Read returns the original decision without rerunning the Action',
+    'actual Core commit acknowledgement loss resolves, the governed Read and a same-key resend return the original decision without rerunning the Action',
     () =>
       Effect.gen(function* recoverOriginalDecisionAfterLostCommitAcknowledgement() {
         const assertion = yield* makeAssertion();
@@ -1829,11 +1824,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             'idempotency-key': 'uncertain-create',
           }),
         );
-        expect(replay.status).toBe(409);
-        const replayBody = yield* Effect.promise(() => replay.json());
-        expect(Predicate.isTagged(replayBody, 'PartyCommandAlreadyCommittedProblem')).toBe(true);
-        expect(replayBody.invocationId).toBe(invocationId);
-        expect(replayBody.retryCommand).toBe(false);
+        expect(replay.status).toBe(200);
+        expect(yield* Effect.promise(() => replay.json())).toEqual({
+          decisionRef: decisions.get(invocationId)?.decisionRef,
+          outcome: 'CREATED',
+          partyRef,
+        });
         expect(executions).toBe(1);
         expect(harness.snapshot().committed).toEqual(committedSnapshot.committed);
         expect(harness.snapshot().invocations.length).toBe(1);

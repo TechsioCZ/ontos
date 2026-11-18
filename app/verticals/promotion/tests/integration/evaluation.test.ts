@@ -1,4 +1,4 @@
-import { ActionAlreadyCommitted, ReadPermissionDenied, ReadPermissionUnavailable, runAction } from '@app/core-runtime';
+import { ReadPermissionDenied, ReadPermissionUnavailable, runAction } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema, Struct } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -415,16 +415,14 @@ describe('Promotion evaluator through native Core Actions and PostgreSQL', () =>
           expect(stored.proof.merchandise.applications).toEqual([]);
           expect(stored.proof.merchandise.shipping).toBe('UNRESOLVED');
           const beforeReplay = yield* fixture.evidenceCount();
-          const replay = yield* Effect.flip(
-            runAction({
-              audience: 'promotion',
-              payload: { reason, request, stage: 'MERCHANDISE' },
-              principal: fixture.principal,
-              registration: issuePromotionProofAction,
-              transport: issuanceTransport,
-            }),
-          );
-          expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
+          const replay = yield* runAction({
+            audience: 'promotion',
+            payload: { reason, request, stage: 'MERCHANDISE' },
+            principal: fixture.principal,
+            registration: issuePromotionProofAction,
+            transport: issuanceTransport,
+          });
+          expect(replay).toEqual(handle);
           expect(yield* fixture.evidenceCount()).toBe(beforeReplay);
           const evidenceBeforeFailure = yield* fixture.evidenceCount();
           external.controls.available = false;

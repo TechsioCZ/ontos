@@ -6,6 +6,7 @@ import type { PrincipalAuthenticationProblems } from '@app/core-runtime/http/pri
 import { PriceGroupActionCommittedRetryReceiptSchema } from '../shared/domain/action-committed-retry-receipt.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
+/** Serves only exact retries Core cannot answer with a saved reply; all others get the original result. */
 export const recoverPriceGroupActionCommittedRetry = (failure: ActionAlreadyCommitted) =>
   PriceGroupActionCommittedRetryReceiptSchema.make({
     invocationId: failure.invocationId,

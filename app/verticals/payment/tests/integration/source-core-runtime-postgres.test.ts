@@ -199,9 +199,15 @@ it.live('#1152 #1151 Late bank evidence through the real Core runtime: ERP recei
         operationId: collect.operation.operationId,
         outcomeChange: { from: 'PENDING', operationId: collect.operation.operationId, to: 'EFFECT_CONFIRMED' },
       });
-      // A retry of the committed invocation is answered by Core (refresh governed reads), never re-executed.
-      const replayed = yield* atR2.runAction(request).pipe(Effect.flip);
-      expect(Predicate.isTagged(replayed, 'ActionAlreadyCommitted')).toBe(true);
+      // A retry of the committed invocation is answered by Core with the saved reply, never re-executed.
+      const replayed = yield* atR2.runAction(request);
+      expect(replayed).toMatchObject({
+        acceptanceOutcome: accepted.acceptanceOutcome,
+        interpretation: accepted.interpretation,
+        observationId: accepted.observationId,
+        operationId: accepted.operationId,
+        outcomeChange: accepted.outcomeChange,
+      });
 
       const [observation] = yield* admin.unsafe<{
         action_invocation_id: string;

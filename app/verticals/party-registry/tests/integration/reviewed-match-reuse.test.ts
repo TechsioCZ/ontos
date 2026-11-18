@@ -358,15 +358,13 @@ it.layer(
       yield* Effect.logInfo('1239 stage replay');
       const beforeReplay = yield* ownerSnapshot();
       const replayEvidence = yield* fixture.evidence(coreEvidenceExecutor);
-      const replayError = yield* Effect.flip(
-        runHttp(
-          createPartyWithAuthorization({ candidate: weak }, yield* authorization(), {
-            ...createOptions,
-            correlationId: yield* nextId,
-          }),
-        ),
+      const replay = yield* runHttp(
+        createPartyWithAuthorization({ candidate: weak }, yield* authorization(), {
+          ...createOptions,
+          correlationId: yield* nextId,
+        }),
       );
-      expect(Predicate.isTagged(replayError, 'PartyCommandAlreadyCommittedProblem')).toBe(true);
+      expect(replay).toEqual(created);
       expect(yield* ownerSnapshot()).toEqual(beforeReplay);
       const afterReplayEvidence = yield* fixture.evidence(coreEvidenceExecutor);
       expect(afterReplayEvidence.events).toEqual(replayEvidence.events);

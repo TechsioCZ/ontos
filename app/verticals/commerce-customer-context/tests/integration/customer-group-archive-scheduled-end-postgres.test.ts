@@ -2,7 +2,6 @@ import { commerceCustomerContextRegistration } from '../../vertical.registration
 import { createHash, randomUUID } from 'node:crypto';
 import {
   ActiveApplicationCompositionService,
-  ActionAlreadyCommitted,
   ActionRuntime,
   ActionPermissionDenied,
   ActionTransactionError,
@@ -1289,8 +1288,9 @@ it.live('ends a genuinely scheduled membership at Archive and never restores it 
         ),
       ).toEqual([]);
       const replayBefore = yield* test.fixture.evidence(test.coreEvidenceExecutor);
-      const replay = yield* Effect.flip(test.remove(member, end, key));
-      expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
+      // A same-key retry answers the saved removal result and writes no new evidence.
+      const replay = yield* test.remove(member, end, key);
+      expect(replay).toEqual(removed);
       expect(yield* test.fixture.evidence(test.coreEvidenceExecutor)).toEqual(replayBefore);
       const next = yield* test.assign(revived.group.groupRef, (yield* test.now()).at);
       expect(next.membershipRef).not.toEqual(member.membershipRef);
@@ -2097,10 +2097,9 @@ it.live('commits source effects once and gates historical receipts through gover
       };
       expect(yield* test.recoverSource(recoveryInput)).toEqual(first);
       yield* test.restart();
-      const repeatedInvocation = yield* Effect.flip(test.applySource(assign, idempotencyKey));
-      expect(repeatedInvocation).toBeInstanceOf(ActionAlreadyCommitted);
-      expect(repeatedInvocation).not.toHaveProperty('items');
-      expect(repeatedInvocation).not.toHaveProperty('source');
+      // After a restart the same-key retry answers the saved result of the committed invocation.
+      const repeatedInvocation = yield* test.applySource(assign, idempotencyKey);
+      expect(repeatedInvocation).toEqual(first);
       const replay = yield* test.applySource(assign);
       expect(replay).toEqual(first);
       test.setSourceRecoveryDenied(true);

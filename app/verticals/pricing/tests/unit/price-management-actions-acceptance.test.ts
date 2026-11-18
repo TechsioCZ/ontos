@@ -609,24 +609,20 @@ describe('Pricing management Actions acceptance', () => {
         registration: setSupportedCurrenciesAction,
         transport: { correlationId: 'currency-support-first-create', idempotencyKey: 'currency-support:create' },
       } as const;
-      const outcomes = yield* Effect.forEach(
+      const [first, second] = yield* Effect.all(
         [harness.runtime.runAction(request), harness.runtime.runAction(request)],
-        (operation) =>
-          operation.pipe(
-            Effect.match({
-              onFailure: (failure) =>
-                Predicate.isTagged(failure, 'ActionAlreadyCommitted') ? 'already_committed' : 'unexpected_failure',
-              onSuccess: () => 'business_result',
-            }),
-          ),
-        { concurrency: 'unbounded' },
+        {
+          concurrency: 'unbounded',
+        },
       );
 
-      expect(outcomes).toContain('business_result');
-      expect(outcomes).toContain('already_committed');
+      // The loser is answered with the reply Core saved with the winner's commit.
+      expect(first).toEqual(supportResult);
+      expect(second).toEqual(first);
       expect(writes).toBe(1);
       expect(harness.snapshot().committed).toHaveLength(1);
-      expect(harness.snapshot().transactionCount).toBe(1);
+      // One write transaction, plus the loser's scoped read of the saved reply.
+      expect(harness.snapshot().transactionCount).toBe(2);
     }),
   );
 
@@ -872,7 +868,7 @@ describe('Pricing management Actions acceptance', () => {
     },
   );
 
-  it('directs committed retries to governed reads and uncertain commits to result lookup without retrying the command', () => {
+  it('directs committed retries without a saved reply to governed reads and uncertain commits to result lookup without retrying the command', () => {
     expect(
       mapDefinePriceActionProblem(
         new ActionAlreadyCommitted({

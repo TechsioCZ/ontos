@@ -1287,16 +1287,14 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
     if (Result.isFailure(stale)) {
       expect(Schema.is(ReviseSetCompositionActionConflictProblemSchema)(stale.failure)).toBe(true);
     }
-    const repeated = yield* Effect.result(
+    const repeated = yield* requireExecutionResult(
+      SetCompositionMutationResultSchema,
       executeReviseSetCompositionWithAuthorization(next, yield* owner.authorization(), yield* nextId, {
         ...options,
         idempotencyKey: key2,
       }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
     );
-    expect(Result.isFailure(repeated)).toBe(true);
-    if (Result.isFailure(repeated)) {
-      expect(Schema.is(ReviseSetCompositionActionAlreadyCommittedProblemSchema)(repeated.failure)).toBe(true);
-    }
+    expect(repeated).toEqual(published);
     const afterPublic = yield* owner.observedAt(afterInstant, owner.read(selected(2)));
     expect(afterPublic.evidence).toMatchObject({ selection: selected(2), status: 'VALID' });
     if (Schema.is(CatalogSelectionValidEvidenceSchema)(afterPublic.evidence)) {

@@ -530,9 +530,16 @@ it.live(
         privacyDenied = false;
         const accepted = yield* apply(acceptedCommand, exactRequest, otherHome.manager);
         expect(accepted.phase).toBe('COMMERCE');
-        const committed = yield* Schema.decodeUnknownEffect(
-          Schema.Struct({ code: Schema.Literal('action_already_committed'), invocationId: ActionInvocationIdSchema }),
-        )(yield* Effect.flip(apply(acceptedCommand, exactRequest, otherHome.manager)));
+        // The exact retry answers the saved result; the committed invocation is read from Core's ledger.
+        expect(yield* apply(acceptedCommand, exactRequest, otherHome.manager)).toEqual(accepted);
+        const [committedRow] = yield* admin<{ invocation_id: string }>`
+          select action_invocation_id::text invocation_id from core.action_invocations
+          where tenant_id=${fixture.tenantId}::uuid and idempotency_key=${exactRequest.idempotencyKey}
+            and status='succeeded'
+        `;
+        const committed = yield* Schema.decodeUnknownEffect(Schema.Struct({ invocationId: ActionInvocationIdSchema }))({
+          invocationId: committedRow?.invocation_id,
+        });
         expect((yield* apply(yield* reconcile(), transport(), otherHome.manager)).phase).toBe('COMMERCE');
         const [ledger] = yield* admin<{ count: number; current_effect: string; current_invocation: string }>`
           select count(*)::integer count,max(effect_id) filter (where is_current) current_effect,

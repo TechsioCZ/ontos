@@ -655,9 +655,7 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
             ),
           );
           expect(changedIdentity).toMatchObject({ code: 'privacy_operation_conflict' });
-          expect(yield* Effect.flip(createSubject(ref, subjectId, key))).toMatchObject({
-            code: 'action_already_committed',
-          });
+          expect(yield* createSubject(ref, subjectId, key)).toEqual(created);
           const listed = yield* runtime
             .runRead({
               input: { subjectRefs: [created.subjectRef] },

@@ -369,20 +369,23 @@ it.live(
           originalCompositionRevision: COMPOSITION_R1,
         });
 
-        // The committed Core invocation is not executed again: no second recovery request exists.
-        const replayed = yield* failureCodeOf(
-          evidence.recover(
-            {
-              operationId: collect.operationId,
-              paymentId: payment.paymentId,
-              reason: 'The provider create response was lost in transport',
-              trigger: 'EXECUTION_OUTCOME_UNKNOWN',
-            },
-            { idempotencyKey },
-          ),
+        // The committed Core invocation is not executed again: the same key and request answer the saved reply,
+        // and no second recovery request or executor task exists.
+        const replayed = yield* evidence.recover(
+          {
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+            reason: 'The provider create response was lost in transport',
+            trigger: 'EXECUTION_OUTCOME_UNKNOWN',
+          },
+          { idempotencyKey },
         );
-        expect(replayed).toBe('action_already_committed');
+        const { requestedAt: replayedAt, ...replayedView } = replayed;
+        const { requestedAt: recoveredAt, ...recoveredView } = recovered;
+        expect(replayedView).toStrictEqual(recoveredView);
+        expect(DateTime.toEpochMillis(replayedAt)).toBe(DateTime.toEpochMillis(recoveredAt));
         expect(yield* evidence.rows.recoveries(payment.paymentId)).toHaveLength(1);
+        expect(yield* recoveryMessages(evidence)).toHaveLength(1);
       }),
     ),
 );

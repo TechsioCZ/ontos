@@ -701,11 +701,8 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
   ).toBe(true);
   expect(eventsAfter.outbox.filter((message) => message.domainEventId === event?.domainEventId)).toHaveLength(1);
   expect(eventsAfter.events.length).toBe(before.events.length + 1);
-  const replay = yield* executeRemoval(input, key).pipe(Effect.result);
-  expect(Result.isFailure(replay)).toBe(true);
-  if (Result.isFailure(replay)) {
-    expect(Predicate.isTagged(replay.failure, 'ActionAlreadyCommitted')).toBe(true);
-  }
+  // The same-key retry answers the saved removal result; the evidence counts below prove nothing ran again.
+  expect(yield* executeRemoval(input, key)).toEqual(removed);
   const equivalent = yield* executeRemoval({ ...input, expectedRevision: removed.state.revision });
   expect(equivalent).toMatchObject({ changed: false, preferenceCleared: false });
   expect(equivalent.state).toEqual(removed.state);
