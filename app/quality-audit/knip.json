@@ -186,6 +186,7 @@
         "tests/fixtures/market-revision-native-backend.ts",
         "tests/support/market-revision-native-child.ts",
         "tests/support/privacy-completion-worker.ts",
+        "tests/support/privacy-completion-http.ts",
         "tests/support/official-identifier-correction-reuse.rstest.config.ts",
         "tests/integration/registered-postal-factory-native-probe.mts"
       ],

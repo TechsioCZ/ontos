@@ -53,8 +53,8 @@ export function resolveVariable(sourceCode: SourceCode, identifier: ESTree.Node)
 
 /** A static property key: an identifier, a string literal, or a template literal without substitutions. */
 export function staticKey(node: ESTree.Node, computed: boolean): string | null {
-  if (!computed) return node.type === "Identifier" ? node.name : null;
   if (node.type === "Literal") return typeof node.value === "string" ? node.value : null;
+  if (!computed) return node.type === "Identifier" ? node.name : null;
   if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
     return node.quasis[0]?.value.cooked ?? null;
   }

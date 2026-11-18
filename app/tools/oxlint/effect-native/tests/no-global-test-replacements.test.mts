@@ -7,6 +7,12 @@ const replacement = (...names: readonly string[]) =>
 testEffectNativeRule('no-global-test-replacements', {
   invalid: [
     {
+      code: "Object.assign(globalThis, { 'fetch': fake }); Object.defineProperties(globalThis, { 'document': { 'value': fakeDocument } });",
+      errors: replacement('fetch', 'document'),
+      filename,
+      name: 'noncomputed quoted keys cannot hide global replacements',
+    },
+    {
       code: 'let saved = globalThis.fetch; saved = fake; globalThis.fetch = saved;',
       errors: replacement('fetch'),
       filename,
@@ -79,6 +85,11 @@ testEffectNativeRule('no-global-test-replacements', {
     },
   ],
   valid: [
+    {
+      code: "const saved = globalThis.fetch; Object.defineProperty(globalThis, 'fetch', { 'value': saved }); Object.defineProperties(globalThis, { 'fetch': { 'value': saved } });",
+      filename,
+      name: 'noncomputed quoted descriptor keys preserve original restoration',
+    },
     {
       code: "const saved = globalThis.fetch; Object.defineProperty(globalThis, 'fetch', { value: saved, configurable: true, writable: true }); Object.defineProperties(globalThis, { fetch: { value: saved } });",
       filename,
