@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { commerceCartRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
@@ -95,9 +96,20 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 const activeApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = GovernedFetchHttpClient.layer.pipe(
+  GovernedReadLayer.provide(
+    GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+  ),
+);
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, commerceCartRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(activeApplicationCompositionLive),
+  GovernedReadLayer.provide(
+    ModuleCallRouteLive.pipe(
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)),
+    ),
+  ),
 );
 
 const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(

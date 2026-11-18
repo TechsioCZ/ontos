@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import {
   ActionRuntime,
@@ -109,8 +110,15 @@ import { ChildProcess } from 'effect/process';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import { NodeHttpServer } from '@effect/platform-node';
-import { HttpClient, HttpClientRequest, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from 'effect/http';
 import {
   AuthBindingIdSchema,
   PrincipalIdSchema,
@@ -2517,7 +2525,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     );
     const ownerRuntimeLayer = Layer.mergeAll(
       makeActionRuntimeLive(ownDeployment, commerceCustomerContextRegistration),
-      makeReadRuntimeLive(ownDeployment, commerceCustomerContextRegistration),
+      makeReadRuntimeLive(ownDeployment, commerceCustomerContextRegistration).pipe(
+        Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer)))),
+      ),
     ).pipe(Layer.provideMerge(common), Layer.provide(ownerConfiguration));
     const runtimeContext = yield* Layer.build(ownerRuntimeLayer);
     const redemptionLayer = GatewayAssertionRedemptionLive.pipe(

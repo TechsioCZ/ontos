@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { catalogBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -340,6 +341,7 @@ const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogB
   Layer.provideMerge(nodeCryptoLayer),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, nativeHttpClientLive)))),
 );
 
 const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(

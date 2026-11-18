@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { commerceMarketCatalogBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import type { MarketRevisionNativeCustomerContextState } from '../support/market-revision-native-protocol.ts';
 import {
@@ -695,6 +696,9 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       yield* Layer.build(
         makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
           Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
+          Layer.provide(
+            ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer))),
+          ),
         ),
       ),
       ReadRuntime,

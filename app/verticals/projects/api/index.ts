@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { projectsBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   makeActionRuntimeLive,
@@ -82,9 +83,20 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = GovernedFetchHttpClient.layer.pipe(
+  GovernedReadLayer.provide(
+    GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+  ),
+);
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(activeApplicationCompositionLive),
+  GovernedReadLayer.provide(
+    ModuleCallRouteLive.pipe(
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)),
+    ),
+  ),
 );
 
 // O11 both ends: a hierarchy change also asks this gate about its destination parent, through the

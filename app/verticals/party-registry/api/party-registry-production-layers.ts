@@ -1,3 +1,5 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { partyRegistryBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   ContextAccessLive,
@@ -62,6 +64,10 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
 export const partyRegistryReadRuntimeLive: Layer.Layer<
   ReadRuntime,
   DatabaseConnectionError,
@@ -69,6 +75,7 @@ export const partyRegistryReadRuntimeLive: Layer.Layer<
 > = makeReadRuntimeLive(ultramodernDeliveryUnit, partyRegistryBackendRegistration).pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)))),
 );
 
 const actionRuntimeDependenciesLive = Layer.mergeAll(

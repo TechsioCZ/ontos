@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { commerceCustomerContextRegistration } from '../vertical.registration.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { HttpServerRequest } from 'effect/http';
@@ -595,6 +596,11 @@ const readRuntimeCoreLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerc
     ),
   ),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(
+    ModuleCallRouteLive.pipe(
+      Layer.provide(Layer.mergeAll(commercePortalAuthPlatformCryptoLive, compositionHttpClientLive)),
+    ),
+  ),
 );
 
 const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeServicesLive.pipe(
