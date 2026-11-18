@@ -223,6 +223,10 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # actions: read finds the newest green push run of a branch without a merge queue.
+    permissions:
+      actions: read
+      contents: read
     outputs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
       lintSweep: ${{ steps.changes.outputs.lintSweep }}
@@ -245,11 +249,12 @@ jobs:
       # A pull request's merge commit has its base as first parent, so two commits compare it exactly. A merge
       # group rebases every queued commit onto its base, so only the whole history reaches that base; without
       # file contents that history stays small. An unreachable base would force the complete suite and a
-      # whole-tree lint on every multi-commit pull request in the queue.
+      # whole-tree lint on every multi-commit pull request in the queue. A push the queue-proof job skipped (a
+      # branch without a merge queue) compares with its newest green push, any number of commits back.
       - name: Checkout the exact comparison history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: ${{ github.event_name != 'merge_group' && 2 || 0 }}
+          fetch-depth: ${{ github.event_name != 'merge_group' && (github.event_name != 'push' || needs.queue-proof.result != 'skipped') && 2 || 0 }}
           filter: blob:none
           persist-credentials: false
       - name: Classify the complete diff without app dependencies
@@ -259,6 +264,9 @@ jobs:
           BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
+          # skipped on a push names a branch without a merge queue: the script looks up its newest green push.
+          QUEUE_PROOF: ${{ needs.queue-proof.result }}
+          GH_TOKEN: ${{ github.token }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
         run: bash app/scripts/plan-ci-changes.sh "$RUNNER_TEMP/ci-changed-paths"
       - name: Record the documentation or exact-commit no-op
