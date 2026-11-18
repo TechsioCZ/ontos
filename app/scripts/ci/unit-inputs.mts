@@ -75,16 +75,19 @@ export const workspaceClosure = (directory: string, packages: readonly Workspace
  * Included (fail closed):
  * - every file of the unit's own package, except tests, fixtures and documentation;
  * - every file reached from an included file by a static reference: imports, re-exports, `require`, `import()`,
- *   `new URL(…, import.meta.url)`, CSS `@import`/`@source`/`@plugin`/`url()`, tsconfig `extends` and the tsconfig of
- *   each `references` project, the nearest package.json, the nearest tsconfig.json of code (esbuild reads it for
- *   every file it bundles), and every string literal outside comments that names a tracked file (the paths code
- *   reads);
+ *   `new URL(…, import.meta.url)`, CSS `@import`/`@plugin`/`url()`, tsconfig `extends` and the tsconfig of each
+ *   `references` project, the nearest package.json, the nearest tsconfig.json of code (esbuild reads it for every
+ *   file it bundles), and every string literal outside comments that names a tracked file (the paths code reads);
+ * - every file below a directory or matching a glob a build scans: a Tailwind `@source` or `source(…)` (tests
+ *   included, Tailwind reads them), and a directory a string literal in code names (a locale, migration or asset
+ *   folder; tests and documentation excluded);
  * - for a workspace package named by a bare specifier, its manifest and the targets of that subpath in its `exports`
  *   under every condition (packageEntries): the bundler, TypeScript, the deploy trace and Node all resolve the
  *   specifier through that map. The deploy trace also copies the subpath's legacy resolution (`<package><subpath>`
  *   with an extension, or its `index`), so that file counts too, without its references. A unit whose build walks
- *   every export of the packages it carries counts all of them (EXPORT_WALKING_STEPS). A package whose `exports` cannot be read that way (none, an unexported subpath, a pattern,
- *   a directory or an untracked target) counts whole. A declared dependency the unit never names is no input: no
+ *   every export of the packages it carries counts all of them (EXPORT_WALKING_STEPS). A package
+ *   whose `exports` cannot be read that way (none, an unexported subpath, a pattern, a directory or an untracked
+ *   target) counts whole. A declared dependency the unit never names is no input: no
  *   build step reads it (Module Federation shares only npm packages);
  * - the build driver, every script it names (except its tools), its extra inputs and every script the unit's own
  *   `build` script runs, with their reference graphs;
@@ -174,9 +177,11 @@ const IMPORT_REFERENCES = [
   /\/\/\/\s*<reference\s+path=["'](?<value>[^"']+)["']/gu,
 ];
 const STYLE_REFERENCES = [
-  /@(?:import|source|plugin|config|reference)\s+(?:not\s+)?(?:url\(\s*)?["'](?<value>[^"']+)["']/gu,
+  /@(?:import|plugin|config|reference)\s+(?:url\(\s*)?["'](?<value>[^"']+)["']/gu,
   /\burl\(\s*["']?(?<value>[^"')\s]+)["']?\s*\)/gu,
 ];
+/** Tailwind scans: `@source` (an exclusion counts too) and the base of `@import 'tailwindcss' source(…)`. */
+const STYLE_SCANS = [/@source\s+(?:not\s+)?["'](?<value>[^"']+)["']/gu, /\bsource\(\s*["'](?<value>[^"']+)["']\s*\)/gu];
 /**
  * Tailwind's automatic source detection scans the whole project (the unit being built), tests included. It is on
  * unless `@import 'tailwindcss'` says `source(none)`; a stylesheet from node_modules may import Tailwind without it.
@@ -396,6 +401,18 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     }
     return directories.has(target) ? { ...NOTHING, directories: [target] } : NOTHING;
   };
+  /** A Tailwind scan: every file under a directory, or every file a glob matches, tests included. */
+  const resolveScan = (from: string, raw: string): Reach => {
+    const target = path.posix.normalize(path.posix.join(path.posix.dirname(from), raw));
+    if (target.includes('*')) {
+      return resolvePath(target);
+    }
+    if (directories.has(target)) {
+      return { ...NOTHING, directories: [target] };
+    }
+    // A missing directory counts once it holds a file: then it is in `directories`.
+    return tracked.has(target) ? { ...NOTHING, files: [target] } : NOTHING;
+  };
   /**
    * A directory that holds a workspace package (or is the app or repository root) is a root locator such as
    * `new URL('../../..', import.meta.url)`: the code then names the files it reads, which the literal scan follows.
@@ -436,11 +453,21 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
         }
       : { ...NOTHING, packages: [named.directory] };
   };
-  /** In code, a string naming a tracked file (from the file or from app/) is taken as a path the code reads. */
+  /**
+   * In code, a string naming a tracked file (from the file or from app/) is taken as a path the code reads, and one
+   * naming a directory (not a root locator) as a directory it reads: every file below it except tests and docs.
+   */
   const resolveLiteral = (from: string, literal: string): readonly string[] =>
     [path.posix.join(path.posix.dirname(from), literal), path.posix.join('app', literal)]
       .map((candidate) => path.posix.normalize(candidate))
-      .filter((candidate) => tracked.has(candidate));
+      .flatMap((candidate) => {
+        if (tracked.has(candidate)) {
+          return [candidate];
+        }
+        return directories.has(candidate) && !isLocator(candidate)
+          ? under(candidate).filter((file) => !isTestInput(file) && !isUnitDocumentation(file))
+          : [];
+      });
   const referencesOf = (filepath: string, text: string): readonly string[] => {
     const name = path.posix.basename(filepath);
     if (/^tsconfig[^/]*\.json$/u.test(name)) {
@@ -464,7 +491,13 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
       return cached;
     }
     const text = workspace.sources.get(filepath) ?? '';
-    const resolved = referencesOf(filepath, text).map((reference) => resolveReference(filepath, reference));
+    const style = filepath.endsWith('.css');
+    const resolved = [
+      ...referencesOf(filepath, text).map((reference) => resolveReference(filepath, reference)),
+      ...(style
+        ? STYLE_SCANS.flatMap((pattern) => matches(pattern, text)).map((raw) => resolveScan(filepath, raw))
+        : []),
+    ];
     const code = /\.[cm]?[jt]sx?$/u.test(filepath);
     const literals = code
       ? matches(PATH_LITERAL, withoutComments(text)).flatMap((literal) => resolveLiteral(filepath, literal))
@@ -477,7 +510,6 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     const manifest = nearest('package.json');
     // esbuild reads the nearest tsconfig.json of every file it bundles (jsx, decorators, class fields, paths).
     const tsconfig = code ? nearest('tsconfig.json') : undefined;
-    const style = filepath.endsWith('.css');
     const named = resolved.flatMap((entry) => entry.directories);
     const owner = owningPackage(filepath);
     const scansProject =

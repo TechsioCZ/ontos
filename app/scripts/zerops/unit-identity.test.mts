@@ -277,6 +277,22 @@ it.effect('counts what the deploy trace carries and esbuild reads of an imported
   }),
 );
 
+it.effect('counts every file below a Tailwind @source directory, even one that holds an index module', () =>
+  Effect.gen(function* sourceDirectory() {
+    const stylesheet = [`${SHELL}/src/routes/ui-kit.css`, "@source '../../../../packages/kit/src';"] as const;
+    const baseline = yield* identity(graphOf([], [stylesheet]), environment, SHELL);
+    const candidates = [`${KIT}/src/utility-candidates.tsx`, 'export const width = "w-[317px]";'] as const;
+    expect(yield* identity(graphOf([], [stylesheet, candidates]), environment, SHELL)).not.toBe(baseline);
+    // A Tailwind import's own `source(…)` base is scanned the same way.
+    const based = [
+      `${SHELL}/src/routes/ui-kit.css`,
+      "@import 'tailwindcss' source('../../../../packages/kit');",
+    ] as const;
+    const before = yield* identity(graphOf([], [based]), environment, SHELL);
+    expect(yield* identity(graphOf([], [based, candidates]), environment, SHELL)).not.toBe(before);
+  }),
+);
+
 it('reads a package as its manifest and every export target, or whole when its exports are not plain files', () => {
   const manifest = `${PARTY}/package.json`;
   const index = `${PARTY}/src/index.ts`;
