@@ -35,23 +35,49 @@ const grpcCodeText = (error: SpiceDbRpcError): string =>
     onSome: (code) => `gRPC ${code}`,
   });
 
-const unavailable = (error: SpiceDbRpcError): AccessProjectionError =>
-  new AccessProjectionError({
-    code: 'access_projection_unavailable',
-    reason: `The SpiceDB projection call did not complete safely: ${grpcCodeText(error)}`,
-  });
+const GRPC_STATUS_NAMES = [
+  'OK',
+  'CANCELLED',
+  'UNKNOWN',
+  'INVALID_ARGUMENT',
+  'DEADLINE_EXCEEDED',
+  'NOT_FOUND',
+  'ALREADY_EXISTS',
+  'PERMISSION_DENIED',
+  'RESOURCE_EXHAUSTED',
+  'FAILED_PRECONDITION',
+  'ABORTED',
+  'OUT_OF_RANGE',
+  'UNIMPLEMENTED',
+  'INTERNAL',
+  'UNAVAILABLE',
+  'DATA_LOSS',
+  'UNAUTHENTICATED',
+] as const;
 
-/**
- * A plan the engine refuses as invalid never becomes valid by retrying it: reporting it as
- * unavailable would make the writer retry a permanent failure and hide the real cause.
- */
-const projectionFailure = (error: SpiceDbRpcError): AccessProjectionError =>
-  Option.getOrUndefined(error.code) === GRPC_INVALID_ARGUMENT
-    ? new AccessProjectionError({
-        code: 'access_projection_engine_rejected',
-        reason: 'The engine refused the projection as invalid, so the same plan cannot succeed on retry',
-      })
-    : unavailable(error);
+/** Keep the transport cause out of caller-visible reasons, but available to server/test diagnostics. */
+const projectionFailure =
+  (operation: 'ReadRelationships' | 'WriteRelationships') =>
+  (error: SpiceDbRpcError): AccessProjectionError => {
+    const code = Option.getOrUndefined(error.code);
+    const diagnostic = {
+      cause: error,
+      grpcStatus: code === undefined ? 'UNKNOWN' : (GRPC_STATUS_NAMES[code] ?? 'UNKNOWN'),
+      operation,
+    };
+    // INVALID_ARGUMENT is permanent: preserve the engine-rejected classification, never retry it.
+    return code === GRPC_INVALID_ARGUMENT
+      ? new AccessProjectionError({
+          ...diagnostic,
+          code: 'access_projection_engine_rejected',
+          reason: 'The engine refused the projection as invalid, so the same plan cannot succeed on retry',
+        })
+      : new AccessProjectionError({
+          ...diagnostic,
+          code: 'access_projection_unavailable',
+          reason: `The SpiceDB projection call did not complete safely: ${grpcCodeText(error)}`,
+        });
+  };
 
 export interface AccessProjectionTransport {
   readonly close: () => void;
@@ -71,8 +97,10 @@ export const makeAccessProjectionTransport = (
   const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
   const transport: AccessProjectionTransport = {
     close: rpc.close,
-    readRelationships: (request) => rpc.readRelationships(request).pipe(Effect.mapError(projectionFailure)),
-    writeRelationships: (request) => rpc.writeRelationships(request).pipe(Effect.mapError(projectionFailure)),
+    readRelationships: (request) =>
+      rpc.readRelationships(request).pipe(Effect.mapError(projectionFailure('ReadRelationships'))),
+    writeRelationships: (request) =>
+      rpc.writeRelationships(request).pipe(Effect.mapError(projectionFailure('WriteRelationships'))),
   };
   return Object.freeze(transport);
 };

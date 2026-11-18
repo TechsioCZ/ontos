@@ -8,6 +8,7 @@ const projectionUnitSchema = Schema.String.check(Schema.isMinLength(1), Schema.i
  * half-written scope behind, because nothing is written until the whole plan validates.
  */
 export class AccessProjectionError extends Schema.TaggedError<AccessProjectionError>()('AccessProjectionError', {
+  cause: Schema.optionalKey(Schema.Unknown),
   code: Schema.Literals([
     'access_projection_agent_sensitive_run',
     'access_projection_ambiguous_role_revision',
@@ -27,6 +28,8 @@ export class AccessProjectionError extends Schema.TaggedError<AccessProjectionEr
     'access_projection_unknown_role_revision',
     'access_projection_verification_failed',
   ]),
+  grpcStatus: Schema.optionalKey(Schema.String),
+  operation: Schema.optionalKey(Schema.String),
   reason: Schema.String,
   unit: Schema.optionalKey(projectionUnitSchema),
 }) {}
