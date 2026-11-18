@@ -14,7 +14,6 @@ import {
 import { encodeProductComposition, SymmyC14ProductFixtureUnavailable } from './symmy-c14-product-runtime.mts';
 
 export const internalSyncJobKey = 'integration.symmy.execute-symmy-job';
-export const internalSyncActionKey = 'integration.symmy.admit-symmy-sync';
 const groupAudience = 'commerce-customer-context';
 const groupModule = 'commerce.customer-context';
 const groupWrite = `${groupModule}.source-write`;
