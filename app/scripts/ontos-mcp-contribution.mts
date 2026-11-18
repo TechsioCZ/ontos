@@ -701,7 +701,14 @@ const deriveContributionResult = (
     const actions = yield* actionEndpointsOf(input.actions, moduleId, appId);
     const commandActions = actions.filter((action) => action.variants !== undefined);
     const namedActions = actions.filter((action) => action.variants === undefined);
-    yield* checkCoverage('reads', authored.reads, new Set(reads.map((read) => read.slug)), moduleId);
+    const readSlugs = new Set(reads.map((read) => read.slug));
+    yield* checkCoverage('reads', authored.reads, readSlugs, moduleId);
+    // The contribution points the approval platform at these reads; each must be one the module publishes.
+    for (const read of [authored.approvalReview?.read, authored.revision?.read]) {
+      if (read !== undefined && !readSlugs.has(read)) {
+        return yield* fail(`${moduleId}: MCP read ${read} is not one of the module's reads`);
+      }
+    }
     yield* checkCoverage(
       'commands',
       authored.commands ?? {},
