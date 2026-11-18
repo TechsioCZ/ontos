@@ -467,15 +467,12 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
         succeeded: 1,
       });
       expect(transport.sentTo(completeOrderPreparationPath)).toHaveLength(1);
-      // The delegation acts for the invocation that enqueued the delivered work, not for the worker.
+      // The delegation acts for the invocation that enqueued the delivered work, not for the worker, under the
+      // release that invocation was admitted in; the wire carries that release beside the subject.
       expect(yield* transport.delegations()).toContainEqual(
         expect.objectContaining({
-          subject: {
-            _tag: 'Originator',
-            actionInvocationId: test.invocationId,
-            compositionRevision: test.revision,
-            tenantId: orderTenantId,
-          },
+          compositionRevision: test.revision,
+          subject: { _tag: 'Originator', actionInvocationId: test.invocationId, tenantId: orderTenantId },
         }),
       );
       expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
