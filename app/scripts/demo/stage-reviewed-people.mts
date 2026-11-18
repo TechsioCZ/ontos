@@ -489,6 +489,14 @@ const savedRoleAdditions = (step: PlannedStep): readonly string[] =>
       ]
     : [];
 
+/** The review diagnostics; printed with the plan, and before a halt so a withdrawn cell names its role and slot. */
+export const describeDiagnostics = (desired: DesiredState): readonly string[] => [
+  `review diagnostics (never granted; a reviewed capability is added in reviewed-people-cells.mts): ${desired.diagnostics.length}`,
+  ...desired.diagnostics.map(({ kind, roleKey, slot }) =>
+    kind === 'unreviewed' ? `  unreviewed ${roleKey}: ${slot}` : `  withdrawn ${roleKey}: ${slot} (not sent)`,
+  ),
+];
+
 /** The plan as a person signs it off: the roles with their admin-kind cells, then every write in order. */
 export const describePlan = (desired: DesiredState, steps: readonly PlannedStep[], options: PlanOptions) =>
   Effect.gen(function* describePlanned() {
@@ -503,13 +511,7 @@ export const describePlan = (desired: DesiredState, steps: readonly PlannedStep[
         ...role.adminCells.map((admin) => `    admin: ${admin}`),
       );
     }
-    lines.push(
-      `review diagnostics (never granted; a reviewed capability is added in reviewed-people-cells.mts): ${desired.diagnostics.length}`,
-      ...desired.diagnostics.map(({ kind, roleKey, slot }) =>
-        kind === 'unreviewed' ? `  unreviewed ${roleKey}: ${slot}` : `  withdrawn ${roleKey}: ${slot} (not sent)`,
-      ),
-      `planned writes: ${steps.length}`,
-    );
+    lines.push(...describeDiagnostics(desired), `planned writes: ${steps.length}`);
     for (const [index, step] of steps.entries()) {
       const request = yield* requestOf(step, true);
       lines.push(
@@ -640,6 +642,9 @@ const run = (input: RunInput) =>
     );
     const planned = planReviewedPeople(desired, observed, input.options);
     if (Result.isFailure(planned)) {
+      for (const line of describeDiagnostics(desired)) {
+        yield* Console.log(line);
+      }
       return yield* halted(planned.failure);
     }
     for (const line of yield* describePlan(desired, planned.success, input.options)) {

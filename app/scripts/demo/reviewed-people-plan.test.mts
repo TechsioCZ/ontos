@@ -10,6 +10,7 @@ import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts
 import { policyReleaseEntries } from './access-policy.mts';
 import { demoHumanAccounts, demoModuleIds, taxAccountantKeys } from './permissions.mts';
 import { REVIEWED_ROLE_CELLS } from './reviewed-people-cells.mts';
+import { describeDiagnostics } from './stage-reviewed-people.mts';
 import {
   AccessAssignmentIdSchema,
   AccessCapabilityKeySchema,
@@ -392,6 +393,14 @@ it.effect('a withdrawn or changed reviewed capability is reported and never sent
       Predicate.isTagged(step, 'SaveRole') ? step.cells.map(slotOf) : [],
     );
     expect(sent.filter((slot) => slot.startsWith(`${removedKey} `))).toEqual([]);
+    // A stage that saved the role before the withdrawal halts without a write, and the driver prints the slot first.
+    expect(haltOf(plan(withdrawn, applied(baseline), apply1))).toEqual({
+      kind: 'validation',
+      reason: 'the managed role sales holds other cells; this script never rewrites a saved role',
+    });
+    expect(describeDiagnostics(withdrawn)).toEqual(
+      expect.arrayContaining(ROLE_ACCOUNTS.map((roleKey) => `  withdrawn ${roleKey}: ${slotOf(runCell)} (not sent)`)),
+    );
 
     // A capability that loses a mode withdraws only that mode's cell; its run cell stays.
     const salesSlots = new Set(sales.cells.map(slotOf));
