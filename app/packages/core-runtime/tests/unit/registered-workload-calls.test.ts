@@ -64,6 +64,8 @@ it('refuses repeated and ambiguous calls, fields main never had and malformed va
   expect(decodes([{ ...worker, jobKey: '' }])).toBe(false);
   const { workerKey: _unused, ...modeless } = worker;
   expect(decodes([modeless])).toBe(false);
+  // No Shell consumer takes a nested assertion that names a recovered action.
+  expect(decodes([{ ...nested, recoveryOf: recovery.recoveryOf }])).toBe(false);
 });
 
 it('records validated calls in the defined manifest and rejects invalid ones at definition', () => {
@@ -132,6 +134,7 @@ const declared = {
 
 it('takes a call only where the installed receiver declares its declaration and workload', () => {
   expect(registeredWorkloadCallReceiverIssue(worker, receiver(declared))).toBeUndefined();
+  // The Shell runs an action call only for the action's own workloads, never for an actor subject workload alone.
   expect(
     registeredWorkloadCallReceiverIssue(
       worker,
@@ -141,7 +144,7 @@ it('takes a call only where the installed receiver declares its declaration and 
         legalEntityScope: worker.legalEntityScope,
       }),
     ),
-  ).toBeUndefined();
+  ).toMatch(/does not declare/u);
   expect(registeredWorkloadCallReceiverIssue(worker, receiver(declared, 'privacy'))).toMatch(/not installed/u);
   expect(registeredWorkloadCallReceiverIssue({ ...worker, schemaVersion: '2' }, receiver(declared))).toMatch(
     /no such operation version/u,
