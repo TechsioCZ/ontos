@@ -26,7 +26,7 @@
  * TLS private keys and gateway/auth secrets are NOT in this seed and stay consumer-local.
  *
  * NEVER seed Database, Migration, RLS, Authorization, and Outbox Integration, the Fresh Database Integration
- * rows, or any job that runs a migration/recovery test in MUST_MIGRATE_TESTS (integration-seed-model.mts):
+ * rows, or any job that runs a migration/recovery test of readFreshDatabaseTests (integration-seed-model.mts):
  * those run only in the Fresh Database rows, from today's complete fresh preparation. Root, Core Runtime,
  * Party Registry and Customer Context rows seed once their weighted shards leave those files out
  * (scripts/ci/rstest-weighted-shard.sh, FRESH_DATABASE_TESTS=skip) and name every file they run.

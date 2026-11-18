@@ -30,12 +30,18 @@ const OLD_REVISION = 'a'.repeat(40);
 const MARKER = 'e'.repeat(64);
 const EMPTY_MODULE = 'export {};';
 const SOURCE = `app/${SHELL}/src/index.ts`;
+/** The trunk's post-build script and the entry it writes into a served unit's dist. */
+const POST_BUILD = 'scripts/serve-entry.mts';
+const SERVED_ENTRY = 'dist/served-entry.mjs';
+const POLICY = { originVariables: ['ONTOS_PUBLIC_ORIGIN'], postBuild: POST_BUILD, servedEntry: SERVED_ENTRY };
 /** A committed workspace with one api-only Shell; its built outputs and caches are ignored, as in the real checkout. */
 const COMMITTED = {
   '.gitignore': 'dist/\n.output/\nnode_modules/\n',
+  [`app/${POST_BUILD}`]: 'export const entry = 1;\n',
   'app/apps/shell-super-app/package.json': JSON.stringify({ name: '@app/shell-super-app', scripts: { build: 'x' } }),
   'app/apps/shell-super-app/src/index.ts': 'export const shell = 1;\n',
-  'app/scripts/zerops/build-app.sh': 'echo build\n',
+  'app/pnpm-workspace.yaml': 'packages:\n  - apps/*\n',
+  'app/scripts/ci/build-units.sh': 'echo build\n',
   'app/topology/application-release-intent.json': JSON.stringify({ modules: [] }),
   'app/topology/reference-topology.json': JSON.stringify({
     shell: { id: APP_ID, path: SHELL, surfaceProfile: 'api-only' },
@@ -78,14 +84,14 @@ const fixture = Effect.gen(function* planFixture() {
       ['dist/ultramodern-build.json', metadata],
       ['.output/ultramodern-build.json', metadata],
       ['dist/api/index.js', EMPTY_MODULE],
-      ['dist/zerops-entry.mjs', EMPTY_MODULE],
+      [SERVED_ENTRY, EMPTY_MODULE],
       ['dist/public/.well-known/ontos-shell-runtime.json', contract],
       ['.output/index.js', EMPTY_MODULE],
       ['.output/package.json', '{}'],
     ] as const) {
       yield* write(`app/${SHELL}/${file}`, content);
     }
-    const context = yield* loadCacheContext(root);
+    const context = yield* loadCacheContext(root, POLICY);
     const [unit] = context.units;
     if (unit === undefined) {
       return yield* Effect.die('the fixture topology names the Shell');
@@ -95,13 +101,14 @@ const fixture = Effect.gen(function* planFixture() {
       digest: yield* expectedDigest(context, unit),
       files: yield* inventory(unitRoot),
       identity,
-      inputs: yield* committedInputs(context.graph, SHELL),
+      inputs: yield* committedInputs(context.graph, context.driver, SHELL),
       schemaVersion: RECEIPT_SCHEMA_VERSION,
       unit: APP_ID,
     });
     return yield* write(`app/${SHELL}/${RECEIPT}`, receipt);
   });
-  const plan = () => loadCacheContext(root).pipe(Effect.flatMap((context) => planUnits(context, context.units)));
+  const plan = () =>
+    loadCacheContext(root, POLICY).pipe(Effect.flatMap((context) => planUnits(context, context.units)));
   return { commit, fs, git, keptBuild, plan, unitRoot, write };
 });
 
@@ -125,6 +132,20 @@ it.effect(
       yield* context.commit('change');
       expect(yield* context.plan()).toEqual({ build: [APP_ID], keep: [] });
       expect(yield* context.fs.exists(path.join(context.unitRoot, KEEP_PROOF))).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  60_000,
+);
+
+it.effect(
+  'rebuilds a kept unit once the post-build script that wrote its served entry changes',
+  () =>
+    Effect.gen(function* postBuildChange() {
+      const context = yield* fixture;
+      yield* context.keptBuild;
+      expect(yield* context.plan()).toEqual({ build: [], keep: [APP_ID] });
+      yield* context.write(`app/${POST_BUILD}`, 'export const entry = 2;\n');
+      yield* context.commit('post-build');
+      expect(yield* context.plan()).toEqual({ build: [APP_ID], keep: [] });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,
 );

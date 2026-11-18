@@ -3,12 +3,13 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import os from 'node:os';
 import path from 'node:path';
 
-import { Schema } from 'effect';
+import { Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import type { CiScope } from '../plan-ci-checks.mts';
-import { CiTemplatesSchema, inScope, rootLevelPackageDirectories } from '../plan-ci-checks.mts';
+import { inScope } from '../plan-ci-checks.mts';
 
 /*
  * The demo trunk's own CI rules, which main does not have. A diff inside a scope of scripts/ci-matrices.json runs only
@@ -19,9 +20,14 @@ import { CiTemplatesSchema, inScope, rootLevelPackageDirectories } from '../plan
  */
 
 const repository = path.resolve(import.meta.dirname, '../../..');
-const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
-  readFileSync(path.join(repository, 'app/scripts/ci-matrices.json'), 'utf-8'),
+/** The demo trunk's matrices: the shared file with the overlay its gates workflow names. */
+const templates = Result.getOrThrow(
+  parseCiMatrices(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../ci-matrices.demo.json', import.meta.url), 'utf-8'),
+  ),
 );
+const rootLevelPackageDirectories = templates['root-packages'] ?? [];
 /** A missing scope matches nothing, which the first test reports. */
 const scope = (name: string): CiScope =>
   (templates.scopes ?? []).find((entry) => entry.name === name) ?? { name, paths: ['!**'], source: ['missing'] };
@@ -100,14 +106,15 @@ it('keeps every stage-delivery file out of everything a scoped plan skips', () =
           referrer !== file &&
           !scopedSet.has(referrer) &&
           !toolingTest(referrer) &&
-          // The scopes' own definition.
+          // The scopes' own definition: the shared matrices and the demo overlay.
           referrer !== 'app/scripts/ci-matrices.json' &&
+          referrer !== 'app/scripts/ci-matrices.demo.json' &&
           // `pnpm quality:audit:test` runs tooling tests, exactly as the tooling rows do.
           !(referrer === 'app/package.json' && toolingTest(file)) &&
           // The Zerops build and start commands run in the deploy, never in a gate.
           referrer !== 'app/zerops.yaml' &&
           // The deploy planner names its stage workflow and delivery action as delivery roots: paths it classifies a
-          // diff by. The gates import it only for unit identities, which never follow those roots.
+          // diff by. The gates never import it: their unit identities come from scripts/ci/unit-inputs.mts.
           !(
             referrer === 'app/scripts/zerops/delivery-plan.mts' &&
             (file === '.github/workflows/zerops-stage.yml' || file.startsWith('.github/actions/deliver-stage/'))
