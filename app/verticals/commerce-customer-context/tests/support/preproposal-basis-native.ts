@@ -2143,19 +2143,25 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       }
       return moduleEnvironment;
     };
-    for (const owner of owners) {
-      const receiver = yield* openNativeChild({
-        args: [owner.artifact, owner.serve],
-        environment: environmentFor(owner.appId),
-        stage: `receiver:${owner.appId}`,
-      });
-      const ready = yield* receiver.read(ReadySchema, 'public');
-      yield* requireProtocol(
-        ready.marker.appId === owner.appId && ready.marker.buildMarker === owner.marker.buildMarker,
-        `exact-receiver:${owner.appId}`,
-      );
-      yield* owner.bind(ready.port);
-    }
+    // Receivers bind distinct placements and do no peer calls during local readiness.
+    yield* Effect.forEach(
+      owners,
+      (owner) =>
+        Effect.gen(function* startReceiver() {
+          const receiver = yield* openNativeChild({
+            args: [owner.artifact, owner.serve],
+            environment: environmentFor(owner.appId),
+            stage: `receiver:${owner.appId}`,
+          });
+          const ready = yield* receiver.read(ReadySchema, 'public');
+          yield* requireProtocol(
+            ready.marker.appId === owner.appId && ready.marker.buildMarker === owner.marker.buildMarker,
+            `exact-receiver:${owner.appId}`,
+          );
+          yield* owner.bind(ready.port);
+        }),
+      { concurrency: 3, discard: true },
+    );
     const storefrontId = `native-preproposal-${randomUUID()}`;
     const intent = `native-preproposal:${randomUUID()}`;
     const scopeGrantArtifact = yield* buildOwnerExecutable(
@@ -2877,6 +2883,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
                 ['pricingQuantityPreparation', 'quantityPreparation'].includes(step),
                 false,
               ).pipe(Effect.map((credential) => [step, Redacted.value(credential)])),
+            { concurrency: 3 },
           ),
         );
         const stage = `catalog-registered-producer:${ordinal}`;
@@ -3085,7 +3092,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       );
       return price;
     });
-    const prices = [yield* definePrice(products[0], '100', 1), yield* definePrice(products[1], '250', 2)] as const;
+    const prices = yield* Effect.all([definePrice(products[0], '100', 1), definePrice(products[1], '250', 2)], {
+      concurrency: 2,
+    });
     const { entries } = cart.observed.cart;
     const sameSelection = Schema.toEquivalence(CatalogSelectionSchema);
     yield* requireProtocol(

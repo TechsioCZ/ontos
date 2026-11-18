@@ -1765,6 +1765,11 @@ const WHOLE_FILES = {
   './verticals/privacy': ['verticals/privacy/tests/integration/privacy-composition-drain.test.ts'],
   root: [
     'scripts/integration/organization-source-customer-owner-conformance.test.mts',
+    'scripts/integration/organization-source-customer-identity-conformance.test.mts',
+    'scripts/integration/symmy-c14-customer-owner-conformance.test.mts',
+    'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
+    'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
+    'scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts',
     'scripts/integration/scoped-owner-migrations.test.mts',
   ],
 } satisfies Readonly<Record<string, readonly string[]>>;
@@ -1776,7 +1781,13 @@ const familyFiles = (family: string) =>
   ).filter((file) => !Object.entries(WHOLE_FILES).some(([owner, files]) => owner === family && files.includes(file)));
 const NATIVE_TOPOLOGY_PROOFS = [
   'whole:organization',
+  'whole:organization-identity',
+  'whole:customer-readback',
+  'whole:customer-roundtrip',
+  'whole:pricing-recovery',
+  'whole:pricing-revisions',
   'whole:privacy',
+  'whole:privacy-recovery',
   'whole:pricing',
   'whole:preproposal-basis',
   'whole:preproposal-approval',
@@ -1822,6 +1833,10 @@ it('covers every integration file exactly once across the owner rows', () => {
       sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)),
     );
     expect(count, family).toBeLessThanOrEqual(familyFiles(family).length);
+    if (family === 'root') {
+      // One file per root task: ICO and Membership must not silently recombine as files are added.
+      expect(count).toBe(familyFiles(family).length);
+    }
   }
   // Every whole-owner proof and unsharded package runs once, and no package runs both whole and sharded.
   for (const whole of WHOLE_PROOFS) {
