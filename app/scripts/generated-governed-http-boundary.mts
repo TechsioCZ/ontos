@@ -3333,10 +3333,18 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
+  // `defineRead` also takes the handler written as `{ load: handler }`. That object must hold exactly the
+  // one `load` entry, and the handler it holds is judged by the rule a bare handler gets; any other object
+  // (a `prepare` or `finish` step, an extra key, a spread) is no single handler; a staged pipeline is judged
+  // by the demo exception below.
+  let loadHandler = handler;
+  if (handler !== undefined && topLevelObjectEntries(handler) !== undefined) {
+    loadHandler = topLevelObjectEntries(handler)?.length === 1 ? objectPropertyValue(handler, 'load') : undefined;
+  }
   // Demo-only exception 3: a staged prepare/load/finish read is proven by the ported staged-read proof.
   const phaseOwner: ReadPhaseOwner = { ownerPath, readFile, sources };
   return (
-    (isReadHandlerCallback(handler, source) ||
+    (isReadHandlerCallback(loadHandler, source) ||
       hasNativeReadPipeline(
         source,
         handler,
@@ -3347,7 +3355,7 @@ const hasReadCallbacks = (
           '() => Effect.succeed({})',
         ),
       ) ||
-      isOwnerLocalImportedFactoryResult(handler)) &&
+      isOwnerLocalImportedFactoryResult(loadHandler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are

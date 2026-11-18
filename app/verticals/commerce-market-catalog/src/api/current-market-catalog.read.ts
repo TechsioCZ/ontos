@@ -73,7 +73,7 @@ export const currentMarketCatalogRead = defineRead(
     resultSchema: CurrentMarketCatalogResponseSchema,
     schemaVersion: '1',
   },
-  handleCurrentMarketCatalog,
+  { load: handleCurrentMarketCatalog },
   (transaction, scope, compositionRevision, listAccess) =>
     marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision, listAccess),
 );
