@@ -203,10 +203,13 @@ const readEndpointsOf = (
     HttpApi.reflect(value, {
       onEndpoint: ({ endpoint }) => {
         const slug = READ_PATH.exec(endpoint.path)?.groups?.slug;
-        const schema = endpoint.payload.get('application/json')?.schemas[0];
-        if (slug === undefined || schema === undefined) {
+        const schemas = endpoint.payload.get('application/json')?.schemas ?? [];
+        const [first] = schemas;
+        if (slug === undefined || first === undefined) {
           return;
         }
+        // The BFF decodes a JSON body against the union of all its payload schemas.
+        const schema = schemas.length === 1 ? first : Schema.Union(schemas);
         const label = `${apiKey} ${endpoint.path}`;
         const read = documentOf(schema, label).pipe(
           Result.map((document) => ({ document, path: endpoint.path, slug })),
