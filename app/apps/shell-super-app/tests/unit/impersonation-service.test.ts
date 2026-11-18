@@ -290,6 +290,7 @@ it.effect('removes the provider session and recovery when started evidence canno
         resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
       }),
       store: makeSupportImpersonationStoreDouble({
+        claimStart: () => Effect.succeed('claimed'),
         deleteRecovery: () =>
           Effect.sync(() => {
             deletedTables.push('deleted');
