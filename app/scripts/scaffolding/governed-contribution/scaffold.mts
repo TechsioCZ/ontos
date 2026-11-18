@@ -124,6 +124,8 @@ interface PublicContractPackage {
   readonly clientSpecifier: string;
   readonly contractPath: string;
   readonly contractSpecifier: string;
+  /** The generated contract exports a Core SDK operation reference, so the package must depend on Core. */
+  readonly dependsOnCoreRuntime: boolean;
   readonly directory: string;
   readonly packageName: string;
 }
@@ -371,6 +373,7 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
           resolveContainedPath(directory, 'src', 'apis', `${name}.ts`),
         ),
         contractSpecifier: `${manifest.name}/${name}`,
+        dependsOnCoreRuntime: manifest.dependencies['@app/core-runtime'] === WORKSPACE_DEPENDENCY,
         directory,
         packageName: manifest.name,
       });
@@ -390,10 +393,11 @@ const apiRequestSchema = (config: ReadAuthorizationConfig): string =>
     ? 'Schema.Struct({})'
     : `Schema.Struct({\n  ${SCAFFOLD_RECORD_KEY_FIELD}: Schema.String.check(Schema.isUUID())\n})`;
 
-const renderApiContract = (name: string, config: ReadAuthorizationConfig): string => {
+const renderApiContract = (vertical: OntosVerticalMetadata, name: string, config: ReadAuthorizationConfig): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader(MODULE_API_KIND)}
+import { moduleOperation } from '@app/core-runtime/sdk';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -401,6 +405,15 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 export const ${type}RequestSchema = ${apiRequestSchema(config)};
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+
+/** The typed operation reference a consumer passes to the Core SDK's \`call\`. */
+export const ${toCamelCase(name)}Operation = moduleOperation({
+  kind: 'read',
+  path: '/reads/${name}',
+  provider: { entrypointKey: '${vertical.moduleId}.api.${name}', moduleId: '${vertical.moduleId}', schemaVersion: '1' },
+  request: ${type}RequestSchema,
+  response: ${type}ResponseSchema,
+});
 
 export const ${type}AuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}AuthenticationProblem',
@@ -1572,7 +1585,7 @@ const renderGovernedContributionArtifact = (
     return renderPublicComponent(name);
   }
   if (kind === MODULE_API_KIND) {
-    return renderApiContract(name, config);
+    return renderApiContract(vertical, name, config);
   }
   return renderProvider(kind, vertical, name, config);
 };
@@ -1596,6 +1609,11 @@ const planGovernedArtifactMutations = Effect.fn('GovernedContributionScaffold.ar
         artifact,
         acceptsGovernedArtifact(kind, vertical, name, config),
       );
+      if (Option.isSome(canonicalArtifactMutation) && !publicContractPackage.dependsOnCoreRuntime) {
+        return yield* scaffoldFailure(
+          `public contract package ${publicContractPackage.packageName} must depend on @app/core-runtime (${WORKSPACE_DEPENDENCY}) for the operation reference of ${name}`,
+        );
+      }
       const ownerArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
         artifactPath,
         renderPublicContractShim(publicContractPackage.contractSpecifier),
