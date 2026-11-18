@@ -3088,8 +3088,10 @@ class DataFactoryProof {
         args.length > 0 &&
         args.every(isClosedData)
       ) {
+        // The pushed values are new positions, so the positional fields no longer list every part.
+        const { fields: _positions, ...grown } = owner;
         this.arrayStates.set(owner, {
-          ...owner,
+          ...grown,
           element: merge([...(owner.empty ? [] : [owner.element ?? BAD]), ...args]),
           empty: false,
         });
