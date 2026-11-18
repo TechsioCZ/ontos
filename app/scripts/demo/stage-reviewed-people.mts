@@ -503,7 +503,13 @@ export const describePlan = (desired: DesiredState, steps: readonly PlannedStep[
         ...role.adminCells.map((admin) => `    admin: ${admin}`),
       );
     }
-    lines.push(`planned writes: ${steps.length}`);
+    lines.push(
+      `review diagnostics (never granted; a reviewed capability is added in reviewed-people-cells.mts): ${desired.diagnostics.length}`,
+      ...desired.diagnostics.map(({ kind, roleKey, slot }) =>
+        kind === 'unreviewed' ? `  unreviewed ${roleKey}: ${slot}` : `  withdrawn ${roleKey}: ${slot} (not sent)`,
+      ),
+      `planned writes: ${steps.length}`,
+    );
     for (const [index, step] of steps.entries()) {
       const request = yield* requestOf(step, true);
       lines.push(
