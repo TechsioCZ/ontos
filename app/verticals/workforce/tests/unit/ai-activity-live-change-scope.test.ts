@@ -1,15 +1,9 @@
 // @rstest-environment happy-dom
-import { waitUntil } from '@app/admin-ui/testing/module-ui';
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import {
-  browserNetwork,
-  pinTestDocument,
-  serveApi,
-  shellGatewayIssuer,
-} from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { it } from 'effect-rstest';
+import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
 
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
@@ -50,23 +44,11 @@ const network = browserNetwork(
   ),
 );
 
-// The AI activity feed shows agents' Core audit events in every module, so another module's change re-reads it.
-it.live('AI activity reloads on a change of any module', () =>
-  Effect.gen(function* scopedAiActivity() {
-    yield* pinTestDocument;
-    yield* aiActivityData.preload('company-a');
-    expect(reads).toHaveLength(1);
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        aiActivityData.subscribe(() => {
-          aiActivityData.snapshot('company-a');
-        }),
-      ),
-      (unsubscribe) => Effect.sync(unsubscribe),
-    );
-    window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['merchandise'] } }));
-    yield* waitUntil(() => reads.length >= 2);
-    yield* aiActivityData.read('company-a');
-    expect(reads).toHaveLength(2);
-  }).pipe(Effect.scoped, Effect.provide(network)),
+it.live('aiActivityData reloads for every app', () =>
+  assertPageDataAppList({
+    expectedApps: 'all',
+    input: 'company-a',
+    reads: () => reads.length,
+    store: aiActivityData,
+  }).pipe(Effect.provide(network)),
 );

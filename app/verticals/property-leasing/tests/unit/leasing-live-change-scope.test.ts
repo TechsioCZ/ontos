@@ -1,18 +1,11 @@
 // @rstest-environment happy-dom
-import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import { RecordsApi as AgreementsRecordsApi } from '@app/legal-agreements/contracts/records';
 import { RecordsApi as PropertyRecordsApi } from '@app/property-portfolio/contracts/records';
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import {
-  browserNetwork,
-  pinTestDocument,
-  serveApi,
-  shellGatewayIssuer,
-} from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect } from 'effect';
-import { beforeEach, expect, it } from 'effect-rstest';
+import { it } from 'effect-rstest';
+import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
 
 import { CustomerListApi } from '../../../party-registry/shared/apis/customer-list.ts';
 import { RecordsApi } from '../../shared/apis/records.ts';
@@ -64,32 +57,11 @@ const network = browserNetwork(
 
 const input = leaseInputOf({ legalEntityId: 'company-a', principalId: 'manager-a', tenantId: 'tenant-a' });
 
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  window.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
-
-beforeEach(() => {
-  reads.length = 0;
-  leaseRecords.invalidate();
-});
-
-it.layer(network, { excludeTestServices: true })('leasing live change scope', (suite) => {
-  suite.effect('lease records ignore a live change from an app they do not show', () =>
-    Effect.gen(function* unrelatedChange() {
-      yield* pinTestDocument;
-      const unsubscribe = leaseRecords.subscribe(() => {
-        leaseRecords.snapshot(input);
-      }, input);
-      yield* Effect.gen(function* checkChanges() {
-        yield* leaseRecords.preload(input);
-        expect(reads).toHaveLength(1);
-        dispatchChange(['finance-billing']);
-        yield* Effect.sleep('10 millis');
-        expect(reads).toHaveLength(1);
-        dispatchChange(['party-registry']);
-        yield* waitUntil(() => leaseRecords.snapshot(input).state === 'ready');
-        expect(reads).toHaveLength(2);
-      }).pipe(Effect.ensuring(Effect.sync(unsubscribe)));
-    }),
-  );
-});
+it.live('leaseRecords reloads only for its app list', () =>
+  assertPageDataAppList({
+    expectedApps: ['legal-agreements', 'party-registry', 'property-leasing', 'property-portfolio'],
+    input,
+    reads: () => reads.length,
+    store: leaseRecords,
+  }).pipe(Effect.provide(network)),
+);

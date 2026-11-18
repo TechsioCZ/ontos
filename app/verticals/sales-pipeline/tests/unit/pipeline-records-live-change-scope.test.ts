@@ -1,16 +1,9 @@
 // @rstest-environment happy-dom
-import { waitUntil } from '@app/admin-ui/testing/module-ui';
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import {
-  browserNetwork,
-  pinTestDocument,
-  serveApi,
-  shellGatewayIssuer,
-} from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { beforeEach, expect, it } from 'effect-rstest';
+import { it } from 'effect-rstest';
+import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { allRecordsInput, pipelineRecords } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-records.ts';
@@ -54,40 +47,11 @@ const network = browserNetwork(
 
 const input = allRecordsInput('company-a');
 
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  window.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
-
-beforeEach(() => {
-  reads.length = 0;
-  pipelineRecords.invalidate();
-});
-
-it.live('live changes of apps the pipeline records do not show read nothing', () =>
-  Effect.gen(function* unrelatedChange() {
-    yield* pinTestDocument;
-    yield* pipelineRecords.preload(input);
-    const unsubscribe = pipelineRecords.subscribe(() => {
-      pipelineRecords.snapshot(input);
-    }, input);
-    expect(reads).toHaveLength(1);
-    dispatchChange(['merchandise']);
-    yield* Effect.sleep('10 millis');
-    expect(reads).toHaveLength(1);
-    unsubscribe();
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a live change of sales-pipeline reloads the mounted pipeline records', () =>
-  Effect.gen(function* ownChange() {
-    yield* pinTestDocument;
-    yield* pipelineRecords.preload(input);
-    const unsubscribe = pipelineRecords.subscribe(() => {
-      pipelineRecords.snapshot(input);
-    }, input);
-    dispatchChange(['sales-pipeline']);
-    yield* waitUntil(() => reads.length === 2);
-    expect(reads).toHaveLength(2);
-    unsubscribe();
+it.live('pipelineRecords reloads only for its app list', () =>
+  assertPageDataAppList({
+    expectedApps: ['sales-pipeline'],
+    input,
+    reads: () => reads.length,
+    store: pipelineRecords,
   }).pipe(Effect.provide(network)),
 );

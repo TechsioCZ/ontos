@@ -1,20 +1,13 @@
 // @rstest-environment happy-dom
-import { waitUntil } from '@app/admin-ui/testing/module-ui';
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import {
-  browserNetwork,
-  pinTestDocument,
-  serveApi,
-  shellGatewayIssuer,
-} from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import {
   RecordsApi as WorkforceRecordsApi,
   RecordsResponseSchema as WorkforceRecordsResponseSchema,
 } from '@app/workforce/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { beforeEach, expect, it } from 'effect-rstest';
+import { it } from 'effect-rstest';
+import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
 
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
@@ -72,31 +65,11 @@ const network = browserNetwork(
 
 const input = recordsInput({ legalEntityId: 'company-a', principalId: 'manager-a', tenantId: 'tenant-a' });
 
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  window.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
-
-beforeEach(() => {
-  reads.length = 0;
-  propertyRecords.invalidate();
-});
-
-it.layer(network, { excludeTestServices: true })('the property register live change scope', (suite) => {
-  suite.effect('the property register ignores a live change from an app it does not show', () =>
-    Effect.gen(function* unrelatedChange() {
-      yield* pinTestDocument;
-      const unsubscribe = propertyRecords.subscribe(() => {
-        propertyRecords.snapshot(input);
-      }, input);
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-      yield* propertyRecords.preload(input);
-      expect(reads).toHaveLength(1);
-      dispatchChange(['property-leasing']);
-      yield* Effect.sleep('10 millis');
-      expect(reads).toHaveLength(1);
-      dispatchChange(['workforce']);
-      yield* waitUntil(() => reads.length === 2);
-      expect(reads).toHaveLength(2);
-    }).pipe(Effect.scoped),
-  );
-});
+it.live('propertyRecords reloads only for its app list', () =>
+  assertPageDataAppList({
+    expectedApps: ['property-portfolio', 'workforce'],
+    input,
+    reads: () => reads.length,
+    store: propertyRecords,
+  }).pipe(Effect.provide(network)),
+);
