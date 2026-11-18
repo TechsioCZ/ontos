@@ -503,6 +503,8 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
           `${owner}/src`,
           'packages/customer-market-retirement-contracts',
           'packages/customer-payment-term-contracts',
+          // customer-price-group-resolution calls the Catalog's operation reference from this package.
+          'packages/price-group-catalog-contracts',
         ].map((folder) => readPricingSourceTree(root, folder)),
       ),
       Effect.all(
@@ -643,6 +645,7 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
   Layer.provide(activeApplicationCompositionLive),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );`;
     expect(handler).toContain(ownerRuntime);
     const direct = handler

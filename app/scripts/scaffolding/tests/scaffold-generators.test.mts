@@ -6317,6 +6317,9 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
               '@app/shared-contracts/server/effect-bff-runtime': [
                 path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
               ],
+              '@app/shared-contracts/server/sdk-module-call-route': [
+                path.join(appRoot, 'packages/shared-contracts/src/sdk-module-call-route.ts'),
+              ],
             },
             resolveJsonModule: true,
             skipLibCheck: true,

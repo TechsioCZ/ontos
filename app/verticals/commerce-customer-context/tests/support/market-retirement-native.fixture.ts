@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import {
   ActiveApplicationCompositionService,
   ContextAccessLive,
@@ -215,6 +216,9 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
         );
         const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
           Layer.provide(common),
+          Layer.provide(
+            ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer))),
+          ),
         );
         const redemptionDatabase = GatewayAssertionRedemptionDatabaseLive.pipe(
           Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),

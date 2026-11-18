@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { promotionRegistration as governedOwnerRegistration } from '../vertical.registration.ts';
 import {
   ultramodernDeliveryUnit as governedActionDeliveryUnit,
@@ -92,9 +93,20 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = GovernedFetchHttpClient.layer.pipe(
+  GovernedReadLayer.provide(
+    GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+  ),
+);
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+  GovernedReadLayer.provide(
+    ModuleCallRouteLive.pipe(
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)),
+    ),
+  ),
 );
 
 const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(

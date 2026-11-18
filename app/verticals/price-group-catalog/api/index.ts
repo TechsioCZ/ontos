@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { priceGroupCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -220,6 +221,7 @@ const priceGroupCatalogReadRuntimeLive = makeReadRuntimeLive(
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );
 
 const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(

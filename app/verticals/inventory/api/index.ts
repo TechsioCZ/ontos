@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { inventoryRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
@@ -145,6 +146,7 @@ const inventoryReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, in
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );
 
 const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(

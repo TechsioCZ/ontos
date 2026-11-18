@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { paymentTermCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
@@ -132,6 +133,7 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, p
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );
 
 /** Deployment composition seam. Trusted Customer Context issuance remains a requirement. */
