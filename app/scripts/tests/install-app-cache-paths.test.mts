@@ -52,12 +52,14 @@ const derive = (workspace: string) => {
   try {
     execFileSync('/bin/bash', ['-c', LISTING_STEP.run ?? ''], {
       cwd: workspace,
+      encoding: UTF8,
       env: { GITHUB_OUTPUT: output, PATH: STEP_PATH },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     text = readFileSync(output, UTF8);
-  } catch {
-    return 'failed' as const;
+  } catch (error) {
+    // The step's own diagnostic, so a test tells the action's rejection from any other failure.
+    return { failed: Schema.decodeUnknownSync(Schema.Struct({ stdout: Schema.String }))(error).stdout };
   } finally {
     rmSync(scratch, { force: true, recursive: true });
   }
@@ -73,8 +75,8 @@ const derive = (workspace: string) => {
 };
 const deriveOrThrow = (workspace: string) => {
   const derived = derive(workspace);
-  if (derived === 'failed') {
-    throw new Error(`the package listing failed in ${workspace}`);
+  if ('failed' in derived) {
+    throw new Error(`the package listing failed in ${workspace}: ${derived.failed}`);
   }
   return derived;
 };
@@ -195,14 +197,18 @@ it('covers a package directory added to the workspace in the cached paths and th
 it('refuses a workspace file it cannot expand exactly', () => {
   for (const entry of ['apps/**', '../outside', './apps/*', '{a,b}/*', '[unclosed']) {
     withWorkspace(`packages:\n  - apps/*\n  - '${entry}'\n`, FIXTURE, (workspace) => {
-      expect(derive(workspace), entry).toBe('failed');
+      expect(derive(workspace), entry).toEqual({
+        failed: `::error::The install action expands only '*' and '?' inside package directories; app/pnpm-workspace.yaml lists '${entry}'.\n`,
+      });
     });
   }
   withWorkspace('packages: [apps/*]\n', FIXTURE, (workspace) => {
-    expect(derive(workspace)).toBe('failed');
+    expect(derive(workspace)).toEqual({ failed: '::error::app/pnpm-workspace.yaml lists no package directory.\n' });
   });
   withWorkspace('packages:\n  - apps/*\n  -\n    - nested\n', FIXTURE, (workspace) => {
-    expect(derive(workspace)).toBe('failed');
+    expect(derive(workspace)).toEqual({
+      failed: '::error::The install action cannot read this packages: entry of app/pnpm-workspace.yaml:   -\n',
+    });
   });
 });
 
