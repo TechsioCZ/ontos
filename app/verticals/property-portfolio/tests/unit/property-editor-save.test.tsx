@@ -1,19 +1,27 @@
 // @rstest-environment happy-dom
 // The new-property form as the user sees the editor state: typing changes only the draft, nothing is sent until its
-// Save runs, and that one save sends exactly one command. Only the generated clients are replaced.
+// Save runs, and that one save sends exactly one command. The generated clients run for real: the Shell's gateway
+// issuer and the property owner's Action and records endpoints answer in process through their HttpApi contracts.
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
-import { Effect, Schema } from 'effect';
-import { beforeEach, expect, it, rstest } from 'effect-rstest';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Schema } from 'effect';
+import { beforeEach, expect, it } from 'effect-rstest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import type { PropertyEditor } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
 import { usePropertyEditor } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
-
-const { apply, records } = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
-
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: apply }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
 
 const employeeId = '75000000-0000-4000-8000-000000000001';
 const employees = [
@@ -25,6 +33,47 @@ const registerRecords = Schema.decodeUnknownSync(RecordsResponseSchema)({
   revision: 4,
   units: [],
 });
+const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({
+  resourceRef: {
+    moduleId: 'property.portfolio',
+    resourceId: '30000000-0000-4000-8000-000000000001',
+    resourceType: 'property.portfolio.property',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  revision: 5,
+});
+
+/** Every command and records read the property owner received, in order. */
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+const reads: RecordsRequest[] = [];
+
+const OwnerActionApi = ApplyCommandActionApi.prefix('/property-portfolio-api');
+const OwnerRecordsApi = RecordsApi.prefix('/property-portfolio-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'property-portfolio': '/property-portfolio-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return created;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return registerRecords;
+        }),
+      ),
+    ),
+  ),
+);
 
 const rendered: PropertyEditor[] = [];
 const Harness = ({ onRender }: { readonly onRender: (editor: PropertyEditor) => void }) => {
@@ -72,14 +121,14 @@ const perform = (action: (editor: PropertyEditor) => void) =>
   });
 
 beforeEach(() => {
-  apply.mockReset();
-  records.mockReset();
+  commands.length = 0;
+  reads.length = 0;
   rendered.length = 0;
-  apply.mockReturnValue(Effect.succeed({ resourceRef: { resourceId: 'p-1' }, revision: 5 }));
 });
 
 it.live('typing in the new-property form sends nothing, not even after a pause', () =>
   Effect.gen(function* typingSendsNothing() {
+    yield* pinTestDocument;
     const unmount = mountHarness();
     yield* perform((editor) => editor.begin());
     yield* perform((editor) => {
@@ -92,16 +141,17 @@ it.live('typing in the new-property form sends nothing, not even after a pause',
     expect(current().createDraft.dirty).toBe(true);
     expect(current().createDraft.canSave).toBe(true);
     yield* Effect.sleep('1 second');
-    expect(apply).not.toHaveBeenCalled();
+    expect(commands).toEqual([]);
     unmount();
     yield* Effect.sleep('100 millis');
-    expect(apply).not.toHaveBeenCalled();
-    expect(records).not.toHaveBeenCalled();
-  }),
+    expect(commands).toEqual([]);
+    expect(reads).toEqual([]);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('the Save of the new-property form sends exactly one command', () =>
   Effect.gen(function* saveSendsOnce() {
+    yield* pinTestDocument;
     const unmount = mountHarness();
     yield* perform((editor) => {
       editor.begin();
@@ -113,13 +163,15 @@ it.live('the Save of the new-property form sends exactly one command', () =>
     });
     yield* perform((editor) => editor.createDraft.save());
     yield* Effect.sleep('100 millis');
-    expect(apply).toHaveBeenCalledTimes(1);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ command: { code: 'NEW-02', name: 'Druhá budova' }, expectedRevision: 4 });
     unmount();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('an invalid new-property draft is not saved and its Save stays disabled', () =>
   Effect.gen(function* invalidDraft() {
+    yield* pinTestDocument;
     const unmount = mountHarness();
     yield* perform((editor) => {
       editor.begin();
@@ -129,7 +181,7 @@ it.live('an invalid new-property draft is not saved and its Save stays disabled'
     expect(current().createDraft.canSave).toBe(false);
     yield* perform((editor) => editor.createDraft.save());
     yield* Effect.sleep('100 millis');
-    expect(apply).not.toHaveBeenCalled();
+    expect(commands).toEqual([]);
     unmount();
-  }),
+  }).pipe(Effect.provide(network)),
 );

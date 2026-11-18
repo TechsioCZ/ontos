@@ -1,5 +1,6 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, rstest } from 'effect-rstest';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it } from 'effect-rstest';
+import type { ReactElement } from 'react';
 import { DateTime, Deferred, Effect, Option, Schema } from 'effect';
 
 import { PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
@@ -14,17 +15,15 @@ import type {
 } from '../../src/routes/[lang]/prodej/strany/[partyId]/party-identity-data.ts';
 import { usePartyIdentityRead } from '../../src/routes/[lang]/prodej/strany/[partyId]/party-identity-read.ts';
 import { PartyIdentityPageView } from '../../src/routes/[lang]/prodej/strany/[partyId]/party-identity-view.tsx';
+import { partyIdentityI18nResources } from '../../src/routes/[lang]/prodej/strany/[partyId]/party-identity-i18n.ts';
 import { routeMeta } from '../../src/routes/[lang]/prodej/strany/[partyId]/route.meta.ts';
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 import { expectHumanReadable } from '../support/visible-text.ts';
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useNavigate: () => rstest.fn(),
-  useParams: () => ({ partyId: '40000000-0000-4000-8000-000000000001' }),
-  useRouterState: () => '/cs/prodej/strany/40000000-0000-4000-8000-000000000001',
-}));
+/** The page's own Czech copy, as the module's runtime configures it. */
+const czech = moduleText('cs', partyIdentityI18nResources);
+const copy = (key: string) => czech(`party-registry.pages.partyIdentity.${key}`);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyId = '40000000-0000-4000-8000-000000000001';
@@ -127,78 +126,94 @@ const ViewWithRead = ({
   return <PartyIdentityPageView input={input} onBack={noop} onReload={handleReload} read={read.view} />;
 };
 
-afterEach(cleanup);
+/** Mounts `element` on the Party identity route of a real router, under the module's real Czech copy. */
+const mount = (element: ReactElement) =>
+  mountInRoute(element, {
+    path: 'prodej/strany/$partyId',
+    resources: partyIdentityI18nResources,
+    url: `/cs/prodej/strany/${partyId}`,
+  });
 
-it('renders the exact Party identity, identifiers and contacts without technical identifiers', () => {
-  render(<PartyIdentityPageView input={readyInput} onBack={noop} onReload={noop} read={readyRead} />);
+afterEach(unmountAll);
 
-  expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
-  expect(screen.getByText('party-registry.pages.partyIdentity.sections.identity')).toBeTruthy();
-  expect(screen.getByText('party-registry.pages.partyIdentity.sections.facts')).toBeTruthy();
-  expect(screen.getByText(/12345678/u)).toBeTruthy();
-  expect(screen.getByText('eva@example.cz')).toBeTruthy();
-  expect(document.body.textContent).not.toContain(partyId);
-  expect(document.body.textContent).not.toContain('counterparty');
-  expectHumanReadable();
-});
+it.live('renders the exact Party identity, identifiers and contacts without technical identifiers', () =>
+  Effect.gen(function* rendersTheExactParty() {
+    yield* mount(<PartyIdentityPageView input={readyInput} onBack={noop} onReload={noop} read={readyRead} />);
 
-it('shows a contact refusal without hiding a ready identity or identifiers', () => {
-  render(
-    <PartyIdentityPageView
-      input={readyInput}
-      onBack={noop}
-      onReload={noop}
-      read={{ ...readyRead, contacts: { status: 'forbidden' } }}
-    />,
-  );
+    expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
+    expect(screen.getByText(copy('sections.identity'))).toBeTruthy();
+    expect(screen.getByText(copy('sections.facts'))).toBeTruthy();
+    expect(screen.getByText(/12345678/u)).toBeTruthy();
+    expect(screen.getByText('eva@example.cz')).toBeTruthy();
+    expect(document.body.textContent).not.toContain(partyId);
+    expect(document.body.textContent).not.toContain('counterparty');
+    expectHumanReadable();
+  }),
+);
 
-  expect(screen.getByText('party-registry.pages.partyIdentity.contacts.forbidden')).toBeTruthy();
-  expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
-  expect(screen.getByText(/12345678/u)).toBeTruthy();
-});
+it.live('shows a contact refusal without hiding a ready identity or identifiers', () =>
+  Effect.gen(function* showsAContactRefusal() {
+    yield* mount(
+      <PartyIdentityPageView
+        input={readyInput}
+        onBack={noop}
+        onReload={noop}
+        read={{ ...readyRead, contacts: { status: 'forbidden' } }}
+      />,
+    );
 
-it('shows a Party permission denial without a record, revision or section actions', () => {
-  render(
-    <PartyIdentityPageView
-      input={readyInput}
-      onBack={noop}
-      onReload={noop}
-      read={{ identity: { status: 'forbidden' }, status: 'identity' }}
-    />,
-  );
+    expect(screen.getByText(copy('contacts.forbidden'))).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
+    expect(screen.getByText(/12345678/u)).toBeTruthy();
+  }),
+);
 
-  expect(screen.getByText('party-registry.pages.partyIdentity.forbidden')).toBeTruthy();
-  expect(screen.queryByText('Eva Bílá')).toBeNull();
-  expect(screen.queryByText('party-registry.pages.partyIdentity.sections.identifiers')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'party-registry.pages.partyIdentity.reload' })).toBeNull();
-});
+it.live('shows a Party permission denial without a record, revision or section actions', () =>
+  Effect.gen(function* showsAPartyPermission() {
+    yield* mount(
+      <PartyIdentityPageView
+        input={readyInput}
+        onBack={noop}
+        onReload={noop}
+        read={{ identity: { status: 'forbidden' }, status: 'identity' }}
+      />,
+    );
 
-it('shows missing and unavailable identities honestly with retry only for unavailable', () => {
-  render(
-    <PartyIdentityPageView
-      input={readyInput}
-      onBack={noop}
-      onReload={noop}
-      read={{ identity: { status: 'not-found' }, status: 'identity' }}
-    />,
-  );
-  expect(screen.getByText('party-registry.pages.partyIdentity.notFound')).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'party-registry.pages.partyIdentity.reload' })).toBeNull();
-  cleanup();
+    expect(screen.getByText(copy('forbidden'))).toBeTruthy();
+    expect(screen.queryByText('Eva Bílá')).toBeNull();
+    expect(screen.queryByText(copy('sections.identifiers'))).toBeNull();
+    expect(screen.queryByRole('button', { name: copy('reload') })).toBeNull();
+  }),
+);
 
-  render(
-    <PartyIdentityPageView
-      input={readyInput}
-      onBack={noop}
-      onReload={noop}
-      read={{ identity: { status: 'unavailable' }, status: 'identity' }}
-    />,
-  );
-  expect(screen.getByText('party-registry.pages.partyIdentity.unavailable')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'party-registry.pages.partyIdentity.reload' })).toBeTruthy();
-});
+it.live('shows missing and unavailable identities honestly with retry only for unavailable', () =>
+  Effect.gen(function* showsMissingAndUnavailable() {
+    yield* mount(
+      <PartyIdentityPageView
+        input={readyInput}
+        onBack={noop}
+        onReload={noop}
+        read={{ identity: { status: 'not-found' }, status: 'identity' }}
+      />,
+    );
+    expect(screen.getByText(copy('notFound'))).toBeTruthy();
+    expect(screen.queryByRole('button', { name: copy('reload') })).toBeNull();
+    unmountAll();
 
-it.effect('discards the previous identity immediately when the route id changes', () =>
+    yield* mount(
+      <PartyIdentityPageView
+        input={readyInput}
+        onBack={noop}
+        onReload={noop}
+        read={{ identity: { status: 'unavailable' }, status: 'identity' }}
+      />,
+    );
+    expect(screen.getByText(copy('unavailable'))).toBeTruthy();
+    expect(screen.getByRole('button', { name: copy('reload') })).toBeTruthy();
+  }),
+);
+
+it.live('discards the previous identity immediately when the route id changes', () =>
   Effect.gen(function* discardPreviousIdentity() {
     const gate = Deferred.makeUnsafe<null>();
     let mode: 'ready' | 'pending' = 'ready';
@@ -218,13 +233,13 @@ it.effect('discards the previous identity immediately when the route id changes'
               }),
             ),
     };
-    const { rerender } = render(<ViewWithRead input={readyInput} readers={readers} />);
+    const { rerender } = yield* mount(<ViewWithRead input={readyInput} readers={readers} />);
     yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy()));
 
     mode = 'pending';
-    rerender(<ViewWithRead input={otherInput} readers={readers} />);
+    yield* rerender(<ViewWithRead input={otherInput} readers={readers} />);
     expect(screen.queryByRole('heading', { name: 'Eva Bílá' })).toBeNull();
-    expect(screen.getByText('party-registry.pages.partyIdentity.loading')).toBeTruthy();
+    expect(screen.getByText(copy('loading'))).toBeTruthy();
 
     act(() => {
       Deferred.doneUnsafe(gate, Effect.succeed(null));
@@ -235,7 +250,7 @@ it.effect('discards the previous identity immediately when the route id changes'
   }),
 );
 
-it.effect('does not keep ready details when a reload is refused', () =>
+it.live('does not keep ready details when a reload is refused', () =>
   Effect.gen(function* refuseReload() {
     const gate = Deferred.makeUnsafe<null>();
     let mode: 'ready' | 'refused' = 'ready';
@@ -250,31 +265,31 @@ it.effect('does not keep ready details when a reload is refused', () =>
             })
           : Deferred.await(gate).pipe(Effect.as({ status: 'forbidden' as const })),
     };
-    render(<ViewWithRead input={readyInput} readers={readers} />);
+    yield* mount(<ViewWithRead input={readyInput} readers={readers} />);
     yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy()));
 
     mode = 'refused';
-    fireEvent.click(screen.getByRole('button', { name: 'party-registry.pages.partyIdentity.reload' }));
+    fireEvent.click(screen.getByRole('button', { name: copy('reload') }));
     expect(screen.queryByRole('heading', { name: 'Eva Bílá' })).toBeNull();
-    expect(screen.getByText('party-registry.pages.partyIdentity.loading')).toBeTruthy();
+    expect(screen.getByText(copy('loading'))).toBeTruthy();
 
     act(() => {
       Deferred.doneUnsafe(gate, Effect.succeed(null));
     });
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('party-registry.pages.partyIdentity.forbidden')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText(copy('forbidden'))).toBeTruthy()));
     expect(screen.queryByRole('heading', { name: 'Eva Bílá' })).toBeNull();
   }),
 );
 
-it('never renders a customer or Counterparty route', () => {
-  render(<PartyIdentityPageView input={readyInput} onBack={noop} onReload={noop} read={readyRead} />);
+it.live('never renders a customer or Counterparty route', () =>
+  Effect.gen(function* neverRendersACustomer() {
+    yield* mount(<PartyIdentityPageView input={readyInput} onBack={noop} onReload={noop} read={readyRead} />);
 
-  expect(document.querySelector('a[href*="zakaznici"]')).toBeNull();
-  expect(document.body.textContent).not.toContain('party-registry.pages.customers');
-  expect(document.body.textContent?.toLowerCase()).not.toContain('counterparty');
-});
+    expect(document.querySelector('a[href*="zakaznici"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('party-registry.pages.customers');
+    expect(document.body.textContent?.toLowerCase()).not.toContain('counterparty');
+  }),
+);
 
 it('declares the generated exact Party identity route contract', () => {
   expect(routeMeta.canonicalPath).toBe('/prodej/strany/:partyId');

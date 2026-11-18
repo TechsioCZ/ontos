@@ -2,45 +2,31 @@
 // The task editor while the task list reloads in the background (a live change, the 20 s freshness window, a settled
 // write). The strict task store reads `pending` during such a reload; the open editor must stay editable: its fields,
 // Uložit, the unsaved status and the assignee name stay as they were. A refused reload still takes write access away.
+// The page runs on its real i18n, router and records client; the Shell's gateway issuer and the task owner's records
+// endpoint answer in process through their real HttpApi contracts.
 import { saveLabelsFor } from '@app/admin-ui';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { constVoid } from 'effect/Function';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { RecordsApi, RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { RecordsPage, taskRecords } from '../../src/routes/[lang]/ukoly/page.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-const mocks = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: () => Effect.never }));
-rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => {
-  const state = { location: { href: '', searchStr: '' } };
-  return {
-    useBlocker: () => ({ status: 'idle' }),
-    useNavigate: () => () => Promise.resolve(),
-    useRouterState: <Value,>({ select }: { readonly select: (input: typeof state) => Value }) => select(state),
-  };
-});
-rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
+const czech = moduleText('cs');
 const copy = {
-  edit: 'work-tasks.pages.records.edit',
+  edit: czech('work-tasks.pages.records.edit'),
   outsideList: 'Účet mimo seznam',
-  readOnly: 'work-tasks.pages.records.readOnly',
+  readOnly: czech('work-tasks.pages.records.readOnly'),
   title: 'task-title',
   typed: 'typed-title',
 } as const;
@@ -116,45 +102,27 @@ const context: ModulePageProps['context'] = {
   tenantId,
 };
 
-/** Lets running reads take a step, then flushes React's updates. */
-const settle: Effect.Effect<void> = Effect.promise(() => browserRuntime.runPromise(Effect.yieldNow)).pipe(
-  Effect.andThen(
-    Effect.sync(() => {
-      act(constVoid);
+/** What the task owner answers the next records read with; each test scripts it. */
+let answer: Effect.Effect<RecordsResponse, typeof RecordsForbiddenProblemSchema.Type> = Effect.succeed(recordsAt(4));
+/** Every records read the owner received, in order. */
+const reads: RecordsRequest[] = [];
+
+/** The task owner's records endpoint, where the browser client sends it. */
+const OwnerRecordsApi = RecordsApi.prefix('/work-tasks-api');
+const taskOwner = HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+  group.handle('execute', ({ payload }) =>
+    Effect.suspend(() => {
+      reads.push(payload);
+      return answer;
     }),
   ),
 );
-const acted = (step: () => void): Effect.Effect<void> =>
-  Effect.sync(() => {
-    act(() => {
-      step();
-    });
-  }).pipe(Effect.andThen(settle));
-const waitUntil = (condition: () => boolean, attempt = 0): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    if (condition() || attempt >= 400) {
-      return Effect.sync(() => {
-        expect(condition()).toBe(true);
-      });
-    }
-    return settle.pipe(Effect.andThen(waitUntil(condition, attempt + 1)));
-  });
+const network = browserNetwork(
+  shellGatewayIssuer({ 'work-tasks': '/work-tasks-api' }).application,
+  serveApi(OwnerRecordsApi, taskOwner),
+);
 
-const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
-const render = acted(() => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  roots.push({ container, root });
-  root.render(<RecordsPage context={context} />);
-});
-
-const buttons = (label: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter(
-    (found) => found.textContent?.trim() === label || found.getAttribute('aria-label') === label,
-  );
 const field = () => Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${copy.title}"]`));
-const text = () => document.body.textContent ?? '';
 const type = (typed: string) =>
   acted(() => {
     const input = Option.getOrThrow(field());
@@ -164,7 +132,8 @@ const type = (typed: string) =>
 
 /** Opens the page with the list at revision 4 and opens the task's editor through its row action. */
 const openEdit = Effect.gen(function* open() {
-  yield* render;
+  yield* pinTestDocument;
+  yield* mountInRoute(<RecordsPage context={context} />, { url: '/cs/ukoly' });
   yield* waitUntil(() => buttons(copy.edit).length > 0);
   yield* acted(() => buttons(copy.edit)[0]?.click());
   yield* waitUntil(() => Option.isSome(field()));
@@ -180,22 +149,12 @@ const expectEditable = () => {
 };
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  mocks.records.mockReset();
-  mocks.records.mockImplementation(() => Effect.succeed(recordsAt(4)));
-  mocks.apply.mockReset();
+  reads.length = 0;
+  answer = Effect.succeed(recordsAt(4));
   taskRecords.invalidate();
 });
 
-afterEach(() => {
-  for (const { container, root } of roots.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('task editor across a background reload', () => {
   it.live('stays editable with its typed input, Uložit and the assignee name while the list reloads', () =>
@@ -205,28 +164,31 @@ describe('task editor across a background reload', () => {
       expect(text()).toContain(labels.unsaved);
       expectEditable();
 
+      const arrived = yield* Deferred.make<true>();
       const gate = yield* Deferred.make<RecordsResponse>();
-      mocks.records.mockReturnValue(Deferred.await(gate));
+      answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Deferred.await(gate)));
       yield* acted(() => taskRecords.invalidate());
-      yield* waitUntil(() => mocks.records.mock.calls.length >= 2);
+      yield* Deferred.await(arrived);
+      yield* settle;
       expectEditable();
       expect(Option.getOrThrow(field()).value).toBe(copy.typed);
       expect(text()).toContain(labels.unsaved);
 
       yield* Deferred.succeed(gate, recordsAt(5));
+      yield* waitUntil(() => reads.length >= 2);
       yield* settle;
       expectEditable();
       expect(Option.getOrThrow(field()).value).toBe(copy.typed);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('a refused reload takes write access away at once', () =>
     Effect.gen(function* refusedReload() {
       yield* openEdit;
-      mocks.records.mockReturnValue(Effect.fail(refused));
+      answer = Effect.fail(refused);
       yield* acted(() => taskRecords.invalidate());
       yield* waitUntil(() => buttons(labels.save).length === 0);
       expect(text()).toContain(copy.readOnly);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

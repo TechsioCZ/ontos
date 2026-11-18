@@ -31,7 +31,8 @@
     "./symmy/organization-source-witness": "./src/symmy/organization-source-witness.ts",
     "./symmy/route-catalog": "./src/symmy/routes.ts",
     "./cz-vat-classifications": "./src/cz-vat-classifications.ts",
-    "./shell-gateway-url": "./src/shell-gateway-url.ts"
+    "./shell-gateway-url": "./src/shell-gateway-url.ts",
+    "./testing/http-double": "./tests/support/http-double.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",

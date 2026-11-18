@@ -22,7 +22,7 @@ import {
 } from '../../shared/browser-api.ts';
 import type { CurrentSession } from '../../shared/browser-api.ts';
 import { moduleTargetSourceHeader } from '../../shared/module-target-diagnostics.ts';
-import { browserNetworkShellBff, inProcessShellBff } from './in-process-shell-bff.ts';
+import { browserNetwork, inProcessFetch } from '@app/shared-contracts/testing/http-double';
 
 const contract = ShellAuthenticationApi.groups;
 
@@ -298,9 +298,9 @@ export const makeShellBff = (script: ShellBffScript) => {
   );
   return {
     /** Serves the page's own browser-runtime requests through the test DOM's network. */
-    browser: browserNetworkShellBff(application),
+    browser: browserNetwork(application),
     /** Serves the client Effects a test runs itself, through `FetchHttpClient.Fetch`. */
-    layer: inProcessShellBff(application),
+    layer: inProcessFetch(application),
     requests,
   } as const;
 };

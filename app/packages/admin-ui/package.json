@@ -9,7 +9,8 @@
     "./form-controls": "./src/form-controls.tsx",
     "./select-template": "./src/select-template.tsx",
     "./side-panel": "./src/side-panel.tsx",
-    "./visible-text": "./src/visible-text.ts"
+    "./visible-text": "./src/visible-text.ts",
+    "./testing/module-ui": "./tests/support/module-ui.tsx"
   },
   "scripts": {
     "test:component": "rstest --project component",
@@ -25,6 +26,10 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@modern-js/i18n-integration": "catalog:ultramodern",
+    "@modern-js/plugin-i18n": "catalog:ultramodern",
+    "@modern-js/plugin-tanstack": "catalog:ultramodern",
+    "@modern-js/runtime": "catalog:ultramodern",
     "@rstest/core": "0.12.6",
     "@techsio/ui-kit": "catalog:",
     "@testing-library/react": "16.3.2",
@@ -33,6 +38,7 @@
     "@types/react-dom": "^19.3.0",
     "effect-rstest": "1.0.0",
     "happy-dom": "21.0.4",
+    "i18next": "26.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   }

@@ -25,7 +25,7 @@ import {
 import { OAUTH_PRELOGIN_PATH } from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
-import { browserNetworkShellBff } from '../../../support/in-process-shell-bff.ts';
+import { browserNetwork } from '@app/shared-contracts/testing/http-double';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 import { ShellI18n, shellTestCopy } from '../../../support/shell-i18n.tsx';
@@ -115,7 +115,7 @@ const oauthOrigin = (prelogin: () => HttpServerResponse.HttpServerResponse) => {
     HttpApiBuilder.layer(OAuthLoginApi).pipe(Layer.provide(signInHandlers)),
     lookup,
   ).pipe(Layer.provide(HttpServer.layerServices));
-  return { browser: browserNetworkShellBff(application), requests } as const;
+  return { browser: browserNetwork(application), requests } as const;
 };
 
 /** The login route of a real router, in the given language. */

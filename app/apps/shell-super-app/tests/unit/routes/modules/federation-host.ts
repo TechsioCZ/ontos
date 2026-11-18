@@ -5,7 +5,7 @@ import { Deferred, Effect, FiberSet, Layer, MutableRef, Option, Queue } from 'ef
 import { constVoid } from 'effect/Function';
 
 import type { ModuleEntrypointNamespace } from '../../../../src/routes/module-entrypoint-loader.ts';
-import { browserNetworkShellBff } from '../../../support/in-process-shell-bff.ts';
+import { browserNetwork } from '@app/shared-contracts/testing/http-double';
 
 /** The native Federation host the Shell finds by name before it registers an approved remote. */
 export const shellHostName = 'shellSuperApp';
@@ -128,7 +128,7 @@ export const makeFederationHost = (options: {
       run: yield* FiberSet.makeRuntimePromise(),
       settled: new Map(),
     };
-    yield* Layer.build(browserNetworkShellBff(assetHost));
+    yield* Layer.build(browserNetwork(assetHost));
     const host = yield* Effect.acquireRelease(
       Effect.sync(() => {
         MutableRef.set(origin, Option.some(tenant));
