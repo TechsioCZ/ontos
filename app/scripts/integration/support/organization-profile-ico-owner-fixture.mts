@@ -73,12 +73,10 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: appIds
-        .filter((appId) => appId !== commerceApp)
-        .map((sourceAppId) => ({ registeredWorkloads: [], sourceAppId })),
+      additionalRelaySources: appIds.filter((appId) => appId !== commerceApp).map((sourceAppId) => ({ sourceAppId })),
       ownedDatabase: isolated,
       productionGate: true,
-      relaySource: { registeredWorkloads: [], sourceAppId: commerceApp },
+      relaySource: { sourceAppId: commerceApp },
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = randomUUID();

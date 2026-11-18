@@ -12,7 +12,7 @@ import {
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
 import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
-import { admitIntegrationCredential, loadGatewayModuleBindings } from './auth/gateway-delegation-policy.ts';
+import { admitIntegrationCredential, loadGatewayModuleCredentialBindings } from './auth/gateway-delegation-policy.ts';
 import {
   acquireSymmyRouteScopeProof,
   issueSymmyRouteScopeAssertion,
@@ -1918,7 +1918,7 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
 });
 
 /** The staff namespace is registered for exactly the source apps the module credentials are enrolled for. */
-const delegationNamespaceRegistryEffect = loadGatewayModuleBindings.pipe(
+const delegationNamespaceRegistryEffect = loadGatewayModuleCredentialBindings.pipe(
   Effect.flatMap((bindings) =>
     staffAuthenticationNamespaceRegistration([...new Set(bindings.map((binding) => binding.sourceAppId))]).pipe(
       Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),

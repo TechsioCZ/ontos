@@ -30,14 +30,7 @@ import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
-import {
-  customerFixtureWorkloads,
-  customerIntakeContext,
-  customerOwnerRelaySources,
-  customerRecoveryRules,
-  customerWorkerKey,
-  customerWorkerRules,
-} from './symmy-c14-customer-rules.mts';
+import { customerFixtureWorkloads, customerIntakeContext, customerWorkerKey } from './symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   buildProductOwner,
@@ -106,89 +99,6 @@ export const observeCustomerFixtureUntil = <Value, Failure, Requirements>(
   });
 
 const assignmentAction = 'commerce.customer-context.assign-customer-price-group';
-const assignmentReceipt = 'commerce.customer-context.api.customer-price-group-assignment-receipt';
-const assignmentRules = [
-  {
-    audience: commerceApp,
-    declarationKey: 'commerce.customer-context.customer-price-group.assign',
-    entrypointKey: assignmentAction,
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'commerce.customer-context.source-write',
-  },
-  {
-    allowHistoricalDeliveryRecovery: true,
-    audience: commerceApp,
-    declarationKey: 'commerce.customer-context.customer-price-group-assignment-receipt.read',
-    entrypointKey: assignmentReceipt,
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'required',
-    recoveryOf: { actionKey: assignmentAction, jobKey: customerWorkerKey },
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'commerce.customer-context.source-read',
-  },
-  {
-    audience: priceGroupApp,
-    declarationKey: 'pricing.price-group-catalog.price-group.create',
-    entrypointKey: priceGroupCreateAction,
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'forbidden',
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'pricing.price-group-catalog.source-write',
-  },
-  {
-    allowHistoricalDeliveryRecovery: true,
-    audience: priceGroupApp,
-    declarationKey: 'pricing.price-group-catalog.price-group-result-lookup.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup',
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'forbidden',
-    recoveryOf: { actionKey: priceGroupCreateAction, jobKey: customerWorkerKey },
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: priceGroupReadWorkload,
-  },
-  {
-    audience: 'privacy',
-    declarationKey: 'privacy.core.source-processing-eligibility.read',
-    entrypointKey: 'privacy.core.api.source-processing-eligibility',
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'privacy.core.source-processing-check',
-  },
-] as const;
-const assignmentOwnerRelaySources = [
-  ...customerOwnerRelaySources.map((source) =>
-    source.sourceAppId === commerceApp
-      ? ({
-          ...source,
-          registeredWorkloads: [
-            ...source.registeredWorkloads,
-            {
-              audience: priceGroupApp,
-              declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
-              entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
-              jobKey: customerWorkerKey,
-              legalEntityScope: 'forbidden' as const,
-              schemaVersion: '1',
-              sourceWorkloadKey: 'commerce.customer-context.source-write',
-              workloadKey: priceGroupReadWorkload,
-            },
-          ],
-        } as const)
-      : source,
-  ),
-  { registeredWorkloads: [], sourceAppId: priceGroupApp } as const,
-];
-
-type ShellFixtureOptions = Parameters<typeof makeApiKeyGatewayNativeFixture>[0];
-type RelaySource = NonNullable<ShellFixtureOptions['additionalRelaySources']>[number];
 export interface SymmyC14CustomerFixtureScopeInput {
   readonly admin: PgClient.PgClient;
   readonly legalEntityId: string;
@@ -203,9 +113,7 @@ export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = 
   }[];
   readonly includePriceGroup?: boolean;
   readonly initializeScopes: (input: SymmyC14CustomerFixtureScopeInput) => Effect.Effect<void, Failure, Requirements>;
-  readonly ownerRelaySources?: readonly RelaySource[];
   readonly verifyPausedIntake?: boolean;
-  readonly workerRules?: NonNullable<NonNullable<ShellFixtureOptions['relaySource']>['registeredWorkloads']>;
   readonly workloads?: readonly string[];
 }
 
@@ -307,18 +215,6 @@ const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPaus
   );
 });
 
-const mergeRelaySources = (baseline: readonly RelaySource[], additions: readonly RelaySource[]) => {
-  const byOwner = new Map<string, RelaySource>(baseline.map((source) => [source.sourceAppId, source]));
-  for (const source of additions) {
-    const current = byOwner.get(source.sourceAppId);
-    byOwner.set(source.sourceAppId, {
-      ...source,
-      registeredWorkloads: [...(current?.registeredWorkloads ?? []), ...(source.registeredWorkloads ?? [])],
-    });
-  }
-  return [...byOwner.values()];
-};
-
 const customerFixtureConfiguration = (options: Omit<SymmyC14CustomerFixtureOptions, 'initializeScopes'>) => ({
   allowedOwnerOperations: [
     ...(options.includePriceGroup === true
@@ -335,16 +231,6 @@ const customerFixtureConfiguration = (options: Omit<SymmyC14CustomerFixtureOptio
   ] as const,
   expectedEffects: 2,
   includePriceGroup: options.includePriceGroup === true,
-  relaySources: mergeRelaySources(
-    options.includePriceGroup === true ? assignmentOwnerRelaySources : customerOwnerRelaySources,
-    options.ownerRelaySources ?? [],
-  ),
-  workerRules: [
-    ...customerWorkerRules,
-    ...customerRecoveryRules,
-    ...(options.includePriceGroup === true ? assignmentRules : []),
-    ...(options.workerRules ?? []),
-  ],
   workloads: [
     ...customerFixtureWorkloads,
     customerWorkerKey,
@@ -369,14 +255,12 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       purpose: 'implementation-1096-registered-workload-gateway',
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+    const ownerAppIds = appIds.filter((appId) => appId !== symmyAppId);
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: configuration.relaySources,
+      additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
       ownedDatabase: isolated,
       productionGate: true,
-      relaySource: {
-        registeredWorkloads: configuration.workerRules,
-        sourceAppId: symmyAppId,
-      },
+      relaySource: { sourceAppId: symmyAppId },
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = yield* uuid;

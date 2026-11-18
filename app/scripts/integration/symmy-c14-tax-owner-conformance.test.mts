@@ -78,11 +78,9 @@ it.live(
     Effect.scoped(
       Effect.gen(function* taxConformance() {
         const runtime = yield* makeSymmyC14PolicyFixture({
-          declarationKey: 'commerce.tax.seller-vat-regime-declaration.import',
           initializeScopes: (scope) =>
             initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.admin)),
           lifecyclePolicy,
-          operation,
           owner: 'tax',
           workloadKey: 'commerce.tax.symmy-seller-vat-fixture-import',
         });

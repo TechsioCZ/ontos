@@ -1,60 +1,49 @@
+import { OntosRegisteredWorkloadCallSchema } from '@app/core-runtime';
 import type { ModuleEntrypointAccess } from '@app/core-runtime/module-entrypoint';
-import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { FiniteGatewayOperationTarget } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { GatewayAudienceSchema } from '@app/shared-contracts';
 import { Config, Effect, Option, Schema } from 'effect';
 
+import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
+import { withRegisteredWorkloadCalls } from './gateway-registered-workload-calls.ts';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
-const sourceActionKeySchema = nonEmpty.pipe(Schema.brand('GatewaySourceActionKey'), Schema.decodeTo(Schema.String));
-const workerKeySchema = nonEmpty.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
-const workloadFields = RegisteredGatewayWorkloadSchema.fields;
 
 /**
- * One deployment credential per calling module. `sourceAppId` is any topology app; the installed
- * catalog check at issuance decides whether that app is actually part of the admitted composition.
+ * One deployment credential per calling module: its provider key id and the app, build and release it attests.
+ * `sourceAppId` is any topology app; the installed catalog check at issuance decides whether that app is actually part
+ * of the admitted composition. The credential carries identity only.
+ */
+export const GatewayModuleCredentialBindingSchema = Schema.Struct({
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+  providerKeyId: nonEmpty.pipe(Schema.brand('GatewayModuleCredentialId')),
+  sourceAppId: GatewayAudienceSchema,
+  sourceBuildMarker: nonEmpty,
+});
+export type GatewayModuleCredentialBinding = typeof GatewayModuleCredentialBindingSchema.Type;
+
+/**
+ * A credential's binding with the registered-workload calls its installed module's reviewed manifest declares and
+ * its receivers still take (`withRegisteredWorkloadCalls`).
  */
 export const GatewayModuleBindingSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   providerKeyId: nonEmpty.pipe(Schema.brand('GatewayModuleCredentialId')),
-  registeredWorkloads: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        allowHistoricalDeliveryRecovery: Schema.optionalKey(Schema.Boolean),
-        allowRecoverySource: Schema.optionalKey(Schema.Boolean),
-        audience: GatewayAudienceSchema,
-        declarationKey: workloadFields.declarationKey,
-        entrypointKey: workloadFields.entrypointKey,
-        jobKey: workloadFields.jobKey.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u)),
-        legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
-        recoveryOf: Schema.optionalKey(
-          Schema.Struct({
-            actionKey: sourceActionKeySchema,
-            jobKey: workloadFields.jobKey,
-          }),
-        ),
-        schemaVersion: nonEmpty,
-        sourceActionKey: Schema.optionalKey(sourceActionKeySchema),
-        sourceWorkloadKey: Schema.optionalKey(workloadFields.workloadKey),
-        workerKey: Schema.optionalKey(workerKeySchema),
-        workloadKey: workloadFields.workloadKey,
-      }),
-    ),
-  ),
+  registeredWorkloads: Schema.optionalKey(Schema.Array(OntosRegisteredWorkloadCallSchema)),
   sourceAppId: GatewayAudienceSchema,
   sourceBuildMarker: nonEmpty,
 });
 export type GatewayModuleBinding = typeof GatewayModuleBindingSchema.Type;
 
-const bindingsSchema = Schema.Array(GatewayModuleBindingSchema).check(
-  Schema.makeFilter((bindings) =>
-    new Set(bindings.map((binding) => binding.providerKeyId)).size === bindings.length
-      ? undefined
-      : 'Module credentials must have one deployment binding',
-  ),
+const oneBindingPerCredential = Schema.makeFilter((bindings: readonly { readonly providerKeyId: string }[]) =>
+  new Set(bindings.map((binding) => binding.providerKeyId)).size === bindings.length
+    ? undefined
+    : 'Module credentials must have one deployment binding',
 );
+const credentialBindingsSchema = Schema.Array(GatewayModuleCredentialBindingSchema).check(oneBindingPerCredential);
+const bindingsSchema = Schema.Array(GatewayModuleBindingSchema).check(oneBindingPerCredential);
 export class GatewayDelegationPolicyUnavailable extends Schema.TaggedError<GatewayDelegationPolicyUnavailable>()(
   'GatewayDelegationPolicyUnavailable',
   { cause: Schema.Defect() },
@@ -63,16 +52,31 @@ export class GatewayDelegationPolicyUnavailable extends Schema.TaggedError<Gatew
 /**
  * Issuer-owned deployment credential enrollment; request headers cannot supply this mapping. The variable is
  * required: an absent or malformed value fails the load, so no module key can be served as a subject's key.
- * A deployment with no module enrolled sets it to `[]`.
+ * A deployment with no module enrolled sets it to `[]`. It carries identity only; a `registeredWorkloads` key in it
+ * is ignored.
  */
-export const loadGatewayModuleBindings = Config.schema(
-  Schema.fromJsonString(bindingsSchema),
+export const loadGatewayModuleCredentialBindings = Config.schema(
+  Schema.fromJsonString(credentialBindingsSchema),
   'ONTOS_GATEWAY_MODULE_BINDINGS',
 ).pipe(Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })));
 
+/**
+ * The enrolled credentials with their registered-workload calls. A binding's calls come only from the installed
+ * contract of exactly its app, build and release, so an unreadable release fails the load; it is never "no calls".
+ */
+export const loadGatewayModuleBindings = Effect.gen(function* loadManifestSourcedGatewayModuleBindings() {
+  const credentials = yield* loadGatewayModuleCredentialBindings;
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+  return yield* Schema.decodeUnknownEffect(bindingsSchema)(
+    credentials.map((credential) => withRegisteredWorkloadCalls(credential, installed)),
+  ).pipe(Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })));
+});
+
 /** Whether the verified credential is a module deployment credential, which may never issue a subject's context. */
-export const isGatewayModuleCredential = (bindings: readonly GatewayModuleBinding[], providerKeyId: string): boolean =>
-  bindings.some((binding) => binding.providerKeyId === providerKeyId);
+export const isGatewayModuleCredential = (
+  bindings: readonly Pick<GatewayModuleCredentialBinding, 'providerKeyId'>[],
+  providerKeyId: string,
+): boolean => bindings.some((binding) => binding.providerKeyId === providerKeyId);
 
 /**
  * Refuses a verified key that is a module deployment credential, which may only issue through the delegated
@@ -80,7 +84,7 @@ export const isGatewayModuleCredential = (bindings: readonly GatewayModuleBindin
  */
 export const admitIntegrationCredential = Effect.fn('GatewayDelegationPolicy.admitIntegrationCredential')(
   function* admitIntegrationCredential(providerKeyId: string) {
-    const bindings = yield* loadGatewayModuleBindings.pipe(Effect.mapError(delegationUnavailable));
+    const bindings = yield* loadGatewayModuleCredentialBindings.pipe(Effect.mapError(delegationUnavailable));
     if (isGatewayModuleCredential(bindings, providerKeyId)) {
       return yield* delegationForbidden();
     }
