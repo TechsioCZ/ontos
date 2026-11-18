@@ -157,8 +157,10 @@ describe('Product Unit governed Actions', () => {
       const result = yield* harness.runtime.runAction(request);
       expect(captured).toEqual([{ id: expect.any(String), result }]);
       expect(harness.snapshot().committed).toHaveLength(1);
-      yield* harness.runtime.runAction(request).pipe(Effect.flip);
+      // The same-key retry answers the reply Core saved with the commit; nothing runs or commits again.
+      expect(yield* harness.runtime.runAction(request)).toEqual(result);
       expect(captured).toHaveLength(1);
+      expect(harness.snapshot().committed).toHaveLength(1);
 
       const failed = yield* makeActionTestHarness({
         access: 'allowed',
