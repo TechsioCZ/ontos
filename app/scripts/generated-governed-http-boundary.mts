@@ -2,13 +2,14 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { SyntaxKind } from '@typescript/native/unstable/ast';
-import { Option, Schema } from 'effect';
+import { Option, Predicate, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
 import type {
   ArrowFunctionExpression,
   AssignmentTarget,
   BindingPattern,
   BreakStatement,
+  Class,
   ContinueStatement,
   Directive,
   Expression,
@@ -3216,58 +3217,141 @@ export const hasReadOwnerPermissionDeclaration = (
   return wrapperSource !== undefined && hasOwnerReadPermissionFactoryExport(wrapperSource, imported.imported);
 };
 
-/** Globals a proven load helper may name: value constructors and pure utilities, never I/O or `globalThis`. */
-const LOAD_WORK_GLOBALS: ReadonlySet<string> = new Set([
-  'Array',
+/** Globals proven load work may read as a value: conversions and constants, never I/O or `globalThis`. */
+const LOAD_WORK_VALUE_GLOBALS: ReadonlySet<string> = new Set([
   'Boolean',
   'Infinity',
-  'JSON',
-  'Math',
+  'Map',
   'NaN',
   'Number',
-  'Object',
+  'Set',
   'String',
   'undefined',
 ]);
-/** `effect` modules without I/O, remote resolvers, configuration or ambient services. */
-const LOAD_WORK_EFFECT_EXPORTS: ReadonlySet<string> = new Set([
-  'Array',
-  'BigDecimal',
-  'BigInt',
-  'Boolean',
-  'Cause',
-  'Chunk',
-  'Data',
-  'DateTime',
-  'Duration',
-  'Effect',
-  'Equal',
-  'Equivalence',
-  'Exit',
-  'Function',
-  'Hash',
-  'HashMap',
-  'HashSet',
-  'Match',
-  'Number',
-  'Option',
-  'Order',
-  'Predicate',
-  'Record',
-  'Redacted',
-  'Result',
-  'Schema',
-  'String',
-  'Struct',
-  'Tuple',
-  'flow',
-  'identity',
-  'pipe',
+/**
+ * The members proven load work may read on a global. Nothing that hands out a prototype, a property
+ * descriptor or the global object, so no path leads to the Function constructor.
+ */
+const LOAD_WORK_GLOBAL_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['Array', new Set(['from', 'isArray', 'of'])],
+  ['JSON', new Set(['parse', 'stringify'])],
+  ['Math', new Set(['abs', 'ceil', 'floor', 'log10', 'max', 'min', 'pow', 'round', 'sign', 'sqrt', 'trunc'])],
+  [
+    'Number',
+    new Set([
+      'EPSILON',
+      'MAX_SAFE_INTEGER',
+      'MIN_SAFE_INTEGER',
+      'isFinite',
+      'isInteger',
+      'isNaN',
+      'isSafeInteger',
+      'parseFloat',
+      'parseInt',
+    ]),
+  ],
+  ['Object', new Set(['defineProperty', 'entries', 'freeze', 'fromEntries', 'hasOwn', 'is', 'keys', 'values'])],
+  ['String', new Set(['fromCharCode', 'fromCodePoint'])],
 ]);
+/**
+ * The `effect` module members proven load work may read, always as `Module.member`. Constructors and
+ * combinators over values and effects the work is given: nothing that reads the ambient context or
+ * services (`Effect.context`, `Effect.services*`, `Effect.service*`), leaves the fiber for a callback or
+ * promise (`Effect.promise`, `Effect.tryPromise`, `Effect.callback`), provides, forks, runs, sleeps or
+ * retries, and nothing that reads a property by a key it is passed (`Struct.get`, `Array.get`,
+ * `Record.get`), which would reach the Function constructor through a key built at run time.
+ */
+const LOAD_WORK_EFFECT_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  [
+    'Effect',
+    new Set([
+      'all',
+      'andThen',
+      'as',
+      'asVoid',
+      'catch',
+      'catchCause',
+      'catchIf',
+      'catchTag',
+      'catchTags',
+      'die',
+      'exit',
+      'fail',
+      'failCause',
+      'filterOrFail',
+      'flatMap',
+      'flatten',
+      'flip',
+      'fn',
+      'fnUntraced',
+      'forEach',
+      'gen',
+      'ignore',
+      'map',
+      'mapBoth',
+      'mapError',
+      'match',
+      'matchCause',
+      'matchEffect',
+      'option',
+      'orDie',
+      'orElseSucceed',
+      'result',
+      'succeed',
+      'suspend',
+      'sync',
+      'tap',
+      'tapError',
+      'void',
+      'when',
+      'zip',
+      'zipWith',
+    ]),
+  ],
+  ['DateTime', new Set(['formatIso', 'now', 'toEpochMillis'])],
+  [
+    'Option',
+    new Set([
+      'filter',
+      'flatMap',
+      'getOrElse',
+      'getOrNull',
+      'getOrUndefined',
+      'isNone',
+      'isSome',
+      'map',
+      'match',
+      'none',
+      'some',
+    ]),
+  ],
+  ['Predicate', new Set(['isNotNullish', 'isNullish', 'isNumber', 'isObjectKeyword', 'isString'])],
+  [
+    'Schema',
+    new Set([
+      'Array',
+      'Boolean',
+      'Literal',
+      'Literals',
+      'NullOr',
+      'Number',
+      'String',
+      'Struct',
+      'Unknown',
+      'decodeUnknownEffect',
+      'decodeUnknownOption',
+      'encodeUnknownOption',
+      'fromJsonString',
+    ]),
+  ],
+]);
+/** `effect` functions proven load work may read as values. */
+const LOAD_WORK_EFFECT_FUNCTIONS: ReadonlySet<string> = new Set(['flow', 'identity', 'pipe']);
 const LOAD_WORK_CORE_RUNTIME_EXPORTS: ReadonlySet<string> = new Set([
   'ReadHandlerExecutionError',
   'ReadHandlerNotFound',
   'ReadHandlerUnavailable',
+  'ReadPermissionDenied',
 ]);
 const LOAD_WORK_FORBIDDEN_PROPERTIES: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -3279,9 +3363,16 @@ interface LoadWorkIdentifier extends Span {
   readonly name: string;
 }
 
+/** A name read from outside the proven code, and the static member read on it when it is `name.member`. */
+interface LoadWorkReference {
+  readonly member?: string | undefined;
+  readonly name: string;
+}
+
 /** One owner module as the load-work proof sees it: name reads, lexical scopes and refused syntax, by span. */
 interface LoadWorkModule {
   readonly assigned: ReadonlySet<Span>;
+  readonly members: ReadonlyMap<Span, string>;
   readonly program: Program;
   readonly references: readonly LoadWorkIdentifier[];
   readonly refusals: readonly Span[];
@@ -3326,10 +3417,24 @@ const loadWorkDeclaredNames = (statements: readonly (Directive | Statement)[]): 
     return statement.type === 'FunctionDeclaration' && statement.id !== null ? [statement.id.name] : [];
   });
 
-const isForbiddenLoadWorkKey = (key: PropertyKey): boolean =>
-  key.type === 'TemplateLiteral' ||
-  (key.type === 'Identifier' && LOAD_WORK_FORBIDDEN_PROPERTIES.has(key.name)) ||
-  (key.type === 'Literal' && LOAD_WORK_FORBIDDEN_PROPERTIES.has(String(key.value)));
+/** The static name of a property key: an identifier that is not computed, or a string or number literal. */
+const loadWorkKeyName = (key: PropertyKey, computed: boolean): string | undefined => {
+  if (key.type === 'Identifier' && !computed) {
+    return key.name;
+  }
+  return key.type === 'Literal' && (Predicate.isString(key.value) || Predicate.isNumber(key.value))
+    ? String(key.value)
+    : undefined;
+};
+
+/**
+ * A key the proof cannot name, or one of the prototype escape keys. A computed key that is not a string or
+ * number literal can be built at run time (`['constr', 'uctor'].join('')`), so it always refuses.
+ */
+const isForbiddenLoadWorkKey = (key: PropertyKey, computed: boolean): boolean => {
+  const name = loadWorkKeyName(key, computed);
+  return name === undefined ? computed || key.type === 'TemplateLiteral' : LOAD_WORK_FORBIDDEN_PROPERTIES.has(name);
+};
 
 /**
  * Reads one module for the load-work proof. Every identifier is a name read unless it is a binding, a
@@ -3350,6 +3455,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   const scopes: LoadWorkScope[] = [];
   const refusals: Span[] = [];
   const assigned = new Set<Span>();
+  const members = new Map<Span, string>();
   const refuse = (node: Span): void => {
     refusals.push(node);
   };
@@ -3390,14 +3496,24 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   const type = (node: Span): void => {
     types.push(node);
   };
+  // A class runs only its `extends` expression, which the proof reads like any other code, unless it has
+  // members, decorators or a static block: those can reach `this`, `super` or the prototype.
+  const emptyClass = (node: Class): void => {
+    if (node.id !== null) {
+      excluded.add(node.id);
+    }
+    if (node.body.body.length !== 0 || node.decorators.length !== 0) {
+      refuse(node);
+    }
+  };
   new Visitor({
     ArrowFunctionExpression: callable,
     AssignmentExpression: (node) => assign(node.left),
     BlockStatement: (node) => scope(node, loadWorkDeclaredNames(node.body)),
     BreakStatement: label,
     CatchClause: (node) => scope(node, node.param === null ? [] : bind([node.param])),
-    ClassDeclaration: refuse,
-    ClassExpression: refuse,
+    ClassDeclaration: emptyClass,
+    ClassExpression: emptyClass,
     ContinueStatement: label,
     ForInStatement: loop,
     ForOfStatement: loop,
@@ -3416,7 +3532,11 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
       if (!node.computed && node.property.type === 'Identifier') {
         excluded.add(node.property);
       }
-      if (isForbiddenLoadWorkKey(node.property)) {
+      const member = loadWorkKeyName(node.property, node.computed);
+      if (node.object.type === 'Identifier' && member !== undefined) {
+        members.set(node.object, member);
+      }
+      if (isForbiddenLoadWorkKey(node.property, node.computed)) {
         refuse(node);
       }
     },
@@ -3425,7 +3545,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
       if (!node.computed && !node.shorthand) {
         excluded.add(node.key);
       }
-      if (isForbiddenLoadWorkKey(node.key)) {
+      if (isForbiddenLoadWorkKey(node.key, node.computed)) {
         refuse(node);
       }
     },
@@ -3435,6 +3555,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
       scope(node, loadWorkDeclaredNames(node.cases.flatMap((switchCase) => switchCase.consequent))),
     ThisExpression: refuse,
     TSAsExpression: (node) => type(node.typeAnnotation),
+    TSClassImplements: type,
     TSDeclareFunction: type,
     TSEnumDeclaration: refuse,
     TSImportEqualsDeclaration: refuse,
@@ -3458,6 +3579,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   }).visit(parsed.program);
   return {
     assigned,
+    members,
     program: parsed.program,
     references: identifiers.filter(
       (identifier) => !excluded.has(identifier) && !types.some((typeSpan) => spanWithin(typeSpan, identifier)),
@@ -3467,17 +3589,24 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   };
 };
 
-/** The names `node` reads from outside itself, or `undefined` when it holds refused syntax or writes one. */
-const loadWorkFreeNames = (module: LoadWorkModule, node: Span): readonly string[] | undefined => {
+/**
+ * The names `node` reads from outside itself, or `undefined` when it holds refused syntax or writes one.
+ * Only a scope inside `node` binds a name, so a name an enclosing function declares is still free.
+ */
+const loadWorkFreeNames = (module: LoadWorkModule, node: Span): readonly LoadWorkReference[] | undefined => {
   if (module.refusals.some((refusal) => spanWithin(node, refusal))) {
     return undefined;
   }
   const free = module.references.filter(
     (reference) =>
       spanWithin(node, reference) &&
-      !module.scopes.some((scope) => spanWithin(scope, reference) && scope.names.has(reference.name)),
+      !module.scopes.some(
+        (scope) => spanWithin(node, scope) && spanWithin(scope, reference) && scope.names.has(reference.name),
+      ),
   );
-  return free.some((reference) => module.assigned.has(reference)) ? undefined : free.map(({ name }) => name);
+  return free.some((reference) => module.assigned.has(reference))
+    ? undefined
+    : free.map((reference) => ({ member: module.members.get(reference), name: reference.name }));
 };
 
 const loadWorkDeclarationBindings = (statement: Directive | Statement, name: string): readonly LoadWorkBinding[] => {
@@ -3511,7 +3640,9 @@ const loadWorkDeclarationBindings = (statement: Directive | Statement, name: str
   return declared?.name === name
     ? [
         {
-          constant: declaration.type === 'FunctionDeclaration' && declaration.body !== null,
+          constant:
+            (declaration.type === 'FunctionDeclaration' && declaration.body !== null) ||
+            (declaration.type === 'ClassDeclaration' && declaration.declare !== true),
           kind: 'code',
           node: declaration,
         },
@@ -3543,12 +3674,25 @@ interface LoadWorkProof {
   readonly visited: Set<string>;
 }
 
+/** A global read as a conversion or constant, or through one of its allowed static members. */
+const isProvenLoadWorkGlobal = ({ member, name }: LoadWorkReference): boolean =>
+  member === undefined ? LOAD_WORK_VALUE_GLOBALS.has(name) : LOAD_WORK_GLOBAL_MEMBERS.get(name)?.has(member) === true;
+
+/** An `effect` export read as an allowed function, as `Module.member`, or as an allowed `Effect` member. */
+const isProvenLoadWorkEffectExport = (imported: string, member: string | undefined): boolean => {
+  if (LOAD_WORK_EFFECT_FUNCTIONS.has(imported)) {
+    return true;
+  }
+  return member !== undefined && LOAD_WORK_EFFECT_MEMBERS.get(imported)?.has(member) === true;
+};
+
 /** A value import the load-work proof admits; a same-owner relative import is proven by `proves`. */
 const isProvenLoadWorkImport = (
   ownerPath: string,
   file: string,
   declaration: ImportDeclaration,
   specifier: ImportDeclarationSpecifier,
+  member: string | undefined,
   proves: (target: string, name: string) => boolean,
 ): boolean => {
   const modulePath = declaration.source.value;
@@ -3560,7 +3704,7 @@ const isProvenLoadWorkImport = (
     return false;
   }
   if (modulePath === 'effect') {
-    return LOAD_WORK_EFFECT_EXPORTS.has(imported);
+    return isProvenLoadWorkEffectExport(imported, member);
   }
   if (modulePath === CORE_RUNTIME_MODULE) {
     return LOAD_WORK_CORE_RUNTIME_EXPORTS.has(imported);
@@ -3577,54 +3721,85 @@ const isProvenLoadWorkImport = (
   );
 };
 
-/**
- * Proves that `name`, read in `file`, is load work the gate can see: a pure global, an allowlisted
- * `effect`, `effect/encoding`, `@noble/hashes` or core read-error import, or the single top-level `const`
- * or function of a same-owner module whose own name reads prove the same way. Any other import, a
- * namespace or default import, a re-export, `let`, an ambient declaration, a class or a duplicate binding
- * refuses, so a helper that yields remote or cross-owner work, directly or through further local code,
- * never passes as a load step.
- */
-const isProvenLoadWorkBinding = (proof: LoadWorkProof, file: string, name: string): boolean => {
-  const key = `${file}\u0000${name}`;
-  if (proof.visited.has(key)) {
-    return true;
-  }
-  proof.visited.add(key);
+const loadWorkProofModule = (proof: LoadWorkProof, file: string): LoadWorkModule | undefined => {
   if (!proof.modules.has(file)) {
     const source = proof.sourceOf(file);
     proof.modules.set(file, source === undefined ? undefined : loadWorkModule(file, source));
   }
-  const module = proof.modules.get(file);
-  const bindings = module === undefined ? [] : loadWorkBindings(module.program, name);
+  return proof.modules.get(file);
+};
+
+/**
+ * Proves that a name read in `file` is load work the gate can see: a pure global or one of its allowed
+ * members, an allowlisted `effect`, `effect/encoding`, `@noble/hashes` or core read-error import (an
+ * `effect` module only as `Module.member`, `Effect` only through its allowed members), or the single
+ * top-level `const` or function of a same-owner module whose own name reads prove the same way. Any other
+ * import, a namespace or default import, a re-export, `let`, an ambient declaration, a class or a
+ * duplicate binding refuses, so load work that yields remote or cross-owner work, reads ambient services
+ * or reaches the Function constructor, directly or through further local code, never passes.
+ */
+const isProvenLoadWorkReference = (proof: LoadWorkProof, file: string, reference: LoadWorkReference): boolean => {
+  const module = loadWorkProofModule(proof, file);
+  const bindings = module === undefined ? [] : loadWorkBindings(module.program, reference.name);
   const [binding] = bindings;
   if (module === undefined || bindings.length > 1) {
     return false;
   }
   if (binding === undefined) {
-    return LOAD_WORK_GLOBALS.has(name);
+    return isProvenLoadWorkGlobal(reference);
   }
   if (binding.kind === 'import') {
-    return isProvenLoadWorkImport(proof.ownerPath, file, binding.declaration, binding.specifier, (target, imported) =>
-      isProvenLoadWorkBinding(proof, target, imported),
+    return isProvenLoadWorkImport(
+      proof.ownerPath,
+      file,
+      binding.declaration,
+      binding.specifier,
+      reference.member,
+      (target, imported) => isProvenLoadWorkReference(proof, target, { member: reference.member, name: imported }),
     );
   }
+  const key = `${file}\u0000${reference.name}`;
+  if (proof.visited.has(key)) {
+    return true;
+  }
+  proof.visited.add(key);
   const free = binding.constant ? loadWorkFreeNames(module, binding.node) : undefined;
-  return free !== undefined && free.every((freeName) => isProvenLoadWorkBinding(proof, file, freeName));
+  return free !== undefined && free.every((freeName) => isProvenLoadWorkReference(proof, file, freeName));
+};
+
+/**
+ * Proves a load step written in the Read module: a name is proven as a binding, any other step by the
+ * names its own source reads. The step is found by its text, so every occurrence of that text in the
+ * module must prove, and the one the gate read is among them.
+ */
+const isProvenLoadWorkStep = (proof: LoadWorkProof, file: string, source: string, step: string): boolean => {
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(step)) {
+    return isProvenLoadWorkReference(proof, file, { name: step });
+  }
+  const module = loadWorkProofModule(proof, file);
+  const starts: number[] = [];
+  for (let start = source.indexOf(step); start !== -1; start = source.indexOf(step, start + 1)) {
+    starts.push(start);
+  }
+  return (
+    module !== undefined &&
+    step.length > 0 &&
+    starts.length > 0 &&
+    starts.every((start) => {
+      const free = loadWorkFreeNames(module, { end: start + step.length, start });
+      return free !== undefined && free.every((reference) => isProvenLoadWorkReference(proof, file, reference));
+    })
+  );
 };
 
 /**
  * `load: (input, context) => helper(input, context.scope.tenantId)`: an expression-bodied load arrow whose
  * whole body calls a read handler `Effect.fn` const of the Read's own module, passing only its own parameters
  * or their property paths. The helper name has that one module-level declaration and no import, parameter or
- * assignment rebinds it, and `provesLocalWork` proves everything the helper reaches is code this gate reads
- * and that does no remote or cross-owner work, so the load work stays inside the governed transaction.
+ * assignment rebinds it. The caller proves everything the helper reaches is code this gate reads and that
+ * does no remote or cross-owner work, so the load work stays inside the governed transaction.
  */
-const isOwnerEffectFnLoadCall = (
-  candidate: string | undefined,
-  ownerSource: string,
-  provesLocalWork: (helper: string) => boolean,
-): boolean => {
+const isOwnerEffectFnLoadCall = (candidate: string | undefined, ownerSource: string): boolean => {
   if (candidate === undefined || !hasBalancedArrowCallback(candidate) || /^async\b/u.test(candidate)) {
     return false;
   }
@@ -3658,8 +3833,7 @@ const isOwnerEffectFnLoadCall = (
       'u',
     ).test(structure) &&
     isEffectFnCallback(constInitializer(ownerSource, callee) ?? '') &&
-    isReadHandlerCallback(callee, ownerSource) &&
-    provesLocalWork(callee)
+    isReadHandlerCallback(callee, ownerSource)
   );
 };
 
@@ -3713,21 +3887,25 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
-  const isReadLoadStep = (candidate: string | undefined): boolean =>
-    isReadHandlerCallback(candidate, source) ||
-    isOwnerEffectFnLoadCall(candidate, source, (helper) =>
-      isProvenLoadWorkBinding(
-        {
-          modules: new Map(),
-          ownerPath,
-          sourceOf: (file) => (file === readFile ? source : sources.get(file)),
-          visited: new Set(),
-        },
-        readFile,
-        helper,
-      ),
-    ) ||
-    isOwnerLocalImportedFactoryResult(candidate);
+  const provesLoadWork = (step: string | undefined): boolean =>
+    step !== undefined &&
+    isProvenLoadWorkStep(
+      {
+        modules: new Map(),
+        ownerPath,
+        sourceOf: (file) => (file === readFile ? source : sources.get(file)),
+        visited: new Set(),
+      },
+      readFile,
+      source,
+      step,
+    );
+  // The load step runs inside the read transaction. A staged read, which declares `prepare` or `finish` for
+  // its remote work, has every load step proven local; a same-module helper call is proven in every read.
+  const isReadLoadStep = (candidate: string | undefined, staged: boolean): boolean =>
+    ((isReadHandlerCallback(candidate, source) || isOwnerLocalImportedFactoryResult(candidate)) &&
+      (!staged || provesLoadWork(candidate))) ||
+    (isOwnerEffectFnLoadCall(candidate, source) && provesLoadWork(candidate));
   // The owner work: a bare read handler, or a pipeline object of unique `prepare`, `load` and `finish`
   // steps that always has `load`. Every step is an executable owner callback.
   const isReadOwnerPipeline = (candidate: string | undefined): boolean => {
@@ -3741,7 +3919,7 @@ const hasReadCallbacks = (
       declared.length === entries.length &&
       new Set(declared).size === declared.length &&
       declared.includes('load') &&
-      isReadLoadStep(objectPropertyValue(candidate, 'load')) &&
+      isReadLoadStep(objectPropertyValue(candidate, 'load'), declared.length > 1) &&
       declared
         .filter((step) => step !== 'load')
         .every((step) => {
@@ -3755,7 +3933,7 @@ const hasReadCallbacks = (
     );
   };
   return (
-    (isReadLoadStep(handler) || isReadOwnerPipeline(handler)) &&
+    (isReadLoadStep(handler, false) || isReadOwnerPipeline(handler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are

@@ -1450,6 +1450,14 @@ for (const [origin, addition] of [
   );
 }
 
+const READ_CORE_IMPORT = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
+const LAYER_ARGUMENT = ', () => Layer.empty);';
+const HELPER_LOAD =
+  '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
+/** A staged owner pipeline around `load`: its load step is proven local. */
+const stagedPipeline = (load: string): string =>
+  `{ prepare: () => Effect.succeed('ready'), load: ${load}, finish: (_input: unknown, context: ReadFinishContext<string, object>) => Effect.succeed(context.loaded) }`;
+
 it.live(
   'accepts a bare read handler or a { prepare, load, finish } owner pipeline and rejects any other owner work',
   Effect.fn(function* readOwnerPipelineGate() {
@@ -1458,8 +1466,12 @@ it.live(
     const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
     const bareHandler = '() => Effect.succeed({}), () => Layer.empty);';
     expect(bareRead).toContain(bareHandler);
+    expect(bareRead).toContain(READ_CORE_IMPORT);
+    // A staged load step is proven local, so its `Effect` is the real import, as in every Read module.
     const withOwnerWork = (ownerWork: string): string =>
-      bareRead.replace(bareHandler, `${ownerWork}, () => Layer.empty);`);
+      bareRead
+        .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n`)
+        .replace(bareHandler, `${ownerWork}, () => Layer.empty);`);
     for (const accepted of [
       bareRead,
       withOwnerWork('{ load: () => Effect.succeed({}) }'),
@@ -1492,44 +1504,42 @@ it.live(
     const root = yield* makeFixture();
     yield* writeGovernedModuleApi(root);
     const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
-    const layerArgument = ', () => Layer.empty);';
-    const bareHandler = `() => Effect.succeed({})${layerArgument}`;
-    const coreImport = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
     expect(bareRead).toContain(bareHandler);
-    expect(bareRead).toContain(coreImport);
+    expect(bareRead).toContain(READ_CORE_IMPORT);
     const effectFnHelper =
       "export const loadStock = Effect.fn('StockList.load')(function* loadStock(input: unknown, tenantId: string) {\n  return yield* Effect.succeed({ input, tenantId });\n});\n";
-    const helperLoad =
-      '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
     const withLoad = (load: string, helper: string, imports = ''): string => {
-      const read = bareRead.replace(coreImport, coreImport + imports).replace(bareHandler, load + layerArgument);
+      const read = bareRead
+        .replace(READ_CORE_IMPORT, READ_CORE_IMPORT + imports)
+        .replace(bareHandler, load + LAYER_ARGUMENT);
       return `${read}\n${helper}`;
     };
     yield* write(
       root,
       STOCK_LIST_READ_FILE,
-      withLoad(helperLoad, effectFnHelper, "import { Effect } from 'effect';\n"),
+      withLoad(HELPER_LOAD, effectFnHelper, "import { Effect } from 'effect';\n"),
     );
     yield* checkModuleEntrypointBoundaries(root);
     yield* assertRejectedSources(
       root,
       STOCK_LIST_READ_FILE,
       [
-        withLoad(helperLoad, '', "import { loadStock } from './stock-load.ts';\n"),
+        withLoad(HELPER_LOAD, '', "import { loadStock } from './stock-load.ts';\n"),
         withLoad(
-          helperLoad,
+          HELPER_LOAD,
           'export const loadStock = (input: unknown, tenantId: string) => Effect.succeed({ input, tenantId });\n',
         ),
         withLoad(
-          helperLoad,
+          HELPER_LOAD,
           'export function loadStock(input: unknown, tenantId: string) {\n  return Effect.succeed({ input, tenantId });\n}\n',
         ),
-        withLoad(helperLoad, `${effectFnHelper}loadStock = otherStockWork;\n`),
+        withLoad(HELPER_LOAD, `${effectFnHelper}loadStock = otherStockWork;\n`),
         withLoad(
-          helperLoad,
+          HELPER_LOAD,
           `${effectFnHelper}function loadStock(input: unknown) {\n  return otherStockWork(input);\n}\n`,
         ),
-        withLoad(helperLoad, effectFnHelper, "import { loadStock } from './stock-load.ts';\n"),
+        withLoad(HELPER_LOAD, effectFnHelper, "import { loadStock } from './stock-load.ts';\n"),
         withLoad(
           '{ load: (loadStock: unknown, context: ReadLoadContext<object>) => loadStock(context) }',
           effectFnHelper,
@@ -1543,7 +1553,7 @@ it.live(
           effectFnHelper,
         ),
         withLoad(
-          helperLoad,
+          HELPER_LOAD,
           "export const loadStock = Effect.fn('StockList.load')(function* loadStock(input: unknown, tenantId: string) {\n  return otherStockWork(input, tenantId);\n});\n",
         ),
       ],
@@ -1566,17 +1576,13 @@ it.live(
     const root = yield* makeFixture();
     yield* writeGovernedModuleApi(root);
     const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
-    const layerArgument = ', () => Layer.empty);';
-    const bareHandler = `() => Effect.succeed({})${layerArgument}`;
-    const coreImport = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
-    const helperLoad =
-      '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
     const remoteImport = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
     const withHelper = (declarations: string, imports = ''): string =>
       [
         bareRead
-          .replace(coreImport, `${coreImport}import { Effect } from 'effect';\n${imports}`)
-          .replace(bareHandler, helperLoad + layerArgument),
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n${imports}`)
+          .replace(bareHandler, HELPER_LOAD + LAYER_ARGUMENT),
         declarations,
       ].join('\n');
     const revisionImport = "import { stockRevision } from '../stock-revision.ts';\n";
@@ -1679,5 +1685,117 @@ it.live(
       [withHelper(revisionHelper, revisionImport)],
       /module APIs require an approved Codesmith generator/u,
     );
+  }),
+);
+
+it.live(
+  'refuses load work that reaches ambient services, the Function constructor or remote code through an allowed name, inline or in a helper',
+  Effect.fn(function* readLoadWorkEscapes() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
+    const remoteImport = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
+    const withOwnerWork = (ownerWork: string, declarations = '', imports = ''): string =>
+      [
+        bareRead
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Struct } from 'effect';\n${imports}`)
+          .replace(bareHandler, ownerWork + LAYER_ARGUMENT),
+        declarations,
+      ].join('\n');
+    const withHelper = (body: string): string => withOwnerWork(HELPER_LOAD, stockLoadHelper(body));
+    yield* write(
+      root,
+      'verticals/inventory-stock/src/integrations/remote-stock.ts',
+      "import { Effect } from 'effect';\nexport const fetchRemoteStock = (input: unknown, tenantId: string) =>\n  Effect.promise(() => fetch('https://stock.example/' + tenantId, { body: JSON.stringify(input) }));\n",
+    );
+    // Load work that reads only its parameters, owner services on them, and pure Effect members still passes.
+    const verdicts = Effect.fn(function* loadWorkVerdicts(sources: readonly string[]) {
+      const passed: number[] = [];
+      for (const [index, source] of sources.entries()) {
+        yield* write(root, STOCK_LIST_READ_FILE, source);
+        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+        if (Exit.isSuccess(result)) {
+          passed.push(index);
+        } else {
+          expect(Cause.pretty(result.cause), `source ${index}`).toMatch(
+            /module APIs require an approved Codesmith generator/u,
+          );
+        }
+      }
+      return passed;
+    });
+    const allowed = [
+      withOwnerWork(
+        stagedPipeline(
+          '(input: unknown, context: ReadLoadContext<{ find: (input: unknown) => Effect.Effect<object> }, string>) => context.services.find(input).pipe(Effect.map((found) => ({ found, prepared: context.prepared })))',
+        ),
+      ),
+      withOwnerWork(
+        stagedPipeline(
+          "Effect.fn('StockList.load')(function* load(input: unknown, context: ReadLoadContext<object, string>) {\n  const rows = yield* Effect.succeed([input]);\n  return { first: rows[0], count: rows.length, tenantId: context.scope.tenantId };\n})",
+        ),
+      ),
+      withHelper('  return yield* Effect.succeed({ found: Object.keys({ input }), tenantId });'),
+    ];
+    expect(yield* verdicts(allowed), 'proven load work the gate refused').toEqual(
+      allowed.map((_source, index) => index),
+    );
+    const refused = [
+      // A non-literal computed key reaches the Function constructor and, through it, fetch.
+      withHelper(
+        "  const key = ['constr', 'uctor'].join('');\n  const make = Effect.succeed[key]('return fetch')();\n  return yield* Effect.promise(() => make('https://stock.example/' + tenantId));",
+      ),
+      withHelper(
+        "  const key = ['constr', 'uctor'].join('');\n  return yield* Effect.sync(() => Effect.succeed[key]('return fetch')()('https://stock.example/' + tenantId));",
+      ),
+      // Effect hands the helper every ambient service.
+      withHelper(
+        '  const probeContext = yield* Effect.context<never>();\n  const probeAll = Array.from((probeContext as any).mapUnsafe.values());\n  return yield* (probeAll[0] as any).resolveCurrent(input);',
+      ),
+      withHelper('  const services = yield* Effect.services<never>();\n  return services;'),
+      withHelper('  return yield* Effect.tryPromise(() => Promise.resolve(tenantId));'),
+      // Effect or Object as a value hands out members the proof never sees by name.
+      withHelper(
+        "  const members = Object.entries(Effect).find(([name]) => name === 'context');\n  return yield* (members as any)[1]();",
+      ),
+      withHelper(
+        "  const fn = Object.values(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(Effect.succeed))).find((d: any) => d.value?.name === 'Function');\n  return yield* Effect.sync(() => (fn as any).value('return fetch')()(tenantId));",
+      ),
+      withHelper('  const E = Effect;\n  return yield* E.succeed(input);'),
+      // A destructured prototype key, or a module member that reads a key it is passed.
+      withHelper(
+        "  const { constructor: make } = (() => tenantId);\n  return yield* Effect.sync(() => make('return fetch')()(tenantId));",
+      ),
+      withHelper(
+        "  return yield* Effect.sync(() => Struct.get(['constr', 'uctor'].join(''))(() => tenantId)('return fetch')()(tenantId));",
+      ),
+      // The same remote work written inline in a staged load, or in a const the load step names.
+      withOwnerWork(
+        stagedPipeline(
+          '(input: unknown, context: ReadLoadContext<object, string>) => Effect.gen(function* inlineProbe() {\n  return yield* fetchRemoteStock(input, context.scope.tenantId);\n})',
+        ),
+        '',
+        remoteImport,
+      ),
+      withOwnerWork(
+        stagedPipeline(
+          '(input: unknown, context: ReadLoadContext<object, string>) => fetchRemoteStock(input, context.scope.tenantId)',
+        ),
+        '',
+        remoteImport,
+      ),
+      withOwnerWork(
+        stagedPipeline('readRemoteStock'),
+        "const readRemoteStock = Effect.fn('StockList.load')(function* readRemoteStock(input: unknown, context: ReadLoadContext<object, string>) {\n  return yield* fetchRemoteStock(input, context.scope.tenantId);\n});\n",
+        remoteImport,
+      ),
+      withOwnerWork(
+        stagedPipeline(
+          '(input: unknown, context: ReadLoadContext<object, string>) => Effect.gen(function* inlineProbe() {\n  return yield* Effect.context<never>();\n})',
+        ),
+      ),
+    ];
+    expect(yield* verdicts(refused), 'load-work escapes the gate accepted').toEqual([]);
   }),
 );
