@@ -3,8 +3,28 @@ import path from 'node:path';
 
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
-import { parseSync } from 'oxc-parser';
-import type { Expression, Statement } from 'oxc-parser';
+import { parseSync, Visitor } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  AssignmentTarget,
+  BindingPattern,
+  BreakStatement,
+  ContinueStatement,
+  Directive,
+  Expression,
+  ForInStatement,
+  ForOfStatement,
+  ForStatementLeft,
+  Function as AstFunction,
+  ImportDeclaration,
+  ImportDeclarationSpecifier,
+  LabeledStatement,
+  ParamPattern,
+  Program,
+  PropertyKey,
+  Span,
+  Statement,
+} from 'oxc-parser';
 
 import {
   DelimiterDepth,
@@ -3196,13 +3216,415 @@ export const hasReadOwnerPermissionDeclaration = (
   return wrapperSource !== undefined && hasOwnerReadPermissionFactoryExport(wrapperSource, imported.imported);
 };
 
+/** Globals a proven load helper may name: value constructors and pure utilities, never I/O or `globalThis`. */
+const LOAD_WORK_GLOBALS: ReadonlySet<string> = new Set([
+  'Array',
+  'Boolean',
+  'Infinity',
+  'JSON',
+  'Math',
+  'NaN',
+  'Number',
+  'Object',
+  'String',
+  'undefined',
+]);
+/** `effect` modules without I/O, remote resolvers, configuration or ambient services. */
+const LOAD_WORK_EFFECT_EXPORTS: ReadonlySet<string> = new Set([
+  'Array',
+  'BigDecimal',
+  'BigInt',
+  'Boolean',
+  'Cause',
+  'Chunk',
+  'Data',
+  'DateTime',
+  'Duration',
+  'Effect',
+  'Equal',
+  'Equivalence',
+  'Exit',
+  'Function',
+  'Hash',
+  'HashMap',
+  'HashSet',
+  'Match',
+  'Number',
+  'Option',
+  'Order',
+  'Predicate',
+  'Record',
+  'Redacted',
+  'Result',
+  'Schema',
+  'String',
+  'Struct',
+  'Tuple',
+  'flow',
+  'identity',
+  'pipe',
+]);
+const LOAD_WORK_CORE_RUNTIME_EXPORTS: ReadonlySet<string> = new Set([
+  'ReadHandlerExecutionError',
+  'ReadHandlerNotFound',
+  'ReadHandlerUnavailable',
+]);
+const LOAD_WORK_FORBIDDEN_PROPERTIES: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
+interface LoadWorkScope extends Span {
+  readonly names: ReadonlySet<string>;
+}
+
+interface LoadWorkIdentifier extends Span {
+  readonly name: string;
+}
+
+/** One owner module as the load-work proof sees it: name reads, lexical scopes and refused syntax, by span. */
+interface LoadWorkModule {
+  readonly assigned: ReadonlySet<Span>;
+  readonly program: Program;
+  readonly references: readonly LoadWorkIdentifier[];
+  readonly refusals: readonly Span[];
+  readonly scopes: readonly LoadWorkScope[];
+}
+
+type LoadWorkBinding =
+  | { readonly declaration: ImportDeclaration; readonly kind: 'import'; readonly specifier: ImportDeclarationSpecifier }
+  | { readonly constant: boolean; readonly kind: 'code'; readonly node: Span };
+
+const spanWithin = (outer: Span, inner: Span): boolean => outer.start <= inner.start && inner.end <= outer.end;
+
+const loadWorkPatternBindings = (pattern: BindingPattern | ParamPattern): readonly LoadWorkIdentifier[] => {
+  if (pattern.type === 'Identifier') {
+    return [pattern];
+  }
+  if (pattern.type === 'AssignmentPattern') {
+    return loadWorkPatternBindings(pattern.left);
+  }
+  if (pattern.type === 'RestElement') {
+    return loadWorkPatternBindings(pattern.argument);
+  }
+  if (pattern.type === 'ArrayPattern') {
+    return pattern.elements.flatMap((element) => (element === null ? [] : loadWorkPatternBindings(element)));
+  }
+  if (pattern.type === 'ObjectPattern') {
+    return pattern.properties.flatMap((property) =>
+      loadWorkPatternBindings(property.type === 'RestElement' ? property.argument : property.value),
+    );
+  }
+  return loadWorkPatternBindings(pattern.parameter);
+};
+
+/** The lexical names a statement list declares in its own block. */
+const loadWorkDeclaredNames = (statements: readonly (Directive | Statement)[]): readonly string[] =>
+  statements.flatMap((statement) => {
+    if (statement.type === 'VariableDeclaration') {
+      return statement.declarations.flatMap((declarator) =>
+        loadWorkPatternBindings(declarator.id).map((binding) => binding.name),
+      );
+    }
+    return statement.type === 'FunctionDeclaration' && statement.id !== null ? [statement.id.name] : [];
+  });
+
+const isForbiddenLoadWorkKey = (key: PropertyKey): boolean =>
+  key.type === 'TemplateLiteral' ||
+  (key.type === 'Identifier' && LOAD_WORK_FORBIDDEN_PROPERTIES.has(key.name)) ||
+  (key.type === 'Literal' && LOAD_WORK_FORBIDDEN_PROPERTIES.has(String(key.value)));
+
+/**
+ * Reads one module for the load-work proof. Every identifier is a name read unless it is a binding, a
+ * static member or property key, a label, or inside a type. Scopes are recorded by span, so a name read
+ * is bound exactly when a function, block, loop, `switch` or `catch` around it declares the name.
+ * Syntax that reaches code or state the proof cannot name is recorded as a refusal: `this`, `super`,
+ * `import.meta`, dynamic `import()`, classes, `with`, JSX, enums, namespaces, `var` and `using`,
+ * destructuring assignment, and the prototype escape keys.
+ */
+const loadWorkModule = (file: string, source: string): LoadWorkModule | undefined => {
+  const parsed = parseSync(file, source, { sourceType: 'module' });
+  if (parsed.errors.length !== 0) {
+    return undefined;
+  }
+  const identifiers: LoadWorkIdentifier[] = [];
+  const excluded = new Set<Span>();
+  const types: Span[] = [];
+  const scopes: LoadWorkScope[] = [];
+  const refusals: Span[] = [];
+  const assigned = new Set<Span>();
+  const refuse = (node: Span): void => {
+    refusals.push(node);
+  };
+  const bind = (patterns: readonly (BindingPattern | ParamPattern)[]): readonly string[] =>
+    patterns.flatMap(loadWorkPatternBindings).map((binding) => {
+      excluded.add(binding);
+      return binding.name;
+    });
+  const scope = (node: Span, names: readonly string[]): void => {
+    scopes.push({ end: node.end, names: new Set(names), start: node.start });
+  };
+  const assign = (target: AssignmentTarget | ForStatementLeft): void => {
+    if (target.type === 'Identifier') {
+      assigned.add(target);
+    } else if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
+      refuse(target);
+    }
+  };
+  const loop = (node: ForInStatement | ForOfStatement): void => {
+    if (node.left.type === 'VariableDeclaration') {
+      scope(node, loadWorkDeclaredNames([node.left]));
+    } else {
+      assign(node.left);
+    }
+  };
+  const callable = (node: AstFunction | ArrowFunctionExpression): void => {
+    const ownName = node.type === 'FunctionExpression' && node.id !== null ? bind([node.id]) : [];
+    if (node.type === 'FunctionDeclaration' && node.id !== null) {
+      excluded.add(node.id);
+    }
+    scope(node, [...ownName, ...bind(node.params)]);
+  };
+  const label = (node: BreakStatement | ContinueStatement | LabeledStatement): void => {
+    if (node.label !== null) {
+      excluded.add(node.label);
+    }
+  };
+  const type = (node: Span): void => {
+    types.push(node);
+  };
+  new Visitor({
+    ArrowFunctionExpression: callable,
+    AssignmentExpression: (node) => assign(node.left),
+    BlockStatement: (node) => scope(node, loadWorkDeclaredNames(node.body)),
+    BreakStatement: label,
+    CatchClause: (node) => scope(node, node.param === null ? [] : bind([node.param])),
+    ClassDeclaration: refuse,
+    ClassExpression: refuse,
+    ContinueStatement: label,
+    ForInStatement: loop,
+    ForOfStatement: loop,
+    ForStatement: (node) =>
+      scope(node, node.init?.type === 'VariableDeclaration' ? loadWorkDeclaredNames([node.init]) : []),
+    FunctionDeclaration: callable,
+    FunctionExpression: callable,
+    Identifier: (node) => {
+      identifiers.push(node);
+    },
+    ImportExpression: refuse,
+    JSXElement: refuse,
+    JSXFragment: refuse,
+    LabeledStatement: label,
+    MemberExpression: (node) => {
+      if (!node.computed && node.property.type === 'Identifier') {
+        excluded.add(node.property);
+      }
+      if (isForbiddenLoadWorkKey(node.property)) {
+        refuse(node);
+      }
+    },
+    MetaProperty: refuse,
+    Property: (node) => {
+      if (!node.computed && !node.shorthand) {
+        excluded.add(node.key);
+      }
+      if (isForbiddenLoadWorkKey(node.key)) {
+        refuse(node);
+      }
+    },
+    StaticBlock: (node) => scope(node, loadWorkDeclaredNames(node.body)),
+    Super: refuse,
+    SwitchStatement: (node) =>
+      scope(node, loadWorkDeclaredNames(node.cases.flatMap((switchCase) => switchCase.consequent))),
+    ThisExpression: refuse,
+    TSAsExpression: (node) => type(node.typeAnnotation),
+    TSDeclareFunction: type,
+    TSEnumDeclaration: refuse,
+    TSImportEqualsDeclaration: refuse,
+    TSInterfaceDeclaration: type,
+    TSModuleDeclaration: refuse,
+    TSParameterProperty: refuse,
+    TSSatisfiesExpression: (node) => type(node.typeAnnotation),
+    TSTypeAliasDeclaration: type,
+    TSTypeAnnotation: type,
+    TSTypeAssertion: (node) => type(node.typeAnnotation),
+    TSTypeParameterDeclaration: type,
+    TSTypeParameterInstantiation: type,
+    UpdateExpression: (node) => assign(node.argument),
+    VariableDeclaration: (node) => {
+      if (node.kind !== 'const' && node.kind !== 'let') {
+        refuse(node);
+      }
+      bind(node.declarations.map((declarator) => declarator.id));
+    },
+    WithStatement: refuse,
+  }).visit(parsed.program);
+  return {
+    assigned,
+    program: parsed.program,
+    references: identifiers.filter(
+      (identifier) => !excluded.has(identifier) && !types.some((typeSpan) => spanWithin(typeSpan, identifier)),
+    ),
+    refusals,
+    scopes,
+  };
+};
+
+/** The names `node` reads from outside itself, or `undefined` when it holds refused syntax or writes one. */
+const loadWorkFreeNames = (module: LoadWorkModule, node: Span): readonly string[] | undefined => {
+  if (module.refusals.some((refusal) => spanWithin(node, refusal))) {
+    return undefined;
+  }
+  const free = module.references.filter(
+    (reference) =>
+      spanWithin(node, reference) &&
+      !module.scopes.some((scope) => spanWithin(scope, reference) && scope.names.has(reference.name)),
+  );
+  return free.some((reference) => module.assigned.has(reference)) ? undefined : free.map(({ name }) => name);
+};
+
+const loadWorkDeclarationBindings = (statement: Directive | Statement, name: string): readonly LoadWorkBinding[] => {
+  const declaration =
+    statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration'
+      ? statement.declaration
+      : statement;
+  if (declaration === null || declaration === undefined) {
+    return [];
+  }
+  if (declaration.type === 'VariableDeclaration') {
+    return declaration.declarations
+      .filter((declarator) => loadWorkPatternBindings(declarator.id).some((binding) => binding.name === name))
+      .map((declarator) => ({
+        constant:
+          declaration.kind === 'const' &&
+          declaration.declare !== true &&
+          declarator.id.type === 'Identifier' &&
+          declarator.init !== null,
+        kind: 'code',
+        node: declarator.init ?? declarator,
+      }));
+  }
+  const declared =
+    declaration.type === 'FunctionDeclaration' ||
+    declaration.type === 'TSDeclareFunction' ||
+    declaration.type === 'ClassDeclaration' ||
+    declaration.type === 'TSEnumDeclaration'
+      ? declaration.id
+      : undefined;
+  return declared?.name === name
+    ? [
+        {
+          constant: declaration.type === 'FunctionDeclaration' && declaration.body !== null,
+          kind: 'code',
+          node: declaration,
+        },
+      ]
+    : [];
+};
+
+/** Every top-level value binding of `name`: a value import or a declaration, exported or not. */
+const loadWorkBindings = (program: Program, name: string): readonly LoadWorkBinding[] =>
+  program.body.flatMap((statement): readonly LoadWorkBinding[] => {
+    if (statement.type !== 'ImportDeclaration') {
+      return loadWorkDeclarationBindings(statement, name);
+    }
+    return statement.importKind === 'type'
+      ? []
+      : statement.specifiers
+          .filter(
+            (specifier) =>
+              specifier.local.name === name &&
+              (specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type'),
+          )
+          .map((specifier) => ({ declaration: statement, kind: 'import', specifier }));
+  });
+
+interface LoadWorkProof {
+  readonly modules: Map<string, LoadWorkModule | undefined>;
+  readonly ownerPath: string;
+  readonly sourceOf: (file: string) => string | undefined;
+  readonly visited: Set<string>;
+}
+
+/** A value import the load-work proof admits; a same-owner relative import is proven by `proves`. */
+const isProvenLoadWorkImport = (
+  ownerPath: string,
+  file: string,
+  declaration: ImportDeclaration,
+  specifier: ImportDeclarationSpecifier,
+  proves: (target: string, name: string) => boolean,
+): boolean => {
+  const modulePath = declaration.source.value;
+  const imported =
+    specifier.type === 'ImportSpecifier' && specifier.imported.type === 'Identifier'
+      ? specifier.imported.name
+      : undefined;
+  if (imported === undefined) {
+    return false;
+  }
+  if (modulePath === 'effect') {
+    return LOAD_WORK_EFFECT_EXPORTS.has(imported);
+  }
+  if (modulePath === CORE_RUNTIME_MODULE) {
+    return LOAD_WORK_CORE_RUNTIME_EXPORTS.has(imported);
+  }
+  if (modulePath === 'effect/encoding' || /^@noble\/hashes\/[a-z0-9]+\.js$/u.test(modulePath)) {
+    return true;
+  }
+  const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), modulePath));
+  return (
+    /^\.\.?\//u.test(modulePath) &&
+    modulePath.endsWith('.ts') &&
+    target.startsWith(`${ownerPath}/`) &&
+    proves(target, imported)
+  );
+};
+
+/**
+ * Proves that `name`, read in `file`, is load work the gate can see: a pure global, an allowlisted
+ * `effect`, `effect/encoding`, `@noble/hashes` or core read-error import, or the single top-level `const`
+ * or function of a same-owner module whose own name reads prove the same way. Any other import, a
+ * namespace or default import, a re-export, `let`, an ambient declaration, a class or a duplicate binding
+ * refuses, so a helper that yields remote or cross-owner work, directly or through further local code,
+ * never passes as a load step.
+ */
+const isProvenLoadWorkBinding = (proof: LoadWorkProof, file: string, name: string): boolean => {
+  const key = `${file}\u0000${name}`;
+  if (proof.visited.has(key)) {
+    return true;
+  }
+  proof.visited.add(key);
+  if (!proof.modules.has(file)) {
+    const source = proof.sourceOf(file);
+    proof.modules.set(file, source === undefined ? undefined : loadWorkModule(file, source));
+  }
+  const module = proof.modules.get(file);
+  const bindings = module === undefined ? [] : loadWorkBindings(module.program, name);
+  const [binding] = bindings;
+  if (module === undefined || bindings.length > 1) {
+    return false;
+  }
+  if (binding === undefined) {
+    return LOAD_WORK_GLOBALS.has(name);
+  }
+  if (binding.kind === 'import') {
+    return isProvenLoadWorkImport(proof.ownerPath, file, binding.declaration, binding.specifier, (target, imported) =>
+      isProvenLoadWorkBinding(proof, target, imported),
+    );
+  }
+  const free = binding.constant ? loadWorkFreeNames(module, binding.node) : undefined;
+  return free !== undefined && free.every((freeName) => isProvenLoadWorkBinding(proof, file, freeName));
+};
+
 /**
  * `load: (input, context) => helper(input, context.scope.tenantId)`: an expression-bodied load arrow whose
  * whole body calls a read handler `Effect.fn` const of the Read's own module, passing only its own parameters
  * or their property paths. The helper name has that one module-level declaration and no import, parameter or
- * assignment rebinds it, so the load work stays in code this gate reads.
+ * assignment rebinds it, and `provesLocalWork` proves everything the helper reaches is code this gate reads
+ * and that does no remote or cross-owner work, so the load work stays inside the governed transaction.
  */
-const isOwnerEffectFnLoadCall = (candidate: string | undefined, ownerSource: string): boolean => {
+const isOwnerEffectFnLoadCall = (
+  candidate: string | undefined,
+  ownerSource: string,
+  provesLocalWork: (helper: string) => boolean,
+): boolean => {
   if (candidate === undefined || !hasBalancedArrowCallback(candidate) || /^async\b/u.test(candidate)) {
     return false;
   }
@@ -3236,7 +3658,8 @@ const isOwnerEffectFnLoadCall = (candidate: string | undefined, ownerSource: str
       'u',
     ).test(structure) &&
     isEffectFnCallback(constInitializer(ownerSource, callee) ?? '') &&
-    isReadHandlerCallback(callee, ownerSource)
+    isReadHandlerCallback(callee, ownerSource) &&
+    provesLocalWork(callee)
   );
 };
 
@@ -3292,7 +3715,18 @@ const hasReadCallbacks = (
   };
   const isReadLoadStep = (candidate: string | undefined): boolean =>
     isReadHandlerCallback(candidate, source) ||
-    isOwnerEffectFnLoadCall(candidate, source) ||
+    isOwnerEffectFnLoadCall(candidate, source, (helper) =>
+      isProvenLoadWorkBinding(
+        {
+          modules: new Map(),
+          ownerPath,
+          sourceOf: (file) => (file === readFile ? source : sources.get(file)),
+          visited: new Set(),
+        },
+        readFile,
+        helper,
+      ),
+    ) ||
     isOwnerLocalImportedFactoryResult(candidate);
   // The owner work: a bare read handler, or a pipeline object of unique `prepare`, `load` and `finish`
   // steps that always has `load`. Every step is an executable owner callback.

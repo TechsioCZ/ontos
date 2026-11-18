@@ -1505,7 +1505,11 @@ it.live(
       const read = bareRead.replace(coreImport, coreImport + imports).replace(bareHandler, load + layerArgument);
       return `${read}\n${helper}`;
     };
-    yield* write(root, STOCK_LIST_READ_FILE, withLoad(helperLoad, effectFnHelper));
+    yield* write(
+      root,
+      STOCK_LIST_READ_FILE,
+      withLoad(helperLoad, effectFnHelper, "import { Effect } from 'effect';\n"),
+    );
     yield* checkModuleEntrypointBoundaries(root);
     yield* assertRejectedSources(
       root,
@@ -1543,6 +1547,136 @@ it.live(
           "export const loadStock = Effect.fn('StockList.load')(function* loadStock(input: unknown, tenantId: string) {\n  return otherStockWork(input, tenantId);\n});\n",
         ),
       ],
+      /module APIs require an approved Codesmith generator/u,
+    );
+  }),
+);
+
+const stockLoadHelper = (body: string): string =>
+  [
+    "export const loadStock = Effect.fn('StockList.load')(function* loadStock(input: unknown, tenantId: string) {",
+    body,
+    '});',
+    '',
+  ].join('\n');
+
+it.live(
+  'refuses a same-module load helper whose work, directly or through other code, reaches anything but proven local code',
+  Effect.fn(function* readLoadHelperForeignWork() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const layerArgument = ', () => Layer.empty);';
+    const bareHandler = `() => Effect.succeed({})${layerArgument}`;
+    const coreImport = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
+    const helperLoad =
+      '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
+    const remoteImport = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
+    const withHelper = (declarations: string, imports = ''): string =>
+      [
+        bareRead
+          .replace(coreImport, `${coreImport}import { Effect } from 'effect';\n${imports}`)
+          .replace(bareHandler, helperLoad + layerArgument),
+        declarations,
+      ].join('\n');
+    const revisionImport = "import { stockRevision } from '../stock-revision.ts';\n";
+    const revisionHelper = stockLoadHelper('  return yield* Effect.succeed(stockRevision(input));');
+    yield* write(
+      root,
+      'verticals/inventory-stock/src/integrations/remote-stock.ts',
+      "import { Effect } from 'effect';\nexport const fetchRemoteStock = (input: unknown, tenantId: string) =>\n  Effect.promise(() => fetch('https://stock.example/' + tenantId, { body: JSON.stringify(input) }));\n",
+    );
+    yield* write(
+      root,
+      'verticals/inventory-stock/src/stock-revision.ts',
+      "export const stockRevision = (value: unknown): string => JSON.stringify(value) ?? '';\n",
+    );
+    // The shape the governed price-group read relies on: a helper that reads only its parameters, `effect`,
+    // core read errors and same-module or same-owner code that is itself proven local.
+    yield* write(
+      root,
+      STOCK_LIST_READ_FILE,
+      withHelper(
+        [
+          "const missing = () => new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'missing' });",
+          'const revisionOf = (value: unknown) => stockRevision([value]);',
+          stockLoadHelper(
+            "  if (tenantId === '') {\n    return yield* missing();\n  }\n  const { found } = yield* Effect.succeed({ found: input });\n  return { found, revision: revisionOf(found) };",
+          ),
+        ].join('\n'),
+        `import { ReadHandlerNotFound } from '@app/core-runtime';\n${revisionImport}`,
+      ),
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      [
+        // The helper yields an imported remote operation.
+        withHelper(stockLoadHelper('  return yield* fetchRemoteStock(input, tenantId);'), remoteImport),
+        // The helper calls a second local helper, which does the remote work.
+        withHelper(
+          [
+            "const remoteStock = Effect.fn('StockList.remote')(function* remoteStock(input: unknown, tenantId: string) {",
+            '  return yield* fetchRemoteStock(input, tenantId);',
+            '});',
+            stockLoadHelper('  return yield* remoteStock(input, tenantId);'),
+          ].join('\n'),
+          remoteImport,
+        ),
+        withHelper(
+          stockLoadHelper('  return yield* fetchRemoteStock(input, tenantId).pipe(Effect.orDie);'),
+          remoteImport,
+        ),
+        withHelper(
+          [
+            'const remoteStock = fetchRemoteStock;',
+            stockLoadHelper('  return yield* remoteStock(input, tenantId);'),
+          ].join('\n'),
+          remoteImport,
+        ),
+        withHelper(
+          ['let remoteStock = Effect.succeed;', stockLoadHelper('  return yield* remoteStock(input);')].join('\n'),
+        ),
+        // A block-scoped shadow does not hide the import read after the block.
+        withHelper(
+          stockLoadHelper(
+            '  {\n    const fetchRemoteStock = Effect.succeed;\n    yield* fetchRemoteStock(input);\n  }\n  return yield* fetchRemoteStock(input, tenantId);',
+          ),
+          remoteImport,
+        ),
+        withHelper(
+          stockLoadHelper("  return yield* Effect.promise(() => fetch('https://stock.example/' + tenantId));"),
+        ),
+        withHelper(stockLoadHelper('  return yield* Effect.promise(() => globalThis.fetch(String(input)));')),
+        withHelper(stockLoadHelper("  return yield* Effect.promise(() => import('../integrations/remote-stock.ts'));")),
+        withHelper(stockLoadHelper("  return yield* Effect.succeed(Effect.succeed.constructor('return fetch')());")),
+        withHelper(stockLoadHelper('  return yield* Effect.succeed(this);')),
+        withHelper(
+          stockLoadHelper('  return yield* remote.fetchRemoteStock(input, tenantId);'),
+          "import * as remote from '../integrations/remote-stock.ts';\n",
+        ),
+        withHelper(
+          stockLoadHelper('  return yield* HttpClient.get(String(input));'),
+          "import { HttpClient } from 'effect/unstable/http';\n",
+        ),
+        withHelper(
+          stockLoadHelper('  return yield* Effect.succeed(remoteRevision(input));'),
+          "import { remoteRevision } from '../stock-revision.ts';\n",
+        ),
+      ],
+      /module APIs require an approved Codesmith generator/u,
+    );
+    // A same-owner module is proven by its own content: one that reaches a global outside the pure set refuses.
+    yield* write(
+      root,
+      'verticals/inventory-stock/src/stock-revision.ts',
+      'export const stockRevision = (value: unknown): string => String(new TextEncoder().encode(String(value)));\n',
+    );
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      [withHelper(revisionHelper, revisionImport)],
       /module APIs require an approved Codesmith generator/u,
     );
   }),
