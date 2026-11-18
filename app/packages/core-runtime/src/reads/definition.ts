@@ -1524,6 +1524,9 @@ export function defineRead<
   ) {
     return failReadDefinition('Read policies must be an explicit array of Policy references');
   }
+  // The owner steps as they are now: the spread reads each step once into a frozen copy only Core holds,
+  // and both the staged classification and the executed steps come from it, so changing the caller's
+  // pipeline object (or a step getter that answers differently) after definition changes nothing.
   const pipeline: AnyReadPipeline<
     InputSchema['Type'],
     ResultSchema['Type'],
@@ -1536,10 +1539,11 @@ export function defineRead<
     PrepareRequirements,
     FinishError,
     FinishRequirements
-  > = Predicate.isFunction(ownerWork) ? { load: ownerWork } : ownerWork;
+  > = Object.freeze(Predicate.isFunction(ownerWork) ? { load: ownerWork } : { ...ownerWork });
   if (
     !Predicate.isFunction(pipeline.load) ||
-    !(pipeline.prepare === undefined || Predicate.isFunction(pipeline.prepare))
+    !(pipeline.prepare === undefined || Predicate.isFunction(pipeline.prepare)) ||
+    !(pipeline.finish === undefined || Predicate.isFunction(pipeline.finish))
   ) {
     return failReadDefinition('Read pipeline steps must be functions');
   }

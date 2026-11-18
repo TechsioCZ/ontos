@@ -5,6 +5,8 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, FileSystem, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { AccessDeclarationError } from '../../src/authorization/access-declaration-error.ts';
 import type { AccessFieldGroupInput } from '../../src/authorization/access-declaration.ts';
 import { defineTenantModuleEntrypoint, defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -16,6 +18,8 @@ import {
   getReadAccessTargetResolver,
   getReadOwnerFactsResolver,
   getReadPermissionTargetResolver,
+  getReadStages,
+  isStagedRead,
   projectReadResultFields,
   validateReadDescriptorInput,
 } from '../../src/reads/definition.ts';
@@ -822,3 +826,90 @@ it('never returns a field projection that fails the read result schema (O17)', (
     Option.some({ primary: 'kept' }),
   );
 });
+
+const stagedReadScope: OperationalScope = Object.freeze({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '00000000-0000-4000-8000-000000000005',
+    authContextRef: 'better-auth-session:read-definition',
+    authMethod: 'session',
+    principalId: '00000000-0000-4000-8000-000000000003',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  }),
+  correlationId: 'correlation-1',
+});
+
+/** Runs a registration's owner steps as Core composes them, outside any transaction. */
+const runOwnerSteps = (registration: ReturnType<typeof declaredReadWithGroups>) =>
+  getReadStages(registration)(
+    {},
+    {
+      readKey: registration.descriptor.readKey,
+      scope: stagedReadScope,
+      transaction: () => Effect.die('No owner transaction in this test'),
+    },
+  ).pipe(
+    Effect.flatMap((load) => load(Object.freeze({}))),
+    Effect.flatten,
+  );
+
+it.effect('runs and classifies only the pipeline steps that existed when the Read was defined', () =>
+  Effect.gen(function* definitionTimeSnapshot() {
+    const calls: string[] = [];
+    const lateSteps = {
+      finish: () =>
+        Effect.sync(() => {
+          calls.push('late-finish');
+          return { evidence: { resultCount: 0 }, result: [] };
+        }),
+      load: () =>
+        Effect.sync(() => {
+          calls.push('late-load');
+          return { evidence: { resultCount: 0 }, result: [] };
+        }),
+      prepare: () =>
+        Effect.sync(() => {
+          calls.push('late-prepare');
+          return 'late';
+        }),
+    };
+    const pipeline = {
+      load: () =>
+        Effect.sync(() => {
+          calls.push('load');
+          return { evidence: { resultCount: 0 }, result: [] };
+        }),
+    };
+    const registration = defineRead(declaredReadDescriptor(), pipeline, readServices, modulePermissionTarget);
+    // The caller's own object gains every step after definition, the transaction step replaced included.
+    Object.assign(pipeline, lateSteps);
+    expect(isStagedRead(registration)).toBe(false);
+    yield* runOwnerSteps(registration);
+    expect(calls).toEqual(['load']);
+
+    // A step that is a getter is read once, when the Read is defined: a later answer changes nothing.
+    calls.length = 0;
+    let prepareReads = 0;
+    const flipping = Object.defineProperty(
+      {
+        load: () =>
+          Effect.sync(() => {
+            calls.push('load');
+            return { evidence: { resultCount: 0 }, result: [] };
+          }),
+      },
+      'prepare',
+      {
+        enumerable: true,
+        get: () => {
+          prepareReads += 1;
+          return prepareReads === 1 ? undefined : lateSteps.prepare;
+        },
+      },
+    );
+    const flippingRegistration = defineRead(declaredReadDescriptor(), flipping, readServices, modulePermissionTarget);
+    expect(isStagedRead(flippingRegistration)).toBe(false);
+    yield* runOwnerSteps(flippingRegistration);
+    expect(calls).toEqual(['load']);
+    expect(prepareReads).toBe(1);
+  }),
+);
