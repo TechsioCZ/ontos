@@ -59,7 +59,8 @@ interface DevelopmentMiddlewareSetup {
   unshift: (
     middleware: (
       request: { url?: string | undefined },
-      response: { end: (body?: Buffer) => void; setHeader: (name: string, value: string) => void; statusCode: number },
+      // `end` always takes a body: the HTTP/2 response has no single `end` overload for an absent body and a Buffer.
+      response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void; statusCode: number },
       next: () => void,
     ) => void,
   ) => void;
@@ -91,7 +92,7 @@ export const createDevelopmentContractMiddleware =
         // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
         if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
           response.statusCode = 404;
-          response.end();
+          response.end(Buffer.alloc(0));
           return;
         }
         throw error;
