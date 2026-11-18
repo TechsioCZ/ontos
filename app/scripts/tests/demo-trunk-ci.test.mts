@@ -106,14 +106,15 @@ it('keeps every stage-delivery file out of everything a scoped plan skips', () =
           referrer !== file &&
           !scopedSet.has(referrer) &&
           !toolingTest(referrer) &&
-          // The scopes' own definition.
+          // The scopes' own definition: the shared matrices and the demo overlay.
           referrer !== 'app/scripts/ci-matrices.json' &&
+          referrer !== 'app/scripts/ci-matrices.demo.json' &&
           // `pnpm quality:audit:test` runs tooling tests, exactly as the tooling rows do.
           !(referrer === 'app/package.json' && toolingTest(file)) &&
           // The Zerops build and start commands run in the deploy, never in a gate.
           referrer !== 'app/zerops.yaml' &&
           // The deploy planner names its stage workflow and delivery action as delivery roots: paths it classifies a
-          // diff by. The gates import it only for unit identities, which never follow those roots.
+          // diff by. The gates never import it: their unit identities come from scripts/ci/unit-inputs.mts.
           !(
             referrer === 'app/scripts/zerops/delivery-plan.mts' &&
             (file === '.github/workflows/zerops-stage.yml' || file.startsWith('.github/actions/deliver-stage/'))

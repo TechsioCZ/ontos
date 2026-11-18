@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,6 +106,14 @@ const ROOT_DOCUMENTATION_TRIGGERS = [
   readWorkflow(QUALITY_AUDIT_WORKFLOW).on.push,
   readWorkflow(QUALITY_AUDIT_WORKFLOW).on.pull_request,
 ];
+
+it('names only fresh-database tests that exist, so a renamed one is never silently run against the seed', () => {
+  expect(FRESH_DATABASE_TESTS.length).toBeGreaterThan(0);
+  const missing = FRESH_DATABASE_TESTS.filter(
+    (file) => !existsSync(fileURLToPath(new URL(`../../${file}`, import.meta.url))),
+  );
+  expect(missing).toEqual([]);
+});
 
 it('deploys nothing and audits nothing for changes to repository-root documentation only', () => {
   for (const trigger of ROOT_DOCUMENTATION_TRIGGERS) {
