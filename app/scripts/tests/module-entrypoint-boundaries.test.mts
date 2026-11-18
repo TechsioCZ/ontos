@@ -1450,6 +1450,12 @@ for (const [origin, addition] of [
   );
 }
 
+const REMOTE_STOCK_FILE = 'verticals/inventory-stock/src/integrations/remote-stock.ts';
+const REMOTE_STOCK_SOURCE =
+  "import { Effect } from 'effect';\nexport const fetchRemoteStock = (input: unknown, tenantId: string) =>\n  Effect.promise(() => fetch('https://stock.example/' + tenantId, { body: JSON.stringify(input) }));\n";
+const STOCK_REVISION_FILE = 'verticals/inventory-stock/src/stock-revision.ts';
+/** A load step's import of the remote stock operation, from the Read module in `src/api/`. */
+const REMOTE_STOCK_IMPORT = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
 const READ_CORE_IMPORT = "import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
 const LAYER_ARGUMENT = ', () => Layer.empty);';
 const HELPER_LOAD =
@@ -1577,7 +1583,7 @@ it.live(
     yield* writeGovernedModuleApi(root);
     const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
     const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
-    const remoteImport = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
+    const remoteImport = REMOTE_STOCK_IMPORT;
     const withHelper = (declarations: string, imports = ''): string =>
       [
         bareRead
@@ -1587,14 +1593,10 @@ it.live(
       ].join('\n');
     const revisionImport = "import { stockRevision } from '../stock-revision.ts';\n";
     const revisionHelper = stockLoadHelper('  return yield* Effect.succeed(stockRevision(input));');
+    yield* write(root, REMOTE_STOCK_FILE, REMOTE_STOCK_SOURCE);
     yield* write(
       root,
-      'verticals/inventory-stock/src/integrations/remote-stock.ts',
-      "import { Effect } from 'effect';\nexport const fetchRemoteStock = (input: unknown, tenantId: string) =>\n  Effect.promise(() => fetch('https://stock.example/' + tenantId, { body: JSON.stringify(input) }));\n",
-    );
-    yield* write(
-      root,
-      'verticals/inventory-stock/src/stock-revision.ts',
+      STOCK_REVISION_FILE,
       "export const stockRevision = (value: unknown): string => JSON.stringify(value) ?? '';\n",
     );
     // The shape the governed price-group read relies on: a helper that reads only its parameters, `effect`,
@@ -1676,7 +1678,7 @@ it.live(
     // A same-owner module is proven by its own content: one that reaches a global outside the pure set refuses.
     yield* write(
       root,
-      'verticals/inventory-stock/src/stock-revision.ts',
+      STOCK_REVISION_FILE,
       'export const stockRevision = (value: unknown): string => String(new TextEncoder().encode(String(value)));\n',
     );
     yield* assertRejectedSources(
@@ -1695,7 +1697,7 @@ it.live(
     yield* writeGovernedModuleApi(root);
     const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
     const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
-    const remoteImport = "import { fetchRemoteStock } from '../integrations/remote-stock.ts';\n";
+    const remoteImport = REMOTE_STOCK_IMPORT;
     const withOwnerWork = (ownerWork: string, declarations = '', imports = ''): string =>
       [
         bareRead
@@ -1704,11 +1706,7 @@ it.live(
         declarations,
       ].join('\n');
     const withHelper = (body: string): string => withOwnerWork(HELPER_LOAD, stockLoadHelper(body));
-    yield* write(
-      root,
-      'verticals/inventory-stock/src/integrations/remote-stock.ts',
-      "import { Effect } from 'effect';\nexport const fetchRemoteStock = (input: unknown, tenantId: string) =>\n  Effect.promise(() => fetch('https://stock.example/' + tenantId, { body: JSON.stringify(input) }));\n",
-    );
+    yield* write(root, REMOTE_STOCK_FILE, REMOTE_STOCK_SOURCE);
     // Load work that reads only its parameters, owner services on them, and pure Effect members still passes.
     const verdicts = Effect.fn(function* loadWorkVerdicts(sources: readonly string[]) {
       const passed: number[] = [];
@@ -1816,6 +1814,98 @@ const acceptedReadSources = Effect.fn(function* acceptedReadSources(root: string
   }
   return passed;
 });
+
+it.live(
+  'proves the implementation a load step invokes: an export resolves to its real declaration and an object member only through a frozen literal nothing writes to',
+  Effect.fn(function* readLoadWorkInvokedImplementation() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    yield* write(root, REMOTE_STOCK_FILE, REMOTE_STOCK_SOURCE);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
+    const withHelper = (body: string, declarations = '', imports = ''): string =>
+      [
+        bareRead
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n${imports}`)
+          .replace(bareHandler, HELPER_LOAD + LAYER_ARGUMENT),
+        declarations,
+        stockLoadHelper(body),
+      ].join('\n');
+    const revisionImport = "import { stockRevision } from '../stock-revision.ts';\n";
+    const revisionRead = withHelper(
+      '  return yield* Effect.succeed(stockRevision(input, tenantId));',
+      '',
+      revisionImport,
+    );
+    const service = (initializer: string, after = ''): string =>
+      withHelper(
+        '  return yield* stockService.find(input, tenantId);',
+        `const stockService = ${initializer};\n${after}`,
+        REMOTE_STOCK_IMPORT,
+      );
+    const provenFind = '{ find: (input: unknown, tenantId: string) => Effect.succeed({ input, tenantId }) }';
+    const verdict = Effect.fn(function* verdict(revisionSource: string, read: string) {
+      yield* write(root, STOCK_REVISION_FILE, revisionSource);
+      return (yield* acceptedReadSources(root, [read])).length === 1;
+    });
+    const remoteRevision = "import { fetchRemoteStock } from './integrations/remote-stock.ts';\n";
+    // An export resolves to the declaration it names: an alias of proven local code, or a named re-export of it,
+    // passes; an alias of remote code refuses even when a private declaration carries the exported name.
+    yield* write(
+      root,
+      'verticals/inventory-stock/src/stock-revision-of.ts',
+      'export const revisionOf = (value: unknown, tenantId: string): string => String(value) + tenantId;\n',
+    );
+    for (const revisionSource of [
+      'const revisionOf = (value: unknown, tenantId: string): string => String(value) + tenantId;\nexport { revisionOf as stockRevision };\n',
+      "export { revisionOf as stockRevision } from './stock-revision-of.ts';\n",
+    ]) {
+      expect(yield* verdict(revisionSource, revisionRead), revisionSource).toBe(true);
+    }
+    for (const [label, revisionSource] of [
+      [
+        'aliased export of remote code beside a private declaration of the exported name',
+        `${remoteRevision}const stockRevision = (value: unknown): string => String(value);\nexport { fetchRemoteStock as stockRevision };\n`,
+      ],
+      [
+        're-export from another module',
+        "export { fetchRemoteStock as stockRevision } from './integrations/remote-stock.ts';\n",
+      ],
+      ['star re-export', "export * from './integrations/remote-stock.ts';\n"],
+      [
+        'private declaration beside a star re-export',
+        "const stockRevision = (value: unknown): string => String(value);\nexport * from './integrations/remote-stock.ts';\n",
+      ],
+    ] as const) {
+      expect(yield* verdict(revisionSource, revisionRead), label).toBe(false);
+    }
+    yield* write(
+      root,
+      STOCK_REVISION_FILE,
+      'export const stockRevision = (value: unknown): string => String(value);\n',
+    );
+    // An object's callable member is proven only through a frozen literal that nothing in the module writes to.
+    expect(yield* acceptedReadSources(root, [service(`Object.freeze(${provenFind})`)])).toEqual([0]);
+    const refusedServices = [
+      service(provenFind, 'stockService.find = fetchRemoteStock;\n'),
+      service(provenFind),
+      service(`Object.freeze(${provenFind})`, 'stockService.find = fetchRemoteStock;\n'),
+      service(`Object.freeze(${provenFind})`, "stockService['find'] = fetchRemoteStock;\n"),
+      service(`Object.freeze(${provenFind})`, 'Object.assign(stockService, { find: fetchRemoteStock });\n'),
+      service(
+        `Object.freeze(${provenFind})`,
+        "Object.defineProperty(stockService, 'find', { value: fetchRemoteStock });\n",
+      ),
+      service(`Object.freeze({ ...${provenFind} })`),
+      service('Object.freeze({ find: fetchRemoteStock })'),
+      // A nested literal is a mutable object behind the frozen one.
+      service(
+        'Object.freeze({ find: (input: unknown, tenantId: string) => Effect.succeed({ input, tenantId }), nested: { tenantId: 1 } })',
+      ),
+    ];
+    expect(yield* acceptedReadSources(root, refusedServices), 'object members the gate accepted').toEqual([]);
+  }),
+);
 
 it.live(
   'admits only the named hash and encoding exports the staged reads use, and the clock only as DateTime.now',

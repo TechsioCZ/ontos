@@ -6,7 +6,8 @@ import { Option, Predicate, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
 import type {
   ArrowFunctionExpression,
-  AssignmentTarget,
+  AssignmentTargetMaybeDefault,
+  AssignmentTargetRest,
   BindingPattern,
   BreakStatement,
   Class,
@@ -20,6 +21,7 @@ import type {
   ImportDeclaration,
   ImportDeclarationSpecifier,
   LabeledStatement,
+  ModuleExportName,
   ParamPattern,
   Program,
   PropertyKey,
@@ -3396,19 +3398,63 @@ interface LoadWorkReference {
   readonly name: string;
 }
 
-/** One owner module as the load-work proof sees it: name reads, lexical scopes and refused syntax, by span. */
+/**
+ * One owner module as the load-work proof sees it: name reads, lexical scopes and refused syntax, by span,
+ * and the names anything in the module writes a property of (`written`).
+ */
 interface LoadWorkModule {
   readonly assigned: ReadonlySet<Span>;
+  readonly dynamicImports: readonly (string | undefined)[];
   readonly members: ReadonlyMap<Span, string>;
   readonly program: Program;
   readonly references: readonly LoadWorkIdentifier[];
   readonly refusals: readonly Span[];
   readonly scopes: readonly LoadWorkScope[];
+  readonly spread: ReadonlySet<Span>;
+  readonly written: ReadonlySet<string>;
 }
+
+/** The `Object` and `Reflect` functions that write a property of, or the prototype of, their first argument. */
+const LOAD_WORK_PROPERTY_WRITERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['Object', new Set(['assign', 'defineProperties', 'defineProperty', 'setPrototypeOf'])],
+  ['Reflect', new Set(['defineProperty', 'deleteProperty', 'set', 'setPrototypeOf'])],
+]);
+
+/** `node` without the parentheses and type assertions around it, which do not change the value. */
+const loadWorkUnwrapped = (node: Expression): Expression =>
+  node.type === 'ParenthesizedExpression' ||
+  node.type === 'TSAsExpression' ||
+  node.type === 'TSSatisfiesExpression' ||
+  node.type === 'TSNonNullExpression' ||
+  node.type === 'TSTypeAssertion'
+    ? loadWorkUnwrapped(node.expression)
+    : node;
+
+/** The name an expression reads its object through: `a` of `a.b[c]!.d as T` or `a?.b`, or `undefined`. */
+const loadWorkRootName = (node: Expression): string | undefined => {
+  const value = loadWorkUnwrapped(node);
+  if (value.type === 'Identifier') {
+    return value.name;
+  }
+  if (value.type === 'MemberExpression') {
+    return loadWorkRootName(value.object);
+  }
+  return value.type === 'ChainExpression' && value.expression.type === 'MemberExpression'
+    ? loadWorkRootName(value.expression.object)
+    : undefined;
+};
+
+/** Anything a name can be assigned through: a plain or destructuring target, a default, a rest, a loop head. */
+type LoadWorkAssignmentTarget = AssignmentTargetMaybeDefault | AssignmentTargetRest | ForStatementLeft;
 
 type LoadWorkBinding =
   | { readonly declaration: ImportDeclaration; readonly kind: 'import'; readonly specifier: ImportDeclarationSpecifier }
-  | { readonly constant: boolean; readonly kind: 'code'; readonly node: Span };
+  | {
+      readonly constant: boolean;
+      readonly initializer?: Expression | undefined;
+      readonly kind: 'code';
+      readonly node: Span;
+    };
 
 const spanWithin = (outer: Span, inner: Span): boolean => outer.start <= inner.start && inner.end <= outer.end;
 
@@ -3468,8 +3514,8 @@ const isForbiddenLoadWorkKey = (key: PropertyKey, computed: boolean): boolean =>
  * static member or property key, a label, or inside a type. Scopes are recorded by span, so a name read
  * is bound exactly when a function, block, loop, `switch` or `catch` around it declares the name.
  * Syntax that reaches code or state the proof cannot name is recorded as a refusal: `this`, `super`,
- * `import.meta`, dynamic `import()`, classes, `with`, JSX, enums, namespaces, `var` and `using`,
- * destructuring assignment, and the prototype escape keys.
+ * `import.meta`, dynamic `import()`, classes, `with`, JSX, enums, namespaces, `var` and `using`, and the
+ * prototype escape keys.
  */
 const loadWorkModule = (file: string, source: string): LoadWorkModule | undefined => {
   const parsed = parseSync(file, source, { sourceType: 'module' });
@@ -3483,8 +3529,18 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   const refusals: Span[] = [];
   const assigned = new Set<Span>();
   const members = new Map<Span, string>();
+  const written = new Set<string>();
+  const spread = new Set<Span>();
+  // The specifier of each dynamic `import()`: its string literal, or `undefined` when it is computed.
+  const dynamicImports: (string | undefined)[] = [];
   const refuse = (node: Span): void => {
     refusals.push(node);
+  };
+  const write = (target: Expression): void => {
+    const root = loadWorkRootName(target);
+    if (root !== undefined) {
+      written.add(root);
+    }
   };
   const bind = (patterns: readonly (BindingPattern | ParamPattern)[]): readonly string[] =>
     patterns.flatMap(loadWorkPatternBindings).map((binding) => {
@@ -3494,11 +3550,30 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   const scope = (node: Span, names: readonly string[]): void => {
     scopes.push({ end: node.end, names: new Set(names), start: node.start });
   };
-  const assign = (target: AssignmentTarget | ForStatementLeft): void => {
+  // A destructuring assignment assigns every name in its pattern and writes every member target in it; its
+  // keys are checked like any other property key.
+  const assign = (target: LoadWorkAssignmentTarget): void => {
+    if (target.type === 'VariableDeclaration') {
+      return;
+    }
     if (target.type === 'Identifier') {
       assigned.add(target);
-    } else if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
-      refuse(target);
+    } else if (target.type === 'ObjectPattern') {
+      for (const property of target.properties) {
+        assign(property.type === 'RestElement' ? property.argument : property.value);
+      }
+    } else if (target.type === 'ArrayPattern') {
+      for (const element of target.elements) {
+        if (element !== null) {
+          assign(element);
+        }
+      }
+    } else if (target.type === 'AssignmentPattern') {
+      assign(target.left);
+    } else if (target.type === 'RestElement') {
+      assign(target.argument);
+    } else {
+      write(target);
     }
   };
   const loop = (node: ForInStatement | ForOfStatement): void => {
@@ -3538,6 +3613,21 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     AssignmentExpression: (node) => assign(node.left),
     BlockStatement: (node) => scope(node, loadWorkDeclaredNames(node.body)),
     BreakStatement: label,
+    CallExpression: (node) => {
+      const callee = node.callee.type === 'ChainExpression' ? node.callee.expression : node.callee;
+      const [target] = node.arguments;
+      if (
+        callee.type === 'MemberExpression' &&
+        callee.object.type === 'Identifier' &&
+        LOAD_WORK_PROPERTY_WRITERS.get(callee.object.name)?.has(
+          loadWorkKeyName(callee.property, callee.computed) ?? '',
+        ) === true &&
+        target !== undefined &&
+        target.type !== 'SpreadElement'
+      ) {
+        write(target);
+      }
+    },
     CatchClause: (node) => scope(node, node.param === null ? [] : bind([node.param])),
     ClassDeclaration: emptyClass,
     ClassExpression: emptyClass,
@@ -3551,7 +3641,12 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     Identifier: (node) => {
       identifiers.push(node);
     },
-    ImportExpression: refuse,
+    ImportExpression: (node) => {
+      refuse(node);
+      dynamicImports.push(
+        node.source.type === 'Literal' && Predicate.isString(node.source.value) ? node.source.value : undefined,
+      );
+    },
     JSXElement: refuse,
     JSXFragment: refuse,
     LabeledStatement: label,
@@ -3576,6 +3671,11 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
         refuse(node);
       }
     },
+    SpreadElement: (node) => {
+      if (node.argument.type === 'Identifier') {
+        spread.add(node.argument);
+      }
+    },
     StaticBlock: (node) => scope(node, loadWorkDeclaredNames(node.body)),
     Super: refuse,
     SwitchStatement: (node) =>
@@ -3595,6 +3695,11 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     TSTypeAssertion: (node) => type(node.typeAnnotation),
     TSTypeParameterDeclaration: type,
     TSTypeParameterInstantiation: type,
+    UnaryExpression: (node) => {
+      if (node.operator === 'delete') {
+        write(node.argument);
+      }
+    },
     UpdateExpression: (node) => assign(node.argument),
     VariableDeclaration: (node) => {
       if (node.kind !== 'const' && node.kind !== 'let') {
@@ -3606,6 +3711,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   }).visit(parsed.program);
   return {
     assigned,
+    dynamicImports,
     members,
     program: parsed.program,
     references: identifiers.filter(
@@ -3613,6 +3719,8 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     ),
     refusals,
     scopes,
+    spread,
+    written,
   };
 };
 
@@ -3653,6 +3761,7 @@ const loadWorkDeclarationBindings = (statement: Directive | Statement, name: str
           declaration.declare !== true &&
           declarator.id.type === 'Identifier' &&
           declarator.init !== null,
+        initializer: declarator.init ?? undefined,
         kind: 'code',
         node: declarator.init ?? declarator,
       }));
@@ -3694,10 +3803,73 @@ const loadWorkBindings = (program: Program, name: string): readonly LoadWorkBind
           .map((specifier) => ({ declaration: statement, kind: 'import', specifier }));
   });
 
+/**
+ * `Object.freeze` of an object or array literal, with the real global `Object`: no spread, no getter or
+ * setter, and every member a function, a literal, a name the proof follows on its own, or a nested literal
+ * frozen the same way. Its members are fixed when the initializer runs, so the members the proof reads in
+ * the initializer are the members any later reader calls.
+ */
+const isLoadWorkFrozenLiteral = (program: Program, node: Expression): boolean => {
+  const call = loadWorkUnwrapped(node);
+  if (
+    call.type !== 'CallExpression' ||
+    call.arguments.length !== 1 ||
+    call.callee.type !== 'MemberExpression' ||
+    call.callee.object.type !== 'Identifier' ||
+    call.callee.object.name !== 'Object' ||
+    loadWorkKeyName(call.callee.property, call.callee.computed) !== 'freeze' ||
+    loadWorkBindings(program, 'Object').length !== 0
+  ) {
+    return false;
+  }
+  const [argument] = call.arguments;
+  const literal = argument === undefined || argument.type === 'SpreadElement' ? undefined : loadWorkUnwrapped(argument);
+  const isFixedMember = (value: Expression): boolean => {
+    const member = loadWorkUnwrapped(value);
+    return (
+      member.type === 'ArrowFunctionExpression' ||
+      member.type === 'FunctionExpression' ||
+      member.type === 'Identifier' ||
+      member.type === 'Literal' ||
+      (member.type === 'TemplateLiteral' && member.expressions.length === 0) ||
+      isLoadWorkFrozenLiteral(program, member)
+    );
+  };
+  if (literal?.type === 'ObjectExpression') {
+    return literal.properties.every(
+      (property) => property.type === 'Property' && property.kind === 'init' && isFixedMember(property.value),
+    );
+  }
+  return (
+    literal?.type === 'ArrayExpression' &&
+    literal.elements.every((element) => element !== null && element.type !== 'SpreadElement' && isFixedMember(element))
+  );
+};
+
+const loadWorkCodeFileLists = new WeakMap<ReadonlyMap<string, string>, readonly string[]>();
+
+/** The workspace's deployable code modules: every script source outside a test directory or test file. */
+const loadWorkCodeFiles = (sources: ReadonlyMap<string, string>): readonly string[] => {
+  const cached = loadWorkCodeFileLists.get(sources);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const files = [...sources.keys()].filter(
+    (file) =>
+      /\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) &&
+      !/(?:^|\/)(?:tests?|__tests__)\//u.test(file) &&
+      !/\.(?:test|spec)\.[^/]+$/u.test(file),
+  );
+  loadWorkCodeFileLists.set(sources, files);
+  return files;
+};
+
 interface LoadWorkProof {
+  readonly codeFiles: readonly string[];
   readonly modules: Map<string, LoadWorkModule | undefined>;
   readonly ownerPath: string;
   readonly sourceOf: (file: string) => string | undefined;
+  readonly sources: ReadonlyMap<string, string>;
   readonly visited: Set<string>;
 }
 
@@ -3722,13 +3894,18 @@ const isProvenLoadWorkPureImport = (modulePath: string, imported: string, member
   return use !== undefined && (member === undefined ? use.byName : use.members.has(member));
 };
 
-/** A value import the load-work proof admits; a same-owner relative import is proven by `proves`. */
+/**
+ * A value import the load-work proof admits. A same-owner relative import, or a workspace package export
+ * (a contract package or another owner's public contract), is proven by `proves` from the content of the
+ * declaration its export resolves to.
+ */
 const isProvenLoadWorkImport = (
   ownerPath: string,
   file: string,
   declaration: ImportDeclaration,
   specifier: ImportDeclarationSpecifier,
   member: string | undefined,
+  packageTarget: (specifier: string) => string | undefined,
   proves: (target: string, name: string) => boolean,
 ): boolean => {
   const modulePath = declaration.source.value;
@@ -3748,13 +3925,15 @@ const isProvenLoadWorkImport = (
   if (LOAD_WORK_PURE_IMPORTS.has(modulePath)) {
     return isProvenLoadWorkPureImport(modulePath, imported, member);
   }
+  if (!/^\.\.?\//u.test(modulePath)) {
+    const exported = packageTarget(modulePath);
+    return exported !== undefined && proves(exported, imported);
+  }
+  // A relative import stays inside the workspace package of the importing module: the owner for owner
+  // code, the contract package for code a package export led to.
+  const root = file.startsWith(`${ownerPath}/`) ? ownerPath : file.split('/').slice(0, 2).join('/');
   const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), modulePath));
-  return (
-    /^\.\.?\//u.test(modulePath) &&
-    modulePath.endsWith('.ts') &&
-    target.startsWith(`${ownerPath}/`) &&
-    proves(target, imported)
-  );
+  return modulePath.endsWith('.ts') && target.startsWith(`${root}/`) && proves(target, imported);
 };
 
 const loadWorkProofModule = (proof: LoadWorkProof, file: string): LoadWorkModule | undefined => {
@@ -3765,20 +3944,309 @@ const loadWorkProofModule = (proof: LoadWorkProof, file: string): LoadWorkModule
   return proof.modules.get(file);
 };
 
+const loadWorkExportName = (name: ModuleExportName): string => (name.type === 'Literal' ? name.value : name.name);
+
+/** A workspace package manifest as the load-work proof reads it: its name and its exports. */
+const LoadWorkPackageManifestSchema = Schema.Struct({
+  exports: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  name: Schema.String,
+});
+const loadWorkPackageTargetMaps = new WeakMap<ReadonlyMap<string, string>, ReadonlyMap<string, string>>();
+
+/**
+ * The file each `@app/<package>[/<subpath>]` specifier of a `packages/*` or `verticals/*` manifest exports,
+ * by specifier. Only a string export target that is a TypeScript file counts.
+ */
+const loadWorkPackageTargets = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
+  const cached = loadWorkPackageTargetMaps.get(sources);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const targets = new Map<string, string>();
+  for (const [manifestFile, source] of sources) {
+    const manifest = /^(?:packages|verticals)\/[^/]+\/package\.json$/u.test(manifestFile)
+      ? Option.getOrUndefined(Schema.decodeUnknownOption(Schema.fromJsonString(LoadWorkPackageManifestSchema))(source))
+      : undefined;
+    for (const [subpath, target] of Object.entries(manifest?.exports ?? {})) {
+      if (manifest !== undefined && Predicate.isString(target) && target.startsWith('./') && target.endsWith('.ts')) {
+        targets.set(
+          subpath === '.' ? manifest.name : `${manifest.name}/${subpath.replace(/^\.\//u, '')}`,
+          path.posix.normalize(path.posix.join(path.posix.dirname(manifestFile), target)),
+        );
+      }
+    }
+  }
+  loadWorkPackageTargetMaps.set(sources, targets);
+  return targets;
+};
+
+/** The workspace file a module specifier names: a relative `.ts` path, or a workspace manifest export. */
+const loadWorkResolve = (proof: LoadWorkProof, from: string, specifier: string): string | undefined => {
+  if (/^\.\.?\//u.test(specifier)) {
+    return specifier.endsWith('.ts')
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier))
+      : undefined;
+  }
+  return loadWorkPackageTargets(proof.sources).get(specifier);
+};
+
+/** A top-level binding, by the file that declares it and its local name there. */
+interface LoadWorkDeclaration {
+  readonly file: string;
+  readonly local: string;
+}
+
+/**
+ * The declaration behind a module's value export `exported`: the binding an `export const`, `export
+ * function` or `export { local as exported }` names, or, through `export { name as exported } from`, the
+ * declaration the named module's export resolves to in turn. `undefined` when the module has any `export *`,
+ * exports the name more than once or as a type only, re-exports from a module the proof cannot resolve, or
+ * does not export it, so the proof always reads the implementation an importer receives and never a
+ * private declaration that merely shares the exported name.
+ */
+const loadWorkExportTarget = (
+  proof: LoadWorkProof,
+  file: string,
+  exported: string,
+  depth = 0,
+): LoadWorkDeclaration | undefined => {
+  const program = loadWorkProofModule(proof, file)?.program;
+  if (program === undefined || depth > 16) {
+    return undefined;
+  }
+  const targets = program.body.flatMap((statement): readonly (LoadWorkDeclaration | undefined)[] => {
+    if (statement.type === 'ExportAllDeclaration') {
+      return [undefined];
+    }
+    if (statement.type !== 'ExportNamedDeclaration') {
+      return [];
+    }
+    if (statement.declaration !== null) {
+      return loadWorkDeclarationBindings(statement, exported).length === 0 ? [] : [{ file, local: exported }];
+    }
+    const source = statement.source === null ? undefined : loadWorkResolve(proof, file, statement.source.value);
+    return statement.specifiers
+      .filter((specifier) => loadWorkExportName(specifier.exported) === exported)
+      .map((specifier) => {
+        const value = statement.exportKind !== 'type' && specifier.exportKind !== 'type';
+        if (statement.source === null) {
+          return value && specifier.local.type === 'Identifier' ? { file, local: specifier.local.name } : undefined;
+        }
+        return value && source !== undefined
+          ? loadWorkExportTarget(proof, source, loadWorkExportName(specifier.local), depth + 1)
+          : undefined;
+      });
+  });
+  const [target] = targets;
+  return targets.length === 1 ? target : undefined;
+};
+
+/** The names `file` exports its top-level binding `local` under, through a declaration or a local specifier. */
+const loadWorkExportNames = (program: Program, local: string): readonly string[] =>
+  program.body.flatMap((statement): readonly string[] => {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.source !== null) {
+      return [];
+    }
+    if (statement.declaration !== null) {
+      return loadWorkDeclarationBindings(statement, local).length === 0 ? [] : [local];
+    }
+    return statement.specifiers
+      .filter((specifier) => specifier.local.type === 'Identifier' && specifier.local.name === local)
+      .map((specifier) => loadWorkExportName(specifier.exported));
+  });
+
+/**
+ * Whether any deployable workspace module other than `file` can write a property of what `file` exports as
+ * `exported`: one that imports it by one of those names, or `file` through a namespace import, and writes a
+ * property rooted at that import; one that re-exports it, whose own importers are then read the same way;
+ * one that re-exports `file` as a namespace or imports `file` or a computed specifier dynamically. A module
+ * that does not parse counts as a writer.
+ */
+const isLoadWorkExportWrittenElsewhere = (
+  proof: LoadWorkProof,
+  file: string,
+  exported: readonly string[],
+  depth = 0,
+): boolean => {
+  if (exported.length === 0) {
+    return false;
+  }
+  if (depth > 16) {
+    return true;
+  }
+  const stem = path.posix.basename(file).replace(/\.ts$/u, '');
+  return proof.codeFiles.some((importer) => {
+    const source = importer === file ? undefined : proof.sourceOf(importer);
+    if (source === undefined || !source.includes(stem)) {
+      return false;
+    }
+    const module = loadWorkProofModule(proof, importer);
+    if (
+      module === undefined ||
+      module.dynamicImports.some(
+        (specifier) => specifier === undefined || loadWorkResolve(proof, importer, specifier) === file,
+      )
+    ) {
+      return true;
+    }
+    return module.program.body.some((statement) => {
+      if (
+        statement.type === 'ExportAllDeclaration' &&
+        loadWorkResolve(proof, importer, statement.source.value) === file
+      ) {
+        return statement.exported !== null || isLoadWorkExportWrittenElsewhere(proof, importer, exported, depth + 1);
+      }
+      if (
+        statement.type === 'ExportNamedDeclaration' &&
+        statement.source !== null &&
+        loadWorkResolve(proof, importer, statement.source.value) === file
+      ) {
+        const names = statement.specifiers
+          .filter((specifier) => exported.includes(loadWorkExportName(specifier.local)))
+          .map((specifier) => loadWorkExportName(specifier.exported));
+        return isLoadWorkExportWrittenElsewhere(proof, importer, names, depth + 1);
+      }
+      return (
+        statement.type === 'ImportDeclaration' &&
+        loadWorkResolve(proof, importer, statement.source.value) === file &&
+        statement.specifiers.some(
+          (specifier) =>
+            (specifier.type === 'ImportNamespaceSpecifier' ||
+              (specifier.type === 'ImportSpecifier' && exported.includes(loadWorkExportName(specifier.imported)))) &&
+            module.written.has(specifier.local.name),
+        )
+      );
+    });
+  });
+};
+
+/**
+ * The library exports that build a descriptor whose members proven load work may read: an `effect` schema,
+ * a Drizzle table, column or SQL fragment, a core scoped-routine declaration. Each returns an object of its
+ * own making, never one it was handed.
+ */
+const LOAD_WORK_DESCRIPTOR_BUILDERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  [CORE_RUNTIME_MODULE, new Set(['defineScopedRoutine'])],
+  ['drizzle-orm/effect-schema', new Set(['createSelectSchema'])],
+  ['drizzle-orm/pg-core', new Set(['pgSchema', 'pgTable'])],
+  ['effect', new Set(['Schema'])],
+]);
+
+/** The initializer of the single top-level `const` a declaration names, or `undefined`. */
+const loadWorkDeclaredInitializer = (
+  proof: LoadWorkProof,
+  declaration: LoadWorkDeclaration,
+): Expression | undefined => {
+  const program = loadWorkProofModule(proof, declaration.file)?.program;
+  const bindings = program === undefined ? [] : loadWorkBindings(program, declaration.local);
+  const [binding] = bindings;
+  return bindings.length === 1 && binding?.kind === 'code' ? binding.initializer : undefined;
+};
+
+/** The name a call chain starts from: `Schema` of `Schema.String.check(...).pipe(...)`, or `undefined`. */
+const loadWorkCallRoot = (value: Expression): string | undefined => {
+  let node = loadWorkUnwrapped(value);
+  for (;;) {
+    if (node.type === 'CallExpression') {
+      node = loadWorkUnwrapped(node.callee);
+    } else if (node.type === 'MemberExpression') {
+      node = loadWorkUnwrapped(node.object);
+    } else if (node.type === 'ChainExpression') {
+      node = node.expression;
+    } else {
+      return node.type === 'Identifier' ? node.name : undefined;
+    }
+  }
+};
+
+/**
+ * Whether `value` is a descriptor a library built: a call whose callee is read from one of
+ * `LOAD_WORK_DESCRIPTOR_BUILDERS`, directly or through members and calls on it or on another top-level
+ * binding built the same way, in this module or one it imports. A call that can return an object owner code
+ * wrote (`identity`, `pipe`, `Option.*`, any global, any owner function) is not: its members are whatever
+ * the owner put there.
+ */
+const isLoadWorkLibraryBuilt = (proof: LoadWorkProof, file: string, value: Expression, depth = 0): boolean => {
+  const root = loadWorkUnwrapped(value).type === 'CallExpression' && depth <= 16 ? loadWorkCallRoot(value) : undefined;
+  const module = loadWorkProofModule(proof, file);
+  const bindings = root === undefined || module === undefined ? [] : loadWorkBindings(module.program, root);
+  const [binding] = bindings;
+  if (binding === undefined || bindings.length !== 1) {
+    return false;
+  }
+  if (binding.kind === 'code') {
+    return binding.initializer !== undefined && isLoadWorkLibraryBuilt(proof, file, binding.initializer, depth + 1);
+  }
+  const modulePath = binding.declaration.source.value;
+  const imported = binding.specifier.type === 'ImportSpecifier' ? loadWorkExportName(binding.specifier.imported) : '';
+  if (LOAD_WORK_DESCRIPTOR_BUILDERS.has(modulePath)) {
+    return LOAD_WORK_DESCRIPTOR_BUILDERS.get(modulePath)?.has(imported) === true;
+  }
+  const target = loadWorkResolve(proof, file, modulePath);
+  const declaration =
+    target === undefined || imported === '' ? undefined : loadWorkExportTarget(proof, target, imported);
+  const initializer = declaration === undefined ? undefined : loadWorkDeclaredInitializer(proof, declaration);
+  return (
+    declaration !== undefined &&
+    initializer !== undefined &&
+    isLoadWorkLibraryBuilt(proof, declaration.file, initializer, depth + 1)
+  );
+};
+
+/**
+ * Whether the proof may follow `file`'s top-level code binding read as `reference`: what its initializer
+ * proves is what a reader of it reaches. An object or array literal passes only frozen, with its members
+ * fixed when its initializer runs, or when the module only spreads it and does not export it, so its
+ * members are copied, never shared. A member is read on any other value only when a library built it
+ * (a schema, table or routine declaration) and no other deployable module writes a property of it; a
+ * member of an object owner code built can be replaced by any code that holds it. That nothing in `file`
+ * writes a property of the name is checked for every name before this.
+ */
+const isFixedLoadWorkBinding = (
+  proof: LoadWorkProof,
+  file: string,
+  initializer: Expression | undefined,
+  reference: LoadWorkReference,
+): boolean => {
+  const module = loadWorkProofModule(proof, file);
+  if (module === undefined) {
+    return false;
+  }
+  if (initializer !== undefined && isLoadWorkFrozenLiteral(module.program, initializer)) {
+    return true;
+  }
+  const value = initializer === undefined ? undefined : loadWorkUnwrapped(initializer);
+  if (value?.type === 'ObjectExpression' || value?.type === 'ArrayExpression') {
+    return (
+      reference.member === undefined &&
+      loadWorkExportNames(module.program, reference.name).length === 0 &&
+      module.references.every((read) => read.name !== reference.name || module.spread.has(read))
+    );
+  }
+  return (
+    reference.member === undefined ||
+    (value !== undefined &&
+      isLoadWorkLibraryBuilt(proof, file, value) &&
+      !isLoadWorkExportWrittenElsewhere(proof, file, loadWorkExportNames(module.program, reference.name)))
+  );
+};
+
 /**
  * Proves that a name read in `file` is load work the gate can see: a pure global or one of its allowed
- * members, an allowlisted `effect`, hash, encoding or core read-error import (an
- * `effect` module only as `Module.member`, `Effect` only through its allowed members), or the single
- * top-level `const` or function of a same-owner module whose own name reads prove the same way. Any other
- * import, a namespace or default import, a re-export, `let`, an ambient declaration, a class or a
- * duplicate binding refuses, so load work that yields remote or cross-owner work, reads ambient services
- * or reaches the Function constructor, directly or through further local code, never passes.
+ * members, an allowlisted `effect`, hash, encoding, Drizzle or core import (an `effect` module only as
+ * `Module.member`, `Effect` only through its allowed members), or the single top-level `const` or function
+ * of a same-owner module or workspace package export whose own name reads prove the same way, followed to
+ * the declaration its export resolves to and read only as `isFixedLoadWorkBinding` allows. Any other
+ * import, a namespace or default import, an `export *`, `let`, an ambient declaration, a duplicate binding,
+ * or a name whose property anything in its module writes refuses, so load work that yields remote or
+ * cross-owner work, reads ambient services or reaches the Function constructor, directly or through
+ * further local code, never passes.
  */
 const isProvenLoadWorkReference = (proof: LoadWorkProof, file: string, reference: LoadWorkReference): boolean => {
   const module = loadWorkProofModule(proof, file);
   const bindings = module === undefined ? [] : loadWorkBindings(module.program, reference.name);
   const [binding] = bindings;
-  if (module === undefined || bindings.length > 1) {
+  if (module === undefined || bindings.length > 1 || module.written.has(reference.name)) {
     return false;
   }
   if (binding === undefined) {
@@ -3791,8 +4259,18 @@ const isProvenLoadWorkReference = (proof: LoadWorkProof, file: string, reference
       binding.declaration,
       binding.specifier,
       reference.member,
-      (target, imported) => isProvenLoadWorkReference(proof, target, { member: reference.member, name: imported }),
+      (specifier) => loadWorkPackageTargets(proof.sources).get(specifier),
+      (target, imported) => {
+        const declaration = loadWorkExportTarget(proof, target, imported);
+        return (
+          declaration !== undefined &&
+          isProvenLoadWorkReference(proof, declaration.file, { member: reference.member, name: declaration.local })
+        );
+      },
     );
+  }
+  if (!isFixedLoadWorkBinding(proof, file, binding.initializer, reference)) {
+    return false;
   }
   const key = `${file}\u0000${reference.name}`;
   if (proof.visited.has(key)) {
@@ -3927,9 +4405,11 @@ const hasReadCallbacks = (
     step !== undefined &&
     isProvenLoadWorkStep(
       {
+        codeFiles: loadWorkCodeFiles(sources),
         modules: new Map(),
         ownerPath,
         sourceOf: (file) => (file === readFile ? source : sources.get(file)),
+        sources,
         visited: new Set(),
       },
       readFile,
