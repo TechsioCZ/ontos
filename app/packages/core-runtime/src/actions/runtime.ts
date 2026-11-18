@@ -2161,7 +2161,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         if (!(yield* replayAccessAllowed())) {
           attempt.savedReply = undefined;
         }
-        return yield* Effect.fail(alreadyCommitted(invocation.actionInvocationId));
+        return yield* alreadyCommitted(invocation.actionInvocationId);
       }
 
       const authorizePermissions = Effect.fn('ActionRuntime.authorizePermissions')(
