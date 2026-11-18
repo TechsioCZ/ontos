@@ -2049,7 +2049,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   }
 });
 
-it('runs the compiler, generators, repository tooling and their waits on lint row 1 only', () => {
+it('runs the compiler, generators and repository tooling on lint row 1 only, with unconditional waits', () => {
   const { steps } = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
   const backgrounds = steps.filter(({ background }) => background === true);
   const waits = steps.filter(({ wait }) => wait !== undefined);
@@ -2059,8 +2059,12 @@ it('runs the compiler, generators, repository tooling and their waits on lint ro
     'Check lint rules and shared contract types',
   ]);
   expect(waits.map(({ wait }) => wait)).toEqual(['lint-rule-checks', 'generator-checks', 'typecheck']);
-  for (const step of [...backgrounds, ...waits]) {
+  for (const step of backgrounds) {
     expect(step.if, step.name).toBe('matrix.row == 1');
+  }
+  // GitHub rejects the whole workflow file when a wait step carries a condition, so no run starts at all.
+  for (const step of waits) {
+    expect(step.if, step.name).toBeUndefined();
   }
   const lint = steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
   expect(lint?.if).toBeUndefined();

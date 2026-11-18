@@ -846,16 +846,15 @@ jobs:
           fi
           git diff --exit-code HEAD
 
+      # GitHub rejects a workflow whose wait step carries a condition. On row 2 the three background steps
+      # are skipped, and waiting for a skipped step returns at once.
       - name: Wait for lint rule checks
-        if: matrix.row == 1
         wait: lint-rule-checks
 
       - name: Wait for API and generator checks
-        if: matrix.row == 1
         wait: generator-checks
 
       - name: Wait for the workspace typecheck
-        if: matrix.row == 1
         wait: typecheck
 
   # No job of this workflow holds a runner while it waits for another job of the same run. A job that reads
