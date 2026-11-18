@@ -13,7 +13,7 @@ import type { OwnerBinding, TransactionRequest } from './contract.ts';
  *    'read committed' })`. The fence, the clock, the scope install (including
  *    `trust.establish_gateway_scope` for a gateway-grant role), the seal and the owner rule all run
  *    under it.
- * 2. Fence: when `admittedRevision` is defined, `lockApplicationCompositionAuthority(tx, revision,
+ * 2. Fence: when `facts.compositionRevision` is defined, `lockApplicationCompositionAuthority(tx, revision,
  *    'read')`; a failure is `TransactionAborted('composition_changed')`.
  * 3. `installOperationalScope(tx, scope)`, then `owner.seal`; its `close` runs when the body ends.
  * 4. Clock: `statement_timestamp()` of one statement issued now (a new helper next to
@@ -21,7 +21,7 @@ import type { OwnerBinding, TransactionRequest } from './contract.ts';
  *    after the fence wait, never earlier than it.
  * 5. Owner rule: `owner.decide(sealed, operationAt)`. `denied` fails `TransactionAborted('owner_denied')`,
  *    `unavailable` fails `'owner_unavailable'`. Decided in every transaction, before services exist.
- * 6. Services: `owner.build(sealed, scope, admittedRevision)`. A failure is
+ * 6. Services: `owner.build(sealed, scope, facts.compositionRevision)`. A failure is
  *    `TransactionAborted('database_unavailable')`.
  * 7. The body runs in a child scope; every fiber it forked is interrupted and awaited before the
  *    transaction settles, so no statement is in flight at COMMIT or ROLLBACK.

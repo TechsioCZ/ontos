@@ -1,15 +1,15 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { ModuleCallRoute, RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
+import { RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
 import type { CallRouteRequest, RouteAnswer, SelectedCaller } from '@app/core-runtime/execution/module-call-route';
 import { moduleOperation } from '@app/core-runtime/sdk';
-import { Effect, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 import type { HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { GatewayDelegationSourceError } from '../../src/gateway-context-server.ts';
 import type { GatewayDelegationRequest } from '../../src/gateway-context-server.ts';
-import { GatewayDelegation, ModuleCallRouteLive, operationUrl } from '../../src/sdk-module-call-route.ts';
+import { makeModuleCallRoute, operationUrl } from '../../src/sdk-module-call-route.ts';
 
 /**
  * The governed HTTP route of `call`: the gateway delegation for the selected caller, the admitted
@@ -50,7 +50,6 @@ const requestOf = (caller: SelectedCaller, admittedRevision: string): CallRouteR
   caller,
   encodedInput: { subject: 'S-1' },
   execution: {
-    admittedRevision,
     callerSource: { _tag: 'RequestPrincipal', principal },
     facts: {
       compositionRevision: admittedRevision,
@@ -120,37 +119,34 @@ const registeredOf = (delegation: GatewayDelegationRequest | undefined) =>
 const sendWith = (script: Script, request: CallRouteRequest) => {
   const delegations: GatewayDelegationRequest[] = [];
   const sent: Sent[] = [];
-  const delegation = Layer.succeed(GatewayDelegation, {
+  const delegation = {
     acquire: (input: GatewayDelegationRequest) => {
       delegations.push(input);
       return script.delegationFails === true
         ? Effect.fail(new GatewayDelegationSourceError({ reason: 'no scope' }))
         : Effect.succeed(delegated);
     },
+  };
+  const http = HttpClient.make((outgoing, url) => {
+    sent.push({
+      body: bodyTextOf(outgoing),
+      headers: outgoing.headers,
+      method: outgoing.method,
+      url: url.toString(),
+    });
+    return Option.match(script.response ?? Option.some(Response.json({ ok: true })), {
+      onNone: () =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ description: 'connection refused', request: outgoing }),
+          }),
+        ),
+      onSome: (value) => Effect.succeed(HttpClientResponse.fromWeb(outgoing, value)),
+    });
   });
-  const http = Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((outgoing, url) => {
-      sent.push({
-        body: bodyTextOf(outgoing),
-        headers: outgoing.headers,
-        method: outgoing.method,
-        url: url.toString(),
-      });
-      return Option.match(script.response ?? Option.some(Response.json({ ok: true })), {
-        onNone: () =>
-          Effect.fail(
-            new HttpClientError.HttpClientError({
-              reason: new HttpClientError.TransportError({ description: 'connection refused', request: outgoing }),
-            }),
-          ),
-        onSome: (value) => Effect.succeed(HttpClientResponse.fromWeb(outgoing, value)),
-      });
-    }),
-  );
-  return ModuleCallRoute.pipe(
+  return makeModuleCallRoute(delegation).pipe(
     Effect.flatMap((route) => route.send(request)),
-    Effect.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.merge(delegation, http)))),
+    Effect.provideService(HttpClient.HttpClient, http),
     Effect.map((answer: RouteAnswer) => ({ answer, delegations, sent })),
   );
 };

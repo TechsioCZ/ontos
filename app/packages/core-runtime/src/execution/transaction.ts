@@ -111,7 +111,7 @@ const endFrame = <A, E>(frame: TransactionFrame<A, E>) =>
   });
 
 const fence = (transaction: CoreTransaction, request: TransactionRequest) => {
-  const revision = request.execution.admittedRevision;
+  const revision = request.execution.facts.compositionRevision;
   if (revision === undefined) {
     return Effect.void;
   }
@@ -215,7 +215,7 @@ const ownerTransaction = Effect.fn('KernelTransactions.ownerTransaction')(functi
 ) {
   const opened = yield* openOwnerScope(transaction, request, owner, frame);
   const services = yield* owner
-    .build(opened.transaction, request.execution.scope, request.execution.admittedRevision)
+    .build(opened.transaction, request.execution.scope, request.execution.facts.compositionRevision)
     .pipe(Effect.mapError(abortedBy('database_unavailable')));
   const exit = yield* Effect.exit(
     runJoined(Effect.suspend(() => body(services, opened.facts))).pipe(Effect.ensuring(endFrame(frame))),

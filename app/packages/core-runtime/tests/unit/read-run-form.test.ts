@@ -224,7 +224,6 @@ const makeRunFormHarness = (
     const execute = (registration: ReturnType<typeof runRead>, overrides: Partial<RunFormReadInput> = {}) =>
       executeRunFormRead(registration, {
         access: {},
-        admittedRevision: unadmitted,
         decodedInput: { subject: 'customer' },
         deniedFieldPaths: [],
         facts: {
@@ -358,6 +357,26 @@ it.effect('writes the denied authz row when run itself refuses the caller', () =
       const exit = yield* Effect.exit(harness.execute(runRead(() => Effect.fail(refusal))));
       expect(failureOf(exit)).toBe(refusal);
       expect(rowsOf(harness.settled)).toEqual([[deniedRow]]);
+    }),
+  ),
+);
+
+it.effect('still answers the denial when its denied evidence cannot be written', () =>
+  Effect.scoped(
+    Effect.gen(function* deniedEvidenceFails() {
+      const ownerDenied = yield* makeRunFormHarness({ decisions: ['denied'], settleFails: true });
+      const ownerExit = yield* Effect.exit(
+        ownerDenied.execute(runRead(() => Effect.succeed(answered({ state: 'CURRENT' })))),
+      );
+      expect(Schema.is(ReadPermissionDenied)(failureOf(ownerExit))).toBe(true);
+      const refusal = new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'The request is outside the trusted operational context',
+      });
+      const moduleDenied = yield* makeRunFormHarness({ settleFails: true });
+      const moduleExit = yield* Effect.exit(moduleDenied.execute(runRead(() => Effect.fail(refusal))));
+      expect(failureOf(moduleExit)).toBe(refusal);
+      expect(rowsOf(moduleDenied.settled)).toEqual([[deniedRow]]);
     }),
   ),
 );

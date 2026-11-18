@@ -1,7 +1,7 @@
 import { Context } from 'effect';
 import type { Effect, Scope } from 'effect';
 
-import type { DeclaredCalls, TransactionAborted } from '../sdk/index.ts';
+import type { DeclaredCalls, ExecutionIdentity, TransactionAborted } from '../sdk/index.ts';
 import type { KernelExecution, KernelSession, OwnerBinding } from './contract.ts';
 
 /**
@@ -38,10 +38,10 @@ import type { KernelExecution, KernelSession, OwnerBinding } from './contract.ts
  * - `capabilities.execution` is `execution.facts` unchanged.
  */
 export interface KernelSessionsService {
-  readonly open: <Services, Calls extends DeclaredCalls, Requirements>(
-    execution: KernelExecution<Calls>,
+  readonly open: <Services, Calls extends DeclaredCalls, Requirements, Identity extends ExecutionIdentity>(
+    execution: KernelExecution<Calls, Identity>,
     owner: OwnerBinding<Services, Requirements>,
-  ) => Effect.Effect<KernelSession<Services, Calls>, TransactionAborted, Requirements | Scope.Scope>;
+  ) => Effect.Effect<KernelSession<Services, Calls, Identity>, TransactionAborted, Requirements | Scope.Scope>;
 }
 
 export class KernelSessions extends Context.Service<KernelSessions, KernelSessionsService>()(

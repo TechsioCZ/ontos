@@ -74,7 +74,6 @@ const execution = <Calls extends DeclaredCalls>(
   budget: ExecutionBudget = generousBudget,
   revision?: string,
 ): KernelExecution<Calls> => ({
-  admittedRevision: revision,
   budget,
   callerSource: RequestPrincipalCallerSourceSchema.make({ principal }),
   calls: declared,

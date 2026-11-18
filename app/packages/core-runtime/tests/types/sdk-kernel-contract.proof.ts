@@ -37,12 +37,14 @@ import {
   moduleOperation,
 } from '../../src/sdk/index.ts';
 import type {
+  ActionInvocationExecution,
   CallOutcome,
   DeclaredCalls,
   ExecutionCapabilities,
   OperationOutput,
   RecoveriesDeclared,
   TransactionAborted,
+  WorkerDeliveryExecution,
   WriteCallOutcome,
 } from '../../src/sdk/index.ts';
 import { canList, canRun, canSeeFields, readAnswer } from '../../src/sdk/read.ts';
@@ -792,7 +794,17 @@ type Market = typeof ProofIdSchema.Type;
 interface RetirementServices {
   readonly retire: (market: Market, reservation: Market) => Effect.Effect<void, ReadHandlerUnavailable>;
 }
-type RetirementCapabilities = ExecutionCapabilities<RetirementServices, typeof retirementCalls>;
+type RetirementActionCapabilities = ExecutionCapabilities<
+  RetirementServices,
+  typeof retirementCalls,
+  ActionInvocationExecution
+>;
+type RetirementWorkerCapabilities = ExecutionCapabilities<
+  RetirementServices,
+  typeof retirementCalls,
+  WorkerDeliveryExecution
+>;
+type RetirementCapabilities = RetirementActionCapabilities | RetirementWorkerCapabilities;
 
 /** A write call settled by its typed outcome; an indeterminate one is recovered by the same key first. */
 const settledReservation = (
@@ -830,24 +842,16 @@ const retire = (context: RetirementCapabilities, market: Market, idempotencyKey:
 /** Action sketch: the identity is the admitted invocation; the transaction is the Action's commit. */
 export const retireMarketActionSketch = (
   payload: { readonly market: Market },
-  context: RetirementCapabilities,
+  context: RetirementActionCapabilities,
 ): Effect.Effect<boolean, ReadHandlerUnavailable | TransactionAborted> =>
-  Match.valueTags(context.execution.identity, {
-    ActionInvocation: ({ actionInvocationId }) => retire(context, payload.market, `${actionInvocationId}:reserve`),
-    Request: () => Effect.succeed(false),
-    WorkerDelivery: () => Effect.succeed(false),
-  });
+  retire(context, payload.market, `${context.execution.identity.actionInvocationId}:reserve`);
 
 /** Worker sketch: the identity is the attested delivery; the same calls, keys derived from the delivery. */
 export const retirementWorkerSketch = (
   message: { readonly market: Market },
-  context: RetirementCapabilities,
+  context: RetirementWorkerCapabilities,
 ): Effect.Effect<boolean, ReadHandlerUnavailable | TransactionAborted> =>
-  Match.valueTags(context.execution.identity, {
-    ActionInvocation: () => Effect.succeed(false),
-    Request: () => Effect.succeed(false),
-    WorkerDelivery: ({ deliveryId }) => retire(context, message.market, `${deliveryId}:reserve`),
-  });
+  retire(context, message.market, `${context.execution.identity.deliveryId}:reserve`);
 
 /* A read call never fails: its outcome is data in the success channel. */
 export const readCallNeverFails = (

@@ -106,7 +106,7 @@ const request = (
   options: { readonly admittedRevision?: string; readonly mode?: 'read_only' | 'read_write' } = {},
 ): TransactionRequest => ({
   execution: {
-    admittedRevision: options.admittedRevision,
+    facts: { compositionRevision: options.admittedRevision },
     scope,
     transactionMode: options.mode ?? 'read_only',
   },

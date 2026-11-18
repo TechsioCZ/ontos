@@ -34,7 +34,7 @@ import { CallRequirementsLive } from '../execution/requirements.ts';
 import { KernelSessionsLive } from '../execution/runner.ts';
 import { KernelTransactionsLive } from '../execution/transaction.ts';
 import { ModuleOperationRouteSchema, RequestExecutionSchema } from '../sdk/index.ts';
-import type { ExecutionIdentity } from '../sdk/index.ts';
+import type { RequestExecution } from '../sdk/index.ts';
 import type { AccessAnswers, AccessQuestions } from '../sdk/read.ts';
 import { answerAccessQuestions } from './access-questions.ts';
 import { ReadRunEvidenceLive } from './run-evidence-live.ts';
@@ -1133,7 +1133,7 @@ const NO_ACCESS_ANSWERS: AccessAnswers<AccessQuestions> = Object.freeze({});
  * The verified provenance of the request principal a read executes for (`RequestExecutionSchema`):
  * a recovery, then a verified workload, then a Core system principal, otherwise a person.
  */
-const requestExecutionOf = (principal: TrustedPrincipalContext): ExecutionIdentity => {
+const requestExecutionOf = (principal: TrustedPrincipalContext): RequestExecution => {
   if (readVerifiedGatewayRecovery(principal) !== undefined) {
     return RequestExecutionSchema.make({ via: 'recovery' });
   }
@@ -1690,7 +1690,6 @@ const readRuntimeFromDependencies = <
               withOptional(
                 {
                   access: admitted.accessAnswers ?? NO_ACCESS_ANSWERS,
-                  admittedRevision: admitted.admittedCompositionRevision,
                   decodedInput,
                   deniedFieldPaths: admitted.gateAuthorization.deniedFieldPaths,
                   facts: {
@@ -2169,7 +2168,10 @@ const readRuntimeFromDependencies = <
       return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
     });
     // A `{ run }` read holds no governed transaction or composition lock across its module code: the
-    // kernel fences the admitted revision in each transaction it opens instead.
+    // kernel fences the admitted revision in each transaction it opens instead. Its access decision
+    // therefore runs before that fence; a decision made under a composition that changes afterwards
+    // cannot commit anything, because every kernel transaction, the evidence write and the module
+    // route each check the admitted revision.
     if (compositionRevision === undefined || getReadRun(input.registration) !== undefined) {
       return yield* executeTrustedRead(database.executor);
     }

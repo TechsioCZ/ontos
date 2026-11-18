@@ -23,7 +23,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from '../reads/context.ts';
 import type { ReadDescriptor, ReadRegistration, ReadServiceFactory } from '../reads/definition.ts';
-import type { AnyReadOperationRef, DeclaredCall, ExecutionCapabilities } from './index.ts';
+import type { AnyReadOperationRef, DeclaredCall, ExecutionCapabilities, RequestExecution } from './index.ts';
 
 /* ------------------------------------------------------------------------------------------------ */
 /* Extra access questions: data on the descriptor, answered by Core                                 */
@@ -113,7 +113,7 @@ export interface ReadRunContext<
   Services,
   Calls extends ReadCalls,
   Questions extends AccessQuestions,
-> extends ExecutionCapabilities<Services, Calls> {
+> extends ExecutionCapabilities<Services, Calls, RequestExecution> {
   /** Core's answers to the descriptor's `accessQuestions`, asked after the read's own decision allowed it. */
   readonly access: AccessAnswers<Questions>;
   /** As on the one-transaction form: present exactly when the access gate decided this read. */
