@@ -6731,10 +6731,9 @@ it.live(
     const binding =
       "import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';";
     const declared = yield* Effect.promise(() =>
-      stat(path.join(appRoot, 'verticals/privacy/vertical.runtime-declaration.ts')).then(
-        () => true,
-        () => false,
-      ),
+      stat(path.join(appRoot, 'verticals/privacy/vertical.runtime-declaration.ts'))
+        .then(() => true)
+        .catch(() => false),
     );
     // Only a Privacy without its runtime declaration gets a synthesized binding; a declared Privacy is checked as is.
     const handler = declared
