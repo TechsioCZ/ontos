@@ -2052,10 +2052,19 @@ const readRuntimeFromDependencies = <
                 ),
               );
           };
+          // The transaction's fiber is bound to its caller: a caller that stops waiting (a lost race, a
+          // timeout) interrupts it and waits for its rollback before going on, so no remote call of `finish`
+          // runs beside it. The scope is the backstop for a caller that detached it.
           const ownerTransaction: ReadOwnerTransaction<Services> = (use) =>
             Effect.suspend(() =>
               finishRunning
-                ? Effect.forkIn(openOwnerTransaction(use), finishTransactions).pipe(Effect.flatMap(Fiber.join))
+                ? Effect.uninterruptibleMask((restore) =>
+                    Effect.forkIn(openOwnerTransaction(use), finishTransactions).pipe(
+                      Effect.flatMap((fiber) =>
+                        restore(Fiber.join(fiber)).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber))),
+                      ),
+                    ),
+                  )
                 : Effect.fail(
                     new ReadHandlerUnavailable({
                       code: 'read_handler_unavailable',
@@ -2158,11 +2167,9 @@ const readRuntimeFromDependencies = <
           if (refusalAfterCommit !== undefined) {
             return yield* refusalAfterCommit;
           }
-          if (Exit.isFailure(finishExit) && Cause.hasInterruptsOnly(finishExit.cause)) {
-            return yield* Effect.failCause(finishExit.cause);
-          }
-          // Everything a caller could learn from `finish`, its own failures and Core's checks of its result
-          // alike, stays private until the release decision below has fenced and decided this Read.
+          // Everything a caller could learn from `finish`, its own failures, defects and interruptions and
+          // Core's checks of its result alike, stays private until the release decision below has fenced and
+          // decided this Read. An interruption of the Read itself stops this fiber at its next step anyway.
           const outcome = yield* Effect.exit(
             Effect.gen(function* checkFinishedRead() {
               const handlerResult = Exit.isSuccess(finishExit)
@@ -2273,9 +2280,6 @@ const readRuntimeFromDependencies = <
               };
             }),
           );
-          if (Exit.isFailure(outcome) && Cause.hasInterruptsOnly(outcome.cause)) {
-            return yield* Effect.failCause(outcome.cause);
-          }
           // The read transaction is gone, so the release decision opens its own short scoped transaction
           // under the same composition fence. A staged Read ran owner work after commit, so its owner rule is
           // decided once more there; only a result that passed every check writes its allowed row, and a held

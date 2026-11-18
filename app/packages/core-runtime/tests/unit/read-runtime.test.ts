@@ -5036,34 +5036,66 @@ const notFoundDuringFinish = new ReadHandlerNotFound({
   reason: 'The remote target does not exist',
 });
 
+/** How a finish tells its caller that the remote target is absent: a typed failure or an interruption. */
+const absentTargetSignals = [
+  ['typed failure', { finishFailure: notFoundDuringFinish }],
+  ['interruption', { ownerStep: () => Effect.interrupt }],
+] as const;
+
 for (const verified of [false, true]) {
-  it.effect(
-    `gives a finish whose remote target is absent the same fenced refusal as a present one${verified ? ' (verified)' : ''}`,
-    () =>
-      Effect.gen(function* finishFailureIsFenced() {
-        const outcomes = yield* Effect.forEach([false, true], (targetAbsent) =>
-          Effect.gen(function* finishBranch() {
-            const events: string[] = [];
-            const authority: StagedReadAuthority = {};
-            // The composition changes while finish waits on its remote lookup, which then finds the target or not.
-            const replaceDuringLookup = { duringFinish: () => authority.replace?.(), ownerState: false };
-            const read = makeStagedRead(
-              events,
-              targetAbsent ? { ...replaceDuringLookup, finishFailure: notFoundDuringFinish } : replaceDuringLookup,
-            );
-            const { exit, harness } = yield* runStagedRead(events, read, { authority, verified });
-            return {
-              evidence: evidenceOutcomeCodes(harness.evidenceParameterRows()),
-              failure: stagedFailureTag(exit),
-              success: Exit.isSuccess(exit),
-            };
-          }),
-        );
-        expect(outcomes[0]).toEqual({ evidence: [], failure: 'ReadHandlerUnavailable', success: false });
-        expect(outcomes[1]).toEqual(outcomes[0]);
-      }),
-  );
+  for (const [signal, absentTarget] of absentTargetSignals) {
+    it.effect(
+      `gives a finish whose remote target is absent (${signal}) the same fenced refusal as a present one${verified ? ' (verified)' : ''}`,
+      () =>
+        Effect.gen(function* finishFailureIsFenced() {
+          const outcomes = yield* Effect.forEach([false, true], (targetAbsent) =>
+            Effect.gen(function* finishBranch() {
+              const events: string[] = [];
+              const authority: StagedReadAuthority = {};
+              // The composition changes while finish waits on its remote lookup, which then finds the target or not.
+              const replaceDuringLookup = { duringFinish: () => authority.replace?.(), ownerState: false };
+              const read = makeStagedRead(
+                events,
+                targetAbsent ? { ...replaceDuringLookup, ...absentTarget } : replaceDuringLookup,
+              );
+              const { exit, harness } = yield* runStagedRead(events, read, { authority, verified });
+              return {
+                begins: events.filter((event) => event === 'BEGIN').length,
+                evidence: evidenceOutcomeCodes(harness.evidenceParameterRows()),
+                failure: stagedFailureTag(exit),
+                interruptsOnly: Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause),
+                success: Exit.isSuccess(exit),
+              };
+            }),
+          );
+          expect(outcomes[0]).toMatchObject({
+            evidence: [],
+            failure: 'ReadHandlerUnavailable',
+            interruptsOnly: false,
+            success: false,
+          });
+          expect(outcomes[1]).toEqual(outcomes[0]);
+        }),
+    );
+  }
 }
+
+it.effect('releases a finish interruption only after the final fence and owner decision allowed the Read', () =>
+  Effect.gen(function* finishInterruptionAfterRelease() {
+    const events: string[] = [];
+    const decisions: number[] = [];
+    const { exit, harness } = yield* runStagedRead(
+      events,
+      makeStagedRead(events, { ownerStep: () => Effect.interrupt }),
+      { ownerAuthorizationOverlay: decisionsInTurn([allowDecision], (turn) => decisions.push(turn)), verified: true },
+    );
+    expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    // Load's decision, then the release decision under the final fence; no allowed row for an interruption.
+    expect(decisions).toEqual([0, 1]);
+    expect(events.slice(events.indexOf('finish')).filter((event) => event === 'authority_locked')).toHaveLength(1);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
 
 it.effect('releases a typed finish failure only after the final fence and owner decision allowed the Read', () =>
   Effect.gen(function* finishFailureAfterRelease() {
@@ -5158,6 +5190,31 @@ it.effect('settles an owner transaction still in flight when finish returns befo
     const rolledBack = events.indexOf('ROLLBACK', events.indexOf('owner-state-started'));
     expect(rolledBack).toBeGreaterThan(-1);
     expect(events.lastIndexOf('BEGIN')).toBeGreaterThan(rolledBack);
+  }),
+);
+
+it.effect('rolls back an owner transaction finish abandons in a lost race before finish goes on', () =>
+  Effect.gen(function* abandonedOwnerTransaction() {
+    const events: string[] = [];
+    const started = yield* Deferred.make<boolean>();
+    const read = makeStagedRead(events, {
+      // The owner races its owner transaction against a signal, the way a timeout does, and goes on remotely.
+      ownerStep: (transaction) =>
+        Effect.race(transaction(holdOwnerState(events, started)), Deferred.await(started)).pipe(
+          Effect.orDie,
+          Effect.andThen(
+            Effect.sync(() => {
+              events.push('remote-call-after-abandon');
+            }),
+          ),
+        ),
+    });
+    yield* runStagedRead(events, read, { verified: true });
+    const remoteCall = events.indexOf('remote-call-after-abandon');
+    expect(remoteCall).toBeGreaterThan(-1);
+    const rolledBack = events.indexOf('ROLLBACK', events.indexOf('owner-state-started'));
+    expect(rolledBack).toBeGreaterThan(-1);
+    expect(rolledBack).toBeLessThan(remoteCall);
   }),
 );
 
