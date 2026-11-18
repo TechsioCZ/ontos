@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
+import { Cause, DateTime, Deferred, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -11,6 +12,8 @@ import { withOptional } from '../../src/access/decision/optional.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { dataAccessEvents } from '../../src/db/schema.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import { ExecutionRuleViolation } from '../../src/execution/contract.ts';
 import type { CallExecutionRequest, CallRoute } from '../../src/execution/contract.ts';
 import { KernelCalls } from '../../src/execution/kernel-calls.ts';
@@ -127,7 +130,8 @@ type Run = (
   context: RunContext,
 ) => Effect.Effect<ReadHandlerResult<unknown>, unknown>;
 
-const runRead = (run: Run) => defineRead({ ...descriptor(), calls }, { run }, services);
+const runRead = (run: Run, factory: (transaction: ScopedTransactionExecutor) => Effect.Effect<Services> = services) =>
+  defineRead({ ...descriptor(), calls }, { run }, factory);
 const answered = <Value>(value: Value) => readAnswer(value, { resultCount: 1 });
 
 /** Statements the scripted database answers; everything else answers no rows. */
@@ -166,14 +170,25 @@ const okCall = (request: CallExecutionRequest) => ({
 });
 
 const makeRunFormHarness = (
-  options: { readonly decisions?: readonly OwnerAuthorizationDecision[]; readonly settleFails?: boolean } = {},
+  options: {
+    readonly decisions?: readonly OwnerAuthorizationDecision[];
+    /** The call executor after the harness recorded the request; by default every call answers Ok. */
+    readonly execute?: KernelCallsService['execute'];
+    /** The ordinal (1-based) of the ROLLBACK the database fails. */
+    readonly failRollback?: number;
+    readonly settleFails?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* makeHarness() {
     const statements: string[] = [];
+    let rollbacks = 0;
     const executor = yield* makeTestDatabase((statement) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         statements.push(statement);
-        return answer(statement);
+        rollbacks += /^rollback/iu.test(statement.trim()) ? 1 : 0;
+        return /^rollback/iu.test(statement.trim()) && rollbacks === options.failRollback
+          ? Effect.fail(new SqlError({ reason: new ConnectionError({ cause: { code: '08006' } }) }))
+          : Effect.succeed(answer(statement));
       }),
     );
     const openTransactions = () => openTransactionsIn(statements);
@@ -184,8 +199,9 @@ const makeRunFormHarness = (
         Effect.sync(() => {
           callRequests.push(request);
           openDuringCalls.push(openTransactions());
-          return okCall(request);
-        }),
+        }).pipe(
+          Effect.andThen(options.execute === undefined ? Effect.succeed(okCall(request)) : options.execute(request)),
+        ),
     };
     const settled: SettledEvidence[] = [];
     const runEvidence: ReadRunEvidenceService = {
@@ -248,7 +264,7 @@ const makeRunFormHarness = (
         workloadAdmission: { carrier: {} },
         ...overrides,
       }).pipe(Effect.provideContext(kernel));
-    return { callRequests, execute, openDuringCalls, ownerInputs, settled };
+    return { callRequests, execute, openDuringCalls, ownerInputs, settled, statements };
   });
 
 const rowsOf = (settled: readonly SettledEvidence[]) =>
@@ -361,22 +377,105 @@ it.effect('writes the denied authz row when run itself refuses the caller', () =
   ),
 );
 
-it.effect('still answers the denial when its denied evidence cannot be written', () =>
+/** Every typed failure of an exit, in cause order. */
+const failuresIn = <A, E>(exit: Exit.Exit<A, E>): readonly E[] =>
+  Exit.isSuccess(exit)
+    ? []
+    : exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []));
+
+it.effect('answers the persistence failure, the denial kept in its cause, when denied evidence cannot be written', () =>
   Effect.scoped(
     Effect.gen(function* deniedEvidenceFails() {
       const ownerDenied = yield* makeRunFormHarness({ decisions: ['denied'], settleFails: true });
       const ownerExit = yield* Effect.exit(
         ownerDenied.execute(runRead(() => Effect.succeed(answered({ state: 'CURRENT' })))),
       );
-      expect(Schema.is(ReadPermissionDenied)(failureOf(ownerExit))).toBe(true);
+      const [ownerAnswer, ownerKept] = failuresIn(ownerExit);
+      expect(Schema.is(ReadEvidencePersistenceError)(ownerAnswer)).toBe(true);
+      expect(Schema.is(ReadPermissionDenied)(ownerKept)).toBe(true);
       const refusal = new ReadPermissionDenied({
         code: 'read_permission_denied',
         reason: 'The request is outside the trusted operational context',
       });
       const moduleDenied = yield* makeRunFormHarness({ settleFails: true });
       const moduleExit = yield* Effect.exit(moduleDenied.execute(runRead(() => Effect.fail(refusal))));
-      expect(failureOf(moduleExit)).toBe(refusal);
+      const [moduleAnswer, moduleKept] = failuresIn(moduleExit);
+      expect(Schema.is(ReadEvidencePersistenceError)(moduleAnswer)).toBe(true);
+      expect(moduleKept).toBe(refusal);
       expect(rowsOf(moduleDenied.settled)).toEqual([[deniedRow]]);
+    }),
+  ),
+);
+
+it.effect('accounts for a forked call that reached the provider and had not answered when run returned', () =>
+  Effect.scoped(
+    Effect.gen(function* forkedCallInFlight() {
+      const reached = yield* Deferred.make<boolean>();
+      const interrupted = yield* Deferred.make<boolean>();
+      const harness = yield* makeRunFormHarness({
+        execute: () =>
+          Deferred.succeed(reached, true).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Deferred.succeed(interrupted, true)),
+          ),
+      });
+      const result = yield* harness.execute(
+        runRead((input, context) =>
+          Effect.forkChild(context.call('restrictions', { subject: input.subject })).pipe(
+            Effect.andThen(Deferred.await(reached)),
+            Effect.as(answered({ state: 'CURRENT' })),
+          ),
+        ),
+      );
+      expect(result).toEqual({ state: 'CURRENT' });
+      // The call was interrupted before the answer was decided, and its row is in the evidence.
+      expect(yield* Deferred.isDone(interrupted)).toBe(true);
+      expect(rowsOf(harness.settled)).toEqual([
+        [
+          allowedRow,
+          {
+            outcome: 'failed',
+            outcomeCode: 'call_interrupted',
+            outcomeStage: 'execution',
+            targetModuleKey: 'test.provider',
+          },
+        ],
+      ]);
+    }),
+  ),
+);
+
+it.effect('keeps an owner denial whose transaction then fails to roll back', () =>
+  Effect.scoped(
+    Effect.gen(function* deniedThenRollbackFails() {
+      // Denied by the opening check, whose ROLLBACK fails: still denied, and run never starts.
+      const atOpen = yield* makeRunFormHarness({ decisions: ['denied'], failRollback: 1 });
+      const openExit = yield* Effect.exit(atOpen.execute(runRead(() => Effect.die('run never starts'))));
+      expect(Schema.is(ReadPermissionDenied)(failureOf(openExit))).toBe(true);
+      expect(rowsOf(atOpen.settled)).toEqual([[deniedRow]]);
+      // Allowed by the opening check, denied in the module's own transaction, whose ROLLBACK fails.
+      const harness = yield* makeRunFormHarness({ decisions: ['allowed', 'denied'], failRollback: 2 });
+      let moduleSaw: unknown;
+      const exit = yield* Effect.exit(
+        harness.execute(
+          runRead((input, context) =>
+            context
+              .transaction((owned) => owned.load(input.subject))
+              .pipe(
+                Effect.tapCause((cause) =>
+                  Effect.sync(() => {
+                    moduleSaw = Option.getOrUndefined(Cause.findErrorOption(cause));
+                  }),
+                ),
+                Effect.map(answered),
+              ),
+          ),
+        ),
+      );
+      expect(Predicate.isTagged(moduleSaw, 'TransactionAborted')).toBe(true);
+      expect(Predicate.hasProperty(moduleSaw, 'reason') ? moduleSaw.reason : undefined).toBe('owner_denied');
+      expect(Schema.is(ReadPermissionDenied)(failureOf(exit))).toBe(true);
+      expect(rowsOf(harness.settled)).toEqual([[deniedRow]]);
     }),
   ),
 );
@@ -473,6 +572,46 @@ it.effect('answers 503 for a kernel rule violation: a call inside the transactio
           ),
       ).toBe(true);
       expect(harness.callRequests).toHaveLength(0);
+    }),
+  ),
+);
+
+it.effect('a query prepared in a transaction and evaluated after it issues no SQL and fails transaction_ended', () =>
+  Effect.scoped(
+    Effect.gen(function* preparedAfterTransaction() {
+      const harness = yield* makeRunFormHarness();
+      // The owner service builds its query when it is called, inside the transaction; run evaluates it later.
+      const registration = runRead(
+        (input, context) =>
+          context
+            .transaction((owned) => Effect.succeed({ prepared: owned.load(input.subject) }))
+            .pipe(
+              Effect.flatMap(({ prepared }) => prepared),
+              Effect.map(answered),
+            ),
+        (transaction) =>
+          Effect.succeed<Services>({
+            load: () =>
+              transaction
+                .select()
+                .from(dataAccessEvents)
+                .pipe(Effect.orDie, Effect.as<Result>({ state: 'CURRENT' })),
+          }),
+      );
+      const exit = yield* Effect.exit(harness.execute(registration));
+      const failure = failureOf(exit);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      const cause = Predicate.hasProperty(failure, 'cause') ? failure.cause : undefined;
+      expect(
+        Cause.isCause(cause) &&
+          cause.reasons.some(
+            (reason) =>
+              Cause.isDieReason(reason) &&
+              Schema.is(ExecutionRuleViolation)(reason.defect) &&
+              reason.defect.rule === 'transaction_ended',
+          ),
+      ).toBe(true);
+      expect(harness.statements.filter((statement) => /data_access_events/u.test(statement))).toEqual([]);
     }),
   ),
 );
@@ -600,6 +739,52 @@ it.layer(NodeCrypto.layer)('the read runtime', (suite) => {
       expect(result).toEqual({ secret: 'owner:customer', state: 'CURRENT' });
       expect(observed).toEqual([0]);
       expect(harness.snapshot().evidenceWrites).toBe(1);
+    }),
+  );
+
+  suite.effect('admits a governed { run } read under the fence: a stale revision writes no denial row', () =>
+    Effect.gen(function* fencedAdmission() {
+      let ran = false;
+      const registration = defineRead(
+        descriptor(),
+        {
+          run: () =>
+            Effect.sync(() => {
+              ran = true;
+              return answered({ state: 'CURRENT' });
+            }),
+        },
+        services,
+      );
+      const request = {
+        input: { subject: 'customer' },
+        principal: trustVerifiedGatewayPrincipalContext(scope, revision),
+        registration,
+        transport: { correlationId: scope.correlationId },
+      };
+      const harnessWith = (authorityRevision: string) =>
+        makeReadTestHarness({
+          access: 'denied',
+          compositionRevision: authorityRevision,
+          executeOwnerQuery: () => Effect.die('The read runs no owner SQL'),
+          operationTime: operationAt,
+          ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: hostOf([registration]),
+          scope,
+        });
+      // The active composition moved on: the read is unavailable before its gate, and nothing is written.
+      const stale = yield* harnessWith('d'.repeat(64));
+      const staleFailure = failureOf(yield* Effect.exit(stale.runtime.runRead(request)));
+      expect(Schema.is(ReadHandlerUnavailable)(staleFailure)).toBe(true);
+      expect(stale.snapshot().evidenceWrites).toBe(0);
+      expect(stale.snapshot().gateTransactions).toEqual([]);
+      // Under the admitted revision, the denial and its row are decided in the fenced governed transaction.
+      const current = yield* harnessWith(revision);
+      const currentFailure = failureOf(yield* Effect.exit(current.runtime.runRead(request)));
+      expect(Schema.is(ReadPermissionDenied)(currentFailure)).toBe(true);
+      expect(current.snapshot().evidenceWrites).toBe(1);
+      expect(current.snapshot().gateTransactions).toEqual(['owned']);
+      expect(ran).toBe(false);
     }),
   );
 

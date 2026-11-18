@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 import type { OwnerAuthorizationDecision } from '../../src/access/enforcement/owner-overlay.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { dataAccessEvents } from '../../src/db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import { ExecutionRuleViolation, RequestPrincipalCallerSourceSchema } from '../../src/execution/contract.ts';
 import type {
@@ -434,14 +435,21 @@ it.effect('a transaction is READ ONLY and READ COMMITTED from its first statemen
   ),
 );
 
-it.effect('the executor services were built on dies transaction_ended after the body', () =>
+it.effect('the executor services were built on dies transaction_ended when used after the body', () =>
   Effect.scoped(
     Effect.gen(function* servicesAfterBody() {
       const harness = yield* makeHarness([]);
       const session = yield* harness.open(execution(calls));
-      const executor = yield* session.capabilities.transaction((services) => Effect.succeed(services.executor));
-      const select = yield* Effect.exit(Effect.sync(() => executor.select()));
-      expect(violationRule(select)).toBe('transaction_ended');
+      const { executor, prepared } = yield* session.capabilities.transaction((services) =>
+        Effect.succeed({ executor: services.executor, prepared: services.executor.select().from(dataAccessEvents) }),
+      );
+      const before = harness.statements.length;
+      // A query prepared inside the body, and one built after it: both refused where they execute.
+      expect(violationRule(yield* Effect.exit(Effect.suspend(() => prepared)))).toBe('transaction_ended');
+      expect(violationRule(yield* Effect.exit(Effect.suspend(() => executor.select().from(dataAccessEvents))))).toBe(
+        'transaction_ended',
+      );
+      expect(harness.statements.slice(before)).toEqual([]);
     }),
   ),
 );

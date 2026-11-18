@@ -4,7 +4,7 @@
  * another), the sticky owner denial, the budget, placement, and the end of the session. Kind-neutral:
  * the kind adapter supplies the execution and the owner binding (see `kernel-sessions.ts`).
  */
-import { Cause, Clock, Context, Effect, Fiber, Layer, Schema, Scope } from 'effect';
+import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Scope } from 'effect';
 
 import type {
   AnyDeclaredCall,
@@ -18,7 +18,14 @@ import type {
 } from '../sdk/index.ts';
 import { CallForbiddenSchema, CallUnavailableSchema, TransactionAborted } from '../sdk/index.ts';
 import { ExecutionRuleViolation } from './contract.ts';
-import type { CallExecutionRequest, CallRecord, KernelExecution, KernelSession, OwnerBinding } from './contract.ts';
+import type {
+  CallExecution,
+  CallExecutionRequest,
+  CallRecord,
+  KernelExecution,
+  KernelSession,
+  OwnerBinding,
+} from './contract.ts';
 import { KernelCalls } from './kernel-calls.ts';
 import type { KernelCallsService } from './kernel-calls.ts';
 import { KernelSessions } from './kernel-sessions.ts';
@@ -29,7 +36,8 @@ import type { KernelTransactionsService } from './kernel-transactions.ts';
 interface Ledger {
   anyTransactionEnded: boolean;
   callsAttempted: number;
-  callsInFlight: number;
+  /** Every admitted call that has not reported yet, by sequence, with the record it leaves if it never does. */
+  readonly callsInFlight: Map<number, CallRecord>;
   callsSent: number;
   closed: boolean;
   ownerDenied: boolean;
@@ -52,8 +60,9 @@ interface SessionState<Services, Calls extends DeclaredCalls, Requirements> {
   readonly ledger: Ledger;
   readonly owner: OwnerBinding<Services, Requirements>;
   readonly ports: KernelPorts;
-  readonly sessionScope: Scope.Scope;
   readonly startedAt: number;
+  /** Every admitted call and transaction runs in this scope; settling the session closes it. */
+  readonly workScope: Scope.Scope;
 }
 
 type Refusal = Readonly<{ readonly refusal: ExecutionRuleViolation['rule'] }>;
@@ -93,7 +102,7 @@ const admitTransaction = <Services, Calls extends DeclaredCalls, Requirements>(
   if (ledger.transactionOpen) {
     return refusal('nested_transaction');
   }
-  if (ledger.callsInFlight > 0) {
+  if (ledger.callsInFlight.size > 0) {
     // Module code forked a call that has not answered: the transaction would run beside it.
     return refusal('call_inside_transaction');
   }
@@ -108,25 +117,39 @@ const admitTransaction = <Services, Calls extends DeclaredCalls, Requirements>(
   return { sequence: ledger.transactions };
 };
 
-const isOwnerDenial = (cause: Cause.Cause<unknown>) =>
-  cause.reasons.some(
-    (reason) =>
-      Cause.isFailReason(reason) &&
-      Schema.is(TransactionAborted)(reason.error) &&
-      reason.error.reason === 'owner_denied',
-  );
-
 const settleTransaction = (ledger: Ledger) =>
   Effect.sync(() => {
     ledger.transactionOpen = false;
     ledger.anyTransactionEnded = true;
   });
 
-const recordDenial = (ledger: Ledger, cause: Cause.Cause<unknown>) =>
-  Effect.sync(() => {
-    if (isOwnerDenial(cause)) {
-      ledger.ownerDenied = true;
-    }
+/**
+ * The owner binding whose denial is noted the moment the owner rule answers it, before any SQL
+ * settlement: a failing ROLLBACK may turn the transaction's typed denial into a defect, never the
+ * decision itself.
+ */
+const observingDenial = <Services, Requirements>(
+  owner: OwnerBinding<Services, Requirements>,
+  onDenied: () => void,
+): OwnerBinding<Services, Requirements> => ({
+  ...owner,
+  decide: (transaction, operationAt) =>
+    owner.decide(transaction, operationAt).pipe(
+      Effect.tap((decision) =>
+        Effect.sync(() => {
+          if (decision === 'denied') {
+            onDenied();
+          }
+        }),
+      ),
+    ),
+});
+
+/** The typed denial of a decided owner rule, whatever the settlement of its transaction left in `cause`. */
+const ownerDeniedFrom = (cause: Cause.Cause<unknown>): TransactionAborted =>
+  Object.defineProperty(new TransactionAborted({ reason: 'owner_denied' }), 'cause', {
+    configurable: true,
+    value: cause,
   });
 
 const runTransaction = Effect.fn('KernelSession.transaction')(function* runTransaction<
@@ -149,19 +172,27 @@ const runTransaction = Effect.fn('KernelSession.transaction')(function* runTrans
     return yield* new TransactionAborted({ reason: admitted.aborted });
   }
   const { captured, ledger } = state;
+  let deniedHere = false;
+  const owner = observingDenial(state.owner, () => {
+    deniedHere = true;
+    ledger.ownerDenied = true;
+  });
   const opened = state.ports
-    .open({ execution: transactionExecution(state.execution), sequence: admitted.sequence }, state.owner, body)
+    .open({ execution: transactionExecution(state.execution), sequence: admitted.sequence }, owner, body)
     .pipe(
       // The factory's requirements come from the session; the fiber's own context wins where both hold
       // a service (its span, its references).
       Effect.updateContext((current: Context.Context<R>) => Context.merge(captured, current)),
-      Effect.onError((cause) => recordDenial(ledger, cause)),
       Effect.ensuring(settleTransaction(ledger)),
     );
-  // Forked into the session scope, so closing the session interrupts (and so rolls back) a transaction
+  // Forked into the work scope, so settling the session interrupts (and so rolls back) a transaction
   // still open; interrupting the caller interrupts it as well.
-  const fiber = yield* Effect.forkIn(opened, state.sessionScope);
-  return yield* Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)));
+  const fiber = yield* Effect.forkIn(opened, state.workScope);
+  const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber))));
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
+  }
+  return yield* deniedHere ? Effect.fail(ownerDeniedFrom(exit.cause)) : Effect.failCause(exit.cause);
 });
 
 /* Calls ------------------------------------------------------------------------------------------ */
@@ -231,13 +262,28 @@ const admitCall = <Services, Calls extends DeclaredCalls, Requirements>(
     return { answer };
   }
   ledger.callsSent += 1;
-  ledger.callsInFlight += 1;
+  ledger.callsInFlight.set(
+    sequence,
+    Object.freeze({ ...localRecord(declared, name, 'Interrupted', placement, sequence), callerKind: 'unknown' }),
+  );
   return { declared, placement, sequence };
 };
 
-const settleCall = (ledger: Ledger) =>
+/**
+ * Accounts for one admitted call exactly once: its executor's record when it reported, otherwise the
+ * record it was admitted with (`Interrupted`) or, for a defect, `Unavailable`.
+ */
+const settleCall = (ledger: Ledger, sequence: number, exit: Exit.Exit<CallExecution>) =>
   Effect.sync(() => {
-    ledger.callsInFlight -= 1;
+    const pending = ledger.callsInFlight.get(sequence);
+    ledger.callsInFlight.delete(sequence);
+    if (Exit.isSuccess(exit)) {
+      ledger.records.push(exit.value.record);
+    } else if (pending !== undefined) {
+      ledger.records.push(
+        Cause.hasInterruptsOnly(exit.cause) ? pending : Object.freeze({ ...pending, outcome: 'Unavailable' as const }),
+      );
+    }
   });
 
 const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Calls extends DeclaredCalls, Requirements>(
@@ -254,7 +300,8 @@ const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Call
     return admitted.answer;
   }
   const { execution, ledger } = state;
-  const executed = yield* state.ports
+  const { sequence } = admitted;
+  const executing = state.ports
     .execute({
       declared: admitted.declared,
       execution: {
@@ -265,10 +312,12 @@ const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Call
       input,
       name,
       placement: admitted.placement,
-      sequence: admitted.sequence,
+      sequence,
     })
-    .pipe(Effect.ensuring(settleCall(ledger)));
-  ledger.records.push(executed.record);
+    .pipe(Effect.onExit((exit) => settleCall(ledger, sequence, exit)));
+  // Forked into the work scope, so settling the session interrupts a call still in flight and accounts for it.
+  const fiber = yield* Effect.forkIn(executing, state.workScope);
+  const executed = yield* Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)));
   return executed.outcome;
 });
 
@@ -303,13 +352,26 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
   const captured = yield* Effect.context<Requirements>();
   const sessionScope = yield* Scope.Scope;
   const startedAt = yield* Clock.currentTimeMillis;
-  // Authority before module code: no session exists for an execution its owner rule denies.
-  yield* ports.checkOwner({ execution: transactionExecution(execution), sequence: 0 }, owner);
+  // Authority before module code: no session exists for an execution its owner rule denies, whatever
+  // the rollback of the check left behind.
+  let deniedAtOpen = false;
+  const checkExit = yield* Effect.exit(
+    ports.checkOwner(
+      { execution: transactionExecution(execution), sequence: 0 },
+      observingDenial(owner, () => {
+        deniedAtOpen = true;
+      }),
+    ),
+  );
+  if (Exit.isFailure(checkExit)) {
+    return yield* deniedAtOpen ? Effect.fail(ownerDeniedFrom(checkExit.cause)) : Effect.failCause(checkExit.cause);
+  }
 
+  const workScope = yield* Scope.fork(sessionScope, 'parallel');
   const ledger: Ledger = {
     anyTransactionEnded: false,
     callsAttempted: 0,
-    callsInFlight: 0,
+    callsInFlight: new Map(),
     callsSent: 0,
     closed: false,
     ownerDenied: false,
@@ -329,8 +391,8 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
     ledger,
     owner,
     ports,
-    sessionScope,
     startedAt,
+    workScope,
   };
   const capabilities: ExecutionCapabilities<Services, Calls, Identity> = {
     call: asCallCapability<Calls>((name, ...args) => runCall(state, name, args[0])),
@@ -343,6 +405,18 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
     ),
     capabilities: Object.freeze(capabilities),
     ownerDenied: Effect.sync(() => ledger.ownerDenied),
+    settle: Effect.sync(() => {
+      ledger.closed = true;
+    }).pipe(
+      Effect.andThen(Scope.close(workScope, Exit.void)),
+      // A call admitted but never started (its fiber was interrupted before it ran) reports here.
+      Effect.andThen(
+        Effect.sync(() => {
+          ledger.records.push(...ledger.callsInFlight.values());
+          ledger.callsInFlight.clear();
+        }),
+      ),
+    ),
     transactionCount: Effect.sync(() => ledger.transactions),
   });
 });

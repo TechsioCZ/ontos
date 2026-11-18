@@ -2,6 +2,30 @@
  * The call executor: one declared read call, from requirement to typed outcome. Everything a module
  * assembled by hand before (requirement lookup, caller identity, credential, routing, revision,
  * decoding) is done here once, and every failure is an outcome, never an error of `call`.
+ *
+ * Obligations, in order:
+ *
+ * 1. Requirement: `CallRequirements.resolve(declared.requirementKey, declared.operation,
+ *    execution.callerSource)`. Unresolved is `Unavailable` (`retryable` exactly for `lease_mismatch`).
+ * 2. Caller: a Core provider (`provider.moduleId` starts with `core.`) is `{ kind: 'in_process' }`
+ *    without selection. Otherwise `selectCaller(identity, resolved.callers, { principalId,
+ *    recoveryRequestHash })`, where the hash is `computeCanonicalValueHash(input)` exactly when the
+ *    identity is a recovery request. Not permitted is `Forbidden` with `callerKind: 'refused'`. Never
+ *    another caller kind.
+ * 3. Request: `Schema.encodeUnknownEffect(operation.request)(input)`; a failure is `Unavailable`
+ *    (`retryable: false`).
+ * 4. Route: `Core` goes to `CoreCallRoute`, `Module` to `ModuleCallRoute`, read with
+ *    `Effect.serviceOption`; absent, it dies `ExecutionRuleViolation('module_call_without_route')`
+ *    (the read runtime refuses to start a host whose reads declare module calls without a route, so
+ *    this is unreachable in a correctly built host).
+ * 5. Answer: `Answered` is decoded with `Schema.decodeUnknownEffect(operation.response)`; a decode
+ *    failure is `Unavailable` (`retryable: false`). `Problem` maps by status: 404 `NotFound`; 401 and
+ *    403 `Forbidden`; 409 and 422 `Rejected` with the problem code; 503 `Unavailable(true)`; any other
+ *    status `Unavailable(false)`. `Unreachable` is `Unavailable(true)`.
+ * 6. One `CallRecord` with timing; logged with the scope's correlation id, never the payload.
+ *
+ * Write calls never reach it: the session dies `write_call_reserved` first. The Action adapter will
+ * define their outcome mapping together with a provider marker for a committed refusal.
  */
 import { Clock, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 

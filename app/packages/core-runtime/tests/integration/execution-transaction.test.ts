@@ -377,6 +377,19 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
     }),
   );
 
+  suite.effect('a query prepared inside the body and evaluated after it dies transaction_ended', () =>
+    Effect.gen(function* preparedAfterBody() {
+      const { admin, runtime } = yield* kernelClients;
+      const { scope } = yield* insertFixture(admin);
+      const transactions = yield* kernelTransactionsFor(runtime);
+      const { prepared } = yield* transactions.open(request(scope), owner().binding, (services) =>
+        Effect.succeed({ prepared: services.executor.select().from(dataAccessEvents) }),
+      );
+      const exit = yield* Effect.exit(Effect.suspend(() => prepared));
+      expect(violationRules(exit)).toEqual(['transaction_ended']);
+    }),
+  );
+
   suite.effect('the owner check rolls back while a transaction commits', () =>
     Effect.gen(function* checkOwnerRollsBack() {
       const { admin, runtime } = yield* kernelClients;

@@ -22,8 +22,9 @@ import type { KernelExecution, KernelSession, OwnerBinding } from './contract.ts
  *   die `call_inside_transaction`. If the ledger holds an owner denial, fail
  *   `TransactionAborted('owner_denied')` without opening one. If the budget is spent, fail
  *   `TransactionAborted('budget_exhausted')`. Otherwise mark open, run `KernelTransactions.open` with
- *   `sequence` = count + 1, record an `owner_denied` it fails with in the ledger, and clear the open
- *   flag when it ends in any way (success, failure, defect, interruption).
+ *   `sequence` = count + 1, record an owner denial in the ledger when the owner rule answers it (so a
+ *   failing rollback cannot lose it; the transaction then fails `TransactionAborted('owner_denied')`),
+ *   and clear the open flag when it ends in any way (success, failure, defect, interruption).
  * - `capabilities.call(name, ...args)`: if a transaction is open, die `call_inside_transaction`. If
  *   `name` is not an own key of `execution.calls`, die `undeclared_call`. If the declared call is a
  *   write call, die `write_call_reserved`. If the ledger holds an owner denial, answer `Forbidden`
@@ -33,11 +34,12 @@ import type { KernelExecution, KernelSession, OwnerBinding } from './contract.ts
  *   `KernelCalls.execute`, record its record, return its outcome.
  * - Calls may run concurrently with each other (`Effect.forEach` with concurrency in module code).
  *   The checks above are made atomically against the ledger.
- * - Closing the scope closes the session: any later use of a capability dies
- *   `capability_after_execution`; an open transaction is interrupted, which rolls it back.
+ * - `settle` (and closing the scope) closes the session: any later use of a capability dies
+ *   `capability_after_execution`; an open transaction is interrupted, which rolls it back; a call in
+ *   flight is interrupted and recorded `Interrupted`.
  * - `capabilities.execution` is `execution.facts` unchanged.
  */
-export interface KernelSessionsService {
+interface KernelSessionsService {
   readonly open: <Services, Calls extends DeclaredCalls, Requirements, Identity extends ExecutionIdentity>(
     execution: KernelExecution<Calls, Identity>,
     owner: OwnerBinding<Services, Requirements>,
