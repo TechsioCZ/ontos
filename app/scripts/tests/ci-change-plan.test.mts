@@ -754,9 +754,10 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
 /** The workflow id and run id of the recorded push run that plans; the lookup reads only this workflow. */
 const PUSH_WORKFLOW_ID = 342_952_200;
 const PUSH_RUN_ID = 44_400_000_000;
-const PUSH_BRANCH = 'trunk';
+/** A branch name that would end the query parameter early if pasted into the URL. */
+const PUSH_BRANCH = 'release/fix&docs';
 const RUN_LOOKUP = `api repos/TechsioCZ/ontos/actions/runs/${PUSH_RUN_ID} --jq .workflow_id`;
-const RUNS_LIST = `api repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs?branch=${PUSH_BRANCH}&event=push&per_page=100`;
+const RUNS_LIST = `api --method GET repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs -f branch=${PUSH_BRANCH} -f event=push -f per_page=100`;
 /** One recorded workflow run as the list endpoint returns it, newest first; only the fields the lookup reads. */
 interface RecordedRun {
   readonly conclusion: string | null;
