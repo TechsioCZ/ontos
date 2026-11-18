@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect } from 'effect';
+import { ConfigProvider, Effect, Logger } from 'effect';
 import { beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
@@ -269,3 +269,34 @@ it.effect('tears down stale authenticated data when tenant context requires auth
     });
   }),
 );
+
+it.effect('logs the collapsed server failure once with correlation and no session data', () => {
+  const entries: string[] = [];
+  const logger = Logger.layer([
+    Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options)))),
+  ]);
+  return Effect.gen(function* reportsServerFailure() {
+    rstest.stubGlobal('window', null);
+    try {
+      currentSessionMock.mockReturnValueOnce(
+        Effect.fail({ _tag: 'AuthenticationUnavailableProblem', detail: 'private-session-detail' }),
+      );
+      expect(
+        yield* loadModel({
+          request: new Request('https://shell.example.test/en', {
+            headers: { cookie: 'private-session-cookie', 'x-correlation-id': 'browser-reload-123' },
+          }),
+        }),
+      ).toEqual({ state: 'unavailable' });
+      expect(entries).toHaveLength(1);
+      expect(JSON.parse(entries[0] ?? '')).toMatchObject({
+        annotations: { correlationId: 'browser-reload-123', errorTag: 'AuthenticationUnavailableProblem' },
+        level: 'ERROR',
+        message: 'Authenticated Shell home loader failed',
+      });
+      expect(entries.join('')).not.toContain('private-session');
+    } finally {
+      rstest.unstubAllGlobals();
+    }
+  }).pipe(Effect.provide(logger));
+});

@@ -11,6 +11,7 @@ import type {
 } from '../../../shared/browser-api.ts';
 import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
 import type { AvailableTenantsClientError } from '../../api/auth-client.ts';
+import { reportHomeLoaderFailure } from '../../api/loader-diagnostics.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
@@ -183,36 +184,42 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       }),
     );
   },
-  Effect.matchEffect({
-    onFailure: (error) =>
-      Effect.succeed<HomePageModel>(
-        Match.value(error).pipe(
-          Match.tag('InvalidCredentialsProblem', () => anonymousModel),
-          Match.tag('DocumentCompositionRevisionError', 'ShellReloadRequiredProblem', () => reloadRequiredModel),
-          Match.tag(
-            'AuthenticationInternalProblem',
-            'AuthenticationUnavailableProblem',
-            'ConfigError',
-            'HttpClientError',
-            'OntosIdentityForbiddenProblem',
-            'SchemaError',
-            'ShellAuthenticationRequiredProblem',
-            'ShellCapabilityUnavailableProblem',
-            'ShellInternalProblem',
-            'ShellInvalidRequestProblem',
-            'ShellPolicyConflictProblem',
-            'ShellPolicyUnprocessableProblem',
-            'ShellPreconditionRequiredProblem',
-            'ShellRateLimitedProblem',
-            'ShellTargetForbiddenProblem',
-            'ShellTargetNotFoundProblem',
-            () => unavailableModel,
-          ),
-          Match.exhaustive,
-        ),
-      ),
-    onSuccess: Effect.succeed,
-  }),
+  (effect, request: Request) =>
+    effect.pipe(
+      Effect.matchEffect({
+        onFailure: Effect.fn('HomePageModel.reportUnavailableHome')(function* reportUnavailableHome(problem) {
+          const model = Match.value(problem).pipe(
+            Match.tag('InvalidCredentialsProblem', () => anonymousModel),
+            Match.tag('DocumentCompositionRevisionError', 'ShellReloadRequiredProblem', () => reloadRequiredModel),
+            Match.tag(
+              'AuthenticationInternalProblem',
+              'AuthenticationUnavailableProblem',
+              'ConfigError',
+              'HttpClientError',
+              'OntosIdentityForbiddenProblem',
+              'SchemaError',
+              'ShellAuthenticationRequiredProblem',
+              'ShellCapabilityUnavailableProblem',
+              'ShellInternalProblem',
+              'ShellInvalidRequestProblem',
+              'ShellPolicyConflictProblem',
+              'ShellPolicyUnprocessableProblem',
+              'ShellPreconditionRequiredProblem',
+              'ShellRateLimitedProblem',
+              'ShellTargetForbiddenProblem',
+              'ShellTargetNotFoundProblem',
+              () => unavailableModel,
+            ),
+            Match.exhaustive,
+          );
+          if (model.state === 'unavailable') {
+            yield* reportHomeLoaderFailure(problem, request);
+          }
+          return model;
+        }),
+        onSuccess: Effect.succeed,
+      }),
+    ),
 );
 
 export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
