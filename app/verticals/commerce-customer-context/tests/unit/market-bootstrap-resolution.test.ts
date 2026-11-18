@@ -7,6 +7,8 @@ import {
   EligibleMarketTuplesResponseSchema,
   ResolveCommerceMarketResponseSchema,
 } from '@app/commerce-market-catalog/api/client';
+import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -18,7 +20,10 @@ import {
   MarketBootstrapResolutionRequestSchema,
   resolveMarketBootstrapPolicy,
 } from '../../shared/domain/market-bootstrap-resolution.ts';
-import { handleMarketBootstrapResolution } from '../../src/api/market-bootstrap-resolution.read.ts';
+import {
+  handleMarketBootstrapResolution,
+  marketBootstrapResolutionRead,
+} from '../../src/api/market-bootstrap-resolution.read.ts';
 import type { MarketBootstrapResolutionServices } from '../../src/api/market-bootstrap-resolution.read.ts';
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread -- Test fixtures preserve exact optional schema fields. */
@@ -331,7 +336,27 @@ describe('Market bootstrap policy resolution', () => {
   });
 });
 
+const marketBootstrapServiceFactory = getReadServiceFactory(marketBootstrapResolutionRead);
+type MarketBootstrapReadTransaction = Parameters<typeof marketBootstrapServiceFactory>[0];
+const refuseInvoke: MarketBootstrapReadTransaction['invoke'] = () =>
+  Effect.die('building the services must not invoke persistence');
+
 describe('Governed Market bootstrap resolution', () => {
+  it.effect('keeps the remote Market owner out of the services its read transactions receive', () =>
+    Effect.gen(function* databaseOnlyReadServices() {
+      // `finish`'s owner transaction receives exactly this factory's output while a database transaction is
+      // open, so it must hold no remote port (D14); the Market owner calls are built in `finish` itself.
+      const services = yield* marketBootstrapServiceFactory(
+        // SAFETY: building the services issues no statement; the policy repository only closes over `invoke`.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Scoped transaction behavior beyond `invoke` is unreachable while the services are only built.
+        { invoke: refuseInvoke } as MarketBootstrapReadTransaction,
+        scope,
+        'a'.repeat(64),
+      ).pipe(Effect.provide(nodeCryptoLayer));
+      expect(Object.keys(services)).toEqual(['loadPolicyCandidates']);
+    }),
+  );
+
   it.effect('preserves valid and invalid explicit selections without loading policy or falling back', () =>
     Effect.gen(function* explicitSelectionIsFinal() {
       const explicitRequest = request({

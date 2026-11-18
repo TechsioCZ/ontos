@@ -64,9 +64,11 @@ export interface ReadPrepareContext {
  * waited on a remote call refuses the Read (`ReadPermissionDenied` or `ReadPermissionUnavailable`, and Core refuses
  * the Read even if `finish` handles that failure). The callback then receives the owner's read services, built by
  * the same factory as `load`, never a database executor, and the transaction is READ ONLY in the database from that
- * point, so `finish` can read owner state but cannot write it. A failure of the transaction itself (database, scope,
- * composition fence, service factory) is `ReadHandlerUnavailable`; the callback's own typed failures reach `finish`
- * unchanged.
+ * point, so `finish` can read owner state but cannot write it. Because the callback runs while this transaction is
+ * open, the read service factory of a staged Read builds database services only; its remote owner ports are built
+ * in `prepare` or `finish`, outside any transaction. A failure of the transaction itself (database, scope,
+ * composition fence, service factory) and a lost database connection under the callback are
+ * `ReadHandlerUnavailable`; the callback's other failures reach `finish` unchanged.
  */
 export type ReadOwnerTransaction<Services> = <Value, Failure, Requirements>(
   use: (services: Services) => Effect.Effect<Value, Failure, Requirements>,

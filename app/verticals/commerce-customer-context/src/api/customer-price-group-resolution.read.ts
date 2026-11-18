@@ -11,7 +11,6 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { OperationalScope, ReadFinishContext, ReadLoadContext } from '@app/core-runtime';
-import type { Crypto } from 'effect';
 import { DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
@@ -42,11 +41,18 @@ import { customerPriceGroupOwnerFacts } from './customer-price-group-read-permis
 
 const CUSTOMER_CONTEXT_MODULE_ID = 'commerce.customer-context' as const;
 
-export interface CustomerPriceGroupResolutionServices {
-  readonly catalog: PriceGroupCatalogPort;
+/**
+ * What the Read's own transactions receive: `load` and every `finish` owner transaction. Only database services,
+ * because no remote call runs while a database transaction is open (D14); the Catalog is built in `finish`.
+ */
+export interface CustomerPriceGroupResolutionOwnerServices {
   readonly now: Effect.Effect<PriceGroupInstant>;
   readonly profileValidation: CustomerPriceGroupProfileValidationPort;
   readonly store: CustomerPriceGroupAssignmentStorePort;
+}
+
+export interface CustomerPriceGroupResolutionServices extends CustomerPriceGroupResolutionOwnerServices {
+  readonly catalog: PriceGroupCatalogPort;
 }
 
 const notFound = () =>
@@ -113,7 +119,7 @@ export const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResol
   function* loadSnapshot(
     input: CustomerPriceGroupResolutionRequest,
     tenantId: string,
-    services: Omit<CustomerPriceGroupResolutionServices, 'catalog'>,
+    services: CustomerPriceGroupResolutionOwnerServices,
   ) {
     if (input.profile.tenantId !== tenantId) {
       return yield* notFound();
@@ -147,7 +153,7 @@ export const recheckCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupRe
   function* recheckSnapshot(
     input: CustomerPriceGroupResolutionRequest,
     tenantId: string,
-    services: Omit<CustomerPriceGroupResolutionServices, 'catalog'>,
+    services: CustomerPriceGroupResolutionOwnerServices,
     expected: CustomerPriceGroupSnapshot,
   ) {
     const current = yield* loadCustomerPriceGroupSnapshot(
@@ -267,7 +273,7 @@ export const customerPriceGroupResolutionServicesForTransaction = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope,
   compositionRevision: string | undefined,
-): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable, Crypto.Crypto> => {
+): Effect.Effect<CustomerPriceGroupResolutionOwnerServices, OperationContextUnavailable> => {
   if (compositionRevision === undefined) {
     return Effect.fail(
       new OperationContextUnavailable({
@@ -286,14 +292,10 @@ export const customerPriceGroupResolutionServicesForTransaction = (
     );
   }
   const trustedScope = { ...scope, legalEntityId };
-  return Effect.gen(function* makeCustomerPriceGroupResolutionServices() {
-    const requiredCatalog = yield* customerPriceGroupCatalogForScope(scope);
-    return {
-      catalog: requiredCatalog,
-      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-      profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
-      store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
-    };
+  return Effect.succeed({
+    now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+    profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
+    store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
   });
 };
 
@@ -331,11 +333,11 @@ export const customerPriceGroupResolutionRead = defineRead(
   {
     load: (
       input: CustomerPriceGroupResolutionRequest,
-      context: ReadLoadContext<CustomerPriceGroupResolutionServices>,
+      context: ReadLoadContext<CustomerPriceGroupResolutionOwnerServices>,
     ) => loadCustomerPriceGroupSnapshot(input, context.scope.tenantId, context.services),
     finish: Effect.fn('CustomerPriceGroupResolution.finish')(function* finish(
       input: CustomerPriceGroupResolutionRequest,
-      context: ReadFinishContext<undefined, CustomerPriceGroupSnapshot, CustomerPriceGroupResolutionServices>,
+      context: ReadFinishContext<undefined, CustomerPriceGroupSnapshot, CustomerPriceGroupResolutionOwnerServices>,
     ) {
       const { scope } = context;
       const catalog = yield* customerPriceGroupCatalogForScope(scope);

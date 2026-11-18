@@ -44,6 +44,7 @@ import {
 import { removeCounterpartyPriceGroupAction } from '../../src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerPriceGroupAction } from '../../src/actions/remove-customer-price-group.action.ts';
 import {
+  customerPriceGroupCatalogForScope,
   customerPriceGroupResolutionRead,
   customerPriceGroupResolutionServicesForTransaction,
 } from '../../src/api/customer-price-group-resolution.read.ts';
@@ -126,10 +127,25 @@ it.effect('attaches every Price Group Action and the governed resolution Read to
     expect(getReadServiceFactory(customerPriceGroupResolutionRead)).toBe(
       customerPriceGroupResolutionServicesForTransaction,
     );
-    const readFactorySource = customerPriceGroupResolutionServicesForTransaction.toString();
-    expect(readFactorySource).toContain('customerPriceGroupCatalogForScope');
-    expect(yield* readResolutionSource).toContain('priceGroupCatalogPortFromEnvironment');
-    expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
+    // The Read's own transactions never hold the Catalog; `finish` builds the production Catalog after commit.
+    const readSource = yield* readResolutionSource;
+    expect(customerPriceGroupResolutionServicesForTransaction.toString()).not.toContain('Catalog');
+    expect(readSource).toMatch(/function\* finish\([^]*?yield\* customerPriceGroupCatalogForScope\(scope\)/u);
+    expect(readSource).toContain('priceGroupCatalogPortFromEnvironment');
+    expect(readSource).not.toContain('unavailablePriceGroupCatalogPort');
+  }),
+);
+
+it.effect('keeps the remote Price Group Catalog out of the services every read transaction receives', () =>
+  Effect.gen(function* databaseOnlyReadServices() {
+    // `load` and every `finish` owner transaction receive exactly this factory's output while a database
+    // transaction is open, so it must hold no remote port (D14); the Catalog is built in `finish` itself.
+    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
+      priceGroupInvoker,
+      scope,
+      compositionRevision,
+    ).pipe(Effect.provide(constructionWithoutDelegation));
+    expect(new Set(Object.keys(readServices))).toEqual(new Set(['now', 'profileValidation', 'store']));
   }),
 );
 
@@ -148,14 +164,12 @@ it.effect('creates a fresh catalog adapter for every governed Action and Read at
     const secondActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
       Effect.provide(constructionWithoutDelegation),
     );
-    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(constructionWithoutDelegation));
+    const readCatalog = yield* customerPriceGroupCatalogForScope(scope).pipe(
+      Effect.provide(constructionWithoutDelegation),
+    );
 
     expect(firstActionServices.catalog).not.toBe(secondActionServices.catalog);
-    expect(readServices.catalog).not.toBe(firstActionServices.catalog);
+    expect(readCatalog).not.toBe(firstActionServices.catalog);
   }),
 );
 
@@ -203,15 +217,13 @@ it.effect('sends the verified request scope to the catalog as an Assertion subje
       cause: { cause: { reason: 'Verified gateway scope is required to act for the requester' } },
     });
 
-    // The Read gates its catalog behind the module operation requirement, which only a genuine Read execution
+    // The Read's `finish` gates its catalog behind the module operation requirement, which only a genuine Read execution
     // satisfies; its port is built with the same Assertion subject.
-    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(Layer.mergeAll(nodeCryptoLayer, delegatedCallerConfiguration)));
+    const readCatalog = yield* customerPriceGroupCatalogForScope(scope).pipe(
+      Effect.provide(Layer.mergeAll(nodeCryptoLayer, delegatedCallerConfiguration)),
+    );
     const readFailure = yield* Effect.flip(
-      readServices.catalog
+      readCatalog
         .resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt)
         .pipe(Effect.provide(delegatedCallerConfiguration)),
     );
