@@ -17,12 +17,18 @@ import {
 import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 import {
+  declaresModuleCalls,
   gatewayModuleBindingsProblem,
   OWNER_RUNTIME_CONFIGURATIONS,
   SHELL_CREDENTIAL_VARIABLES,
   requestServiceHoldsModuleCredential,
   SHELL_GATEWAY_BASE_URL_VARIABLE,
 } from '../ops/owner-runtime-configuration.mts';
+
+const { deriveOntosModuleDeploymentContract } = await import(
+  /* webpackIgnore: true */
+  '../generate-ontos-module-contract.mts'
+);
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
@@ -184,8 +190,8 @@ const verticalSourceFiles = (directory: string): readonly string[] =>
     .filter((file) => /\.m?ts$/u.test(file) && !file.split('/').includes('tests') && !/\.test\./u.test(file))
     .map((file) => path.join(directory, file));
 
-/** The vertical units whose production code calls another module through the delegated gateway client. */
-const delegatedCallerUnits = (): readonly string[] => {
+/** The vertical units whose production code still calls another module through the delegated gateway client. */
+const gatewayClientCallerUnits = (): readonly string[] => {
   const verticals = fileURLToPath(new URL('../../verticals/', import.meta.url));
   const callers = new Set(
     verticalSourceFiles(verticals)
@@ -201,46 +207,88 @@ const delegatedCallerUnits = (): readonly string[] => {
   return EffectArray.sort([...callers], Order.String);
 };
 
-it('gives every module that calls another module its own module credential, and no other module one', () => {
-  const environments = serviceEnvironments();
-  const setups = new Set(environments.keys());
-  const configured = EffectArray.sort(
-    OWNER_RUNTIME_CONFIGURATIONS.map(({ unitId }) => unitId),
+const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
+const TopologySchema = Schema.fromJsonString(
+  Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })) }),
+);
+
+/** The vertical units whose built module contract declares a call to another module (`declaresModuleCalls`). */
+const declaredCallerUnits = Effect.fn('DeploymentContract.declaredCallerUnits')(function* declaredCallerUnits() {
+  const topology = Schema.decodeUnknownSync(TopologySchema)(
+    readFileSync(path.join(workspaceRoot, 'topology/reference-topology.json'), 'utf-8'),
+  );
+  const contracts = yield* Effect.forEach(
+    topology.verticals,
+    ({ path: verticalPath }) =>
+      deriveOntosModuleDeploymentContract({ vertical: path.basename(verticalPath), workspaceRoot }),
+    { concurrency: 2 },
+  );
+  return EffectArray.sort(
+    contracts.filter(({ manifest }) => declaresModuleCalls(manifest)).map(({ deployment }) => deployment.appId),
     Order.String,
   );
-
-  expect(configured).toStrictEqual(delegatedCallerUnits());
-  for (const configuration of OWNER_RUNTIME_CONFIGURATIONS) {
-    const { credentialVariables, moduleCredentialVariable, operatorValues, unitId } = configuration;
-    const expected = ownerRuntimeSetups(unitId, setups);
-    const moduleReference = `\${migrator_${moduleCredentialVariable}}`;
-    const moduleHolders = [...environments]
-      .filter(([, environment]) => environment.ONTOS_GATEWAY_MODULE_API_KEY === moduleReference)
-      .map(([setup]) => setup);
-    // A `worker-only` unit's request service receives no module credential; its Outbox Worker alone holds it.
-    expect(moduleHolders).toStrictEqual(
-      requestServiceHoldsModuleCredential(configuration) ? expected : expected.filter((setup) => setup !== unitId),
-    );
-    // Only the deployments that hold the module credential call other modules, so only they get the Shell base.
-    for (const setup of moduleHolders) {
-      expect(environments.get(setup)?.[SHELL_GATEWAY_BASE_URL_VARIABLE]).toContain(
-        'shellsuperapp:3020/shell-super-app-api',
-      );
-    }
-    const secretHolders = secretHolderSetups(unitId, setups);
-    for (const key of [...credentialVariables, ...operatorValues.map(({ variable }) => variable)]) {
-      const holders = [...environments]
-        .filter(([, environment]) =>
-          Object.entries(environment).some(([name, value]) => name === key || value.includes(key)),
-        )
-        .map(([setup]) => setup);
-      expect(holders).toStrictEqual(secretHolders);
-      for (const setup of secretHolders) {
-        expect(environments.get(setup)?.[key]).toBe(`\${migrator_${key}}`);
-      }
-    }
-  }
 });
+
+it('counts a module as a caller by its declared requirement callers or registered-workload calls', () => {
+  const requirement = {};
+  expect(declaresModuleCalls({})).toBe(false);
+  expect(declaresModuleCalls({ requirements: { operations: [requirement] } })).toBe(false);
+  expect(declaresModuleCalls({ requirements: { operations: [{ ...requirement, callers: [] }] } })).toBe(false);
+  expect(
+    declaresModuleCalls({ requirements: { operations: [{ ...requirement, callers: [{ kind: 'person' }] }] } }),
+  ).toBe(true);
+  expect(declaresModuleCalls({ registeredWorkloadCalls: [{ workloadKey: 'commerce.catalog.read' }] })).toBe(true);
+});
+
+it.live(
+  'gives every module that calls another module its own module credential, and no other module one',
+  () =>
+    Effect.gen(function* everyCallerHoldsItsCredential() {
+      const declared = yield* declaredCallerUnits();
+      // The SDK callers carry no gateway client import; their manifests alone show the call.
+      expect(declared).toEqual(expect.arrayContaining(['commerce-customer-context', 'commerce-market-catalog']));
+      const callers = EffectArray.sort(new Set([...declared, ...gatewayClientCallerUnits()]), Order.String);
+      const environments = serviceEnvironments();
+      const setups = new Set(environments.keys());
+      const configured = EffectArray.sort(
+        OWNER_RUNTIME_CONFIGURATIONS.map(({ unitId }) => unitId),
+        Order.String,
+      );
+
+      expect(configured).toStrictEqual(callers);
+      for (const configuration of OWNER_RUNTIME_CONFIGURATIONS) {
+        const { credentialVariables, moduleCredentialVariable, operatorValues, unitId } = configuration;
+        const expected = ownerRuntimeSetups(unitId, setups);
+        const moduleReference = `\${migrator_${moduleCredentialVariable}}`;
+        const moduleHolders = [...environments]
+          .filter(([, environment]) => environment.ONTOS_GATEWAY_MODULE_API_KEY === moduleReference)
+          .map(([setup]) => setup);
+        // A `worker-only` unit's request service receives no module credential; its Outbox Worker alone holds it.
+        expect(moduleHolders).toStrictEqual(
+          requestServiceHoldsModuleCredential(configuration) ? expected : expected.filter((setup) => setup !== unitId),
+        );
+        // Only the deployments that hold the module credential call other modules, so only they get the Shell base.
+        for (const setup of moduleHolders) {
+          expect(environments.get(setup)?.[SHELL_GATEWAY_BASE_URL_VARIABLE]).toContain(
+            'shellsuperapp:3020/shell-super-app-api',
+          );
+        }
+        const secretHolders = secretHolderSetups(unitId, setups);
+        for (const key of [...credentialVariables, ...operatorValues.map(({ variable }) => variable)]) {
+          const holders = [...environments]
+            .filter(([, environment]) =>
+              Object.entries(environment).some(([name, value]) => name === key || value.includes(key)),
+            )
+            .map(([setup]) => setup);
+          expect(holders).toStrictEqual(secretHolders);
+          for (const setup of secretHolders) {
+            expect(environments.get(setup)?.[key]).toBe(`\${migrator_${key}}`);
+          }
+        }
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  { timeout: 600_000 },
+);
 
 /** The hosted owners whose workers hold a module credential, with the host entry binding of each. */
 const HOSTED_OWNER_CREDENTIALS = [
