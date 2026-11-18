@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -155,8 +155,10 @@ it('reports the required Workspace gates check on every pull request and merge g
 /** A GitHub Actions `${{ … }}` expression, written without JavaScript template placeholders. */
 const expression = (body: string) => `\${{ ${body} }}`;
 const CURRENT_SOURCE_REVISION = expression('github.sha');
+const GITHUB_TOKEN_EXPRESSION = expression('github.token');
 
 const WorkflowStepSchema = Schema.Struct({
+  'continue-on-error': Schema.optional(Schema.Boolean),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   id: Schema.optional(Schema.String),
   if: Schema.optional(Schema.String),
@@ -216,8 +218,15 @@ const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
  * bootstrap proof in front of the integration wave before it became a row.
  */
 const BACKEND_ARTIFACT_CONDITION = "matrix.suite == 'bootstrap' || matrix.suite == 'integration'";
-const BACKEND_ARTIFACT_DOWNLOAD_STEP = 'Download the same-run Node artifacts for native owner fixtures';
-const BACKEND_ARTIFACT_UNPACK_STEP = 'Unpack the Node artifacts for native owner fixtures';
+const BACKEND_ARTIFACT_DOWNLOAD_STEP = 'Download and unpack the same-run Node artifacts for native owner fixtures';
+const BACKEND_ARTIFACT_UNPACK_STEP = 'Wait for the same-run Node artifacts for native owner fixtures';
+const NATIVE_ARTIFACTS_STEP_ID = 'native-artifacts';
+const START_INTEGRATION_SERVICES_STEP = 'Start fresh PostgreSQL and SpiceDB services';
+const BACKEND_ARTIFACT_DOWNLOAD_COMMAND = [
+  `gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern '${NODE_BUILD_ARTIFACT_PATTERN}' --dir "$RUNNER_TEMP/native-composition-units"`,
+  UNPACK_NATIVE_ARTIFACTS_COMMAND,
+  '',
+].join('\n');
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 /** The integration matrix row that proves the built topology of every delivery unit. */
 const NODE_PROOF_SUITE = BOOTSTRAP_SUITE;
@@ -622,7 +631,7 @@ it('tells the planner whether a push has a merge queue from the queue-proof job,
   expect(plan.permissions).toEqual({ actions: 'read', contents: 'read' });
   const classify = plan.steps.find(({ id }) => id === 'changes');
   expect(classify?.env?.QUEUE_PROOF).toBe(expression('needs.queue-proof.result'));
-  expect(classify?.env?.GH_TOKEN).toBe(expression('github.token'));
+  expect(classify?.env?.GH_TOKEN).toBe(GITHUB_TOKEN_EXPRESSION);
   // Two commits for a pull request and a push behind the queue as before; a merge group and a push the
   // queue-proof job skipped read the whole history, without file contents.
   const checkout = plan.steps.find(({ name }) => name === 'Checkout the exact comparison history');
@@ -1364,6 +1373,83 @@ const shardFilters = (shard: { readonly tasks?: readonly string[] | undefined })
 const rootRow = (shard: { readonly tasks?: readonly string[] | undefined }) =>
   (shard.tasks ?? []).some((task) => task.startsWith('root:'));
 
+it('overlaps independent integration preparations and joins their failures before the first consumer', () => {
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
+  const { steps } = jobs[OWNER_INTEGRATION_JOB];
+  const named = (name: string) => steps.findIndex((step) => step.name === name);
+  const install = named(INSTALL_APP_STEP);
+  expect(steps[install]?.background).toBeUndefined();
+  const tls = named('Create the local SpiceDB TLS certificate');
+  const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
+  const services = named(START_INTEGRATION_SERVICES_STEP);
+  for (const [id, consumer] of [
+    ['integration-images', Math.min(workers, services)],
+    [NATIVE_ARTIFACTS_STEP_ID, named('Derive the fresh built Composition for native owner fixtures')],
+  ] as const) {
+    const launch = steps.findIndex((step) => step.id === id);
+    const joins = steps.filter((step) => step.wait === id);
+    const join = steps.findIndex((step) => step.wait === id);
+    expect(launch).toBeGreaterThan(-1);
+    expect(steps[launch]?.background).toBe(true);
+    expect(steps[launch]?.['continue-on-error']).toBeUndefined();
+    // Native wait propagates the background shell's exit code and keeps its output in the step log.
+    expect(joins).toHaveLength(1);
+    expect(joins[0]?.if).toBeUndefined();
+    expect(joins[0]?.['continue-on-error']).toBeUndefined();
+    expect(launch < join && join < consumer).toBe(true);
+    expect(launch < install && install < join).toBe(true);
+  }
+  expect(install < tls && tls < workers && tls < services).toBe(true);
+  const artifactsReady = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
+  for (const consumer of [
+    'Generate federated types and check performance readiness over every unit',
+    'Prove Node backend-federation artifacts',
+    'Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry',
+  ]) {
+    expect(artifactsReady).toBeLessThan(named(consumer));
+  }
+
+  const unpackOutput = 'bash preparation output';
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-integration-preparation-'));
+  try {
+    for (const command of ['gh', 'docker', 'bash']) {
+      const executable = path.join(directory, command);
+      writeFileSync(executable, `#!/bin/sh\necho "${command} preparation output" >&2\nexit "$PREP_${command}"\n`);
+      chmodSync(executable, 0o755);
+    }
+    // Run the real background shell bodies with failing external commands: neither a failed download,
+    // image pull nor unpack may become a successful step for the native wait to join.
+    for (const [id, gh, docker, unpack, status, output] of [
+      [NATIVE_ARTIFACTS_STEP_ID, '37', '0', '0', 37, 'gh preparation output'],
+      [NATIVE_ARTIFACTS_STEP_ID, '0', '0', '43', 43, unpackOutput],
+      ['integration-images', '0', '29', '0', 29, 'docker preparation output'],
+      [NATIVE_ARTIFACTS_STEP_ID, '0', '0', '0', 0, unpackOutput],
+    ] as const) {
+      const step = steps.find((candidate) => candidate.id === id);
+      const result = spawnSync('/bin/bash', ['-eo', 'pipefail', '-c', step?.run ?? 'exit 0'], {
+        cwd: directory,
+        encoding: 'utf-8',
+        env: {
+          GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+          GITHUB_RUN_ID: '123',
+          PATH: `${directory}:${STEP_PATH}`,
+          PREP_bash: unpack,
+          PREP_docker: docker,
+          PREP_gh: gh,
+          RUNNER_TEMP: directory,
+        },
+      });
+      expect(result.status).toBe(status);
+      expect(result.stderr).toContain(output);
+      if (gh !== '0') {
+        expect(result.stderr).not.toContain(unpackOutput);
+      }
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 it('runs retained-release browser recovery separately with one worker and its publication flag enabled', () => {
   const source: unknown = readGateWorkflow();
   const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[BROWSER_INTEGRATION_JOB];
@@ -1467,13 +1553,13 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(selected.some((shard) => shardFilters(shard).includes('./verticals/pricing'))).toBe(true);
   expect(selected.some((shard) => shardFilters(shard).includes('./verticals/inventory'))).toBe(true);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
-  const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const unpack = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   expect(workers).toBeGreaterThan(-1);
-  expect(workers < download).toBe(true);
+  expect(download < workers).toBe(true);
   expect(rows.flatMap((row) => row.tasks ?? []).filter((task) => task === 'whole:migrations')).toHaveLength(1);
   // Every integration job runs the same steps, each selecting its own by the row's suite.
   for (const job of [SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB] as const) {
@@ -1482,16 +1568,13 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(false);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
-  expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
-  // Omitting a repository, token and run-id keeps the download bound to this workflow run.
-  expect(steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
-  });
-  expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
+  expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
+  // gh explicitly binds the download to this repository and workflow run.
+  expect(steps[download]?.env).toEqual({ GH_TOKEN: GITHUB_TOKEN_EXPRESSION });
+  expect(steps[unpack]?.wait).toBe(NATIVE_ARTIFACTS_STEP_ID);
   expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
   expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[unpack]?.if).toBeUndefined();
   expect(steps[derive]?.if).toBe('matrix.native-composition == true');
   expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(1);
 });
@@ -1531,7 +1614,7 @@ it('proves the built topology of every delivery unit in one row of the integrati
   expect(steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
   expect(bootstrap).toBeLessThan(indexes[0] ?? -1);
   expect(migrations).toBeLessThan(indexes[0] ?? -1);
-  expect(steps[named('Start fresh PostgreSQL and SpiceDB services')]?.if).toBe(
+  expect(steps[named(START_INTEGRATION_SERVICES_STEP)]?.if).toBe(
     "matrix.suite == 'bootstrap' || matrix.suite == 'browser' || matrix.suite == 'database'",
   );
   // The suites never run on this row, and its steps never run on a suite row.
@@ -1539,7 +1622,7 @@ it('proves the built topology of every delivery unit in one row of the integrati
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
 });
 
-it('downloads the bootstrap Node artifacts after its fresh-database proofs, from shards it needs', () => {
+it('prepares the bootstrap Node artifacts during install, from shards it needs', () => {
   const { needs, steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     TOPOLOGY_PROOF_JOB
   ];
@@ -1549,11 +1632,9 @@ it('downloads the bootstrap Node artifacts after its fresh-database proofs, from
   // The bootstrap needs the build shards, so the artifacts exist when it starts and it never waits for them.
   expect(needs).toContain(NODE_ARTIFACT_BUILD_JOB);
   expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  expect(steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
-  });
-  expect(named(BOOTSTRAP_MIGRATOR_STEP)).toBeLessThan(download);
+  expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
+  expect(download).toBeLessThan(named(INSTALL_APP_STEP));
+  expect(named(BOOTSTRAP_MIGRATOR_STEP)).toBeLessThan(unpack);
   expect(download).toBeLessThan(unpack);
   for (const step of steps) {
     if (step.wait !== undefined) {
@@ -1880,7 +1961,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   // Bootstrap ordering is proved end to end: the pre-seeded runtime role goes first, then the real
   // migrator artifact against the scratch cluster, then the migrations, the grant audit and the host.
   const order = [
-    'Start fresh PostgreSQL and SpiceDB services',
+    START_INTEGRATION_SERVICES_STEP,
     'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
     BOOTSTRAP_MIGRATOR_STEP,
     'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
@@ -1907,7 +1988,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   expect(migrations?.if).toBe(NON_BOOTSTRAP_CONDITION);
   expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
   expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_UNPACK_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_UNPACK_STEP)?.if).toBeUndefined();
 });
 
 it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
@@ -1965,23 +2046,20 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   ]);
   expect(ownerRows).toEqual(integration.strategy.matrix.include);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
-  const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const unpack = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
   expect(steps.some(({ run }) => run?.includes('zerops:materialize --app commerce-customer-context') === true)).toBe(
     false,
   );
   const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < tests).toBe(true);
-  expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
-  // No run-id, repository or token override: the artifacts must belong to this workflow run.
-  expect(steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
-  });
-  expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
+  expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
+  // gh explicitly binds the download to this repository and workflow run.
+  expect(steps[download]?.env).toEqual({ GH_TOKEN: GITHUB_TOKEN_EXPRESSION });
+  expect(steps[unpack]?.wait).toBe(NATIVE_ARTIFACTS_STEP_ID);
   expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[unpack]?.if).toBeUndefined();
   // Every owner row restores the same artifacts, which exist when it starts.
   const preproposal = ownerRows.filter((shard) =>
     (shard.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')),
@@ -1994,7 +2072,7 @@ it('refuses root native integration when the same-run build archives are missing
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
   ];
-  const unpack = integration.steps.find(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  const unpack = integration.steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-artifact-step-'));
   try {
     const scripts = path.join(directory, 'scripts');
@@ -2005,7 +2083,7 @@ it('refuses root native integration when the same-run build archives are missing
       readFileSync(new URL('../unpack-unit-build-outputs.sh', import.meta.url), 'utf-8'),
     );
     expect(() =>
-      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', unpack?.run ?? 'exit 0'], {
+      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', unpack?.run?.split('\n').slice(1).join('\n') ?? 'exit 0'], {
         cwd: directory,
         env: { PATH: STEP_PATH, RUNNER_TEMP: directory },
         stdio: ['ignore', 'pipe', 'pipe'],

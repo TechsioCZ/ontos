@@ -833,6 +833,9 @@ jobs:
   # producer they need must have succeeded.
   node-topology-proof:
     name: ${{ matrix.name }}
+    permissions:
+      actions: read
+      contents: read
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     runs-on: *gate-image
@@ -883,6 +886,25 @@ jobs:
       - name: Sample runner pressure until the job ends
         working-directory: app
         run: &sample-runner-pressure nohup bash scripts/ci/sample-runner-pressure.sh "$RUNNER_TEMP/runner-pressure.txt" >/dev/null 2>&1 &
+
+      # Both producers have finished through needs. Hosted Node, gh, tar and zstd need no workspace
+      # install; unpack writes unit build outputs, while install-app restores only node_modules.
+      - name: Download and unpack the same-run Node artifacts for native owner fixtures
+        id: native-artifacts
+        if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
+        background: true
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
+          bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Pull integration service images
+        id: integration-images
+        background: true
+        working-directory: app
+        run: docker compose pull
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
@@ -944,6 +966,11 @@ jobs:
             echo 'SPICEDB_CA_CERT_EOF'
           } >> "$GITHUB_ENV"
 
+      # TLS generation uses installed Effect packages; image pulls and artifact unpacking do not.
+      # Native wait steps fail with the background step's exit code and retain its log.
+      - name: Wait for integration service images
+        wait: integration-images
+
       # An owner row starts its empty worker clusters first; only the restore below reads this run's archive.
       - name: Start each integration worker's own empty PostgreSQL cluster and SpiceDB datastore
         if: matrix.suite == 'integration'
@@ -953,7 +980,7 @@ jobs:
         run: bash scripts/ci/start-integration-workers.sh
 
       # The owner rows need the database producer, so this run's archive exists when they start. The restore
-      # downloads it and loads it into every worker cluster while the Node artifacts below transfer and
+      # downloads it and loads it into every worker cluster while the Node artifacts transfer and
       # unpack; the tests wait for both.
       - name: Restore this run's migrated database into every worker cluster
         id: integration-workers
@@ -1081,22 +1108,10 @@ jobs:
           SPICEDB_DATABASE_PASSWORD: spicedb
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
-      # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
-      # proof row derives the whole Composition from every delivery unit.
-      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
-      # Bootstrap also proves federation, so both backend rows need the build shards and read these exact
-      # outputs; the bootstrap downloads them after its source-only proofs.
-      - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: node-units-*
-          path: ${{ runner.temp }}/native-composition-units
-
-      - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
-        working-directory: app
-        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+      # Every backend row consumes these exact outputs; a missing archive or incomplete topology
+      # fails this join, not a later test. The download and unpack log stays with native-artifacts.
+      - name: Wait for the same-run Node artifacts for native owner fixtures
+        wait: native-artifacts
 
       - name: Wait for the restored worker clusters
         wait: integration-workers
