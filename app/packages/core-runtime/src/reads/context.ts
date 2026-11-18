@@ -1,9 +1,13 @@
 import { Effect, Predicate, Schema } from 'effect';
 
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { OperationContextUnavailable } from '../operations/errors.ts';
+import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
+import type { ReadHandlerExecutionError, ReadHandlerUnavailable } from './errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -18,24 +22,74 @@ export interface ReadEvidenceMetadata {
   readonly resultCount: number;
   readonly resultFingerprintHash?: string;
   readonly resultFingerprintSchema?: string;
+  /** Exact owner-visible record returned by a one-result read; evidence only, never authorization. */
+  readonly targetResource?: {
+    readonly resourceId: string;
+    readonly resourceType: string;
+  };
 }
 
-export interface ReadHandlerContext<Services> {
+/**
+ * What every owner step of a Read knows: the Read, its Core-verified scope, the verified composition,
+ * and the access gate's own answer for this caller's rows and fields.
+ */
+export interface ReadPrepareContext {
+  /** The Core-admitted composition revision, which remote owner calls must carry. */
+  readonly compositionRevision?: string | undefined;
   /**
    * The declared result paths this caller's field grants deny (O17, O25). It is present exactly when
-   * the access gate decided this read, and it is empty when every declared field group is granted,
-   * so an owner can tell a granted answer from a missing one. A row-scoped read applies it to what
-   * its own query matches, orders and reports as well as to the result it returns: a denied surface
-   * takes no part in selecting a candidate, and its rows are still projected out of the payload.
+   * the access gate decided this read, and it is empty when every declared field group is granted, so
+   * an owner can tell a granted answer from a missing one. A row-scoped read applies it to what its
+   * own query matches, orders and reports as well as to the result it returns: a denied surface takes
+   * no part in selecting a candidate, and its rows are still projected out of the payload.
    */
   readonly deniedFieldPaths?: readonly (readonly string[])[];
   /**
    * The owner's row filter for a list, search or report read (D16, O25). It is present exactly when
    * this read is row-scoped and answered by the access gate: the owner applies it inside its own
    * query, so a row the caller may not read never reaches the result. Its absence means the read is
-   * not row-scoped (a detail read) or is not decided by v2 yet. An empty `groups` list means every
-   * row of the scope is visible; the gate never answers an allowed list without a predicate.
+   * not row-scoped (a detail read) or is not decided by v2 yet. An empty `groups` list means every row
+   * of the scope is visible; the gate never answers an allowed list without a predicate.
    */
+  readonly listAccess?: ListAccessPredicate;
+  readonly readKey: string;
+  readonly scope: OperationalScope;
+}
+
+/**
+ * A short owner transaction after commit: admitted by the same composition revision, with the same operational
+ * scope installed, and guarded like the Read's own transaction. It is for evaluations that interleave remote owner
+ * calls with owner-state reads: each owner-state read gets its own short transaction, and no remote call ever runs
+ * while one is open.
+ */
+export type ReadOwnerTransaction = <Value, Failure, Requirements>(
+  use: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
+) => Effect.Effect<
+  Value,
+  Failure | OperationContextUnavailable | ReadHandlerExecutionError | ReadHandlerUnavailable,
+  Requirements
+>;
+
+/**
+ * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
+ * `prepare` has nothing prepared, so its load step may be called without it.
+ */
+export type ReadLoadContext<Services, Prepared = undefined> = ReadPrepareContext & {
+  readonly services: Services;
+} & (undefined extends Prepared ? { readonly prepared?: Prepared } : { readonly prepared: Prepared });
+
+/** The step after commit: what `prepare` established and what `load` read. */
+export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext {
+  readonly loaded: Loaded;
+  readonly prepared: Prepared;
+  readonly transaction: ReadOwnerTransaction;
+}
+
+/** What a single-handler Read receives: the Read, its Core-verified scope, and the scoped owner services. */
+export interface ReadHandlerContext<Services> {
+  /** The declared result paths this caller's field grants deny (O17, O25); see {@link ReadPrepareContext}. */
+  readonly deniedFieldPaths?: readonly (readonly string[])[];
+  /** The owner's row filter for this row-scoped read (D16, O25); see {@link ReadPrepareContext}. */
   readonly listAccess?: ListAccessPredicate;
   readonly readKey: string;
   readonly scope: OperationalScope;
@@ -48,7 +102,13 @@ export interface ReadHandlerResult<Result> {
 }
 
 const sha256 = /^[\da-f]{64}$/u;
-const evidenceKeys = new Set(['queryHash', 'resultCount', 'resultFingerprintHash', 'resultFingerprintSchema']);
+const evidenceKeys = new Set([
+  'queryHash',
+  'resultCount',
+  'resultFingerprintHash',
+  'resultFingerprintSchema',
+  'targetResource',
+]);
 const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
   const failure = new ReadEvidenceValidationError({
     code: 'read_evidence_invalid',
@@ -63,11 +123,18 @@ const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
         writable: false,
       });
 };
+const ReadEvidenceResourceIdSchema = ResourceIdentitySchema.pipe(Schema.brand('ReadEvidenceResourceId'));
 const ReadEvidenceCandidateSchema = Schema.Struct({
   queryHash: Schema.optional(Schema.Unknown),
   resultCount: Schema.Unknown,
   resultFingerprintHash: Schema.optional(Schema.Unknown),
   resultFingerprintSchema: Schema.optional(Schema.Unknown),
+  targetResource: Schema.optionalKey(
+    Schema.Struct({
+      resourceId: ReadEvidenceResourceIdSchema,
+      resourceType: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    }),
+  ),
 });
 
 type ReadEvidenceCandidate = typeof ReadEvidenceCandidateSchema.Type;
@@ -102,8 +169,13 @@ export const validateReadEvidenceMetadata = <Value>(
         resultCount,
         resultFingerprintHash: fingerprintHash,
         resultFingerprintSchema: fingerprintSchema,
+        targetResource,
       } = record;
-      if (Object.keys(record).some((key) => !evidenceKeys.has(key)) || !isValidResultCount(resultCount)) {
+      if (
+        Object.keys(record).some((key) => !evidenceKeys.has(key)) ||
+        !isValidResultCount(resultCount) ||
+        (targetResource !== undefined && resultCount !== 1)
+      ) {
         return Effect.fail(invalidEvidence());
       }
       if (
@@ -130,7 +202,7 @@ export const validateReadEvidenceMetadata = <Value>(
             Predicate.isString(fingerprintSchema),
             'resultFingerprintSchema',
             fingerprintSchema,
-            {},
+            targetResource === undefined ? {} : { targetResource: Object.freeze(targetResource) },
           ),
         ),
       );

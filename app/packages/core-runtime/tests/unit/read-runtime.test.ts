@@ -76,6 +76,8 @@ import {
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
+import type { ReadFinishContext, ReadLoadContext } from '../../src/reads/context.ts';
+import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
@@ -1398,8 +1400,18 @@ it.effect('admits the new active Read revision before scope, service factory, an
         transport: { correlationId: scope.correlationId },
       }),
     ).toEqual(['current']);
-    expect(events).toEqual(['authority_locked', 'scope_installed', 'factory', 'handler', 'transaction_settled']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 1, scopeInstalls: 1 });
+    // The owner transaction installs the read's scope, and the after-commit allowed evidence opens its
+    // own short scoped transaction inside the verified request's fence, so a successful read installs
+    // scope twice.
+    expect(events).toEqual([
+      'authority_locked',
+      'scope_installed',
+      'factory',
+      'handler',
+      'scope_installed',
+      'transaction_settled',
+    ]);
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 1, scopeInstalls: 2 });
     expect(harness.evidence()).toBe(1);
   }),
 );
@@ -1437,7 +1449,9 @@ it.effect('leaves owner-local Reads independent from composition authority queri
         transport: { correlationId: scope.correlationId },
       }),
     ).toEqual(['local']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 1 });
+    // The owner transaction installs the read's scope, and the after-commit allowed evidence opens its
+    // own short scoped transaction, so a successful read installs scope twice.
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 2 });
   }),
 );
 
@@ -2668,7 +2682,9 @@ for (const mode of ['local', 'governed'] as const) {
         expect(harness.authorityCounts()).toEqual({
           authorityLocks: mode === 'governed' ? 1 : 0,
           authorityReads: mode === 'governed' ? 1 : 0,
-          scopeInstalls: 1,
+          // A verified request settles once, around the read and its separate allowed evidence; a local
+          // read's own commit fails before any evidence scope is installed.
+          scopeInstalls: mode === 'governed' ? 2 : 1,
         });
       }),
     );
@@ -3452,7 +3468,8 @@ it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound rec
     expect(result).toEqual({ ...input, legalName: 'Managed Legal Entity', status: 'active' });
     expect(harness.legalEntityReads()).toBe(1);
     expect(harness.evidence()).toBe(1);
-    expect(harness.authorityCounts().authorityLocks).toBe(1);
+    // The admitted revision fences the read transaction and, again, the separate allowed evidence commit.
+    expect(harness.authorityCounts().authorityLocks).toBe(2);
   }),
 );
 
@@ -4355,3 +4372,303 @@ it.effect(
       expect(handlerCalls).toBe(1);
     }),
 );
+
+type StagedReadServices = Readonly<Record<string, never>>;
+const StagedReadInputSchema = Schema.Struct({});
+type StagedReadInput = typeof StagedReadInputSchema.Type;
+
+/** Lets a test replace the active composition while a staged Read runs. */
+interface StagedReadAuthority {
+  replace?: () => void;
+}
+
+/** A staged Read that records each owner step beside the SQL and authority events of its harness. */
+const makeStagedRead = (
+  events: string[],
+  options: {
+    readonly duringFinish?: () => void;
+    readonly ownerState?: boolean;
+    readonly policy?: ReturnType<typeof defineGlobalPolicy<Readonly<Record<string, never>>>>;
+  } = {},
+) =>
+  defineRead(
+    {
+      accessDeclaration: fixtureReadAccess('test.read-stages'),
+      accessKind: 'list',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'protected' },
+        entrypointKey: 'test.read-stages.value',
+        moduleKey: 'test.read-stages',
+        role: 'api',
+      }),
+      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.read-stages.evidence.v1' },
+      inputSchema: StagedReadInputSchema,
+      legalEntityScope: 'forbidden',
+      owningModuleKey: 'test.read-stages',
+      policies: options.policy === undefined ? [] : [{ denialStatus: 422, policyKey: options.policy.policyKey }],
+      readKey: 'test.read-stages.value',
+      resultSchema: Schema.Array(Schema.String),
+      schemaVersion: '1',
+    },
+    {
+      finish: (_input: StagedReadInput, context: ReadFinishContext<string, readonly string[]>) =>
+        Effect.gen(function* finishAfterCommit() {
+          events.push('finish');
+          options.duringFinish?.();
+          if (options.ownerState !== false) {
+            yield* context.transaction(() =>
+              Effect.sync(() => {
+                events.push('owner-state');
+              }),
+            );
+          }
+          return { evidence: { resultCount: context.loaded.length }, result: [...context.loaded] };
+        }),
+      load: (_input: StagedReadInput, context: ReadLoadContext<StagedReadServices, string>) =>
+        Effect.sync(() => {
+          events.push('load');
+          return [context.prepared];
+        }),
+      prepare: () =>
+        Effect.sync(() => {
+          events.push('prepare');
+          return 'prepared-owner-value';
+        }),
+    },
+    (): Effect.Effect<StagedReadServices> => Effect.succeed({}),
+    undefined,
+    undefined,
+    options.policy === undefined ? [] : [options.policy],
+  );
+
+const runStagedRead = Effect.fn(function* runStagedRead(
+  events: string[],
+  read: ReturnType<typeof makeStagedRead>,
+  options: {
+    readonly access?: 'allowed' | 'denied';
+    readonly authority?: StagedReadAuthority;
+    readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
+  } = {},
+) {
+  const owner = makeTestOperationOwner({ moduleId: 'test.read-stages', reads: [read] });
+  const { revision } = (yield* owner.snapshot).composition;
+  let authority: ReadAuthorityFixture = { phase: 'active', revision, unexpired: true };
+  if (options.authority !== undefined) {
+    options.authority.replace = () => {
+      authority = { phase: 'active', revision: 'f'.repeat(64), unexpired: true };
+    };
+  }
+  const harness = yield* makeHarness({
+    accessDecision: makeScriptedBoundAccessGate(options.access ?? 'allowed').bound,
+    authorityEvents: events,
+    get compositionAuthority() {
+      return authority;
+    },
+    ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
+    runtimeAdmission: {
+      applicationComposition: owner.applicationComposition,
+      expectedDeployment: owner.expectedDeployment,
+      ownerRegistration: owner.ownerRegistration,
+    },
+    sqlEvents: events,
+  });
+  const exit = yield* Effect.exit(
+    harness.runtime.runRead({
+      input: {},
+      principal: scope,
+      registration: read,
+      transport: { correlationId: scope.correlationId },
+    }),
+  );
+  return { exit, harness };
+});
+
+/** The tag of the typed failure a staged Read ended with, if any. */
+const stagedFailureTag = <Failure>(exit: Exit.Exit<readonly string[], Failure>): string | undefined => {
+  const failure = Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
+  return Predicate.hasProperty(failure, '_tag') && Predicate.isString(failure._tag) ? failure._tag : undefined;
+};
+
+it.effect('runs prepare before the read transaction, load inside it, and finish after its commit', () =>
+  Effect.gen(function* stagedReadPhases() {
+    const events: string[] = [];
+    const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events));
+    expect(exit).toEqual(Exit.succeed(['prepared-owner-value']));
+    // Each transaction (the read, finish's own owner-state read, and the allowed evidence) is fenced by
+    // the admitted composition and installs the read's scope before any owner or evidence work.
+    expect(events).toEqual([
+      'prepare',
+      'BEGIN',
+      'authority_locked',
+      'scope_installed',
+      'load',
+      'COMMIT',
+      'finish',
+      'BEGIN',
+      'authority_locked',
+      'scope_installed',
+      'owner-state',
+      'COMMIT',
+      'BEGIN',
+      'authority_locked',
+      'scope_installed',
+      'COMMIT',
+    ]);
+    expect(harness.evidence()).toBe(1);
+  }),
+);
+
+for (const ownerState of [false, true]) {
+  it.effect(
+    `refuses a staged result when the composition changes during finish${ownerState ? ' before an owner-state read' : ''}`,
+    () =>
+      Effect.gen(function* revisionChangeAfterCommit() {
+        const events: string[] = [];
+        const authority: StagedReadAuthority = {};
+        const read = makeStagedRead(events, { duringFinish: () => authority.replace?.(), ownerState });
+        const { exit, harness } = yield* runStagedRead(events, read, { authority });
+        expect(stagedFailureTag(exit)).toBe('ReadHandlerUnavailable');
+        expect(events).not.toContain('owner-state');
+        expect(harness.evidence()).toBe(0);
+      }),
+  );
+}
+
+it.effect('never runs prepare for a Read the access gate denies', () =>
+  Effect.gen(function* gateDeniedBeforePrepare() {
+    const events: string[] = [];
+    const { exit } = yield* runStagedRead(events, makeStagedRead(events), { access: 'denied' });
+    expect(stagedFailureTag(exit)).toBe('ReadPermissionDenied');
+    expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual([]);
+  }),
+);
+
+it.effect('never runs prepare for a Read a Policy denies', () =>
+  Effect.gen(function* policyDeniedBeforePrepare() {
+    const events: string[] = [];
+    const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
+      evaluate: () => Effect.fail(denyPolicy('staged-policy', 'Denied before owner preparation')),
+      policyKey: 'global.read-stages-policy.v1',
+    });
+    const { exit } = yield* runStagedRead(events, makeStagedRead(events, { policy }));
+    expect(stagedFailureTag(exit)).toBe('ReadPolicyDenied');
+    expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual([]);
+  }),
+);
+
+it.effect('never releases prepared owner output when the owner-local rule denies the Read', () =>
+  Effect.gen(function* ownerOverlayDeniesPrepared() {
+    const events: string[] = [];
+    const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events), {
+      ownerAuthorizationOverlay: { authorize: () => Effect.succeed('denied' as const) },
+    });
+    expect(stagedFailureTag(exit)).toBe('ReadPermissionDenied');
+    expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual(['prepare']);
+    expect(JSON.stringify(exit)).not.toContain('prepared-owner-value');
+    expect(harness.evidenceParameterRows().flat()).not.toContain('prepared-owner-value');
+  }),
+);
+
+for (const targeted of [false, true]) {
+  it.effect(
+    `persists ${targeted ? 'the exact owner record on a single read' : 'a one-result list without a record target'}`,
+    () =>
+      Effect.gen(function* ownerRecordReadEvidence() {
+        const harness = yield* makeHarness({ permissionDecision: 'allowed' });
+        const evidence = targeted
+          ? { resultCount: 1, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } }
+          : { resultCount: 1 };
+        const read = defineRead(
+          registration().descriptor,
+          { load: () => Effect.succeed({ evidence, result: ['visible'] }) },
+          () => Effect.succeed({}),
+          () => ({ kind: 'module', moduleId: 'core.shell' }),
+        );
+        expect(
+          yield* harness.runtime.runRead({
+            input: {},
+            principal: scope,
+            registration: read,
+            transport: { correlationId: scope.correlationId },
+          }),
+        ).toEqual(['visible']);
+        const [persisted] = harness.evidenceParameterRows();
+        expect(persisted).toContain(targeted ? 'read' : 'list');
+        expect(persisted?.includes('record-1')).toBe(targeted);
+        expect(persisted?.includes('fixture.record')).toBe(targeted);
+        expect(harness.permissionChecks().resourcePermissionChecks).toBe(0);
+      }),
+  );
+}
+
+it.effect('refuses owner evidence that replaces a declared authorized resource', () =>
+  Effect.gen(function* conflictingOwnerResourceEvidence() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const harness = yield* makeHarness({ permissionDecision: 'allowed', resolvedScope: { ...scope, legalEntityId } });
+    const read = defineRead(
+      { ...registration().descriptor, legalEntityScope: 'required', permissionTarget: 'resource' },
+      {
+        load: () =>
+          Effect.succeed({
+            evidence: {
+              resultCount: 1,
+              targetResource: { resourceId: 'other-record', resourceType: 'fixture.record' },
+            },
+            result: ['visible'],
+          }),
+      },
+      () => Effect.succeed({}),
+      () => ({
+        kind: 'resource',
+        resource: { moduleId: 'core.shell', resourceId: 'authorized-record', resourceType: 'fixture.record' },
+      }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadEvidenceValidationError')).toBe(true);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
+const pipelineLoad = () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+const pipelineServices = () => Effect.succeed({});
+const pipelineTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
+
+it('defines a Read from a bare handler or an owner pipeline whose steps are functions', () => {
+  const { descriptor } = registration();
+  const accepted = [
+    defineRead(descriptor, pipelineLoad, pipelineServices, pipelineTarget),
+    defineRead(descriptor, { load: pipelineLoad }, pipelineServices, pipelineTarget),
+    defineRead(
+      descriptor,
+      {
+        finish: (_input, context) => Effect.succeed({ evidence: { resultCount: 0 }, result: context.loaded }),
+        load: () => Effect.succeed([]),
+        prepare: () => Effect.succeed('prepared'),
+      },
+      pipelineServices,
+      pipelineTarget,
+    ),
+  ];
+  expect(accepted.map((read) => read.descriptor.readKey)).toEqual(accepted.map(() => descriptor.readKey));
+  // Negative controls: every present step must be a function, and `load` is always required.
+  const rejected = [{ load: 1 }, { load: pipelineLoad, prepare: 1 }, { prepare: pipelineLoad }, {}];
+  for (const pipeline of rejected) {
+    expect(() =>
+      defineRead(
+        descriptor,
+        // SAFETY: This intentionally forges an untyped authoring mistake to prove definition fails closed.
+        pipeline as never,
+        pipelineServices,
+        pipelineTarget,
+      ),
+    ).toThrow(/Read pipeline steps must be functions/u);
+  }
+});

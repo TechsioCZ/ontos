@@ -20,6 +20,11 @@ import {
 } from '../../src/reads/definition.ts';
 import type { ReadDescriptorValidationInput } from '../../src/reads/definition.ts';
 import { accessCarrierErrorReason, fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
+import {
+  SCENARIO_MODULE,
+  workloadReadEntrypoint,
+  workloadReadMarker,
+} from '../support/access-scenarios/declarations.ts';
 
 const modulePermissionTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
 it('defines immutable read metadata while keeping handler and service factory private', () => {
@@ -684,6 +689,14 @@ it('binds an accessTarget to the record-scoped declaration it serves (O9, O25, Q
   }
 });
 
+const workloadOnlyRead = (): ReadDescriptorValidationInput => ({
+  ...declaredReadWithoutDeclaration(),
+  accessKind: 'detail',
+  accessWorkload: workloadReadMarker,
+  entrypoint: workloadReadEntrypoint,
+  owningModuleKey: SCENARIO_MODULE,
+});
+
 const recordOwnerFacts = () => ({ counterpartyId: '6f1d5b6e-0d5b-4c1e-9f6b-2a3f0b9a4c11' });
 
 it('binds the owner-local facts of a read to the capability it declares (O70)', () => {
@@ -721,9 +734,16 @@ it('binds the owner-local facts of a read to the capability it declares (O70)', 
         }),
       /accessOwnerFacts requires/u,
     ],
+    // A workload carrier alone does not carry owner facts: Core resolves them only for a declared capability.
+    [
+      () => validateReadDescriptorInput({ ...workloadOnlyRead(), accessOwnerFacts: recordOwnerFacts }),
+      /accessOwnerFacts requires the descriptor to declare its own accessDeclaration$/u,
+    ],
     // A resolver is a function, never an already-evaluated map (O5).
     [validate({ accessOwnerFacts: recordOwnerFacts() }), /access owner facts must be a resolver function/u],
   ];
+  // The workload-only descriptor itself is valid, so the refusal above is the owner facts alone.
+  expect(() => validateReadDescriptorInput(workloadOnlyRead())).not.toThrow();
   for (const [control, reason] of negativeControls) {
     expect(control).toThrow(reason);
   }

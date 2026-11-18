@@ -1449,3 +1449,39 @@ for (const [origin, addition] of [
     }),
   );
 }
+
+it.live(
+  'accepts a bare read handler or a { prepare, load, finish } owner pipeline and rejects any other owner work',
+  Effect.fn(function* readOwnerPipelineGate() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = '() => Effect.succeed({}), () => Layer.empty);';
+    expect(bareRead).toContain(bareHandler);
+    const withOwnerWork = (ownerWork: string): string =>
+      bareRead.replace(bareHandler, `${ownerWork}, () => Layer.empty);`);
+    for (const accepted of [
+      bareRead,
+      withOwnerWork('{ load: () => Effect.succeed({}) }'),
+      withOwnerWork(
+        "{ prepare: () => Effect.succeed('ready'), load: () => Effect.succeed({}), finish: () => Effect.succeed({}) }",
+      ),
+    ]) {
+      yield* write(root, STOCK_LIST_READ_FILE, accepted);
+      yield* checkModuleEntrypointBoundaries(root);
+    }
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      [
+        withOwnerWork('{ load: () => Effect.succeed({}), extra: () => Effect.succeed({}) }'),
+        withOwnerWork("{ prepare: () => Effect.succeed('ready') }"),
+        withOwnerWork('{ load: 42 }'),
+        withOwnerWork('{ load: () => Effect.succeed({}), load: () => Effect.succeed({}) }'),
+        withOwnerWork('{ load: () => Effect.succeed({}), finish: 42 }'),
+        withOwnerWork('{ ...{ load: () => Effect.succeed({}) } }'),
+      ],
+      /module APIs require an approved Codesmith generator/u,
+    );
+  }),
+);

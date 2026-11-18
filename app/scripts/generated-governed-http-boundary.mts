@@ -3196,6 +3196,8 @@ export const hasReadOwnerPermissionDeclaration = (
   return wrapperSource !== undefined && hasOwnerReadPermissionFactoryExport(wrapperSource, imported.imported);
 };
 
+const READ_PIPELINE_STEPS: ReadonlySet<string> = new Set(['finish', 'load', 'prepare']);
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -3244,8 +3246,36 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
+  const isReadLoadStep = (candidate: string | undefined): boolean =>
+    isReadHandlerCallback(candidate, source) || isOwnerLocalImportedFactoryResult(candidate);
+  // The owner work: a bare read handler, or a pipeline object of unique `prepare`, `load` and `finish`
+  // steps that always has `load`. Every step is an executable owner callback.
+  const isReadOwnerPipeline = (candidate: string | undefined): boolean => {
+    const entries = candidate === undefined ? undefined : topLevelObjectEntries(candidate);
+    if (candidate === undefined || entries === undefined) {
+      return false;
+    }
+    const steps = entries.map((entry) => /^(?<step>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|$)/u.exec(entry)?.groups?.step);
+    const declared = steps.filter((step): step is string => step !== undefined && READ_PIPELINE_STEPS.has(step));
+    return (
+      declared.length === entries.length &&
+      new Set(declared).size === declared.length &&
+      declared.includes('load') &&
+      isReadLoadStep(objectPropertyValue(candidate, 'load')) &&
+      declared
+        .filter((step) => step !== 'load')
+        .every((step) => {
+          const callback = objectPropertyValue(candidate, step);
+          return (
+            isExecutableCallback(callback, source) ||
+            isOwnerLocalImportedCallback(callback) ||
+            isOwnerLocalImportedFactoryResult(callback)
+          );
+        })
+    );
+  };
   return (
-    (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
+    (isReadLoadStep(handler) || isReadOwnerPipeline(handler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are
