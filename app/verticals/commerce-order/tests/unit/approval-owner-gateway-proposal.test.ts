@@ -18,15 +18,12 @@ import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import {
-  makeIssue788CommercialTotal,
-  makeIssue788IssuedConfirmation,
-  makeIssue788Quotation,
-} from '../../../pricing/tests/unit/support/issue-788-confirmation.fixture.ts';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import { ApprovalOwnerGateway, ApprovalOwnerGatewayLive } from '../../src/services/approval-owner-gateway.ts';
 import {
   approvedProposalEvidence,
+  gatewayConfirmation,
+  gatewayQuotation,
   genuineConsumptionResult,
   gatewayScope,
   makeGatewayConsumptionState,
@@ -146,24 +143,15 @@ const gatewayOver = <A, E>(
   );
 
 /** The admissibility state built over a genuine owner-issued Pricing quotation. */
-const buildRevalidationState = Effect.fn('test.revalidationState')(function* buildRevalidationState() {
-  const commercialTotal = yield* makeIssue788CommercialTotal('900');
-  return makeGatewayRevalidationState(makeIssue788Quotation(commercialTotal));
-});
+const revalidationState = makeGatewayRevalidationState(gatewayQuotation);
 
 /** The committed state built over a genuine owner-issued quotation and commitment confirmation. */
-const buildConsumptionState = Effect.fn('test.consumptionState')(function* buildConsumptionState() {
-  const commercialTotal = yield* makeIssue788CommercialTotal('900');
-  return makeGatewayConsumptionState(
-    makeIssue788Quotation(commercialTotal),
-    makeIssue788IssuedConfirmation(commercialTotal),
-  );
-});
+const consumptionState = makeGatewayConsumptionState(gatewayQuotation, gatewayConfirmation);
 
 describe('Order approval owner gateway parked proposals', () => {
   it.effect('refuses a parked revalidation proposal that retained no genuine receipt', () =>
     Effect.gen(function* refuseParkedRevalidation() {
-      const state = yield* buildRevalidationState();
+      const state = revalidationState;
       const transport = yield* approvalOwner({
         evidence: [evidence(notFoundRevalidationEvidence(state))],
         revalidate: [parked],
@@ -179,7 +167,7 @@ describe('Order approval owner gateway parked proposals', () => {
 
   it.effect('settles a parked revalidation only when an exact durable receipt subsequently appears', () =>
     Effect.gen(function* recoverAfterParkedRevalidation() {
-      const state = yield* buildRevalidationState();
+      const state = revalidationState;
       const notFound = evidence(notFoundRevalidationEvidence(state));
       const transport = yield* approvalOwner({
         evidence: [notFound, notFound, evidence(recoveredRevalidationEvidence(state))],
@@ -196,7 +184,7 @@ describe('Order approval owner gateway parked proposals', () => {
 
   it.effect('accepts only a genuinely retained, exactly bound revalidation', () =>
     Effect.gen(function* acceptRetainedRevalidation() {
-      const state = yield* buildRevalidationState();
+      const state = revalidationState;
       const transport = yield* approvalOwner({ evidence: [evidence(recoveredRevalidationEvidence(state))] });
       const outcome = yield* gatewayOver(transport, (gateway) =>
         gateway.revalidateOutcome(state, { idempotencyKey }, gatewayScope),
@@ -208,7 +196,7 @@ describe('Order approval owner gateway parked proposals', () => {
 
   it.effect('lets an exact retained revalidation settle an indeterminate Action failure', () =>
     Effect.gen(function* settleIndeterminateFailure() {
-      const state = yield* buildRevalidationState();
+      const state = revalidationState;
       const notFound = evidence(notFoundRevalidationEvidence(state));
       const transport = yield* approvalOwner({
         evidence: [notFound, notFound, evidence(recoveredRevalidationEvidence(state))],
@@ -226,7 +214,7 @@ describe('Order approval owner gateway parked proposals', () => {
 
   it.effect('keeps a published revalidation conflict a conflict and never settles it by recovery', () =>
     Effect.gen(function* keepPublishedConflict() {
-      const state = yield* buildRevalidationState();
+      const state = revalidationState;
       const notFound = evidence(notFoundRevalidationEvidence(state));
       const transport = yield* approvalOwner({
         evidence: [notFound, notFound, evidence(recoveredRevalidationEvidence(state))],
@@ -246,7 +234,7 @@ describe('Order approval owner gateway parked proposals', () => {
 describe('Order approval owner gateway parked consumption proposals', () => {
   it.effect('refuses a parked consumption proposal for an approval that is not genuinely consumed', () =>
     Effect.gen(function* refuseParkedConsumption() {
-      const state = yield* buildConsumptionState();
+      const state = consumptionState;
       const transport = yield* approvalOwner({ consume: [parked], evidence: [evidence(approvedProposalEvidence)] });
       const failure = yield* gatewayOver(transport, (gateway) => gateway.consume(state, gatewayScope)).pipe(
         Effect.flip,
@@ -259,7 +247,7 @@ describe('Order approval owner gateway parked consumption proposals', () => {
 
   it.effect('settles a parked consumption only from the subsequently retained exact receipt', () =>
     Effect.gen(function* recoverAfterParkedConsumption() {
-      const state = yield* buildConsumptionState();
+      const state = consumptionState;
       const transport = yield* approvalOwner({
         consume: [parked],
         evidence: [evidence(approvedProposalEvidence), evidence(retainedConsumptionProposal(state))],
@@ -273,7 +261,7 @@ describe('Order approval owner gateway parked consumption proposals', () => {
 
   it.effect('resolves durable consumption debt from the exact retained receipt without another write', () =>
     Effect.gen(function* resolveRetainedConsumption() {
-      const state = yield* buildConsumptionState();
+      const state = consumptionState;
       const transport = yield* approvalOwner({ evidence: [evidence(retainedConsumptionProposal(state))] });
       const result = yield* gatewayOver(transport, (gateway) => gateway.consume(state, gatewayScope));
       expect(result.outcome).toBe('ALREADY_CONSUMED');
@@ -283,7 +271,7 @@ describe('Order approval owner gateway parked consumption proposals', () => {
 
   it.effect('accepts a genuine consumption result the owner Action answers', () =>
     Effect.gen(function* acceptGenuineConsumption() {
-      const state = yield* buildConsumptionState();
+      const state = consumptionState;
       const transport = yield* approvalOwner({
         consume: [ownerWire(ConsumeOrderPurchaseApprovalResultSchema, genuineConsumptionResult(state))],
         evidence: [evidence(approvedProposalEvidence)],

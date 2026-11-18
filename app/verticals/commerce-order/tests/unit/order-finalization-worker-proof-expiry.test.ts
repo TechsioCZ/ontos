@@ -5,12 +5,7 @@ import { describe, expect, it, rs } from 'effect-rstest';
 import { attestOutboxWorkerHandlerContext } from '../../../../packages/core-runtime/src/outbox/definition.ts';
 import { RecordOrderProofSetInputSchema } from '../../shared/domain/order-commitment.ts';
 import { OrderFinalizationWorker } from '../../src/services/order-finalization-worker.service.ts';
-import {
-  issue788QuoteValidUntil,
-  makeIssue788CommercialTotal,
-  makeIssue788Quotation,
-} from '../../../pricing/tests/unit/support/issue-788-confirmation.fixture.ts';
-import { makeGatewayRevalidationState } from '../support/order-approval-gateway-state.ts';
+import { gatewayQuotation, makeGatewayRevalidationState } from '../support/order-approval-gateway-state.ts';
 import {
   lostOwnerResponse,
   makeOrderOwnerTransport,
@@ -29,8 +24,8 @@ import { orderTenantId } from '../support/order-revalidation-work.ts';
 
 const revision = 'a'.repeat(64);
 const originatorInvocationId = '80000000-0000-4000-8000-0000000000a2';
-const afterExpiry = Date.parse(issue788QuoteValidUntil) + 2000;
-const beforeExpiry = Date.parse(issue788QuoteValidUntil) - 60_000;
+const afterExpiry = Date.parse(gatewayQuotation.validity.validUntil) + 2000;
+const beforeExpiry = Date.parse(gatewayQuotation.validity.validUntil) - 60_000;
 const context = attestOutboxWorkerHandlerContext({
   attemptNumber: 3,
   claimId: 'claim-late-proof',
@@ -56,10 +51,8 @@ const context = attestOutboxWorkerHandlerContext({
  */
 const deliverAt = Effect.fn('test.deliverProofAt')(function* deliverProofAt(at: number, settled: boolean) {
   yield* TestClock.setTime(at);
-  // The retained Bundle holds Pricing's genuine Quotation, whose interval ends at `issue788QuoteValidUntil`.
-  const answers = orderProofAnswers(
-    makeGatewayRevalidationState(makeIssue788Quotation(yield* makeIssue788CommercialTotal('900'))),
-  );
+  // The retained Bundle holds Pricing's genuine Quotation, whose interval ends at its `validUntil`.
+  const answers = orderProofAnswers(makeGatewayRevalidationState(gatewayQuotation));
   const transport = makeOrderOwnerTransport({
     compositionRevision: revision,
     expiresAt: at / 1000 + 600,

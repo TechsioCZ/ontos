@@ -47,11 +47,7 @@ import { createPrepareOrderCommitmentCommerceOrderFinalizationWorkOutboxMessage 
 import type { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import { OrderFinalizationWorker } from '../../src/services/order-finalization-worker.service.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
-import {
-  makeIssue788CommercialTotal,
-  makeIssue788Quotation,
-} from '../../../pricing/tests/unit/support/issue-788-confirmation.fixture.ts';
-import { makeGatewayRevalidationState } from '../support/order-approval-gateway-state.ts';
+import { gatewayQuotation, makeGatewayRevalidationState } from '../support/order-approval-gateway-state.ts';
 import {
   completeOrderPreparationPath,
   failedOrderPreparationAnswer,
@@ -508,9 +504,7 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
 
   nativeTest('acknowledges an expired proof delivery without a Confirmation so composition drain completes', (test) =>
     Effect.gen(function* expiredProofWork() {
-      const proof = orderProofAnswers(
-        makeGatewayRevalidationState(makeIssue788Quotation(yield* makeIssue788CommercialTotal('900'))),
-      );
+      const proof = orderProofAnswers(makeGatewayRevalidationState(gatewayQuotation));
       const transport = ownerTransport(test.revision, proof.pending, proof.failed);
       transport.reply(recordOrderProofSetPath, proof.failedProgress);
       const id = yield* test.accept(test.expiredProofWork);
