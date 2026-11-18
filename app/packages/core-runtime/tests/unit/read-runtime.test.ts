@@ -5030,3 +5030,133 @@ for (const [name, unsuccessful] of [
     }),
   );
 }
+
+const notFoundDuringFinish = new ReadHandlerNotFound({
+  code: 'read_handler_not_found',
+  reason: 'The remote target does not exist',
+});
+
+for (const verified of [false, true]) {
+  it.effect(
+    `gives a finish whose remote target is absent the same fenced refusal as a present one${verified ? ' (verified)' : ''}`,
+    () =>
+      Effect.gen(function* finishFailureIsFenced() {
+        const outcomes = yield* Effect.forEach([false, true], (targetAbsent) =>
+          Effect.gen(function* finishBranch() {
+            const events: string[] = [];
+            const authority: StagedReadAuthority = {};
+            // The composition changes while finish waits on its remote lookup, which then finds the target or not.
+            const replaceDuringLookup = { duringFinish: () => authority.replace?.(), ownerState: false };
+            const read = makeStagedRead(
+              events,
+              targetAbsent ? { ...replaceDuringLookup, finishFailure: notFoundDuringFinish } : replaceDuringLookup,
+            );
+            const { exit, harness } = yield* runStagedRead(events, read, { authority, verified });
+            return {
+              evidence: evidenceOutcomeCodes(harness.evidenceParameterRows()),
+              failure: stagedFailureTag(exit),
+              success: Exit.isSuccess(exit),
+            };
+          }),
+        );
+        expect(outcomes[0]).toEqual({ evidence: [], failure: 'ReadHandlerUnavailable', success: false });
+        expect(outcomes[1]).toEqual(outcomes[0]);
+      }),
+  );
+}
+
+it.effect('releases a typed finish failure only after the final fence and owner decision allowed the Read', () =>
+  Effect.gen(function* finishFailureAfterRelease() {
+    const events: string[] = [];
+    const decisions: number[] = [];
+    const { exit, harness } = yield* runStagedRead(
+      events,
+      makeStagedRead(events, { finishFailure: notFoundDuringFinish, ownerState: false }),
+      { ownerAuthorizationOverlay: decisionsInTurn([allowDecision], (turn) => decisions.push(turn)), verified: true },
+    );
+    expect(Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()).toEqual(
+      Option.some(notFoundDuringFinish),
+    );
+    // Load's decision, then the release decision under the final fence; no allowed row for a failure.
+    expect(decisions).toEqual([0, 1]);
+    expect(events.slice(events.indexOf('finish')).filter((event) => event === 'authority_locked')).toHaveLength(1);
+    expect(harness.evidence()).toBe(0);
+    // Negative control: when the final owner decision denies, the denial is what the caller sees.
+    const deniedEvents: string[] = [];
+    const denied = yield* runStagedRead(
+      deniedEvents,
+      makeStagedRead(deniedEvents, { finishFailure: notFoundDuringFinish, ownerState: false }),
+      { ownerAuthorizationOverlay: decisionsInTurn([allowDecision, () => Effect.succeed('denied' as const)]) },
+    );
+    expect(stagedFailureTag(denied.exit)).toBe('ReadPermissionDenied');
+    expect(visibleOutcome(denied.exit)).not.toContain('The remote target does not exist');
+    expect(evidenceOutcomeCodes(denied.harness.evidenceParameterRows())).toEqual(['read_permission_denied']);
+  }),
+);
+
+/** An owner-state step an owner retained and runs after its Read ended. */
+const recordLateOwnerState = (events: string[]) => () =>
+  Effect.sync(() => {
+    events.push('late-owner-state');
+  });
+
+/** An owner-state step that announces it started and then never settles on its own. */
+const holdOwnerState = (events: string[], started: Deferred.Deferred<boolean>) => () =>
+  Effect.sync(() => events.push('owner-state-started')).pipe(
+    Effect.andThen(Deferred.succeed(started, true)),
+    Effect.andThen(Effect.never),
+  );
+
+it.effect('refuses an owner transaction opened after finish returned, without opening a transaction', () =>
+  Effect.gen(function* lateOwnerTransaction() {
+    const events: string[] = [];
+    let retained: ReadOwnerTransaction<StagedReadServices> | undefined;
+    const read = makeStagedRead(events, {
+      ownerStep: (transaction) =>
+        Effect.sync(() => {
+          retained = transaction;
+        }),
+    });
+    const { exit, harness } = yield* runStagedRead(events, read, { verified: true });
+    expect(exit).toEqual(Exit.succeed(['prepared-owner-value']));
+    expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).toEqual(['read_allowed']);
+    const opener = retained;
+    if (opener === undefined) {
+      throw new Error('finish did not receive an owner transaction');
+    }
+    const settled = events.length;
+    const late = yield* Effect.exit(opener(recordLateOwnerState(events)));
+    const lateFailure = Exit.isFailure(late) ? Cause.findErrorOption(late.cause) : Option.none();
+    expect(Option.exists(lateFailure, Schema.is(ReadHandlerUnavailable))).toBe(true);
+    // Nothing reached the database: no BEGIN, no fence, no owner callback.
+    expect(events.slice(settled)).toEqual([]);
+  }),
+);
+
+it.effect('settles an owner transaction still in flight when finish returns before releasing the Read', () =>
+  Effect.gen(function* inFlightOwnerTransaction() {
+    const events: string[] = [];
+    const started = yield* Deferred.make<boolean>();
+    let inFlight: Fiber.Fiber<unknown, unknown> | undefined;
+    const read = makeStagedRead(events, {
+      // The owner leaves an owner transaction running in a detached fiber and returns without it.
+      ownerStep: (transaction) =>
+        Effect.gen(function* leaveTransactionRunning() {
+          inFlight = yield* Effect.forkDetach(transaction(holdOwnerState(events, started)));
+          yield* Deferred.await(started);
+        }),
+    });
+    const { exit } = yield* runStagedRead(events, read, { verified: true });
+    expect(exit).toEqual(Exit.succeed(['prepared-owner-value']));
+    const fiber = inFlight;
+    if (fiber === undefined) {
+      throw new Error('finish did not start its owner transaction');
+    }
+    // The in-flight transaction was interrupted and rolled back before the allowed evidence was written.
+    const fiberExit = yield* Fiber.await(fiber);
+    expect(Exit.isFailure(fiberExit) && Cause.hasInterruptsOnly(fiberExit.cause)).toBe(true);
+    const rolledBack = events.indexOf('ROLLBACK', events.indexOf('owner-state-started'));
+    expect(rolledBack).toBeGreaterThan(-1);
+    expect(events.lastIndexOf('BEGIN')).toBeGreaterThan(rolledBack);
+  }),
+);
