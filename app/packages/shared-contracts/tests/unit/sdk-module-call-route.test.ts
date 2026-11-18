@@ -2,9 +2,10 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import { RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
 import type { CallRouteRequest, RouteAnswer, SelectedCaller } from '@app/core-runtime/execution/module-call-route';
 import { moduleOperation } from '@app/core-runtime/sdk';
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 import type { HttpClientRequest } from 'effect/http';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { GatewayDelegationSourceError } from '../../src/gateway-context-server.ts';
@@ -259,6 +260,21 @@ it.effect('reports a provider problem with its status and code, and a transport 
 
     const down = yield* sendWith({ response: Option.none() }, requestOf(asPerson, revision));
     expect(isUnreachable(down.answer)).toBe(true);
+  }),
+);
+
+it.effect('answers Unreachable when the provider sends its headers and then stalls the body', () =>
+  Effect.gen(function* stalledBody() {
+    // Headers arrive at once; the body never ends.
+    const stalled = new Response(new ReadableStream<Uint8Array>(), {
+      headers: { 'content-type': 'application/json' },
+      status: 200,
+    });
+    const fiber = yield* Effect.forkChild(sendWith({ response: Option.some(stalled) }, requestOf(asPerson, revision)));
+    yield* TestClock.adjust('21 seconds');
+    const { answer, sent } = yield* Fiber.join(fiber);
+    expect(sent).toHaveLength(1);
+    expect(isUnreachable(answer)).toBe(true);
   }),
 );
 

@@ -112,13 +112,22 @@ export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* m
       HttpClientRequest.setHeaders(governedHeaders(request, credential, issued.compositionRevision)),
       HttpClientRequest.bodyJsonUnsafe(request.encodedInput),
     );
-    // The read budget bounds the whole execution; one provider answer may take at most this long.
-    const response = yield* http.execute(httpRequest).pipe(Effect.timeout(PROVIDER_ANSWER_TIMEOUT), Effect.option);
-    if (Option.isNone(response)) {
+    // The read budget bounds the whole execution; one provider exchange (request, headers and the whole
+    // body) may take at most this long. A body that is not JSON is `None`; a stalled one is unreachable.
+    const exchanged = yield* http.execute(httpRequest).pipe(
+      Effect.flatMap((response) =>
+        response.json.pipe(
+          Effect.option,
+          Effect.map((body) => ({ body, status: response.status })),
+        ),
+      ),
+      Effect.timeout(PROVIDER_ANSWER_TIMEOUT),
+      Effect.option,
+    );
+    if (Option.isNone(exchanged)) {
       return unreachable.make({ reason: 'The provider could not be reached' });
     }
-    const { status } = response.value;
-    const body = yield* response.value.json.pipe(Effect.option);
+    const { body, status } = exchanged.value;
     if (status >= 200 && status < 300) {
       return Option.match(body, {
         onNone: () => problem(502, 'The provider answer is not JSON', 'provider_answer_unreadable'),
