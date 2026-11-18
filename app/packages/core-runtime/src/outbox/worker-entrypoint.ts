@@ -44,7 +44,7 @@ export {
 } from '../modules/active-application-composition.ts';
 export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
 export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
-export { defineOntosMcpContribution } from '../modules/mcp-contribution.ts';
+export { defineOntosMcpContribution, OntosMcpHidden } from '../modules/mcp-contribution.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine } from '../db/scoped-routine.ts';
 export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
