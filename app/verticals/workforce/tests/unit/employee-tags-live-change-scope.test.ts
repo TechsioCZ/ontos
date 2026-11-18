@@ -5,7 +5,7 @@ import type { RecordsRequest } from '@app/tagging/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 
 import { employeeTagsData } from '../../src/routes/[lang]/prodej/zamestnanci/employees-data.ts';
 
@@ -35,11 +35,12 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('employeeTagsData reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['tagging', 'workforce'],
+  suite.effect('employeeTagsData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: 'company-a',
       reads: () => reads.length,
+      reloadsOn: ['tagging'],
       store: employeeTagsData,
     }),
   );

@@ -90,11 +90,29 @@ let accountGate: Promise<Response> | null = null;
 let recoveryGate: Promise<Response> | null = null;
 let quoteGate: Promise<Response> | null = null;
 let root: Root;
+/** One browser's Web Locks: a second request for a held name is refused, as `ifAvailable` asks. */
+const inMemoryLocks = (): CheckoutLockManager => {
+  const held = new Set<string>();
+  return {
+    request: async (name, _options, onLock) => {
+      if (held.has(name)) {
+        return await onLock(null);
+      }
+      held.add(name);
+      try {
+        return await onLock({ mode: "exclusive", name });
+      } finally {
+        held.delete(name);
+      }
+    },
+  };
+};
+let locks = inMemoryLocks();
 let container: HTMLDivElement;
-let lockDescriptor: PropertyDescriptor | undefined;
 let previousInterceptor: typeof window.happyDOM.settings.fetch.interceptor;
 
-// Only public HTTP and browser Web Locks are substituted; React, all hooks and both providers are real.
+// Public HTTP is answered in process and the tabs' Web Locks are an in-memory lock manager passed through the
+// checkout's own `locks` prop (happy-dom has none); React, all hooks and both providers are real.
 const fetchOwner = async (request: Request): Promise<Response> => {
   requests.push(request.clone());
   switch (new URL(request.url).pathname) {
@@ -141,7 +159,7 @@ const mount = async () => {
       <AppRouterContext.Provider value={router}>
         <PortalSessionProvider>
           <CartProvider imageHosts={[]} scope={options.scope}>
-            <CheckoutView dictionary={d} locale="cs" options={options} />
+            <CheckoutView dictionary={d} locale="cs" locks={locks} options={options} />
           </CartProvider>
         </PortalSessionProvider>
       </AppRouterContext.Provider>,
@@ -185,7 +203,6 @@ beforeEach(() => {
   accountGate = null;
   recoveryGate = null;
   quoteGate = null;
-  rs.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   previousInterceptor = window.happyDOM.settings.fetch.interceptor;
   window.happyDOM.settings.fetch.interceptor = {
     beforeAsyncRequest: async ({ request, window }) => {
@@ -198,22 +215,7 @@ beforeEach(() => {
     },
   };
   window.localStorage.clear();
-  const held = new Set<string>();
-  const locks: CheckoutLockManager = {
-    request: async (name, _options, onLock) => {
-      if (held.has(name)) {
-        return await onLock(null);
-      }
-      held.add(name);
-      try {
-        return await onLock({ mode: "exclusive", name });
-      } finally {
-        held.delete(name);
-      }
-    },
-  };
-  lockDescriptor = Object.getOwnPropertyDescriptor(navigator, "locks");
-  Object.defineProperty(navigator, "locks", { configurable: true, value: locks });
+  locks = inMemoryLocks();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -224,13 +226,7 @@ afterEach(async () => {
   });
   container.remove();
   window.localStorage.clear();
-  if (lockDescriptor === undefined) {
-    Reflect.deleteProperty(navigator, "locks");
-  } else {
-    Object.defineProperty(navigator, "locks", lockDescriptor);
-  }
   window.happyDOM.settings.fetch.interceptor = previousInterceptor;
-  rs.unstubAllGlobals();
 });
 
 describe("checkout through public session, cart and owner boundaries", () => {
@@ -397,7 +393,9 @@ describe("checkout through public session, cart and owner boundaries", () => {
         requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
       ).toHaveLength(1);
     });
+    // No way back to the cart while the owner is answering: the link becomes a disabled button.
     expect(container.querySelector('a[href="/cs/kosik"]')).toBeNull();
+    expect(button(d.checkout.back).disabled).toBe(true);
     await act(async () => {
       response.resolve(
         Response.json({
@@ -418,6 +416,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
       expect(button(d.checkout.verify).disabled).toBe(false);
       expect(container.textContent).toContain(d.checkout.rejected);
     });
+    expect(container.querySelector('a[href="/cs/kosik"]')).not.toBeNull();
     expect(container.querySelector(`button[aria-label="${d.checkout.confirm}"]`)).toBeNull();
     expect(amount(d.checkout.total)).toBe(d.shopping.unresolved);
     expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();

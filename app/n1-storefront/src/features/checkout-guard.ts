@@ -1,10 +1,8 @@
 "use client";
 
 import { Effect, Exit, Schema } from "effect";
-import type { HttpClient } from "effect/http";
 import { CartQuoteRequestSchema, CartScopeSchema } from "@/ontos/cart-quote";
 import type { CartQuoteRequest, CartScope } from "@/ontos/cart-quote";
-import { clientRuntime } from "@/ontos/client-runtime";
 import { cartStorageKey, decodeStoredCart } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 
@@ -185,15 +183,17 @@ export const removeCheckoutGuard = (input: CheckoutGuard, storage?: CheckoutGuar
   });
 
 /**
- * Browser integration edge. The inner runtime finishes the mutation and cleanup while the Web Lock
- * remains held, even if the rendering component disappears. Its Exit retains typed failures and defects.
+ * Browser integration edge. The program runs on its own fiber with the caller's services, so it finishes the
+ * mutation and cleanup while the Web Lock remains held, even if the rendering component disappears. Its Exit
+ * retains typed failures and defects. `locks` defaults to the browser's `navigator.locks`.
  */
-export const withCheckoutLock = <A, E>(
+export const withCheckoutLock = <A, E, R>(
   scope: CartScope,
-  program: Effect.Effect<A, E, HttpClient.HttpClient>,
+  program: Effect.Effect<A, E, R>,
   locks?: CheckoutLockManager | null,
-): Effect.Effect<A, E | CheckoutGuardFailure> =>
+): Effect.Effect<A, E | CheckoutGuardFailure, R> =>
   Effect.gen(function* checkoutLockProgram() {
+    const run = Effect.runPromiseExitWith(yield* Effect.context<R>());
     const manager: CheckoutLockManager | null | undefined = yield* Effect.try({
       catch: () => new CheckoutGuardFailure({ reason: "unsupported" }),
       try: () => (locks === undefined ? navigator.locks : locks),
@@ -210,7 +210,7 @@ export const withCheckoutLock = <A, E>(
           async (lock) =>
             lock === null
               ? Exit.fail(new CheckoutGuardFailure({ reason: "busy" }))
-              : await clientRuntime.runPromiseExit(program),
+              : await run(program),
         ),
     });
     return yield* outcome;

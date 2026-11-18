@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
@@ -35,11 +35,12 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('activities reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['crm-activities'],
+  suite.effect('activities reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: { legalEntityId: 'company-a', resourceId: '10000000-0000-4000-8000-000000000001' },
       reads: () => reads.length,
+      reloadsOn: ['crm-activities'],
       store: activities,
     }),
   );

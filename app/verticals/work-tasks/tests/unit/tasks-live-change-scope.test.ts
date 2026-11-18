@@ -3,7 +3,7 @@ import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contra
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { PartyIdSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { taskRecords } from '../../src/routes/[lang]/ukoly/page.tsx';
@@ -63,11 +63,13 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('taskRecords reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['work-tasks', 'shell'],
+  suite.effect('taskRecords reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input,
       reads: () => reads.length,
+      // 'shell' names Core identity changes; the owner's read includes assignable principals and their names.
+      reloadsOn: ['work-tasks', 'shell'],
       store: taskRecords,
     }),
   );

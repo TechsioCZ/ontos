@@ -3,7 +3,7 @@ import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contra
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { allRecordsInput, pipelineRecords } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-records.ts';
@@ -48,11 +48,12 @@ const network = browserNetwork(
 const input = allRecordsInput('company-a');
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('pipelineRecords reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['sales-pipeline'],
+  suite.effect('pipelineRecords reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input,
       reads: () => reads.length,
+      reloadsOn: ['sales-pipeline'],
       store: pipelineRecords,
     }),
   );

@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
@@ -95,22 +95,25 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('opportunityRelatedData reloads only for its app list', () =>
-    Effect.gen(function* relatedApps() {
-      pinDocumentNavigationModules(['work.tasks', 'demo.merchandise', 'legal.agreements'], document);
-      yield* assertPageDataAppList({
-        expectedApps: ['legal-agreements', 'merchandise', 'sales-pipeline', 'work-tasks'],
-        input: {
-          counterpartyId: '30000000-0000-4000-8000-000000000001',
-          opportunity: Schema.decodeUnknownSync(
-            Schema.Struct({ id: OpportunitySchema.fields.id, partyId: OpportunitySchema.fields.partyId }),
-          )({ id: '10000000-0000-4000-8000-000000000001', partyId: '10000000-0000-4000-8000-000000000002' }),
-          revision: 7,
-          scope: 'company-a',
-        },
-        reads: () => reads.length,
-        store: opportunityRelatedData,
-      });
-    }),
+  suite.effect(
+    'opportunityRelatedData reloads on a live change of the data it reads and ignores an unrelated app',
+    () =>
+      Effect.gen(function* relatedApps() {
+        pinDocumentNavigationModules(['work.tasks', 'demo.merchandise', 'legal.agreements'], document);
+        yield* assertLiveChangeReload({
+          ignores: 'tax',
+          input: {
+            counterpartyId: '30000000-0000-4000-8000-000000000001',
+            opportunity: Schema.decodeUnknownSync(
+              Schema.Struct({ id: OpportunitySchema.fields.id, partyId: OpportunitySchema.fields.partyId }),
+            )({ id: '10000000-0000-4000-8000-000000000001', partyId: '10000000-0000-4000-8000-000000000002' }),
+            revision: 7,
+            scope: 'company-a',
+          },
+          reads: () => reads.length,
+          reloadsOn: ['legal-agreements', 'merchandise', 'work-tasks'],
+          store: opportunityRelatedData,
+        });
+      }),
   );
 });

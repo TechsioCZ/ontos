@@ -1,7 +1,9 @@
 // @rstest-environment happy-dom
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { commerceCustomerContextApi } from '@app/commerce-customer-context/api';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { HttpApi } from 'effect/http-api';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
 import { CustomerListApi, CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
@@ -79,22 +81,36 @@ const identity = PartyDetailResponseSchema.make({
   resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
 });
 
-const listReads: unknown[] = [];
+/** Segment reads: the customer list shows each customer's Commerce Customer Context segment. */
+const segmentReads: unknown[] = [];
+
 const detailReads: unknown[] = [];
 const ListApi = CustomerListApi.prefix('/party-registry-api');
+const SegmentsApi = HttpApi.make('CustomerSegmentsTestApi')
+  .add(commerceCustomerContextApi.groups.counterpartyCustomerGroupMemberships)
+  .prefix('/commerce-customer-context-api');
 const CounterpartyApi = CounterpartyReadApi.prefix('/party-registry-api');
 const IdentityApi = PartyDetailApi.prefix('/party-registry-api');
 const ContactsApi = PartyContactPointsApi.prefix('/party-registry-api');
 const IdentifiersApi = PartyOfficialIdentifierHistoryApi.prefix('/party-registry-api');
 const network = browserNetwork(
-  shellGatewayIssuer({ 'party-registry': '/party-registry-api' }).application,
+  shellGatewayIssuer({
+    'commerce-customer-context': '/commerce-customer-context-api',
+    'party-registry': '/party-registry-api',
+  }).application,
   serveApi(
     ListApi,
     HttpApiBuilder.group(ListApi, 'customerList', (group) =>
+      group.handle('execute', () => Effect.succeed({ items: [customer] })),
+    ),
+  ),
+  serveApi(
+    SegmentsApi,
+    HttpApiBuilder.group(SegmentsApi, 'counterpartyCustomerGroupMemberships', (group) =>
       group.handle('execute', ({ payload }) =>
         Effect.sync(() => {
-          listReads.push(payload);
-          return { items: [] };
+          segmentReads.push(payload);
+          return { effectiveAt: instant, groups: [], items: [] };
         }),
       ),
     ),
@@ -131,21 +147,23 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('customer store app contracts', (suite) => {
-  suite.effect('customersData reloads only for its app list', () =>
-    assertPageDataAppList({
-      store: customersData,
+  suite.effect('customersData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: 'company-a',
-      reads: () => listReads.length,
-      expectedApps: ['commerce-customer-context', 'party-registry'],
+      reads: () => segmentReads.length,
+      reloadsOn: ['party-registry', 'commerce-customer-context'],
+      store: customersData,
     }),
   );
 
-  suite.effect('customerDetailData reloads only for its app list', () =>
-    assertPageDataAppList({
-      store: customerDetailData,
+  suite.effect('customerDetailData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: { customer, scope: 'company-a' },
       reads: () => detailReads.length,
-      expectedApps: ['party-registry'],
+      reloadsOn: ['party-registry'],
+      store: customerDetailData,
     }),
   );
 });

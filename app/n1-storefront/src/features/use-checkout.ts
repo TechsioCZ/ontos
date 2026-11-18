@@ -18,7 +18,7 @@ import {
   saveCheckoutGuard,
   withCheckoutLock,
 } from "./checkout-guard";
-import type { CheckoutGuard } from "./checkout-guard";
+import type { CheckoutGuard, CheckoutGuardStorage, CheckoutLockManager } from "./checkout-guard";
 import type { CartEntry } from "./cart-state";
 import { advanceQuoteSelection } from "./cart-quote-state";
 import type { QuoteSelection } from "./cart-quote-state";
@@ -62,17 +62,23 @@ export const submitCheckoutProgram = ({
   isCurrentSession,
   lines,
   locale,
+  locks,
   method,
   placing,
   scope,
+  storage,
 }: {
   fields: FormData;
   isCurrentSession: () => boolean;
   lines: CartQuoteRequest["lines"];
   locale: string;
+  /** The tabs' Web Locks; the browser's `navigator.locks` when absent. */
+  locks?: CheckoutLockManager | undefined;
   method: ReadyOptions["shippingMethods"][number];
   placing: boolean;
   scope: CartScope;
+  /** Where the submission guard is kept; the browser's `localStorage` when absent. */
+  storage?: CheckoutGuardStorage | undefined;
 }) =>
   Effect.gen(function* submitGuestCheckout() {
     const clientRequestId = yield* Effect.try({
@@ -115,23 +121,28 @@ export const submitCheckoutProgram = ({
     const result = yield* withCheckoutLock(
       scope,
       Effect.gen(function* guardedPlacement() {
-        yield* saveCheckoutGuard(guard);
+        yield* saveCheckoutGuard(guard, storage);
         const outcome = yield* Effect.result(send);
         if (Result.isFailure(outcome)) {
           if (isCurrentSession() && definitiveRefusal(outcome.failure)) {
-            yield* removeCheckoutGuard(guard);
+            yield* removeCheckoutGuard(guard, storage);
           }
           return yield* Effect.fail(outcome.failure);
         }
         if (isCurrentSession() && outcome.success.outcome === "REJECTED") {
-          yield* removeCheckoutGuard(guard);
+          yield* removeCheckoutGuard(guard, storage);
         }
         return outcome.success;
       }),
+      locks,
     );
     return { guard, result };
   });
-const recoverCheckoutProgram = (guard: CheckoutGuard, locale: string) =>
+const recoverCheckoutProgram = (
+  guard: CheckoutGuard,
+  locale: string,
+  locks?: CheckoutLockManager,
+) =>
   withCheckoutLock(
     guard.scope,
     checkoutClient.pipe(
@@ -146,6 +157,7 @@ const recoverCheckoutProgram = (guard: CheckoutGuard, locale: string) =>
       ),
       Effect.timeout("65 seconds"),
     ),
+    locks,
   );
 
 /** Restore only the still-current persisted intent; this program never creates or dismisses an order. */
@@ -153,22 +165,28 @@ export const recoverStoredCheckoutProgram = ({
   guard,
   isCurrent,
   locale,
+  locks,
   onConfirmed,
   onUnavailable,
+  storage,
 }: {
   guard: CheckoutGuard;
   isCurrent: () => boolean;
   locale: string;
+  locks?: CheckoutLockManager | undefined;
   onConfirmed: (result: CheckoutResult) => void;
   onUnavailable: () => void;
+  storage?: CheckoutGuardStorage | undefined;
 }) =>
   Effect.suspend(() => {
     if (!isCurrent()) {
       return Effect.void;
     }
-    return recoverCheckoutProgram(guard, locale).pipe(
+    return recoverCheckoutProgram(guard, locale, locks).pipe(
       Effect.flatMap((recovered) =>
-        readCheckoutGuard(guard.scope).pipe(Effect.map((stored) => ({ recovered, stored }))),
+        readCheckoutGuard(guard.scope, storage).pipe(
+          Effect.map((stored) => ({ recovered, stored })),
+        ),
       ),
       Effect.match({
         onFailure: () => {
@@ -202,6 +220,7 @@ export const recoverConfirmedCheckoutProgram = ({
   guard,
   isCurrent,
   locale,
+  locks,
   onConfirmed,
   onUnavailable,
 }: {
@@ -209,6 +228,7 @@ export const recoverConfirmedCheckoutProgram = ({
   guard: CheckoutGuard;
   isCurrent: () => boolean;
   locale: string;
+  locks?: CheckoutLockManager | undefined;
   onConfirmed: (result: CheckoutResult) => void;
   onUnavailable: () => void;
 }) =>
@@ -228,7 +248,7 @@ export const recoverConfirmedCheckoutProgram = ({
       onUnavailable();
       return Effect.void;
     }
-    return recoverCheckoutProgram(guard, locale).pipe(
+    return recoverCheckoutProgram(guard, locale, locks).pipe(
       Effect.match({
         onFailure: () => {
           if (isCurrent()) {
@@ -255,7 +275,7 @@ export const recoverConfirmedCheckoutProgram = ({
       }),
     );
   });
-const dismissReceiptProgram = (guard: CheckoutGuard) =>
+const dismissReceiptProgram = (guard: CheckoutGuard, locks?: CheckoutLockManager) =>
   withCheckoutLock(
     guard.scope,
     Effect.gen(function* dismissConfirmedReceipt() {
@@ -264,6 +284,7 @@ const dismissReceiptProgram = (guard: CheckoutGuard) =>
         yield* removeCheckoutGuard(guard);
       }
     }),
+    locks,
   );
 const failureNotice = (
   error: Effect.Error<ReturnType<typeof submitCheckoutProgram>>,
@@ -339,7 +360,7 @@ const useCheckoutContext = (key: string, sessionGeneration: number, locale: stri
 };
 
 /** An intent survives reloads; only explicit receipt dismissal permits another order. */
-export const useCheckout = (options: ReadyOptions, locale: string) => {
+export const useCheckout = (options: ReadyOptions, locale: string, locks?: CheckoutLockManager) => {
   const cart = useCart();
   const { currentSession, ready: sessionReady, sessionGeneration } = useCheckoutSession();
   const key = checkoutGuardKey(options.scope);
@@ -455,6 +476,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
         isCurrentSession: () => currentSession.current === requestSession,
         lines: cartLineSnapshot(cart.entries),
         locale,
+        locks,
         method,
         placing,
         scope: options.scope,
@@ -486,6 +508,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
                     receiptGuard.current.clientRequestId === guard.clientRequestId &&
                     checkoutGuardKey(receiptGuard.current.scope) === key,
                   locale,
+                  locks,
                   // The placement has already cleared its submitted lines. Only enrich the receipt.
                   onConfirmed: setReceipt,
                   onUnavailable: () => {
@@ -536,6 +559,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
           guard,
           isCurrent,
           locale,
+          locks,
           // A receipt retry must not clear a cart refilled after the original placement.
           onConfirmed: setReceipt,
           onUnavailable: () => {
@@ -553,6 +577,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
         isCurrent: () =>
           currentSession.current === requestSession && currentScope.current === contextKey,
         locale,
+        locks,
         onConfirmed: (result) => complete(result, guard, requestSession),
         onUnavailable: () => {
           setNotice("uncertain");
@@ -599,7 +624,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     }
     busy.current = true;
     clientRuntime.runFork(
-      dismissReceiptProgram(receiptGuard.current).pipe(
+      dismissReceiptProgram(receiptGuard.current, locks).pipe(
         Effect.match({
           onFailure: () => setNotice("storage"),
           onSuccess: () => {

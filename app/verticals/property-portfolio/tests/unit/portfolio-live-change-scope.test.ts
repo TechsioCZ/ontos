@@ -7,7 +7,7 @@ import {
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
@@ -66,11 +66,12 @@ const network = browserNetwork(
 const input = recordsInput({ legalEntityId: 'company-a', principalId: 'manager-a', tenantId: 'tenant-a' });
 
 it.layer(network, { excludeTestServices: true })('portfolio store app contract', (suite) => {
-  suite.effect('propertyRecords reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['property-portfolio', 'workforce'],
+  suite.effect('propertyRecords reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input,
       reads: () => reads.length,
+      reloadsOn: ['property-portfolio', 'workforce'],
       store: propertyRecords,
     }),
   );

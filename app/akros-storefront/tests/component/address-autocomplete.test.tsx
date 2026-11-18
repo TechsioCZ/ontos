@@ -1,25 +1,55 @@
+// @vitest-environment happy-dom
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type FormEvent } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AddressFields } from "@/features/checkout/address-fields";
 import type { CheckoutAddress } from "@/features/checkout/checkout-state";
 import { AddressAutocomplete } from "@/features/checkout/address-autocomplete";
 
-// jsdom cannot scroll an option into view; the real combobox still handles selection.
-const scrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
-beforeAll(() => {
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: () => {},
-  });
-});
-afterAll(() => {
-  if (scrollIntoView === undefined) {
-    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
-  } else {
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", scrollIntoView);
+/** happy-dom's own fetch seam (`IFetchInterceptor`): it may answer a request with a Response of the sending window. */
+interface FetchInterceptor {
+  readonly beforeAsyncRequest: (context: {
+    readonly request: Request;
+    readonly window: { readonly Response: typeof Response };
+  }) => Promise<Response>;
+}
+declare global {
+  interface Window {
+    readonly happyDOM: {
+      readonly settings: { readonly fetch: { interceptor: FetchInterceptor | null } };
+    };
   }
+}
+
+// The same-origin suggestion route is answered in process through the browser's own request interceptor; the
+// component, the UI kit and the browser's fetch are real.
+const queries: string[] = [];
+let answer: (query: string) => Promise<Response> = async () => Response.json({ suggestions: [] });
+let previousInterceptor: typeof window.happyDOM.settings.fetch.interceptor;
+beforeEach(() => {
+  queries.length = 0;
+  answer = async () => Response.json({ suggestions: [] });
+  previousInterceptor = window.happyDOM.settings.fetch.interceptor;
+  window.happyDOM.settings.fetch.interceptor = {
+    beforeAsyncRequest: async ({ request, window }) => {
+      const url = new URL(request.url);
+      if (url.pathname !== "/api/address-suggestions") {
+        throw new Error(`Unexpected request: ${request.url}`);
+      }
+      const query = url.searchParams.get("q") ?? "";
+      queries.push(query);
+      const response = await answer(query);
+      return new window.Response(await response.arrayBuffer(), {
+        headers: [...response.headers],
+        status: response.status,
+      });
+    },
+  };
+});
+afterEach(() => {
+  cleanup();
+  window.happyDOM.settings.fetch.interceptor = previousInterceptor;
 });
 
 function AddressField({ country = "CZ" }: { country?: string }) {
@@ -36,42 +66,20 @@ function AddressField({ country = "CZ" }: { country?: string }) {
 }
 
 describe("checkout address suggestions", () => {
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
   it("selects the requested address from multiple suggestions", async () => {
-    // jsdom has no layout observer; use the real kit without inventing geometry.
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>().mockImplementation(
-        async () =>
-          new Response(
-            JSON.stringify({
-              suggestions: [1, 2].map((number) => ({
-                id: `address-${number}`,
-                displayLabel: `Bakalovo nábřeží ${number}, Brno`,
-                address: {
-                  street: "Bakalovo nábřeží",
-                  houseNumber: String(number),
-                  city: "Brno",
-                  countryCode: "CZ",
-                },
-              })),
-            }),
-          ),
-      ),
-    );
+    answer = async () =>
+      Response.json({
+        suggestions: [1, 2].map((number) => ({
+          id: `address-${number}`,
+          displayLabel: `Bakalovo nábřeží ${number}, Brno`,
+          address: {
+            street: "Bakalovo nábřeží",
+            houseNumber: String(number),
+            city: "Brno",
+            countryCode: "CZ",
+          },
+        })),
+      });
     render(<AddressField />);
     const user = userEvent.setup();
     await user.type(screen.getByRole("combobox"), "Bakalovo");
@@ -81,8 +89,6 @@ describe("checkout address suggestions", () => {
   });
 
   it("keeps manual entry without contacting the provider for an uncovered address country", async () => {
-    const fetcher = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetcher);
     render(<AddressField country="SK" />);
     const user = userEvent.setup();
     expect(screen.queryByRole("combobox")).toBeNull();
@@ -91,7 +97,7 @@ describe("checkout address suggestions", () => {
     expect((screen.getByRole("textbox", { name: /Ulice/ }) as HTMLInputElement).value).toBe(
       "Obchodná 10",
     );
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(queries).toEqual([]);
   });
 });
 
@@ -127,25 +133,8 @@ const suggestion = {
 
 // These cover the module-specific behavior formerly buried in the obsolete account/checkout browser sweep.
 describe("address completion behavior", () => {
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
   it("applies partial suggestions to billing only, preserving entered fields and delivery", async () => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn<typeof fetch>()
-        .mockImplementation(async () => Response.json({ suggestions: [suggestion] })),
-    );
+    answer = async () => Response.json({ suggestions: [suggestion] });
     render(<AddressPair />);
     const user = userEvent.setup();
     const billing = within(screen.getByRole("region", { name: "Billing" }));
@@ -163,21 +152,10 @@ describe("address completion behavior", () => {
     expect(delivery.getByLabelText(/Město/)).toHaveProperty("value", "Praha");
   });
   it("keeps manual input on outage and retries without submitting the surrounding form", async () => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response("offline", { status: 503 }))
-        .mockImplementation(async () => Response.json({ suggestions: [suggestion] })),
-    );
+    answer = async () => {
+      answer = async () => Response.json({ suggestions: [suggestion] });
+      return new Response("offline", { status: 503 });
+    };
     const submit = vi.fn<(event: FormEvent) => void>((event) => event.preventDefault());
     render(
       <form onSubmit={submit}>
@@ -194,30 +172,18 @@ describe("address completion behavior", () => {
     expect(submit).not.toHaveBeenCalled();
   });
   it("does not replace newer empty results with a late response to an old query", async () => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
     let resolveOld: (response: Response) => void = () => {
       throw new Error("Old request not started");
     };
     const old = new Promise<Response>((resolve) => {
       resolveOld = resolve;
     });
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockReturnValueOnce(old)
-      .mockResolvedValue(Response.json({ suggestions: [] }));
-    vi.stubGlobal("fetch", fetcher);
+    answer = async (query) => (query === "Old street" ? old : Response.json({ suggestions: [] }));
     render(<AddressField />);
     const user = userEvent.setup();
     const input = screen.getByRole("combobox");
     await user.type(input, "Old street");
-    await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    await waitFor(() => expect(queries).toEqual(["Old street"]));
     await user.clear(input);
     await user.type(input, "New street");
     await screen.findByText("Služba nenašla návrhy. Adresu můžete zadat ručně.");

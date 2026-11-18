@@ -5,7 +5,7 @@ import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contra
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 
 import { CustomerListApi } from '../../../party-registry/shared/apis/customer-list.ts';
 import { RecordsApi } from '../../shared/apis/records.ts';
@@ -58,11 +58,12 @@ const network = browserNetwork(
 const input = leaseInputOf({ legalEntityId: 'company-a', principalId: 'manager-a', tenantId: 'tenant-a' });
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('leaseRecords reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['legal-agreements', 'party-registry', 'property-leasing', 'property-portfolio'],
+  suite.effect('leaseRecords reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input,
       reads: () => reads.length,
+      reloadsOn: ['legal-agreements', 'party-registry', 'property-leasing', 'property-portfolio'],
       store: leaseRecords,
     }),
   );

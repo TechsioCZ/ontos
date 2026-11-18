@@ -208,3 +208,18 @@ it.live('a denied reload drops the shown product at once', () =>
     expect(text()).toBe('');
   }).pipe(Effect.provide(network)),
 );
+
+it.live('a failed read of another product never shows the product read before', () =>
+  Effect.gen(function* otherProduct() {
+    yield* pinTestDocument;
+    serve('Cable');
+    yield* show('product-1');
+    yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
+    refuse(unavailable);
+    shown.length = 0;
+    yield* show('product-2');
+    yield* waitUntil(() => shown.at(-1) === 'error:unavailable');
+    expect(shown.some((state) => state.startsWith('ready:'))).toBe(false);
+    expect(text()).toBe('');
+  }).pipe(Effect.provide(network)),
+);

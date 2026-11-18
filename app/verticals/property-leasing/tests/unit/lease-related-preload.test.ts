@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { moduleChangeEvent, pageDataPending } from '@app/shared-contracts/page-data';
+import { moduleChangeEvent, moduleWriteEvent, pageDataPending } from '@app/shared-contracts/page-data';
 import {
   networkIdle,
   networkQuietExcept,
@@ -45,6 +45,7 @@ import {
   renderedLeaseOccupantRows,
 } from '../../src/routes/[lang]/najmy/lease-occupant.ts';
 import {
+  invalidateLeaseRelated,
   invoicesForLease,
   leaseInvoicesExact,
   leaseRelatedView,
@@ -400,16 +401,35 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       }),
   );
 
-  suite.effect('refused task and invoice reads render unavailable, not empty or previously allowed data', () =>
-    Effect.gen(function* refusedOwners() {
+  suite.effect('live and settled-write refusals clear both related decisions and retry independently', () =>
+    Effect.gen(function* invalidation() {
       yield* pinTestDocument;
-      workAnswer = Effect.fail(RecordsForbiddenProblemSchema.make(problem));
-      invoiceAnswer = Effect.fail(LeaseInvoicesForbiddenProblemSchema.make(problem));
-      yield* Effect.result(leaseTasks.read(detail(1)));
-      yield* Effect.result(leaseInvoicesExact.read(detail(1)));
-      expect(
-        leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoicesExact.snapshot(detail(1))),
-      ).toEqual({ invoices: Option.some('unavailable'), tasks: Option.some('unavailable') });
+      yield* leaseTasks.read(detail(1));
+      yield* leaseInvoicesExact.read(detail(1));
+      for (const event of [moduleChangeEvent, moduleWriteEvent]) {
+        window.dispatchEvent(new Event(event));
+        expect(leaseTasks.snapshot(detail(1))).toBe(pageDataPending);
+        expect(leaseInvoicesExact.snapshot(detail(1))).toBe(pageDataPending);
+        workAnswer = Effect.fail(RecordsForbiddenProblemSchema.make(problem));
+        invoiceAnswer = Effect.fail(LeaseInvoicesForbiddenProblemSchema.make(problem));
+        yield* Effect.result(leaseTasks.read(detail(1)));
+        yield* Effect.result(leaseInvoicesExact.read(detail(1)));
+        const view = leaseRelatedView(
+          detail(1),
+          leaseTasks.snapshot(detail(1)),
+          leaseInvoicesExact.snapshot(detail(1)),
+        );
+        expect(view).toEqual({ invoices: Option.some('unavailable'), tasks: Option.some('unavailable') });
+        expect(leaseTasks.snapshot(detail(1))).not.toHaveProperty('value');
+        expect(leaseInvoicesExact.snapshot(detail(1))).not.toHaveProperty('value');
+        workAnswer = Effect.succeed(workResponse);
+        invoiceAnswer = Effect.succeed(emptyInvoices);
+        yield* leaseTasks.read(detail(1));
+        yield* leaseInvoicesExact.read(detail(1));
+      }
+      invalidateLeaseRelated();
+      expect(leaseTasks.snapshot(detail(1))).toBe(pageDataPending);
+      expect(leaseInvoicesExact.snapshot(detail(1))).toBe(pageDataPending);
     }),
   );
 

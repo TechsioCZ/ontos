@@ -1,3 +1,6 @@
+// The live-change scope of one page-data store, through public behaviour: real window events, the real store and the
+// owner endpoints a test serves in process. A change of an app whose data the store reads reloads the mounted store
+// once; a change of an app it does not read sends nothing.
 import { Deferred, Effect } from 'effect';
 import { expect } from 'effect-rstest';
 
@@ -5,58 +8,23 @@ import { moduleChangeEvent } from '../../src/page-data.ts';
 import type { PageData } from '../../src/page-data.ts';
 import { networkIdle, pinTestDocument } from './http-double.ts';
 
-/** Fixed deployment-app domain, independent of stores' implementation declarations. */
-export const knownApps = [
-  'assortment',
-  'availability',
-  'catalog',
-  'commerce-cart',
-  'commerce-customer-context',
-  'commerce-market-catalog',
-  'commerce-order',
-  'crm',
-  'crm-activities',
-  'facility-operations',
-  'finance-billing',
-  'inventory',
-  'legal-agreements',
-  'merchandise',
-  'party-registry',
-  'payment',
-  'payment-term-catalog',
-  'price-group-catalog',
-  'pricing',
-  'privacy',
-  'projects',
-  'promotion',
-  'property-leasing',
-  'property-portfolio',
-  'sales-insights',
-  'sales-pipeline',
-  'shell',
-  'storefront-registry',
-  'symmy-integration',
-  'tagging',
-  'tax',
-  'work-tasks',
-  'workforce',
-];
-
-/** Checks a real store's exact app scope through window events and completed owner requests. */
-export const assertPageDataAppList = <I, A, E>({
-  expectedApps,
+export const assertLiveChangeReload = <I, A, E>({
+  ignores,
   input,
   reads,
+  reloadsOn,
   store,
 }: {
-  /** Explicit module contract; 'all' is reserved for intentionally unfiltered stores. */
-  readonly expectedApps: readonly string[] | 'all';
+  /** An app whose data the store does not read: its change must not reach any owner. */
+  readonly ignores?: string;
   readonly input: I;
-  /** Count one owner endpoint that every complete load must reach. */
+  /** Owner reads so far of one endpoint every complete load reaches. */
   readonly reads: () => number;
+  /** Apps whose data the store's read shows: each change must reload what is on screen. */
+  readonly reloadsOn: readonly string[];
   readonly store: PageData<I, A, E>;
 }) =>
-  Effect.gen(function* appList() {
+  Effect.gen(function* liveChangeReload() {
     yield* pinTestDocument;
     store.invalidate();
     yield* Effect.acquireRelease(
@@ -71,8 +39,11 @@ export const assertPageDataAppList = <I, A, E>({
     yield* networkIdle;
     expect(reads()).toBeGreaterThan(0);
     expect(store.snapshot(input)).toMatchObject({ refreshing: false, state: 'ready' });
-    for (const app of new Set([...knownApps, ...(expectedApps === 'all' ? [] : expectedApps)])) {
-      const relevant = expectedApps === 'all' || expectedApps.includes(app);
+    const changes = [
+      ...reloadsOn.map((app) => ({ app, reloads: true })),
+      ...(ignores === undefined ? [] : [{ app: ignores, reloads: false }]),
+    ];
+    for (const { app, reloads } of changes) {
       const before = reads();
       const completed = yield* Deferred.make<undefined>();
       const unsubscribe = store.subscribe(() => {
@@ -81,13 +52,13 @@ export const assertPageDataAppList = <I, A, E>({
           Deferred.doneUnsafe(completed, Effect.undefined);
         }
       }, input);
-      yield* Effect.gen(function* eventResult() {
+      yield* Effect.gen(function* changeOf() {
         window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: [app] } }));
-        if (relevant) {
+        if (reloads) {
           yield* Deferred.await(completed).pipe(Effect.timeout('2 seconds'));
         }
         yield* networkIdle;
-        expect(reads(), app).toBe(before + (relevant ? 1 : 0));
+        expect(reads(), app).toBe(before + (reloads ? 1 : 0));
         expect(store.snapshot(input), app).toMatchObject({ refreshing: false, state: 'ready' });
       }).pipe(Effect.ensuring(Effect.sync(unsubscribe)));
     }

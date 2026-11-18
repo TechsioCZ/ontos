@@ -1,16 +1,20 @@
 import { cleanup, render, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import { afterEach, expect, it, vi } from "vitest";
 import GlobalError from "@/app/global-error";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/cs" }));
 afterEach(cleanup);
 
 it("does not index an unavailable catalog and lets the customer retry the real render", async () => {
   const reset = vi.fn<() => void>();
-  const { container } = render(<GlobalError reset={reset} />, {
-    container: document,
-  });
+  // Next's real usePathname reads the router's pathname context; the failed request was for a Czech page.
+  const { container } = render(
+    <PathnameContext.Provider value="/cs">
+      <GlobalError reset={reset} />
+    </PathnameContext.Provider>,
+    { container: document },
+  );
   expect(container.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe(
     "noindex, nofollow, noarchive",
   );

@@ -5,7 +5,7 @@ import type { RecordsRequest } from '@app/work-tasks/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { followUpTasks } from '../../src/routes/[lang]/aktivity/page.tsx';
 
 const reads: RecordsRequest[] = [];
@@ -56,11 +56,12 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('followUpTasks reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['crm-activities', 'work-tasks'],
+  suite.effect('followUpTasks reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: 'company-a',
       reads: () => reads.length,
+      reloadsOn: ['work-tasks'],
       store: followUpTasks,
     }),
   );

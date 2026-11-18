@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
@@ -128,47 +128,52 @@ const network = browserNetwork(
 );
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
-  suite.effect('marketCatalogData reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['commerce-market-catalog'],
+  suite.effect('marketCatalogData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: legalEntityId,
       reads: () => catalogReads.length,
+      reloadsOn: ['commerce-market-catalog'],
       store: marketCatalogData,
     }),
   );
 
-  suite.effect('storefrontsData reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['commerce-market-catalog', 'storefront-registry'],
+  suite.effect('storefrontsData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: legalEntityId,
       reads: () => storefrontReads.length,
+      reloadsOn: ['storefront-registry'],
       store: storefrontsData,
     }),
   );
 
-  suite.effect('administrationData reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['commerce-market-catalog'],
+  suite.effect('administrationData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: market,
       reads: () => administrationReads.length,
+      reloadsOn: ['commerce-market-catalog'],
       store: administrationData,
     }),
   );
 
-  suite.effect('creationGrantData reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['commerce-market-catalog'],
+  suite.effect('creationGrantData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: legalEntityId,
       reads: () => administrationReads.length,
+      reloadsOn: ['commerce-market-catalog'],
       store: creationGrantData,
     }),
   );
 
-  suite.effect('marketHistoryData reloads only for its app list', () =>
-    assertPageDataAppList({
-      expectedApps: ['commerce-market-catalog'],
+  suite.effect('marketHistoryData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
       input: market,
       reads: () => historyReads.length,
+      reloadsOn: ['commerce-market-catalog'],
       store: marketHistoryData,
     }),
   );

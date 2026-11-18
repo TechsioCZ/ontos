@@ -3,7 +3,7 @@ import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contra
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { it } from 'effect-rstest';
-import { assertPageDataAppList } from '@app/shared-contracts/testing/page-data-app-list';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
@@ -46,10 +46,10 @@ const network = browserNetwork(
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
   suite.effect('aiActivityData reloads for every app', () =>
-    assertPageDataAppList({
-      expectedApps: 'all',
+    assertLiveChangeReload({
       input: 'company-a',
       reads: () => reads.length,
+      reloadsOn: ['workforce', 'crm', 'merchandise'],
       store: aiActivityData,
     }),
   );
