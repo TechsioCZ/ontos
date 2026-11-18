@@ -12,6 +12,7 @@ import type {
   CallOutcome,
   DeclaredCalls,
   ExecutionCapabilities,
+  ExecutionIdentity,
   TransactionFacts,
   WriteCallOutcome,
 } from '../sdk/index.ts';
@@ -63,7 +64,7 @@ const die = (rule: ExecutionRuleViolation['rule'], detail: string) =>
   Effect.die(new ExecutionRuleViolation({ detail, rule }));
 
 const transactionExecution = <Calls extends DeclaredCalls>(execution: KernelExecution<Calls>) => ({
-  admittedRevision: execution.admittedRevision,
+  facts: execution.facts,
   scope: execution.scope,
   transactionMode: execution.transactionMode,
 });
@@ -257,7 +258,6 @@ const runCall = Effect.fn('KernelSession.call')(function* runCall<Services, Call
     .execute({
       declared: admitted.declared,
       execution: {
-        admittedRevision: execution.admittedRevision,
         callerSource: execution.callerSource,
         facts: execution.facts,
         scope: execution.scope,
@@ -294,11 +294,12 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
   Services,
   Calls extends DeclaredCalls,
   Requirements,
+  Identity extends ExecutionIdentity,
 >(
   ports: KernelPorts,
-  execution: KernelExecution<Calls>,
+  execution: KernelExecution<Calls, Identity>,
   owner: OwnerBinding<Services, Requirements>,
-): Effect.fn.Return<KernelSession<Services, Calls>, TransactionAborted, Requirements | Scope.Scope> {
+): Effect.fn.Return<KernelSession<Services, Calls, Identity>, TransactionAborted, Requirements | Scope.Scope> {
   const captured = yield* Effect.context<Requirements>();
   const sessionScope = yield* Scope.Scope;
   const startedAt = yield* Clock.currentTimeMillis;
@@ -331,7 +332,7 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
     sessionScope,
     startedAt,
   };
-  const capabilities: ExecutionCapabilities<Services, Calls> = {
+  const capabilities: ExecutionCapabilities<Services, Calls, Identity> = {
     call: asCallCapability<Calls>((name, ...args) => runCall(state, name, args[0])),
     execution: execution.facts,
     transaction: (body) => runTransaction(state, body),

@@ -327,12 +327,18 @@ export const ExecutionIdentitySchema = Schema.Union([
   WorkerDeliveryExecutionSchema,
 ]);
 export type ExecutionIdentity = typeof ExecutionIdentitySchema.Type;
+export type RequestExecution = typeof RequestExecutionSchema.Type;
+export type ActionInvocationExecution = typeof ActionInvocationExecutionSchema.Type;
+export type WorkerDeliveryExecution = typeof WorkerDeliveryExecutionSchema.Type;
 
-/** Plain facts about the running execution. Request correlation stays on the scope, as today. */
-export interface ExecutionFacts {
+/**
+ * Plain facts about the running execution. Request correlation stays on the scope, as today. Each kind
+ * fixes `Identity` to the one it runs as (a read: `RequestExecution`).
+ */
+export interface ExecutionFacts<Identity extends ExecutionIdentity = ExecutionIdentity> {
   /** The composition revision the operation was admitted under; every transaction is fenced to it. */
   readonly compositionRevision: string | undefined;
-  readonly identity: ExecutionIdentity;
+  readonly identity: Identity;
   /** The operation key: a read key, an Action key, a worker key. */
   readonly operationKey: string;
   readonly owningModuleKey: string;
@@ -409,10 +415,17 @@ export type TransactionCapability<Services> = <A, E, R>(
   body: (services: Services, facts: TransactionFacts) => Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E | TransactionAborted, R>;
 
-/** What every kind's context carries. Reads, Actions and workers extend it; none narrows it. */
-export interface ExecutionCapabilities<Services, Calls extends DeclaredCalls> {
+/**
+ * What every kind's context carries. Reads, Actions and workers extend it and fix `Identity` to the
+ * identity they run as, so none handles an identity it never receives.
+ */
+export interface ExecutionCapabilities<
+  Services,
+  Calls extends DeclaredCalls,
+  Identity extends ExecutionIdentity = ExecutionIdentity,
+> {
   readonly call: CallCapability<Calls>;
-  readonly execution: ExecutionFacts;
+  readonly execution: ExecutionFacts<Identity>;
   readonly transaction: TransactionCapability<Services>;
 }
 

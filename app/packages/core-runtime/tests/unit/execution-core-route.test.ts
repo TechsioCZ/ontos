@@ -162,7 +162,6 @@ const requestOf = (operation: AnyReadOperationRef, encodedInput: Schema.Json): C
   caller: { kind: 'in_process' },
   encodedInput,
   execution: {
-    admittedRevision: 'a'.repeat(64),
     callerSource: { _tag: 'RequestPrincipal', principal },
     facts: {
       compositionRevision: 'a'.repeat(64),

@@ -4,7 +4,8 @@
  *
  * They keep the kernel's one runtime rule, so a module test fails the way production would: a call
  * while a transaction is open dies `call_inside_transaction`, a transaction inside another dies
- * `nested_transaction`, and a call the descriptor does not declare dies `undeclared_call`. Every call
+ * `nested_transaction`, a call the descriptor does not declare dies `undeclared_call`, and a write call
+ * dies `write_call_reserved` until the Action adapter defines its outcomes. Every call
  * answers with the test's typed answer for that name; Core's own work (requirement, caller identity,
  * credential, route, decoding, evidence) is covered by Core's tests, not here.
  */
@@ -101,6 +102,9 @@ export const makeExecutionStandIn = <Services, const Calls extends DeclaredCalls
     Effect.suspend(() => {
       if (!Object.hasOwn(calls, name)) {
         return violation('undeclared_call', `The call ${name} is not declared`);
+      }
+      if (calls[name]?.operation.kind === 'write') {
+        return violation('write_call_reserved', `The call ${name} is a write call`);
       }
       if (open) {
         return violation('call_inside_transaction', `The call ${name} ran while a transaction was open`);

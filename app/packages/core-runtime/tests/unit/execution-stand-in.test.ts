@@ -2,7 +2,14 @@ import { Cause, DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ExecutionRuleViolation } from '../../src/execution/contract.ts';
-import { CallUnavailableSchema, callAnswer, callOkSchema, declaredCall, moduleOperation } from '../../src/sdk/index.ts';
+import {
+  CallUnavailableSchema,
+  callAnswer,
+  callOkSchema,
+  declaredCall,
+  declaredWriteCall,
+  moduleOperation,
+} from '../../src/sdk/index.ts';
 import type { DeclaredCalls } from '../../src/sdk/index.ts';
 import { ExecutionStandInAnswerMissing, makeExecutionStandIn } from '../../src/testing/sdk.ts';
 
@@ -88,6 +95,30 @@ it.effect('dies with the call name when the test gives no answer for a declared 
     const exit = yield* Effect.exit(standIn.call('resolve', { id: 'a' }));
     const missing = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
     expect(Schema.is(ExecutionStandInAnswerMissing)(missing)).toBe(true);
+    expect(standIn.steps).toEqual([]);
+  }),
+);
+
+it.effect('dies write_call_reserved on a write call, as the kernel does', () =>
+  Effect.gen(function* standInWriteCall() {
+    const reserve = moduleOperation({
+      kind: 'write',
+      path: '/actions/reserve',
+      provider: { entrypointKey: 'provider.alpha.api.reserve', moduleId: 'provider.alpha', schemaVersion: '1' },
+      request: Schema.Struct({ id: Schema.String }),
+      response: ResolveResponseSchema,
+    });
+    const writeCalls = {
+      reserve: declaredWriteCall(reserve, 'consumer.alpha.requirement.reserve', 'resolve'),
+      resolve: calls.resolve,
+    };
+    const standIn = makeExecutionStandIn<object, DeclaredCalls>(writeCalls, {
+      answers: {},
+      operationAt,
+      services: () => ({}),
+    });
+    const exit = yield* Effect.exit(standIn.call('reserve', { id: 'a' }));
+    expect(ruleOf(exit)).toBe('write_call_reserved');
     expect(standIn.steps).toEqual([]);
   }),
 );

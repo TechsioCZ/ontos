@@ -26,7 +26,6 @@ import {
   CallRejectedSchema,
   CallUnavailableSchema,
   declaredCall,
-  declaredWriteCall,
   ExecutionIdentitySchema,
   moduleOperation,
   RequirementCallerSchema,
@@ -112,7 +111,6 @@ const requestOf = (
 ): CallExecutionRequest => ({
   declared,
   execution: {
-    admittedRevision: revision,
     callerSource: { _tag: 'RequestPrincipal', principal },
     facts: {
       compositionRevision: revision,
@@ -330,21 +328,5 @@ it.effect('dies module_call_without_route when the host provides no module route
       harness({ withModuleRoute: false }).execute(requestOf(moduleCall, { count: 1 }, asPerson)),
     );
     expect(ruleOf(exit)).toBe('module_call_without_route');
-  }),
-);
-
-it.effect('dies write_call_reserved for a write call', () =>
-  Effect.gen(function* writeCall() {
-    const write = moduleOperation({
-      kind: 'write',
-      path: '/actions/configure',
-      provider,
-      request: Schema.Struct({}),
-      response: Schema.Struct({}),
-    });
-    const exit = yield* Effect.exit(
-      harness({}).execute(requestOf(declaredWriteCall(write, moduleCall.requirementKey, 'recover'), {}, asPerson)),
-    );
-    expect(ruleOf(exit)).toBe('write_call_reserved');
   }),
 );

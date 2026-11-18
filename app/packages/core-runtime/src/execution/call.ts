@@ -163,16 +163,9 @@ const makeExecute = Effect.fn('KernelCalls.make')(function* makeExecute() {
     return { callerKind, outcome };
   });
 
+  // A write call never reaches here: the session refuses it first (`write_call_reserved`).
   return Effect.fn('KernelCalls.execute')(function* execute(request: CallExecutionRequest) {
     const { operation } = request.declared;
-    if (operation.kind === 'write') {
-      return yield* Effect.die(
-        new ExecutionRuleViolation({
-          detail: `Call ${request.name} is a write call; the Action adapter defines its outcomes`,
-          rule: 'write_call_reserved',
-        }),
-      );
-    }
     const started = yield* Clock.currentTimeMillis;
     const step = yield* send(request);
     const finished = yield* Clock.currentTimeMillis;

@@ -156,13 +156,12 @@ export interface OwnerBinding<Services, Requirements> {
 }
 
 /** Everything the kernel needs about one admitted execution. Built by the kind adapter. */
-export interface KernelExecution<Calls extends DeclaredCalls> {
-  /** The composition revision the execution was admitted under; every transaction fences it. */
-  readonly admittedRevision: string | undefined;
+export interface KernelExecution<Calls extends DeclaredCalls, Identity extends ExecutionIdentity = ExecutionIdentity> {
   readonly budget: ExecutionBudget;
   readonly callerSource: CallerSource;
   readonly calls: Calls;
-  readonly facts: ExecutionFacts;
+  /** `facts.compositionRevision` is the revision the execution was admitted under; every transaction fences it. */
+  readonly facts: ExecutionFacts<Identity>;
   /** The resolved operational scope every transaction installs. */
   readonly scope: OperationalScope;
   /** `read_only` for every read; `read_write` is reserved for the Action adapter. */
@@ -188,10 +187,14 @@ export interface CallRecord {
 }
 
 /** The open session of one execution: the two capabilities and what the runner observed. */
-export interface KernelSession<Services, Calls extends DeclaredCalls> {
+export interface KernelSession<
+  Services,
+  Calls extends DeclaredCalls,
+  Identity extends ExecutionIdentity = ExecutionIdentity,
+> {
   /** Call records so far, in order. Read by the adapter when it writes evidence, success or failure. */
   readonly callRecords: Effect.Effect<readonly CallRecord[]>;
-  readonly capabilities: ExecutionCapabilities<Services, Calls>;
+  readonly capabilities: ExecutionCapabilities<Services, Calls, Identity>;
   /**
    * True once any transaction of this execution answered `owner_denied`. Sticky; the adapter answers
    * the operation as denied whenever it is true, whatever the module's code returned.
@@ -206,7 +209,9 @@ export interface KernelSession<Services, Calls extends DeclaredCalls> {
 /* ------------------------------------------------------------------------------------------------ */
 
 export interface TransactionRequest {
-  readonly execution: Pick<KernelExecution<DeclaredCalls>, 'admittedRevision' | 'scope' | 'transactionMode'>;
+  readonly execution: Pick<KernelExecution<DeclaredCalls>, 'scope' | 'transactionMode'> & {
+    readonly facts: Pick<ExecutionFacts, 'compositionRevision'>;
+  };
   /** 1-based order of this transaction in the execution; 0 for the opening owner check. */
   readonly sequence: number;
 }
@@ -217,7 +222,7 @@ export interface TransactionRequest {
 
 export interface CallExecutionRequest {
   readonly declared: AnyDeclaredCall;
-  readonly execution: Pick<KernelExecution<DeclaredCalls>, 'admittedRevision' | 'callerSource' | 'facts' | 'scope'>;
+  readonly execution: Pick<KernelExecution<DeclaredCalls>, 'callerSource' | 'facts' | 'scope'>;
   /** Present exactly for a write call. */
   readonly idempotencyKey?: string;
   /** The decoded input the module passed (`OperationInput` of the declared operation). */
@@ -378,7 +383,7 @@ export type CoreCallRouteFor = (runRead: CoreRunRead) => CallRoute;
  * `workload` → `RegisteredWorkload`, reserved; `in_process` never reaches it); call
  * `acquireDelegatedGatewayContext({ audience: requirement.providerAppId, legalEntityScope:
  * caller.legalEntityScope, requestCorrelation: scope.correlationId, subject })`; answer `Problem 503`
- * when the issued `compositionRevision` differs from `execution.admittedRevision`; POST `encodedInput`
+ * when the issued `compositionRevision` differs from `execution.facts.compositionRevision`; POST `encodedInput`
  * as JSON to `new URL(route.path, apiBaseUrl)` with the headers `makeGovernedEffectBffClient` sends
  * (authorization, x-correlation-id, x-trace-id, x-ontos-composition-revision, idempotency-key for
  * writes); 2xx is `Answered` with the parsed JSON body; a problem body gives `status`, `code`,

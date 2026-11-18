@@ -19,7 +19,7 @@ import type { KernelSessions } from '../execution/kernel-sessions.ts';
 import type { BoundAccessGate } from '../operations/access-gate.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
-import type { ExecutionFacts } from '../sdk/index.ts';
+import type { ExecutionFacts, RequestExecution } from '../sdk/index.ts';
 import type { AccessAnswers, AccessQuestions } from '../sdk/read.ts';
 import type { ReadRegistration } from './definition.ts';
 import type { ReadCoreError } from './errors.ts';
@@ -86,11 +86,10 @@ export type ExecutionLease = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect
 /** What `reads/runtime.ts` has established when it hands a `{ run }` read to the run-form executor. */
 export interface RunFormReadInput {
   readonly access: AccessAnswers<AccessQuestions>;
-  readonly admittedRevision: string | undefined;
   readonly decodedInput: unknown;
   readonly deniedFieldPaths: readonly (readonly string[])[];
-  /** `identity` is `Request` with `via` computed as `RequestExecutionSchema` documents. */
-  readonly facts: ExecutionFacts;
+  /** `via` computed as `RequestExecutionSchema` documents. */
+  readonly facts: ExecutionFacts<RequestExecution>;
   readonly lease: ExecutionLease;
   readonly listAccess?: ListAccessPredicate;
   /** The owner rule's question, completed with each transaction's `operationAt`. */

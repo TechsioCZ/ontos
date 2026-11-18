@@ -15,6 +15,7 @@ import { ExecutionRuleViolation, READ_EXECUTION_BUDGET } from '../execution/cont
 import type { CallRecord, KernelExecution, OwnerBinding } from '../execution/contract.ts';
 import { KernelSessions } from '../execution/kernel-sessions.ts';
 import { TransactionAborted } from '../sdk/index.ts';
+import type { RequestExecution } from '../sdk/index.ts';
 import type { AccessQuestions, ReadCalls, ReadRunContext } from '../sdk/read.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type { ReadHandlerResult } from './context.ts';
@@ -234,8 +235,7 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
         input.workloadAdmission.decision,
       ),
   };
-  const execution: KernelExecution<ReadCalls> = Object.freeze({
-    admittedRevision: input.admittedRevision,
+  const execution: KernelExecution<ReadCalls, RequestExecution> = Object.freeze({
     budget: READ_EXECUTION_BUDGET,
     // The execution's scope object itself, the one its lease was opened with: the lease and the gateway
     // delegation recognise exactly that instance, so a copy (or the pre-scope principal) is refused.
@@ -311,19 +311,21 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
   const settle = (
     row: PersistReadEvidenceInput,
   ): Effect.Effect<void, ReadEvidencePersistenceError | ReadHandlerUnavailable> =>
-    runEvidence.settle({ admittedRevision: input.admittedRevision, rows: [row, ...callRows], scope: input.scope }).pipe(
-      Effect.mapError((failure) =>
-        isTransactionAborted(failure)
-          ? preserveFailureCause(
-              new ReadHandlerUnavailable({
-                code: 'read_handler_unavailable',
-                reason: 'The Read evidence could not be written under the admitted composition',
-              }),
-              failure,
-            )
-          : failure,
-      ),
-    );
+    runEvidence
+      .settle({ admittedRevision: input.facts.compositionRevision, rows: [row, ...callRows], scope: input.scope })
+      .pipe(
+        Effect.mapError((failure) =>
+          isTransactionAborted(failure)
+            ? preserveFailureCause(
+                new ReadHandlerUnavailable({
+                  code: 'read_handler_unavailable',
+                  reason: 'The Read evidence could not be written under the admitted composition',
+                }),
+                failure,
+              )
+            : failure,
+        ),
+      );
   const failedRow = (outcomeCode: string) =>
     readRow({ outcome: 'failed', outcomeCode, outcomeStage: 'execution', resultCount: 0 });
   /** Best effort: an evidence failure is logged and never replaces the read's own failure. */
@@ -351,8 +353,9 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
         readRow({ outcome: 'denied', outcomeCode: 'read_permission_denied', outcomeStage: 'authz', resultCount: 0 }),
       ),
     );
+    // The denial comes first, so the caller gets it even when its evidence could not be written.
     return yield* Effect.failCause(
-      Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, Cause.fail(denial)) : Cause.fail(denial),
+      Exit.isFailure(evidenceExit) ? Cause.combine(Cause.fail(denial), evidenceExit.cause) : Cause.fail(denial),
     );
   }
 

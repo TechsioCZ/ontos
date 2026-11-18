@@ -2,13 +2,13 @@
  * `@app/shared-contracts/server/sdk-module-call-route`: the governed HTTP route of the Core SDK's `call`
  * to a vertical's operation. It replaces what a module assembled by hand before: the delegated gateway
  * credential for the selected caller, the provider deployment's base URL, the admitted composition
- * revision and the governed request headers. A vertical host provides `ModuleCallRouteLive` with
- * `GatewayDelegationLive` and `FetchHttpClient.layer`.
+ * revision and the governed request headers. Every vertical host provides `ModuleCallRouteLive` to its
+ * read runtime, with `Crypto` and its fetch client (no cache, no redirect) composed at its root.
  */
 import { ModuleCallRoute, RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
 import type { CallRouteRequest, RouteAnswer } from '@app/core-runtime/execution/module-call-route';
 import { ModuleOperationRouteSchema } from '@app/core-runtime/sdk';
-import { Context, Crypto, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Crypto, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { acquireDelegatedGatewayContext } from './gateway-context-server.ts';
@@ -21,23 +21,11 @@ type AcquiredDelegation = Pick<
 >;
 
 /** The gateway delegation of this deployment's own module credential (`acquireDelegatedGatewayContext`). */
-export class GatewayDelegation extends Context.Service<
-  GatewayDelegation,
-  {
-    readonly acquire: (
-      request: GatewayDelegationRequest,
-    ) => Effect.Effect<AcquiredDelegation, Effect.Error<DelegationAttempt>>;
-  }
->()('@app/shared-contracts/sdk-module-call-route/GatewayDelegation') {}
-
-export const GatewayDelegationLive: Layer.Layer<GatewayDelegation, never, Crypto.Crypto> = Layer.effect(
-  GatewayDelegation,
-  Crypto.Crypto.pipe(
-    Effect.map((crypto) =>
-      GatewayDelegation.of({ acquire: (request) => acquireDelegatedGatewayContext(request, crypto) }),
-    ),
-  ),
-);
+export interface GatewayDelegation {
+  readonly acquire: (
+    request: GatewayDelegationRequest,
+  ) => Effect.Effect<AcquiredDelegation, Effect.Error<DelegationAttempt>>;
+}
 
 const [answered, problemAnswer, unreachable] = RouteAnswerSchema.members;
 
@@ -108,8 +96,10 @@ const governedHeaders = (request: CallRouteRequest, credential: Redacted.Redacte
   'x-trace-id': request.execution.scope.traceId,
 });
 
-const makeSend = Effect.fn('ModuleCallRoute.make')(function* makeSend() {
-  const delegation = yield* GatewayDelegation;
+/** The route over a given gateway delegation and the host's HTTP client. */
+export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* makeModuleCallRoute(
+  delegation: GatewayDelegation,
+) {
   const http = yield* HttpClient.HttpClient;
 
   const post = Effect.fn('ModuleCallRoute.post')(function* post(
@@ -138,7 +128,7 @@ const makeSend = Effect.fn('ModuleCallRoute.make')(function* makeSend() {
     return problemOf(status, body.pipe(Option.flatMap((json) => Schema.decodeUnknownOption(ProblemBodySchema)(json))));
   });
 
-  return Effect.fn('ModuleCallRoute.send')(function* send(request: CallRouteRequest) {
+  const send = Effect.fn('ModuleCallRoute.send')(function* send(request: CallRouteRequest) {
     const subject = delegationSubjectOf(request);
     const route = Option.liftPredicate(request.operation.route, Schema.is(ModuleOperationRouteSchema));
     if (Option.isNone(route) || Option.isNone(subject) || request.caller.kind === 'in_process') {
@@ -155,16 +145,27 @@ const makeSend = Effect.fn('ModuleCallRoute.make')(function* makeSend() {
     if (Option.isNone(issued)) {
       return unreachable.make({ reason: 'The gateway did not delegate a credential for this call' });
     }
-    if (issued.value.compositionRevision !== request.execution.admittedRevision) {
+    if (issued.value.compositionRevision !== request.execution.facts.compositionRevision) {
       return problem(503, 'The gateway delegated under another composition revision', 'composition_revision_mismatch');
     }
     return yield* post(request, route.value.path, issued.value);
   });
+  return ModuleCallRoute.of({ send });
 });
 
 /**
- * The governed HTTP route of a vertical host over the module's own gateway delegation and an HTTP
- * client: a host provides `GatewayDelegationLive` (its module credential) and `FetchHttpClient.layer`.
+ * The governed module route of a vertical host: this deployment's own gateway delegation over the host's
+ * HTTP client. Every host provides it to `makeReadRuntimeLive`, so a read that starts calling another
+ * module needs no host change. The host's fetch client must neither cache nor follow redirects
+ * (`FetchHttpClient.RequestInit` `{ cache: 'no-store', redirect: 'manual' }`), so the delegated
+ * credential reaches only the provider deployment the gateway named.
  */
-export const ModuleCallRouteLive: Layer.Layer<ModuleCallRoute, never, GatewayDelegation | HttpClient.HttpClient> =
-  Layer.effect(ModuleCallRoute, makeSend().pipe(Effect.map((send) => ModuleCallRoute.of({ send }))));
+export const ModuleCallRouteLive: Layer.Layer<ModuleCallRoute, never, Crypto.Crypto | HttpClient.HttpClient> =
+  Layer.effect(
+    ModuleCallRoute,
+    Crypto.Crypto.pipe(
+      Effect.flatMap((crypto) =>
+        makeModuleCallRoute({ acquire: (request) => acquireDelegatedGatewayContext(request, crypto) }),
+      ),
+    ),
+  );
