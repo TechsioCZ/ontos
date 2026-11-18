@@ -1999,6 +1999,21 @@ const readRuntimeFromDependencies = <
                 targetResourceId: ownerResource.resourceId,
                 targetResourceType: ownerResource.resourceType,
               };
+        // The complete payload was decoded, validated and hashed by its owner above; the caller
+        // receives the projection of the field groups it may read (O17).
+        // It is computed before the allowed evidence commits, so a refused projection leaves no
+        // read_allowed row behind.
+        const projected = projectReadResultFields(
+          result,
+          gateAuthorization.deniedFieldPaths,
+          input.registration.descriptor.resultSchema,
+        );
+        if (Option.isNone(projected)) {
+          return yield* new ReadPermissionUnavailable({
+            code: 'read_permission_unavailable',
+            reason: 'The read result could not be projected onto the field groups this caller may read',
+          });
+        }
         // The read transaction is gone, so the allowed evidence opens its own short scoped transaction
         // under the same composition fence.
         yield* persistReadEvidenceForComposition(
@@ -2040,19 +2055,6 @@ const readRuntimeFromDependencies = <
           admittedCompositionRevision,
         );
         stage('evidence_persisted');
-        // The complete payload was decoded, validated and hashed by its owner above; the caller
-        // receives the projection of the field groups it may read (O17).
-        const projected = projectReadResultFields(
-          result,
-          gateAuthorization.deniedFieldPaths,
-          input.registration.descriptor.resultSchema,
-        );
-        if (Option.isNone(projected)) {
-          return yield* new ReadPermissionUnavailable({
-            code: 'read_permission_unavailable',
-            reason: 'The read result could not be projected onto the field groups this caller may read',
-          });
-        }
         return projected.value;
       });
       const transactionExit = yield* Effect.exit(
