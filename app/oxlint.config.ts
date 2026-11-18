@@ -1340,6 +1340,7 @@ export default defineConfig({
   rules: {
     '@nkzw/require-use-effect-arguments': 'error',
     'effect-native/no-instanceof': 'error',
+    'eslint/no-useless-assignment': 'error',
     // Ultracite core already enforces these policies through Unicorn and Promise rules.
     'github/array-foreach': 'off',
     'github/no-then': 'off',

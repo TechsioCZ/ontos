@@ -27,6 +27,8 @@ const testingConsumer = 'packages/core-runtime/src/testing/consumer.ts';
 const applicationTest = 'apps/demo/tests/y.test.ts';
 const e2eTest = 'apps/demo/tests/e2e/y.test.ts';
 const handlers = 'apps/demo/src/handlers.ts';
+const discardedAssignment = 'apps/demo/src/discarded-assignment.ts';
+const observedValues = 'apps/demo/src/observed-values.ts';
 
 const validRoutes = [
   'apps/shell-super-app/src/routes/[lang]/$.tsx',
@@ -78,6 +80,8 @@ const staged: readonly (readonly [string, string])[] = [
   [applicationTest, nodeTestImport],
   [e2eTest, nodeTestImport],
   [handlers, domainVocabulary],
+  [discardedAssignment, 'export const read = () => { let value = 1; value = 2; return value; };\n'],
+  [observedValues, 'export const read = () => 2;\n'],
   ...routes.map((file) => [file, 'export const value = 1;\n'] as const),
 ];
 
@@ -114,4 +118,9 @@ it('production SonarJS configuration accepts Match.tags and discriminator keys t
   const sonarCodes = codesFor(handlers).filter((code) => code.startsWith('sonarjs('));
   expect(sonarCodes, 'the SonarJS plugin must run on the fixture').toContain('sonarjs(no-all-duplicated-branches)');
   expect(sonarCodes, 'domain-vocabulary keys are not function names').not.toContain('sonarjs(function-name)');
+});
+
+it('production rejects overwritten assignments without rejecting observed values', () => {
+  expect(codesFor(discardedAssignment)).toContain('eslint(no-useless-assignment)');
+  expect(codesFor(observedValues)).not.toContain('eslint(no-useless-assignment)');
 });
