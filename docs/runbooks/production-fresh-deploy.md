@@ -1,5 +1,9 @@
 # Runbook: stand up production in under an hour
 
+> **Retired. Do not follow.** The provisioner every step below runs,
+> `scripts/ops/production-environment.mts`, has been deleted. This branch has no scripted way to
+> create production. The steps are kept only as history.
+
 Production doesn't exist yet. This page gets it from nothing to a dispatched first deploy. The
 details behind each step are in [Create production](../../app/docs/architecture/DEPLOYMENT.md#create-production).
 
