@@ -98,8 +98,12 @@ const resolveRef = (node: Json | undefined, definitions: JsonObject): Json | und
   if (!isJsonObject(node) || !isString(node.$ref)) {
     return node;
   }
-  const name = node.$ref.replace(/^#\/(?:\$defs|definitions)\//u, '');
-  return definitions[name] ?? node;
+  // The fragment is a JSON Pointer token: Effect writes an identifier's `/` as `~1` and its `~` as `~0`.
+  const name = node.$ref
+    .replace(/^#\/(?:\$defs|definitions)\//u, '')
+    .replaceAll('~1', '/')
+    .replaceAll('~0', '~');
+  return Object.hasOwn(definitions, name) ? definitions[name] : node;
 };
 
 interface TaggedVariant {
@@ -389,7 +393,7 @@ const mergeDefinitions = (
   Result.gen(function* mergeSchemaDefinitions() {
     for (const [name, value] of Object.entries(source)) {
       const previous = target[name];
-      if (name in target && previous !== undefined) {
+      if (Object.hasOwn(target, name) && previous !== undefined) {
         // Definition identity is byte-order-sensitive, just like the catalog and subtree digest inputs.
         const previousText = yield* encodeJson(previous);
         const nextText = yield* encodeJson(value);
