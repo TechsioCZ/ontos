@@ -41,6 +41,15 @@ jq -e '
       $proof.outputs.proven != "true" and all($expected[]; . == "skipped")
     elif $plan.outputs.mode == "full" then
       all($expected[]; . == "success")
+    elif $plan.outputs.mode == "tooling" then
+      $proof.outputs.proven != "true" and
+      all($expected | to_entries[];
+        .value == (if (.key == "workspace-unit" or .key == "node-artifact-build" or .key == "service-integration")
+          then "skipped" else "success" end)) and
+      all(["unit", "unitAfterLint", "unitAfterStatic", "unitAfterTooling",
+        "integration", "integrationBuild", "integrationOwners", "integrationBrowser",
+        "integrationBrowserAfterStatic", "integrationTopology"][];
+        ($plan.outputs[.] | fromjson) == [])
     elif $plan.outputs.mode == "affected" then
       $proof.outputs.proven != "true" and
       all($expected | to_entries[] | select(.key != "service-integration"); .value == "success")

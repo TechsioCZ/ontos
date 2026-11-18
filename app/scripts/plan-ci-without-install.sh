@@ -31,6 +31,7 @@ if ('unreadable' in workspace) {
 const directories = ['.', ...[...workspace.directories].sort()];
 const plan = planCiChecks({
   changedPaths: readFileSync(process.argv[2], 'utf8').split('\0').filter(Boolean),
+  eventName: process.env.GITHUB_EVENT_NAME,
   forceFull: bootstrapMode === 'full',
   packages: ciWorkspacePackages({
     manifests: directories.map(directory => ({directory, manifest: read(`${directory}/package.json`)})),

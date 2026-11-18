@@ -15,7 +15,7 @@ export interface CiWorkspacePackage {
  * Partition selected work by the job that runs it. No job holds a runner while it waits for another job of
  * the run: producers only produce, and every consumer names its producers in `needs`, so GitHub starts it
  * once their artifacts exist. Producers start with the run: the build shards (node-artifact-build) build
- * and upload every delivery unit on every run, and the database producer (service-integration) migrates,
+ * and upload every delivery unit on runtime-impacting runs, and the database producer (service-integration) migrates,
  * exports and uploads this run's database whenever integration work is selected, so neither gate job ever
  * expands an empty matrix. The browser checks migrate their own database and need nobody. The deployment
  * bootstrap and the owner rows consume the build shards; the owner rows also restore the database archive.
@@ -270,6 +270,20 @@ const gateIds = [
 const rootDocumentation = (changedPath: string) =>
   changedPath.startsWith('docs/') || ['CONTEXT-MAP.md', 'README.md', 'AGENTS.md'].includes(changedPath);
 
+/**
+ * rstest.config.ts runs direct script test files only in test:scripts. Fixtures and helpers are not
+ * covered: integration tests read scripts/tests/fixtures/migration-selected-intent.json. Lint plugins,
+ * their helpers and fixtures feed oxlint.config.ts and the lint-rule checks, not application artifacts.
+ * Keep source contracts, static contracts, all tooling tests and compiler/lint enforcement for both.
+ */
+const toolingPath = (changedPath: string, paths: Templates['toolingPaths']) =>
+  paths !== undefined &&
+  (paths.lintDirectories.some((directory) => changedPath.startsWith(`${directory}/`)) ||
+    paths.scriptTestDirectories.some((directory) => {
+      const file = changedPath.slice(directory.length + 1);
+      return changedPath.startsWith(`${directory}/`) && !file.includes('/') && file.endsWith('.test.mts');
+    }));
+
 // A path under no workspace package directory widens in planCiChecks, which knows the directories app/pnpm-workspace.yaml
 // declares; this names the paths that widen even inside one.
 const broadPath = (changedPath: string) =>
@@ -326,6 +340,7 @@ export const knownTask = (task: string) =>
 
 export const planCiChecks = (input: {
   readonly changedPaths: readonly string[];
+  readonly eventName?: string | undefined;
   readonly forceFull?: boolean;
   readonly integrationCosts?: Readonly<Record<string, number>>;
   readonly packages: readonly CiWorkspacePackage[];
@@ -340,6 +355,17 @@ export const planCiChecks = (input: {
     ...input.templates,
     integration: packed,
   };
+  // Queue, push, manual and nightly selection keep their prior strictness. A PR may mix tooling with
+  // owner changes: remove only proven tooling inputs, then resolve every remaining path as before.
+  const runtimePaths = input.changedPaths.filter(
+    (changedPath) =>
+      !rootDocumentation(changedPath) &&
+      !(input.eventName === 'pull_request' && toolingPath(changedPath, templates.toolingPaths)),
+  );
+  const toolingOnly =
+    input.changedPaths.some(
+      (changedPath) => input.eventName === 'pull_request' && toolingPath(changedPath, templates.toolingPaths),
+    ) && runtimePaths.length === 0;
   const seeds = input.changedPaths.flatMap((changedPath) =>
     packages
       .filter(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`))
@@ -372,13 +398,31 @@ export const planCiChecks = (input: {
     ) ||
     new Set(packages.map(({ name }) => name)).size !== packages.length ||
     input.changedPaths.length === 0 ||
-    input.changedPaths.some(broadPath) ||
-    seeds.length === 0 ||
-    input.changedPaths.some(
+    runtimePaths.some(broadPath) ||
+    (!toolingOnly && seeds.length === 0) ||
+    runtimePaths.some(
       (changedPath) =>
         !rootDocumentation(changedPath) &&
         !packages.some(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`)),
     );
+  if (!broad && toolingOnly) {
+    return {
+      affectedPackages,
+      build: [],
+      expected: Object.fromEntries(
+        gateIds.map((gate) => [
+          gate,
+          ['workspace-gate', 'static-contracts', 'format-and-lint'].includes(gate) ? 'success' : 'skipped',
+        ]),
+      ),
+      integration: [],
+      mode: 'tooling' as const,
+      reason:
+        'Only repository tooling tests or lint tools changed; source, static, compiler and lint checks remain required.',
+      source: templates.source,
+      unit: [],
+    };
+  }
   const affectedDirectories = new Set(affected.map(({ directory }) => directory));
   const rootAffected = affectedDirectories.has('.');
   // Each task names its owner, so the task list alone decides what an affected plan keeps.
@@ -437,7 +481,7 @@ export const planCiChecks = (input: {
       : 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   return {
     affectedPackages,
-    // Every run builds every delivery unit from this commit, whatever it selects.
+    // Runtime-impacting runs still build every delivery unit from this commit.
     build: templates.build,
     expected,
     integration,

@@ -56,6 +56,12 @@ export const CiTemplatesSchema = Schema.Struct({
   build: Schema.Array(BuildShardSchema),
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
+  toolingPaths: Schema.optionalKey(
+    Schema.Struct({
+      lintDirectories: Schema.Array(Schema.String),
+      scriptTestDirectories: Schema.Array(Schema.String),
+    }),
+  ),
   unit: Schema.Array(CommandEntrySchema),
 });
 export type Templates = typeof CiTemplatesSchema.Type;
@@ -188,6 +194,7 @@ const cli = Command.make(
       );
       const plan = planCiChecks({
         changedPaths: paths.split('\0').filter(Boolean),
+        eventName: yield* Config.String('GITHUB_EVENT_NAME').pipe(Config.withDefault('')),
         forceFull,
         packages,
         templates,

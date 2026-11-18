@@ -64,6 +64,7 @@ const integrationRowSeconds = (...args: Parameters<typeof estimateRowSeconds>) =
   return result.seconds;
 };
 const PRIVACY_SOURCE = 'app/verticals/privacy/src/service.ts';
+const LOCKFILE = 'app/pnpm-lock.yaml';
 
 const authoredTemplates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
@@ -620,10 +621,131 @@ it('widens changed shared infrastructure, unknown paths and package metadata to 
     'app/verticals/catalog/vertical.runtime-declaration.ts',
     'app/docs/architecture/DEPLOYMENT.md',
     '.github/workflows/ultramodern-workspace-gates.yml',
-    'app/pnpm-lock.yaml',
+    LOCKFILE,
   ]) {
     expect(planCiChecks({ changedPaths: [changedPath], packages, templates }).mode).toBe('full');
   }
+});
+
+const TOOLING_TEST = 'app/scripts/tests/ci-change-plan.test.mts';
+const LINT_TOOL = 'app/tools/oxlint/anti-slop/shared/type-alias-resolution.ts';
+
+it('keeps all source gates but no runtime jobs for proven tooling-only pull requests', () => {
+  for (const changedPaths of [
+    [TOOLING_TEST],
+    ['app/scripts/tests/authorization-policy.test.mts'],
+    [LINT_TOOL],
+    ['app/tools/oxlint/effect-native/repository-policy.config.ts'],
+    ['app/tools/oxlint/effect-native/tests/fixtures/example/schema.ts'],
+    [TOOLING_TEST, LINT_TOOL, 'README.md'],
+  ]) {
+    const plan = planCiChecks({ changedPaths, eventName: 'pull_request', packages, templates });
+    expect(plan.mode, changedPaths.join(', ')).toBe('tooling');
+    expect(plan.source).toEqual(templates.source);
+    expect(plan.expected).toEqual({
+      'format-and-lint': 'success',
+      'node-artifact-build': 'skipped',
+      'service-integration': 'skipped',
+      'static-contracts': 'success',
+      'workspace-gate': 'success',
+      'workspace-unit': 'skipped',
+    });
+    expect(plan.build).toEqual([]);
+    expect(plan.unit).toEqual([]);
+    expect(plan.integration).toEqual([]);
+    for (const lintSweep of ['changed', 'all'] as const) {
+      const outputs = ciPlanOutputs(plan, lintSweep);
+      expect(outputs.lint).toHaveLength(lintSweep === 'all' ? 2 : 1);
+      for (const key of [
+        'unit',
+        'unitAfterLint',
+        'unitAfterStatic',
+        'unitAfterTooling',
+        'integration',
+        'integrationBuild',
+        'integrationOwners',
+        'integrationTopology',
+        'integrationBrowser',
+        'integrationBrowserAfterStatic',
+      ] as const) {
+        expect(outputs[key], key).toEqual([]);
+      }
+    }
+  }
+});
+
+it('does not let a tooling path hide runtime changes, fixtures, configuration or an unknown graph', () => {
+  for (const changedPath of [
+    'app/scripts/tests/fixtures/migration-selected-intent.json',
+    'app/scripts/tests/fixtures/nested.test.mts',
+    'app/scripts/tests/helper.mts',
+    'app/scripts/testsuite/ci-change-plan.test.mts',
+    'app/scripts/integration/scoped-owner-migrations.test.mts',
+    'app/scripts/ci-impact.mts',
+    'app/scripts/ci-matrices.json',
+    'app/scripts/plan-ci-checks.mts',
+    'app/scripts/plan-ci-changes.sh',
+    'app/scripts/plan-ci-without-install.sh',
+    'app/scripts/check-ci-gates.sh',
+    'app/tools/other/index.ts',
+    'app/rstest.config.ts',
+    'app/oxlint.config.ts',
+    LOCKFILE,
+    'app/.mise.toml',
+    'app/pnpm-workspace.yaml',
+    'app/packages/core-runtime/src/service.ts',
+    '.github/workflows/ultramodern-workspace-gates.yml',
+    '.github/actions/install-app/action.yml',
+  ]) {
+    expect(
+      planCiChecks({ changedPaths: [TOOLING_TEST, changedPath], eventName: 'pull_request', packages, templates }).mode,
+      changedPath,
+    ).toBe('full');
+  }
+  expect(
+    planCiChecks({
+      changedPaths: [TOOLING_TEST],
+      eventName: 'pull_request',
+      packages: packages.map((entry) => ({ ...entry, uncertain: true })),
+      templates,
+    }).mode,
+  ).toBe('full');
+  const { toolingPaths: _toolingPaths, ...withoutToolingPaths } = templates;
+  expect(
+    planCiChecks({
+      changedPaths: [TOOLING_TEST],
+      eventName: 'pull_request',
+      packages,
+      templates: withoutToolingPaths,
+    }).mode,
+  ).toBe('full');
+});
+
+it('unions tooling with owner impact without changing queue, push or forced-full selection', () => {
+  const owner = planCiChecks({ changedPaths: [CATALOG_SOURCE], eventName: 'pull_request', packages, templates });
+  expect(
+    planCiChecks({
+      changedPaths: [TOOLING_TEST, LINT_TOOL, CATALOG_SOURCE],
+      eventName: 'pull_request',
+      packages,
+      templates,
+    }),
+  ).toEqual(owner);
+  for (const eventName of [undefined, 'merge_group', 'push', 'schedule', 'workflow_dispatch']) {
+    expect(
+      planCiChecks({ changedPaths: [TOOLING_TEST, LINT_TOOL], eventName, packages, templates }).mode,
+      eventName,
+    ).toBe('full');
+  }
+  expect(
+    planCiChecks({
+      changedPaths: [TOOLING_TEST, LINT_TOOL],
+      eventName: 'pull_request',
+      forceFull: true,
+      packages,
+      templates,
+    }).mode,
+  ).toBe('full');
 });
 
 it('plans a further package root by its own rows, honours negated globs and widens outside every root', () => {
@@ -837,7 +959,7 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         'app/tools/oxlint/effect-native/rules/no-native-timers.ts',
         'app/patches/linter.patch',
         'app/tsconfig.base.json',
-        'app/pnpm-lock.yaml',
+        LOCKFILE,
         'app/pnpm-workspace.yaml',
         'app/.mise.toml',
       ]) {
@@ -1133,6 +1255,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
         cwd,
         env: {
           ...mode,
+          GITHUB_EVENT_NAME: 'pull_request',
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           LINT_SWEEP: 'changed',
@@ -1148,7 +1271,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
       ['affected', []],
       ['full', ['--full']],
     ] as const) {
-      for (const changed of [CATALOG_SOURCE, 'app/scripts/check.mts']) {
+      for (const changed of [CATALOG_SOURCE, 'app/scripts/check.mts', TOOLING_TEST, LINT_TOOL]) {
         writeFileSync(paths, `${changed}\0`);
         const native = plan('/bin/bash', [NO_INSTALL_PLANNER, paths], fixture, { BOOTSTRAP_MODE: bootstrapMode });
         const installed = plan(
@@ -1160,6 +1283,8 @@ it('plans with no installed dependencies using the same tested impact algorithm'
         expect(native).toEqual(installed);
         if (bootstrapMode === 'full') {
           expect(native.mode).toBe('full');
+        } else if (changed === TOOLING_TEST || changed === LINT_TOOL) {
+          expect(native.mode).toBe('tooling');
         }
       }
     }

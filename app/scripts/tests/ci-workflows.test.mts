@@ -835,6 +835,61 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   };
   expect(passes(integrationSkipped)).toBe(true);
   expect(passes({ ...integrationSkipped, [TOPOLOGY_PROOF_JOB]: { result: 'success' } })).toBe(false);
+  // Tooling PRs keep every source gate, including compiler diagnostics and lint-rule tests. Only the
+  // three runtime gates may be skipped, and every runtime output must be an explicitly empty matrix.
+  const tooling = needs('tooling', passed);
+  const runtimeGates: readonly string[] = [WORKSPACE_UNIT_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB];
+  tooling[CI_PLAN_JOB].outputs.expected = JSON.stringify(
+    Object.fromEntries(GATE_JOBS.map((gate) => [gate, runtimeGates.includes(gate) ? 'skipped' : 'success'])),
+  );
+  const runtimeOutputs = [
+    'unit',
+    'unitAfterLint',
+    'unitAfterStatic',
+    'unitAfterTooling',
+    'integration',
+    'integrationBuild',
+    'integrationOwners',
+    'integrationBrowser',
+    'integrationBrowserAfterStatic',
+    'integrationTopology',
+  ];
+  for (const output of runtimeOutputs) {
+    tooling[CI_PLAN_JOB].outputs[output] = '[]';
+  }
+  const toolingNeeds = {
+    ...tooling,
+    ...Object.fromEntries(
+      [...runtimeGates, TOPOLOGY_PROOF_JOB, ...PLANNED_HELPERS.map(([helper]) => helper)].map((job) => [
+        job,
+        { result: 'skipped' },
+      ]),
+    ),
+  };
+  expect(passes(toolingNeeds)).toBe(true);
+  for (const job of [WORKSPACE_GATE_JOB, SOURCE_CONTRACTS_JOB, STATIC_CONTRACTS_JOB, FORMAT_AND_LINT_JOB]) {
+    for (const result of ['skipped', 'failure', 'cancelled']) {
+      expect(passes({ ...toolingNeeds, [job]: { result } }), `${job}: ${result}`).toBe(false);
+    }
+    expect(passes(Object.fromEntries(Object.entries(toolingNeeds).filter(([key]) => key !== job))), job).toBe(false);
+  }
+  for (const job of [...runtimeGates, TOPOLOGY_PROOF_JOB, ...PLANNED_HELPERS.map(([helper]) => helper)]) {
+    expect(passes({ ...toolingNeeds, [job]: { result: 'success' } }), job).toBe(false);
+  }
+  for (const output of runtimeOutputs) {
+    for (const value of [undefined, '{}', '[{}]']) {
+      expect(
+        passes({
+          ...toolingNeeds,
+          [CI_PLAN_JOB]: {
+            ...toolingNeeds[CI_PLAN_JOB],
+            outputs: { ...toolingNeeds[CI_PLAN_JOB].outputs, [output]: value },
+          },
+        }),
+        output,
+      ).toBe(false);
+    }
+  }
   expect(passes(needs('affected', skipped))).toBe(false);
   expect(passes(needs('invented', passed))).toBe(false);
   const missing = needs('docs', skipped);

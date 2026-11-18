@@ -1,4 +1,8 @@
 {
+  "toolingPaths": {
+    "scriptTestDirectories": ["app/scripts/tests"],
+    "lintDirectories": ["app/tools/oxlint"]
+  },
   "source": [
     {
       "name": "Repository Tooling Tests",
