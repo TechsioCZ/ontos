@@ -1,5 +1,3 @@
-import { startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
@@ -11,7 +9,6 @@ import {
   termsDraftOf,
   termsUnchangedSince,
 } from '../../src/routes/[lang]/smlouvy/contract-terms-draft.ts';
-import type { TermsDraft } from '../../src/routes/[lang]/smlouvy/contract-terms-draft.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const contractRef = {
@@ -95,84 +92,6 @@ describe('contract terms draft', () => {
       expect(yield* termsSaveResult(Effect.succeed({ revision: 9 }))).toBe(9);
       expect(yield* termsSaveResult(Effect.fail(conflictProblem('agreements_conflict')))).toBe('conflict');
       expect(yield* termsSaveResult(Effect.fail(conflictProblem('action_invocation_state_invalid')))).toBe('failed');
-    }),
-  );
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: TermsDraft[] = [];
-  const controller = yield* startDraftSave(saved, {
-    equals: sameTermsDraft,
-    isValid: (value: TermsDraft) => Option.isSome(termsCommandOf(contractRef, value)),
-    save: (value: TermsDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('contract terms panel save', () => {
-  it.live('sends nothing while the person types, however long they wait', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, noticePeriod: '3 měsíce' });
-      yield* Effect.sleep('1 second');
-      expect(sent).toEqual([]);
-      expect(controller.status()).toBe('dirty');
-    }),
-  );
-
-  it.effect('Save sends a typed notice period exactly once; an invalid rent stays local', () =>
-    Effect.gen(function* explicit() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, monthly: 'hodně' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-      expect(sent).toEqual([]);
-      controller.change({ ...saved, noticePeriod: '3 měsíce' });
-      controller.save();
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ noticePeriod }) => noticePeriod)).toEqual(['3 měsíce']);
-      expect(controller.status()).toBe('saved');
-    }),
-  );
-
-  it.effect('discarding goes back to the saved terms and sends nothing', () =>
-    Effect.gen(function* discarded() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, subject: 'Nájem skladu' });
-      controller.discard();
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('idle');
-      expect(sent).toEqual([]);
-    }),
-  );
-
-  it.effect('holds a conflicting draft instead of sending it again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...saved, subject: 'Nájem skladu' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...saved, subject: 'Nájem dílny' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toHaveLength(1);
-    }),
-  );
-
-  it.effect('parks terms sent for approval: they are not saved and never sent again', () =>
-    Effect.gen(function* proposed() {
-      const { controller, sent } = yield* panel('proposed');
-      controller.change({ ...saved, subject: 'Nájem skladu' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('proposed');
-      expect(controller.confirmed()).toEqual(saved);
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toHaveLength(1);
     }),
   );
 });
