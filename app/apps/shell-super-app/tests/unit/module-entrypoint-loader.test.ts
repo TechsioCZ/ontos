@@ -11,7 +11,7 @@ import type {
   ModuleStateSnapshot,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { Clock, Effect, Fiber, Function as Fn, Match, Predicate, Schema } from 'effect';
+import { Cause, Clock, Deferred, Effect, Fiber, Logger, Function as Fn, Match, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -1231,3 +1231,82 @@ it.effect('checks physical starts and raw settlement against the clock even befo
       );
   }),
 );
+
+it.effect('logs the remote owner and original load error before mapping it to unavailable', () => {
+  const entries: string[] = [];
+  return Effect.gen(function* logsLoadFailure() {
+    const scheduler = makeModuleEntrypointLoadScheduler();
+    const results = yield* scheduler.settle([
+      {
+        contract: RemoteModuleSchema,
+        identity: 'contacts/page',
+        load: () => Effect.fail(new Cause.UnknownError(new Error('remote bootstrap exploded'))),
+        loadIdentity: loadIdentity('contacts'),
+      },
+    ]);
+    expect(results).toEqual([{ identity: 'contacts/page', reason: 'unavailable', state: 'unavailable' }]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toContain('contacts.module');
+    expect(entries[0]).toContain('remote bootstrap exploded');
+    expect(JSON.parse(entries[0] ?? '')).toMatchObject({ annotations: { phase: 'load' }, level: 'ERROR' });
+  }).pipe(
+    Effect.provide(
+      Logger.layer([Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options))))]),
+    ),
+  );
+});
+
+it.effect('logs contract incompatibility without serializing private remote namespace values', () => {
+  const entries: string[] = [];
+  return Effect.gen(function* logsContractFailure() {
+    const scheduler = makeModuleEntrypointLoadScheduler();
+    const results = yield* scheduler.settle([
+      {
+        contract: RemoteModuleSchema,
+        identity: 'contacts/page',
+        load: () => Effect.succeed({ default: 'PRIVATE_NAMESPACE_VALUE' }),
+        loadIdentity: loadIdentity('contacts'),
+      },
+    ]);
+    expect(results).toEqual([{ identity: 'contacts/page', reason: 'incompatible', state: 'unavailable' }]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toContain('SchemaError');
+    expect(entries[0]).toContain('contacts.module');
+    expect(entries[0]).not.toContain('PRIVATE_NAMESPACE_VALUE');
+    expect(JSON.parse(entries[0] ?? '')).toMatchObject({ annotations: { phase: 'contract' } });
+  }).pipe(
+    Effect.provide(
+      Logger.layer([Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options))))]),
+    ),
+  );
+});
+
+it.effect('logs the module owner when its existing caller deadline elapses', () => {
+  const entries: string[] = [];
+  return Effect.gen(function* logsCallerTimeout() {
+    const scheduler = makeModuleEntrypointLoadScheduler();
+    const loadStarted = yield* Deferred.make<null>();
+    const fiber = yield* scheduler
+      .settle([
+        {
+          contract: RemoteModuleSchema,
+          identity: 'contacts/page',
+          load: () => Deferred.succeed(loadStarted, null).pipe(Effect.andThen(Effect.never)),
+          loadIdentity: loadIdentity('contacts'),
+          timeoutMs: 10,
+        },
+      ])
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(loadStarted);
+    yield* TestClock.adjust('10 millis');
+    expect(yield* Fiber.join(fiber)).toEqual([{ identity: 'contacts/page', reason: 'timeout', state: 'unavailable' }]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toContain('contacts.module');
+    expect(entries[0]).toContain('deadline elapsed');
+    expect(JSON.parse(entries[0] ?? '')).toMatchObject({ annotations: { phase: 'timeout' } });
+  }).pipe(
+    Effect.provide(
+      Logger.layer([Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options))))]),
+    ),
+  );
+});
