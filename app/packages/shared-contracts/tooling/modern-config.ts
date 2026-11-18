@@ -9,7 +9,7 @@ import type { AppUserConfig } from '@modern-js/app-tools/cli-config';
 import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { isSuccess as isResultSuccess } from 'effect/Result';
-import { OptionFromUndefinedOr, Trim, check, decodeResult, isMinLength } from 'effect/Schema';
+import { Literal, OptionFromUndefinedOr, Struct, Trim, check, decodeResult, is, isMinLength } from 'effect/Schema';
 
 type BuildEnvironmentReader = (name: string) => string | undefined;
 
@@ -33,9 +33,13 @@ type DevelopmentMiddlewareSetup = Pick<
   'unshift'
 >;
 
+const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
+
+const isMissingFileError = is(Struct({ code: Literal('ENOENT') }));
+
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
-  '/.well-known/ontos-module-mcp-tools.json',
+  DEVELOPMENT_MCP_TOOL_CATALOG,
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
@@ -48,7 +52,18 @@ export const createDevelopmentContractMiddleware =
         next();
         return;
       }
-      const contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      let contract: Buffer;
+      try {
+        contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      } catch (error) {
+        // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
+        if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
+          response.statusCode = 404;
+          response.end();
+          return;
+        }
+        throw error;
+      }
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
