@@ -299,8 +299,8 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
   publicSurface: OntosSerializedPublicSurfaceSchema,
   /**
    * The registered-workload calls this module's credential makes (absent: none, so the Shell refuses every one with
-   * `registered_workload_unmatched`). Upstream main has no production source for these rules (`[]` in
-   * `.env.example`); this is demo divergence exception 8, to be offered upstream.
+   * `registered_workload_unmatched`). The calling module's reviewed manifest is the only source of these rules; the
+   * Shell keeps a call only while the installed receiver declares it.
    */
   registeredWorkloadCalls: Schema.optionalKey(OntosRegisteredWorkloadCallsSchema),
   requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
@@ -511,8 +511,8 @@ export const projectOntosModuleOperationContracts = (
       operationKey: binding.operationKey,
       schemaVersion: registration.descriptor.schemaVersion,
     };
-    // Demo divergence exception 8: publish the workloads the operation admits, so the Shell can check a caller's
-    // declared registered-workload call against the installed receiver.
+    // Publish the workloads the operation admits, so the Shell can check a caller's declared registered-workload
+    // call against the installed receiver.
     const carriers: {
       readonly accessActor?: { readonly subjectWorkloads?: readonly string[] | undefined } | undefined;
       readonly accessDeclaration?: { readonly key: string } | undefined;

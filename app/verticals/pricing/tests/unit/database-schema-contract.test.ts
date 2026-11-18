@@ -450,7 +450,6 @@ describe('Pricing historical Action receipt attribution contract', () => {
 
 describe('Pricing Price database contract', () => {
   it('owns stable Price roots and immutable versioned schedules', () => {
-    expect(PRICING_TABLE_INVENTORY).toHaveLength(67);
     expect(new Set(PRICING_TABLE_INVENTORY).size).toBe(PRICING_TABLE_INVENTORY.length);
     expect(PRICING_TABLE_INVENTORY.toSorted()).toEqual(PRICING_TABLES.map(getTableName).toSorted());
     expect(

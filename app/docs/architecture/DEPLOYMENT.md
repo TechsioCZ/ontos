@@ -457,7 +457,7 @@ Use this sequence for a new or changed MicroVertical:
 
 Do not report release success before all required smoke checks pass.
 
-### Deploy target per environment
+### Node build shards
 
 Stage is the only deployed environment. `.github/workflows/zerops-stage.yml` deploys it from `demo/sales-crm` into the GitHub environment `stage-edge` (see [Stage on Zerops](#stage-on-zerops)). `main` deploys nothing: `ultramodern-workspace-gates.yml` only runs the gates. There is no production deploy path; a production project needs its own deploy workflow, its own `migrator` identity secrets, gateway key pair, auth origin and SpiceDB TLS pairs, and its own enforced authorization evidence and context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)) before anything deploys to it.
 

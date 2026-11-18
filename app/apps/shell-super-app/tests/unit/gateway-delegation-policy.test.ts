@@ -185,6 +185,7 @@ const declaredAction: ReceiverAction = {
   accessDeclaration: { key: createParty.declarationKey },
   accessWorkload: { workloads: [createParty.workloadKey] },
   entrypoint: { entrypointKey: createParty.entrypointKey },
+  legalEntityScope: createParty.legalEntityScope,
   schemaVersion: '1',
 };
 const partyReceiver = (action: ReceiverAction = declaredAction) => ({
@@ -230,24 +231,21 @@ const callsOf = (
 const keptOf = (receivers: readonly InstalledFixture[]) =>
   callsOf(receivers).pipe(Effect.map(([bound]) => bound?.registeredWorkloads?.map((call) => call.entrypointKey)));
 const { accessDeclaration: _withoutDeclaration, ...undeclaredAction } = declaredAction;
-const { accessWorkload: _withoutWorkload, ...subjectOnlyAction } = declaredAction;
+const { accessWorkload: _withoutWorkload, ...workloadlessAction } = declaredAction;
+// The installed contract keeps the actor's subject workloads, which the receiver check does not read.
+const subjectOnlyAction = { ...workloadlessAction, accessActor: { subjectWorkloads: [createParty.workloadKey] } };
 
 it.effect('copies the calls of the attested calling contract that its receivers declare', () =>
   Effect.gen(function* attestedCalls() {
     const [bound] = yield* callsOf([partyReceiver(), privacyReceiver(declaredPrivacy)]);
     expect(bound?.registeredWorkloads).toEqual([createParty, sourceProcessing]);
-    // A subject workload of the receiving operation counts as declared too.
-    const [subject] = yield* callsOf([
-      partyReceiver({ ...subjectOnlyAction, accessActor: { subjectWorkloads: [createParty.workloadKey] } }),
-    ]);
-    expect(subject?.registeredWorkloads).toEqual([createParty]);
     // A module that declares no calls binds without any.
     const [none] = yield* callsOf([partyReceiver()], 'none');
     expect(none === undefined ? 'unbound' : Object.hasOwn(none, 'registeredWorkloads')).toBe(false);
   }),
 );
 
-it.effect('drops a call its receiver does not declare: workload, declaration, version, receiver', () =>
+it.effect('drops a call its receiver does not declare: workload, declaration, version, scope, receiver', () =>
   Effect.gen(function* droppedCalls() {
     expect(yield* keptOf([privacyReceiver(declaredPrivacy)])).toEqual([sourceProcessing.entrypointKey]);
     expect(
@@ -260,6 +258,9 @@ it.effect('drops a call its receiver does not declare: workload, declaration, ve
     ).toEqual([]);
     expect(yield* keptOf([partyReceiver({ ...declaredAction, schemaVersion: '2' })])).toEqual([]);
     expect(yield* keptOf([partyReceiver(undeclaredAction)])).toEqual([]);
+    // The Shell runs an action call only for the action's own workloads, never for an actor subject workload alone.
+    expect(yield* keptOf([partyReceiver(subjectOnlyAction)])).toEqual([]);
+    expect(yield* keptOf([partyReceiver({ ...declaredAction, legalEntityScope: 'required' })])).toEqual([]);
     expect(yield* keptOf([privacyReceiver()])).toEqual([]);
     expect(yield* keptOf([privacyReceiver({ ...declaredPrivacy, workloads: ['privacy.core.other-check'] })])).toEqual(
       [],

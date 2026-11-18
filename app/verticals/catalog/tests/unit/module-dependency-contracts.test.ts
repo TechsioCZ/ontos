@@ -12,8 +12,8 @@ import { updateProductRecoveryRead } from '../../src/api/update-product-recovery
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 
 /**
- * The workload carrier the manifest publishes for an operation that admits workloads (demo exception 8): its access
- * declaration and the workloads it admits, directly or as subject workloads.
+ * The workload carrier the manifest publishes for an operation that admits workloads: its access declaration and
+ * the workloads it admits, directly or as subject workloads.
  */
 const expectedWorkloadCarrier = (descriptor: {
   readonly accessActor?: { readonly subjectWorkloads?: readonly string[] | undefined } | undefined;

@@ -25,6 +25,35 @@ elif [[ "${FORCE_FULL:-false}" != true &&
       BASE_SHA="$(git rev-parse 'HEAD^1')"
     fi
   fi
+  # A push the queue-proof job skipped (QUEUE_PROOF=skipped) is on a branch without a merge queue. GitHub keeps
+  # one pending run per concurrency group there, so the commit before the push may never have had a run, or a red
+  # or cancelled one. Such a push compares with the newest commit whose push run of this workflow on this branch
+  # succeeded: every green run compared with an earlier green commit, so the diff covers every commit not yet
+  # proven. No such ancestor among the 100 newest push runs, or any failed lookup, leaves no base: every gate runs.
+  # The list is read unfiltered by status: with `status=success` it omitted a run that had ended green 24 s before,
+  # and a queued push run starts exactly when the one before it ends.
+  if [[ "${GITHUB_EVENT_NAME:-}" == push && "${QUEUE_PROOF:-}" == skipped ]]; then
+    BASE_SHA=
+    workflow_id="$(gh api "repos/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}" --jq '.workflow_id')" || workflow_id=''
+    proven=''
+    if [[ "$workflow_id" =~ ^[0-9]+$ ]] &&
+      runs="$(gh api "repos/${GITHUB_REPOSITORY:-}/actions/workflows/$workflow_id/runs?branch=${GITHUB_REF_NAME:-}&event=push&per_page=100")"; then
+      proven="$(jq -r --arg branch "${GITHUB_REF_NAME:-}" --argjson workflow "$workflow_id" '.workflow_runs[]
+        | select(.workflow_id == $workflow and .event == "push" and .head_branch == $branch
+          and .status == "completed" and .conclusion == "success")
+        | .head_sha' <<<"$runs")" || proven=''
+    fi
+    while IFS= read -r sha; do
+      if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$sha" != "${HEAD_SHA:-}" ]] && git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+        BASE_SHA="$sha"
+        echo "Comparing with $sha, the newest commit of this branch whose push run of this workflow succeeded."
+        break
+      fi
+    done <<<"$proven"
+    if [[ -z "$BASE_SHA" ]]; then
+      echo "::warning title=Complete suite::No green push run of this workflow is on an ancestor of this commit; every gate runs."
+    fi
+  fi
   if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ && "${HEAD_SHA:-}" =~ ^[0-9a-f]{40}$ ]] &&
     git cat-file -e "$BASE_SHA^{commit}" &&
     git cat-file -e "$HEAD_SHA^{commit}" &&

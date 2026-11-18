@@ -116,6 +116,7 @@ it('passes every other request to the next middleware', () => {
     '/.well-known/other.json',
     '/prefix/.well-known/ontos-module-manifest.json',
     '/.well-known/ontos-module-manifest.json/extra',
+    '/.well-known/ontos-module-mcp-tools.json/extra',
   ]) {
     const response = request(middleware, url);
     expect(response.nextCalled, url).toBe(true);

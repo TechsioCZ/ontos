@@ -284,6 +284,8 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
   expect(contract).toContain("export { ChangeRatePayloadSchema } from '../actions/change-rate.ts'");
   expect(contract).not.toContain('export { ChangeRatePayloadSchema, ChangeRateResultSchema }');
   expect(contract).not.toContain('export const ChangeRateActionHeadersSchema');
+  expect(contract).toContain('reasons: Schema.optionalKey(Schema.Array(Schema.String))');
+  expect(problems).toContain('failure.reasons ?? []');
   expect(problems).not.toContain('jscpd:ignore-start');
   expect(problems).not.toContain('jscpd:ignore-end');
   expect(problems).toContain('Match.tags({');

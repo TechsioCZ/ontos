@@ -238,6 +238,8 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 it('selects work before gates and starts source checks without waiting for artifacts', () => {
   const proof = readTargetWorkflow().jobs[QUEUE_PROOF_JOB];
   expect(proof.if).toContain('inputs.force-ci-full != true');
+  // Limited to main: a push it skips (the demo trunk) is what turns on plan-ci-changes.sh's newest-green-push lookup.
+  expect(proof.if).toContain("github.ref == 'refs/heads/main'");
   expect(proof.permissions).toEqual({ actions: 'read' });
   expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven'));
   const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
@@ -311,16 +313,14 @@ it('classifies documentation before installation and schedules full regression w
     "github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/') && inputs.force-ci-full != true",
   );
   expect(steps[candidate]?.env).toEqual({ BASE_REF: expression('inputs.base-ref') });
-  // A demo trunk push compares with the newest commit whose push run succeeded, never with the commit before it.
-  const provenBase = steps.findIndex(({ id }) => id === 'proven-base');
-  expect(provenBase).toBeGreaterThan(-1);
-  expect(provenBase).toBeLessThan(classify);
-  expect(steps[provenBase]?.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'");
+  // A demo trunk push compares with the newest commit whose push run succeeded, never with the commit before it:
+  // queue-proof runs only on main, so its skipped result on a push turns on the lookup in plan-ci-changes.sh.
+  expect(steps.some(({ id }) => id === 'proven-base')).toBe(false);
   expect(steps[classify]?.env?.BASE_SHA).toBe(
-    expression(
-      "steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '')",
-    ),
+    expression('steps.candidate.outputs.base || github.event.merge_group.base_sha || github.event.before'),
   );
+  expect(steps[classify]?.env?.QUEUE_PROOF).toBe(expression('needs.queue-proof.result'));
+  expect(steps[classify]?.env?.GH_TOKEN).toBe(expression('github.token'));
   expect(steps[classify]?.env?.CANDIDATE_DISPATCH).toBe(expression("steps.candidate.outputs.base != ''"));
 });
 

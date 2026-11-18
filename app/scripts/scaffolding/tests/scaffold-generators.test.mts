@@ -6785,6 +6785,7 @@ it.live(
     expect(handler).toContain(binding);
     expect(accepts(shared, handler)).toBe(true);
     for (const forged of [
+      "import { privacyBackendRegistration as privacyRegistration } from '../vertical.registration.ts';",
       "import { partyRegistryBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';",
       "import { privacyBackendRegistration as privacyRegistration } from '../foreign/vertical.runtime-declaration.ts';",
       "import { privacyBackendRegistration as privacyRegistration } from './vertical.runtime-declaration.ts';",

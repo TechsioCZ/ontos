@@ -105,7 +105,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # actions: read finds the newest green push run of the demo trunk.
+    # actions: read finds the newest green push run of a branch without a merge queue (plan-ci-changes.sh).
     permissions:
       actions: read
       contents: read
@@ -145,30 +145,6 @@ jobs:
           else
             echo "::warning title=Complete suite::origin/$BASE_REF has no merge base with this commit; every gate runs."
           fi
-      # A push to the demo trunk compares with the newest commit whose push run of this workflow succeeded, not with
-      # the commit before the push: that run may have failed, been cancelled or still be running, and its changes would
-      # then never be checked. Every green run compared with an earlier green commit, so the diff covers every commit not
-      # yet proven. No such ancestor among the 100 newest push runs leaves the comparison empty: every gate runs.
-      # The list is read unfiltered: with `status=success` it omitted a run that had ended green 24 s before (run
-      # 44196254683 planned against an older base), and a queued push run starts exactly when the one before it ends.
-      - name: Find the newest proven commit of the demo trunk
-        id: proven-base
-        if: github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # An unreadable answer finds no base, so the complete suite runs.
-          workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')" || workflow_id=''
-          proven="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?branch=demo/sales-crm&event=push&per_page=100" \
-            --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | .head_sha')" || proven=''
-          while IFS= read -r sha; do
-            if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$sha" != "$GITHUB_SHA" ]] && git merge-base --is-ancestor "$sha" HEAD; then
-              echo "base=$sha" >>"$GITHUB_OUTPUT"
-              echo "Comparing with $sha, the newest commit of this branch whose push run of this workflow succeeded."
-              exit 0
-            fi
-          done <<<"$proven"
-          echo "::warning title=Complete suite::No green push run of this workflow is on an ancestor of this commit; every gate runs."
       # The migrated integration database changes only with these inputs: every Drizzle migration and config, the
       # database identity, role and grant scripts, the stage migrator and its activation and convergence scripts, the
       # verifier and trust audit, the seed tool itself, SpiceDB's bootstrap schema, the topology and authorization
@@ -182,11 +158,14 @@ jobs:
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
-          # A demo trunk push without a proven base gets none, never github.event.before.
-          BASE_SHA: ${{ steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '') }}
+          # A push the queue-proof job skipped (the demo trunk) replaces github.event.before with its newest green push.
+          BASE_SHA: ${{ steps.candidate.outputs.base || github.event.merge_group.base_sha || github.event.before }}
           CANDIDATE_DISPATCH: ${{ steps.candidate.outputs.base != '' }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
+          # skipped on a push names a branch without a merge queue: the script looks up its newest green push.
+          QUEUE_PROOF: ${{ needs.queue-proof.result }}
+          GH_TOKEN: ${{ github.token }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
         run: bash app/scripts/plan-ci-changes.sh "$RUNNER_TEMP/ci-changed-paths"
       - name: Record the documentation or exact-commit no-op
@@ -1535,11 +1514,13 @@ jobs:
           tests/e2e/login.spec.ts --grep 'reloads failed Contacts into a genuinely published R2'
           --workers 1
 
+      # Diagnostics are named per attempt: a re-run that fails again keeps both failures' evidence, and an
+      # upload under a name the run already holds would fail instead of keeping either.
       - name: Upload browser failure diagnostics
         if: failure() && matrix.suite == 'browser'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: shell-browser-failure-diagnostics
+          name: shell-browser-failure-diagnostics-${{ github.run_attempt }}
           path: |
             app/apps/shell-super-app/test-results/**/trace.zip
             app/apps/shell-super-app/test-results/**/error-context.md

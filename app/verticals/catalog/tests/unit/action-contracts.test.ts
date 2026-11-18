@@ -15,6 +15,7 @@ import { mapUpdateProductActionProblem } from '../../api/update-product-action-p
 
 import { CorrectProductPayloadSchema, correctProductAction } from '../../src/actions/correct-product.action.ts';
 import { ProductSelectionRevalidationRequiredSchema } from '../../shared/actions/correct-product.ts';
+import { CreateProductActionForbiddenProblemSchema } from '../../shared/apis/create-product-action.ts';
 import { catalogAuthorityBundles } from '../../shared/api.ts';
 import { ProductPersistenceConflict } from '../../shared/domain/product-errors.ts';
 import { CatalogPersistenceConflict, CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';
@@ -140,6 +141,34 @@ describe('Catalog Product Action contracts', () => {
       status: 503,
     });
     expect(JSON.stringify(denied)).not.toContain(productRef.resourceId);
+  });
+
+  it('carries the refusal reason codes into the 403 problem and nowhere else', () => {
+    const denied = mapCreateProductActionProblem(
+      new ActionPermissionDenied({
+        code: 'action_permission_denied',
+        reason: 'Denied',
+        reasons: ['deny.insufficient_grant'],
+      }),
+    );
+    expect(denied).toMatchObject({ reasons: ['deny.insufficient_grant'], status: 403 });
+    if (denied.status !== 403) {
+      throw new Error('expected a 403 problem');
+    }
+    expect(Schema.encodeSync(CreateProductActionForbiddenProblemSchema)(denied)).toMatchObject({
+      reasons: ['deny.insufficient_grant'],
+    });
+
+    const deniedWithoutReasons = mapCreateProductActionProblem(
+      new ActionPermissionDenied({ code: 'action_permission_denied', reason: 'Denied' }),
+    );
+    expect(deniedWithoutReasons).toMatchObject({ reasons: [], status: 403 });
+
+    const checkUnavailable = mapCreateProductActionProblem(
+      new ActionPermissionCheckError({ code: 'action_permission_check_failed', reason: 'Unavailable' }),
+    );
+    expect(checkUnavailable.status).toBe(503);
+    expect(checkUnavailable).not.toHaveProperty('reasons');
   });
 
   it('exposes five explicitly provisioned tenant Actions with no legal-entity scope', () => {

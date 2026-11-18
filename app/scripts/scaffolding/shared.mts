@@ -1686,7 +1686,6 @@ export const validRuntimeDeclarationViews = (
       manifest,
       manifestName,
       ['activation', 'publicSurface'],
-      // `registeredWorkloadCalls` is demo divergence exception 8 (upstream main has no production source for them).
       ['originatorActions', 'registeredWorkloadCalls'],
     ),
     ownerObjectView(

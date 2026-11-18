@@ -123,7 +123,7 @@ diff --git a/dist/cjs/build-config/internal-effect-discovery.js b/dist/cjs/build
      "@typescript/native"
  ];
 -const EFFECT_TSRS_PROVIDER_VERSION = '0.67.0';
-+const EFFECT_TSRS_PROVIDER_VERSION = '0.69.0';
++const EFFECT_TSRS_PROVIDER_VERSION = '0.70.0';
  const EFFECT_TSRS_TARGETS = new Set([
      '@tsrs/darwin-arm64',
      '@tsrs/darwin-x64',
@@ -140,7 +140,7 @@ diff --git a/dist/esm/build-config/internal-effect-discovery.mjs b/dist/esm/buil
      "@typescript/native"
  ];
 -const EFFECT_TSRS_PROVIDER_VERSION = '0.67.0';
-+const EFFECT_TSRS_PROVIDER_VERSION = '0.69.0';
++const EFFECT_TSRS_PROVIDER_VERSION = '0.70.0';
  const EFFECT_TSRS_TARGETS = new Set([
      '@tsrs/darwin-arm64',
      '@tsrs/darwin-x64',
@@ -157,7 +157,7 @@ diff --git a/dist/esm-node/build-config/internal-effect-discovery.mjs b/dist/esm
      "@typescript/native"
  ];
 -const EFFECT_TSRS_PROVIDER_VERSION = '0.67.0';
-+const EFFECT_TSRS_PROVIDER_VERSION = '0.69.0';
++const EFFECT_TSRS_PROVIDER_VERSION = '0.70.0';
  const EFFECT_TSRS_TARGETS = new Set([
      '@tsrs/darwin-arm64',
      '@tsrs/darwin-x64',

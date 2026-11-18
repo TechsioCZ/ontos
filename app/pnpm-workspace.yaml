@@ -46,14 +46,14 @@ minimumReleaseAgeExclude:
   - '@effect/platform-node-shared@4.0.7'
   - '@effect/sql-pg@4.0.7'
   # Exact compiler identities from the reviewed UltraModern compiler contract.
-  - '@effect/tsgo-darwin-arm64@0.69.0'
-  - '@effect/tsgo-darwin-x64@0.69.0'
-  - '@effect/tsgo-linux-arm64@0.69.0'
-  - '@effect/tsgo-linux-arm@0.69.0'
-  - '@effect/tsgo-linux-x64@0.69.0'
-  - '@effect/tsgo-win32-arm64@0.69.0'
-  - '@effect/tsgo-win32-x64@0.69.0'
-  - '@effect/tsgo@0.69.0'
+  - '@effect/tsgo-darwin-arm64@0.70.0'
+  - '@effect/tsgo-darwin-x64@0.70.0'
+  - '@effect/tsgo-linux-arm64@0.70.0'
+  - '@effect/tsgo-linux-arm@0.70.0'
+  - '@effect/tsgo-linux-x64@0.70.0'
+  - '@effect/tsgo-win32-arm64@0.70.0'
+  - '@effect/tsgo-win32-x64@0.70.0'
+  - '@effect/tsgo@0.70.0'
   - '@tsrs/darwin-arm64@0.25.0-ts7.1.0-beta'
   - '@tsrs/darwin-x64@0.25.0-ts7.1.0-beta'
   - '@tsrs/linux-arm64-gnu@0.25.0-ts7.1.0-beta'
@@ -166,7 +166,7 @@ peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
 overrides:
-  '@effect/tsgo': 0.69.0
+  '@effect/tsgo': 0.70.0
   tsrs: 0.25.0-ts7.1.0-beta
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
@@ -200,7 +200,7 @@ patchedDependencies:
   # skips the server declaration emit and TS-Go check; CI gates typecheck every unit.
   '@bleedingdev/modern-js-server-utils@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-server-utils@3.11.3-ultramodern.1.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
-  # compiler-prepare accepts the reviewed @effect/tsgo 0.69.0 tsrs contract (tsrs 0.25.0, Oxlint 1.91-1.93; adds win32-arm64).
+  # compiler-prepare accepts the reviewed @effect/tsgo 0.70.0 tsrs contract (tsrs 0.25.0, Oxlint 1.91-1.94; adds win32-arm64).
   '@bleedingdev/modern-js-ultramodern-create@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-ultramodern-create@3.11.3-ultramodern.1.patch
   # upstream: https://github.com/ultramodernjs/ultramodern.js
   '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-app-tools@3.11.3-ultramodern.1.patch
@@ -217,7 +217,7 @@ patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js (app-tools-extensions backend-federation-build codegen)
   # A unit may opt in (package.json modernjs.backendFederation.containerMinify: "whitespace-syntax") to whitespace and
   # syntax minification of its backend federation container only; identifiers are never mangled and names are kept.
-  # Typecheck compiler discovery (internal-effect-discovery) accepts the reviewed @effect/tsgo 0.69.0 tsrs contract.
+  # Typecheck compiler discovery (internal-effect-discovery) accepts the reviewed @effect/tsgo 0.70.0 tsrs contract.
   '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-app-tools-extensions@3.11.3-ultramodern.1.patch
   # Only commerce-customer-context opts in: its container measured trunk 16,510,159 / main 16,090,643 / merged
   # 17,875,235 bytes against the 16,777,216-byte federation entry limit. Follow-up: slim its import graph (Core root
