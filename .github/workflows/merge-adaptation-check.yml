@@ -73,7 +73,7 @@ jobs:
         env:
           TOOL_SHA: ${{ github.sha }}
         run: |
-          for tool in scripts/merge/adaptation-check.mts scripts/scaffolding/registered-workload-calls.mts; do
+          for tool in scripts/merge/adaptation-check.mts scripts/registered-workload-callers.mts; do
             if [[ ! -f "$tool" ]]; then
               mkdir -p "$(dirname "$tool")"
               git show "$TOOL_SHA:app/$tool" > "$tool"
