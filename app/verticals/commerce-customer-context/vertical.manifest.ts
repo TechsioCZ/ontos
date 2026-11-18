@@ -1454,9 +1454,9 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
-        // A person is relayed as itself and a verified workload calls as this module under the Catalog's
-        // compatibility declaration, as the hand-built delegation did; Core now also selects the registered
-        // caller for a recovery or system requester. Both carry a tenant-only credential, as before.
+        // A person or a system requester is relayed as itself; a verified workload or a recovery calls as
+        // this module under the Catalog's compatibility declaration, as the hand-built delegation did.
+        // Both carry a tenant-only credential, as before.
         callers: [
           { kind: 'person', legalEntityScope: 'tenant' },
           {
