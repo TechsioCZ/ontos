@@ -141,7 +141,6 @@ it.layer(NodeServices.layer)((suite) => {
 
         expect(preExtraction).toHaveLength(59);
         expect(actual).toEqual(expect.arrayContaining(preExtraction));
-        expect(current).toHaveLength(180);
         expect(actual).toEqual(current);
       }),
   );

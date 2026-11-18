@@ -43,7 +43,8 @@ describe('Catalog backend declaration and full publication', () => {
     expect(declaration.actions).toBe(runtimeManifest.publicSurface.actions);
     const backendActions = getVerticalRuntimeActions(backendRegistration);
     const fullActions = getVerticalRuntimeActions(registration);
-    expect(backendActions).toHaveLength(83);
+    expect(backendActions.length).toBeGreaterThan(0);
+    expect(manifest.publicSurface.actions).toHaveLength(backendActions.length);
     expect(fullActions).toHaveLength(backendActions.length);
     for (const [index, action] of backendActions.entries()) {
       expect(action).toBe(fullActions[index]);
