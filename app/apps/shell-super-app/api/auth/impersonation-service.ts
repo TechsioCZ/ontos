@@ -64,7 +64,6 @@ export { SupportAuthProviderService } from './support-auth-provider-service.ts';
 export { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 export { SupportImpersonationStoreService } from './support-impersonation-store-service.ts';
 export type {
-  SupportImpersonationStartClaim,
   SupportImpersonationStartKey,
   SupportImpersonationStore,
   SupportRecoveryRecord,
