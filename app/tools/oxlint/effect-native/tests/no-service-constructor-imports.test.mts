@@ -844,9 +844,12 @@ it('proves Json as a closed value without admitting the unknown it is often conf
   );
 });
 
+/** The generated factory's default icon input, the template literal `icon-[${value}]`. */
+const iconTemplateInput = `\`icon-[\${value}]\``;
+
 /** A factory that decodes `{ icon }` through a template literal of the given parts. */
-const iconFactory = (parts: string): string =>
-  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral(${parts}) })); export const makeData = (value: string) => decode({ icon: \`icon-[\${value}]\` });`;
+const iconFactory = (parts: string, input = iconTemplateInput): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral(${parts}) })); export const makeData = (value: string) => decode({ icon: ${input} });`;
 
 it('proves a TemplateLiteral only when every part is a string literal or a closed string schema', () => {
   expectDataFactoryProofs(
@@ -855,7 +858,7 @@ it('proves a TemplateLiteral only when every part is a string literal or a close
       iconFactory('["icon-[", Schema.NonEmptyString, "]"]'),
       iconFactory('["icon-[", Schema.Literal("lucide"), "--", Schema.String, "]"]'),
       iconFactory('["icon-[", Schema.TemplateLiteral([Schema.String, "--", Schema.String]), "]"]'),
-      iconFactory('["icon"]'),
+      iconFactory('["icon"]', '"icon"'),
     ],
     [
       iconFactory('["icon-[", Schema.Unknown, "]"]'),
@@ -883,6 +886,20 @@ it('proves a TemplateLiteral of local parts only while every position is known',
       // A pushed part is a new position the stale fields would not list.
       localPartsFactory('parts.push(1);'),
       localPartsFactory('parts.push("x");'),
+    ],
+  );
+});
+
+it('proves an explicit all-string Literals list as a closed string schema', () => {
+  expectDataFactoryProofs(
+    [
+      iconFactory('["id-", Schema.Literals(["a", "b"])]', '"id-a"'),
+      decodedEntriesFactory('Schema.Record(Schema.Literals(["key", "other"]), Schema.String)', ...stringEntry),
+    ],
+    [
+      iconFactory('["id-", Schema.Literals(["a", 1])]', '"id-a"'),
+      iconFactory('["id-", Schema.Literals([])]', '"id-"'),
+      decodedEntriesFactory('Schema.Record(Schema.Literals(["key", null]), Schema.String)', ...stringEntry),
     ],
   );
 });
