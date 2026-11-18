@@ -351,7 +351,8 @@ const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(func
     ['a%25a', []],
     ['nothing-like-this', []],
   ];
-  // Each search has its own request and assertions; no policy or business state changes between them.
+  // One search at a time. The read path handles these requests one after another, about 15 s each, so three
+  // at once saved nothing: each took 31 to 56 s in run 44397491701 and the tenth answered 503 at its deadline.
   yield* Effect.forEach(
     cases,
     ([q, expected]) =>
@@ -360,7 +361,7 @@ const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(func
         expect(sourceKeysOf(found), q).toEqual(expected);
         expect(found.count, q).toBe(expected.length);
       }),
-    { concurrency: 3, discard: true },
+    { discard: true },
   );
   const pagedMatches = yield* read('?q=internal&limit=1&offset=1');
   expect(pagedMatches).toMatchObject({ count: 2, limit: 1, offset: 1 });
