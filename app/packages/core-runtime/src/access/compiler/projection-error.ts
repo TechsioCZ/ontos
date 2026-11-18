@@ -32,7 +32,14 @@ export class AccessProjectionError extends Schema.TaggedError<AccessProjectionEr
   operation: Schema.optionalKey(Schema.String),
   reason: Schema.String,
   unit: Schema.optionalKey(projectionUnitSchema),
-}) {}
+}) {
+  // Effect's Cause.pretty retains Error.message and native causes, not arbitrary schema fields.
+  override get message(): string {
+    return this.operation === undefined
+      ? super.message
+      : `${this.operation} (${this.grpcStatus ?? 'UNKNOWN'}): ${this.reason}`;
+  }
+}
 
 /**
  * A refusal names the unit it refused. The label is bounded, because a unit whose identifier is

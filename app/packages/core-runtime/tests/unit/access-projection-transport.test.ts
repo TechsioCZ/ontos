@@ -40,6 +40,8 @@ it.effect('preserves RPC details, status name and operation through projection a
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain('connection closed before response');
+        expect(Cause.pretty(exit.cause)).toContain(operation);
+        expect(Cause.pretty(exit.cause)).toContain('UNAVAILABLE');
       }
     }
   }),
