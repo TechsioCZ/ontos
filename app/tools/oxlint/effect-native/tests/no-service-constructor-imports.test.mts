@@ -741,6 +741,40 @@ it('proves own Record entries without admitting inherited Object members as data
   );
 });
 
+/** A factory that returns data or `otherwise` by comparing a decoded entry with `test`. */
+const literalBranchFactory = (schema: string, input: string, read: string, test: string, otherwise: string): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entry: ${schema} })); export const makeData = (value: string) => decode({ entry: ${input} }).entry${read} === ${test} ? { ok: true } : ${otherwise};`;
+
+it('keeps no exact literal for a nullable value or an absent Record key, so a branch on it cannot hide a function', () => {
+  expectDataFactoryProofs(
+    [
+      // Both branches are data, so the widened comparison still proves.
+      literalBranchFactory('Schema.NullOr(Schema.Literal("ok"))', 'value', '', '"ok"', '{ ok: false }'),
+      literalBranchFactory(
+        'Schema.Record(Schema.String, Schema.Literal("ok"))',
+        '{ present: value }',
+        '.missing',
+        '"ok"',
+        '{ ok: false }',
+      ),
+      // A required literal is exact: the other branch is unreachable.
+      literalBranchFactory('Schema.Literal("ok")', 'value', '', '"ok"', '() => 1'),
+    ],
+    [
+      // null, undefined or an absent key reaches the function branch at runtime.
+      literalBranchFactory('Schema.NullOr(Schema.Literal("ok"))', 'value', '', '"ok"', '() => 1'),
+      literalBranchFactory('Schema.UndefinedOr(Schema.Literal(true))', 'value', '', 'true', '() => 1'),
+      literalBranchFactory(
+        'Schema.Record(Schema.String, Schema.Literal("ok"))',
+        '{ present: value }',
+        '.missing',
+        '"ok"',
+        '() => 1',
+      ),
+    ],
+  );
+});
+
 it('proves Json as a closed value without admitting the unknown it is often confused with', () => {
   expectDataFactoryProofs(
     [
