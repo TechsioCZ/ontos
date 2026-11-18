@@ -116,6 +116,10 @@ export const runVerifyMarketEligibilityV1 = Effect.fn('VerifyMarketEligibilityV1
   const original = input.originalRequest;
   let subjectRestrictions = Option.none<MarketSubjectRestrictionSnapshot>();
   if (original.subject !== undefined && original.subject.kind !== 'GUEST') {
+    // Customer Context answers a subject's restrictions only under the requester's Legal Entity.
+    if (context.scope.legalEntityId === undefined) {
+      return readAnswer(unavailable(), { resultCount: 1 });
+    }
     const answer = yield* context.call('subjectRestrictions', { subject: original.subject });
     subjectRestrictions = Option.flatMap(callAnswer(answer), currentSubjectRestrictionSnapshot);
     if (Option.isNone(subjectRestrictions)) {

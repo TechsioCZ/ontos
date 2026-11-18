@@ -369,6 +369,19 @@ describe('verify market eligibility owner read', () => {
     }),
   );
 
+  it.effect('answers UNAVAILABLE without a call or a transaction for a subject without a Legal Entity', () =>
+    Effect.gen(function* verifyWithoutLegalEntity() {
+      const fixture = harness({ current: snapshotFor(at) });
+      const { legalEntityId: _withoutLegalEntity, ...scopeWithoutLegalEntity } = scope;
+      const result = yield* runVerifyMarketEligibilityV1(
+        { observedProof: proof(at), originalRequest: request(at, true) },
+        { ...fixture.context, scope: scopeWithoutLegalEntity },
+      );
+      expect(result.result.state).toBe('UNAVAILABLE');
+      expect(fixture.steps()).toEqual([]);
+    }),
+  );
+
   it.effect('denies a request outside the trusted scope before any call or transaction', () =>
     Effect.gen(function* verifyOutsideScope() {
       const fixture = harness({ current: snapshotFor(at) });
