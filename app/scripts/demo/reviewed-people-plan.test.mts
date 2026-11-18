@@ -378,7 +378,8 @@ it.effect('a withdrawn or changed reviewed capability is reported and never sent
     if (sales === undefined || runCell === undefined) {
       throw new Error('sales holds no work.tasks run cell');
     }
-    const removedKey = runCell.capabilityKey;
+    // The release keys and the role cell keys carry different brands; compare them as the plain text they share.
+    const removedKey: string = runCell.capabilityKey;
     const withdrawn = desiredFrom(release.filter(({ key }) => key !== removedKey));
     expect(holdsSlot(baseline, slotOf(runCell))).toEqual(ROLE_ACCOUNTS);
     const removedDiagnostics = diagnosticsFor(withdrawn, removedKey);
