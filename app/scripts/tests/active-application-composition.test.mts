@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 
 import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { parse } from 'yaml';
 
 import {
   ActiveApplicationCompositionSnapshotSchema,
@@ -136,10 +135,6 @@ const CUSTOMER_CONTEXT_WORKER = 'commerce-customer-context-worker';
 const PARTY_MODULE = 'party.registry';
 const PAGE_EXPOSE = './PageContacts';
 const SHELL_MANIFEST_URL = 'https://shell.example/mf-manifest.json';
-const refreshWorkflowUrl = new URL(
-  '../../../.github/workflows/active-application-composition-refresh.yml',
-  import.meta.url,
-);
 const SHELL_REMOTE = 'shellSuperApp';
 const SHELL_APP = 'shell-super-app';
 
@@ -521,141 +516,7 @@ it.effect('observes a placed unit on Cloudflare at the Worker URL its edge build
 it('refreshes well inside the validity window on the configured schedule', () => {
   const { refreshCron, refreshInterval, validity } = ACTIVE_APPLICATION_COMPOSITION_POLICY;
   expect(Duration.toMillis(validity)).toBeGreaterThanOrEqual(3 * Duration.toMillis(refreshInterval));
-  const workflow = Schema.decodeUnknownSync(
-    Schema.Struct({ on: Schema.Struct({ schedule: Schema.Array(Schema.Struct({ cron: Schema.String })) }) }),
-  )(parse(readFileSync(refreshWorkflowUrl, 'utf-8')));
-  expect(workflow.on.schedule).toEqual([{ cron: refreshCron }]);
   expect(refreshCron).toMatch(/^\d+ \*\/6 \* \* \*$/u);
-});
-
-it('leaves the refresh to the deploy while the Outbox Workers drift from the Outbox Worker mode', () => {
-  const workflow = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Record(
-        Schema.String,
-        Schema.Struct({
-          steps: Schema.Array(
-            Schema.Struct({
-              id: Schema.optional(Schema.String),
-              if: Schema.optional(Schema.String),
-              name: Schema.String,
-            }),
-          ),
-        }),
-      ),
-    }),
-  )(parse(readFileSync(refreshWorkflowUrl, 'utf-8')));
-  const steps = Object.values(workflow.jobs).flatMap((job) => job.steps);
-  const gates = steps.flatMap((step) =>
-    step.if?.includes('steps.worker-drift') === true ? [{ condition: step.if, name: step.name }] : [],
-  );
-  expect(steps.some((step) => step.id === 'worker-drift')).toBe(true);
-  const refreshes = "steps.worker-drift.outputs.drift != 'true'";
-  const refreshSteps = [
-    "Preserve the workflow's native VPN action",
-    'Check out the deployed revision',
-    "Install the deployed revision's app workspace",
-    'Connect the runner to the private Zerops database network',
-    'Renew the complete approved Application Composition',
-  ];
-  expect(gates).toEqual([
-    {
-      condition: "steps.worker-drift.outputs.drift == 'true'",
-      name: 'Leave the pending Outbox Worker mode switch to the stage deploy',
-    },
-    ...refreshSteps.slice(3).map((name) => ({ condition: refreshes, name })),
-    {
-      condition: "steps.worker-drift.outputs.drift == 'true'",
-      name: 'Leave the pending Outbox Worker mode switch to the production deploy',
-    },
-    ...refreshSteps.map((name) => ({ condition: `steps.base.outputs.base != '' && ${refreshes}`, name })),
-  ]);
-});
-
-it('refreshes the production composition on Zerops, in its own environment and concurrency group', () => {
-  const workflow = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Struct({
-        'refresh-production': Schema.Struct({
-          concurrency: Schema.Struct({ group: Schema.String }),
-          env: Schema.Record(Schema.String, Schema.String),
-          environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
-          steps: Schema.Array(
-            Schema.Struct({ if: Schema.optional(Schema.String), run: Schema.optional(Schema.String) }),
-          ),
-        }),
-      }),
-    }),
-  )(parse(readFileSync(refreshWorkflowUrl, 'utf-8')));
-  const production = workflow.jobs['refresh-production'];
-  expect(production.environment).toEqual({ deployment: false, name: 'production' });
-  expect(production.concurrency.group).toBe('zerops-production');
-  expect(production.env.DEPLOY_TARGET).toBe('zerops');
-  // Production names its own Outbox Worker mode; the publisher has no default for it.
-  expect(production.env.OUTBOX_WORKER_MODE).toBe(`\${{ vars.OUTBOX_WORKER_MODE }}`);
-  const runs = production.steps.map(({ run }) => run ?? '').join('\n');
-  expect(runs).toContain('deployment-base:resolve --environment production --optional');
-  expect(runs).toContain('--environment production');
-  expect(runs).not.toContain('--environment stage');
-  // An unconfigured or never-deployed production has no snapshot, so the lane publishes nothing.
-  // A pending production mode switch is left to the production deploy, as on stage.
-  const drift = production.steps.find(
-    ({ run }) => run?.includes('active-composition:publish worker-mode-drift') === true,
-  );
-  expect(drift?.if).toBe("steps.base.outputs.base != ''");
-  const publish = production.steps.find(({ run }) => run?.includes('active-composition:publish refresh') === true);
-  expect(publish?.if).toBe("steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'");
-});
-
-it('bounds each refresh and yields it to a main deploy in flight', () => {
-  const StepSchema = Schema.Struct({
-    if: Schema.optional(Schema.String),
-    run: Schema.optional(Schema.String),
-    'timeout-minutes': Schema.optional(Schema.Number),
-    uses: Schema.optional(Schema.String),
-  });
-  const JobSchema = Schema.Struct({
-    concurrency: Schema.optional(Schema.Struct({ group: Schema.String })),
-    if: Schema.optional(Schema.String),
-    needs: Schema.optional(Schema.Array(Schema.String)),
-    steps: Schema.Array(StepSchema),
-    'timeout-minutes': Schema.Number,
-  });
-  const workflow = Schema.decodeUnknownSync(Schema.Struct({ jobs: Schema.Record(Schema.String, JobSchema) }))(
-    parse(readFileSync(refreshWorkflowUrl, 'utf-8')),
-  );
-  const { jobs } = workflow;
-  const guard = jobs['deploy-guard'];
-  // The guard queues outside every deploy lock: a refresh pending in the lock would cancel a pending deploy.
-  expect(guard?.concurrency).toBeUndefined();
-  expect(guard?.steps.map(({ run }) => run ?? '').join('\n')).toContain('--workflow ultramodern-workspace-gates.yml');
-  for (const [name, environment] of [
-    ['refresh-stage', 'stage'],
-    ['refresh-production', 'production'],
-  ] as const) {
-    const job = jobs[name];
-    expect(job?.concurrency?.group).toBe(`zerops-${environment}`);
-    expect(job?.needs).toEqual(environment === 'stage' ? ['deploy-guard', 'stage-target'] : ['deploy-guard']);
-    expect(job?.if).toBe(`needs.deploy-guard.outputs.${environment}-deploy-active == 'false'`);
-    expect(job?.['timeout-minutes']).toBeLessThanOrEqual(10);
-    // Every install and the publication carry their own bound inside the job's.
-    for (const step of job?.steps ?? []) {
-      if (
-        step.uses === './.github/actions/install-app' ||
-        step.run?.includes('active-composition:publish refresh') === true
-      ) {
-        expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
-      }
-    }
-    const checkout = job?.steps.find(({ run }) => run?.includes('git checkout --detach') === true);
-    if (environment === 'production') {
-      // The second install must not walk the first one's node_modules: mise-action hashes the whole tree.
-      expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
-    } else {
-      expect(checkout).toBeUndefined();
-    }
-  }
-  expect(jobs['refresh-stage-edge']).toBeUndefined();
 });
 
 it('reads quoted Zerops env-file values', () => {

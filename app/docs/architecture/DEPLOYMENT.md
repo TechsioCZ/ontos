@@ -22,9 +22,6 @@ Core DB authority coordinates publication and transaction admission with revisio
 
 - **Node:** `active-application-composition-source.node.ts` lazily reads `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, with optional `ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN`. It enforces the source URL contract, bounded body/read time and a short successful-read cache capped by the snapshot's original authority deadline. Failures are not cached. Reading the same old content never extends its lease. The source constants own the timeout/cache limits.
 - **Workers:** `active-application-composition-source.workerd.ts` reads native binding `ONTOS_ACTIVE_APPLICATION_COMPOSITION`, key `active`, as defined in `active-application-composition-edge.ts`. Missing binding/key, invalid content or bounded-read failure fail closed. KV propagation is distinct from publication readback; this playbook promises no immediate global cutover SLA.
-- **Renewal:** the scheduled `active-application-composition-refresh.yml` workflow shares the environment's deployment lock and runs `active-composition:publish refresh --environment <environment>`. It re-observes the approved exact artifacts and rejects any different revision; changed artifacts require an explicit promotion. `scripts/active-application-composition.mts#ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window. Renewal does not select another graph or restart consumers to replace process-start JSON.
-
-Stage refresh reads `DEPLOY_TARGET` from the `stage` environment, defaulting to Zerops like deployment. It uses `stage` credentials for Zerops and `stage-edge` credentials for Cloudflare. It keeps the workflow revision already checked out by its initial checkout. The approved snapshot supplies the complete module membership, backend transports and exact artifact pins; stage does not select another source revision from deployment history. This also covers Node-only stage and target switches where a newer worker deployment did not publish a new Composition. The deployment lock, VPN and worker-mode drift checks still apply. Production retains its existing deployed-source checkout.
 
 The current policy refreshes every six hours and gives each successful observation a 24-hour validity window. A business endpoint returning HTTP 500 does not by itself prevent identity observation. Missing or changed artifact bytes, failed backend-identity observation, or a stalled identity response can prevent renewal of the complete snapshot. Without another successful authorized observation, admission expires at the original `validUntil`, including otherwise healthy operations; cached bytes and an old hash do not extend that deadline. This shared observation failure domain remains part of the bounded MIN behavior, rather than a new availability guarantee.
 
@@ -147,8 +144,7 @@ is, and the preproposal proofs when one of their declared proof packages is; a r
 left is dropped. A task in an unknown form requires the full suite.
 
 An affected plan omits unrelated package tests; source checks, lint, static contracts and the
-complete Node artifact build remain required. The retired Cloudflare build and proof jobs stay
-disabled and are not required gates. Core, authorization, schema, public-API, package-metadata,
+complete Node artifact build remain required. Core, authorization, schema, public-API, package-metadata,
 workflow and unknown changes still require the complete suite. Source checks do not wait for Node
 artifact builds, and integration rows that need no built artifact start with the builds; the other
 unit and integration rows retain their same-run artifact dependency.
@@ -184,8 +180,6 @@ A new MicroVertical is not deployable until its delivery contract accounts for a
 Codesmith or another approved generator must update these surfaces atomically. Until the generator exists, do not add another copied Contacts block to the workflow, `zerops.yaml`, migration runner, or validator. Extend and test the generator first.
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*` cannot be mapped to known delivery units. An unknown new vertical must never produce a no-op deploy.
-
-The stage plan diffs from the commit of the last successful `stage` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`.
 
 ### Change-impact rules
 
@@ -272,7 +266,6 @@ Stage provisioning, run by a human, never an agent:
 
 1. From a host on the Zerops VPN, with `DATABASE_ADMIN_URL` set, run `node scripts/ops/cloudflare-stage-cutover.mts database-identities`. It creates the missing sensitive `migrator` service secrets `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD` (never printed), then creates the three login roles with `LOGIN` and `CONNECT` only. Roles must exist first because Hyperdrive tests the connection when a config is created.
 2. Run `provision`. It creates Hyperdrive `ontos-stage-party-registry` (user `party_registry_runtime`, caching off, origin limit 10) and `ontos-stage-gateway-issuer` (user `shell_gateway_issuer`, caching off, limit 5), and writes `ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID` and `ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID` into `topology/cloudflare-placement.json` `buildEnvironment` for a reviewed PR. `verify` checks user, caching and limit drift.
-3. Merge. `edge-deploy-readiness` requires both IDs, so no deploy starts before provisioning is complete.
 
 The passwords are `migrator` service secrets, referenced as `${migrator_<KEY>}`, never project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this. Each process holds only its own URLs:
 
@@ -499,198 +492,16 @@ Use this sequence for a new or changed MicroVertical:
 
 Do not report release success before all required smoke checks pass.
 
-### Deploy target per environment
+### Node build shards
 
-One workflow deploys every GitHub deployment environment. Each environment chooses where its
-delivery units run with its `DEPLOY_TARGET` variable, and how its Outbox Workers run on Zerops with
-its required `OUTBOX_WORKER_MODE` variable (`dedicated` or `host`, see
-[Outbox Workers](./OUTBOX_WORKERS.md)). The two are independent:
-
-| Environment  | `DEPLOY_TARGET`   | What deploys                                                                                                                                                                                                  |
-| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage`      | unset or `zerops` | Fresh reviewed business members and Shell on Zerops; unchanged slots retain original receipts. Public artifacts use the existing immutable asset gateway. Migration/verifier and worker sets are independent. |
-| `stage`      | `cloudflare`      | Fresh reviewed placed members and Shell artifacts on Cloudflare; unchanged slots retain original receipts. Required infrastructure and Outbox Workers remain on Zerops.                                       |
-| `production` | unset or `zerops` | The reviewed Node release uses production configuration and its existing artifact gateway. Cloudflare backend placement remains rejected outside the reviewed stage edge environment.                         |
-
-The deployment planner always emits both plans from the same topology: the Zerops phases (`phases`,
-`units.providers` with each vertical's outbox worker, `units.shell`, `units.workers`) and the edge
-units (`units.cloudflare`). The workflow filters business builds through the complete reviewed release
-selection and keeps infrastructure/worker phases separate. Tests cover both backend targets for the
-same diffs. `zerops.yaml`, its generators and materializers remain the source for Node provider builds;
-a source package outside reviewed membership is not automatically deployed or enrolled.
-
-| Environment  | `OUTBOX_WORKER_MODE` | Outbox Workers on Zerops                                                         |
-| ------------ | -------------------- | -------------------------------------------------------------------------------- |
-| `stage`      | `host`               | Every owner's worker in the one `outbox-worker-host` process, the cheap choice.  |
-| `production` | `dedicated`          | One `<owner>-worker` service per owner, deployed and failing independently (HA). |
-
-Before the Cloudflare cut-over stage runs `dedicated`, the workers it has today; `cloudflare-stage-cutover.mts
-activate` switches it to `host` beside `DEPLOY_TARGET=cloudflare`. A preview or demo environment on
-Zerops can equally run `host`.
-
-`deploy-target` reads `DEPLOY_TARGET`, `OUTBOX_WORKER_MODE`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN`
-secret from the deploying environment without creating a deployment. An invalid target or mode fails
-the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it has no default. An
-environment without its Zerops project or token deploys nothing and records nothing. `deploy-plan`
-then plans in that environment from the environment's last successful deployment. After the complete
-expected candidate is prepared, `deploy-migrations` runs the independent migration/verifier closure and
-requested SpiceDB deploy. `deploy-node-backends` deploys fresh Node business units and Shell, then
-`deploy-zerops`, the environment's one deployment record, handles workers and the Node publication in the
-original environment. Pushes to `main` deploy `stage`. Production deploys
-only on an explicit dispatch:
-
-```sh
-gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
-```
-
-Create `production` once, outside CI, before the first dispatch, with the operator script in
-[Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
-`OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
-
-`zerops.yaml` describes stage. Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
-`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
-names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
-therefore never runs stage-only behaviour. Every runtime reaches SpiceDB over TLS gRPC and pins
-`SPICEDB_CA_CERT`, which `zerops.yaml` takes from the `spicedb` service's `SPICEDB_GRPC_TLS_CERT`
-secret; there is no plaintext mode. Production's copy sets every `SPICEDB_ENDPOINT` to production's
-`SPICEDB_ENDPOINT` variable, so production's SpiceDB gRPC certificate must name that host. A
-production deploy without that variable fails before it pushes anything. The
-scheduled composition refresh has a `refresh-production` lane beside `refresh-stage`, in production's
-own environment and `zerops-production` concurrency group; it publishes nothing until production is
-configured and has deployed once.
-Each refresh lane holds its environment's deploy lock, so it is bounded to 10 minutes (about two in
-practice), and it yields to a main deploy run that is still unfinished: GitHub cancels the older pending
-job when another queues in the same concurrency group, so a refresh queued behind a deploy could cancel
-the next deploy job, and every deploy re-publishes the composition anyway.
-
-The composition publisher resolves each unit's public origin by target: the Zerops subdomain of its
-service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
-(`ULTRAMODERN_PUBLIC_URL_<UNIT>` in the placement `buildEnvironment`). `deploy-zerops` does not publish
-on `cloudflare`, because a new or moved Worker is unobservable until `deploy-cloudflare` ships it;
-`publish-edge-composition` then runs `active-composition:publish publish` with the complete approved
-candidate. Scheduled refresh runs `active-composition:publish refresh` for the same approved revision.
-Both invoke `scripts/publish-active-application-composition.mts` directly under the environment's
-deploy lock: the native publisher writes KV key `active`, verifies readback, and coordinates Core DB
-authority. There is no detached synchronization writer or publication-triggered consumer restart.
-Every placed Worker binds the composition KV namespace as `ONTOS_ACTIVE_APPLICATION_COMPOSITION`
-and reads key `active` on each request, failing closed when the binding or key is missing. Node
-consumers use the lazy HTTP source described in **Current Composition transport**; troubleshoot
-source/readback and authority freshness rather than restarting processes to load a snapshot.
-
-Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
-`full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
-is not configured fails in `edge-deploy-readiness`, before anything changes on Zerops.
-
-### Edge units on Cloudflare Workers
-
-`topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
-each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
-deployable on its own. Every vertical (UI and headless API) and the Shell are placed, so every
-Worker the Shell binds as a service is placed too. The deployment planner emits the placed,
-impacted units as `units.cloudflare` in dependency order (providers before Shell).
-
-Cloudflare backend placement runs only for configured `stage`. The Node target reuses the existing
-immutable public-asset gateway; it does not perform an additive shadow deployment of every backend.
-In the `host` Outbox Worker mode, whatever the target, `deploy-zerops` deploys the one
-`outbox-worker-host` service (`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's
-dedicated worker service; see [Outbox Workers](./OUTBOX_WORKERS.md). The run that deploys one mode's
-workers stops the other mode's. A switch changes no source, so each deploy first checks whether the
-other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
-when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
-
-`capture-application-baseline` records B before `edge-plan` partitions the complete reviewed release.
-`edge-build` builds and verifies only fresh slots on separate runners, without deployment credentials.
-After workspace gates and initial-cutover verification, `deploy-cloudflare` retains immutable named
-backend/public-asset versions **before** migrations, under the existing `zerops-stage` environment
-lock. It retrieves original retained receipts, validates complete N, and uses `prepare
---observe-backends` to verify native backend versions as well as exact public pins before producing T.
-The public Shell ingress remains unchanged during this staging phase.
-
-`deploy-migrations` then receives original B/T and the independent migration requirements.
-`deploy-zerops` handles required workers; `publish-edge-composition` reobserves the full candidate and
-performs explicit publication. Only after that succeeds does `finalize-edge-deployment` activate the
-approved Shell ingress and record the successful edge deployment.
-
-Failed or cancelled releases preserve their immutable artifacts, original receipt set and prepared
-candidate. They do not automatically restore a historical Worker version, delete newly retained
-artifacts, or infer that an old revision can run against changed schema/queues. Same-run recovery uses
-the original prepared identity and native checks. Explicit compatible rollback follows
-[Rollback](#rollback). Source/build changes continue to be planned from the last successful edge
-deployment, so failed work is not hidden by an unrelated successful worker phase.
-
-Removing a unit from placement, or renaming its Worker, must list the old Worker in
-`retiredWorkers`. The planner compares placement with the last successful edge deployment, in full
-plans too, and refuses a change that drops a deployed Worker without retiring it. Placed units must
-also have distinct Worker names. Retirement has two phases, and CI never deletes a Worker. The
-deploy that drops a Worker leaves it running, so a rollback of the Shell or another dependent still
-finds its binding target. After the proofs pass, every successful edge deploy reports each retired
-Worker that still exists as a warning, until an operator deletes it with
-`wrangler delete --name <worker>`. `retiredWorkers` is a ledger: CI cannot see a deletion, so the
-planner keeps every entry the last edge deployment retired, and a deleted Worker's entry costs one
-read-only check per deploy.
-
-The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
-variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
-environment (below). The `edge-deploy-readiness` job checks all three from `stage-edge` without
-creating a deployment. Missing required configuration fails a selected Cloudflare target before provider changes. A Node
-target checks the public-asset gateway separately from Cloudflare backend data bindings. Reading `stage-edge` without a deployment uses
-`environment.deployment: false`, which GitHub refuses for environments with custom deployment
-protection rules, so `stage-edge` must not have any.
-
-The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
-`topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
-origin (the placed units' API CORS allowlist), `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
-unit (the output verifier requires them), and the private data plane every Worker binds:
-`ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID` (the `HYPERDRIVE` binding, from which Core's
-`#database-runtime` takes the runtime `DATABASE_URL`) and
-`ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID` (the `SPICEDB` Workers VPC binding Core's
-`#spicedb-transport` calls), and `ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID` (the
-`ONTOS_ACTIVE_APPLICATION_COMPOSITION` KV binding Core's `#active-application-composition-source`
-reads). A Worker build without any of them fails. It may add `MODERN_ASSET_PREFIX`.
-Only `MODERN_`, `ULTRAMODERN_` and `VERTICAL_` keys are accepted. `ULTRAMODERN_SOURCE_REVISION` and
-`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for the run. `VERTICAL_*_WORKER_NAME` and
-`VERTICAL_*_WORKER_BINDING` are rejected: a Worker's name and service-binding name are its topology
-`cloudflare.workerName` and `workerDispatch.serviceBinding`, the names CI deploys and every caller uses. Because it is a topology document,
-changing a value replans every unit, so no Worker keeps a build of the old configuration. The job
-never reads the Zerops `stage` environment.
-Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
-(`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`); the
-Hyperdrive config and Workers VPC service the IDs above name are account objects.
-
-Inside the account the Workers call each other through service bindings where the topology allows
-it: a binding call goes straight to the target Worker, without a public round trip or a routable
-hostname. The Shell discovers each UI vertical's module
-contract through its `VERTICAL_<UNIT>_WORKER` binding (the reference topology's
-`workerDispatch.serviceBinding`), and Commerce calls Price Group Catalog through
-`VERTICAL_PRICE_GROUP_CATALOG_WORKER` (Core's `#unit-service-fetch`). On Node both keep their URLs.
-Calls a binding cannot carry go by URL: gateway credentials come from the Shell, which binds every
-vertical, so a vertical binding the Shell would be a deploy cycle no first seed can satisfy. Those
-URLs must be the Shell's and verticals' routable custom domains. Every OntOS Worker sets
-`global_fetch_strictly_public`, the flag under which Cloudflare lets a Worker fetch another Worker
-on the same zone.
-
-The gate workflow builds the delivery units in parallel shards: each `node-artifact-build` or
-`cloudflare-artifact-build` matrix job builds a few units for its target (`node` with `build`,
-`cloudflare` with `cloudflare:build`) and uploads their git-ignored outputs. Every Node shard is a
-`node-artifact-build` row (its `shard` and `units` in the `build` list of `scripts/ci-matrices.json`)
-that only builds, packs and uploads. The `Deployment Bootstrap and Node Federation Proof` job, the owner
-rows (`owner-integration`, which also need the `Prepare integration database` producer) and the unit
-rows list `node-artifact-build` in `needs`, so GitHub starts them only once every shard has uploaded and
-none of them holds a runner while it waits; they then download them all
-(`scripts/unpack-unit-build-outputs.sh` fails naming any unit no shard built). A new unit joins one
-shard of each target; `Repository Tooling Tests` fails until it does. The Cloudflare proof runs as two jobs over the same outputs: one verifies the
-Worker outputs and their SSR, the other proves the Worker topology below.
-
-The `Cloudflare Workerd Artifact Proof (topology)` job runs the built Workers together before any deploy:
-`scripts/prove-cloudflare-local-topology.sh` starts each Worker in `wrangler dev` against the job's
-PostgreSQL (as the `HYPERDRIVE` local connection string) and SpiceDB (a local gateway Worker stands
-in for the `SPICEDB` VPC service), then proves repeated database requests, a SpiceDB-authorized
-Shell read, module discovery and a vertical API over service bindings, and SSR. Run it locally
-after `pnpm cloudflare:build`, `pnpm db:migrate` and `pnpm local:initialize`. The per-unit
-`cloudflare:proof` and the verified rollback catch a Worker whose configuration is incomplete.
-The first edge deploy has no previous edge deployment, so seed it with a full run:
-`gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
-delivery; it never removes a Zerops service or any GitHub environment variable or secret.
+The gate workflow builds the delivery units in parallel shards and uploads their git-ignored outputs.
+Every shard is a `node-artifact-build` row (its `shard` and `units` in the `build` list of
+`scripts/ci-matrices.json`) that only builds, packs and uploads. The `Deployment Bootstrap and Node
+Federation Proof` job, the owner rows (`owner-integration`, which also need the `Prepare integration
+database` producer) and the unit rows list `node-artifact-build` in `needs`, so GitHub starts them only
+once every shard has uploaded and none of them holds a runner while it waits; they then download them
+all (`scripts/unpack-unit-build-outputs.sh` fails naming any unit no shard built). A new unit joins one
+shard; `Repository Tooling Tests` fails until it does.
 
 ### Adding a vertical
 
@@ -1024,12 +835,7 @@ The first command only previews; the second creates the secrets.
 `provision` does not set Zerops project variables. Before the first deploy, set on the production
 project the values stage holds at project scope, with production's own origins:
 `MODERN_PUBLIC_SITE_URL`, `ONTOS_GATEWAY_ISSUER` and `ULTRAMODERN_MF_DEV_ORIGIN`. Production also needs its own enforced authorization evidence and
-context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)). Then
-dispatch the first production deploy:
-
-```sh
-gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
-```
+context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)).
 
 ## Required smoke suite
 
@@ -1104,27 +910,10 @@ No merge strategy flag is needed: the queue rebases. Before the pull request's o
 command enables auto-merge, and the pull request joins the queue once they do. It leaves the queue if
 its merge-group run fails. Nobody bypasses the queue, so do not pass `--admin`.
 
-The push that lands the commit deploys straight away. `queue-proof` looks for a successful
-`merge_group` run of the workflow on that commit; when one exists every gate job is skipped and
-`Workspace gates` passes on that proof. A commit without one (a dispatch on a commit pushed before
-the queue) runs the gates first. The deploy then runs:
-
-```text
-deploy-target + readiness -> capture B -> reviewed selection
-  Cloudflare: edge-build -> immutable deploy + native preparation of T
-  Node:       node-release-build -> immutable public assets + preparation of T
-workspace gates + initial-cutover proof + prepared T
-  -> migration/verifier closure guarded by B/T
-  -> actual Node backend deployment and receipts (Node target)
-  -> requested worker deploy/stop
-  -> full observed T + explicit Composition publication
-  -> approved Shell ingress finalization (Cloudflare target)
-```
-
-Planning and fresh builds can run alongside workspace verification. Database changes wait for the
-complete prepared candidate; unchanged builds do not remove required owner verifiers. A zero-build
-release still validates the full desired membership. Report measured build/deploy counts and elapsed
-times for the actual run rather than assuming a fixed release duration.
+The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
+run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
+passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
+gates.
 
 ## Pull-request and release hygiene
 
