@@ -258,8 +258,9 @@ export const registeredWorkloadCallDrift = (
 };
 
 /**
- * The drift of every contract and of every reviewed caller the contracts lack, one issue per declaration; the module
- * contract check fails on any.
+ * The drift of every contract in the checked workspace, one issue per declaration; the module contract check fails
+ * on any. A reviewed caller the workspace does not hold is not judged here: a fixture workspace holds few modules,
+ * and the generation test pins that the reviewed callers are exactly the modules that declare calls.
  */
 export const registeredWorkloadCallInventoryIssues = (
   contracts: readonly {
@@ -268,10 +269,7 @@ export const registeredWorkloadCallInventoryIssues = (
   }[],
 ): readonly string[] =>
   EffectArray.sort(
-    new Set([
-      ...Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS),
-      ...contracts.map(({ deployment }) => deployment.appId),
-    ]),
+    contracts.map(({ deployment }) => deployment.appId),
     Order.String,
   ).flatMap((appId) =>
     registeredWorkloadCallDrift(

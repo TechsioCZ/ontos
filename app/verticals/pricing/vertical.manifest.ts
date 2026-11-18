@@ -47,12 +47,12 @@ import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
 import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
 // </generated-module-manifest-imports>
-import { pricingMcpContribution } from './shared/mcp/contribution.ts';
-import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
 import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
 import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
 import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
+import { pricingMcpContribution } from './shared/mcp/contribution.ts';
+import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const catalogModuleId = 'commerce.catalog';
 const marketCatalogModuleId = 'commerce.market-catalog';
