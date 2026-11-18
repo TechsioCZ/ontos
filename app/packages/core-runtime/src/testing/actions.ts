@@ -42,7 +42,7 @@ import type {
   ContextAccessService,
   OwnerPermissionAccessTarget,
 } from '../permissions/context-access.ts';
-import { failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
 import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
 import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
 import type { TestAccessOutcome } from './access-gate.ts';
@@ -141,7 +141,8 @@ export interface ActionTestHarnessOptions extends Pick<
   readonly moduleState?: TenantModuleState;
   /**
    * Observes the owner overlay input the runner builds inside the transaction and answers it (O70).
-   * Omitting it keeps the fail-closed owner-neutral overlay.
+   * Omitting it uses the owner adapter the harness's context installs (`OwnerAuthorizationOverlay`), as the
+   * live Action runtime does, and otherwise the fail-closed owner-neutral overlay.
    */
   readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   /** Scripted Current decisions in exact target order; omitted positions remain unavailable. */
@@ -443,6 +444,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         ),
     };
     const scopeAccess = makeTestOperationalScopeAccess({ decision: options.legalEntityAccess ?? 'allowed' });
+    const installedOwnerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
     // Transitional: a suite that still states the legacy executor decision describes the same
     // authority a v2 carrier asks for, until the codemod renames the option to `access` (C05).
     const boundAccess = makeScriptedBoundAccessGate(options.access ?? options.actionPermission ?? 'denied');
@@ -544,7 +546,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       },
       ownerAuthorizationOverlay:
         options.onOwnerAuthorization === undefined
-          ? failClosedOwnerAuthorizationOverlay
+          ? Option.getOrElse(installedOwnerAuthorizationOverlay, () => failClosedOwnerAuthorizationOverlay)
           : {
               authorize: (_transaction, input) => Effect.succeed(options.onOwnerAuthorization?.(input) ?? 'denied'),
             },

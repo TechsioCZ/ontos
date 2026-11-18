@@ -38,6 +38,7 @@ import {
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
+import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import {
   commerceCustomerContextRelations,
   savedAddressSourceRoutes,
@@ -153,7 +154,9 @@ it.live(
           profileReactivationEligibilityEvaluatorFactoryLive,
           partyRegistryGuestResolverFactoryLive,
         ).pipe(Layer.provideMerge(ContextAccessLive), Layer.provide(profileReconfirmationPolicyUnavailableLive));
-        const context = yield* Layer.build(ordinary.pipe(Layer.provideMerge(fixture.layer)));
+        // Commerce's own owner adapter, as the production composition installs it under the Action runtime.
+        const ownerRuntime = fixture.layer.pipe(Layer.provide(commerceCustomerContextOwnerAuthorizationOverlayLive));
+        const context = yield* Layer.build(ordinary.pipe(Layer.provideMerge(ownerRuntime)));
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
         const profilePayload = yield* Schema.decodeUnknownEffect(EnsureRetailCustomerProfilePayloadSchema)({
           effectiveAt: '2026-11-07T00:00:00.000Z',

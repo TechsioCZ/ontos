@@ -1,8 +1,11 @@
 import { projectsRegistration } from '../../vertical.registration.ts';
+import { OwnerAuthorizationOverlay } from '@app/core-runtime';
+import { makeScriptedBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { makeProjectDestinationAuthority } from '../../src/access/project-destination-authority.ts';
 import { createProjectAction } from '../../src/actions/create-project.action.ts';
 import { updateProjectAction } from '../../src/actions/update-project.action.ts';
 import { creatorId, ownerId, projectFixture, projectId, tenantId } from '../support/project.ts';
@@ -33,7 +36,13 @@ it.layer(NodeCrypto.layer)('Projects Action lifecycle', (test) => {
             ownerEligibility: () => Effect.succeed('allowed'),
           }),
         ],
-      });
+      }).pipe(
+        // Projects' own destination authority, as its composition installs it (projectDestinationAuthorityLive).
+        Effect.provideService(
+          OwnerAuthorizationOverlay,
+          makeProjectDestinationAuthority(makeScriptedBoundAccessGate('allowed').bound),
+        ),
+      );
       const request = {
         payload: { name: 'Project', ownerPrincipalId: ownerId, prefix: 'ONTO' },
         principal,
