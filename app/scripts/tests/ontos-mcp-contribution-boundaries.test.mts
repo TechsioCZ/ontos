@@ -466,3 +466,24 @@ it('adds a definition named like an Object prototype member and still rejects it
     }),
   ).toThrow('JSON Schema definition constructor differs between two schemas of the module');
 });
+
+it.each([
+  ['approvalReview', { approvalReview: { read: 'toString' } }],
+  ['revision', { revision: { read: 'toString' } }],
+])('rejects a %s read that is only an inherited name of the reads map', (_field, reference) => {
+  const contribution = { ...authored, ...reference, reads: { state: { title } } };
+  expect(() => defineOntosMcpContribution(contribution)).toThrow("read toString is not one of the module's reads");
+  expect(() => derive({ api: { BookingApi: readApi(readPayload) }, authored: contribution })).toThrow(
+    "booking: MCP read toString is not one of the module's reads",
+  );
+  const declared = {
+    ...authored,
+    approvalReview: { read: 'state' },
+    reads: { state: { title } },
+    revision: { read: 'state' },
+  };
+  expect(defineOntosMcpContribution(declared)).toBe(declared);
+  expect(derive({ api: { BookingApi: readApi(readPayload) }, authored: declared })?.contribution.revision?.path).toBe(
+    READ_PATH,
+  );
+});
