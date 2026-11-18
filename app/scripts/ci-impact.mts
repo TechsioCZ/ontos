@@ -100,6 +100,120 @@ export interface CiPackageManifest {
   readonly peerDependencies?: DependencyGroup;
 }
 
+/** One `packages:` entry of app/pnpm-workspace.yaml: a path glob, and whether a leading `!` excludes what it names. */
+export interface WorkspaceGlob {
+  readonly exclude: boolean;
+  readonly glob: string;
+}
+
+const WORKSPACE_ENTRY = /^\s*-\s+(?<pattern>\S+)\s*(?:#.*)?$/u;
+const EXPANDABLE_GLOB = /^[A-Za-z0-9@_*?-][A-Za-z0-9@._*?-]*(?:\/[A-Za-z0-9@_*?-][A-Za-z0-9@._*?-]*)*$/u;
+
+/** One block-list line read as a glob, or why ci-plan cannot expand it exactly. */
+const workspaceGlob = (line: string): WorkspaceGlob | { readonly refused: string } => {
+  const pattern = WORKSPACE_ENTRY.exec(line)?.groups?.pattern;
+  if (pattern === undefined) {
+    return { refused: `ci-plan cannot read this packages: entry of app/pnpm-workspace.yaml: ${line}` };
+  }
+  const entry = /^(?<quote>['"])(?<inner>.*)\k<quote>$/u.exec(pattern)?.groups?.inner ?? pattern;
+  const glob = entry.replace(/^!/u, '');
+  return EXPANDABLE_GLOB.test(glob) && !glob.includes('**')
+    ? { exclude: entry.startsWith('!'), glob }
+    : {
+        refused: `ci-plan expands only '*' and '?' inside package directories; app/pnpm-workspace.yaml lists '${entry}'.`,
+      };
+};
+
+/**
+ * The `packages:` globs of app/pnpm-workspace.yaml, or why they cannot be read. ci-plan reads the file before any YAML
+ * parser is installed, so this reads the block list the install action reads, by its rules: quotes, a leading `!` and
+ * trailing comments are honoured, and only `*` and `?` inside a path segment are expanded. Any other form is refused
+ * rather than planned from a partial package list.
+ */
+export const workspacePackageGlobs = (
+  text: string,
+): { readonly globs: readonly WorkspaceGlob[] } | { readonly unreadable: string } => {
+  const lines = text.split(/\r?\n/u);
+  const start = lines.findIndex((line) => /^packages:\s*(?:#.*)?$/u.test(line));
+  const following = start === -1 ? [] : lines.slice(start + 1);
+  const end = following.findIndex((line) => /^[^\s#-]/u.test(line));
+  const read = (end === -1 ? following : following.slice(0, end))
+    .filter((line) => !/^\s*(?:#.*)?$/u.test(line))
+    .map(workspaceGlob);
+  const [refused] = read.flatMap((glob) => ('refused' in glob ? [glob.refused] : []));
+  if (refused !== undefined) {
+    return { unreadable: refused };
+  }
+  const globs = read.flatMap((glob) => ('refused' in glob ? [] : [glob]));
+  return globs.some(({ exclude }) => !exclude)
+    ? { globs }
+    : { unreadable: 'app/pnpm-workspace.yaml lists no package directory.' };
+};
+
+/** Whether a glob segment matches against its parent's listed entries rather than naming one child. */
+export const workspaceGlobLists = (segment: string) => /[*?]/u.test(segment);
+
+/**
+ * One glob segment applied to a directory (`.` for app/): a literal segment names its child, a `*` or `?` segment the
+ * listed entries it matches. Like the install action's shell glob, a wildcard never matches a name starting with a dot.
+ */
+export const workspaceGlobChildren = (parent: string, segment: string, entries: readonly string[]) => {
+  const prefix = parent === '.' ? '' : `${parent}/`;
+  if (!workspaceGlobLists(segment)) {
+    return [`${prefix}${segment}`];
+  }
+  const matcher = new RegExp(
+    `^${segment
+      .replaceAll('.', String.raw`\.`)
+      .replaceAll('*', '[^/]*')
+      .replaceAll('?', '[^/]')}$`,
+    'u',
+  );
+  return entries.filter((entry) => !entry.startsWith('.') && matcher.test(entry)).map((entry) => `${prefix}${entry}`);
+};
+
+/**
+ * The workspace package directories: every directory an included glob matched minus every directory an excluded one
+ * matched, never one inside node_modules. Each list holds only directories with a package.json. Callers sort the result
+ * bytewise, as the install action lists it and as the planner always ordered its packages.
+ */
+export const workspaceDirectories = (
+  expanded: readonly { readonly directories: readonly string[]; readonly exclude: boolean }[],
+): readonly string[] => {
+  const excluded = new Set(expanded.filter(({ exclude }) => exclude).flatMap(({ directories }) => directories));
+  return [...new Set(expanded.filter(({ exclude }) => !exclude).flatMap(({ directories }) => directories))].filter(
+    (directory) => !excluded.has(directory) && !`/${directory}/`.includes('/node_modules/'),
+  );
+};
+
+/**
+ * The package directories app/pnpm-workspace.yaml declares, or why they cannot be read, listed synchronously: `entries`
+ * lists a directory relative to app/ (empty when it is none) and `hasManifest` tells whether one holds a package.json.
+ */
+export const workspacePackageDirectories = (
+  text: string,
+  entries: (directory: string) => readonly string[],
+  hasManifest: (directory: string) => boolean,
+): { readonly directories: readonly string[] } | { readonly unreadable: string } => {
+  const workspace = workspacePackageGlobs(text);
+  if ('unreadable' in workspace) {
+    return workspace;
+  }
+  return {
+    directories: workspaceDirectories(
+      workspace.globs.map(({ exclude, glob }) => {
+        let level: readonly string[] = ['.'];
+        for (const segment of glob.split('/')) {
+          level = level.flatMap((parent) =>
+            workspaceGlobChildren(parent, segment, workspaceGlobLists(segment) ? entries(parent) : []),
+          );
+        }
+        return { directories: level.filter(hasManifest), exclude };
+      }),
+    ),
+  };
+};
+
 /**
  * The planner's view of the workspace. Both entry points read the same files and call this one mapping:
  * the installed CLI through Effect, ci-plan through plain Node before any dependency is installed.
@@ -155,12 +269,13 @@ const gateIds = [
 const rootDocumentation = (changedPath: string) =>
   changedPath.startsWith('docs/') || ['CONTEXT-MAP.md', 'README.md', 'AGENTS.md'].includes(changedPath);
 
+// A path under no workspace package directory widens in planCiChecks, which knows the directories app/pnpm-workspace.yaml
+// declares; this names the paths that widen even inside one.
 const broadPath = (changedPath: string) =>
   !rootDocumentation(changedPath) &&
-  (!/^app\/(?:apps|verticals|packages)\/[a-z0-9-]+\//u.test(changedPath) ||
-    /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
-      changedPath,
-    ) ||
+  (/^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
+    changedPath,
+  ) ||
     /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts|vertical\.runtime-declaration\.ts)$/u.test(
       changedPath,
     ) ||
@@ -198,7 +313,7 @@ export const matchingPackages = (filters: string, packages: readonly CiWorkspace
 
 /** The workspace directory a package task such as `./verticals/privacy#2/8` runs in; undefined for root and whole proofs. */
 export const taskDirectory = (task: string) =>
-  /^\.\/(?<directory>(?:apps|packages|verticals)\/[a-z0-9-]+)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.directory;
+  /^\.\/(?<directory>[a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.directory;
 
 /** Every task form run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
 export const knownTask = (task: string) =>
@@ -226,7 +341,7 @@ export const planCiChecks = (input: {
   const uncertain = packages.some(
     (entry) =>
       entry.uncertain === true ||
-      (entry.directory !== '.' && !/^(?:apps|packages|verticals)\/[a-z0-9-]+$/u.test(entry.directory)) ||
+      (entry.directory !== '.' && !/^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/u.test(entry.directory)) ||
       !/^(?:@app\/[a-z0-9-]+|app)$/u.test(entry.name) ||
       entry.dependencies.some((dependency) => !packages.some(({ name }) => name === dependency)) ||
       (entry.contractProducer !== undefined && !packages.some(({ name }) => name === entry.contractProducer)),
