@@ -52,7 +52,7 @@ import { AuthenticationServiceLive, makeAuthenticationService } from '../../api/
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { GatewayIssuer, GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseObserver } from '../../api/auth/gateway-release-diagnostic.ts';
-import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
+import { GatewayModuleCredentialBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -465,14 +465,14 @@ const serve = Effect.scoped(
       if (Option.isNone(relaySource) || Option.isNone(sourceKey)) {
         return yield* unavailable();
       }
-      const bindings = yield* Schema.decodeEffect(Schema.Array(GatewayModuleBindingSchema))([
+      const bindings = yield* Schema.decodeEffect(Schema.Array(GatewayModuleCredentialBindingSchema))([
         { ...relaySource.value, providerKeyId: sourceKey.value },
         ...additionalSources.map((source) => ({
           ...source,
           providerKeyId: moduleKeys.get(source.sourceAppId)?.keyId ?? '',
         })),
       ]).pipe(
-        Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
+        Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleCredentialBindingSchema)))),
         Effect.mapError(unavailable),
       );
       if (productionGate) {

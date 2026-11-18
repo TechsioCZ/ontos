@@ -1,7 +1,9 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
+import { Effect, Latch, Schema } from 'effect';
+import { afterEach, expect, it, rstest, test } from 'effect-rstest';
+import { createInstance } from 'i18next';
+import type { ReactNode } from 'react';
 
 import {
   addExactLevel,
@@ -18,7 +20,6 @@ import { RoleEditorView } from '../../src/routes/access-admin/role-editor/role-e
 import type { RoleEditorViewProps } from '../../src/routes/access-admin/role-editor/role-editor-view.tsx';
 import { routeMeta } from '../../src/routes/[lang]/access/roles/route.meta.ts';
 import { loadRolePageModel } from '../../src/routes/[lang]/access/roles/role-page-model.ts';
-import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
 import { roleErrorStatus } from '../../src/routes/access-admin/role-editor/role-commands.ts';
 import { RoleEditorFeature } from '../../src/routes/access-admin/role-editor/role-editor-feature.tsx';
 import { CreateRoleFeature } from '../../src/routes/access-admin/role-editor/create-role-feature.tsx';
@@ -28,43 +29,32 @@ import {
   ListAccessRoleTemplatesResponseSchema,
   PreviewAccessRoleEditResponseSchema,
 } from '../../shared/access-admin-api.ts';
+import { CurrentSessionSchema } from '../../shared/browser-api.ts';
+import { adaSelectingCompany, makeShellBff, signedInShellReads } from '../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../support/shell-bff-double.ts';
+import { ShellI18n } from '../support/shell-i18n.tsx';
 
-const { createCall, homeCall, listCall, previewCall, saveCall, templatesCall } = rstest.hoisted(() => ({
-  createCall: rstest.fn(),
-  homeCall: rstest.fn(),
-  listCall: rstest.fn(),
-  previewCall: rstest.fn(),
-  saveCall: rstest.fn(),
-  templatesCall: rstest.fn(),
-}));
-rstest.mock('../../src/api/auth-client.ts', () => ({
-  createAccessAdministrationIdempotencyKey: () => Effect.succeed('test-idempotency-key'),
-  createAccessRole: createCall,
-  listAccessRoles: listCall,
-  listAccessRoleTemplates: templatesCall,
-  previewAccessRoleEdit: previewCall,
-  saveAccessRoleEdit: saveCall,
-}));
-rstest.mock('../../src/routes/[lang]/home-page-model.ts', () => ({ loadHomePageModel: homeCall }));
-rstest.mock('../../src/routes/shell-authentication-client-options.ts', () => ({
-  shellAuthenticationClientOptionsFromRequest: () => Effect.succeed({ locale: 'en' }),
-}));
-beforeEach(() => {
-  homeCall.mockReset();
-  listCall.mockReset();
-  templatesCall.mockReset();
-  createCall.mockReset();
-  previewCall.mockReset();
-  saveCall.mockReset();
-});
+/**
+ * Real i18next in English with no copy: every key renders as itself, followed by the named effect
+ * when the view interpolates one, so assertions name the exact key the view chose.
+ */
+const keyEcho = createInstance();
+void keyEcho
+  .use({
+    name: 'keyWithEffect',
+    process: (value: string, _key: string | string[], options: { readonly effect?: string }) =>
+      options.effect === undefined ? value : `${value}: ${options.effect}`,
+    type: 'postProcessor',
+  })
+  .init({ initAsync: false, lng: 'en', postProcess: ['keyWithEffect'], resources: {} });
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={keyEcho}>{children}</ShellI18n>
+);
+const renderCopy = (ui: Parameters<typeof render>[0]) => render(ui, { wrapper: ShellCopy });
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    language: 'en',
-    t: (key: string, values?: Readonly<Record<string, string>>) =>
-      values?.['effect'] === undefined ? key : `${key}: ${values['effect']}`,
-  }),
-}));
+/** The role administration BFF the editor features reach through the page's own network. */
+const rolesBff = (script: ShellBffScript) => makeShellBff({ ...signedInShellReads(adaSelectingCompany), ...script });
 
 afterEach(cleanup);
 const cell: RoleCellView = { capabilityKey: 'commerce.order.order.read', mode: 'run', selector: { _tag: 'all' } };
@@ -189,7 +179,7 @@ test('save requires every named effect, a current preview, idle state and backed
 it.effect('kit checkbox is keyboard-operable and names the exact capability, mode and scope', () =>
   Effect.gen(function* keyboardCellTest() {
     const input = props();
-    render(<RoleEditorView {...input} />);
+    renderCopy(<RoleEditorView {...input} />);
     const checkbox = screen.getByRole('checkbox', { name: /commerce\.order\.order\.read/u });
     checkbox.focus();
     const user = userEvent.setup();
@@ -201,7 +191,7 @@ it.effect('kit checkbox is keyboard-operable and names the exact capability, mod
 it.effect('dangerous effects have distinct accessible names and cannot save with partial acknowledgement', () =>
   Effect.gen(function* keyboardConfirmationTest() {
     const input = { ...props(), cells: [cell, dangerous], preview };
-    const { rerender } = render(<RoleEditorView {...input} />);
+    const { rerender } = renderCopy(<RoleEditorView {...input} />);
     const saveName = 'shell.accessAdmin.role.confirmSave';
     expect(screen.getByRole('button', { name: saveName }).hasAttribute('disabled')).toBe(true);
     const confirm = screen.getByRole('checkbox', { name: /Cancel committed orders/u });
@@ -218,7 +208,7 @@ it.effect('dangerous effects have distinct accessible names and cannot save with
 );
 
 test('preview shows full before/after and server affected-human count', () => {
-  render(<RoleEditorView {...props()} cells={[cell, dangerous]} preview={preview} />);
+  renderCopy(<RoleEditorView {...props()} cells={[cell, dangerous]} preview={preview} />);
   const before = screen.getByRole('region', { name: 'shell.accessAdmin.common.beforeState' });
   const after = screen.getByRole('region', { name: 'shell.accessAdmin.common.afterState' });
   expect(within(before).getByText(cell.capabilityKey)).toBeTruthy();
@@ -228,7 +218,7 @@ test('preview shows full before/after and server affected-human count', () => {
 });
 
 test('unavailable writer never advertises a working save and expiry stays assignment-owned', () => {
-  render(
+  renderCopy(
     <RoleEditorView {...props()} confirmations={['cancel', 'approve']} preview={preview} writesAvailable={false} />,
   );
   expect(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }).hasAttribute('disabled')).toBe(
@@ -240,14 +230,14 @@ test('unavailable writer never advertises a working save and expiry stays assign
 });
 
 test('stale revision disables editor and offers refresh without treating it as an outage', () => {
-  render(<RoleEditorView {...props()} status="conflict" />);
+  renderCopy(<RoleEditorView {...props()} status="conflict" />);
   expect(screen.getByText('shell.accessAdmin.common.conflict')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' }).hasAttribute('disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'shell.accessAdmin.common.refresh' }).hasAttribute('disabled')).toBe(false);
 });
 
 test('retains and displays unsupported exact targets instead of silently dropping them', () => {
-  render(
+  renderCopy(
     <RoleEditorView {...props()} cells={[{ ...cell, selector: { _tag: 'targets', recordKeys: ['record-1'] } }]} />,
   );
   expect(screen.getByText('shell.accessAdmin.role.unsupportedCells')).toBeTruthy();
@@ -321,43 +311,9 @@ const featureFixture = () => {
 it.effect('editing after a server preview invalidates both token and confirmations before save', () =>
   Effect.gen(function* stalePreviewTest() {
     const fixture = featureFixture();
-    previewCall.mockReturnValue(Effect.succeed(fixture.response));
-    render(
-      <RoleEditorFeature
-        catalog={fixture.catalog}
-        initialRole={fixture.role}
-        onRefresh={() => {}}
-        onSaved={() => {}}
-        writesAvailable
-      />,
-    );
-    const user = userEvent.setup();
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
-    yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
-    yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
-    yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /commerce\.order\.order\.read/u })));
-    expect(screen.queryByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })).toBeNull();
-    expect(saveCall).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect(
-  'unavailable save retries the same idempotency key and echoes server effect without displaying its code',
-  () =>
-    Effect.gen(function* retryTest() {
-      const fixture = featureFixture();
-      previewCall.mockReturnValue(Effect.succeed(fixture.response));
-      saveCall.mockReturnValue(
-        Effect.fail({
-          _tag: 'AccessAdminUnavailable',
-          detail: 'Unavailable',
-          retryable: true,
-          status: 503,
-          title: 'Unavailable',
-          type: 'urn:test',
-        }),
-      );
-      render(
+    const bff = rolesBff({ previewAccessRoleEdit: () => Effect.succeed(fixture.response) });
+    yield* Effect.gen(function* editAfterPreview() {
+      renderCopy(
         <RoleEditorFeature
           catalog={fixture.catalog}
           initialRole={fixture.role}
@@ -369,24 +325,74 @@ it.effect(
       const user = userEvent.setup();
       yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
       yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
-      expect(document.body.textContent).not.toContain('run:action:critical');
       yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
-      yield* Effect.promise(() =>
-        user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
-      );
-      yield* Effect.promise(() => screen.findByText('shell.accessAdmin.common.unavailable'));
-      yield* Effect.promise(() =>
-        user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
-      );
-      yield* Effect.promise(() => waitFor(() => expect(saveCall).toHaveBeenCalledTimes(2)));
-      expect(saveCall.mock.calls[0]?.[1]).toEqual(saveCall.mock.calls[1]?.[1]);
-      expect(saveCall).toHaveBeenCalledWith(
-        expect.objectContaining({
-          confirmedEffects: [{ effect: 'run:action:critical', slot: 'danger-slot' }],
-          previewToken: 'trusted-preview',
-        }),
-        expect.objectContaining({ idempotencyKey: expect.any(String) }),
-      );
+      yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /commerce\.order\.order\.read/u })));
+      expect(screen.queryByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })).toBeNull();
+    }).pipe(Effect.provide(bff.browser));
+    expect(bff.requests.map((received) => received.endpoint)).toEqual(['previewAccessRoleEdit']);
+  }),
+);
+
+it.effect(
+  'unavailable save retries the same idempotency key and echoes server effect without displaying its code',
+  () =>
+    Effect.gen(function* retryTest() {
+      const fixture = featureFixture();
+      const secondSave = yield* Latch.make();
+      let saves = 0;
+      const bff = rolesBff({
+        previewAccessRoleEdit: () => Effect.succeed(fixture.response),
+        saveAccessRoleEdit: () =>
+          Effect.suspend(() => {
+            saves += 1;
+            return saves === 2 ? secondSave.open : Effect.void;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail({
+                _tag: 'AccessAdminUnavailable' as const,
+                detail: 'Unavailable',
+                retryable: true as const,
+                status: 503 as const,
+                title: 'Unavailable',
+                type: 'urn:test',
+              }),
+            ),
+          ),
+      });
+      yield* Effect.gen(function* retrySave() {
+        renderCopy(
+          <RoleEditorFeature
+            catalog={fixture.catalog}
+            initialRole={fixture.role}
+            onRefresh={() => {}}
+            onSaved={() => {}}
+            writesAvailable
+          />,
+        );
+        const user = userEvent.setup();
+        yield* Effect.promise(() =>
+          user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })),
+        );
+        yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
+        expect(document.body.textContent).not.toContain('run:action:critical');
+        yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
+        yield* Effect.promise(() =>
+          user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
+        );
+        yield* Effect.promise(() => screen.findByText('shell.accessAdmin.common.unavailable'));
+        yield* Effect.promise(() =>
+          user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
+        );
+        yield* secondSave.await;
+      }).pipe(Effect.provide(bff.browser));
+      const saveRequests = bff.requests.filter((received) => received.endpoint === 'saveAccessRoleEdit');
+      expect(saveRequests).toHaveLength(2);
+      expect(saveRequests[0]?.idempotencyKey).toMatch(uuid);
+      expect(saveRequests[1]?.idempotencyKey).toBe(saveRequests[0]?.idempotencyKey);
+      expect(saveRequests[0]?.body).toMatchObject({
+        confirmedEffects: [{ effect: 'run:action:critical', slot: 'danger-slot' }],
+        previewToken: 'trusted-preview',
+      });
     }),
 );
 
@@ -406,48 +412,83 @@ it.effect('creation uses only the blank template with no cells, then selects the
       ],
     };
     const created = { ...fixture.role, cells: [] };
-    createCall.mockReturnValue(Effect.succeed(created));
-    const onCreated = rstest.fn<(role: typeof fixture.role) => void>();
-    render(<CreateRoleFeature catalog={catalog} onCreated={onCreated} writesAvailable />);
-    const user = userEvent.setup();
-    yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' })));
-    yield* Effect.promise(() => waitFor(() => expect(onCreated).toHaveBeenCalledWith(created)));
-    expect(createCall).toHaveBeenCalledWith(
-      expect.objectContaining({ cells: [], name: 'New role', scope: { kind: 'tenant' }, templateKey: 'blank' }),
-      expect.objectContaining({ idempotencyKey: 'test-idempotency-key' }),
-    );
+    const bff = rolesBff({ createAccessRole: () => Effect.succeed(created) });
+    const selected = Promise.withResolvers<typeof fixture.role>();
+    const role = yield* Effect.gen(function* createBlankRole() {
+      const handleCreated = selected.resolve;
+      renderCopy(<CreateRoleFeature catalog={catalog} onCreated={handleCreated} writesAvailable />);
+      const user = userEvent.setup();
+      yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
+      yield* Effect.promise(() =>
+        user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' })),
+      );
+      return yield* Effect.promise(() => selected.promise);
+    }).pipe(Effect.provide(bff.browser));
+    expect(role).toEqual(created);
+    expect(bff.requests).toHaveLength(1);
+    expect(bff.requests[0]).toMatchObject({
+      acceptLanguage: 'en',
+      body: { cells: [], name: 'New role', scope: { kind: 'tenant' }, templateKey: 'blank' },
+      endpoint: 'createAccessRole',
+    });
+    expect(bff.requests[0]?.idempotencyKey).toMatch(uuid);
   }),
 );
 
-test('creation cannot use a nonblank template or an unavailable writer', () => {
-  const fixture = featureFixture();
-  render(<CreateRoleFeature catalog={fixture.catalog} onCreated={() => {}} writesAvailable={false} />);
-  expect(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' }).hasAttribute('disabled')).toBe(
-    true,
-  );
-  expect(createCall).not.toHaveBeenCalled();
-});
+it.effect('creation cannot use a nonblank template or an unavailable writer', () =>
+  Effect.gen(function* refusedCreation() {
+    const fixture = featureFixture();
+    const bff = rolesBff({});
+    yield* Effect.gen(function* unavailableWriter() {
+      const user = userEvent.setup();
+      renderCopy(<CreateRoleFeature catalog={fixture.catalog} onCreated={() => {}} writesAvailable={false} />);
+      const create = screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' });
+      expect(create.hasAttribute('disabled')).toBe(true);
+      yield* Effect.promise(() => user.click(create));
+    }).pipe(Effect.provide(bff.browser));
+    expect(bff.requests).toEqual([]);
+  }),
+);
 
 it.effect('tenant administration loads without a selected company and anonymous sessions do not issue role reads', () =>
   Effect.gen(function* tenantContextTest() {
     const fixture = featureFixture();
-    const { selectedLegalEntityId, ...shell } = authenticatedShellFixture();
-    void selectedLegalEntityId;
-    homeCall.mockReturnValue(Effect.succeed({ ...shell, contextState: 'selection_required' }));
-    listCall.mockReturnValue(Effect.succeed({ items: [fixture.role], nextCursor: null }));
-    templatesCall.mockReturnValue(Effect.succeed(fixture.catalog));
-    const model = yield* loadRolePageModel(new Request('https://app.example.test/en/access/roles'));
+    const roleReads = {
+      listAccessRoles: () => Effect.succeed({ items: [fixture.role], nextCursor: null }),
+      listAccessRoleTemplates: () => Effect.succeed(fixture.catalog),
+    } satisfies ShellBffScript;
+    const tenantBff = rolesBff(roleReads);
+    const model = yield* loadRolePageModel(new Request('https://app.example.test/en/access/roles')).pipe(
+      Effect.provide(tenantBff.layer),
+    );
     expect(model.state).toBe('ready');
-    expect(listCall).toHaveBeenCalledWith({ limit: 100 }, { locale: 'en' });
-    expect(templatesCall).toHaveBeenCalledTimes(1);
-    listCall.mockClear();
-    templatesCall.mockClear();
-    homeCall.mockReturnValue(Effect.succeed({ state: 'anonymous' }));
-    const anonymous = yield* loadRolePageModel(new Request('https://app.example.test/en/access/roles'));
+    const roleRequests = tenantBff.requests.filter((received) => received.endpoint.startsWith('listAccessRole'));
+    const sentReads = roleRequests.map(({ body, endpoint, url }) => ({ body, endpoint, url }));
+    // The two reads run concurrently; their order is not part of the contract.
+    expect(sentReads).toHaveLength(2);
+    expect(sentReads).toEqual(
+      expect.arrayContaining([
+        {
+          body: { limit: 100 },
+          endpoint: 'listAccessRoleTemplates',
+          url: 'https://app.example.test/shell-super-app-api/shell/access/roles/templates',
+        },
+        {
+          body: { limit: 100 },
+          endpoint: 'listAccessRoles',
+          url: 'https://app.example.test/shell-super-app-api/shell/access/roles/list',
+        },
+      ]),
+    );
+    const anonymousBff = rolesBff({
+      ...roleReads,
+      currentSession: () => Effect.succeed(Schema.decodeUnknownSync(CurrentSessionSchema)({ state: 'anonymous' })),
+    });
+    const anonymous = yield* loadRolePageModel(new Request('https://app.example.test/en/access/roles')).pipe(
+      Effect.provide(anonymousBff.layer),
+    );
     expect(anonymous.state).toBe('unauthenticated');
-    expect(listCall).not.toHaveBeenCalled();
-    expect(templatesCall).not.toHaveBeenCalled();
+    expect(anonymousBff.requests.map((received) => received.endpoint)).toEqual(['currentSession']);
   }),
 );
 
@@ -460,46 +501,50 @@ it.effect('successful save remains visible and the next preview uses the returne
       revision: 2,
       revisionId: '00000000-0000-4000-8000-000000000002',
     });
-    previewCall.mockReturnValue(Effect.succeed(fixture.response));
-    saveCall.mockReturnValue(
-      Effect.succeed({ added: fixture.response.added, affectedHolderCount: 3, removed: [], role: savedRole }),
-    );
+    const bff = rolesBff({
+      previewAccessRoleEdit: () => Effect.succeed(fixture.response),
+      saveAccessRoleEdit: () =>
+        Effect.succeed({ added: fixture.response.added, affectedHolderCount: 3, removed: [], role: savedRole }),
+    });
     const onSaved = rstest.fn<(role: typeof fixture.role) => void>();
-    const { rerender } = render(
-      <RoleEditorFeature
-        catalog={fixture.catalog}
-        initialRole={fixture.role}
-        onRefresh={() => {}}
-        onSaved={onSaved}
-        writesAvailable
-      />,
-    );
-    const user = userEvent.setup();
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
-    yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
-    yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })));
-    yield* Effect.promise(() => screen.findByText('shell.accessAdmin.common.saved'));
-    expect(onSaved).toHaveBeenCalledWith(savedRole);
-    rerender(
-      <RoleEditorFeature
-        catalog={fixture.catalog}
-        initialRole={savedRole}
-        onRefresh={() => {}}
-        onSaved={onSaved}
-        writesAvailable
-      />,
-    );
-    expect(screen.getByText('shell.accessAdmin.common.saved')).toBeTruthy();
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
-    yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(previewCall).toHaveBeenLastCalledWith(
-          expect.objectContaining({ expectedRoleRevisionId: savedRole.revisionId }),
-          { locale: 'en' },
-        ),
-      ),
-    );
+    yield* Effect.gen(function* saveThenPreview() {
+      const { rerender } = renderCopy(
+        <RoleEditorFeature
+          catalog={fixture.catalog}
+          initialRole={fixture.role}
+          onRefresh={() => {}}
+          onSaved={onSaved}
+          writesAvailable
+        />,
+      );
+      const user = userEvent.setup();
+      yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
+      yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
+      yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
+      yield* Effect.promise(() =>
+        user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
+      );
+      yield* Effect.promise(() => screen.findByText('shell.accessAdmin.common.saved'));
+      expect(onSaved).toHaveBeenCalledWith(savedRole);
+      rerender(
+        <RoleEditorFeature
+          catalog={fixture.catalog}
+          initialRole={savedRole}
+          onRefresh={() => {}}
+          onSaved={onSaved}
+          writesAvailable
+        />,
+      );
+      expect(screen.getByText('shell.accessAdmin.common.saved')).toBeTruthy();
+      yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
+      yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
+    }).pipe(Effect.provide(bff.browser));
+    const previews = bff.requests.filter((received) => received.endpoint === 'previewAccessRoleEdit');
+    expect(previews).toHaveLength(2);
+    expect(previews.at(-1)).toMatchObject({
+      acceptLanguage: 'en',
+      body: { expectedRoleRevisionId: savedRole.revisionId },
+    });
   }),
 );
 

@@ -35,18 +35,6 @@ const humanCapabilities = [
   'privacy.core.measure-execution-eligibility.read',
   'privacy.core.owner-execution-outcome.record',
 ];
-const relayRules = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.product.create',
-    entrypointKey: 'commerce.catalog.create-product',
-    jobKey: workerKey,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '2',
-    workerKey,
-    workloadKey: importWorkload,
-  },
-];
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
   status: Schema.Literal('queued'),
@@ -124,14 +112,10 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   });
   const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
-    additionalRelaySources: [
-      { registeredWorkloads: [], sourceAppId: 'privacy' },
-      { registeredWorkloads: [], sourceAppId: 'catalog' },
-      { registeredWorkloads: [], sourceAppId: marketApp },
-    ],
+    additionalRelaySources: [{ sourceAppId: 'privacy' }, { sourceAppId: 'catalog' }, { sourceAppId: marketApp }],
     ownedDatabase: isolated,
     productionGate: true,
-    relaySource: { registeredWorkloads: relayRules, sourceAppId: symmyApp },
+    relaySource: { sourceAppId: symmyApp },
     snapshotJson: yield* encodeProductComposition(snapshot),
   });
   const tenantId = randomUUID();

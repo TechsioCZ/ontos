@@ -1,11 +1,11 @@
 import { OrderServiceApprovalEvidenceResponseSchema } from '@app/commerce-customer-context/api/order-service-approval-evidence';
 import { ConsumeOrderPurchaseApprovalResultSchema } from '@app/commerce-customer-context/api/consume-order-purchase-approval-action';
 import { PaymentTermDefinitionSchema } from '@app/payment-term-catalog-contracts/payment-term';
+import { PricingCommitmentConfirmationIssuedSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import type { PricingCommitmentConfirmationIssued } from '@app/pricing-contracts/domain/commitment-confirmation';
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
 import { Schema } from 'effect';
 
-import { acceptedTaxTermsInput } from '../../../tax/tests/unit/tax-correction-fixtures.ts';
 import { OrderCommitmentStateSchema } from '../../shared/domain/order-commitment.ts';
 import type { OrderCommitmentState } from '../../shared/domain/order-commitment.ts';
 import {
@@ -14,6 +14,7 @@ import {
   OrderTaxCandidateSchema,
 } from '../../shared/domain/order-finalization-evidence.ts';
 import { orderPreparationInput } from './order-preparation-input.ts';
+import { pricedOperationTime, pricedQuotation } from './pricing-owner-quotation.ts';
 import { ActionInvocationIdSchema, callAs } from '../../src/services/order-module-call.ts';
 
 export const gatewayTenantId = '33333333-3333-4333-8333-333333333333';
@@ -354,9 +355,155 @@ const attempt = {
   updatedAt: businessTime,
 };
 
+/** Tax's determined final outcome for one CZK line, in the encoded form its owner hands back to Order. */
+const taxOutcome = {
+  _tag: 'TAX_DETERMINED',
+  decision: {
+    decisionId: 'tax-decision-1',
+    declarationRevisionRef: { revision: 1 },
+    purchaseBinding: {
+      currency: 'CZK',
+      pricingResultRef: { pricingResultId: 'pricing-result-1', revision: 1 },
+      purchaseCandidateRef: 'purchase-a',
+      purchaseDemandOccurrences: [
+        {
+          catalogSelection: { productRef: 'product-1', variantRef: 'variant-1' },
+          occurrenceId: 'o1',
+          quantity: { amount: '1', unitRef: 'piece' },
+        },
+      ],
+      purchasingSubject: { _tag: 'RETAIL_CUSTOMER', purchasingSubjectRef: 'retail-customer-1' },
+      sellingLegalEntityRef: 'selling-legal-entity-1',
+      tenantId: 'tenant-1',
+      traceabilityContext: { channel: 'B2C', storefrontRef: 'storefront-1' },
+    },
+    sellerVatRegime: 'VAT_PAYER',
+    taxEvaluationTime: '2026-10-08T10:00:02.000Z',
+    taxRelevantTime: '2026-10-08T10:00:00.000Z',
+    units: [
+      {
+        applicability: 'APPLICABLE',
+        governingTaxRuleRevisionRef: { revision: 1, taxRuleId: 'cz-domestic-standard' },
+        jurisdiction: {
+          jurisdiction: 'CZ_DOMESTIC',
+          placeEvidenceRefs: {
+            deliveryDestination: 'delivery-destination-evidence-1',
+            sellingLegalEntity: 'selling-legal-entity-evidence-1',
+          },
+        },
+        taxableBasisInterpretation: {
+          components: [
+            {
+              _tag: 'LINE_COMMERCIAL_VALUE',
+              amount: { denominator: '1', numerator: '1000' },
+              amountBasis: 'NET',
+              occurrenceId: 'o1',
+              pricingLineRef: 'pricing-line-o1',
+            },
+          ],
+        },
+        taxableSupplyUnit: {
+          mapping: {
+            _tag: 'ORDINARY_OCCURRENCE',
+            catalogSelection: { productRef: 'product-1', variantRef: 'variant-1' },
+            occurrenceId: 'o1',
+          },
+          unitId: 'taxable-supply-unit:o1',
+        },
+        taxClassification: {
+          catalogSelection: { productRef: 'product-1', variantRef: 'variant-1' },
+          classificationCode: 'cz-standard-goods',
+          completenessEvidenceRef: 'completeness-1',
+          materialCatalogEvidence: [
+            {
+              _tag: 'CURRENT',
+              catalogFactRef: 'variant-1:tax-category',
+              catalogFactRevisionRef: 'r1',
+              factKind: 'TAX_CATEGORY',
+              factValue: 'cz-standard-goods',
+              ownerEvidenceRef: 'owner-evidence-1',
+            },
+          ],
+        },
+        treatment: { _tag: 'TAXABLE', ratePercent: '21' },
+      },
+    ],
+  },
+  result: {
+    currency: 'CZK',
+    purchaseTaxTotal: { amount: '210.00', currency: 'CZK' },
+    taxDecisionId: 'tax-decision-1',
+    taxRoundingPolicy: { currency: 'CZK', mode: 'ROUND_HALF_UP', precision: '0.01', revision: 1 },
+    units: [
+      {
+        exactTaxContribution: { denominator: '1', numerator: '210' },
+        publishedTaxAmount: { amount: '210.00', currency: 'CZK' },
+        taxableSupplyUnitId: 'taxable-supply-unit:o1',
+        taxRoundingAdjustment: { denominator: '1', numerator: '0' },
+        taxRoundingPolicy: { currency: 'CZK', mode: 'ROUND_HALF_UP', precision: '0.01', revision: 1 },
+      },
+    ],
+  },
+};
+
+/** Pricing's Quotation the gateway's Bundle retains, issued as Pricing validated its material evidence. */
+export const gatewayQuotation = pricedQuotation('order', {
+  issuedAt: pricedOperationTime,
+  quotationRef: 'pricing-quotation:order-gateway',
+});
+
+/** Pricing's Commitment Confirmation over an exact reuse of that Quotation, decoded by its published contract. */
+export const gatewayConfirmation = Schema.decodeUnknownSync(PricingCommitmentConfirmationIssuedSchema)({
+  authenticity: {
+    authority: 'EVIDENCE_ONLY',
+    issuerRef: 'pricing-confirmation-owner:launch',
+    keyRef: 'pricing-confirmation-key:launch',
+    keyVersion: '1',
+    lineageRef: 'pricing-confirmation-key-lineage:launch',
+    payloadDigest: 'sha256:pricing-confirmation:order-gateway',
+    proofRef: 'pricing-confirmation-proof:order-gateway',
+    proofVersion: '1',
+  },
+  binding: {
+    attemptRef: 'order-commitment-attempt:order-gateway',
+    decisionBundleHash: 'sha256:bundle-order-gateway',
+    decisionBundleRef: 'order-decision-bundle:order-gateway',
+    decisionBundleVersion: '1',
+    purchase: gatewayQuotation.binding,
+  },
+  confirmationRef: 'pricing-confirmation:order-gateway',
+  expiresAt: '2026-09-28T12:00:30.000Z',
+  issuedAt: pricedOperationTime,
+  kind: 'PRICING_COMMITMENT_CONFIRMATION',
+  source: {
+    kind: 'QUOTATION_BACKED',
+    materialEvidence: gatewayQuotation.materialEvidence,
+    quotationRevalidation: {
+      authenticityEvidence: {
+        authenticityRef: `pricing-quotation-authenticity:${gatewayQuotation.quotationRef}`,
+        authority: 'EVIDENCE_ONLY',
+        issuerRef: 'pricing-quotation-owner:launch',
+        keyRef: 'pricing-quotation-key:launch',
+        keyStatus: active,
+        keyVersion: '3',
+        lineageRef: 'pricing-quotation-key-lineage:launch',
+        payloadDigest: `sha256:${gatewayQuotation.quotationRef}`,
+        proofVersion: '1',
+        quotationRef: gatewayQuotation.quotationRef,
+        verifiedAt: pricedOperationTime,
+      },
+      bindingProof: { kind: 'DIRECT_EXACT_MATCH' },
+      evaluatedAt: pricedOperationTime,
+      kind: 'EXACT_REUSE',
+      quotation: gatewayQuotation,
+      termsAuthority: 'ORIGINAL_QUOTATION',
+    },
+  },
+  terms: gatewayQuotation.quotedResult,
+});
+
 /** Genuine owner-issued finalization evidence the gateway's state requires. */
 const makeGatewayFinalization = (quotation: PricingQuotationIssued) => {
-  const taxOutcome = acceptedTaxTermsInput([{ lineValue: '1000', occurrenceId: 'o1', quantity: '1' }]).finalTax;
   const tax = {
     result: {
       _tag: 'FINALIZED',

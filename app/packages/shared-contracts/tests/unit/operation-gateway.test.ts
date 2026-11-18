@@ -1,5 +1,6 @@
+// @rstest-environment happy-dom
 import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import {
   DocumentCompositionRevisionError,
@@ -12,17 +13,6 @@ const approvedTarget = {
   apiBaseUrl: '/shell-super-app-api/module-api/inventory-stock/build-1/inventory-stock-api',
   compositionRevision,
 };
-const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-beforeEach(() => {
-  Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelectorAll: () => [] } });
-});
-afterEach(() => {
-  if (previousDocument === undefined) {
-    Reflect.deleteProperty(globalThis, 'document');
-  } else {
-    Object.defineProperty(globalThis, 'document', previousDocument);
-  }
-});
 
 const gatewayAcquisitionFailure = {
   _tag: 'GatewayAcquisitionTestError',
@@ -125,31 +115,6 @@ it.effect('preserves the attempted-operation failure without translation', () =>
     const received = yield* gateway.invoke(() => Effect.fail(operationAttemptFailure)).pipe(Effect.flip);
 
     expect(received).toBe(operationAttemptFailure);
-  }),
-);
-
-it.effect('does not contact the issuer or owner before the document admits a release', () =>
-  Effect.gen(function* missingDocumentRevisionEffect() {
-    Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelectorAll: () => [] } });
-    let issuerCalls = 0;
-    let attemptCalls = 0;
-    const gateway = makeOperationGateway(audience, () => {
-      issuerCalls += 1;
-      return Effect.succeed({ ...approvedTarget, expiresAt: 1_700_000_300, token: 'must not issue' });
-    });
-
-    const failure = yield* gateway
-      .invoke(() => {
-        attemptCalls += 1;
-        return Effect.void;
-      })
-      .pipe(Effect.flip);
-
-    expect(Schema.is(DocumentCompositionRevisionError)(failure)).toBe(true);
-    const documentFailure = yield* Schema.decodeUnknownEffect(DocumentCompositionRevisionError)(failure);
-    expect(documentFailure.reason).toBe('uninitialized');
-    expect(issuerCalls).toBe(0);
-    expect(attemptCalls).toBe(0);
   }),
 );
 

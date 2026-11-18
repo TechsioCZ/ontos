@@ -2124,6 +2124,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       const moduleEnvironment: typeof environment & {
         ONTOS_GATEWAY_MODULE_API_KEY?: string;
         ONTOS_GATEWAY_MODULE_BINDINGS?: string;
+        ONTOS_PREPROPOSAL_PRICING_FAILURE_SPANS?: string;
       } = { ...environment };
       const credential = moduleCredentials.find((candidate) => candidate.appId === appId);
       if (credential !== undefined) {
@@ -2131,6 +2132,14 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       }
       if (appId === shellAudience) {
         moduleEnvironment.ONTOS_GATEWAY_MODULE_BINDINGS = gatewayModuleBindings;
+      }
+      if (appId === pricingAudience) {
+        // A Quotation 503 carries no cause: Pricing reports which authority refused it, innermost first, and when.
+        moduleEnvironment.ONTOS_PREPROPOSAL_PRICING_FAILURE_SPANS = [
+          'makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.verifyPurchaseSingleton',
+          'ManageQuotationFreshCurrentAuthority.resolveFresh',
+          'ManageQuotationAction.apply',
+        ].join(',');
       }
       return moduleEnvironment;
     };

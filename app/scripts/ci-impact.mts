@@ -346,13 +346,18 @@ export const planCiChecks = (input: {
       entry.dependencies.some((dependency) => !packages.some(({ name }) => name === dependency)) ||
       (entry.contractProducer !== undefined && !packages.some(({ name }) => name === entry.contractProducer)),
   );
+  // A package task in a directory outside the workspace graph matches no affected package: it widens instead of vanishing.
+  const unrunnable = (task: string) => {
+    const directory = taskDirectory(task);
+    return !knownTask(task) || (directory !== undefined && !packages.some((entry) => entry.directory === directory));
+  };
   const broad =
     input.forceFull === true ||
     uncertain ||
     templates.unit.some(({ commands }) => unknownFilters(commands)) ||
     templates.integration.some(
       (entry) =>
-        (entry.tasks ?? []).some((task) => !knownTask(task)) ||
+        (entry.tasks ?? []).some(unrunnable) ||
         (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
     ) ||
     new Set(packages.map(({ name }) => name)).size !== packages.length ||

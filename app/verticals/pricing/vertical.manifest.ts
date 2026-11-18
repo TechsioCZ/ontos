@@ -51,6 +51,8 @@ import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing
 import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
 import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
 import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
+import { pricingMcpContribution } from './shared/mcp/contribution.ts';
+import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const catalogModuleId = 'commerce.catalog';
 const marketCatalogModuleId = 'commerce.market-catalog';
@@ -133,6 +135,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: pricingMcpContribution,
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       { apiKey: 'price-definition', operationKey: 'priceDefinition.execute', registration: priceDefinitionRead },
@@ -196,6 +199,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
+  registeredWorkloadCalls: pricingRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],

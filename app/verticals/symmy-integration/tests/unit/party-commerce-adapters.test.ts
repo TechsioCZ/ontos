@@ -1,19 +1,29 @@
 import { AssignCounterpartyPriceGroupResultSchema } from '@app/commerce-customer-context/actions/assign-counterparty-price-group';
-import { AssignCounterpartyPriceGroupActionForbiddenProblemSchema } from '@app/commerce-customer-context/api/assign-counterparty-price-group-action';
+import { UpdateCustomerGroupResultSchema } from '@app/commerce-customer-context/actions/update-customer-group';
+import { AddSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/add-saved-address-action';
+import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
+import {
+  AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
+  AssignCounterpartyPriceGroupPayloadSchema,
+} from '@app/commerce-customer-context/api/assign-counterparty-price-group-action';
+import { AssignCustomerPriceGroupPayloadSchema } from '@app/commerce-customer-context/api/assign-customer-price-group-action';
 import { ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema } from '@app/commerce-customer-context/api/change-organization-customer-profile-ico-action';
 import { OrganizationCustomerProfileIcoForbiddenProblemSchema } from '@app/commerce-customer-context/api/organization-customer-profile-ico';
 import {
+  ChangeOrganizationCustomerProfileIcoPayloadSchema,
   ChangeOrganizationCustomerProfileIcoResultSchema,
+  OrganizationCustomerProfileIcoRequestSchema,
   OrganizationCustomerProfileIcoResponseSchema,
 } from '@app/commerce-customer-context/domain/organization-profile-ico';
-import type { executeChangeOrganizationCustomerProfileIcoWithAuthorization } from '@app/commerce-customer-context/api/change-organization-customer-profile-ico-action/client';
-import type { executeOrganizationCustomerProfileIcoWithAuthorization } from '@app/commerce-customer-context/api/organization-customer-profile-ico/client';
 import {
+  CustomerGroupDefinitionSourceRequestSchema,
   CustomerGroupDefinitionSourceResponseSchema,
   CustomerGroupDefinitionSourceUnavailableProblemSchema,
 } from '@app/commerce-customer-context/api/customer-group-definition-source';
-import type { executeCustomerGroupDefinitionSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-group-definition-source/client';
-import type { executeCustomerGroupMembershipSourceReceiptWithAuthorization } from '@app/commerce-customer-context/api/customer-group-membership-source-receipt/client';
+import {
+  CustomerGroupMembershipSourceReceiptRequestSchema,
+  CustomerGroupMembershipSourceReceiptResponseSchema,
+} from '@app/commerce-customer-context/api/customer-group-membership-source-receipt';
 import { ApplyCustomerGroupMembershipSourceResultSchema } from '@app/commerce-customer-context/actions/apply-customer-group-membership-source';
 import {
   OrganizationBusinessSourceStatement,
@@ -21,52 +31,59 @@ import {
   OrganizationBusinessCustomerRoleReason,
   OrganizationBusinessOnboardTemplateProjectionVersion,
 } from '@app/party-registry/apis/organization-record-facts';
-import { UpdateCustomerGroupActionIneligibleProblemSchema } from '@app/commerce-customer-context/api/update-customer-group-action';
-import type {
-  executeUpdateCustomerGroupWithAuthorization,
-  executeApplyCustomerGroupMembershipSourceWithAuthorization,
-  executeAssignCounterpartyPriceGroupWithAuthorization,
-  executeEnsureRetailCustomerProfileWithAuthorization,
-  executeAssignCustomerPriceGroupWithAuthorization,
-} from '@app/commerce-customer-context/api/client';
-import type { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
 import {
+  UpdateCustomerGroupActionIneligibleProblemSchema,
+  UpdateCustomerGroupPayloadSchema,
+} from '@app/commerce-customer-context/api/update-customer-group-action';
+import {
+  CustomerProfileSourceRequestSchema,
   CustomerProfileSourceResponseSchema,
   CustomerProfileSourceForbiddenProblemSchema,
   CustomerProfileSourceUnavailableProblemSchema,
 } from '@app/commerce-customer-context/api/customer-profile-source';
-import type { executeAddSavedAddressWithAuthorization } from '@app/commerce-customer-context/api/add-saved-address-action/client';
-import type { executeSavedAddressSourceReceiptWithAuthorization } from '@app/commerce-customer-context/api/saved-address-source-receipt/client';
-import { SavedAddressSourceReceiptResponseSchema } from '@app/commerce-customer-context/api/saved-address-source-receipt';
+import {
+  SavedAddressSourceReceiptRequestSchema,
+  SavedAddressSourceReceiptResponseSchema,
+} from '@app/commerce-customer-context/api/saved-address-source-receipt';
 import { AddSavedAddressResultSchema } from '@app/commerce-customer-context/actions/add-saved-address';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { EnsureRetailCustomerProfileResultSchema } from '@app/commerce-customer-context/actions/ensure-retail-customer-profile';
-import type { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/client';
-import type { executeCustomerPriceGroupAssignmentReceiptWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-assignment-receipt/client';
-import { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
-import { CustomerPriceGroupAssignmentReceiptForbiddenProblemSchema } from '@app/commerce-customer-context/api/customer-price-group-assignment-receipt';
-import { AssignCustomerPriceGroupResultSchema } from '@app/commerce-customer-context/actions/assign-customer-price-group';
-import type {
-  createPartyWithAuthorization,
-  endContactPointWithAuthorization,
-  counterpartyCustomerOnboardWithAuthorization,
-} from '@app/party-registry/api/client';
-import type { executePartySourceEffectReceiptWithAuthorization } from '@app/party-registry/apis/party-source-effect-receipt/client';
-import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
+import { EnsureRetailCustomerProfilePayloadSchema } from '@app/commerce-customer-context/api/ensure-retail-customer-profile-action';
 import {
+  SourceProcessingEligibilityRequestSchema,
+  SourceProcessingEligibilityResponseSchema,
+} from '@app/privacy/api/source-processing-eligibility';
+import {
+  CustomerPriceGroupAssignmentReceiptForbiddenProblemSchema,
+  CustomerPriceGroupAssignmentReceiptRequestSchema,
+  CustomerPriceGroupAssignmentReceiptResponseSchema,
+} from '@app/commerce-customer-context/api/customer-price-group-assignment-receipt';
+import { AssignCustomerPriceGroupResultSchema } from '@app/commerce-customer-context/actions/assign-customer-price-group';
+import {
+  CreatePartyPayloadSchema,
   CreatePartyResultSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
   CounterpartyCustomerOnboardResultSchema,
-  PartyCommandCommitIndeterminateProblemSchema,
+  EndContactPointPayloadSchema,
   EndContactPointResultSchema,
+  PartyCommandCommitIndeterminateProblemSchema,
 } from '@app/party-registry/api';
 import {
+  PartySourceEffectReceiptRequestSchema,
   PartySourceEffectReceiptResponseSchema,
   PartySourceEffectReceiptForbiddenProblemSchema,
 } from '@app/party-registry/apis/party-source-effect-receipt';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
-import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { Effect, Match, Option, Result, Schema, Struct } from 'effect';
-import { describe, expect, it, rs } from 'effect-rstest';
+import {
+  GatewayContextResponseSchema,
+  GatewayDelegatedContextRequestSchema,
+  shellGatewayContextContract,
+} from '@app/shared-contracts';
+import { NodeCrypto } from '@effect/platform-node';
+import { ConfigProvider, Effect, Match, Option, Result, Schema, Struct } from 'effect';
+import type { Crypto } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { describe, expect, it } from 'effect-rstest';
 
 import {
   SymmyPartyCommerceOwnerReceiptSchema,
@@ -79,172 +96,283 @@ import {
   prepareSymmyPartyCommerceRequestHash,
 } from '../../src/services/symmy-party-commerce-adapters.ts';
 import { symmyJobWorkerUnavailable } from '../../src/services/symmy-job-worker-error.ts';
+import { symmyWorkerCompositionRevision, withSymmyWorkerClaim } from '../support/symmy-worker-claim.fixture.ts';
 
 const executorPrincipalId = '10000000-0000-4000-8000-000000000008';
 const fixtureAuthContextRef = 'job:integration.symmy.execute-symmy-job:run:10000000-0000-4000-8000-000000000010';
-type CreatePartyClient = typeof createPartyWithAuthorization;
-type ReceiptClient = typeof executePartySourceEffectReceiptWithAuthorization;
-interface AdapterCalls {
-  address: ReturnType<typeof rs.fn<typeof executeAddSavedAddressWithAuthorization>>;
-  addressReceipt: ReturnType<typeof rs.fn<typeof executeSavedAddressSourceReceiptWithAuthorization>>;
-  assignment: ReturnType<typeof rs.fn<typeof executeAssignCustomerPriceGroupWithAuthorization>>;
-  assignmentReceipt: ReturnType<typeof rs.fn<typeof executeCustomerPriceGroupAssignmentReceiptWithAuthorization>>;
-  counterpartyAssignment: ReturnType<typeof rs.fn<typeof executeAssignCounterpartyPriceGroupWithAuthorization>>;
-  create: ReturnType<typeof rs.fn<CreatePartyClient>>;
-  endContact: ReturnType<typeof rs.fn<typeof endContactPointWithAuthorization>>;
+const invocationId = '10000000-0000-4000-8000-000000000009';
+
+/**
+ * The owner deployments Symmy reaches, as native HTTP peers behind the actual generated owner clients and
+ * the actual delegated Shell gateway client. Each peer reads the schema-valid request it was sent and
+ * answers with the schema-valid response or problem the test scripts for it.
+ */
+type OwnerReply = () => Response;
+interface RoutedOwnerEndpoint {
+  readonly path: string;
+  readonly receive: (request: Request, text: string) => Option.Option<OwnerReply>;
+  readonly reset: () => void;
+  readonly write: boolean;
+}
+const problemReply =
+  <Problem extends { readonly status: number }, Encoded>(
+    schema: Schema.Codec<Problem, Encoded>,
+    problem: Problem,
+  ): OwnerReply =>
+  () =>
+    Response.json(Schema.encodeSync(schema)(problem), {
+      headers: { 'content-type': 'application/problem+json' },
+      status: problem.status,
+    });
+const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
+  path: string,
+  schemas: {
+    readonly body: Schema.Codec<Body, BodyEncoded>;
+    readonly success: Schema.Codec<Success, SuccessEncoded>;
+    readonly write: boolean;
+  },
+) => {
+  const bodies: Body[] = [];
+  const sent: Request[] = [];
+  const queued: OwnerReply[] = [];
+  let fallback = Option.none<OwnerReply>();
+  const decodeBody = Schema.decodeUnknownOption(Schema.fromJsonString(schemas.body));
+  const encodeSuccess = Schema.encodeSync(schemas.success);
+  const succeeding =
+    (value: () => Success): OwnerReply =>
+    () =>
+      Response.json(encodeSuccess(value()));
+  const endpoint = {
+    /** Answers every later request with the owner's response computed when the request arrives. */
+    answer: (value: () => Success) => {
+      fallback = Option.some(succeeding(value));
+    },
+    bodies,
+    fail: <Problem extends { readonly status: number }, Encoded>(
+      schema: Schema.Codec<Problem, Encoded>,
+      problem: Problem,
+    ) => {
+      fallback = Option.some(problemReply(schema, problem));
+    },
+    failOnce: <Problem extends { readonly status: number }, Encoded>(
+      schema: Schema.Codec<Problem, Encoded>,
+      problem: Problem,
+    ) => {
+      queued.push(problemReply(schema, problem));
+      return endpoint;
+    },
+    path,
+    /** Records the schema-valid request; an undecodable one gets no scripted reply. */
+    receive: (request: Request, text: string) => {
+      sent.push(request);
+      return Option.flatMap(decodeBody(text), (body) => {
+        bodies.push(body);
+        return Option.orElse(Option.fromNullishOr(queued.shift()), () => fallback);
+      });
+    },
+    reset: () => {
+      bodies.length = 0;
+      sent.length = 0;
+      queued.length = 0;
+      fallback = Option.none();
+    },
+    sent,
+    succeed: (value: Success) => {
+      fallback = Option.some(succeeding(() => value));
+    },
+    succeedOnce: (value: Success) => {
+      queued.push(succeeding(() => value));
+      return endpoint;
+    },
+    write: schemas.write,
+  };
+  return endpoint;
+};
+const owners = {
+  address: ownerEndpoint('/commerce-customer-context/actions/add-saved-address', {
+    body: AddSavedAddressPayloadSchema,
+    success: AddSavedAddressResultSchema,
+    write: true,
+  }),
+  addressReceipt: ownerEndpoint('/reads/saved-address-source-receipt', {
+    body: SavedAddressSourceReceiptRequestSchema,
+    success: SavedAddressSourceReceiptResponseSchema,
+    write: false,
+  }),
+  assignment: ownerEndpoint('/commerce-customer-context/actions/assign-customer-price-group', {
+    body: AssignCustomerPriceGroupPayloadSchema,
+    success: AssignCustomerPriceGroupResultSchema,
+    write: true,
+  }),
+  assignmentReceipt: ownerEndpoint('/reads/customer-price-group-assignment-receipt', {
+    body: CustomerPriceGroupAssignmentReceiptRequestSchema,
+    success: CustomerPriceGroupAssignmentReceiptResponseSchema,
+    write: false,
+  }),
+  counterpartyAssignment: ownerEndpoint('/commerce-customer-context/actions/assign-counterparty-price-group', {
+    body: AssignCounterpartyPriceGroupPayloadSchema,
+    success: AssignCounterpartyPriceGroupResultSchema,
+    write: true,
+  }),
+  create: ownerEndpoint('/party-registry/actions/create-party', {
+    body: CreatePartyPayloadSchema,
+    success: CreatePartyResultSchema,
+    write: true,
+  }),
+  endContact: ownerEndpoint('/party-registry/actions/end-contact-point', {
+    body: EndContactPointPayloadSchema,
+    success: EndContactPointResultSchema,
+    write: true,
+  }),
+  groupDefinition: ownerEndpoint('/reads/customer-group-definition-source', {
+    body: CustomerGroupDefinitionSourceRequestSchema,
+    success: CustomerGroupDefinitionSourceResponseSchema,
+    write: false,
+  }),
+  membership: ownerEndpoint('/commerce-customer-context/actions/apply-customer-group-membership-source', {
+    body: ApplyCustomerGroupMembershipSourcePayloadSchema,
+    success: ApplyCustomerGroupMembershipSourceResultSchema,
+    write: true,
+  }),
+  membershipReceipt: ownerEndpoint('/reads/customer-group-membership-source-receipt', {
+    body: CustomerGroupMembershipSourceReceiptRequestSchema,
+    success: CustomerGroupMembershipSourceReceiptResponseSchema,
+    write: false,
+  }),
+  onboard: ownerEndpoint('/party-registry/actions/counterparty-customer-onboard', {
+    body: CounterpartyCustomerOnboardPayloadSchema,
+    success: CounterpartyCustomerOnboardResultSchema,
+    write: true,
+  }),
+  organizationIco: ownerEndpoint('/commerce-customer-context/actions/change-organization-customer-profile-ico', {
+    body: ChangeOrganizationCustomerProfileIcoPayloadSchema,
+    success: ChangeOrganizationCustomerProfileIcoResultSchema,
+    write: true,
+  }),
+  organizationIcoRead: ownerEndpoint('/reads/organization-customer-profile-ico', {
+    body: OrganizationCustomerProfileIcoRequestSchema,
+    success: OrganizationCustomerProfileIcoResponseSchema,
+    write: false,
+  }),
+  privacy: ownerEndpoint('/reads/source-processing-eligibility', {
+    body: SourceProcessingEligibilityRequestSchema,
+    success: SourceProcessingEligibilityResponseSchema,
+    write: false,
+  }),
+  profileReceipt: ownerEndpoint('/reads/customer-profile-source', {
+    body: CustomerProfileSourceRequestSchema,
+    success: CustomerProfileSourceResponseSchema,
+    write: false,
+  }),
+  receipt: ownerEndpoint('/reads/party-source-effect-receipt', {
+    body: PartySourceEffectReceiptRequestSchema,
+    success: PartySourceEffectReceiptResponseSchema,
+    write: false,
+  }),
+  retail: ownerEndpoint('/commerce-customer-context/actions/ensure-retail-customer-profile', {
+    body: EnsureRetailCustomerProfilePayloadSchema,
+    success: EnsureRetailCustomerProfileResultSchema,
+    write: true,
+  }),
+  updateGroup: ownerEndpoint('/commerce-customer-context/actions/update-customer-group', {
+    body: UpdateCustomerGroupPayloadSchema,
+    success: UpdateCustomerGroupResultSchema,
+    write: true,
+  }),
+};
+const routedOwners: readonly RoutedOwnerEndpoint[] = Object.values(owners);
+interface PeerState {
+  /** Whether Core records the succeeded invocation once an owner write is acknowledged. */
   exposeCommittedAckFact: boolean;
   fact: { actionInvocationId: string; status: string } | null;
   factReads: number;
-  gateway: GatewayDelegationRequest[];
-  groupDefinition: ReturnType<typeof rs.fn<typeof executeCustomerGroupDefinitionSourceWithAuthorization>>;
-  hashes: { authContextRef: string; hash: string }[];
-  membership: ReturnType<typeof rs.fn<typeof executeApplyCustomerGroupMembershipSourceWithAuthorization>>;
-  membershipReceipt: ReturnType<typeof rs.fn<typeof executeCustomerGroupMembershipSourceReceiptWithAuthorization>>;
-  onboard: ReturnType<typeof rs.fn<typeof counterpartyCustomerOnboardWithAuthorization>>;
-  order: string[];
-  organizationIco: ReturnType<typeof rs.fn<typeof executeChangeOrganizationCustomerProfileIcoWithAuthorization>>;
-  organizationIcoRead: ReturnType<typeof rs.fn<typeof executeOrganizationCustomerProfileIcoWithAuthorization>>;
-  privacy: ReturnType<typeof rs.fn<typeof executeSourceProcessingEligibilityWithAuthorization>>;
-  profileReceipt: ReturnType<typeof rs.fn<typeof executeCustomerProfileSourceWithAuthorization>>;
-  receipt: ReturnType<typeof rs.fn<ReceiptClient>>;
-  retail: ReturnType<typeof rs.fn<typeof executeEnsureRetailCustomerProfileWithAuthorization>>;
-  updateGroup: ReturnType<typeof rs.fn<typeof executeUpdateCustomerGroupWithAuthorization>>;
+  readonly gateway: (typeof GatewayDelegatedContextRequestSchema.Type)[];
+  readonly hashes: { authContextRef: string; hash: string }[];
+  readonly order: string[];
+  /** Requests no owner peer was scripted to answer; every test ends with none. */
+  readonly unrouted: string[];
 }
-const calls = rs.hoisted((): AdapterCalls => ({
-  address: rs.fn<typeof executeAddSavedAddressWithAuthorization>(),
-  addressReceipt: rs.fn<typeof executeSavedAddressSourceReceiptWithAuthorization>(),
-  assignment: rs.fn<typeof executeAssignCustomerPriceGroupWithAuthorization>(),
-  assignmentReceipt: rs.fn<typeof executeCustomerPriceGroupAssignmentReceiptWithAuthorization>(),
-  counterpartyAssignment: rs.fn<typeof executeAssignCounterpartyPriceGroupWithAuthorization>(),
-  create: rs.fn<CreatePartyClient>(),
-  endContact: rs.fn<typeof endContactPointWithAuthorization>(),
+const peer: PeerState & typeof owners = {
+  ...owners,
   exposeCommittedAckFact: true,
   fact: null,
   factReads: 0,
   gateway: [],
-  groupDefinition: rs.fn<typeof executeCustomerGroupDefinitionSourceWithAuthorization>(),
   hashes: [],
-  membership: rs.fn<typeof executeApplyCustomerGroupMembershipSourceWithAuthorization>(),
-  membershipReceipt: rs.fn<typeof executeCustomerGroupMembershipSourceReceiptWithAuthorization>(),
-  onboard: rs.fn<typeof counterpartyCustomerOnboardWithAuthorization>(),
   order: [],
-  organizationIco: rs.fn<typeof executeChangeOrganizationCustomerProfileIcoWithAuthorization>(),
-  organizationIcoRead: rs.fn<typeof executeOrganizationCustomerProfileIcoWithAuthorization>(),
-  privacy: rs.fn<typeof executeSourceProcessingEligibilityWithAuthorization>(),
-  profileReceipt: rs.fn<typeof executeCustomerProfileSourceWithAuthorization>(),
-  receipt: rs.fn<ReceiptClient>(),
-  retail: rs.fn<typeof executeEnsureRetailCustomerProfileWithAuthorization>(),
-  updateGroup: rs.fn<typeof executeUpdateCustomerGroupWithAuthorization>(),
-}));
-const invocationId = '10000000-0000-4000-8000-000000000009';
-// Published client successes model the native Core commit separately from its DTO; production reads real facts.
-const fixtureCommittedAck = Effect.sync(() => {
-  if (calls.exposeCommittedAckFact && calls.fact === null) {
-    calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-  }
-});
-rs.mock('@app/commerce-customer-context/api/add-saved-address-action/client', () => ({
-  executeAddSavedAddressWithAuthorization: (...args: Parameters<typeof executeAddSavedAddressWithAuthorization>) =>
-    calls.address(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-}));
-rs.mock('@app/commerce-customer-context/api/saved-address-source-receipt/client', () => ({
-  executeSavedAddressSourceReceiptWithAuthorization: calls.addressReceipt,
-}));
-rs.mock('@app/commerce-customer-context/api/customer-profile-source/client', () => ({
-  executeCustomerProfileSourceWithAuthorization: calls.profileReceipt,
-}));
-rs.mock('@app/commerce-customer-context/api/customer-group-definition-source/client', () => ({
-  executeCustomerGroupDefinitionSourceWithAuthorization: calls.groupDefinition,
-}));
-rs.mock('@app/commerce-customer-context/api/customer-group-membership-source-receipt/client', () => ({
-  executeCustomerGroupMembershipSourceReceiptWithAuthorization: calls.membershipReceipt,
-}));
-rs.mock('@app/commerce-customer-context/api/change-organization-customer-profile-ico-action/client', () => ({
-  executeChangeOrganizationCustomerProfileIcoWithAuthorization: (
-    ...args: Parameters<typeof executeChangeOrganizationCustomerProfileIcoWithAuthorization>
-  ) => calls.organizationIco(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-}));
-rs.mock('@app/commerce-customer-context/api/organization-customer-profile-ico/client', () => ({
-  executeOrganizationCustomerProfileIcoWithAuthorization: calls.organizationIcoRead,
-}));
-rs.mock('@app/privacy/api/client', () => ({ executeSourceProcessingEligibilityWithAuthorization: calls.privacy }));
-rs.mock('@app/commerce-customer-context/api/customer-price-group-assignment-receipt/client', () => ({
-  executeCustomerPriceGroupAssignmentReceiptWithAuthorization: calls.assignmentReceipt,
-}));
-rs.mock('@app/commerce-customer-context/api/client', () => ({
-  executeApplyCustomerGroupMembershipSourceWithAuthorization: (
-    ...args: Parameters<typeof executeApplyCustomerGroupMembershipSourceWithAuthorization>
-  ) => calls.membership(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  executeAssignCounterpartyPriceGroupWithAuthorization: (
-    ...args: Parameters<typeof executeAssignCounterpartyPriceGroupWithAuthorization>
-  ) => calls.counterpartyAssignment(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  executeAssignCustomerPriceGroupWithAuthorization: (
-    ...args: Parameters<typeof executeAssignCustomerPriceGroupWithAuthorization>
-  ) => calls.assignment(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  executeChangeCustomerProfileIcoWithAuthorization: rs.fn(),
-  executeCreateCounterpartyPurchasingProfileWithAuthorization: rs.fn(),
-  executeCreateCustomerGroupWithAuthorization: rs.fn(),
-  executeEnsureRetailCustomerProfileWithAuthorization: (
-    ...args: Parameters<typeof executeEnsureRetailCustomerProfileWithAuthorization>
-  ) => calls.retail(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  executeUpdateCustomerGroupWithAuthorization: (
-    ...args: Parameters<typeof executeUpdateCustomerGroupWithAuthorization>
-  ) => calls.updateGroup(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-}));
-rs.mock('@app/party-registry/api/client', () => ({
-  addContactPointWithAuthorization: rs.fn(),
-  correctPartyFactWithAuthorization: rs.fn(),
-  counterpartyCustomerOnboardWithAuthorization: (
-    ...args: Parameters<typeof counterpartyCustomerOnboardWithAuthorization>
-  ) => calls.onboard(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  createPartyWithAuthorization: (...args: Parameters<CreatePartyClient>) =>
-    calls.create(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  endContactPointWithAuthorization: (...args: Parameters<typeof endContactPointWithAuthorization>) =>
-    calls.endContact(...args).pipe(Effect.tap(() => fixtureCommittedAck)),
-  matchPartyWithAuthorization: rs.fn(),
-  updateContactPointWithAuthorization: rs.fn(),
-  updatePartyWithAuthorization: rs.fn(),
-}));
-rs.mock('@app/party-registry/apis/party-source-effect-receipt/client', () => ({
-  executePartySourceEffectReceiptWithAuthorization: calls.receipt,
-}));
-rs.mock('@app/shared-contracts/gateway-context-server', () => ({
-  acquireDelegatedGatewayContext: (request: GatewayDelegationRequest) => {
-    calls.gateway.push(request);
-    const recovery = Match.value(request.subject).pipe(
-      Match.tag('RegisteredRecovery', (subject) => {
-        if (calls.fact === null) {
-          return Option.none();
-        }
-        return Option.some({
-          originalActionInvocationId: calls.fact.actionInvocationId,
-          originalActionKey: subject.originalActionKey,
-          originalAuthContextRef: fixtureAuthContextRef,
-          originalIdempotencyKey: subject.originalIdempotencyKey,
-          originalPrincipalId: subject.originalPrincipalId,
-          originalRequestHash: subject.originalRequestHash,
-          requestHash: subject.requestHash,
-        });
-      }),
-      Match.orElse(() => Option.none()),
-    );
-    const result = {
-      apiBaseUrl: 'https://party.internal.fixture/party-registry-api',
-      authorization: `Bearer internal-attempt-${calls.gateway.length}`,
-      compositionRevision: 'c'.repeat(64),
+  unrouted: [],
+};
+const decodeGatewayRequest = Schema.decodeUnknownSync(Schema.fromJsonString(GatewayDelegatedContextRequestSchema));
+const encodeGatewayResponse = Schema.encodeUnknownSync(GatewayContextResponseSchema);
+/** The Shell issuer: a fresh operation-bound credential, plus original-invocation metadata only Core can prove. */
+const issueDelegatedContext = (text: string) => {
+  const request = decodeGatewayRequest(text);
+  peer.gateway.push(request);
+  const recovery = Match.value(request.subject).pipe(
+    Match.tag('RegisteredRecovery', (subject) =>
+      peer.fact === null
+        ? {}
+        : {
+            recovery: {
+              originalActionInvocationId: peer.fact.actionInvocationId,
+              originalActionKey: subject.originalActionKey,
+              originalAuthContextRef: fixtureAuthContextRef,
+              originalIdempotencyKey: subject.originalIdempotencyKey,
+              originalPrincipalId: subject.originalPrincipalId,
+              originalRequestHash: subject.originalRequestHash,
+              requestHash: subject.requestHash,
+            },
+          },
+    ),
+    Match.orElse(() => ({})),
+  );
+  return Response.json(
+    encodeGatewayResponse({
+      apiBaseUrl: `/${request.audience}-api`,
+      compositionRevision: request.compositionRevision,
       expiresAt: 1_700_000_300,
       machineContext: {
         authContextRef: fixtureAuthContextRef,
         bindingIncarnation: '10000000-0000-4000-8000-000000000007',
         principalId: executorPrincipalId,
       },
-    };
-    return Option.match(recovery, {
-      onNone: () => Effect.succeed(result),
-      onSome: (metadata) => Effect.succeed({ ...result, recovery: metadata }),
-    });
-  },
-}));
+      token: `internal-attempt-${peer.gateway.length}`,
+      ...recovery,
+    }),
+  );
+};
+const answerPeer = (request: Request, text: string): Response => {
+  const { pathname } = new URL(request.url);
+  if (pathname === shellGatewayContextContract.issueDelegatedGatewayContextPath) {
+    return issueDelegatedContext(text);
+  }
+  const endpoint = routedOwners.find((candidate) => pathname.endsWith(candidate.path));
+  const reply = endpoint === undefined ? Option.none() : endpoint.receive(request, text);
+  if (endpoint === undefined || Option.isNone(reply)) {
+    peer.unrouted.push(pathname);
+    return Response.json(
+      { detail: `No scripted owner response for ${pathname}`, status: 500, title: 'Internal', type: 'about:blank' },
+      { headers: { 'content-type': 'application/problem+json' }, status: 500 },
+    );
+  }
+  const response = reply.value();
+  // Published owner successes model the native Core commit separately from their DTO; production reads real facts.
+  if (endpoint.write && response.ok && peer.exposeCommittedAckFact && peer.fact === null) {
+    peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+  }
+  return response;
+};
+const fetchPeer: typeof globalThis.fetch = (input, init) => {
+  const request = new Request(input, init);
+  return request
+    .clone()
+    .text()
+    .then((text) => answerPeer(request, text));
+};
+const peerConfiguration = ConfigProvider.fromEnvRecord({
+  ONTOS_GATEWAY_MODULE_API_KEY: 'internal-module-key',
+  ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+});
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const routeId = '10000000-0000-4000-8000-000000000002';
@@ -299,7 +427,7 @@ const context = attestOutboxWorkerHandlerContext({
   actorPrincipalId: '10000000-0000-4000-8000-000000000006',
   attemptNumber: 1,
   claimId: 'claim:internal',
-  compositionRevision: 'c'.repeat(64),
+  compositionRevision: symmyWorkerCompositionRevision,
   consumerModuleKey: 'integration.symmy',
   deliveryId: '10000000-0000-4000-8000-000000000010',
   domainEventId: '10000000-0000-4000-8000-000000000011',
@@ -346,15 +474,15 @@ const input = (): SymmyEffectAdapterInput => ({
   effect,
   readOriginalActionInvocation: () =>
     Effect.sync(() => {
-      calls.factReads += 1;
-      return Option.fromNullishOr(calls.fact);
+      peer.factReads += 1;
+      return Option.fromNullishOr(peer.fact);
     }),
   recordInvocationId: () => Effect.void,
   recordOwnerReceipt: () => Effect.void,
   recordOwnerRequest: ({ authContextRef, requestHash }) =>
     Effect.sync(() => {
-      calls.hashes.push({ authContextRef, hash: requestHash });
-      calls.order.push('pin-request');
+      peer.hashes.push({ authContextRef, hash: requestHash });
+      peer.order.push('pin-request');
     }),
   recordResolvedEffect: () => Effect.void,
 });
@@ -384,32 +512,34 @@ const withOriginalRequest = Effect.fn('PartyCommerceAdapterFixture.originalReque
     originalRequestHash,
   };
 });
+
 const reset = () => {
-  calls.counterpartyAssignment.mockReset();
-  calls.organizationIco.mockReset();
-  calls.organizationIcoRead.mockReset();
-  calls.groupDefinition.mockReset();
-  calls.membership.mockReset();
-  calls.membershipReceipt.mockReset();
-  calls.onboard.mockReset();
-  calls.updateGroup.mockReset();
-  calls.profileReceipt.mockReset();
-  calls.address.mockReset();
-  calls.endContact.mockReset();
-  calls.addressReceipt.mockReset();
-  calls.create.mockReset();
-  calls.retail.mockReset();
-  calls.assignment.mockReset();
-  calls.assignmentReceipt.mockReset();
-  calls.privacy.mockReset();
-  calls.receipt.mockReset();
-  calls.fact = null;
-  calls.exposeCommittedAckFact = true;
-  calls.factReads = 0;
-  calls.hashes.length = 0;
-  calls.gateway.length = 0;
-  calls.order.length = 0;
+  for (const endpoint of routedOwners) {
+    endpoint.reset();
+  }
+  peer.fact = null;
+  peer.exposeCommittedAckFact = true;
+  peer.factReads = 0;
+  peer.hashes.length = 0;
+  peer.gateway.length = 0;
+  peer.order.length = 0;
+  peer.unrouted.length = 0;
 };
+/** Runs a test against the scripted owner peers without any worker delivery claim. */
+const overSymmyPeers = <Value, Failure>(program: Effect.Effect<Value, Failure, Crypto.Crypto>) =>
+  program.pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        expect(peer.unrouted).toEqual([]);
+      }),
+    ),
+    Effect.provide(NodeCrypto.layer),
+    Effect.provideService(ConfigProvider.ConfigProvider, peerConfiguration),
+    Effect.provideService(FetchHttpClient.Fetch, fetchPeer),
+  );
+/** Runs a test as the Symmy job worker of `context`'s delivery against the scripted owner peers. */
+const asSymmyWorker = <Value, Failure>(program: Effect.Effect<Value, Failure, Crypto.Crypto>) =>
+  overSymmyPeers(program.pipe(withSymmyWorkerClaim(context)));
 
 const profile = {
   kind: 'RETAIL',
@@ -529,40 +659,37 @@ describe('explicit Commerce assignment source Privacy', () => {
   it.effect('checks the exact profile and source again after an earlier positive result', () =>
     Effect.gen(function* recheck() {
       reset();
-      calls.privacy
-        .mockReturnValueOnce(Effect.succeed(privacyAllowed))
-        .mockReturnValueOnce(Effect.succeed(privacyDenied));
-      calls.assignment.mockReturnValue(Effect.succeed(assignmentResult));
+      peer.privacy.succeedOnce(privacyAllowed).succeedOnce(privacyDenied);
+      peer.assignment.succeed(assignmentResult);
       const adapter = yield* assignmentAdapter;
       const original = { ...input(), effect: assignmentEffect, legalEntityId: '10000000-0000-4000-8000-000000000020' };
       const first = yield* adapter.execute(original);
       expect(first.status).toBe('accepted_change');
       const denied = yield* adapter.execute(original);
       expect(denied.status).toBe('denied');
-      expect(calls.assignment).toHaveBeenCalledTimes(1);
-      expect(calls.privacy).toHaveBeenCalledTimes(2);
-      expect(calls.privacy.mock.calls[0]?.[0]).toMatchObject({
+      expect(peer.assignment.sent).toHaveLength(1);
+      expect(peer.privacy.sent).toHaveLength(2);
+      expect(peer.privacy.bodies[0]).toMatchObject({
         consumerModuleId: 'commerce.customer-context',
         operation: 'PRICE_GROUP_ASSIGN',
         source: { occurrenceId: 'occurrence-1', recordId: 'customer-1' },
         target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profile.resourceId },
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('leaves recovery indeterminate when receiving owner current Privacy rejects its immutable source', () =>
     Effect.gen(function* deniedRecovery() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.assignmentReceipt.mockReturnValue(
-        Effect.fail(
-          CustomerPriceGroupAssignmentReceiptForbiddenProblemSchema.make({
-            detail: 'Current owner Privacy denies the original source',
-            status: 403,
-            title: 'Forbidden',
-            type: 'about:blank',
-          }),
-        ),
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.assignmentReceipt.fail(
+        CustomerPriceGroupAssignmentReceiptForbiddenProblemSchema,
+        CustomerPriceGroupAssignmentReceiptForbiddenProblemSchema.make({
+          detail: 'Current owner Privacy denies the original source',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
       );
       const adapter = yield* assignmentAdapter;
       const result = yield* adapter
@@ -576,10 +703,10 @@ describe('explicit Commerce assignment source Privacy', () => {
         )
         .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.assignmentReceipt).toHaveBeenCalledTimes(1);
-      expect(calls.privacy).not.toHaveBeenCalled();
-      expect(calls.assignment).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.assignmentReceipt.sent).toHaveLength(1);
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.assignment.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 
@@ -617,16 +744,14 @@ describe('governed internal Party adapter', () => {
   it.effect('preserves the original Contact end no-change receipt instead of guessing from current state', () =>
     Effect.gen(function* contactNoChange() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.receipt.mockReturnValue(
-        Effect.succeed(
-          Schema.decodeUnknownSync(PartySourceEffectReceiptResponseSchema)({
-            actionInvocationId: invocationId,
-            operation: 'END_CONTACT_POINT',
-            outcome: 'COMMITTED',
-            result: { changed: false, contactPointRef, partyRef: canonicalPartyRef, revision: 3 },
-          }),
-        ),
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.receipt.succeed(
+        Schema.decodeUnknownSync(PartySourceEffectReceiptResponseSchema)({
+          actionInvocationId: invocationId,
+          operation: 'END_CONTACT_POINT',
+          outcome: 'COMMITTED',
+          result: { changed: false, contactPointRef, partyRef: canonicalPartyRef, revision: 3 },
+        }),
       );
       const adapters = yield* makeSymmyPartyCommerceAdapters;
       const adapter = adapters.find(
@@ -643,52 +768,52 @@ describe('governed internal Party adapter', () => {
         }),
       );
       expect(recovered).toMatchObject({ outcome: { status: 'accepted_no_change' }, status: 'settled' });
-      expect(calls.receipt.mock.calls[0]?.[0]).toMatchObject({
+      expect(peer.receipt.bodies[0]).toMatchObject({
         operation: 'END_CONTACT_POINT',
         payload: { contactPointRef },
       });
       return yield* Effect.void;
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('does not invoke the owner if the complete request pin cannot be saved', () =>
     Effect.gen(function* cannotPin() {
       reset();
-      calls.create.mockReturnValue(Effect.succeed(created));
+      peer.create.succeed(created);
       const adapter = yield* createAdapter;
       const result = yield* Effect.result(
         adapter.execute({ ...input(), recordOwnerRequest: () => Effect.fail(symmyJobWorkerUnavailable()) }),
       );
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.create).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.create.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('reuses the pinned executor and exact original command key when no invocation was acknowledged', () =>
     Effect.gen(function* originalCommand() {
       reset();
-      calls.receipt.mockReturnValue(Effect.succeed({ outcome: 'INDETERMINATE' }));
-      calls.create.mockReturnValue(Effect.succeed(created));
+      peer.receipt.succeed({ outcome: 'INDETERMINATE' });
+      peer.create.succeed(created);
       const adapter = yield* createAdapter;
       const original = yield* withOriginalRequest(input());
       expect(yield* adapter.recover(original)).toEqual({ status: 'retry_original_key' });
-      expect(calls.gateway).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(0);
       const result = yield* adapter.execute(original);
       expect(result).toMatchObject({ status: 'accepted_change' });
-      expect(calls.gateway).toHaveLength(1);
-      expect(calls.gateway[0]?.subject).toMatchObject({
+      expect(peer.gateway).toHaveLength(1);
+      expect(peer.gateway[0]?.subject).toMatchObject({
         operationRequirementKey: 'integration.symmy.requirement.worker.party.registry.create-party',
       });
-      expect(calls.gateway[0]?.subject).toMatchObject({ expectedPrincipalId: '10000000-0000-4000-8000-000000000008' });
-      expect(calls.create.mock.calls[0]?.[2].idempotencyKey).toBe(effectId);
-      expect(calls.create.mock.calls[0]?.[1]).toBe('Bearer internal-attempt-1');
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.gateway[0]?.subject).toMatchObject({ expectedPrincipalId: '10000000-0000-4000-8000-000000000008' });
+      expect(peer.create.sent[0]?.headers.get('idempotency-key')).toBe(effectId);
+      expect(peer.create.sent[0]?.headers.get('authorization')).toBe('Bearer internal-attempt-1');
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('keeps revoked new-effect authority from replaying an uncertain command', () =>
     Effect.gen(function* revoked() {
       reset();
-      calls.receipt.mockReturnValue(Effect.succeed({ outcome: 'INDETERMINATE' }));
+      peer.receipt.succeed({ outcome: 'INDETERMINATE' });
       const adapter = yield* createAdapter;
       const result = yield* adapter.recover({
         ...input(),
@@ -696,15 +821,15 @@ describe('governed internal Party adapter', () => {
         originalExecutorPrincipalId: '10000000-0000-4000-8000-000000000008',
       });
       expect(result).toEqual({ status: 'unavailable' });
-      expect(calls.create).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.create.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('rejects a receipt identifying a different previously recorded invocation', () =>
     Effect.gen(function* wrongInvocation() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.receipt.mockReturnValue(Effect.succeed(originalReceipt));
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.receipt.succeed(originalReceipt);
       const adapter = yield* createAdapter;
       const result = yield* adapter.recover(
         yield* withOriginalRequest({
@@ -713,14 +838,14 @@ describe('governed internal Party adapter', () => {
         }),
       );
       expect(result).toEqual({ status: 'unavailable' });
-      expect(calls.create).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.create.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('uses the committed synchronous admission without manufacturing a worker delivery', () =>
     Effect.gen(function* synchronousAdmission() {
       reset();
-      calls.create.mockReturnValue(Effect.succeed(created));
+      peer.create.succeed(created);
       const adapter = yield* createAdapter;
       const initial = input();
       yield* adapter.execute({
@@ -740,78 +865,84 @@ describe('governed internal Party adapter', () => {
         recordResolvedEffect: initial.recordResolvedEffect,
       });
       expect(
-        calls.gateway.some((request) =>
+        peer.gateway.some((request) =>
           Match.value(request.subject).pipe(
             Match.tag('RegisteredAdmission', () => true),
             Match.orElse(() => false),
           ),
         ),
       ).toBe(true);
-      expect(calls.gateway[0]?.subject).toMatchObject({
+      expect(peer.gateway[0]?.subject).toMatchObject({
         actionInvocationId: invocationId,
         sourceActionKey: 'integration.symmy.admit-symmy-sync',
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(overSymmyPeers),
   );
 
   it.effect('pins the actual executor before the native write and uses a fresh operation-bound credential', () =>
     Effect.gen(function* execute() {
       reset();
-      calls.create.mockImplementation(() =>
-        Effect.sync(() => {
-          calls.order.push('owner-write');
-          return created;
-        }),
-      );
+      peer.create.answer(() => {
+        peer.order.push('owner-write');
+        return created;
+      });
       const adapter = yield* createAdapter;
       const result = yield* adapter.execute(input());
       expect(result.status).toBe('accepted_change');
-      expect(calls.order).toEqual(['pin-request', 'owner-write']);
-      expect(calls.hashes[0]?.hash).toMatch(/^[a-f0-9]{64}$/u);
-      expect(calls.hashes[0]?.authContextRef).toBe(fixtureAuthContextRef);
-      expect(calls.gateway[0]).toMatchObject({
+      expect(peer.order).toEqual(['pin-request', 'owner-write']);
+      expect(peer.hashes[0]?.hash).toMatch(/^[a-f0-9]{64}$/u);
+      expect(peer.hashes[0]?.authContextRef).toBe(fixtureAuthContextRef);
+      // Shell receives the delivery the worker holds by its verified identity, never the in-process context.
+      expect(peer.gateway[0]).toMatchObject({
         audience: 'party-registry',
-        subject: { _tag: 'RegisteredWorkload', context, declarationKey: 'party.registry.party.create' },
+        compositionRevision: context.compositionRevision,
+        subject: {
+          _tag: 'RegisteredWorkload',
+          claimId: context.claimId,
+          declarationKey: 'party.registry.party.create',
+          deliveryId: context.deliveryId,
+          tenantId: context.tenantId,
+          workerKey: context.workerKey,
+        },
       });
-      expect(calls.create.mock.calls[0]?.[1]).toBe('Bearer internal-attempt-1');
-      expect(calls.create.mock.calls[0]?.[2]).toMatchObject({ idempotencyKey: effectId });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.create.sent[0]?.headers.get('authorization')).toBe('Bearer internal-attempt-1');
+      expect(peer.create.sent[0]?.headers.get('idempotency-key')).toBe(effectId);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('recovers the original owner receipt without invoking the write again', () =>
     Effect.gen(function* recover() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.receipt.mockReturnValue(Effect.succeed(originalReceipt));
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.receipt.succeed(originalReceipt);
       const adapter = yield* createAdapter;
       const result = yield* adapter.recover(yield* withOriginalRequest(input()));
       expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
-      expect(calls.create).not.toHaveBeenCalled();
-      expect(calls.receipt.mock.calls[0]?.[0]).toMatchObject({ operation: 'CREATE' });
-      expect(calls.gateway[0]?.subject).toMatchObject({
+      expect(peer.create.sent).toHaveLength(0);
+      expect(peer.receipt.bodies[0]).toMatchObject({ operation: 'CREATE' });
+      expect(peer.gateway[0]?.subject).toMatchObject({
         declarationKey: 'party.registry.party-source-effect-receipt.read',
         operationRequirementKey: 'integration.symmy.requirement.worker.party.registry.api.party-source-effect-receipt',
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('records a native indeterminate invocation before returning uncertainty', () =>
     Effect.gen(function* indeterminate() {
       reset();
-      calls.create.mockReturnValue(
-        Effect.fail(
-          PartyCommandCommitIndeterminateProblemSchema.make({
-            detail: 'Internal lost acknowledgement fixture',
-            invocationId: Schema.decodeUnknownSync(PartyCommandCommitIndeterminateProblemSchema.fields.invocationId)(
-              invocationId,
-            ),
-            resolution: 'RESOLVE_COMMIT',
-            retryCommand: false,
-            status: 503,
-            title: 'Indeterminate',
-            type: 'https://ontos.dev/problems/internal-lost-ack',
-          }),
-        ),
+      peer.create.fail(
+        PartyCommandCommitIndeterminateProblemSchema,
+        PartyCommandCommitIndeterminateProblemSchema.make({
+          detail: 'Internal lost acknowledgement fixture',
+          invocationId: Schema.decodeUnknownSync(PartyCommandCommitIndeterminateProblemSchema.fields.invocationId)(
+            invocationId,
+          ),
+          resolution: 'RESOLVE_COMMIT',
+          retryCommand: false,
+          status: 503,
+          title: 'Indeterminate',
+          type: 'https://ontos.dev/problems/internal-lost-ack',
+        }),
       );
       const invocations: string[] = [];
       const adapter = yield* createAdapter;
@@ -826,18 +957,18 @@ describe('governed internal Party adapter', () => {
       );
       expect(Result.isFailure(result)).toBe(true);
       expect(invocations).toEqual([invocationId]);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('allows a new exact attempt after interruption before any owner request was pinned', () =>
     Effect.gen(function* absent() {
       reset();
-      calls.receipt.mockReturnValue(Effect.succeed({ outcome: 'INDETERMINATE' }));
+      peer.receipt.succeed({ outcome: 'INDETERMINATE' });
       const adapter = yield* createAdapter;
       const result = yield* adapter.recover(input());
       expect(result).toEqual({ status: 'not_committed' });
-      expect(calls.create).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.create.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
   it.effect('keeps the pinned executor when recovering an old interruption between owner pins', () =>
     Effect.gen(function* partialPin() {
@@ -848,85 +979,82 @@ describe('governed internal Party adapter', () => {
       expect(yield* adapter.recover({ ...legacy, originalInvocationId: invocationId })).toEqual({
         status: 'unavailable',
       });
-      expect(calls.factReads).toBe(0);
-      expect(calls.gateway).toHaveLength(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.factReads).toBe(0);
+      expect(peer.gateway).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 describe('original native invocation recovery authority', () => {
   it.effect('does not retry a known committed action when its authorized receipt Read is denied', () =>
     Effect.gen(function* committedDenied() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.receipt.mockReturnValue(
-        Effect.fail(
-          PartySourceEffectReceiptForbiddenProblemSchema.make({
-            detail: 'Internal current authority revoked',
-            status: 403,
-            title: 'Forbidden',
-            type: 'about:blank',
-          }),
-        ),
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.receipt.fail(
+        PartySourceEffectReceiptForbiddenProblemSchema,
+        PartySourceEffectReceiptForbiddenProblemSchema.make({
+          detail: 'Internal current authority revoked',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
       );
       const adapter = yield* createAdapter;
       const recovered = yield* adapter.recover(yield* withOriginalRequest(input())).pipe(Effect.result);
       expect(Result.isFailure(recovered)).toBe(true);
-      expect(calls.receipt).toHaveBeenCalledTimes(1);
-      expect(calls.create).not.toHaveBeenCalled();
-      expect(calls.gateway[0]?.subject).toMatchObject({
+      expect(peer.receipt.sent).toHaveLength(1);
+      expect(peer.create.sent).toHaveLength(0);
+      expect(peer.gateway[0]?.subject).toMatchObject({
         originalActionKey: 'party.registry.create-party',
         originalIdempotencyKey: effectId,
         originalPrincipalId: executorPrincipalId,
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
   it.effect.each(['rejected', 'failed'])(
     'never invokes a write or receipt Read for a kernel invocation in %s',
     (status) =>
       Effect.gen(function* noncommittedFact() {
         reset();
-        calls.fact = { actionInvocationId: invocationId, status };
+        peer.fact = { actionInvocationId: invocationId, status };
         const adapter = yield* createAdapter;
         const recovered = yield* adapter.recover(yield* withOriginalRequest(input()));
         expect(recovered).toEqual({ status: 'unavailable' });
-        expect(calls.create).not.toHaveBeenCalled();
-        expect(calls.receipt).not.toHaveBeenCalled();
-        expect(calls.gateway).toHaveLength(0);
-      }).pipe(Effect.provide(nodeCryptoLayer)),
+        expect(peer.create.sent).toHaveLength(0);
+        expect(peer.receipt.sent).toHaveLength(0);
+        expect(peer.gateway).toHaveLength(0);
+      }).pipe(asSymmyWorker),
   );
   it.effect.each(['received', 'running'])(
     'lets the worker retry a kernel invocation in %s using only current exact write authority',
     (status) =>
       Effect.gen(function* openFact() {
         reset();
-        calls.fact = { actionInvocationId: invocationId, status };
+        peer.fact = { actionInvocationId: invocationId, status };
         const adapter = yield* createAdapter;
         const original = yield* withOriginalRequest({ ...input(), originalInvocationId: invocationId });
         expect(yield* adapter.recover(original)).toEqual({ status: 'retry_original_key' });
         expect(yield* adapter.recover({ ...original, canExecuteNewEffects: false })).toEqual({ status: 'unavailable' });
-        expect(calls.create).not.toHaveBeenCalled();
-        expect(calls.receipt).not.toHaveBeenCalled();
-        expect(calls.gateway).toHaveLength(0);
-        calls.create.mockReturnValue(
-          Effect.sync(() => {
-            calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-            return created;
-          }),
-        );
-        calls.receipt.mockReturnValue(Effect.succeed(originalReceipt));
+        expect(peer.create.sent).toHaveLength(0);
+        expect(peer.receipt.sent).toHaveLength(0);
+        expect(peer.gateway).toHaveLength(0);
+        peer.create.answer(() => {
+          peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+          return created;
+        });
+        peer.receipt.succeed(originalReceipt);
         expect(yield* adapter.execute(original)).toMatchObject({ status: 'accepted_change' });
         expect(yield* adapter.recover({ ...original, canExecuteNewEffects: false })).toMatchObject({
           outcome: { status: 'accepted_change' },
           status: 'settled',
         });
-        expect(calls.create).toHaveBeenCalledTimes(1);
-        expect(calls.create.mock.calls[0]?.[2].idempotencyKey).toBe(effectId);
-      }).pipe(Effect.provide(nodeCryptoLayer)),
+        expect(peer.create.sent).toHaveLength(1);
+        expect(peer.create.sent[0]?.headers.get('idempotency-key')).toBe(effectId);
+      }).pipe(asSymmyWorker),
   );
   it.effect('fails before the owner call when an original command no longer matches its persisted request hash', () =>
     Effect.gen(function* hashMismatch() {
       reset();
-      calls.create.mockReturnValue(Effect.succeed(created));
+      peer.create.succeed(created);
       const adapter = yield* createAdapter;
       const result = yield* adapter
         .execute({
@@ -937,9 +1065,9 @@ describe('original native invocation recovery authority', () => {
         })
         .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.create).not.toHaveBeenCalled();
-      expect(calls.hashes).toHaveLength(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.create.sent).toHaveLength(0);
+      expect(peer.hashes).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 const sellingLegalEntityId = '10000000-0000-4000-8000-000000000090';
@@ -1012,17 +1140,15 @@ describe('immutable canonical dependency resolution', () => {
   it.effect('persists the actual resolved Party before pinning the executor or writing a native profile', () =>
     Effect.gen(function* resolvedBeforeWrite() {
       reset();
-      calls.retail.mockImplementation(() =>
-        Effect.sync(() => {
-          calls.order.push('owner-write');
-          return Schema.decodeUnknownSync(EnsureRetailCustomerProfileResultSchema)({
-            outcome: 'PROFILE_CREATED',
-            profileRef: profile,
-            revision: 1,
-            state: 'ACTIVE',
-          });
-        }),
-      );
+      peer.retail.answer(() => {
+        peer.order.push('owner-write');
+        return Schema.decodeUnknownSync(EnsureRetailCustomerProfileResultSchema)({
+          outcome: 'PROFILE_CREATED',
+          profileRef: profile,
+          revision: 1,
+          state: 'ACTIVE',
+        });
+      });
       const adapter = yield* retailDependencyAdapter;
       const recorded: unknown[] = [];
       const result = yield* adapter.execute({
@@ -1033,11 +1159,11 @@ describe('immutable canonical dependency resolution', () => {
         recordResolvedEffect: (value) =>
           Effect.sync(() => {
             recorded.push(value);
-            calls.order.push('resolve');
+            peer.order.push('resolve');
           }),
       });
       expect(result.status).toBe('accepted_change');
-      expect(calls.order).toEqual(['resolve', 'pin-request', 'owner-write']);
+      expect(peer.order).toEqual(['resolve', 'pin-request', 'owner-write']);
       expect(recorded).toMatchObject([
         {
           intent: {
@@ -1046,8 +1172,8 @@ describe('immutable canonical dependency resolution', () => {
           },
         },
       ]);
-      expect(calls.retail.mock.calls[0]?.[0].subject.partyRef).toEqual(canonicalPartyRef);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.retail.bodies[0].subject.partyRef).toEqual(canonicalPartyRef);
+    }).pipe(asSymmyWorker),
   );
   it.effect('does not resolve an undeclared parent or retry resolution after authority is revoked', () =>
     Effect.gen(function* unresolvedDenied() {
@@ -1070,9 +1196,9 @@ describe('immutable canonical dependency resolution', () => {
       });
       expect(Result.isFailure(undeclared)).toBe(true);
       expect(revoked).toEqual({ status: 'unavailable' });
-      expect(calls.retail).not.toHaveBeenCalled();
-      expect(calls.gateway).toHaveLength(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.retail.sent).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 const addressSource = {
@@ -1135,28 +1261,26 @@ describe('finite Saved Address owner dispatch', () => {
   it.effect('writes the explicit purpose and source locator without inventing a native address ID', () =>
     Effect.gen(function* addAddress() {
       reset();
-      calls.address.mockReturnValue(
-        Effect.succeed(
-          Schema.decodeUnknownSync(AddSavedAddressResultSchema)({
-            address: {
-              lifecycle: 'ACTIVE',
-              origin: {
-                kind: 'COMMERCE_ONLY',
-                postalAddress: {
-                  addressLine1: 'Fixture Street 1',
-                  city: 'Prague',
-                  countryCode: 'CZ',
-                  postalCode: '11000',
-                },
+      peer.address.succeed(
+        Schema.decodeUnknownSync(AddSavedAddressResultSchema)({
+          address: {
+            lifecycle: 'ACTIVE',
+            origin: {
+              kind: 'COMMERCE_ONLY',
+              postalAddress: {
+                addressLine1: 'Fixture Street 1',
+                city: 'Prague',
+                countryCode: 'CZ',
+                postalCode: '11000',
               },
-              profile: { kind: 'RETAIL', profileRef: profile },
-              purposes: ['DELIVERY'],
-              revision: 1,
-              savedAddressRef,
             },
-            outcome: 'ADDED',
-          }),
-        ),
+            profile: { kind: 'RETAIL', profileRef: profile },
+            purposes: ['DELIVERY'],
+            revision: 1,
+            savedAddressRef,
+          },
+          outcome: 'ADDED',
+        }),
       );
       const adapter = yield* savedAddressAdapter;
       const result = yield* adapter.execute({
@@ -1165,51 +1289,49 @@ describe('finite Saved Address owner dispatch', () => {
         legalEntityId: sellingLegalEntityId,
       });
       expect(result.status).toBe('accepted_change');
-      expect(calls.address.mock.calls[0]?.[0]).toMatchObject({
+      expect(peer.address.bodies[0]).toMatchObject({
         purposes: ['DELIVERY'],
         source: { effectId, identity: { occurrenceId: 'occurrence-1', recordId: 'customer-1' } },
       });
-      expect(calls.address.mock.calls[0]?.[0].source?.nativeAddressId).toBeUndefined();
-      expect(calls.order).toEqual(['pin-request']);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.address.bodies[0].source?.nativeAddressId).toBeUndefined();
+      expect(peer.order).toEqual(['pin-request']);
+    }).pipe(asSymmyWorker),
   );
   it.effect('recovers an original reused result without creating another address', () =>
     Effect.gen(function* recoveredAddress() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
       const original = yield* withOriginalRequest({
         ...input(),
         effect: savedAddressEffect,
         legalEntityId: sellingLegalEntityId,
       });
-      calls.addressReceipt.mockReturnValue(
-        Effect.succeed(
-          Schema.decodeUnknownSync(SavedAddressSourceReceiptResponseSchema)({
-            _tag: 'RECEIPT',
-            receipt: {
-              actionInvocationId: invocationId,
-              clearedDefaults: [],
-              operation: 'ADD',
-              outcome: 'REUSED',
-              profile: { kind: 'RETAIL', profileRef: profile },
-              requestHash: original.originalRequestHash,
-              revision: 1,
-              savedAddressRef,
-            },
-          }),
-        ),
+      peer.addressReceipt.succeed(
+        Schema.decodeUnknownSync(SavedAddressSourceReceiptResponseSchema)({
+          _tag: 'RECEIPT',
+          receipt: {
+            actionInvocationId: invocationId,
+            clearedDefaults: [],
+            operation: 'ADD',
+            outcome: 'REUSED',
+            profile: { kind: 'RETAIL', profileRef: profile },
+            requestHash: original.originalRequestHash,
+            revision: 1,
+            savedAddressRef,
+          },
+        }),
       );
       const adapter = yield* savedAddressAdapter;
       const result = yield* adapter.recover(original);
       expect(result).toMatchObject({ outcome: { status: 'accepted_no_change' }, status: 'settled' });
-      expect(calls.address).not.toHaveBeenCalled();
-      expect(calls.addressReceipt.mock.calls[0]?.[0]).toMatchObject({
+      expect(peer.address.sent).toHaveLength(0);
+      expect(peer.addressReceipt.bodies[0]).toMatchObject({
         actionInvocationId: invocationId,
         actionKey: 'commerce.customer-context.add-saved-address',
         requestHash: original.originalRequestHash,
         source: { identity: { recordId: 'customer-1' } },
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
 });
 
@@ -1255,20 +1377,18 @@ describe('Commerce-only Saved Address resolved from its profile effect', () => {
   it.effect('persists the AddSavedAddress it resolved from the profile receipt before the native write', () =>
     Effect.gen(function* resolvedAddress() {
       reset();
-      calls.address.mockReturnValue(
-        Effect.succeed(
-          Schema.decodeUnknownSync(AddSavedAddressResultSchema)({
-            address: {
-              lifecycle: 'ACTIVE',
-              origin: { kind: 'COMMERCE_ONLY', postalAddress: commerceOnlyPostalAddress },
-              profile: { kind: 'RETAIL', profileRef: profile },
-              purposes: ['DELIVERY'],
-              revision: 1,
-              savedAddressRef,
-            },
-            outcome: 'ADDED',
-          }),
-        ),
+      peer.address.succeed(
+        Schema.decodeUnknownSync(AddSavedAddressResultSchema)({
+          address: {
+            lifecycle: 'ACTIVE',
+            origin: { kind: 'COMMERCE_ONLY', postalAddress: commerceOnlyPostalAddress },
+            profile: { kind: 'RETAIL', profileRef: profile },
+            purposes: ['DELIVERY'],
+            revision: 1,
+            savedAddressRef,
+          },
+          outcome: 'ADDED',
+        }),
       );
       const adapter = yield* savedAddressAdapter;
       const recorded: unknown[] = [];
@@ -1296,11 +1416,11 @@ describe('Commerce-only Saved Address resolved from its profile effect', () => {
           },
         },
       ]);
-      expect(calls.address.mock.calls[0]?.[0]).toMatchObject({
+      expect(peer.address.bodies[0]).toMatchObject({
         origin: { kind: 'COMMERCE_ONLY' },
         profile: { kind: 'RETAIL', profileRef: { resourceId: profile.resourceId } },
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('writes nothing when the profile effect was not accepted', () =>
@@ -1316,8 +1436,8 @@ describe('Commerce-only Saved Address resolved from its profile effect', () => {
         })
         .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.address).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.address.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('finds nothing committed for an unresolved address and never recovers by itself', () =>
@@ -1339,55 +1459,52 @@ describe('Commerce-only Saved Address resolved from its profile effect', () => {
         legalEntityId: sellingLegalEntityId,
       });
       expect(revoked).toEqual({ status: 'unavailable' });
-      expect(calls.address).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.address.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 
 it.effect('keeps a successful Contact write indeterminate when its following receipt Read is forbidden', () =>
   Effect.gen(function* acknowledgedContactReadDenied() {
     reset();
-    calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-    calls.endContact.mockReturnValue(
-      Effect.succeed(
-        Schema.decodeUnknownSync(EndContactPointResultSchema)({
-          contactPointRef,
-          current: false,
-          end: {
-            effectiveEnd: '2026-11-07T00:00:00.000Z',
-            endedByActionInvocationId: invocationId,
-            endedByPrincipalId: executorPrincipalId,
-            provenance: { evidenceReferences: [], method: 'PROVIDER_OBSERVATION', source: 'EXTERNAL_EVIDENCE' },
-            reason: 'Explicit end',
-            recordedAt: '2026-11-07T00:00:00.000Z',
-          },
-          partyRef: canonicalPartyRef,
-          privacyClassification: 'PERSONAL',
-          provenance: { authoritative: false, method: 'PROVIDER_OBSERVATION', source: 'EXTERNAL_EVIDENCE' },
+    peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+    peer.endContact.succeed(
+      Schema.decodeUnknownSync(EndContactPointResultSchema)({
+        contactPointRef,
+        current: false,
+        end: {
+          effectiveEnd: '2026-11-07T00:00:00.000Z',
+          endedByActionInvocationId: invocationId,
+          endedByPrincipalId: executorPrincipalId,
+          provenance: { evidenceReferences: [], method: 'PROVIDER_OBSERVATION', source: 'EXTERNAL_EVIDENCE' },
+          reason: 'Explicit end',
           recordedAt: '2026-11-07T00:00:00.000Z',
-          revision: 2,
-          state: 'ENDED',
-          storedPartyRef: canonicalPartyRef,
-          validFrom: '2026-11-06T00:00:00.000Z',
-          validTo: '2026-11-07T00:00:00.000Z',
-          value: {
-            displayValue: 'fixture@example.test',
-            lookupValue: 'fixture@example.test',
-            preferred: false,
-            type: 'EMAIL',
-          },
-        }),
-      ),
+        },
+        partyRef: canonicalPartyRef,
+        privacyClassification: 'PERSONAL',
+        provenance: { authoritative: false, method: 'PROVIDER_OBSERVATION', source: 'EXTERNAL_EVIDENCE' },
+        recordedAt: '2026-11-07T00:00:00.000Z',
+        revision: 2,
+        state: 'ENDED',
+        storedPartyRef: canonicalPartyRef,
+        validFrom: '2026-11-06T00:00:00.000Z',
+        validTo: '2026-11-07T00:00:00.000Z',
+        value: {
+          displayValue: 'fixture@example.test',
+          lookupValue: 'fixture@example.test',
+          preferred: false,
+          type: 'EMAIL',
+        },
+      }),
     );
-    calls.receipt.mockReturnValue(
-      Effect.fail(
-        PartySourceEffectReceiptForbiddenProblemSchema.make({
-          detail: 'Current processing denied after native commit',
-          status: 403,
-          title: 'Forbidden',
-          type: 'about:blank',
-        }),
-      ),
+    peer.receipt.fail(
+      PartySourceEffectReceiptForbiddenProblemSchema,
+      PartySourceEffectReceiptForbiddenProblemSchema.make({
+        detail: 'Current processing denied after native commit',
+        status: 403,
+        title: 'Forbidden',
+        type: 'about:blank',
+      }),
     );
     const adapters = yield* makeSymmyPartyCommerceAdapters;
     const adapter = adapters.find(
@@ -1398,10 +1515,10 @@ it.effect('keeps a successful Contact write indeterminate when its following rec
     }
     const result = yield* adapter.execute({ ...input(), effect: endContactEffect }).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
-    expect(calls.endContact).toHaveBeenCalledTimes(1);
-    expect(calls.receipt).toHaveBeenCalledTimes(1);
+    expect(peer.endContact.sent).toHaveLength(1);
+    expect(peer.receipt.sent).toHaveLength(1);
     return yield* Effect.void;
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+  }).pipe(asSymmyWorker),
 );
 
 it.effect(
@@ -1412,9 +1529,9 @@ it.effect(
       const adapter = yield* createAdapter;
       const result = yield* adapter.execute({ ...input(), canExecuteNewEffects: false }).pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.gateway).toHaveLength(0);
-      expect(calls.create).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.gateway).toHaveLength(0);
+      expect(peer.create.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
 );
 
 const resolvedRetailEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
@@ -1431,79 +1548,75 @@ const resolvedRetailEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
 it.effect('uses only independently guarded minimal Retail creation receipt after a forbidden full profile Read', () =>
   Effect.gen(function* minimalCreationRecovery() {
     reset();
-    calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+    peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
     const nativeIntent = yield* Schema.decodeUnknownEffect(SymmyPartyCommerceIntentSchema)(resolvedRetailEffect.intent);
     const originalIntent = Match.value(nativeIntent).pipe(
       Match.tag('EnsureRetailProfile', (intent) => intent.payload),
       Match.orElse(() => {}),
     );
-    calls.profileReceipt
-      .mockReturnValueOnce(
-        Effect.fail(
-          CustomerProfileSourceForbiddenProblemSchema.make({
-            detail: 'Exact full profile read currently forbidden',
-            status: 403,
-            title: 'Forbidden',
-            type: 'about:blank',
-          }),
-        ),
+    peer.profileReceipt
+      .failOnce(
+        CustomerProfileSourceForbiddenProblemSchema,
+        CustomerProfileSourceForbiddenProblemSchema.make({
+          detail: 'Exact full profile read currently forbidden',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
       )
-      .mockReturnValueOnce(
-        Effect.succeed(
-          Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
-            _tag: 'MINIMAL_RECEIPT',
-            currentAdmission: {
-              outcome: 'SOURCE_PERSON_CURRENT',
-              partyRef: canonicalPartyRef,
-              partyRevision: 1,
-              sourceActionInvocationId: '10000000-0000-4000-8000-000000000097',
-              sourceDecisionRef: created.decisionRef,
-              sourceReference: {
-                occurrenceId: 'occurrence-1',
-                recordId: 'customer-1',
-                source: { issuer: 'internal-symmy', namespace: 'customers', recordType: 'CUSTOMER', routeRef: routeId },
-              },
+      .succeedOnce(
+        Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+          _tag: 'MINIMAL_RECEIPT',
+          currentAdmission: {
+            outcome: 'SOURCE_PERSON_CURRENT',
+            partyRef: canonicalPartyRef,
+            partyRevision: 1,
+            sourceActionInvocationId: '10000000-0000-4000-8000-000000000097',
+            sourceDecisionRef: created.decisionRef,
+            sourceReference: {
+              occurrenceId: 'occurrence-1',
+              recordId: 'customer-1',
+              source: { issuer: 'internal-symmy', namespace: 'customers', recordType: 'CUSTOMER', routeRef: routeId },
             },
-            receipt: {
-              actionInvocationId: invocationId,
-              actorPrincipalId: executorPrincipalId,
-              intent: originalIntent,
-              profileKind: 'RETAIL',
-              recordedAt: '2026-11-07T00:00:00.000Z',
-              result: {
-                outcome: 'PROFILE_CREATED',
-                profileRef: profile,
-                revision: 1,
-                sourceEffect: { effectId, replayed: false },
-                state: 'ACTIVE',
-              },
+          },
+          receipt: {
+            actionInvocationId: invocationId,
+            actorPrincipalId: executorPrincipalId,
+            intent: originalIntent,
+            profileKind: 'RETAIL',
+            recordedAt: '2026-11-07T00:00:00.000Z',
+            result: {
+              outcome: 'PROFILE_CREATED',
+              profileRef: profile,
+              revision: 1,
+              sourceEffect: { effectId, replayed: false },
+              state: 'ACTIVE',
             },
-          }),
-        ),
+          },
+        }),
       );
     const adapter = yield* retailDependencyAdapter;
     const result = yield* adapter.recover(
       yield* withOriginalRequest({ ...input(), effect: resolvedRetailEffect, legalEntityId: sellingLegalEntityId }),
     );
     expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
-    expect(calls.retail).not.toHaveBeenCalled();
-    expect(calls.profileReceipt.mock.calls.map((call) => call[0].mode)).toEqual(['RECEIPT', 'MINIMAL_RECEIPT']);
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+    expect(peer.retail.sent).toHaveLength(0);
+    expect(peer.profileReceipt.bodies.map((body) => body.mode)).toEqual(['RECEIPT', 'MINIMAL_RECEIPT']);
+  }).pipe(asSymmyWorker),
 );
 it.effect('does not treat an unavailable full profile receipt as absence or issue another write', () =>
   Effect.gen(function* unavailableProfileRecovery() {
     reset();
-    calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-    calls.profileReceipt.mockReturnValue(
-      Effect.fail(
-        CustomerProfileSourceUnavailableProblemSchema.make({
-          detail: 'Owner context unavailable',
-          retryable: true,
-          status: 503,
-          title: 'Unavailable',
-          type: 'about:blank',
-        }),
-      ),
+    peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+    peer.profileReceipt.fail(
+      CustomerProfileSourceUnavailableProblemSchema,
+      CustomerProfileSourceUnavailableProblemSchema.make({
+        detail: 'Owner context unavailable',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'about:blank',
+      }),
     );
     const adapter = yield* retailDependencyAdapter;
     const result = yield* adapter
@@ -1512,24 +1625,23 @@ it.effect('does not treat an unavailable full profile receipt as absence or issu
       )
       .pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
-    expect(calls.profileReceipt).toHaveBeenCalledTimes(1);
-    expect(calls.retail).not.toHaveBeenCalled();
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+    expect(peer.profileReceipt.sent).toHaveLength(1);
+    expect(peer.retail.sent).toHaveLength(0);
+  }).pipe(asSymmyWorker),
 );
 
 it.effect('settles the native group meaning-change refusal as conflict without retry or receipt lookup', () =>
   Effect.gen(function* definiteMeaningConflict() {
     reset();
-    calls.updateGroup.mockReturnValue(
-      Effect.fail(
-        UpdateCustomerGroupActionIneligibleProblemSchema.make({
-          code: 'customer_group_definition_change_requires_new_group',
-          detail: 'A changed group meaning requires a new group',
-          status: 422,
-          title: 'Ineligible',
-          type: 'about:blank',
-        }),
-      ),
+    peer.updateGroup.fail(
+      UpdateCustomerGroupActionIneligibleProblemSchema,
+      UpdateCustomerGroupActionIneligibleProblemSchema.make({
+        code: 'customer_group_definition_change_requires_new_group',
+        detail: 'A changed group meaning requires a new group',
+        status: 422,
+        title: 'Ineligible',
+        type: 'about:blank',
+      }),
     );
     const groupRef = {
       moduleId: 'commerce.customer-context',
@@ -1580,24 +1692,24 @@ it.effect('settles the native group meaning-change refusal as conflict without r
     }
     const result = yield* adapter.execute({ ...input(), effect: selected, legalEntityId: sellingLegalEntityId });
     expect(result.status).toBe('conflict');
-    expect(calls.updateGroup).toHaveBeenCalledTimes(1);
-    expect(calls.factReads).toBe(0);
+    expect(peer.updateGroup.sent).toHaveLength(1);
+    expect(peer.factReads).toBe(0);
     return yield* Effect.void;
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+  }).pipe(asSymmyWorker),
 );
 
 it.effect('never settles a successful native ACK without the actual succeeded Core identity', () =>
   Effect.gen(function* absentNativeFact() {
     reset();
-    calls.exposeCommittedAckFact = false;
-    calls.create.mockReturnValue(Effect.succeed(created));
+    peer.exposeCommittedAckFact = false;
+    peer.create.succeed(created);
     const adapter = yield* createAdapter;
     const result = yield* adapter.execute(input()).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
-    expect(calls.create).toHaveBeenCalledTimes(1);
-    expect(calls.receipt).not.toHaveBeenCalled();
-    expect(calls.factReads).toBe(1);
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+    expect(peer.create.sent).toHaveLength(1);
+    expect(peer.receipt.sent).toHaveLength(0);
+    expect(peer.factReads).toBe(1);
+  }).pipe(asSymmyWorker),
 );
 
 it.effect('pins the accepted company semantic witness before CAS, executor identity, hash and native Onboard', () =>
@@ -1696,12 +1808,10 @@ it.effect('pins the accepted company semantic witness before CAS, executor ident
       validFrom: '2026-11-07T00:00:00.000Z',
       validTo: null,
     });
-    calls.onboard.mockImplementation(() =>
-      Effect.sync(() => {
-        calls.order.push('owner-write');
-        return nativeResult;
-      }),
-    );
+    peer.onboard.answer(() => {
+      peer.order.push('owner-write');
+      return nativeResult;
+    });
     const adapters = yield* makeSymmyPartyCommerceAdapters;
     const adapter = adapters.find(
       (candidate) => candidate.operation.entrypointKey === onboard.ref.operation.entrypointKey,
@@ -1726,11 +1836,11 @@ it.effect('pins the accepted company semantic witness before CAS, executor ident
       recordResolvedEffect: (value) =>
         Effect.sync(() => {
           recorded.push(value);
-          calls.order.push('resolve');
+          peer.order.push('resolve');
         }),
     });
     expect(result.status).toBe('accepted_change');
-    expect(calls.order).toEqual(['resolve', 'pin-request', 'owner-write']);
+    expect(peer.order).toEqual(['resolve', 'pin-request', 'owner-write']);
     expect(recorded).toMatchObject([
       {
         intent: {
@@ -1746,16 +1856,14 @@ it.effect('pins the accepted company semantic witness before CAS, executor ident
         },
       },
     ]);
-    expect(calls.onboard.mock.calls[0]?.[0].sourceOrganizationWitness?.semanticInputDigest).toMatch(/^[a-f0-9]{64}$/u);
-    calls.receipt.mockReturnValue(
-      Effect.succeed(
-        yield* Schema.decodeUnknownEffect(PartySourceEffectReceiptResponseSchema)({
-          actionInvocationId: invocationId,
-          operation: 'ONBOARD_COUNTERPARTY_CUSTOMER',
-          outcome: 'COMMITTED',
-          result: Schema.encodeSync(CounterpartyCustomerOnboardResultSchema)(nativeResult),
-        }),
-      ),
+    expect(peer.onboard.bodies[0].sourceOrganizationWitness?.semanticInputDigest).toMatch(/^[a-f0-9]{64}$/u);
+    peer.receipt.succeed(
+      yield* Schema.decodeUnknownEffect(PartySourceEffectReceiptResponseSchema)({
+        actionInvocationId: invocationId,
+        operation: 'ONBOARD_COUNTERPARTY_CUSTOMER',
+        outcome: 'COMMITTED',
+        result: Schema.encodeSync(CounterpartyCustomerOnboardResultSchema)(nativeResult),
+      }),
     );
     const resolved = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)(recorded[0]);
     for (const priorRefs of [
@@ -1787,9 +1895,9 @@ it.effect('pins the accepted company semantic witness before CAS, executor ident
       expect(receipts[0]).toEqual({ ...originalOwnerReceipt, actionInvocationId: invocationId });
       expect(Object.hasOwn(receipts[0] ?? {}, 'rolePeriodRef')).toBe(Object.hasOwn(priorRefs, 'rolePeriodRef'));
     }
-    expect(calls.onboard).toHaveBeenCalledTimes(1);
+    expect(peer.onboard.sent).toHaveLength(1);
     return yield* Effect.void;
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+  }).pipe(asSymmyWorker),
 );
 
 const selectedMembershipGroup = {
@@ -1899,8 +2007,8 @@ describe('current qualified Group Definition before first Membership write', () 
     () =>
       Effect.gen(function* currentQualifiedDefinition() {
         reset();
-        calls.groupDefinition.mockReturnValue(Effect.succeed(membershipCurrentGroup));
-        calls.membership.mockReturnValue(Effect.succeed(membershipResult));
+        peer.groupDefinition.succeed(membershipCurrentGroup);
+        peer.membership.succeed(membershipResult);
         const adapter = yield* membershipAdapter;
         const result = yield* adapter.execute({
           ...input(),
@@ -1910,8 +2018,8 @@ describe('current qualified Group Definition before first Membership write', () 
           selector: membershipSelector,
         });
         expect(result.status).toBe('accepted_no_change');
-        expect(calls.groupDefinition).toHaveBeenCalledTimes(1);
-        expect(calls.groupDefinition.mock.calls[0]?.[0]).toEqual({
+        expect(peer.groupDefinition.sent).toHaveLength(1);
+        expect(peer.groupDefinition.bodies[0]).toEqual({
           issuer: 'group-definition-issuer',
           mappingRevision: 'mapping-1',
           mode: 'CURRENT',
@@ -1919,12 +2027,12 @@ describe('current qualified Group Definition before first Membership write', () 
           recordId: 'group-record-1',
           route: { id: routeId, revision: 'route-1' },
         });
-        expect(calls.gateway[0]?.subject).toMatchObject({
+        expect(peer.gateway[0]?.subject).toMatchObject({
           operationRequirementKey:
             'integration.symmy.requirement.worker.commerce.customer-context.api.customer-group-definition-source',
         });
-        expect(calls.membership).toHaveBeenCalledTimes(1);
-      }).pipe(Effect.provide(nodeCryptoLayer)),
+        expect(peer.membership.sent).toHaveLength(1);
+      }).pipe(asSymmyWorker),
   );
   it.effect('never writes for absent, retargeted, stale or unavailable current definition', () =>
     Effect.gen(function* rejectedCurrentDefinition() {
@@ -1954,9 +2062,7 @@ describe('current qualified Group Definition before first Membership write', () 
         },
       ]) {
         reset();
-        calls.groupDefinition.mockReturnValue(
-          Effect.succeed(Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)(response)),
-        );
+        peer.groupDefinition.succeed(Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)(response));
         const adapter = yield* membershipAdapter;
         yield* adapter
           .execute({
@@ -1967,20 +2073,19 @@ describe('current qualified Group Definition before first Membership write', () 
             selector: membershipSelector,
           })
           .pipe(Effect.result);
-        expect(calls.membership).not.toHaveBeenCalled();
-        expect(calls.hashes).toHaveLength(0);
+        expect(peer.membership.sent).toHaveLength(0);
+        expect(peer.hashes).toHaveLength(0);
       }
       reset();
-      calls.groupDefinition.mockReturnValue(
-        Effect.fail(
-          CustomerGroupDefinitionSourceUnavailableProblemSchema.make({
-            detail: 'Current source unavailable',
-            retryable: true,
-            status: 503,
-            title: 'Unavailable',
-            type: 'about:blank',
-          }),
-        ),
+      peer.groupDefinition.fail(
+        CustomerGroupDefinitionSourceUnavailableProblemSchema,
+        CustomerGroupDefinitionSourceUnavailableProblemSchema.make({
+          detail: 'Current source unavailable',
+          retryable: true,
+          status: 503,
+          title: 'Unavailable',
+          type: 'about:blank',
+        }),
       );
       const adapter = yield* membershipAdapter;
       yield* adapter
@@ -1992,14 +2097,14 @@ describe('current qualified Group Definition before first Membership write', () 
           selector: membershipSelector,
         })
         .pipe(Effect.result);
-      expect(calls.membership).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
   it.effect('uses the exact accepted Membership receipt without retargeting through the current Group selector', () =>
     Effect.gen(function* originalReceiptOnly() {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.membershipReceipt.mockReturnValue(Effect.succeed(membershipResult));
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.membershipReceipt.succeed(membershipResult);
       const adapter = yield* membershipAdapter;
       const recovered = yield* adapter.recover(
         yield* withOriginalRequest({
@@ -2010,10 +2115,10 @@ describe('current qualified Group Definition before first Membership write', () 
         }),
       );
       expect(recovered.status).toBe('settled');
-      expect(calls.membershipReceipt).toHaveBeenCalledTimes(1);
-      expect(calls.groupDefinition).not.toHaveBeenCalled();
-      expect(calls.membership).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.membershipReceipt.sent).toHaveLength(1);
+      expect(peer.groupDefinition.sent).toHaveLength(0);
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 
@@ -2052,11 +2157,11 @@ it.effect(
         reason: 'missing_context',
         status: 'unsupported',
       });
-      expect(calls.membership).not.toHaveBeenCalled();
-      expect(calls.groupDefinition).not.toHaveBeenCalled();
-      expect(calls.gateway).toHaveLength(0);
+      expect(peer.membership.sent).toHaveLength(0);
+      expect(peer.groupDefinition.sent).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(0);
       reset();
-      calls.membership.mockReturnValue(Effect.succeed(membershipResult));
+      peer.membership.succeed(membershipResult);
       const generic = yield* adapter.execute({
         ...input(),
         effect: complete,
@@ -2064,8 +2169,8 @@ it.effect(
         routeKey: 'customersBatch',
       });
       expect(generic.status).toBe('accepted_no_change');
-      expect(calls.membership).toHaveBeenCalledTimes(1);
-      expect(calls.groupDefinition).not.toHaveBeenCalled();
+      expect(peer.membership.sent).toHaveLength(1);
+      expect(peer.groupDefinition.sent).toHaveLength(0);
       reset();
       const uncertain = yield* adapter
         .execute({
@@ -2078,8 +2183,8 @@ it.effect(
         })
         .pipe(Effect.result);
       expect(Result.isFailure(uncertain)).toBe(true);
-      expect(calls.membership).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
 );
 
 it.effect(
@@ -2115,11 +2220,11 @@ it.effect(
           .execute({ ...input(), ...variant, legalEntityId: sellingLegalEntityId })
           .pipe(Effect.result);
         expect(Result.isFailure(result)).toBe(true);
-        expect(calls.membership).not.toHaveBeenCalled();
-        expect(calls.groupDefinition).not.toHaveBeenCalled();
-        expect(calls.gateway).toHaveLength(0);
+        expect(peer.membership.sent).toHaveLength(0);
+        expect(peer.groupDefinition.sent).toHaveLength(0);
+        expect(peer.gateway).toHaveLength(0);
       }
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
 );
 
 const organizationIcoProfile = {
@@ -2234,8 +2339,8 @@ describe('explicit organization contextual ICO native path', () => {
     () =>
       Effect.gen(function* organizationIcoWrite() {
         reset();
-        calls.profileReceipt.mockReturnValue(Effect.succeed(organizationIcoCurrentProfile));
-        calls.organizationIco.mockReturnValue(Effect.succeed(organizationIcoNative));
+        peer.profileReceipt.succeed(organizationIcoCurrentProfile);
+        peer.organizationIco.succeed(organizationIcoNative);
         const adapter = yield* organizationIcoAdapter;
         const result = yield* adapter.execute({
           ...input(),
@@ -2243,8 +2348,8 @@ describe('explicit organization contextual ICO native path', () => {
           legalEntityId: sellingLegalEntityId,
         });
         expect(result.status).toBe('accepted_change');
-        expect(calls.organizationIco).toHaveBeenCalledTimes(1);
-        expect(calls.profileReceipt.mock.calls[0]?.[0]).toEqual({
+        expect(peer.organizationIco.sent).toHaveLength(1);
+        expect(peer.profileReceipt.bodies[0]).toEqual({
           issuer: 'internal-symmy',
           mappingRevision: 'mapping-1',
           mode: 'CURRENT',
@@ -2253,17 +2358,17 @@ describe('explicit organization contextual ICO native path', () => {
           recordType: 'CUSTOMER',
           route: { id: routeId, revision: 'route-1' },
         });
-        expect(calls.privacy).not.toHaveBeenCalled();
-        expect(calls.hashes).toHaveLength(1);
-        expect(calls.gateway[0]?.subject).toMatchObject({
+        expect(peer.privacy.sent).toHaveLength(0);
+        expect(peer.hashes).toHaveLength(1);
+        expect(peer.gateway[0]?.subject).toMatchObject({
           operationRequirementKey:
             'integration.symmy.requirement.worker.commerce.customer-context.api.customer-profile-source',
         });
-        expect(calls.gateway[1]?.subject).toMatchObject({
+        expect(peer.gateway[1]?.subject).toMatchObject({
           operationRequirementKey:
             'integration.symmy.requirement.worker.commerce.customer-context.change-organization-customer-profile-ico',
         });
-      }).pipe(Effect.provide(nodeCryptoLayer)),
+      }).pipe(asSymmyWorker),
   );
   it.effect('does not write or switch to personal handling for an absent or retargeted source profile', () =>
     Effect.gen(function* organizationSourceRefusal() {
@@ -2288,33 +2393,29 @@ describe('explicit organization contextual ICO native path', () => {
         },
       ]) {
         reset();
-        calls.profileReceipt.mockReturnValue(
-          Effect.succeed(Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)(response)),
-        );
+        peer.profileReceipt.succeed(Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)(response));
         const adapter = yield* organizationIcoAdapter;
         const result = yield* adapter
           .execute({ ...input(), effect: organizationIcoEffect, legalEntityId: sellingLegalEntityId })
           .pipe(Effect.result);
         expect(Result.isFailure(result)).toBe(true);
-        expect(calls.organizationIco).not.toHaveBeenCalled();
-        expect(calls.privacy).not.toHaveBeenCalled();
-        expect(calls.hashes).toHaveLength(0);
+        expect(peer.organizationIco.sent).toHaveLength(0);
+        expect(peer.privacy.sent).toHaveLength(0);
+        expect(peer.hashes).toHaveLength(0);
       }
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
   it.effect(
     'recovers only the exact original native company ICO receipt without rechecking source targeting or rewriting',
     () =>
       Effect.gen(function* organizationExactReceipt() {
         reset();
-        calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-        calls.organizationIcoRead.mockReturnValue(
-          Effect.succeed(
-            Schema.decodeUnknownSync(OrganizationCustomerProfileIcoResponseSchema)({
-              _tag: 'RECEIPT',
-              assertion: organizationIcoNative.assertion,
-            }),
-          ),
+        peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+        peer.organizationIcoRead.succeed(
+          Schema.decodeUnknownSync(OrganizationCustomerProfileIcoResponseSchema)({
+            _tag: 'RECEIPT',
+            assertion: organizationIcoNative.assertion,
+          }),
         );
         const adapter = yield* organizationIcoAdapter;
         const recovered = yield* adapter.recover(
@@ -2325,14 +2426,14 @@ describe('explicit organization contextual ICO native path', () => {
           }),
         );
         expect(recovered.status).toBe('settled');
-        expect(calls.organizationIcoRead.mock.calls[0]?.[0]).toEqual({
+        expect(peer.organizationIcoRead.bodies[0]).toEqual({
           actionInvocationId: invocationId,
           profileRef: organizationIcoProfile,
         });
-        expect(calls.profileReceipt).not.toHaveBeenCalled();
-        expect(calls.organizationIco).not.toHaveBeenCalled();
-        expect(calls.privacy).not.toHaveBeenCalled();
-      }).pipe(Effect.provide(nodeCryptoLayer)),
+        expect(peer.profileReceipt.sent).toHaveLength(0);
+        expect(peer.organizationIco.sent).toHaveLength(0);
+        expect(peer.privacy.sent).toHaveLength(0);
+      }).pipe(asSymmyWorker),
   );
 });
 
@@ -2393,8 +2494,8 @@ describe('company ICO resolved from the profile effect of the same job', () => {
   it.effect('records the explicit ICO change on the profile the parent returned, then writes it', () =>
     Effect.gen(function* resolvedProfileIco() {
       reset();
-      calls.profileReceipt.mockReturnValue(Effect.succeed(organizationIcoCurrentProfile));
-      calls.organizationIco.mockReturnValue(Effect.succeed(organizationIcoNative));
+      peer.profileReceipt.succeed(organizationIcoCurrentProfile);
+      peer.organizationIco.succeed(organizationIcoNative);
       const adapter = yield* organizationIcoAdapter;
       const recorded: unknown[] = [];
       // An existing profile ends accepted without change: the ICO still goes to it, never to a second profile.
@@ -2420,15 +2521,15 @@ describe('company ICO resolved from the profile effect of the same job', () => {
         },
       ]);
       expect(JSON.stringify(recorded)).not.toContain('fromProfileEffect');
-      expect(calls.organizationIco).toHaveBeenCalledTimes(1);
-      expect(calls.organizationIco.mock.calls[0]?.[0]).toMatchObject({
+      expect(peer.organizationIco.sent).toHaveLength(1);
+      expect(peer.organizationIco.bodies[0]).toMatchObject({
         effectId,
         expectedRevision: 0,
         identifier: { identifierType: 'ICO', value: '27074358' },
         profileRef: { resourceId: organizationIcoProfile.resourceId },
       });
-      expect(calls.profileReceipt).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.profileReceipt.sent).toHaveLength(1);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('writes nothing when the profile effect was not accepted', () =>
@@ -2444,9 +2545,9 @@ describe('company ICO resolved from the profile effect of the same job', () => {
         })
         .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.organizationIco).not.toHaveBeenCalled();
-      expect(calls.profileReceipt).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.organizationIco.sent).toHaveLength(0);
+      expect(peer.profileReceipt.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 
   it.effect('names no profile of a Retail effect and never writes through the unresolved intent', () =>
@@ -2462,30 +2563,29 @@ describe('company ICO resolved from the profile effect of the same job', () => {
         })
         .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(calls.organizationIco).not.toHaveBeenCalled();
+      expect(peer.organizationIco.sent).toHaveLength(0);
       const unresolved = yield* adapter
         .recover({ ...input(), dependencies: [counterpartyProfileParent('accepted_change')], effect: profileIcoEffect })
         .pipe(Effect.result);
       expect(Result.isFailure(unresolved) || unresolved.success.status !== 'settled').toBe(true);
-      expect(calls.organizationIco).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.organizationIco.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
 });
 
 it.effect('keeps explicit company Privacy denial terminal and does not switch to a personal action or migration', () =>
   Effect.gen(function* companyPrivacyDenied() {
     reset();
-    calls.profileReceipt.mockReturnValue(Effect.succeed(organizationIcoCurrentProfile));
-    calls.organizationIco.mockReturnValue(
-      Effect.fail(
-        ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema.make({
-          code: 'PRIVACY_DENIED',
-          detail: 'Current company policy denies the native fields',
-          status: 422,
-          title: 'Ineligible',
-          type: 'about:blank',
-        }),
-      ),
+    peer.profileReceipt.succeed(organizationIcoCurrentProfile);
+    peer.organizationIco.fail(
+      ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema,
+      ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema.make({
+        code: 'PRIVACY_DENIED',
+        detail: 'Current company policy denies the native fields',
+        status: 422,
+        title: 'Ineligible',
+        type: 'about:blank',
+      }),
     );
     const adapter = yield* organizationIcoAdapter;
     const result = yield* adapter.execute({
@@ -2494,12 +2594,12 @@ it.effect('keeps explicit company Privacy denial terminal and does not switch to
       legalEntityId: sellingLegalEntityId,
     });
     expect(result.status).toBe('denied');
-    expect(calls.organizationIco).toHaveBeenCalledTimes(1);
-    expect(calls.organizationIcoRead).not.toHaveBeenCalled();
-    expect(calls.privacy).not.toHaveBeenCalled();
-    expect(calls.create).not.toHaveBeenCalled();
-    expect(calls.factReads).toBe(0);
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+    expect(peer.organizationIco.sent).toHaveLength(1);
+    expect(peer.organizationIcoRead.sent).toHaveLength(0);
+    expect(peer.privacy.sent).toHaveLength(0);
+    expect(peer.create.sent).toHaveLength(0);
+    expect(peer.factReads).toBe(0);
+  }).pipe(asSymmyWorker),
 );
 it.effect('does not settle a mismatched company ICO receipt or reinterpret forbidden recovery as a new rejection', () =>
   Effect.gen(function* exactCompanyRecoveryRefusal() {
@@ -2517,30 +2617,27 @@ it.effect('does not settle a mismatched company ICO receipt or reinterpret forbi
       },
     ]) {
       reset();
-      calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      calls.organizationIcoRead.mockReturnValue(
-        Effect.succeed(
-          Schema.decodeUnknownSync(OrganizationCustomerProfileIcoResponseSchema)({ _tag: 'RECEIPT', assertion }),
-        ),
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.organizationIcoRead.succeed(
+        Schema.decodeUnknownSync(OrganizationCustomerProfileIcoResponseSchema)({ _tag: 'RECEIPT', assertion }),
       );
       const result = yield* adapter.recover(
         yield* withOriginalRequest({ ...input(), effect: organizationIcoEffect, legalEntityId: sellingLegalEntityId }),
       );
       expect(result.status).toBe('unavailable');
-      expect(calls.organizationIco).not.toHaveBeenCalled();
-      expect(calls.profileReceipt).not.toHaveBeenCalled();
+      expect(peer.organizationIco.sent).toHaveLength(0);
+      expect(peer.profileReceipt.sent).toHaveLength(0);
     }
     reset();
-    calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-    calls.organizationIcoRead.mockReturnValue(
-      Effect.fail(
-        OrganizationCustomerProfileIcoForbiddenProblemSchema.make({
-          detail: 'Current original-receipt policy denies disclosure',
-          status: 403,
-          title: 'Forbidden',
-          type: 'about:blank',
-        }),
-      ),
+    peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+    peer.organizationIcoRead.fail(
+      OrganizationCustomerProfileIcoForbiddenProblemSchema,
+      OrganizationCustomerProfileIcoForbiddenProblemSchema.make({
+        detail: 'Current original-receipt policy denies disclosure',
+        status: 403,
+        title: 'Forbidden',
+        type: 'about:blank',
+      }),
     );
     const result = yield* adapter
       .recover(
@@ -2548,10 +2645,10 @@ it.effect('does not settle a mismatched company ICO receipt or reinterpret forbi
       )
       .pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
-    expect(calls.organizationIco).not.toHaveBeenCalled();
-    expect(calls.profileReceipt).not.toHaveBeenCalled();
-    expect(calls.privacy).not.toHaveBeenCalled();
-  }).pipe(Effect.provide(nodeCryptoLayer)),
+    expect(peer.organizationIco.sent).toHaveLength(0);
+    expect(peer.profileReceipt.sent).toHaveLength(0);
+    expect(peer.privacy.sent).toHaveLength(0);
+  }).pipe(asSymmyWorker),
 );
 
 it.effect(
@@ -2559,17 +2656,16 @@ it.effect(
   () =>
     Effect.gen(function* companyFenceRequired() {
       reset();
-      calls.profileReceipt.mockReturnValue(Effect.succeed(organizationIcoCurrentProfile));
-      calls.organizationIco.mockReturnValue(
-        Effect.fail(
-          ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema.make({
-            code: 'MIGRATION_REQUIRED',
-            detail: 'Native owner requires the explicit operator fence',
-            status: 422,
-            title: 'Ineligible',
-            type: 'about:blank',
-          }),
-        ),
+      peer.profileReceipt.succeed(organizationIcoCurrentProfile);
+      peer.organizationIco.fail(
+        ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema,
+        ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema.make({
+          code: 'MIGRATION_REQUIRED',
+          detail: 'Native owner requires the explicit operator fence',
+          status: 422,
+          title: 'Ineligible',
+          type: 'about:blank',
+        }),
       );
       const adapter = yield* organizationIcoAdapter;
       const result = yield* adapter.execute({
@@ -2578,12 +2674,12 @@ it.effect(
         legalEntityId: sellingLegalEntityId,
       });
       expect(result).toEqual({ owner: 'commerce.customer-context', reason: 'missing_context', status: 'unsupported' });
-      expect(calls.organizationIco).toHaveBeenCalledTimes(1);
-      expect(calls.organizationIcoRead).not.toHaveBeenCalled();
-      expect(calls.privacy).not.toHaveBeenCalled();
-      expect(calls.create).not.toHaveBeenCalled();
-      expect(calls.factReads).toBe(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.organizationIco.sent).toHaveLength(1);
+      expect(peer.organizationIcoRead.sent).toHaveLength(0);
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.create.sent).toHaveLength(0);
+      expect(peer.factReads).toBe(0);
+    }).pipe(asSymmyWorker),
 );
 
 const organizationAssignmentCounterparty = {
@@ -2659,7 +2755,7 @@ describe('explicit company price assignment processing branch', () => {
   it.effect('sends the validated company command to its native owner without the personal-data checker', () =>
     Effect.gen(function* organizationNativeBranch() {
       reset();
-      calls.counterpartyAssignment.mockReturnValue(Effect.succeed(organizationAssignmentResult));
+      peer.counterpartyAssignment.succeed(organizationAssignmentResult);
       const adapter = yield* counterpartyAssignmentAdapter;
       const result = yield* adapter.execute({
         ...input(),
@@ -2667,19 +2763,19 @@ describe('explicit company price assignment processing branch', () => {
         legalEntityId: sellingLegalEntityId,
       });
       expect(result.status).toBe('accepted_change');
-      expect(calls.counterpartyAssignment).toHaveBeenCalledTimes(1);
-      expect(calls.privacy).not.toHaveBeenCalled();
-      expect(calls.gateway).toHaveLength(1);
-      expect(calls.gateway[0]?.audience).toBe('commerce-customer-context');
-      expect(calls.gateway[0]?.subject).toMatchObject({
+      expect(peer.counterpartyAssignment.sent).toHaveLength(1);
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(1);
+      expect(peer.gateway[0]?.audience).toBe('commerce-customer-context');
+      expect(peer.gateway[0]?.subject).toMatchObject({
         declarationKey: 'commerce.customer-context.counterparty-price-group.assign',
       });
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
   it.effect('preserves the personal Counterparty policy check and stops its denied command', () =>
     Effect.gen(function* personalCounterpartyDenied() {
       reset();
-      calls.privacy.mockReturnValue(Effect.succeed(privacyDenied));
+      peer.privacy.succeed(privacyDenied);
       const personal = Match.value(organizationAssignmentIntent).pipe(
         Match.tag('AssignCounterpartyPriceGroup', (value) => ({
           ...value,
@@ -2696,10 +2792,10 @@ describe('explicit company price assignment processing branch', () => {
       const adapter = yield* counterpartyAssignmentAdapter;
       const result = yield* adapter.execute({ ...input(), effect: selected, legalEntityId: sellingLegalEntityId });
       expect(result.status).toBe('denied');
-      expect(calls.privacy).toHaveBeenCalledTimes(1);
-      expect(calls.counterpartyAssignment).not.toHaveBeenCalled();
-      expect(calls.hashes).toHaveLength(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.privacy.sent).toHaveLength(1);
+      expect(peer.counterpartyAssignment.sent).toHaveLength(0);
+      expect(peer.hashes).toHaveLength(0);
+    }).pipe(asSymmyWorker),
   );
   it.effect('validates malformed company commands before any credential or owner HTTP call', () =>
     Effect.gen(function* malformedCompanyBoundary() {
@@ -2719,25 +2815,24 @@ describe('explicit company price assignment processing branch', () => {
           .execute({ ...input(), effect: malformed, legalEntityId: sellingLegalEntityId })
           .pipe(Effect.result);
         expect(Result.isFailure(result)).toBe(true);
-        expect(calls.gateway).toHaveLength(0);
-        expect(calls.privacy).not.toHaveBeenCalled();
-        expect(calls.counterpartyAssignment).not.toHaveBeenCalled();
+        expect(peer.gateway).toHaveLength(0);
+        expect(peer.privacy.sent).toHaveLength(0);
+        expect(peer.counterpartyAssignment.sent).toHaveLength(0);
       }
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }).pipe(asSymmyWorker),
   );
   it.effect('retains native company refusal without retrying through personal processing', () =>
     Effect.gen(function* noDenialFallback() {
       reset();
-      calls.counterpartyAssignment.mockReturnValue(
-        Effect.fail(
-          AssignCounterpartyPriceGroupActionForbiddenProblemSchema.make({
-            code: 'customer_price_group_source_privacy_denied',
-            detail: 'Current company processing is denied',
-            status: 403,
-            title: 'Forbidden',
-            type: 'about:blank',
-          }),
-        ),
+      peer.counterpartyAssignment.fail(
+        AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
+        AssignCounterpartyPriceGroupActionForbiddenProblemSchema.make({
+          code: 'customer_price_group_source_privacy_denied',
+          detail: 'Current company processing is denied',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
       );
       const adapter = yield* counterpartyAssignmentAdapter;
       const result = yield* adapter.execute({
@@ -2746,10 +2841,10 @@ describe('explicit company price assignment processing branch', () => {
         legalEntityId: sellingLegalEntityId,
       });
       expect(result.status).toBe('denied');
-      expect(calls.counterpartyAssignment).toHaveBeenCalledTimes(1);
-      expect(calls.privacy).not.toHaveBeenCalled();
-      expect(calls.gateway).toHaveLength(1);
-      expect(calls.factReads).toBe(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+      expect(peer.counterpartyAssignment.sent).toHaveLength(1);
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(1);
+      expect(peer.factReads).toBe(0);
+    }).pipe(asSymmyWorker),
   );
 });

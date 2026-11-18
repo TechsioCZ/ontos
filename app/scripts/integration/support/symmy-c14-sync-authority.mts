@@ -14,83 +14,12 @@ import {
 import { encodeProductComposition, SymmyC14ProductFixtureUnavailable } from './symmy-c14-product-runtime.mts';
 
 export const internalSyncJobKey = 'integration.symmy.execute-symmy-job';
-export const internalSyncActionKey = 'integration.symmy.admit-symmy-sync';
 const groupAudience = 'commerce-customer-context';
 const groupModule = 'commerce.customer-context';
 const groupWrite = `${groupModule}.source-write`;
 const groupRead = `${groupModule}.source-read`;
 const inventoryWrite = 'commerce.inventory.source-write';
 const inventoryRead = 'commerce.inventory.source-read';
-
-const groupRules = [
-  {
-    declarationKey: `${groupModule}.customer-group.create`,
-    entrypointKey: `${groupModule}.create-customer-group`,
-    workloadKey: groupWrite,
-  },
-  {
-    declarationKey: `${groupModule}.customer-group.update`,
-    entrypointKey: `${groupModule}.update-customer-group`,
-    workloadKey: groupWrite,
-  },
-  {
-    declarationKey: `${groupModule}.customer-group-definition-source.read`,
-    entrypointKey: `${groupModule}.api.customer-group-definition-source`,
-    workloadKey: groupRead,
-  },
-].map((rule) => ({
-  ...rule,
-  audience: groupAudience,
-  jobKey: internalSyncJobKey,
-  legalEntityScope: 'required' as const,
-  schemaVersion: '1',
-  sourceActionKey: internalSyncActionKey,
-}));
-const inventoryRules = [
-  {
-    declarationKey: 'commerce.inventory.source-assertion.import',
-    entrypointKey: 'commerce.inventory.import-source-assertion',
-    workloadKey: inventoryWrite,
-  },
-  {
-    declarationKey: 'commerce.inventory.inventory-source-import-receipt.read',
-    entrypointKey: 'commerce.inventory.api.inventory-source-import-receipt',
-    workloadKey: inventoryRead,
-  },
-].map((rule) => ({
-  ...rule,
-  audience: 'inventory',
-  jobKey: internalSyncJobKey,
-  legalEntityScope: 'forbidden' as const,
-  schemaVersion: '1',
-  sourceActionKey: internalSyncActionKey,
-}));
-const recoveryRules = [
-  ...groupRules
-    .filter(({ workloadKey }) => workloadKey === groupWrite)
-    .map(({ entrypointKey }) => ({
-      audience: groupAudience,
-      declarationKey: `${groupModule}.customer-group-definition-source.read`,
-      entrypointKey: `${groupModule}.api.customer-group-definition-source`,
-      jobKey: internalSyncJobKey,
-      legalEntityScope: 'required' as const,
-      recoveryOf: { actionKey: entrypointKey, jobKey: internalSyncJobKey },
-      schemaVersion: '1',
-      sourceActionKey: internalSyncActionKey,
-      workloadKey: groupRead,
-    })),
-  {
-    audience: 'inventory',
-    declarationKey: 'commerce.inventory.inventory-source-import-receipt.read',
-    entrypointKey: 'commerce.inventory.api.inventory-source-import-receipt',
-    jobKey: internalSyncJobKey,
-    legalEntityScope: 'forbidden' as const,
-    recoveryOf: { actionKey: 'commerce.inventory.import-source-assertion', jobKey: internalSyncJobKey },
-    schemaVersion: '1',
-    sourceActionKey: internalSyncActionKey,
-    workloadKey: inventoryRead,
-  },
-];
 
 type OwnedSyncDatabase = Effect.Success<ReturnType<typeof makeIsolatedNativeDatabaseFixture>>;
 
@@ -101,13 +30,10 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
 ) {
   const admin = yield* PgClient.make({ url: Redacted.make(ownedDatabase.connections.admin.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
-    additionalRelaySources: [{ registeredWorkloads: [], sourceAppId: groupAudience }],
+    additionalRelaySources: [{ sourceAppId: groupAudience }],
     ownedDatabase,
     productionGate: true,
-    relaySource: {
-      registeredWorkloads: [...groupRules, ...inventoryRules, ...recoveryRules],
-      sourceAppId: 'symmy-integration',
-    },
+    relaySource: { sourceAppId: 'symmy-integration' },
     snapshotJson: yield* encodeProductComposition(snapshot),
   });
   const tenantId = randomUUID();

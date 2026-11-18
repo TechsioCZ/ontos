@@ -1,40 +1,31 @@
-import { ConfigProvider, Effect } from 'effect';
-import { beforeEach, expect, rstest, it } from 'effect-rstest';
+import { ConfigProvider, Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
-import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
-  rstest: 'importActual',
-};
+import {
+  AuthenticationUnavailableProblemSchema,
+  AvailableLegalEntitiesResponseSchema,
+  AvailableTenantsResponseSchema,
+  CurrentSessionSchema,
+  ShellCompositionSchema,
+  ShellCapabilityUnavailableProblemSchema,
+  ShellReloadRequiredProblemSchema,
+  TenantAuthenticationRequiredProblemSchema,
+  TenantCapabilityUnavailableProblemSchema,
+} from '../../../../shared/browser-api.ts';
 import { loadHomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { makeShellBff } from '../../../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
-const {
-  availableLegalEntitiesMock,
-  availableTenantsMock,
-  browserConfigValuesMock,
-  currentSessionMock,
-  shellCompositionMock,
-} = rstest.hoisted(() => ({
-  availableLegalEntitiesMock: rstest.fn(),
-  availableTenantsMock: rstest.fn(),
-  browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
-  currentSessionMock: rstest.fn(),
-  shellCompositionMock: rstest.fn(),
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  ...actualAuthClient,
-  availableLegalEntities: availableLegalEntitiesMock,
-  availableTenants: availableTenantsMock,
-  currentSession: currentSessionMock,
-  shellComposition: shellCompositionMock,
-}));
-
+const legalEntityId = '20000000-0000-4000-8000-000000000001';
+const tenantId = '30000000-0000-4000-8000-000000000001';
+const otherTenantId = '30000000-0000-4000-8000-000000000002';
 const identity = {
   displayName: 'Ada Lovelace',
   email: 'ada@example.test',
-  legalEntityId: 'legal-1',
+  legalEntityId,
   legalName: 'Alpha company',
   principalId: 'principal-1',
-  tenantId: 'tenant-1',
+  tenantId,
 };
 const compositionRevision = '1'.repeat(64);
 const navigation = [
@@ -51,59 +42,57 @@ const navigation = [
     writable: true,
   },
 ];
+const problem = { detail: 'redacted', title: 'redacted', type: 'about:blank' } as const;
 const request = () =>
   new Request('https://shell.example.test/en', {
     headers: { cookie: 'session=test-session' },
   });
 
-const loadModel = ({ request: input }: { readonly request: Request }) =>
-  Effect.suspend(() =>
-    loadHomePageModel(input).pipe(
-      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(browserConfigValuesMock())),
-    ),
-  );
-const withBetterAuthUrl = <Value, Failure>(baseUrl: string, operation: () => Effect.Effect<Value, Failure>) =>
-  Effect.suspend(() => {
-    browserConfigValuesMock.mockReturnValueOnce({ BETTER_AUTH_URL: baseUrl });
-    return operation();
+const session = Schema.decodeUnknownSync(CurrentSessionSchema);
+const legalEntities = Schema.decodeUnknownSync(AvailableLegalEntitiesResponseSchema)({
+  legalEntities: [{ legalEntityId, legalName: 'Alpha company' }],
+  selectedLegalEntityId: legalEntityId,
+  state: 'authenticated',
+});
+const tenants = Schema.decodeUnknownSync(AvailableTenantsResponseSchema)({
+  tenants: [
+    { name: 'Alpha tenant', tenantId },
+    { name: 'Zeta tenant', tenantId: otherTenantId },
+  ],
+});
+const composition = Schema.decodeUnknownSync(ShellCompositionSchema)({
+  compositionRevision,
+  navigation,
+  state: 'available',
+  unavailableDeployments: [],
+});
+
+/** The Shell BFF of a signed-in Ada with her Alpha company selected; a test overrides single reads. */
+const signedInBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    availableLegalEntities: () => Effect.succeed(legalEntities),
+    availableTenants: () => Effect.succeed(tenants),
+    currentSession: () => Effect.succeed(session({ identity, state: 'authenticated' })),
+    shellComposition: () => Effect.succeed(composition),
+    ...overrides,
   });
 
-beforeEach(() => {
-  browserConfigValuesMock.mockReturnValue({});
-  currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
-  availableLegalEntitiesMock.mockReturnValue(
-    Effect.succeed({
-      legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
-      selectedLegalEntityId: 'legal-1',
-      state: 'authenticated',
-    }),
+const loadModel = (bff: ReturnType<typeof makeShellBff>, input: Request = request(), configuration = {}) =>
+  loadHomePageModel(input).pipe(
+    Effect.provide(bff.layer),
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(configuration)),
   );
-  shellCompositionMock.mockReturnValue(
-    Effect.succeed({
-      compositionRevision,
-      navigation,
-      state: 'available' as const,
-      unavailableDeployments: [],
-    }),
-  );
-  availableTenantsMock.mockReturnValue(
-    Effect.succeed({
-      tenants: [
-        { name: 'Alpha tenant', tenantId: 'tenant-1' },
-        { name: 'Zeta tenant', tenantId: 'tenant-2' },
-      ],
-    }),
-  );
-});
+const endpoints = (bff: ReturnType<typeof makeShellBff>) => bff.requests.map((received) => received.endpoint);
 
 it.effect('resolves trusted context before returning one serializable composition', () =>
   Effect.gen(function* verifyCase1() {
-    expect(yield* loadModel({ request: request() })).toEqual({
+    const bff = signedInBff();
+    expect(yield* loadModel(bff)).toEqual({
       compositionRevision,
       contextState: 'authenticated',
       identity,
       legalEntities: {
-        items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        items: [{ legalEntityId, legalName: 'Alpha company' }],
         state: 'available',
       },
       navigation: {
@@ -111,36 +100,29 @@ it.effect('resolves trusted context before returning one serializable compositio
         state: 'available',
         unavailableDeployments: [],
       },
-      selectedLegalEntityId: 'legal-1',
+      selectedLegalEntityId: legalEntityId,
       state: 'authenticated',
       tenants: {
         items: [
-          { name: 'Alpha tenant', tenantId: 'tenant-1' },
-          { name: 'Zeta tenant', tenantId: 'tenant-2' },
+          { name: 'Alpha tenant', tenantId },
+          { name: 'Zeta tenant', tenantId: otherTenantId },
         ],
         state: 'available',
       },
     });
-    expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      availableLegalEntitiesMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      availableTenantsMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
+    // The session is read first and the composition before either choice list.
+    expect(endpoints(bff).slice(0, 2)).toEqual(['currentSession', 'shellComposition']);
+    expect(endpoints(bff).slice(2).toSorted()).toEqual(['availableLegalEntities', 'availableTenants']);
   }),
 );
 
 it.effect('does not request composition for an anonymous session', () =>
   Effect.gen(function* verifyCase2() {
-    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
-    expect(yield* loadModel({ request: request() })).toEqual({
+    const bff = signedInBff({ currentSession: () => Effect.succeed(session({ state: 'anonymous' })) });
+    expect(yield* loadModel(bff)).toEqual({
       state: 'anonymous',
     });
-    expect(shellCompositionMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    expect(endpoints(bff)).toEqual(['currentSession']);
   }),
 );
 
@@ -152,90 +134,102 @@ it.effect('does not invent a selected legal entity while a tenant session requir
       principalId: identity.principalId,
       tenantId: identity.tenantId,
     };
-    currentSessionMock.mockReturnValueOnce(
-      Effect.succeed({
-        availableLegalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
-        identity: tenantIdentity,
-        state: 'selection_required' as const,
-      }),
-    );
-    const model = yield* loadModel({ request: request() });
+    const bff = signedInBff({
+      currentSession: () =>
+        Effect.succeed(
+          session({
+            availableLegalEntities: [{ legalEntityId, legalName: 'Alpha company' }],
+            identity: tenantIdentity,
+            state: 'selection_required',
+          }),
+        ),
+    });
+    const model = yield* loadModel(bff);
     expect(model).toMatchObject({
       contextState: 'selection_required',
       identity: tenantIdentity,
       legalEntities: {
-        items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        items: [{ legalEntityId, legalName: 'Alpha company' }],
         state: 'available',
       },
       state: 'authenticated',
     });
     expect(model).not.toHaveProperty('selectedLegalEntityId');
-    expect(shellCompositionMock).not.toHaveBeenCalled();
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+    expect(endpoints(bff)).not.toContain('shellComposition');
+    expect(endpoints(bff)).not.toContain('availableLegalEntities');
   }),
 );
 
 it.effect('uses the configured HTTPS origin for the server-side session request', () =>
   Effect.gen(function* verifyCase4() {
-    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
-
-    yield* withBetterAuthUrl('https://shell.stage.example.test', () =>
-      Effect.gen(function* verifyCase5() {
-        return yield* loadModel({
-          request: new Request('http://shell.stage.example.test/en'),
-        });
-      }),
-    );
-
-    expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
-      'https://shell.stage.example.test/shell-super-app-api',
-    );
+    const bff = signedInBff({ currentSession: () => Effect.succeed(session({ state: 'anonymous' })) });
+    yield* loadModel(bff, new Request('http://shell.stage.example.test/en'), {
+      BETTER_AUTH_URL: 'https://shell.stage.example.test',
+    });
+    expect(bff.requests.at(-1)?.url).toBe('https://shell.stage.example.test/shell-super-app-api/auth/session');
   }),
 );
 
 it.effect('keeps the configured local HTTP origin for the server-side session request', () =>
   Effect.gen(function* verifyCase6() {
-    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
-
-    yield* withBetterAuthUrl('http://localhost:3020', () =>
-      Effect.gen(function* verifyCase7() {
-        return yield* loadModel({
-          request: new Request('http://localhost:3020/en'),
-        });
-      }),
-    );
-
-    expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
-      'http://localhost:3020/shell-super-app-api',
-    );
+    const bff = signedInBff({ currentSession: () => Effect.succeed(session({ state: 'anonymous' })) });
+    yield* loadModel(bff, new Request('http://localhost:3020/en'), { BETTER_AUTH_URL: 'http://localhost:3020' });
+    expect(bff.requests.at(-1)?.url).toBe('http://localhost:3020/shell-super-app-api/auth/session');
   }),
 );
 
 it.effect('stops before legal-entity and tenant reads when composition is unavailable', () =>
   Effect.gen(function* verifyCase8() {
-    shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
-    expect(yield* loadModel({ request: request() })).toEqual({ state: 'unavailable' });
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    const bff = signedInBff({
+      shellComposition: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(ShellCapabilityUnavailableProblemSchema)({
+            ...problem,
+            _tag: 'ShellCapabilityUnavailableProblem',
+            retryable: true,
+            status: 503,
+          }),
+        ),
+    });
+    expect(yield* loadModel(bff)).toEqual({ state: 'unavailable' });
+    expect(endpoints(bff)).toEqual(['currentSession', 'shellComposition']);
   }),
 );
 
 it.effect('requires a document reload before legal-entity and tenant reads for a stale release', () =>
   Effect.gen(function* staleCompositionStopsOwnerReads() {
-    shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellReloadRequiredProblem' }));
-    expect(yield* loadModel({ request: request() })).toEqual({ state: 'reload_required' });
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    const bff = signedInBff({
+      shellComposition: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)({
+            ...problem,
+            _tag: 'ShellReloadRequiredProblem',
+            status: 409,
+          }),
+        ),
+    });
+    expect(yield* loadModel(bff)).toEqual({ state: 'reload_required' });
+    expect(endpoints(bff)).toEqual(['currentSession', 'shellComposition']);
   }),
 );
 
+const tenantCapabilityUnavailable = () =>
+  Effect.fail(
+    Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)({
+      ...problem,
+      _tag: 'TenantCapabilityUnavailableProblem',
+      retryable: true,
+      status: 503,
+    }),
+  );
+
 it.effect('maps tenant failure to the current-tenant fallback without discarding composition', () =>
   Effect.gen(function* verifyCase9() {
-    availableTenantsMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' }));
-    expect(yield* loadModel({ request: request() })).toMatchObject({
+    const bff = signedInBff({ availableTenants: tenantCapabilityUnavailable });
+    expect(yield* loadModel(bff)).toMatchObject({
       navigation: { items: navigation, state: 'available' },
       tenants: {
-        items: [{ name: 'tenant-1', tenantId: 'tenant-1' }],
+        items: [{ name: tenantId, tenantId }],
         state: 'unavailable',
       },
     });
@@ -244,8 +238,8 @@ it.effect('maps tenant failure to the current-tenant fallback without discarding
 
 it.effect('keeps legal-entity acquisition failure explicit without claiming choices are available', () =>
   Effect.gen(function* verifyCase10() {
-    availableLegalEntitiesMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' }));
-    expect(yield* loadModel({ request: request() })).toMatchObject({
+    const bff = signedInBff({ availableLegalEntities: tenantCapabilityUnavailable });
+    expect(yield* loadModel(bff)).toMatchObject({
       legalEntities: { items: [], state: 'unavailable' },
       state: 'authenticated',
     });
@@ -254,8 +248,17 @@ it.effect('keeps legal-entity acquisition failure explicit without claiming choi
 
 it.effect('does not collapse an authentication infrastructure failure into an anonymous session', () =>
   Effect.gen(function* verifyCase11() {
-    currentSessionMock.mockReturnValueOnce(Effect.fail({ _tag: 'AuthenticationUnavailableProblem' }));
-    expect(yield* loadModel({ request: request() })).toEqual({
+    const bff = signedInBff({
+      currentSession: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)({
+            ...problem,
+            _tag: 'AuthenticationUnavailableProblem',
+            status: 503,
+          }),
+        ),
+    });
+    expect(yield* loadModel(bff)).toEqual({
       state: 'unavailable',
     });
   }),
@@ -263,8 +266,17 @@ it.effect('does not collapse an authentication infrastructure failure into an an
 
 it.effect('tears down stale authenticated data when tenant context requires authentication', () =>
   Effect.gen(function* verifyCase12() {
-    availableTenantsMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantAuthenticationRequiredProblem' }));
-    expect(yield* loadModel({ request: request() })).toEqual({
+    const bff = signedInBff({
+      availableTenants: () =>
+        Effect.fail(
+          Schema.decodeUnknownSync(TenantAuthenticationRequiredProblemSchema)({
+            ...problem,
+            _tag: 'TenantAuthenticationRequiredProblem',
+            status: 401,
+          }),
+        ),
+    });
+    expect(yield* loadModel(bff)).toEqual({
       state: 'anonymous',
     });
   }),

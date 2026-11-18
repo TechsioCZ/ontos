@@ -84,6 +84,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-effect-run-in-tests': 'error',
   'effect-native/no-environment-record-type': 'error',
   'effect-native/no-failure-discarding-error-callback': 'error',
+  'effect-native/no-focused-tests': 'error',
+  'effect-native/no-global-test-replacements': 'error',
   'effect-native/no-hand-built-http-server-in-tests': 'error',
   'effect-native/no-hand-built-problem-details': 'error',
   'effect-native/no-hand-parsed-environment-value': 'error',
@@ -170,6 +172,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-unbranded-identifier-schema': 'error',
   'effect-native/no-unjustified-file-wide-lint-suppression': 'error',
   'effect-native/no-unmanaged-mutable-state': 'error',
+  'effect-native/no-unsignaled-spy-poll': 'error',
   'effect-native/no-unredacted-secret-field': 'error',
   'effect-native/no-wide-factory-signature': 'error',
   'effect-native/prefer-effect-fn-for-operations': 'error',
@@ -1340,6 +1343,7 @@ export default defineConfig({
   rules: {
     '@nkzw/require-use-effect-arguments': 'error',
     'effect-native/no-instanceof': 'error',
+    'eslint/no-useless-assignment': 'error',
     // Ultracite core already enforces these policies through Unicorn and Promise rules.
     'github/array-foreach': 'off',
     'github/no-then': 'off',

@@ -75,7 +75,7 @@ import { FetchHttpClient } from 'effect/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { commerceMarketCatalogRegistration } from '../vertical.registration.ts';
+import { commerceMarketCatalogBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { retirementUnavailable, retirementPreflightUnavailable } from './market-retirement-runtime.ts';
 import {
@@ -214,9 +214,12 @@ const actionRuntimeDependenciesLive = commerceMarketCatalogActionRuntimeDependen
 );
 const baseProductionActionRuntimeLive = makeActionRuntimeLive(
   ultramodernDeliveryUnit,
-  commerceMarketCatalogRegistration,
+  commerceMarketCatalogBackendRegistration,
 ).pipe(Layer.provide(Layer.mergeAll(accessEnforcementLive, actionRuntimeDependenciesLive)));
-const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+const productionReadRuntimeLive = makeReadRuntimeLive(
+  ultramodernDeliveryUnit,
+  commerceMarketCatalogBackendRegistration,
+).pipe(
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -518,7 +521,7 @@ const nativeRetirementBindingsLive = Layer.effect(
     const dependencies = yield* Effect.context<Layer.Success<typeof actionRuntimeDependenciesLive>>();
     return {
       base,
-      coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+      coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
         Layer.provide(Layer.mergeAll(accessEnforcementLive, Layer.succeedContext(dependencies))),
       ),
       crypto,

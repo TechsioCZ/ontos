@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
+import type { ReactNode } from 'react';
 
 import cs from '../../locales/cs/shell.json';
 import en from '../../locales/en/shell.json';
@@ -19,9 +20,20 @@ import type { PeopleMutationPort } from '../../src/routes/access-admin/people/pe
 import { toPeopleViewModel } from '../../src/routes/access-admin/people/people-presentation.ts';
 import { PeopleView } from '../../src/routes/access-admin/people/people-view.tsx';
 import type { PeopleCommand } from '../../src/routes/access-admin/people/people-view-model.ts';
+import { ShellI18n, shellLocaleCopy } from '../support/shell-i18n.tsx';
+import type { ShellLanguage } from '../support/shell-i18n.tsx';
 import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
 
-const { locale } = rstest.hoisted(() => ({ locale: { current: 'en' } }));
+/** The language a test selects before rendering. */
+interface SelectedLanguage {
+  current: ShellLanguage;
+}
+const locale: SelectedLanguage = { current: 'en' };
+const copies = { cs: shellLocaleCopy('cs'), en: shellLocaleCopy('en') };
+/** The Shell's real i18n context, in whichever language the test selected before rendering. */
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={copies[locale.current]}>{children}</ShellI18n>
+);
 const flatten = (node: typeof Schema.Json.Type, prefix = ''): [string, string][] => {
   if (Predicate.isString(node)) {
     return [[prefix, node]];
@@ -40,10 +52,6 @@ const translate = (key: string, values?: Record<string, string | number>) => {
   }
   return label;
 };
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: locale.current, t: translate }),
-}));
 
 const personId = '00000000-0000-4000-8000-000000000001';
 const managerId = '00000000-0000-4000-8000-000000000002';
@@ -177,7 +185,9 @@ const renderPeople = (snapshot = fixture().snapshot) => {
     onNextPage: rstest.fn<() => void>(),
     onRefresh: rstest.fn<() => void>(),
   };
-  const rendered = render(<PeopleView feedback="idle" model={model(snapshot)} {...callbacks} />);
+  const rendered = render(<PeopleView feedback="idle" model={model(snapshot)} {...callbacks} />, {
+    wrapper: ShellCopy,
+  });
   return { ...rendered, ...callbacks };
 };
 
@@ -605,7 +615,7 @@ test('a delegated assignment keeps its frozen limits visible after the delegatio
 });
 
 test('English and Czech presentation use real locale keys without untranslated output', () => {
-  for (const language of ['en', 'cs']) {
+  for (const language of ['en', 'cs'] as const) {
     locale.current = language;
     const rendered = renderPeople();
     expect(screen.getByRole('region', { name: translate('shell.accessAdmin.people.title') })).toBeTruthy();

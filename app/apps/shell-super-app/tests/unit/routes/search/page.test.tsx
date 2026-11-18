@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, rstest, test } from 'effect-rstest';
+import { afterEach, expect, it } from 'effect-rstest';
 
 import {
   AppIdSchema,
@@ -14,89 +14,32 @@ import {
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
-import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
-  rstest: 'importActual',
+import { shellTestCopy } from '../../../support/shell-i18n.tsx';
+import type { ShellLanguage } from '../../../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../../../support/shell-router.tsx';
+
+const copy = {
+  'shell.auth.identity.title': 'Authenticated identity',
+  'shell.auth.logout.action': 'Logout',
+  'shell.auth.logout.failed': 'Logout failed',
+  'shell.dashboard.account.label': 'Account menu',
+  'shell.dashboard.brand': 'OntOS',
+  'shell.dashboard.header.label': 'Dashboard header',
+  'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
+  'shell.dashboard.navigation.home': 'Home',
+  'shell.dashboard.navigation.label': 'Dashboard navigation',
+  'shell.dashboard.sidebar.label': 'Dashboard sidebar',
+  'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
+  'shell.dashboard.unavailable': 'Dashboard unavailable',
+  'shell.modules.state.readOnly': 'Read only',
+  'shell.moduleTarget.reload_required': 'Reload this page to continue',
+  'shell.search.empty': 'No results',
+  'shell.search.label': 'Search this legal entity',
+  'shell.search.selection_required': 'Select a legal entity first',
+  'shell.search.submit': 'Search',
+  'shell.search.title': 'Search',
+  'shell.search.unavailable': 'Search unavailable',
 };
-import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
-import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
-
-const {
-  browserRunPromiseMock,
-  languageState,
-  localizedLinkCalls,
-  navigateMock,
-  signOutMock,
-  switchLegalEntityMock,
-  switchTenantMock,
-  useLoaderDataMock,
-} = rstest.hoisted(() => {
-  const recordedLinkCalls: LocalizedLinkCall[] = [];
-  return {
-    browserRunPromiseMock: rstest.fn(),
-    languageState: { current: 'en' },
-    localizedLinkCalls: recordedLinkCalls,
-    navigateMock: rstest.fn(async () => {}),
-    signOutMock: rstest.fn(),
-    switchLegalEntityMock: rstest.fn(),
-    switchTenantMock: rstest.fn(),
-    useLoaderDataMock: rstest.fn(),
-  };
-});
-
-const translations = new Map(
-  Object.entries({
-    'shell.auth.identity.title': 'Authenticated identity',
-    'shell.auth.logout.action': 'Logout',
-    'shell.auth.logout.failed': 'Logout failed',
-    'shell.dashboard.account.label': 'Account menu',
-    'shell.dashboard.brand': 'OntOS',
-    'shell.dashboard.header.label': 'Dashboard header',
-    'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
-    'shell.dashboard.navigation.home': 'Home',
-    'shell.dashboard.navigation.label': 'Dashboard navigation',
-    'shell.dashboard.sidebar.label': 'Dashboard sidebar',
-    'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
-    'shell.dashboard.unavailable': 'Dashboard unavailable',
-    'shell.modules.state.readOnly': 'Read only',
-    'shell.moduleTarget.reload_required': 'Reload this page to continue',
-    'shell.search.empty': 'No results',
-    'shell.search.label': 'Search this legal entity',
-    'shell.search.selection_required': 'Select a legal entity first',
-    'shell.search.submit': 'Search',
-    'shell.search.title': 'Search',
-    'shell.search.unavailable': 'Search unavailable',
-  }),
-);
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: (props: LocalizedLinkDoubleProps) =>
-    renderLocalizedLinkDouble(props, {
-      calls: localizedLinkCalls,
-      language: languageState,
-    }),
-  useLocalizedLocation: () => ({
-    alternates: { cs: '/cs/hledat', en: '/en/search' },
-  }),
-  useModernI18n: () => ({
-    language: languageState.current,
-    t: (key: string) => translations.get(key) ?? key,
-  }),
-}));
-
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useLoaderData: useLoaderDataMock,
-  useNavigate: () => navigateMock,
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  signOut: signOutMock,
-  switchLegalEntity: switchLegalEntityMock,
-  switchTenant: switchTenantMock,
-}));
-
-rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock, runSyncExit: browserRuntime.runSyncExit },
-}));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
 const tenantId = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
@@ -162,111 +105,104 @@ const readyModel = (resourceType: string, resourceId: typeof plainResourceId): S
   state: 'ready',
 });
 
-const resourceLinkCalls = () => localizedLinkCalls.filter((call) => call.to.startsWith('/resources'));
-
-beforeEach(() => {
-  browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
-  signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
-  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId }));
-  switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId }));
-  useLoaderDataMock.mockReturnValue(readyModel('stock-item', plainResourceId));
-});
-
-afterEach(() => {
-  cleanup();
-  languageState.current = 'en';
-  localizedLinkCalls.length = 0;
-  rstest.clearAllMocks();
-});
-
-test('a search result hands the canonical resource route to the framework link', () => {
-  render(<SearchPage />);
-
-  const [resultCall] = resourceLinkCalls();
-  expect(resourceLinkCalls()).toHaveLength(1);
-  expect(resultCall?.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
-  expect(resultCall?.params).toEqual({
-    moduleId: 'inventory.stock',
-    resourceId: 'unit-1',
-    resourceType: 'stock-item',
-  });
-  expect(resultCall?.href).toBeUndefined();
-  expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
-    '/en/resources/inventory.stock/stock-item/unit-1',
+/** The search route of a real router, loading the given model, in the given language. */
+const renderSearch = (model: SearchPageModel, language: ShellLanguage = 'en') =>
+  renderShellRoute(
+    makeShellRouter({
+      page: { component: SearchPage, loaderData: () => model, path: 'search' },
+      url: `/${language}/search?q=unit`,
+    }),
+    shellTestCopy(language, copy),
   );
-});
 
-test('a search result resolves the Czech resource route from the same canonical target', () => {
-  languageState.current = 'cs';
-  render(<SearchPage />);
+/** Links the page rendered into a resource route, in any language. */
+const resourceLinks = () =>
+  screen
+    .queryAllByRole('link')
+    .filter((link) => /^\/(?:en\/resources|cs\/zdroje)\//u.test(link.getAttribute('href') ?? ''));
 
-  expect(resourceLinkCalls()[0]?.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
-  expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
-    '/cs/zdroje/inventory.stock/stock-item/unit-1',
-  );
-});
+afterEach(cleanup);
 
-test('resource path segments stay percent-encoded per segment', () => {
-  useLoaderDataMock.mockReturnValue(readyModel('stock item', awkwardResourceId));
-  render(<SearchPage />);
+it.effect('a search result links to the localised resource route of its own reference', () =>
+  Effect.gen(function* resultLink() {
+    yield* renderSearch(readyModel('stock-item', plainResourceId));
 
-  expect(resourceLinkCalls()[0]?.params).toEqual({
-    moduleId: 'inventory.stock',
-    resourceId: 'unit #1/2',
-    resourceType: 'stock item',
-  });
-  expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
-    '/en/resources/inventory.stock/stock%20item/unit%20%231%2F2',
-  );
-});
+    expect(resourceLinks()).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
+      '/en/resources/inventory.stock/stock-item/unit-1',
+    );
+  }),
+);
 
-test('an empty result set exposes no resource affordance', () => {
-  useLoaderDataMock.mockReturnValue({
-    query: 'unit',
-    response: { partial: false, results: [] },
-    shell: authenticatedShell(),
-    state: 'ready',
-  } satisfies SearchPageModel);
-  render(<SearchPage />);
+it.effect('a search result resolves the Czech resource route from the same canonical target', () =>
+  Effect.gen(function* czechResultLink() {
+    yield* renderSearch(readyModel('stock-item', plainResourceId), 'cs');
 
-  expect(screen.getByText('No results')).toBeTruthy();
-  expect(resourceLinkCalls()).toHaveLength(0);
-});
+    expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
+      '/cs/zdroje/inventory.stock/stock-item/unit-1',
+    );
+  }),
+);
 
-test('an unavailable search exposes no resource affordance', () => {
-  useLoaderDataMock.mockReturnValue({
-    query: 'unit',
-    shell: authenticatedShell(),
-    state: 'unavailable',
-  } satisfies SearchPageModel);
-  render(<SearchPage />);
+it.effect('resource path segments stay percent-encoded per segment', () =>
+  Effect.gen(function* encodedSegments() {
+    yield* renderSearch(readyModel('stock item', awkwardResourceId));
 
-  expect(screen.getByText('Search unavailable')).toBeTruthy();
-  expect(resourceLinkCalls()).toHaveLength(0);
-});
+    expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
+      '/en/resources/inventory.stock/stock%20item/unit%20%231%2F2',
+    );
+  }),
+);
 
-test('a closed shell state exposes no navigable affordance at all', () => {
-  useLoaderDataMock.mockReturnValue({
-    query: 'unit',
-    shell: { state: 'unavailable' },
-    state: 'unavailable',
-  } satisfies SearchPageModel);
-  render(<SearchPage />);
+it.effect('an empty result set exposes no resource affordance', () =>
+  Effect.gen(function* emptyResults() {
+    yield* renderSearch({
+      query: 'unit',
+      response: { partial: false, results: [] },
+      shell: authenticatedShell(),
+      state: 'ready',
+    });
 
-  expect(screen.getByText('Dashboard unavailable')).toBeTruthy();
-  expect(screen.queryAllByRole('link')).toHaveLength(0);
-  expect(localizedLinkCalls).toHaveLength(0);
-});
+    expect(screen.getByText('No results')).toBeTruthy();
+    expect(resourceLinks()).toHaveLength(0);
+  }),
+);
 
-test('a stale search release exposes only the reload message', () => {
-  useLoaderDataMock.mockReturnValue({
-    query: 'unit',
-    shell: { state: 'reload_required' },
-    state: 'reload_required',
-  } satisfies SearchPageModel);
-  render(<SearchPage />);
+it.effect('an unavailable search exposes no resource affordance', () =>
+  Effect.gen(function* unavailableSearch() {
+    yield* renderSearch({
+      query: 'unit',
+      shell: authenticatedShell(),
+      state: 'unavailable',
+    });
 
-  expect(screen.getByText('Reload this page to continue')).toBeTruthy();
-  expect(screen.queryAllByRole('link')).toHaveLength(0);
-  expect(resourceLinkCalls()).toHaveLength(0);
-});
+    expect(screen.getByText('Search unavailable')).toBeTruthy();
+    expect(resourceLinks()).toHaveLength(0);
+  }),
+);
+
+it.effect('a closed shell state exposes no navigable affordance at all', () =>
+  Effect.gen(function* closedShell() {
+    yield* renderSearch({
+      query: 'unit',
+      shell: { state: 'unavailable' },
+      state: 'unavailable',
+    });
+
+    expect(screen.getByText('Dashboard unavailable')).toBeTruthy();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+  }),
+);
+
+it.effect('a stale search release exposes only the reload message', () =>
+  Effect.gen(function* staleRelease() {
+    yield* renderSearch({
+      query: 'unit',
+      shell: { state: 'reload_required' },
+      state: 'reload_required',
+    });
+
+    expect(screen.getByText('Reload this page to continue')).toBeTruthy();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+  }),
+);

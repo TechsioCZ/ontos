@@ -1,96 +1,63 @@
-import { Menu as ActualMenu } from '@techsio/ui-kit/molecules/menu' with {
-  rstest: 'importActual',
-};
-import { Select as ActualSelect } from '@techsio/ui-kit/molecules/select' with {
-  rstest: 'importActual',
-};
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
-import { afterEach, expect, it, rstest, test } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { AppIdSchema } from '../../shared/browser-api.ts';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
+import { ShellI18n, shellTestCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 
-const { accountMenuSelectHandlers, tenantValueChangeHandlers } = rstest.hoisted(() => {
-  const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
-  const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
-  return {
-    accountMenuSelectHandlers: accountHandlers,
-    tenantValueChangeHandlers: tenantHandlers,
-  };
+const copy = shellTestCopy('en', {
+  'shell.accessAdmin.accessible.navigation': 'Access administration',
+  'shell.accessAdmin.navigation.approvals': 'Approvals',
+  'shell.accessAdmin.navigation.changes': 'Permission changes',
+  'shell.accessAdmin.navigation.label': 'Access administration',
+  'shell.accessAdmin.navigation.people': 'People',
+  'shell.accessAdmin.navigation.roles': 'Roles',
+  'shell.accessAdmin.navigation.why': 'Why?',
+  'shell.auth.logout.action': 'Logout',
+  'shell.auth.logout.pending': 'Logging out…',
+  'shell.dashboard.account.label': 'Account menu',
+  'shell.dashboard.brand': 'OntOS',
+  'shell.dashboard.header.label': 'Dashboard header',
+  'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
+  'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
+  'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
+  'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
+  'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
+  'shell.dashboard.navigation.home': 'Home',
+  'shell.dashboard.navigation.label': 'Dashboard navigation',
+  'shell.dashboard.sidebar.label': 'Dashboard sidebar',
+  'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
+  'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
+  'shell.dashboard.tenant.pending': 'Switching tenant…',
+  'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
+  'shell.modules.discovery.incompatible': 'Incompatible module deployment',
+  'shell.modules.discovery.revoked': 'Module revoked',
+  'shell.modules.discovery.timeout': 'Module deployment timed out',
+  'shell.modules.discovery.unavailable': 'Module deployment unavailable',
 });
-
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  Outlet: () => <main>Current route</main>,
-}));
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: ({
-    children,
-    to,
-    ...props
-  }: Omit<ComponentProps<'a'>, 'href'> & {
-    children: ReactNode;
-    to: string;
-  }) => (
-    <a href={`/en${to === '/' ? '/' : to}`} {...props}>
-      {children}
-    </a>
-  ),
-  useModernI18n: () => ({
-    t: (key: string) =>
-      ({
-        'shell.accessAdmin.accessible.navigation': 'Access administration',
-        'shell.accessAdmin.navigation.approvals': 'Approvals',
-        'shell.accessAdmin.navigation.changes': 'Permission changes',
-        'shell.accessAdmin.navigation.label': 'Access administration',
-        'shell.accessAdmin.navigation.people': 'People',
-        'shell.accessAdmin.navigation.roles': 'Roles',
-        'shell.accessAdmin.navigation.why': 'Why?',
-        'shell.auth.logout.action': 'Logout',
-        'shell.auth.logout.pending': 'Logging out…',
-        'shell.dashboard.account.label': 'Account menu',
-        'shell.dashboard.brand': 'OntOS',
-        'shell.dashboard.header.label': 'Dashboard header',
-        'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
-        'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
-        'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
-        'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
-        'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
-        'shell.dashboard.navigation.home': 'Home',
-        'shell.dashboard.navigation.label': 'Dashboard navigation',
-        'shell.dashboard.sidebar.label': 'Dashboard sidebar',
-        'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
-        'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
-        'shell.dashboard.tenant.pending': 'Switching tenant…',
-        'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
-        'shell.modules.discovery.incompatible': 'Incompatible module deployment',
-        'shell.modules.discovery.revoked': 'Module revoked',
-        'shell.modules.discovery.timeout': 'Module deployment timed out',
-        'shell.modules.discovery.unavailable': 'Module deployment unavailable',
-      })[key] ?? key,
-  }),
-}));
-
-rstest.mock('@techsio/ui-kit/molecules/menu', () => ({
-  Menu: (props: ComponentProps<typeof ActualMenu>) => {
-    accountMenuSelectHandlers.push(props.onSelect);
-    return <ActualMenu {...props} />;
-  },
-}));
-
-rstest.mock('@techsio/ui-kit/molecules/select', () => ({
-  Select: Object.assign((props: ComponentProps<typeof ActualSelect>) => {
-    if (props.name === 'tenant') {
-      tenantValueChangeHandlers.push(props.onValueChange);
-    }
-    return <ActualSelect {...props} />;
-  }, ActualSelect),
-}));
+/** The Shell's real i18n context over this file's English copy. */
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={copy}>{children}</ShellI18n>
+);
+const renderCopy = (ui: Parameters<typeof render>[0]) => render(ui, { wrapper: ShellCopy });
+/** Puts the test document on the page the dashboard is rendered for, as the browser would be. */
+const visit = (path: string) => window.history.replaceState(null, '', path);
+/** The Shell layout as the router renders it around the current route. */
+const renderLayout = () =>
+  renderShellRoute(
+    makeShellRouter({
+      page: { component: () => <main>Current route</main>, path: '/' },
+      root: Layout,
+      url: '/en/',
+    }),
+    copy,
+  );
 
 const identity = {
   displayName: 'Ada Lovelace',
@@ -148,29 +115,33 @@ const tenantProps = {
 const testingWorkspaceTitle = 'Testing workspace';
 const approvalsTitle = 'Approvals';
 
-afterEach(() => {
-  cleanup();
-  accountMenuSelectHandlers.length = 0;
-  tenantValueChangeHandlers.length = 0;
+beforeEach(() => {
+  visit('/en/');
 });
+afterEach(cleanup);
 
-test('leaves route content free of global user-perceivable UI', () => {
-  render(<Layout />);
+it.effect('leaves route content free of global user-perceivable UI', () =>
+  Effect.gen(function* routeContentOnly() {
+    yield* renderLayout();
 
-  expect(screen.getByRole('main').textContent).toBe('Current route');
-  expect(screen.queryByRole('region')).toBeNull();
-  expect(document.body.textContent?.trim()).toBe('Current route');
-});
+    expect((yield* Effect.promise(() => screen.findByRole('main'))).textContent).toBe('Current route');
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(document.body.textContent?.trim()).toBe('Current route');
+  }),
+);
 
-test('marks every server-rendered Shell route with its UI release marker', () => {
-  const { container } = render(<Layout />);
+it.effect('marks every server-rendered Shell route with its UI release marker', () =>
+  Effect.gen(function* releaseMarker() {
+    const { container } = yield* renderLayout();
+    yield* Effect.promise(() => screen.findByRole('main'));
 
-  const root = container.querySelector<HTMLElement>('[data-app-id="shell-super-app"]');
-  expect(root?.dataset['buildMarker']).toBe(ultramodernUiMarker.build);
-});
+    const root = container.querySelector<HTMLElement>('[data-app-id="shell-super-app"]');
+    expect(root?.dataset['buildMarker']).toBe(ultramodernUiMarker.build);
+  }),
+);
 
 test('renders the default Home dashboard contract and preserves page children', () => {
-  render(
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
@@ -198,7 +169,7 @@ test('renders the default Home dashboard contract and preserves page children', 
   const links = [...navigationElement.querySelectorAll('a')];
   expect(links.map((link) => link.textContent)).toEqual(['Home', 'Future generated', 'Testing one']);
   expect(links.map((link) => link.getAttribute('href'))).toEqual([
-    '/en/',
+    '/en',
     '/en/modules/future-generated',
     '/en/modules/testing.one',
   ]);
@@ -208,7 +179,8 @@ test('renders the default Home dashboard contract and preserves page children', 
 });
 
 test('supports an alternate title and current MicroVertical without changing children', () => {
-  render(
+  visit('/en/modules/testing.one');
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       currentModuleId="testing.one"
@@ -229,7 +201,8 @@ test('supports an alternate title and current MicroVertical without changing chi
 });
 
 test('supports module pages without a shell heading and keeps reduced horizontal content padding', () => {
-  render(
+  visit('/en/modules/testing.one');
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       currentModuleId="testing.one"
@@ -249,7 +222,8 @@ test('supports module pages without a shell heading and keeps reduced horizontal
 });
 
 test('offers access administration in its own landmark and marks the current page', () => {
-  render(
+  visit('/en/access/approvals');
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       currentAccessPage="approvals"
@@ -277,7 +251,7 @@ test('offers access administration in its own landmark and marks the current pag
 });
 
 test('keeps Home as the only navigation link when no active modules are supplied', () => {
-  render(
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
@@ -294,7 +268,7 @@ test('keeps Home as the only navigation link when no active modules are supplied
 });
 
 test('shows failed installed deployments as disabled identities with typed reasons', () => {
-  render(
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
@@ -335,7 +309,7 @@ it.effect('renders the account Menu last and dispatches only the logout command 
   Effect.gen(function* accountKeyboardLogout() {
     const onLogout = rstest.fn();
     const user = userEvent.setup();
-    render(
+    renderCopy(
       <AuthenticatedDashboardLayout
         {...tenantProps}
         identity={identity}
@@ -361,9 +335,6 @@ it.effect('renders the account Menu last and dispatches only the logout command 
     expect(commands[0]?.textContent).toBe('Logout');
     yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
     expect(onLogout).toHaveBeenCalledTimes(1);
-
-    accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
-    expect(onLogout).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -371,7 +342,7 @@ it.effect('retains the account trigger and disables the sole command while logou
   Effect.gen(function* pendingLogoutCommand() {
     const onLogout = rstest.fn();
     const user = userEvent.setup();
-    render(
+    renderCopy(
       <AuthenticatedDashboardLayout
         {...tenantProps}
         identity={identity}
@@ -397,7 +368,7 @@ it.effect('renders complete ordered tenant items and dispatches keyboard selecti
   Effect.gen(function* tenantKeyboardSelection() {
     const onTenantChange = rstest.fn();
     const user = userEvent.setup();
-    render(
+    renderCopy(
       <AuthenticatedDashboardLayout
         {...tenantProps}
         identity={identity}
@@ -421,17 +392,15 @@ it.effect('renders complete ordered tenant items and dispatches keyboard selecti
     expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
     expect(onTenantChange).toHaveBeenCalledTimes(1);
 
-    tenantValueChangeHandlers.at(-1)?.({
-      items: [tenantProps.tenantChoices[0]],
-      value: ['tenant-1'],
-    });
-    tenantValueChangeHandlers.at(-1)?.({ items: [], value: [] });
+    // Choosing the tenant the session already has is not a switch.
+    yield* Effect.promise(() => user.click(trigger));
+    yield* Effect.promise(() => user.click(screen.getByRole('option', { name: 'Alpha tenant' })));
     expect(onTenantChange).toHaveBeenCalledTimes(1);
   }),
 );
 
 test('disables unavailable, one-choice, and pending tenant states with associated feedback', () => {
-  const { rerender } = render(
+  const { rerender } = renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
@@ -497,7 +466,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
 });
 
 test('associates failed tenant feedback and keeps multiple choices operable', () => {
-  render(
+  renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
@@ -518,7 +487,7 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
 });
 
 test('names the legal-entity selector by its own label and keeps a sole choice operable', () => {
-  const { rerender } = render(
+  const { rerender } = renderCopy(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
@@ -593,7 +562,7 @@ const legalEntitySelectorStateCases: LegalEntitySelectorStateCase[] = [
 test.each(legalEntitySelectorStateCases)(
   'associates legal-entity feedback with its own selector when $name',
   ({ disabled, overrides, statusText }) => {
-    render(
+    renderCopy(
       <AuthenticatedDashboardLayout
         {...tenantProps}
         {...overrides}

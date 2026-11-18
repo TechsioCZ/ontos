@@ -4,15 +4,16 @@ import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { GatewayAssertionReplayError, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
-import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { decodeSupportedGatewayContextClaims } from '@app/shared-contracts';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { decodeJwt, SignJWT } from 'jose';
 import { defineRelations, eq, sql } from 'drizzle-orm';
 import {
@@ -172,11 +173,23 @@ it.live('serves an authorized owner Read through the unchanged default API and r
       const gateway = yield* makeAcceptanceGatewayIssuer('https://ccc-default-redemption.ontos.test', 'ccc-redemption');
       rs.stubEnv('ONTOS_GATEWAY_ISSUER', gateway.issuer);
       rs.stubEnv('ONTOS_GATEWAY_PUBLIC_JWKS', JSON.stringify({ keys: [gateway.publicJwk] }));
-      rs.stubEnv('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL', 'https://composition.ccc-redemption.test/active');
-      rs.stubGlobal('fetch', async () => Response.json(snapshot));
+      // The default API reads its active composition over its actual fetch transport from a loopback
+      // source owned by this case's scope.
+      const snapshotDocument = yield* Schema.encodeEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(snapshot);
+      const sourceContext = yield* Layer.build(NodeHttpServer.layerTest);
+      const source = Context.get(sourceContext, HttpServer.HttpServer);
+      yield* source.serve(
+        Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })),
+      );
+      const sourceAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(source.address);
+      rs.stubEnv(
+        'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
+        `http://127.0.0.1:${sourceAddress.port}/active-composition`,
+      );
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          rs.unstubAllGlobals();
           rs.unstubAllEnvs();
         }),
       );

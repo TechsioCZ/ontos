@@ -38,7 +38,7 @@ import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
+import { GatewayModuleCredentialBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from '../../api/auth/identity-lifecycle.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -104,7 +104,7 @@ const issuePartyModuleCredential = Effect.fn('PrivacyCompletionShell.issuePartyM
   },
 );
 
-/** The GatewayModuleBinding list the Shell reads from ONTOS_GATEWAY_MODULE_BINDINGS for the party-registry key. */
+/** The identity-only module binding list the Shell reads from ONTOS_GATEWAY_MODULE_BINDINGS for the party-registry key. */
 const partyModuleBindings = Effect.fn('PrivacyCompletionShell.partyModuleBindings')(function* partyModuleBindings(
   composition: typeof ActiveApplicationCompositionSnapshotSchema.Type,
   providerKeyId: string,
@@ -115,7 +115,7 @@ const partyModuleBindings = Effect.fn('PrivacyCompletionShell.partyModuleBinding
   if (partyDeployment === undefined) {
     return yield* new PrivacyCompletionShellFailure({ reason: 'Party composition deployment is unavailable' });
   }
-  return yield* Schema.decodeUnknownEffect(Schema.Array(GatewayModuleBindingSchema))([
+  return yield* Schema.decodeUnknownEffect(Schema.Array(GatewayModuleCredentialBindingSchema))([
     {
       compositionRevision: composition.composition.revision,
       providerKeyId,
@@ -123,7 +123,7 @@ const partyModuleBindings = Effect.fn('PrivacyCompletionShell.partyModuleBinding
       sourceBuildMarker: partyDeployment.buildMarker,
     },
   ]).pipe(
-    Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
+    Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleCredentialBindingSchema)))),
     Effect.mapError(() => new PrivacyCompletionShellFailure({ reason: 'Party module binding is invalid' })),
   );
 });

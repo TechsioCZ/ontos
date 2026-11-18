@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -13,7 +14,8 @@ const MANIFEST = 'package.json';
 const WORKSPACE_FILE = 'pnpm-workspace.yaml';
 /** The only programs the listing step runs (sha256sum is in /sbin on macOS); a fixed PATH keeps the run hermetic. */
 const STEP_PATH = '/usr/bin:/bin:/sbin';
-const APP = new URL('../..', import.meta.url).pathname;
+const KEY_STEP = 'Name the installed workspace';
+const APP = fileURLToPath(new URL('../..', import.meta.url));
 const expression = (body: string) => `\${{ ${body} }}`;
 const DERIVED_PATHS = expression('steps.packages.outputs.paths');
 const DERIVED_MANIFESTS = expression('steps.packages.outputs.manifests');
@@ -51,12 +53,14 @@ const derive = (workspace: string) => {
   try {
     execFileSync('/bin/bash', ['-c', LISTING_STEP.run ?? ''], {
       cwd: workspace,
+      encoding: UTF8,
       env: { GITHUB_OUTPUT: output, PATH: STEP_PATH },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     text = readFileSync(output, UTF8);
-  } catch {
-    return 'failed' as const;
+  } catch (error) {
+    // The step's own diagnostic, so a test tells the action's rejection from any other failure.
+    return { failed: Schema.decodeUnknownSync(Schema.Struct({ stdout: Schema.String }))(error).stdout };
   } finally {
     rmSync(scratch, { force: true, recursive: true });
   }
@@ -72,8 +76,8 @@ const derive = (workspace: string) => {
 };
 const deriveOrThrow = (workspace: string) => {
   const derived = derive(workspace);
-  if (derived === 'failed') {
-    throw new Error(`the package listing failed in ${workspace}`);
+  if ('failed' in derived) {
+    throw new Error(`the package listing failed in ${workspace}: ${derived.failed}`);
   }
   return derived;
 };
@@ -170,6 +174,21 @@ it('follows the packages: globs, negations, quotes and comments of a workspace f
   });
 });
 
+it('excludes only the directory a negation names, not one its name begins', () => {
+  const kept = 'sites/web';
+  withWorkspace("packages:\n  - sites/*\n  - '!sites/*lib'\n", [kept, `${kept} lib`], (workspace) => {
+    expect(deriveOrThrow(workspace).directories).toEqual([kept]);
+  });
+});
+
+it('caches a package whose directory name holds glob characters under a literal path', () => {
+  withWorkspace('packages:\n  - sites/*\n', ['sites/web[1]', 'sites/a*b?'], (workspace) => {
+    const { directories, paths } = deriveOrThrow(workspace);
+    expect(directories).toEqual(['sites/a*b?', 'sites/web[1]']);
+    expect(paths.slice(2)).toEqual(['app/sites/a[*]b[?]/node_modules', 'app/sites/web[[]1]/node_modules']);
+  });
+});
+
 it('covers a package directory added to the workspace in the cached paths and the key', () => {
   withWorkspace(LISTING, FIXTURE, (workspace) => {
     const before = deriveOrThrow(workspace);
@@ -194,24 +213,40 @@ it('covers a package directory added to the workspace in the cached paths and th
 it('refuses a workspace file it cannot expand exactly', () => {
   for (const entry of ['apps/**', '../outside', './apps/*', '{a,b}/*', '[unclosed']) {
     withWorkspace(`packages:\n  - apps/*\n  - '${entry}'\n`, FIXTURE, (workspace) => {
-      expect(derive(workspace), entry).toBe('failed');
+      expect(derive(workspace), entry).toEqual({
+        failed: `::error::The install action expands only '*' and '?' inside package directories; app/pnpm-workspace.yaml lists '${entry}'.\n`,
+      });
     });
   }
   withWorkspace('packages: [apps/*]\n', FIXTURE, (workspace) => {
-    expect(derive(workspace)).toBe('failed');
+    expect(derive(workspace)).toEqual({ failed: '::error::app/pnpm-workspace.yaml lists no package directory.\n' });
   });
   withWorkspace('packages:\n  - apps/*\n  -\n    - nested\n', FIXTURE, (workspace) => {
-    expect(derive(workspace)).toBe('failed');
+    expect(derive(workspace)).toEqual({
+      failed: '::error::The install action cannot read this packages: entry of app/pnpm-workspace.yaml:   -\n',
+    });
   });
+  // A package pnpm reads from another manifest would be left out of the cached paths and the key.
+  for (const manifest of ['package.yaml', 'package.json5']) {
+    withWorkspace('packages:\n  - apps/*\n', FIXTURE, (workspace) => {
+      mkdirSync(path.join(workspace, 'apps/extra'));
+      writeFileSync(path.join(workspace, 'apps/extra', manifest), '');
+      expect(derive(workspace), manifest).toEqual({
+        failed: `::error::The install action reads only package.json manifests; app/pnpm-workspace.yaml matches apps/extra/${manifest}.\n`,
+      });
+    });
+  }
 });
 
 it('restores and saves exactly the derived paths under a key that names every package manifest', () => {
+  const key = step(KEY_STEP);
   const restore = step('Restore the installed workspace');
   const save = step('Save the installed workspace');
   expect(restore.with?.path).toBe(DERIVED_PATHS);
   expect(save.with?.path).toBe(DERIVED_PATHS);
-  expect(restore.with?.key).toContain(DERIVED_MANIFESTS);
-  expect(restore.with?.key).toContain("'app/pnpm-workspace.yaml'");
+  expect(key.run).toContain(DERIVED_MANIFESTS);
+  expect(key.run).toContain("'app/pnpm-workspace.yaml'");
+  expect(restore.with?.key).toBe(expression('steps.workspace-key.outputs.key'));
   expect(save.with?.key).toBe(expression('steps.workspace.outputs.cache-primary-key'));
   for (const { name, run, with: inputs } of steps) {
     expect(`${run ?? ''}${JSON.stringify(inputs ?? {})}`, name).not.toMatch(
@@ -220,10 +255,37 @@ it('restores and saves exactly the derived paths under a key that names every pa
   }
 });
 
+it('keys the installed workspace on its install code and both hosted runner image variables', () => {
+  const key = step(KEY_STEP);
+  expect(key.id).toBe('workspace-key');
+  expect(key.run).toContain("hashFiles('.github/actions/install-app/action.yml',");
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-key-'));
+  const output = path.join(scratch, 'github-output');
+  try {
+    // GitHub evaluates these expressions before bash runs; leave the image reads to the actual step.
+    const run = (key.run ?? '').replaceAll(/\$\{\{.*?\}\}/gu, 'hash');
+    for (const [ImageOS, ImageVersion] of [
+      ['ubuntu24', '20261109.1.0'],
+      ['ubuntu24', '20261116.1.0'],
+      ['ubuntu26', '20261116.1.0'],
+    ]) {
+      writeFileSync(output, '');
+      execFileSync('/bin/bash', ['-c', run], {
+        env: { GITHUB_OUTPUT: output, ImageOS, ImageVersion, PATH: STEP_PATH },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      expect(readFileSync(output, UTF8)).toBe(`key=pnpm-workspace-hash-hash-${ImageOS}-${ImageVersion}-hash-hash\n`);
+    }
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+});
+
 it('never saves an exact hit again and lets a caller opt out of the gates tree', () => {
   const optedIn = "inputs.restore-node-modules == 'true'";
   for (const name of [
     'List the workspace packages',
+    KEY_STEP,
     'Restore the installed workspace',
     'Verify the restored workspace resolves',
   ]) {

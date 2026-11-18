@@ -45,112 +45,11 @@ const priceRead = 'commerce.pricing.source-read';
 const catalogRead = 'commerce.catalog.symmy-product-read';
 const marketRead = 'commerce.market-catalog.source-read';
 const groupModuleId = 'pricing.price-group-catalog';
-const groupAudience = 'price-group-catalog';
 const groupAssociationsRead = 'pricing.price-group-catalog.api.price-group-source-associations';
 const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
-const groupRevisionAction = 'pricing.price-group-catalog.create-price-group-definition-revision';
 const pricingModule = 'commerce.pricing';
-const pricingAudience = 'pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
-const rules = [
-  ...[groupCreateAction, groupRevisionAction].map((actionKey) => ({
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-result-lookup.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup',
-    legalEntityScope: 'forbidden' as const,
-    recoveryOf: { actionKey, jobKey: workerKey },
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  })),
-  ...[definePriceOperation, revisePriceOperation].map((actionKey) => {
-    const rule = {
-      audience: pricingAudience,
-      declarationKey: 'commerce.pricing.price-source-result-lookup.read',
-      entrypointKey: 'commerce.pricing.api.price-source-result-lookup',
-      legalEntityScope: 'required' as const,
-      recoveryOf: { actionKey, jobKey: workerKey },
-      schemaVersion: '1',
-      workloadKey: priceRead,
-    };
-    return actionKey === definePriceOperation ? { ...rule, allowHistoricalDeliveryRecovery: true } : rule;
-  }),
-  {
-    audience: pricingAudience,
-    declarationKey: 'commerce.pricing.price.read-definition',
-    entrypointKey: 'commerce.pricing.api.price-definition',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: priceRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
-    entrypointKey: groupAssociationsRead,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group.create',
-    entrypointKey: groupCreateAction,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupWrite,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-definition-revision.create',
-    entrypointKey: groupRevisionAction,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupWrite,
-  },
-  {
-    audience: pricingAudience,
-    declarationKey: 'commerce.pricing.price.define',
-    entrypointKey: definePriceOperation,
-    legalEntityScope: 'required' as const,
-    schemaVersion: '2',
-    workloadKey: priceWrite,
-  },
-  {
-    audience: pricingAudience,
-    declarationKey: 'commerce.pricing.price.revise',
-    entrypointKey: revisePriceOperation,
-    legalEntityScope: 'required' as const,
-    schemaVersion: '2',
-    workloadKey: priceWrite,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, workerKey }));
-// These exact nested Reads are independent from the upstream Symmy worker enrollment.
-const pricingDelegationRules = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.selection-evidence.read',
-    entrypointKey: 'commerce.catalog.api.selection-evidence',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-  {
-    audience: 'commerce-market-catalog',
-    declarationKey: 'commerce.market-catalog.market-catalog.read',
-    entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: marketRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, sourceWorkloadKey: priceWrite }));
 /** One authority-only enrollment: an owner operation the route may use, never an intent. */
 const enrolled = (
   entityKind: 'PRICE' | 'PRICE_GROUP',
@@ -202,11 +101,30 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     assert.isOk(market);
     assert.isOk(symmy);
     assert.isOk(group);
-    const isolated = yield* makeIsolatedNativeDatabaseFixture({
-      compositionSnapshot: snapshot,
-      mode: 'schema-only',
-      purpose: 'implementation-1096-registered-workload-gateway',
-    });
+    const [
+      isolated,
+      [groupArtifacts, symmyArtifacts, workerArtifact, catalogArtifacts, pricingArtifacts, marketArtifacts],
+    ] = yield* Effect.all(
+      [
+        makeIsolatedNativeDatabaseFixture({
+          compositionSnapshot: snapshot,
+          mode: 'schema-only',
+          purpose: 'implementation-1096-registered-workload-gateway',
+        }),
+        Effect.all(
+          [
+            buildProductOwner(group),
+            buildProductOwner(symmy),
+            buildProductWorker(symmy),
+            buildProductOwner(catalog),
+            buildProductOwner(pricing),
+            buildProductOwner(market),
+          ],
+          { concurrency: 3 },
+        ),
+      ],
+      { concurrency: 2 },
+    );
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const tenantId = randomUUID();
     const legalEntityId = randomUUID();
@@ -228,13 +146,13 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       schemaVersion: 1,
     });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: [{ registeredWorkloads: pricingDelegationRules, sourceAppId: 'pricing' }],
+      additionalRelaySources: [{ sourceAppId: 'pricing' }],
       ownedDatabase: isolated,
       priceReadProjectionJson: yield* Schema.encodeEffect(
         Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
       )(priceReadSources),
       productionGate: true,
-      relaySource: { registeredWorkloads: rules, sourceAppId: 'symmy-integration' },
+      relaySource: { sourceAppId: 'symmy-integration' },
       // A price-list read composes several owner reads, each behind its own gateway assertion.
       requestDeadlineSeconds: 60,
       snapshotJson: yield* encodeProductComposition(snapshot),
@@ -342,18 +260,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
       tenantId,
     });
-    const [groupArtifacts, symmyArtifacts, workerArtifact, catalogArtifacts, pricingArtifacts, marketArtifacts] =
-      yield* Effect.all(
-        [
-          buildProductOwner(group),
-          buildProductOwner(symmy),
-          buildProductWorker(symmy),
-          buildProductOwner(catalog),
-          buildProductOwner(pricing),
-          buildProductOwner(market),
-        ],
-        { concurrency: 3 },
-      );
     // A public price list code is 1 to 80 characters of letters, digits, dot, underscore and hyphen.
     const firstRecordId = 'CZ-wholesale_A.1';
     const secondRecordId = `CZ-wholesale_${'B'.repeat(60)}`;
@@ -443,41 +349,50 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
       ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
     };
-    const groupOwner = yield* startProductOwner({
-      artifacts: groupArtifacts,
-      contract: group,
-      environment,
-      port: groupPort,
-      prefix: '/price-group-catalog-api',
-    });
-    const symmyOwner = yield* startProductOwner({
-      artifacts: symmyArtifacts,
-      contract: symmy,
-      environment,
-      port: symmyPort,
-      prefix: '/symmy-integration-api',
-    });
-    yield* startProductOwner({
-      artifacts: catalogArtifacts,
-      contract: catalog,
-      environment,
-      port: catalogPort,
-      prefix: '/catalog-api',
-    });
-    yield* startProductOwner({
-      artifacts: marketArtifacts,
-      contract: market,
-      environment,
-      port: marketPort,
-      prefix: '/commerce-market-catalog-api',
-    });
-    const pricingOwner = yield* startProductOwner({
-      artifacts: pricingArtifacts,
-      contract: pricing,
-      environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(pricingKey.secret) },
-      port: pricingPort,
-      prefix: '/pricing-api',
-    });
+    // Receiver readiness binds the local HTTP listener; no peer operation runs until a request arrives.
+    // All module credentials, including Pricing's separate key, are already bound above.
+    // Acquire in the parent scope so every receiver closes before Shell and the database.
+    const { groupOwner, pricingOwner, symmyOwner } = yield* Effect.all(
+      {
+        catalogOwner: startProductOwner({
+          artifacts: catalogArtifacts,
+          contract: catalog,
+          environment,
+          port: catalogPort,
+          prefix: '/catalog-api',
+        }),
+        groupOwner: startProductOwner({
+          artifacts: groupArtifacts,
+          contract: group,
+          environment,
+          port: groupPort,
+          prefix: '/price-group-catalog-api',
+        }),
+        marketOwner: startProductOwner({
+          artifacts: marketArtifacts,
+          contract: market,
+          environment,
+          port: marketPort,
+          prefix: '/commerce-market-catalog-api',
+        }),
+        pricingOwner: startProductOwner({
+          artifacts: pricingArtifacts,
+          contract: pricing,
+          environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(pricingKey.secret) },
+          port: pricingPort,
+          prefix: '/pricing-api',
+        }),
+        symmyOwner: startProductOwner({
+          artifacts: symmyArtifacts,
+          contract: symmy,
+          environment,
+          port: symmyPort,
+          prefix: '/symmy-integration-api',
+        }),
+      },
+      { concurrency: 3 },
+    );
+    // The worker dispatches to these HTTP receivers; acquire it last so it also stops first.
     const worker = yield* startProductWorker(workerArtifact, {
       ...environment,
       ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES',

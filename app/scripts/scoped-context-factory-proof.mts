@@ -3393,10 +3393,9 @@ class FactoryResolver {
     const previous = this.contextSnapshotProofs;
     const proofs = new Map<string, ContextSnapshotProof>();
     this.contextSnapshotProofs = proofs;
-    let result = false;
     for (let iteration = 0; iteration < budget; iteration += 1) {
       const count = proofs.size;
-      result = this.localServiceContextsClosed(module, tag, wanted, false, reached);
+      const result = this.localServiceContextsClosed(module, tag, wanted, false, reached);
       let changed = false;
       for (const proof of proofs.values()) {
         if (proof.valid && !this.localServiceContextsClosed(proof.module, proof.expression, wanted, true, reached)) {

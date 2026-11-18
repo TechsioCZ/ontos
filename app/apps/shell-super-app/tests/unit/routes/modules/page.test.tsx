@@ -1,76 +1,44 @@
-import { getDocumentCompositionRevision } from '@app/shared-contracts';
-import { CatchBoundary } from '@tanstack/react-router' with { rstest: 'importActual' };
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
+import { CatchBoundary, RouterProvider, useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+import { Deferred, Effect, Option, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
+import { afterEach, expect, it, rstest } from 'effect-rstest';
 import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 
 import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/browser-api.ts';
+import type { ResolvedModuleTarget } from '../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
 import {
   moduleEntrypointLoadIdentity,
   pinBrowserModuleTarget,
 } from '../../../../src/routes/module-entrypoint-loader.ts';
+import type { ModuleEntrypointNamespace } from '../../../../src/routes/module-entrypoint-loader.ts';
 import { ModuleRenderFailure } from '../../../../src/routes/module-render-failure.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
-import ModuleTargetPage, { ModuleTargetView } from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
+import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
+import { ShellI18n, shellTestCopy } from '../../../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../../../support/shell-router.tsx';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
+import { makeFederationHost, shellHostName } from './federation-host.ts';
 
 type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
 
-const {
-  getInstanceMock,
-  loadRemotePageMock,
-  navigateMock,
-  registerRemotesMock,
-  reloadRequiredMock,
-  remotePropsMock,
-  useLoaderDataMock,
-} = rstest.hoisted(() => ({
-  getInstanceMock: rstest.fn(),
-  loadRemotePageMock: rstest.fn(),
-  navigateMock: rstest.fn(),
-  registerRemotesMock: rstest.fn(),
-  reloadRequiredMock: rstest.fn(),
-  remotePropsMock: rstest.fn(),
-  useLoaderDataMock: rstest.fn(),
-}));
+/** One execution of the remote page, with the loader data the router had committed for that render. */
+interface RemotePageExecution {
+  readonly admission: ModuleTargetPageModel;
+  readonly props: RemotePageProps;
+}
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ t: (key: string) => key }),
-}));
+interface RemotePageProps {
+  readonly routeParams: Readonly<Record<string, string>>;
+  readonly target: ResolvedModuleTarget;
+}
 
-rstest.mock('@tanstack/react-router', () => ({
-  CatchBoundary,
-  useLoaderData: useLoaderDataMock,
-  useNavigate: () => navigateMock,
-}));
-
-rstest.mock('@module-federation/modern-js-v3/runtime', () => ({ getInstance: getInstanceMock }));
-
-rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
-  AuthenticatedDashboardLayout: ({ children }: { readonly children: ReactNode }) => (
-    <main data-testid="shell-framing">{children}</main>
-  ),
-}));
-
-rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
-  useShellControls: () => ({
-    handleLegalEntityChange: rstest.fn(),
-    handleLogout: rstest.fn(),
-    handleSearch: rstest.fn(),
-    handleTenantChange: rstest.fn(),
-    legalEntitySwitchFailed: false,
-    legalEntitySwitchPending: false,
-    logoutFailed: false,
-    logoutPending: false,
-    reloadRequired: reloadRequiredMock(),
-    tenantSwitchFailed: false,
-    tenantSwitchPending: false,
-  }),
-}));
+/** Real i18next without copy: every message renders as its own key. */
+const translations = shellTestCopy('en', {});
 
 const shell: ResolvedPageModel['shell'] = { ...authenticatedShellFixture(), compositionRevision: 'c'.repeat(64) };
 
@@ -166,25 +134,21 @@ const exactPageCases: ExactPageCase[] = [
   },
 ];
 
-const fixtureRemotePage = ({
-  routeParams,
-  target,
-}: {
-  readonly routeParams: Readonly<Record<string, string>>;
-  readonly target: ResolvedPageModel['target'];
-}) => {
-  remotePropsMock({ routeParams, target });
-  return <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>;
-};
-
 const FailingRemoteFixture = (): never => {
   throw new Error('1296_PRIVATE_RENDER_SENTINEL');
 };
+const ExactListComponent = () => <div>exact exposed list component</div>;
+const ExactDetailComponent = () => <div>exact exposed detail component</div>;
+const StaleRemoteComponent = () => <div>stale previous remote</div>;
 
-const blockedPageFixture = (index: number) => {
+/** The exposed-module request the native SDK makes for a target's page. */
+const exposeRequest = (target: ResolvedModuleTarget) =>
+  `${target.federation.remoteName}/${target.federation.expose.slice(2)}`;
+
+/** An approved page of its own module owner and remote, scheduled independently of the contacts pages. */
+const ownerPageFixture = (index: number): ResolvedPageModel => {
   const appId = `load-blocker-${index}`;
   const componentKey = `${appId}.core.page`;
-  const remoteName = `loadBlocker${index}`;
   const target = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
     ...targetFixture(componentKey, `${appId}.core.page.show`),
     appId,
@@ -194,111 +158,219 @@ const blockedPageFixture = (index: number) => {
         sha256: 'a'.repeat(64),
         url: `https://assets.example.test/${appId}/release-a/mf-manifest.json`,
       },
-      remoteName,
+      remoteName: `loadBlocker${index}`,
     },
     moduleId: `${appId}.core`,
   });
-  return {
-    model: { ...resolvedModel, target },
-    pending: Promise.withResolvers<{ readonly default: typeof fixtureRemotePage }>(),
-    request: `${remoteName}/${componentKey}`,
+  return { ...resolvedModel, target };
+};
+
+/** A held exposed module the test settles once it has observed what it needs. */
+const heldExpose = () => Deferred.makeUnsafe<ModuleEntrypointNamespace, Error>();
+
+/**
+ * The real native Federation host for one test. Its remotes expose `page`, which records the props
+ * it rendered with; `scripted` answers single requests and every other request evaluates to `page`.
+ */
+const federation = (
+  options: {
+    readonly refusedRemotes?: readonly string[];
+    readonly scripted?: (request: string) => Option.Option<Effect.Effect<ModuleEntrypointNamespace, Error>>;
+  } = {},
+) =>
+  Effect.gen(function* federationForTest() {
+    const renders: RemotePageProps[] = [];
+    const executions: RemotePageExecution[] = [];
+    const ExposedPage = ({ routeParams, target }: RemotePageProps) => {
+      const admission: ModuleTargetPageModel = useLoaderData({
+        from: '/$lang/modules/$moduleId',
+        structuralSharing: false,
+      });
+      renders.push({ routeParams, target });
+      executions.push({ admission, props: { routeParams, target } });
+      return <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>;
+    };
+    const scripted = options.scripted ?? (() => Option.none());
+    const host = yield* makeFederationHost({
+      answer: (request) => Option.getOrElse(scripted(request), () => Effect.succeed({ default: ExposedPage })),
+      refusedRemotes: options.refusedRemotes ?? [],
+    });
+    return { ...host, executions, page: ExposedPage, renders } as const;
+  });
+
+/** Answers each listed expose with its own module every time it is requested. */
+const answering =
+  (answers: Readonly<Record<string, Effect.Effect<ModuleEntrypointNamespace, Error>>>) => (request: string) =>
+    Option.fromNullishOr(answers[request]);
+
+/** Answers only the first request of each listed expose with its own module. */
+const answeringOnce = (answers: Readonly<Record<string, Effect.Effect<ModuleEntrypointNamespace, Error>>>) => {
+  const unanswered = new Map(Object.entries(answers));
+  return (request: string) => {
+    const answer = Option.fromNullishOr(unanswered.get(request));
+    unanswered.delete(request);
+    return answer;
   };
 };
 
-beforeEach(() => {
-  navigateMock.mockImplementation(() => Promise.resolve());
-  reloadRequiredMock.mockReturnValue(false);
-  loadRemotePageMock.mockResolvedValue({ default: fixtureRemotePage });
-  getInstanceMock.mockReturnValue({
-    loadRemote: loadRemotePageMock,
-    name: 'shellSuperApp',
-    registerRemotes: registerRemotesMock,
+/** Lets React apply whatever the page scheduled. */
+const reactSettled = Effect.promise(() => act(() => Promise.resolve()));
+
+/**
+ * The module page route of a real router, loading whatever model the holder carries. `show` changes
+ * the loader data and revalidates the route, as the next governed resolution of the page does.
+ */
+const renderModulePage = (model: ModuleTargetPageModel) =>
+  Effect.gen(function* renderModuleRoute() {
+    const holder = { current: model };
+    const router = makeShellRouter({
+      page: { component: ModuleTargetPage, loaderData: () => holder.current, path: 'modules/$moduleId' },
+      url: '/en/modules/contacts.core',
+    });
+    const view = yield* renderShellRoute(router, translations);
+    // The router commits a revalidation through React itself, so it cannot run inside act;
+    // act afterwards applies whatever the page scheduled in response.
+    const show = (next: ModuleTargetPageModel) =>
+      Effect.sync(() => {
+        holder.current = next;
+      }).pipe(Effect.andThen(Effect.promise(() => router.invalidate())), Effect.andThen(reactSettled));
+    return { router, show, view } as const;
   });
-});
 
-afterEach(() => {
-  cleanup();
-  rstest.clearAllMocks();
-});
+/**
+ * Changes the resolution from `previous` to `next` and returns every execution of the remote page,
+ * from the first transition on, that ran under any loader data other than `previous`. Executions
+ * under the previous admission before the router commits the change are expected.
+ */
+const executionsBeyond = (
+  fx: { readonly executions: readonly RemotePageExecution[] },
+  show: (model: ModuleTargetPageModel) => Effect.Effect<void>,
+  previous: ModuleTargetPageModel,
+  next: ModuleTargetPageModel,
+) =>
+  Effect.gen(function* executionsBeyondEffect() {
+    const from = fx.executions.length;
+    yield* show(next);
+    return fx.executions.slice(from).filter(({ admission }) => admission !== previous);
+  });
 
-it.each(['selection_required', 'forbidden', 'not_found', 'reload_required', 'unavailable'] as const)(
+/**
+ * Settles a held exposed module and waits until the native SDK has settled the load of `request`,
+ * then lets React apply whatever the page scheduled in response.
+ */
+const settle = (
+  fx: { readonly settled: (request: string) => Effect.Effect<void> },
+  request: string,
+  held: Deferred.Deferred<ModuleEntrypointNamespace, Error>,
+  value: ModuleEntrypointNamespace,
+) => Deferred.succeed(held, value).pipe(Effect.andThen(fx.settled(request)), Effect.andThen(reactSettled));
+
+/** The fresh-document reload a render failure offers; this boundary test never follows it. */
+const handleReload = constVoid;
+
+/** The real framework boundary the page puts around an exposed page, keyed by the target's result. */
+const moduleBoundary = (target: ResolvedModuleTarget, children: ReactNode) => (
+  <ShellI18n translations={translations}>
+    <CatchBoundary
+      errorComponent={() => <ModuleRenderFailure onReload={handleReload} />}
+      getResetKey={() => moduleEntrypointLoadIdentity(target).result}
+    >
+      {children}
+    </CatchBoundary>
+  </ShellI18n>
+);
+
+const shellSidebars = () => screen.getAllByRole('complementary', { name: 'shell.dashboard.sidebar.label' });
+
+/** The Shell host the native SDK registry hands the page, as the page looks it up. */
+const registeredShellHost = Effect.promise(() => import('@module-federation/modern-js-v3/runtime')).pipe(
+  Effect.map(({ getInstance }) => getInstance((instance) => instance.name === shellHostName)),
+);
+
+afterEach(cleanup);
+
+it.live.each(['selection_required', 'forbidden', 'not_found', 'reload_required', 'unavailable'] as const)(
   'does not initialize or load Federation for a %s exact-page response',
-  (state) => {
-    useLoaderDataMock.mockReturnValue({
-      shell,
-      state,
-    } satisfies ModuleTargetPageModel);
-    render(<ModuleTargetPage />);
-    expect(getInstanceMock).not.toHaveBeenCalled();
-    expect(registerRemotesMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
-  },
+  (state) =>
+    Effect.gen(function* closedResponseLeavesFederationAlone() {
+      const fx = yield* federation();
+      yield* renderModulePage({ shell, state } satisfies ModuleTargetPageModel);
+
+      expect(screen.getByText(`shell.moduleTarget.${state}`)).toBeTruthy();
+      expect(fx.registered).toEqual([]);
+      expect(fx.requests).toEqual([]);
+    }),
 );
 
 it.live('does not register or load an owner when disposed during native SDK acquisition', () =>
   Effect.gen(function* disposesBeforeNativeSdkSettles() {
     // Build the real shared runtime first so its initial service acquisition cannot delay the pin.
     yield* browserRuntime.contextEffect;
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-    const view = render(<ModuleTargetPage />);
-    const revision = yield* getDocumentCompositionRevision(document);
-    expect(revision).toBe('c'.repeat(64));
-    expect(getInstanceMock).not.toHaveBeenCalled();
-
+    const fx = yield* federation();
+    const { view } = yield* renderModulePage(resolvedModel);
     act(() => view.unmount());
-    const sdk = yield* Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime'));
-    expect(sdk.getInstance).toBe(getInstanceMock);
+
+    expect(yield* getDocumentCompositionRevision(document)).toBe('c'.repeat(64));
+    // The SDK the page acquires holds a Shell host it could have registered the owner with.
+    expect(yield* registeredShellHost).toBe(fx.host);
     yield* Effect.promise(() =>
       act(async () => {
         await Promise.resolve();
       }),
     );
 
-    expect(getInstanceMock).not.toHaveBeenCalled();
-    expect(registerRemotesMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
-    expect(remotePropsMock).not.toHaveBeenCalled();
+    expect(fx.registered).toEqual([]);
+    expect(fx.requests).toEqual([]);
+    expect(fx.renders).toEqual([]);
   }),
 );
 
 it.live('registers and loads a previously unknown approved remote only after authentication', () =>
   Effect.gen(function* invokesTheExactPrivatePageLoader() {
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-    render(<ModuleTargetPage />);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(registerRemotesMock).toHaveBeenCalledWith([
+    const fx = yield* federation();
+    yield* renderModulePage(resolvedModel);
+
+    expect(yield* fx.nextRequest).toBe('previouslyUnknownContacts/contacts.core.page-customers');
+    expect(fx.registered).toEqual([
       {
         entry: resolvedModel.target.federation.manifest.url,
         name: resolvedModel.target.federation.remoteName,
       },
     ]);
-    expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
     expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'))).toBeTruthy();
   }),
 );
 
 it.live('maps an unreachable approved remote to its safe local diagnostic', () =>
   Effect.gen(function* mapsAnUnreachableApprovedRemoteTo() {
-    loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-
-    render(<ModuleTargetPage />);
+    yield* federation({
+      scripted: answeringOnce({
+        [exposeRequest(resolvedModel.target)]: Effect.fail(new Error('private remote error')),
+      }),
+    });
+    yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
+    expect(document.body.textContent).not.toContain('private remote error');
   }),
 );
 
 it.live('contains a remote render exception while the Shell framing and healthy exposed page remain mounted', () =>
   Effect.gen(function* containsOnlyTheFailedRemoteTree() {
+    const diagnostics = rstest.spyOn(console, 'log');
     const healthyModel: ResolvedPageModel = {
       ...resolvedModel,
       routeParams: { id: 'healthy-owner' },
       target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
     };
-    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
+    yield* federation({
+      scripted: answeringOnce({
+        [exposeRequest(resolvedModel.target)]: Effect.succeed({ default: FailingRemoteFixture }),
+      }),
+    });
 
-    render(<ModuleTargetView initialModel={resolvedModel} />);
-    render(<ModuleTargetView initialModel={healthyModel} />);
+    yield* renderModulePage(resolvedModel);
+    yield* renderModulePage(healthyModel);
 
     expect((yield* Effect.promise(() => screen.findByRole('alert'))).textContent).toContain(
       'shell.moduleTarget.render_failed',
@@ -306,78 +378,98 @@ it.live('contains a remote render exception while the Shell framing and healthy 
     expect(
       yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:healthy-owner')),
     ).toBeTruthy();
-    expect(screen.getAllByTestId('shell-framing')).toHaveLength(2);
+    expect(shellSidebars()).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'shell.moduleTarget.reload_page' }).getAttribute('type')).toBe('button');
     expect(document.body.textContent).not.toContain('1296_PRIVATE_RENDER_SENTINEL');
+    const output = JSON.stringify(diagnostics.mock.calls);
+    expect(output).toContain('Remote module entrypoint failed');
+    expect(output).toContain('contacts.core');
+    expect(output).toContain('1296_PRIVATE_RENDER_SENTINEL');
+    expect(output).toContain('render');
   }),
 );
 
 it.live('keeps a failed equivalent target contained and resets only for the newly approved expose', () =>
   Effect.gen(function* resetsForTheExactApprovedExposedResult() {
-    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
-    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    const fx = yield* federation({
+      scripted: answeringOnce({
+        [exposeRequest(resolvedModel.target)]: Effect.succeed({ default: FailingRemoteFixture }),
+      }),
+    });
+    const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByRole('alert'));
     const equivalentModel: ResolvedPageModel = {
       ...resolvedModel,
       target: targetFixture(resolvedModel.target.componentKey, resolvedModel.target.entrypointKey),
     };
 
-    view.rerender(<ModuleTargetView initialModel={equivalentModel} />);
+    yield* show(equivalentModel);
 
     expect(screen.getByRole('alert').textContent).toContain('shell.moduleTarget.render_failed');
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+    expect(fx.requests).toHaveLength(1);
     const nextModel: ResolvedPageModel = {
       ...resolvedModel,
       routeParams: { id: 'correct-next-expose' },
       target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
     };
-    view.rerender(<ModuleTargetView initialModel={nextModel} />);
+    yield* show(nextModel);
 
     expect(
       yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:correct-next-expose')),
     ).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(2);
-    expect(loadRemotePageMock).toHaveBeenLastCalledWith('previouslyUnknownContacts/contacts.core.page-customer-detail');
+    expect(fx.requests).toEqual([
+      'previouslyUnknownContacts/contacts.core.page-customers',
+      'previouslyUnknownContacts/contacts.core.page-customer-detail',
+    ]);
   }),
 );
 
 it.live('requests a full document reload instead of locally executing the failed entrypoint again', () =>
   Effect.gen(function* recoveryRequiresFreshDocumentAdmission() {
-    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
-    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    const fx = yield* federation({
+      scripted: answeringOnce({
+        [exposeRequest(resolvedModel.target)]: Effect.succeed({ default: FailingRemoteFixture }),
+      }),
+    });
+    const { router, show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByRole('alert'));
+    // A full document reload leaves the page; the router reports the navigation it was asked for.
+    const navigated = Deferred.makeUnsafe<Parameters<typeof router.navigate>[0]>();
+    rstest.spyOn(router, 'navigate').mockImplementation(async (navigation) => {
+      Deferred.doneUnsafe(navigated, Effect.succeed(navigation));
+    });
 
     yield* Effect.promise(() =>
       userEvent.setup().click(screen.getByRole('button', { name: 'shell.moduleTarget.reload_page' })),
     );
-    yield* Effect.promise(() =>
-      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
-    );
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
-    // The navigation driver is controlled here. The browser test proves actual document
-    // replacement and native permission revocation; this unit supplies its denied model.
-    view.rerender(<ModuleTargetView initialModel={{ shell, state: 'forbidden' }} />);
+
+    expect(yield* Deferred.await(navigated)).toMatchObject({ reloadDocument: true, to: '.' });
+    expect(fx.requests).toHaveLength(1);
+    // The browser test proves actual document replacement and native permission revocation;
+    // this unit supplies the denied model the fresh document resolves.
+    yield* show({ shell, state: 'forbidden' });
 
     expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+    expect(fx.requests).toHaveLength(1);
   }),
 );
 
 it.live('never restores previous caller content when a changed tenant and principal receive a typed denial', () =>
   Effect.gen(function* keepsCurrentContextDenialsOutsideTheBoundary() {
-    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    const detailModel: ResolvedPageModel = {
+      ...resolvedModel,
+      target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
+    };
+    const fx = yield* federation({
+      scripted: answeringOnce({
+        [exposeRequest(detailModel.target)]: Effect.succeed({ default: FailingRemoteFixture }),
+      }),
+    });
+    const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
-    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
-    view.rerender(
-      <ModuleTargetView
-        initialModel={{
-          ...resolvedModel,
-          target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
-        }}
-      />,
-    );
+    yield* show(detailModel);
     yield* Effect.promise(() => screen.findByRole('alert'));
     const deniedShell: ResolvedPageModel['shell'] = {
       ...shell,
@@ -387,15 +479,14 @@ it.live('never restores previous caller content when a changed tenant and princi
         tenantId: 'current-tenant',
       }),
     };
-    remotePropsMock.mockClear();
+    const denied: ModuleTargetPageModel = { shell: deniedShell, state: 'forbidden' };
 
-    view.rerender(<ModuleTargetView initialModel={{ shell: deniedShell, state: 'forbidden' }} />);
+    expect(yield* executionsBeyond(fx, show, detailModel, denied)).toEqual([]);
 
     expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
     expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(remotePropsMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(2);
+    expect(fx.requests).toHaveLength(2);
   }),
 );
 
@@ -403,6 +494,8 @@ it.live(
   'resets the actual framework boundary for a separately pinned R2 DOM document in a controlled reset-key test',
   () =>
     Effect.gen(function* checksRevisionResetWithoutClaimingBrowserNavigation() {
+      // The current document is the R1 document every other page in this file renders into.
+      yield* pinDocumentCompositionRevision(resolvedModel.target.compositionRevision, document);
       const nextTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
         ...resolvedModel.target,
         compositionRevision: 'd'.repeat(64),
@@ -410,37 +503,11 @@ it.live(
       const nextDocument = document.implementation.createHTMLDocument();
       yield* pinBrowserModuleTarget(nextTarget, nextDocument);
       expect(yield* getDocumentCompositionRevision(nextDocument)).toBe(nextTarget.compositionRevision);
-      const view = render(
-        <CatchBoundary
-          errorComponent={() => (
-            <ModuleRenderFailure
-              onReload={() => {
-                navigateMock();
-              }}
-            />
-          )}
-          getResetKey={() => moduleEntrypointLoadIdentity(resolvedModel.target).result}
-        >
-          <FailingRemoteFixture />
-        </CatchBoundary>,
-      );
+      const view = render(moduleBoundary(resolvedModel.target, <FailingRemoteFixture />));
       expect(screen.getByRole('alert').textContent).toContain('shell.moduleTarget.render_failed');
       // This exercises the real boundary's reset with controlled approved-target fixtures,
       // not a browser navigation or publication proof. The existing R1 document stays pinned.
-      view.rerender(
-        <CatchBoundary
-          errorComponent={() => (
-            <ModuleRenderFailure
-              onReload={() => {
-                navigateMock();
-              }}
-            />
-          )}
-          getResetKey={() => moduleEntrypointLoadIdentity(nextTarget).result}
-        >
-          <div>controlled R2 result</div>
-        </CatchBoundary>,
-      );
+      view.rerender(moduleBoundary(nextTarget, <div>controlled R2 result</div>));
       expect(screen.getByText('controlled R2 result')).toBeTruthy();
       expect(screen.queryByRole('alert')).toBeNull();
       expect(yield* getDocumentCompositionRevision(document)).toBe(resolvedModel.target.compositionRevision);
@@ -451,22 +518,20 @@ it.live(
   'keeps a caller load timeout as its typed diagnostic rather than a render failure',
   () =>
     Effect.gen(function* separatesLoadTimeoutFromRenderFailure() {
-      const pending = Promise.withResolvers<{ readonly default: typeof fixtureRemotePage }>();
-      loadRemotePageMock.mockReturnValueOnce(pending.promise);
+      const held = heldExpose();
+      const fx = yield* federation({
+        scripted: answeringOnce({ [exposeRequest(resolvedModel.target)]: Deferred.await(held) }),
+      });
       try {
-        render(<ModuleTargetView initialModel={resolvedModel} />);
+        yield* renderModulePage(resolvedModel);
         expect(
           yield* Effect.promise(() => screen.findByText('shell.moduleTarget.timeout', {}, { timeout: 7000 })),
         ).toBeTruthy();
         expect(screen.queryByRole('alert')).toBeNull();
         expect(screen.queryByRole('button', { name: 'shell.moduleTarget.reload_page' })).toBeNull();
+        expect(fx.requests).toHaveLength(1);
       } finally {
-        yield* Effect.promise(() =>
-          act(async () => {
-            pending.resolve({ default: fixtureRemotePage });
-            await pending.promise;
-          }),
-        );
+        yield* Deferred.succeed(held, { default: fx.page });
       }
     }),
   15_000,
@@ -474,8 +539,10 @@ it.live(
 
 it.live('shares equivalent cloned targets while an unmounted caller cannot cancel the remaining page', () =>
   Effect.gen(function* sharesPhysicalWorkAcrossIndependentPages() {
-    const pending = Promise.withResolvers<{ readonly default: typeof fixtureRemotePage }>();
-    loadRemotePageMock.mockReturnValueOnce(pending.promise);
+    const held = heldExpose();
+    const fx = yield* federation({
+      scripted: answeringOnce({ [exposeRequest(resolvedModel.target)]: Deferred.await(held) }),
+    });
     const secondModel: ResolvedPageModel = {
       ...resolvedModel,
       routeParams: { id: 'second-caller' },
@@ -483,181 +550,181 @@ it.live('shares equivalent cloned targets while an unmounted caller cannot cance
     };
     expect(secondModel.target).not.toBe(resolvedModel.target);
     try {
-      const first = render(<ModuleTargetView initialModel={resolvedModel} />);
-      render(<ModuleTargetView initialModel={secondModel} />);
-      yield* Effect.promise(() => waitFor(() => expect(getInstanceMock).toHaveBeenCalledTimes(2)));
-      expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
-      expect(registerRemotesMock).toHaveBeenCalledTimes(1);
+      const first = yield* renderModulePage(resolvedModel);
+      yield* renderModulePage(secondModel);
+      expect(yield* fx.nextRequest).toBe(exposeRequest(resolvedModel.target));
+      expect(fx.registered).toHaveLength(1);
 
-      act(() => first.unmount());
-      yield* Effect.promise(() =>
-        act(async () => {
-          pending.resolve({ default: fixtureRemotePage });
-          await pending.promise;
-        }),
-      );
+      act(() => first.view.unmount());
+      yield* settle(fx, exposeRequest(resolvedModel.target), held, { default: fx.page });
 
       expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:second-caller'))).toBeTruthy();
-      expect(remotePropsMock).toHaveBeenCalledWith({
-        routeParams: secondModel.routeParams,
-        target: secondModel.target,
-      });
-      expect(remotePropsMock).not.toHaveBeenCalledWith({
-        routeParams: resolvedModel.routeParams,
-        target: resolvedModel.target,
-      });
-      expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+      expect(fx.renders).toContainEqual({ routeParams: secondModel.routeParams, target: secondModel.target });
+      expect(fx.renders).not.toContainEqual({ routeParams: resolvedModel.routeParams, target: resolvedModel.target });
+      // Both callers were served by the one physical SDK load.
+      expect(fx.requests).toEqual([exposeRequest(resolvedModel.target)]);
+      expect(fx.registered).toHaveLength(1);
     } finally {
-      pending.resolve({ default: fixtureRemotePage });
+      Deferred.doneUnsafe(held, Effect.succeed({ default: fx.page }));
     }
   }),
 );
 
 it.live('does not let the first queued page caller abort the shared SDK thunk needed by a second caller', () =>
   Effect.gen(function* startsQueuedWorkForItsRemainingCaller() {
-    const blockers = Array.from({ length: 8 }, (_, index) => blockedPageFixture(index));
+    // Two running contacts pages fill the contacts owner's slots; five other owners and a final
+    // sentinel owner fill the remaining physical SDK slots.
+    const contactsBlockers = ['a', 'b'].map((suffix): ResolvedPageModel => ({
+      ...resolvedModel,
+      target: targetFixture(`contacts.core.page-blocker-${suffix}`, `contacts.core.page.blocker-${suffix}`),
+    }));
+    const ownerBlockers = Array.from({ length: 5 }, (_, index) => ownerPageFixture(index));
+    const sentinel = ownerPageFixture(5);
+    const blockers = [...contactsBlockers, ...ownerBlockers, sentinel];
+    const held = new Map(blockers.map((model) => [exposeRequest(model.target), heldExpose()]));
+    const fx = yield* federation({
+      scripted: (request) => Option.map(Option.fromNullishOr(held.get(request)), Deferred.await),
+    });
     const secondModel: ResolvedPageModel = {
       ...resolvedModel,
       routeParams: { id: 'remaining-queued-caller' },
       target: targetFixture(resolvedModel.target.componentKey, resolvedModel.target.entrypointKey),
     };
-    loadRemotePageMock.mockImplementation((entrypoint: string) => {
-      const blocker = blockers.find(({ request }) => request === entrypoint);
-      return blocker === undefined ? Promise.resolve({ default: fixtureRemotePage }) : blocker.pending.promise;
-    });
+    const nextRequests = (count: number) => Effect.forEach(Array.from({ length: count }), () => fx.nextRequest);
     try {
-      for (const blocker of blockers) {
-        render(<ModuleTargetView initialModel={blocker.model} />);
+      for (const blocker of [...contactsBlockers, ...ownerBlockers]) {
+        yield* renderModulePage(blocker);
       }
-      yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(8)));
-      const first = render(<ModuleTargetView initialModel={resolvedModel} />);
-      render(<ModuleTargetView initialModel={secondModel} />);
-      yield* Effect.promise(() => waitFor(() => expect(getInstanceMock).toHaveBeenCalledTimes(10)));
-      expect(loadRemotePageMock).toHaveBeenCalledTimes(8);
-
-      act(() => first.unmount());
-      yield* Effect.promise(() =>
-        act(async () => {
-          blockers[0]?.pending.resolve({ default: fixtureRemotePage });
-          await blockers[0]?.pending.promise;
-        }),
+      expect((yield* nextRequests(7)).toSorted()).toEqual(
+        [...contactsBlockers, ...ownerBlockers].map((model) => exposeRequest(model.target)).toSorted(),
       );
+      const first = yield* renderModulePage(resolvedModel);
+      yield* renderModulePage(secondModel);
+      yield* renderModulePage(sentinel);
+      // The sentinel was admitted after both contacts callers queued, and took the last SDK slot.
+      expect(yield* fx.nextRequest).toBe(exposeRequest(sentinel.target));
+      expect(fx.requests).toHaveLength(8);
+      expect(fx.requests).not.toContain(exposeRequest(resolvedModel.target));
 
+      act(() => first.view.unmount());
+      const freedRequest = exposeRequest(targetFixture('contacts.core.page-blocker-a', 'contacts.core.page.blocker-a'));
+      const freed = held.get(freedRequest);
+      expect(freed).toBeDefined();
+      if (freed !== undefined) {
+        yield* settle(fx, freedRequest, freed, { default: fx.page });
+      }
+
+      expect(yield* fx.nextRequest).toBe(exposeRequest(resolvedModel.target));
       expect(
         yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:remaining-queued-caller')),
       ).toBeTruthy();
-      expect(loadRemotePageMock).toHaveBeenCalledTimes(9);
-      expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
-      expect(remotePropsMock).toHaveBeenCalledWith({
-        routeParams: secondModel.routeParams,
-        target: secondModel.target,
-      });
+      expect(fx.requests).toHaveLength(9);
+      expect(fx.requests.filter((request) => request === exposeRequest(resolvedModel.target))).toHaveLength(1);
+      expect(fx.renders).toContainEqual({ routeParams: secondModel.routeParams, target: secondModel.target });
+      expect(fx.renders).not.toContainEqual({ routeParams: resolvedModel.routeParams, target: resolvedModel.target });
     } finally {
-      yield* Effect.promise(() =>
-        act(async () => {
-          for (const blocker of blockers) {
-            blocker.pending.resolve({ default: fixtureRemotePage });
-          }
-          await Promise.all(blockers.map(({ pending }) => pending.promise));
-        }),
-      );
+      for (const pending of held.values()) {
+        Deferred.doneUnsafe(pending, Effect.succeed({ default: fx.page }));
+      }
     }
   }),
 );
 
 it.live('keeps concurrent exposes of one approved remote distinct through staggered SDK settlement', () =>
   Effect.gen(function* rendersOnlyEachRequestedExport() {
-    const first = Promise.withResolvers<{ readonly default: () => ReactNode }>();
-    const second = Promise.withResolvers<{ readonly default: () => ReactNode }>();
+    const first = heldExpose();
+    const second = heldExpose();
     const secondModel: ResolvedPageModel = {
       ...resolvedModel,
       target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
     };
-    loadRemotePageMock.mockImplementation((entrypoint: string) => {
-      if (entrypoint === 'previouslyUnknownContacts/contacts.core.page-customers') {
-        return first.promise;
-      }
-      return second.promise;
+    const fx = yield* federation({
+      scripted: answering({
+        [exposeRequest(resolvedModel.target)]: Deferred.await(first),
+        [exposeRequest(secondModel.target)]: Deferred.await(second),
+      }),
     });
     try {
-      render(<ModuleTargetView initialModel={resolvedModel} />);
-      render(<ModuleTargetView initialModel={secondModel} />);
-      yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(2)));
-      yield* Effect.promise(() =>
-        act(async () => {
-          first.resolve({ default: () => <div>exact exposed list component</div> });
-          await first.promise;
-        }),
-      );
-      yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(2)));
-      expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
-      expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customer-detail');
-      expect(screen.getAllByText('exact exposed list component')).toHaveLength(1);
+      yield* renderModulePage(resolvedModel);
+      yield* renderModulePage(secondModel);
+      expect([yield* fx.nextRequest, yield* fx.nextRequest].toSorted()).toEqual([
+        'previouslyUnknownContacts/contacts.core.page-customer-detail',
+        'previouslyUnknownContacts/contacts.core.page-customers',
+      ]);
+      yield* settle(fx, exposeRequest(resolvedModel.target), first, { default: ExactListComponent });
+
+      expect(yield* Effect.promise(() => screen.findAllByText('exact exposed list component'))).toHaveLength(1);
       expect(screen.queryByText('exact exposed detail component')).toBeNull();
-      yield* Effect.promise(() =>
-        act(async () => {
-          second.resolve({ default: () => <div>exact exposed detail component</div> });
-          await second.promise;
-        }),
-      );
+      expect(fx.requests).toHaveLength(2);
+      yield* settle(fx, exposeRequest(secondModel.target), second, { default: ExactDetailComponent });
       expect(yield* Effect.promise(() => screen.findByText('exact exposed detail component'))).toBeTruthy();
       expect(screen.getAllByText('exact exposed list component')).toHaveLength(1);
+      expect(fx.requests).toHaveLength(2);
     } finally {
-      first.resolve({ default: () => <div>exact exposed list component</div> });
-      second.resolve({ default: () => <div>exact exposed detail component</div> });
+      Deferred.doneUnsafe(first, Effect.succeed({ default: ExactListComponent }));
+      Deferred.doneUnsafe(second, Effect.succeed({ default: ExactDetailComponent }));
     }
   }),
 );
 
 it.live('passes changed route context to already loaded code without reusing previous page props', () =>
   Effect.gen(function* keepsRouteContextSeparateFromLoadedCode() {
-    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    const fx = yield* federation();
+    const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
-    remotePropsMock.mockClear();
     const nextModel: ResolvedPageModel = { ...resolvedModel, routeParams: { id: 'current-route-context' } };
 
-    view.rerender(<ModuleTargetView initialModel={nextModel} />);
+    yield* show(nextModel);
 
     expect(screen.getByText('contacts.core.page-customers:current-route-context')).toBeTruthy();
     expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
-    expect(remotePropsMock).toHaveBeenCalledWith({ routeParams: nextModel.routeParams, target: nextModel.target });
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+    // From its first render in the new route context, the loaded code never sees the previous props.
+    const firstNextRender = fx.renders.findIndex(({ routeParams }) => routeParams === nextModel.routeParams);
+    expect(firstNextRender).toBeGreaterThan(-1);
+    expect(new Set(fx.renders.slice(firstNextRender))).toEqual(
+      new Set([{ routeParams: nextModel.routeParams, target: nextModel.target }]),
+    );
+    expect(fx.requests).toHaveLength(1);
   }),
 );
 
 it.live('unmounts loaded code when the current governed page resolution becomes forbidden', () =>
   Effect.gen(function* neverTreatsLoadedCodeAsPageAdmission() {
-    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    const fx = yield* federation();
+    const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
-    remotePropsMock.mockClear();
+    const forbidden: ModuleTargetPageModel = { shell, state: 'forbidden' };
 
-    view.rerender(<ModuleTargetView initialModel={{ shell, state: 'forbidden' }} />);
+    expect(yield* executionsBeyond(fx, show, resolvedModel, forbidden)).toEqual([]);
 
     expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
     expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
-    expect(remotePropsMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+    expect(fx.requests).toHaveLength(1);
   }),
 );
 
 it.live('rejects a malformed remote module before React receives it', () =>
   Effect.gen(function* rejectsAMalformedRemoteModuleBefore() {
-    loadRemotePageMock.mockResolvedValueOnce({ default: 'not a component' });
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-
-    render(<ModuleTargetPage />);
+    const fx = yield* federation({
+      scripted: answeringOnce({
+        [exposeRequest(resolvedModel.target)]: Effect.succeed({ default: 'not a component' }),
+      }),
+    });
+    yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
-    expect(remotePropsMock).not.toHaveBeenCalled();
+    expect(fx.renders).toEqual([]);
   }),
 );
 
 it.live('passes an empty route-parameter record to a resolved static page', () =>
   Effect.gen(function* passesAnEmptyRouteParameterRecord() {
-    useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
-    render(<ModuleTargetPage />);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    const fx = yield* federation();
+    yield* renderModulePage({ ...resolvedModel, routeParams: {} });
+
+    expect(yield* fx.nextRequest).toBe(exposeRequest(resolvedModel.target));
     expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:static'))).toBeTruthy();
+    expect(fx.renders).toContainEqual({ routeParams: {}, target: resolvedModel.target });
   }),
 );
 
@@ -670,185 +737,184 @@ it.live.each(exactPageCases)(
         routeParams,
         target: targetFixture(componentKey, entrypointKey, writable),
       };
-      useLoaderDataMock.mockReturnValue(exactModel);
+      const fx = yield* federation();
 
-      render(<ModuleTargetPage />);
+      yield* renderModulePage(exactModel);
 
-      yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-      expect(loadRemotePageMock).toHaveBeenCalledWith(`previouslyUnknownContacts/${componentKey}`);
-      expect(remotePropsMock).toHaveBeenCalledWith({
-        routeParams,
-        target: exactModel.target,
-      });
+      expect(yield* fx.nextRequest).toBe(`previouslyUnknownContacts/${componentKey}`);
       expect(yield* Effect.promise(() => screen.findByText(renderedText))).toBeTruthy();
+      expect(fx.renders).toContainEqual({ routeParams, target: exactModel.target });
+      expect(fx.requests).toHaveLength(1);
     }),
 );
 
-it('does not initialize Federation or execute remote UI during server rendering', () => {
-  useLoaderDataMock.mockReturnValue(resolvedModel);
+it.live('does not initialize Federation or execute remote UI during server rendering', () =>
+  Effect.gen(function* rendersOnlyTheLoadingStateOnTheServer() {
+    const fx = yield* federation();
+    const router = makeShellRouter({
+      page: { component: ModuleTargetPage, loaderData: () => resolvedModel, path: 'modules/$moduleId' },
+      url: '/en/modules/contacts.core',
+    });
+    yield* Effect.promise(() => router.load());
 
-  const html = renderToString(<ModuleTargetPage />);
+    const html = renderToString(
+      <ShellI18n translations={translations}>
+        <RouterProvider router={router} />
+      </ShellI18n>,
+    );
 
-  expect(html).toContain('shell.moduleTarget.loading');
-  expect(getInstanceMock).not.toHaveBeenCalled();
-  expect(registerRemotesMock).not.toHaveBeenCalled();
-  expect(loadRemotePageMock).not.toHaveBeenCalled();
-});
+    expect(html).toContain('shell.moduleTarget.loading');
+    expect(fx.registered).toEqual([]);
+    expect(fx.requests).toEqual([]);
+    expect(fx.renders).toEqual([]);
+  }),
+);
 
 it.live('maps a null native remote result to a local compatibility diagnostic', () =>
   Effect.gen(function* rejectsNullRemoteResult() {
-    loadRemotePageMock.mockResolvedValueOnce(null);
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-
-    render(<ModuleTargetPage />);
+    const fx = yield* federation({
+      scripted: answeringOnce({ [exposeRequest(resolvedModel.target)]: Effect.succeed(null) }),
+    });
+    yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
-    expect(remotePropsMock).not.toHaveBeenCalled();
+    expect(fx.renders).toEqual([]);
   }),
 );
 
 it.live('fails locally when the native host is unavailable', () =>
   Effect.gen(function* rejectsUnavailableNativeHost() {
-    getInstanceMock.mockReturnValueOnce(null);
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-
-    render(<ModuleTargetPage />);
+    // No Shell host is registered with the native SDK for this document.
+    expect(yield* registeredShellHost).toBeNull();
+    yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
-    expect(registerRemotesMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
+    expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
   }),
 );
 
 it.live('requires reload before admitting a different composition into the same document', () =>
   Effect.gen(function* rejectsMixedDocumentRevisions() {
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-    const view = render(<ModuleTargetPage />);
+    const fx = yield* federation();
+    const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
-    loadRemotePageMock.mockClear();
-    registerRemotesMock.mockClear();
-    remotePropsMock.mockClear();
-    useLoaderDataMock.mockReturnValue({
+    const [registeredBefore, requestedBefore] = [fx.registered.length, fx.requests.length];
+    const promoted: ResolvedPageModel = {
       ...resolvedModel,
       target: { ...resolvedModel.target, compositionRevision: 'd'.repeat(64) },
-    });
+    };
 
-    view.rerender(<ModuleTargetPage />);
+    expect(yield* executionsBeyond(fx, show, resolvedModel, promoted)).toEqual([]);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.reload_required'))).toBeTruthy();
-    expect(remotePropsMock).not.toHaveBeenCalled();
-    expect(registerRemotesMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
+    expect(fx.registered).toHaveLength(registeredBefore);
+    expect(fx.requests).toHaveLength(requestedBefore);
   }),
 );
 
 it.live('does not load a remote when native registration fails', () =>
   Effect.gen(function* rejectsFailedNativeRegistration() {
-    registerRemotesMock.mockImplementationOnce(() => {
-      throw new Error('native registration unavailable');
-    });
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-
-    render(<ModuleTargetPage />);
+    const fx = yield* federation({ refusedRemotes: [resolvedModel.target.federation.remoteName] });
+    yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
+    expect(fx.registered).toEqual([]);
+    expect(fx.requests).toEqual([]);
   }),
 );
 
 it.live('ignores a previous remote load that settles after navigation to another approved target', () =>
   Effect.gen(function* ignoresStaleLoadAfterNavigation() {
-    const oldRemote = Promise.withResolvers<{ readonly default: () => ReactNode }>();
-    loadRemotePageMock.mockReturnValueOnce(oldRemote.promise);
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-    const view = render(<ModuleTargetPage />);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    const nextModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: { id: 'customer-2' },
-      target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
-    };
-    useLoaderDataMock.mockReturnValue(nextModel);
-
-    view.rerender(<ModuleTargetPage />);
-    yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:customer-2'));
-    yield* Effect.promise(() =>
-      act(async () => {
-        oldRemote.resolve({ default: () => <div>stale previous remote</div> });
-        await oldRemote.promise;
-      }),
-    );
-
-    expect(screen.queryByText('stale previous remote')).toBeNull();
-    expect(screen.getByText('contacts.core.page-customer-detail:customer-2')).toBeTruthy();
-    expect(remotePropsMock).not.toHaveBeenCalledWith({
-      routeParams: resolvedModel.routeParams,
-      target: resolvedModel.target,
+    const oldRemote = heldExpose();
+    const fx = yield* federation({
+      scripted: answeringOnce({ [exposeRequest(resolvedModel.target)]: Deferred.await(oldRemote) }),
     });
+    try {
+      const { show } = yield* renderModulePage(resolvedModel);
+      expect(yield* fx.nextRequest).toBe(exposeRequest(resolvedModel.target));
+      const nextModel: ResolvedPageModel = {
+        ...resolvedModel,
+        routeParams: { id: 'customer-2' },
+        target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
+      };
+
+      yield* show(nextModel);
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:customer-2'));
+      yield* settle(fx, exposeRequest(resolvedModel.target), oldRemote, { default: StaleRemoteComponent });
+
+      expect(screen.queryByText('stale previous remote')).toBeNull();
+      expect(screen.getByText('contacts.core.page-customer-detail:customer-2')).toBeTruthy();
+      expect(fx.renders).not.toContainEqual({ routeParams: resolvedModel.routeParams, target: resolvedModel.target });
+    } finally {
+      Deferred.doneUnsafe(oldRemote, Effect.succeed({ default: StaleRemoteComponent }));
+    }
   }),
 );
 
-it('suppresses a resolved remote owner when Shell document admission requires reload', () => {
-  reloadRequiredMock.mockReturnValue(true);
-  useLoaderDataMock.mockReturnValue(resolvedModel);
+/** The same resolution, composed for another release than the one this document admitted. */
+const otherReleaseModel: ResolvedPageModel = {
+  ...resolvedModel,
+  shell: { ...shell, compositionRevision: 'e'.repeat(64) },
+};
 
-  render(<ModuleTargetPage />);
+it.live('suppresses a resolved remote owner when Shell document admission requires reload', () =>
+  Effect.gen(function* suppressesOwnerForAnotherRelease() {
+    yield* pinDocumentCompositionRevision(resolvedModel.target.compositionRevision, document);
+    const fx = yield* federation();
 
-  expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
-  expect(getInstanceMock).not.toHaveBeenCalled();
-  expect(registerRemotesMock).not.toHaveBeenCalled();
-  expect(loadRemotePageMock).not.toHaveBeenCalled();
-  expect(remotePropsMock).not.toHaveBeenCalled();
-});
+    yield* renderModulePage(otherReleaseModel);
+
+    expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
+    expect(fx.registered).toEqual([]);
+    expect(fx.requests).toEqual([]);
+    expect(fx.renders).toEqual([]);
+  }),
+);
 
 it.live('unmounts an already loaded owner when current Shell admission requires reload', () =>
   Effect.gen(function* unmountsOwnerAfterAdmissionConflict() {
-    useLoaderDataMock.mockReturnValue(resolvedModel);
-    const view = render(<ModuleTargetPage />);
+    const fx = yield* federation();
+    const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
-    remotePropsMock.mockClear();
-    loadRemotePageMock.mockClear();
-    reloadRequiredMock.mockReturnValue(true);
+    const requestedBefore = fx.requests.length;
 
-    view.rerender(<ModuleTargetPage />);
+    expect(yield* executionsBeyond(fx, show, resolvedModel, otherReleaseModel)).toEqual([]);
 
     expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
     expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
-    expect(remotePropsMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
+    expect(fx.requests).toHaveLength(requestedBefore);
   }),
 );
 
-it('shows reload guidance for a Shell model rejected by document admission', () => {
-  useLoaderDataMock.mockReturnValue({
-    shell: { state: 'reload_required' },
-    state: 'reload_required',
-  } satisfies ModuleTargetPageModel);
+it.live('shows reload guidance for a Shell model rejected by document admission', () =>
+  Effect.gen(function* showsReloadGuidance() {
+    const fx = yield* federation();
+    yield* renderModulePage({
+      shell: { state: 'reload_required' },
+      state: 'reload_required',
+    } satisfies ModuleTargetPageModel);
 
-  render(<ModuleTargetPage />);
-
-  expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
-  expect(screen.queryByText('shell.moduleTarget.selection_required')).toBeNull();
-  expect(getInstanceMock).not.toHaveBeenCalled();
-  expect(registerRemotesMock).not.toHaveBeenCalled();
-  expect(loadRemotePageMock).not.toHaveBeenCalled();
-});
+    expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
+    expect(screen.queryByText('shell.moduleTarget.selection_required')).toBeNull();
+    expect(fx.registered).toEqual([]);
+    expect(fx.requests).toEqual([]);
+  }),
+);
 
 it.live('rejects an approved remote name that collides with the native Shell host', () =>
   Effect.gen(function* rejectsNativeHostIdentityCollision() {
-    useLoaderDataMock.mockReturnValue({
+    const fx = yield* federation();
+    yield* renderModulePage({
       ...resolvedModel,
       target: {
         ...resolvedModel.target,
-        federation: { ...resolvedModel.target.federation, remoteName: 'shellSuperApp' },
+        federation: { ...resolvedModel.target.federation, remoteName: shellHostName },
       },
     } satisfies ResolvedPageModel);
 
-    render(<ModuleTargetPage />);
-
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
-    expect(registerRemotesMock).not.toHaveBeenCalled();
-    expect(loadRemotePageMock).not.toHaveBeenCalled();
-    expect(remotePropsMock).not.toHaveBeenCalled();
+    expect(fx.registered).toEqual([]);
+    expect(fx.requests).toEqual([]);
+    expect(fx.renders).toEqual([]);
   }),
 );

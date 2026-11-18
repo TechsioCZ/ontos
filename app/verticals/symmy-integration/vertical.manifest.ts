@@ -21,6 +21,7 @@ import { SymmySyncAdmissionApi } from './shared/apis/symmy-sync-admission.ts';
 import { symmySyncAdmissionRead } from './src/api/symmy-sync-admission.read.ts';
 import { syncAdmissionResourceDescriptor } from './shared/resources/sync-admission.ts';
 // </generated-module-manifest-imports>
+import { symmyIntegrationRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const privacyModuleId = 'privacy.core' as const;
 const ownerOperationProviders = [
@@ -261,6 +262,7 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
       timelines: [],
     },
   },
+  registeredWorkloadCalls: symmyIntegrationRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [],
     intrinsic: [],

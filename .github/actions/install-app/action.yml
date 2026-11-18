@@ -52,7 +52,8 @@ runs:
     # packages into node_modules, in every job that installs; restoring the finished tree spends that once.
     #
     # The key is exact and carries NO prefix restore-keys: a half-restored dependency graph is a wrong
-    # answer, so a changed input must miss and install. It covers the pinned toolchain (app/.mise.toml),
+    # answer, so a changed input must miss and install. It covers this action's install code and arguments,
+    # the hosted runner's ImageOS and ImageVersion, the pinned toolchain (app/.mise.toml),
     # the resolution (app/pnpm-lock.yaml), the workspace settings that decide the SHAPE of the tree
     # (app/pnpm-workspace.yaml: packageImportMethod, enableGlobalVirtualStore, patchedDependencies), the
     # patches themselves, and every workspace manifest. The manifests are in the key so that the one thing
@@ -113,17 +114,25 @@ runs:
             positives+=("$glob")
           fi
         done <pnpm-workspace.yaml
-        excluded=' '
+        # One directory per line: a directory name may hold a space, never a newline.
+        excluded=$'\n'
         for glob in ${negatives[@]+"${negatives[@]}"}; do
           for manifest in $glob/package.json; do
-            excluded+="${manifest%/package.json} "
+            excluded+="${manifest%/package.json}"$'\n'
           done
         done
         directories=()
         for glob in ${positives[@]+"${positives[@]}"}; do
+          # pnpm also reads package.yaml and package.json5; this listing reads only package.json, so it refuses them.
+          for manifest in $glob/package.yaml $glob/package.json5; do
+            # A glob without a wildcard stays as written even when it names no file.
+            [[ -e "$manifest" ]] || continue
+            echo "::error::The install action reads only package.json manifests; app/pnpm-workspace.yaml matches $manifest."
+            exit 1
+          done
           for manifest in $glob/package.json; do
             directory="${manifest%/package.json}"
-            [[ "$excluded" == *" $directory "* || "/$directory/" == */node_modules/* ]] || directories+=("$directory")
+            [[ "$excluded" == *$'\n'"$directory"$'\n'* || "/$directory/" == */node_modules/* ]] || directories+=("$directory")
           done
         done
         if [[ "${#directories[@]}" == '0' ]]; then
@@ -138,10 +147,19 @@ runs:
           echo 'EOF'
           echo 'paths<<EOF'
           printf '%s\n' app/node_modules '!app/node_modules/.cache'
-          sed 's|.*|app/&/node_modules|' <<<"$packages"
+          # actions/cache reads each path as a glob: [ * ? in a directory name are bracketed to match literally.
+          sed -e 's/[[*?]/[&]/g' -e 's|.*|app/&/node_modules|' <<<"$packages"
           echo 'EOF'
           echo "manifests=${manifests%% *}"
         } >>"$GITHUB_OUTPUT"
+
+    - name: Name the installed workspace
+      id: workspace-key
+      if: inputs.restore-node-modules == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "key=pnpm-workspace-${{ runner.os }}-${{ runner.arch }}-${ImageOS:?}-${ImageVersion:?}-${{ hashFiles('.github/actions/install-app/action.yml', 'app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/package.json', 'app/patches/**') }}-${{ steps.packages.outputs.manifests }}" >>"$GITHUB_OUTPUT"
 
     - name: Restore the installed workspace
       id: workspace
@@ -149,7 +167,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.packages.outputs.paths }}
-        key: pnpm-workspace-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/package.json', 'app/patches/**') }}-${{ steps.packages.outputs.manifests }}
+        key: ${{ steps.workspace-key.outputs.key }}
 
     # A restored tree is used only if it resolves: the virtual store and pnpm's own state file are present
     # and no dependency link of the root or of a workspace package dangles. Anything else is removed and

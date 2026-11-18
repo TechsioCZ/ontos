@@ -7,6 +7,7 @@ import type { ComponentType } from 'react';
 
 import type { ResolvedModuleTarget } from '../../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { reportModuleEntrypointFailure } from '../../../../module-diagnostics.ts';
 import {
   moduleEntrypointLoadIdentity,
   ModuleEntrypointNamespaceSchema,
@@ -69,7 +70,9 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
           }
           const host = getInstance((instance) => instance.name === 'shellSuperApp');
           if (host === undefined || host === null) {
-            return Effect.succeed<RemoteState>({ reason: 'unavailable', state: 'unavailable' });
+            return reportModuleEntrypointFailure(moduleEntrypointLoadIdentity(model.target).owner, 'initialization', {
+              message: 'Federation host shellSuperApp is unavailable',
+            }).pipe(Effect.as<RemoteState>({ reason: 'unavailable', state: 'unavailable' }));
           }
           const { federation } = model.target;
           if (federation.remoteName === host.name) {
@@ -104,6 +107,9 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
             }),
           );
         }),
+        Effect.tapError((failure) =>
+          reportModuleEntrypointFailure(moduleEntrypointLoadIdentity(model.target).owner, 'initialization', failure),
+        ),
         Effect.catchTags({
           BrowserModuleRevisionConflict: () =>
             Effect.succeed<RemoteState>({ reason: 'reload_required', state: 'unavailable' }),
@@ -141,7 +147,7 @@ interface ModuleTargetViewProps {
   readonly initialModel: ModuleTargetPageModel;
 }
 
-// Framework integration adapter: raw error and boundary.reset are intentionally unused.
+// Framework integration adapter: the boundary reports the error through onCatch.
 const ModuleRenderError = () => {
   const navigate = useNavigate();
   const handleReload = () => {
@@ -177,6 +183,15 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
       <CatchBoundary
         errorComponent={ModuleRenderError}
         getResetKey={() => moduleEntrypointLoadIdentity(model.target).result}
+        onCatch={(error) => {
+          void browserRuntime.runPromiseExit(
+            reportModuleEntrypointFailure(
+              moduleEntrypointLoadIdentity(model.target).owner,
+              'render',
+              Schema.is(Schema.ErrorInstance())(error) ? error : { message: 'Remote render threw a non-Error value' },
+            ),
+          );
+        }}
       >
         <ResolvedTarget model={model} />
       </CatchBoundary>

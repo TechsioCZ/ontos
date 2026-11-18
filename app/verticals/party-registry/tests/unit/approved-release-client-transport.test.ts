@@ -1,3 +1,5 @@
+// @rstest-environment happy-dom
+// @rstest-environment-options {"url":"https://shell.example/en"}
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -7,30 +9,8 @@ import { loadCounterpartiesClient } from '../../src/api/counterparties-search-cl
 
 it.effect('the issuer release overrides caller transport options on every generated client attempt', () =>
   Effect.gen(function* approvedReleaseClientTransport() {
-    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-    const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (previousDocument === undefined) {
-          Reflect.deleteProperty(globalThis, 'document');
-        } else {
-          Object.defineProperty(globalThis, 'document', previousDocument);
-        }
-        if (previousLocation === undefined) {
-          Reflect.deleteProperty(globalThis, 'location');
-        } else {
-          Object.defineProperty(globalThis, 'location', previousLocation);
-        }
-      }),
-    );
-    Object.defineProperty(globalThis, 'document', {
-      configurable: true,
-      value: { querySelectorAll: () => [] },
-    });
-    Object.defineProperty(globalThis, 'location', {
-      configurable: true,
-      value: { origin: 'https://shell.example', pathname: '/en' },
-    });
+    // The browser document the generated client runs in, at the Shell origin it was served from.
+    expect(globalThis.location.origin).toBe('https://shell.example');
     const compositionRevision = 'a'.repeat(64);
     const apiBaseUrl = '/module-api/party-registry/build-approved/party-registry-api';
     yield* pinDocumentCompositionRevision(compositionRevision);

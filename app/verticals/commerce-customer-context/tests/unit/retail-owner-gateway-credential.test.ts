@@ -1,31 +1,10 @@
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { Crypto, Effect, Redacted, Result, Schema } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
-
-import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
+import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
+import { ConfigProvider, Crypto, Effect, Redacted, Result, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { expect, it } from 'effect-rstest';
 
 import { acquireRetailOwnerCredential } from '../../src/enrollment/journeys/retail-owner-gateway-credential.ts';
-
-interface DelegatedState {
-  readonly requests: GatewayDelegationRequest[];
-  token: string;
-}
-const delegated = rs.hoisted((): DelegatedState => ({ requests: [], token: '' }));
-rs.mock('@app/shared-contracts/gateway-context-server', () => ({
-  acquireDelegatedGatewayContext: (request: GatewayDelegationRequest) => {
-    delegated.requests.push(request);
-    return Effect.succeed({
-      apiBaseUrl: 'https://shell.example.test/party-registry-api',
-      authorization: `Bearer ${delegated.token}`,
-      compositionRevision: 'c'.repeat(64),
-      expiresAt: 1_700_000_300,
-    });
-  },
-  GatewayDelegationSourceError: class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDelegationSourceError>()(
-    'GatewayDelegationSourceError',
-    { reason: Schema.String },
-  ) {},
-}));
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -69,6 +48,45 @@ type AssertionClaims = ReturnType<typeof claimsFor>;
 const tokenFor = (claims: AssertionClaims) =>
   `header.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`;
 
+const delegatedPath = '/shell-super-app-api/auth/delegated/gateway-context';
+const shellConfiguration = ConfigProvider.fromUnknown({
+  ONTOS_GATEWAY_MODULE_API_KEY: 'ccc-fixture-module-key',
+  ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+});
+
+/**
+ * The actual delegated Shell client runs against this fake Shell peer, which answers every delegation with
+ * the Party Registry base path and the scripted assertion as its bearer.
+ */
+const acquireWith = (token: string, input: Parameters<typeof acquireRetailOwnerCredential>[0]) => {
+  const requests: Request[] = [];
+  const fetch: typeof globalThis.fetch = (url, init) => {
+    const sent = new Request(url, init);
+    requests.push(sent);
+    return Promise.resolve(
+      new URL(sent.url).pathname === delegatedPath
+        ? Response.json({
+            apiBaseUrl: '/party-registry-api',
+            compositionRevision,
+            expiresAt: 1_700_000_300,
+            token,
+          })
+        : Response.json({ detail: 'Unknown route' }, { status: 404 }),
+    );
+  };
+  return acquireRetailOwnerCredential(input).pipe(
+    Effect.provideService(ConfigProvider.ConfigProvider, shellConfiguration),
+    Effect.provideService(FetchHttpClient.Fetch, fetch),
+    Effect.map((owner) => ({ owner, requests })),
+  );
+};
+
+/** A delegation the actual client sent, decoded as the Shell reads it. */
+const readDelegation = (sent: Request) =>
+  Effect.promise(() => sent.clone().text()).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(GatewayDelegatedContextRequestSchema))),
+  );
+
 const request = {
   audience: 'party-registry' as const,
   crypto,
@@ -79,24 +97,27 @@ const request = {
 
 it.effect('acts for the originator and accepts an assertion issued to this module for the Attempt scope', () =>
   Effect.gen(function* acceptsAttemptScope() {
-    delegated.token = tokenFor(claimsFor());
-    const owner = yield* acquireRetailOwnerCredential(request);
+    const token = tokenFor(claimsFor());
+    const { owner, requests } = yield* acquireWith(token, request);
     expect(owner.baseUrl.pathname).toBe('/party-registry-api');
-    expect(Redacted.value(owner.credential)).toBe(`Bearer ${delegated.token}`);
-    expect(delegated.requests.at(-1)).toMatchObject({
-      audience: 'party-registry',
-      legalEntityScope: 'subject',
-      requestCorrelation: 'enrollment-owner-test',
-      subject: { _tag: 'Originator', actionInvocationId, compositionRevision, legalEntityId, tenantId },
-    });
+    expect(Redacted.value(owner.credential)).toBe(`Bearer ${token}`);
+    const delegated = requests.filter((sent) => new URL(sent.url).pathname === delegatedPath);
+    expect(delegated.map((sent) => sent.headers.get('x-correlation-id'))).toEqual(['enrollment-owner-test']);
+    expect(yield* Effect.all(delegated.map((sent) => readDelegation(sent)))).toMatchObject([
+      {
+        audience: 'party-registry',
+        compositionRevision,
+        legalEntityScope: 'subject',
+        subject: { _tag: 'Originator', actionInvocationId, legalEntityId, tenantId },
+      },
+    ]);
   }),
 );
 
 it.effect('refuses an assertion issued for another Legal Entity than the Attempt names', () =>
   Effect.gen(function* refusesOtherLegalEntity() {
-    delegated.token = tokenFor(claimsFor());
     const failure = yield* Effect.result(
-      acquireRetailOwnerCredential({ ...request, legalEntityId: '20000000-0000-4000-8000-000000000009' }),
+      acquireWith(tokenFor(claimsFor()), { ...request, legalEntityId: '20000000-0000-4000-8000-000000000009' }),
     );
     expect(Result.isFailure(failure)).toBe(true);
   }),
@@ -104,16 +125,16 @@ it.effect('refuses an assertion issued for another Legal Entity than the Attempt
 
 it.effect('refuses an assertion whose calling module is not Commerce Customer Context', () =>
   Effect.gen(function* refusesOtherCaller() {
-    delegated.token = tokenFor(claimsFor({ act: 'pricing' }));
-    const failure = yield* Effect.result(acquireRetailOwnerCredential(request));
+    const failure = yield* Effect.result(acquireWith(tokenFor(claimsFor({ act: 'pricing' })), request));
     expect(Result.isFailure(failure)).toBe(true);
   }),
 );
 
 it.effect('refuses an assertion issued for another Tenant than the originator', () =>
   Effect.gen(function* refusesOtherTenant() {
-    delegated.token = tokenFor(claimsFor({ tenant: '10000000-0000-4000-8000-000000000009' }));
-    const failure = yield* Effect.result(acquireRetailOwnerCredential(request));
+    const failure = yield* Effect.result(
+      acquireWith(tokenFor(claimsFor({ tenant: '10000000-0000-4000-8000-000000000009' })), request),
+    );
     expect(Result.isFailure(failure)).toBe(true);
   }),
 );

@@ -23,31 +23,11 @@ import {
 import type { C14PolicyFixtureOwner } from './symmy-c14-product-runtime.mts';
 
 const assortmentCurrentnessWorkload = 'commerce.assortment.symmy-fixture-currentness';
-const assortmentCurrentnessReceivers = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.assortment-product-classification-v1.read',
-    entrypointKey: 'commerce.catalog.api.assortment-product-classification-v1',
-    legalEntityScope: 'forbidden',
-  },
-  {
-    audience: 'commerce-customer-context',
-    declarationKey: 'commerce.customer-context.customer-group.read',
-    entrypointKey: 'commerce.customer-context.api.customer-group-detail',
-    legalEntityScope: 'required',
-  },
-  {
-    audience: 'commerce-market-catalog',
-    declarationKey: 'commerce.market-catalog.assortment-fixture-market-association.read',
-    entrypointKey: 'commerce.market-catalog.api.assortment-fixture-market-association',
-    legalEntityScope: 'required',
-  },
-  {
-    audience: 'storefront-registry',
-    declarationKey: 'commerce.storefront-registry.storefront-application.read-current',
-    entrypointKey: 'commerce.storefront-registry.api.current-storefront-application',
-    legalEntityScope: 'optional',
-  },
+const assortmentCurrentnessAudiences = [
+  'catalog',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+  'storefront-registry',
 ] as const;
 const workerKey = 'integration.symmy.execute-symmy-job';
 
@@ -103,29 +83,25 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   Failure,
   Requirements,
 >({
-  declarationKey,
   initializeScopes,
   lifecyclePolicy,
-  operation,
   owner,
   workloadKey,
 }: {
-  readonly declarationKey: string;
   readonly initializeScopes: (scope: FixtureScope) => Effect.Effect<void, Failure, Requirements>;
   readonly lifecyclePolicy: { readonly policyId: string; readonly revision: string };
-  readonly operation: { readonly entrypointKey: string; readonly schemaVersion: string };
   readonly owner: C14PolicyFixtureOwner;
   readonly workloadKey: string;
 }) {
-  const receiverAudiences = owner === 'assortment' ? assortmentCurrentnessReceivers : [];
+  const receiverAudiences = owner === 'assortment' ? assortmentCurrentnessAudiences : [];
   const allocatedPorts = yield* nativePortList(2 + receiverAudiences.length);
   const [ownerPort, symmyPort] = allocatedPorts;
   assert.isDefined(ownerPort);
   assert.isDefined(symmyPort);
-  const currentnessReceivers = receiverAudiences.map((receiver, index) => {
+  const currentnessReceivers = receiverAudiences.map((audience, index) => {
     const port = allocatedPorts[index + 2];
     assert.isDefined(port);
-    return { ...receiver, port };
+    return { audience, port };
   });
   const { contracts, snapshot } = yield* productComposition(
     {
@@ -148,36 +124,11 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
     ...(owner === 'assortment' && {
-      additionalRelaySources: [
-        {
-          registeredWorkloads: assortmentCurrentnessReceivers.map((receiver) => ({
-            ...receiver,
-            jobKey: workerKey,
-            schemaVersion: '1',
-            sourceWorkloadKey: workloadKey,
-            workloadKey: assortmentCurrentnessWorkload,
-          })),
-          sourceAppId: 'assortment' as const,
-        },
-      ],
+      additionalRelaySources: [{ sourceAppId: 'assortment' as const }],
     }),
     ownedDatabase: isolated,
     productionGate: true,
-    relaySource: {
-      registeredWorkloads: [
-        {
-          audience: owner,
-          declarationKey,
-          entrypointKey: operation.entrypointKey,
-          jobKey: workerKey,
-          legalEntityScope: 'required',
-          schemaVersion: operation.schemaVersion,
-          workerKey,
-          workloadKey,
-        },
-      ],
-      sourceAppId: 'symmy-integration',
-    },
+    relaySource: { sourceAppId: 'symmy-integration' },
     snapshotJson: yield* encodeProductComposition(snapshot),
   });
 

@@ -1,145 +1,107 @@
 import { toaster } from '@techsio/ui-kit/molecules/toast';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Redacted } from 'effect';
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+import { Effect, Latch, Redacted, Schema } from 'effect';
+import { afterEach, expect, it, rstest } from 'effect-rstest';
 
+import { SignInResponseSchema } from '../../../../shared/browser-api.ts';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
-import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
-  rstest: 'importActual',
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
+import { makeShellBff } from '../../../support/shell-bff-double.ts';
+import { shellTestCopy } from '../../../support/shell-i18n.tsx';
+import type { ShellLanguage } from '../../../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../../../support/shell-router.tsx';
+import type { ShellRouter } from '../../../support/shell-router.tsx';
+
+const copy = {
+  'shell.login.back': '← Back to the home page',
+  'shell.login.field.login': 'Login',
+  'shell.login.field.password': 'Password',
+  'shell.login.pending': 'Signing in…',
+  'shell.login.required.login': 'Enter your login.',
+  'shell.login.required.password': 'Enter your password.',
+  'shell.login.submit': 'Login',
+  'shell.login.title': 'Login',
+  'shell.login.toast.description': 'Fill in both required fields.',
+  'shell.login.toast.title': 'Login details are incomplete',
 };
-import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
-import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
-const { browserRunPromiseMock, invalidateMock, languageState, localizedLinkCalls, navigateMock, signInMock } =
-  rstest.hoisted(() => {
-    const recordedLinkCalls: LocalizedLinkCall[] = [];
-    return {
-      browserRunPromiseMock: rstest.fn(),
-      invalidateMock: rstest.fn(),
-      languageState: { current: 'en' },
-      localizedLinkCalls: recordedLinkCalls,
-      navigateMock: rstest.fn(),
-      signInMock: rstest.fn(),
-    };
-  });
-
-beforeEach(() => {
-  invalidateMock.mockImplementation(() => Promise.resolve());
-  navigateMock.mockImplementation(() => Promise.resolve());
-  browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
-  signInMock.mockReturnValue(
-    Effect.succeed({
-      identity: {
-        displayName: 'Ada',
-        email: 'ada@example.test',
-        principalId: 'principal-1',
-        tenantId: 'tenant-1',
-      },
-    }),
-  );
+const signedIn = Schema.decodeUnknownSync(SignInResponseSchema)({
+  identity: {
+    displayName: 'Ada',
+    email: 'ada@example.test',
+    principalId: 'principal-1',
+    tenantId: 'tenant-1',
+  },
 });
 
-const translations = new Map(
-  Object.entries({
-    'shell.login.back': '← Back to the home page',
-    'shell.login.field.login': 'Login',
-    'shell.login.field.password': 'Password',
-    'shell.login.required.login': 'Enter your login.',
-    'shell.login.required.password': 'Enter your password.',
-    'shell.login.submit': 'Login',
-    'shell.login.title': 'Login',
-    'shell.login.toast.description': 'Fill in both required fields.',
-    'shell.login.toast.title': 'Login details are incomplete',
-  }),
-);
+/**
+ * The Shell BFF that accepts the sign-in this file submits. With a gate, the answer waits until the
+ * test opens it, so the test can read the form as the submission left it before the page navigates.
+ */
+const signInBff = (gate?: Latch.Latch) =>
+  makeShellBff({
+    signIn: () => (gate === undefined ? Effect.succeed(signedIn) : gate.await.pipe(Effect.as(signedIn))),
+  });
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: (props: LocalizedLinkDoubleProps) =>
-    renderLocalizedLinkDouble(props, {
-      calls: localizedLinkCalls,
-      language: languageState,
-    }),
-  useLocalizedLocation: () => ({
-    alternates: {
-      cs: '/cs/login',
-      en: '/en/login',
-    },
-    canonical: '/en/login',
-  }),
-  useModernI18n: () => ({
-    language: languageState.current,
-    t: (key: string) => translations.get(key) ?? key,
-  }),
-}));
-
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useNavigate: () => navigateMock,
-  useRouter: () => ({ invalidate: invalidateMock }),
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  signIn: signInMock,
-}));
-
-rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock },
-}));
+/** The login route of a real router, in the given language. */
+const loginRouter = (language: ShellLanguage = 'en') =>
+  makeShellRouter({ page: { component: LoginPage, path: 'login' }, url: `/${language}/login` });
+const renderLogin = (router: ShellRouter = loginRouter(), language: ShellLanguage = 'en') =>
+  renderShellRoute(router, shellTestCopy(language, copy));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
-
-const renderLogin = () => render(<LoginPage />);
+/** The submit control, idle or announcing the sign-in it started. */
+const getSubmitControl = () => screen.getByRole('button', { name: /^(?:Login|Signing in…)$/u });
 
 afterEach(() => {
   cleanup();
-  languageState.current = 'en';
-  localizedLinkCalls.length = 0;
   toaster.remove();
-  rstest.unstubAllGlobals();
-  rstest.clearAllMocks();
 });
 
-it('shows the required login controls through the UI kit', () => {
-  render(<LoginPage />);
+it.effect('shows the required login controls through the UI kit', () =>
+  Effect.gen(function* requiredControls() {
+    yield* renderLogin();
 
-  const login = getLogin();
-  const password = getPassword();
-  const submit = getSubmit();
+    const login = getLogin();
+    const password = getPassword();
+    const submit = getSubmit();
 
-  expect(login.getAttribute('name')).toBe('login');
-  expect(login.getAttribute('autocomplete')).toBe('username');
-  expect(login.hasAttribute('required')).toBe(true);
-  expect(password.getAttribute('name')).toBe('password');
-  expect(password.getAttribute('type')).toBe('password');
-  expect(password.getAttribute('autocomplete')).toBe('current-password');
-  expect(password.hasAttribute('required')).toBe(true);
-  expect(submit.getAttribute('type')).toBe('submit');
-  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/en');
-});
+    expect(login.getAttribute('name')).toBe('login');
+    expect(login.getAttribute('autocomplete')).toBe('username');
+    expect(login.hasAttribute('required')).toBe(true);
+    expect(password.getAttribute('name')).toBe('password');
+    expect(password.getAttribute('type')).toBe('password');
+    expect(password.getAttribute('autocomplete')).toBe('current-password');
+    expect(password.hasAttribute('required')).toBe(true);
+    expect(submit.getAttribute('type')).toBe('submit');
+    expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/en');
+  }),
+);
 
-it('the back link hands the canonical home target to the framework link', () => {
-  renderLogin();
+it.effect('the back link resolves Czech from the same canonical target', () =>
+  Effect.gen(function* czechBackLink() {
+    yield* renderLogin(loginRouter('cs'), 'cs');
 
-  const homeCall = localizedLinkCalls.find((call) => call.to === '/');
-  expect(homeCall).toBeDefined();
-  expect(homeCall?.params).toBeUndefined();
-  expect(homeCall?.href).toBeUndefined();
-});
+    expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/cs');
+  }),
+);
 
-it('the back link resolves Czech from the same canonical target', () => {
-  languageState.current = 'cs';
-  renderLogin();
+/** Every Effect the page has handed to the browser runtime, settled. */
+const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly { readonly value: unknown }[] } }) =>
+  Effect.promise(() => Promise.allSettled(runs.mock.results.map((result) => result.value)));
 
-  expect(localizedLinkCalls.map((call) => call.to)).toContain('/');
-  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/cs');
-});
-
-const submitLogin = (login: string, password: string) =>
+/**
+ * Renders the login route and submits the given values. The page's own Effects are observed, so a
+ * test that submits valid values can await the sign-in it started before the test scope closes.
+ */
+const submitLogin = (login: string, password: string, router: ShellRouter = loginRouter()) =>
   Effect.gen(function* submitLoginEffect() {
     const user = userEvent.setup();
-    renderLogin();
+    const runs = rstest.spyOn(browserRuntime, 'runPromise');
+    yield* renderLogin(router);
     if (login.length > 0) {
       yield* Effect.promise(() => user.type(getLogin(), login));
     }
@@ -147,7 +109,7 @@ const submitLogin = (login: string, password: string) =>
       yield* Effect.promise(() => user.type(getPassword(), password));
     }
     yield* Effect.promise(() => user.click(getSubmit()));
-    return user;
+    return { runs, user };
   });
 
 interface LoginValidationCase {
@@ -162,7 +124,7 @@ interface LoginValidationCase {
 const focusTargets = {
   login: getLogin,
   password: getPassword,
-  submit: getSubmit,
+  submit: getSubmitControl,
 };
 
 const validationCases: LoginValidationCase[] = [
@@ -212,22 +174,30 @@ it.effect.each(validationCases)(
   'marks, explains and focuses exactly the missing fields when $name',
   ({ focus, login, loginInvalid, password, passwordInvalid }) =>
     Effect.gen(function* marksExplainsAndFocusesTheMissingFields() {
-      yield* submitLogin(login, password);
+      const answered = yield* Latch.make();
+      const bff = signInBff(answered);
+      yield* Effect.gen(function* submitAndRead() {
+        const { runs } = yield* submitLogin(login, password);
 
-      const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
-      expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
-      expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
-      expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
-      expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
-      expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
-      expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
-      expect(document.activeElement).toBe(focusTargets[focus]());
+        const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
+        expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
+        expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
+        expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
+        expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
+        expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
+        expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
+        expect(document.activeElement).toBe(focusTargets[focus]());
+        // Only a complete submission reaches the authentication client.
+        yield* answered.open;
+        yield* pageEffectsSettled(runs);
+        expect(bff.requests).toHaveLength(incompleteToasts === 0 ? 1 : 0);
+      }).pipe(Effect.provide(bff.browser));
     }),
 );
 
 it.effect('creates one Toast per repeated invalid submission', () =>
   Effect.gen(function* createsOneToastPerRepeatedInvalidSubmission() {
-    const user = yield* submitLogin('', '');
+    const { user } = yield* submitLogin('', '');
 
     yield* Effect.promise(() => user.click(getSubmit()));
     expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
@@ -237,22 +207,29 @@ it.effect('creates one Toast per repeated invalid submission', () =>
 
 it.effect('clears stale errors after both fields are corrected', () =>
   Effect.gen(function* clearsStaleErrorsAfterBothFieldsCorrected() {
-    const user = yield* submitLogin('', '');
+    const answered = yield* Latch.make();
+    const bff = signInBff(answered);
+    yield* Effect.gen(function* correctAndResubmit() {
+      const { runs, user } = yield* submitLogin('', '');
 
-    yield* Effect.promise(() => user.type(getLogin(), 'admin'));
-    yield* Effect.promise(() => user.type(getPassword(), 'secret'));
-    yield* Effect.promise(() => user.click(getSubmit()));
-    expect(getLogin().getAttribute('aria-invalid')).toBeNull();
-    expect(getPassword().getAttribute('aria-invalid')).toBeNull();
-    expect(screen.queryByText('Enter your login.')).toBeNull();
-    expect(screen.queryByText('Enter your password.')).toBeNull();
+      yield* Effect.promise(() => user.type(getLogin(), 'admin'));
+      yield* Effect.promise(() => user.type(getPassword(), 'secret'));
+      yield* Effect.promise(() => user.click(getSubmit()));
+      expect(getLogin().getAttribute('aria-invalid')).toBeNull();
+      expect(getPassword().getAttribute('aria-invalid')).toBeNull();
+      expect(screen.queryByText('Enter your login.')).toBeNull();
+      expect(screen.queryByText('Enter your password.')).toBeNull();
+      yield* answered.open;
+      yield* pageEffectsSettled(runs);
+      expect(bff.requests.map((received) => received.endpoint)).toEqual(['signIn']);
+    }).pipe(Effect.provide(bff.browser));
   }),
 );
 
 it.effect('runs the same validation when submitted with Enter', () =>
   Effect.gen(function* runsTheSameValidationWhenSubmittedWithEnter() {
     const user = userEvent.setup();
-    renderLogin();
+    yield* renderLogin();
 
     yield* Effect.promise(() => user.click(getLogin()));
     yield* Effect.promise(() => user.keyboard('{Enter}'));
@@ -263,57 +240,57 @@ it.effect('runs the same validation when submitted with Enter', () =>
   }),
 );
 
-it.effect('submits valid values through the Shell authentication client and navigates home', () =>
-  Effect.gen(function* submitsValidValuesThroughShellAuthClient() {
-    yield* submitLogin('admin', 'secret');
+it.effect('submits valid values through the Shell authentication client and navigates home', () => {
+  const bff = signInBff();
+  return Effect.gen(function* submitsValidValuesThroughShellAuthClient() {
+    const router = loginRouter();
+    const invalidations = rstest.spyOn(router, 'invalidate');
+    const navigations = rstest.spyOn(router, 'navigate');
+    const { runs } = yield* submitLogin('admin', 'secret', router);
+    yield* pageEffectsSettled(runs);
 
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(signInMock).toHaveBeenCalledWith(
-          {
-            email: 'admin',
-            password: Redacted.make('secret'),
-          },
-          { locale: 'en' },
-        );
-        expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
-        expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
-        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-        expect(getSubmit().hasAttribute('disabled')).toBe(false);
-        expect(screen.queryByText('shell.login.error.internal')).toBeNull();
-        expect(screen.queryByText('Login details are incomplete')).toBeNull();
-      }),
-    );
-  }),
-);
+    expect(runs).toHaveBeenCalledTimes(1);
+    expect(bff.requests).toHaveLength(1);
+    expect(bff.requests[0]).toMatchObject({ acceptLanguage: 'en', endpoint: 'signIn' });
+    expect(bff.requests[0]?.body).toEqual({ email: 'admin', password: Redacted.make('secret') });
+    expect(invalidations).toHaveBeenCalledWith({ sync: true });
+    expect(navigations).toHaveBeenCalledWith(expect.objectContaining({ to: '/en/' }));
+    // The router normalises the home target without its trailing slash.
+    expect(router.state.location.pathname).toBe('/en');
+    expect(screen.queryByText('shell.login.error.internal')).toBeNull();
+    expect(screen.queryByText('Login details are incomplete')).toBeNull();
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.effect('reports navigation failure and restores the login form after authentication', () =>
-  Effect.gen(function* reportsNavigationFailure() {
-    navigateMock.mockRejectedValueOnce('Navigation failed');
-    yield* submitLogin('admin', 'secret');
+it.effect('reports navigation failure and restores the login form after authentication', () => {
+  const bff = signInBff();
+  return Effect.gen(function* reportsNavigationFailure() {
+    const router = loginRouter();
+    const navigations = rstest.spyOn(router, 'navigate').mockRejectedValueOnce('Navigation failed');
+    const { runs } = yield* submitLogin('admin', 'secret', router);
+    yield* pageEffectsSettled(runs);
 
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-        expect(getSubmit().hasAttribute('disabled')).toBe(false);
-        expect(document.activeElement).toBe(getLogin());
-      }),
-    );
-  }),
-);
+    expect(navigations).toHaveBeenCalledWith(expect.objectContaining({ to: '/en/' }));
+    expect(router.state.location.pathname).toBe('/en/login');
+    expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+    expect(getSubmit().hasAttribute('disabled')).toBe(false);
+    expect(document.activeElement).toBe(getLogin());
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.effect('keeps navigation on the login route when auth cache refresh fails', () =>
-  Effect.gen(function* reportsAuthenticationRefreshFailure() {
-    invalidateMock.mockRejectedValueOnce('Route refresh failed');
-    yield* submitLogin('admin', 'secret');
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
-        expect(navigateMock).not.toHaveBeenCalled();
-        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-        expect(getSubmit().hasAttribute('disabled')).toBe(false);
-      }),
-    );
-  }),
-);
+it.effect('keeps navigation on the login route when auth cache refresh fails', () => {
+  const bff = signInBff();
+  return Effect.gen(function* reportsAuthenticationRefreshFailure() {
+    const router = loginRouter();
+    const invalidations = rstest.spyOn(router, 'invalidate').mockRejectedValueOnce('Route refresh failed');
+    const navigations = rstest.spyOn(router, 'navigate');
+    const { runs } = yield* submitLogin('admin', 'secret', router);
+    yield* pageEffectsSettled(runs);
+
+    expect(invalidations).toHaveBeenCalledWith({ sync: true });
+    expect(navigations).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe('/en/login');
+    expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+    expect(getSubmit().hasAttribute('disabled')).toBe(false);
+  }).pipe(Effect.provide(bff.browser));
+});

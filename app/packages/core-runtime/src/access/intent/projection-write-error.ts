@@ -26,6 +26,7 @@ export type AccessProjectionWriteErrorCode = typeof AccessProjectionWriteErrorCo
 export class AccessProjectionWriteError extends Schema.TaggedError<AccessProjectionWriteError>()(
   'AccessProjectionWriteError',
   {
+    cause: Schema.optionalKey(Schema.Unknown),
     code: AccessProjectionWriteErrorCodeSchema,
     reason: Schema.String,
     /** The compiler's own refusals, in its order; absent when the failure is not a plan violation. */
@@ -51,8 +52,10 @@ export const projectionWriteRefusal = (
 export const projectionWriteViolation = (
   code: AccessProjectionWriteErrorCode,
   reasons: readonly string[],
+  cause?: unknown,
 ): AccessProjectionWriteError => {
   const [first] = reasons;
-  const base = { code, reason: first ?? 'The projection of this tenant was refused' };
+  const reason = { code, reason: first ?? 'The projection of this tenant was refused' };
+  const base = cause === undefined ? reason : { ...reason, cause };
   return new AccessProjectionWriteError(reasons.length > 1 ? { ...base, violations: [...reasons] } : base);
 };
