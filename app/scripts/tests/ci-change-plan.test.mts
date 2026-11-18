@@ -83,7 +83,7 @@ const REQUIRED_GATES = [
   'workspace-gate',
   'workspace-unit',
 ];
-const packages = [
+const owners = [
   { dependencies: [], directory: CATALOG_DIRECTORY, name: CATALOG },
   { dependencies: [CATALOG], directory: PRICING_DIRECTORY, name: PRICING },
   { dependencies: [], directory: PRIVACY_DIRECTORY, name: PRIVACY },
@@ -93,6 +93,15 @@ const packages = [
   { dependencies: [], directory: 'verticals/storefront-registry', name: '@app/storefront-registry' },
   { dependencies: [], directory: 'verticals/commerce-market-catalog', name: '@app/commerce-market-catalog' },
   { dependencies: [], directory: 'verticals/commerce-customer-context', name: CUSTOMER_CONTEXT },
+];
+/** The owners above plus every other directory a template task runs in: each task names a package, as on this trunk. */
+const packages = [
+  ...owners,
+  ...[
+    ...new Set(templates.integration.flatMap(({ tasks }) => tasks ?? []).flatMap((task) => taskDirectory(task) ?? [])),
+  ]
+    .filter((directory) => !owners.some((owner) => owner.directory === directory))
+    .map((directory) => ({ dependencies: [], directory, name: `@app/${path.basename(directory)}` })),
 ];
 
 const PACKAGE_MANIFEST = 'package.json';
@@ -362,7 +371,14 @@ it('rejects incomplete full matrices and widens an unrunnable task form', () => 
     }),
   ).toBe(false);
   // The dependency-free planner reads authored JSON without the schema, so it widens on its own.
-  for (const task of ['@app/pricing...', './verticals/catalog#one', 'whole:invented']) {
+  // A runnable form naming a directory that is no workspace package widens too, instead of matching nothing.
+  for (const task of [
+    '@app/pricing...',
+    './verticals/catalog#one',
+    'whole:invented',
+    './sites/missing#1/2',
+    './verticals/missing',
+  ]) {
     expect(
       planCiChecks({
         changedPaths: [CATALOG_SOURCE],
