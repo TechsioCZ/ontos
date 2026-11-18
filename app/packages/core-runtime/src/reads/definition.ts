@@ -567,6 +567,9 @@ export interface ReadLoadStep<
   readonly load: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
 }
 
+/** The context of a handler written as `{ load: handler }`: the context the bare handler gets. */
+export type ReadLoadContext<Services> = ReadHandlerContext<Services>;
+
 export interface ReadDescriptorValidationInput {
   readonly accessActor?: AccessActorInput;
   readonly accessDeclaration?: AccessDeclarationInput;
@@ -958,7 +961,14 @@ const readHandlerOf = <
       `Read ${readKey}: { load } must hold the read handler as its only own enumerable data property`,
     );
   }
-  return definition.load;
+  // One read of the property, and it has to give the function the descriptor showed.
+  const handler = definition.load;
+  if (handler !== load.value) {
+    return failReadDefinition(
+      `Read ${readKey}: { load } must hold the read handler as its only own enumerable data property`,
+    );
+  }
+  return handler;
 };
 
 export const defineRead = <

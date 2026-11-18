@@ -42,9 +42,6 @@ export interface ReadHandlerContext<Services> {
   readonly services: Services;
 }
 
-/** The context of a read handler written as `{ load: handler }`: the same context the bare handler gets. */
-export type ReadLoadContext<Services> = ReadHandlerContext<Services>;
-
 export interface ReadHandlerResult<Result> {
   readonly evidence: ReadEvidenceMetadata;
   readonly result: Result;
