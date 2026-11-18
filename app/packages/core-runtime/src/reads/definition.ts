@@ -564,20 +564,6 @@ export type ReadHandler<
   context: ReadHandlerContext<Services>,
 ) => Effect.Effect<ReadHandlerResult<ResultSchema['Type']>, Error, Requirements>;
 
-/**
- * The same read handler written as `{ load: handler }`. It is only another spelling: `defineRead`
- * unwraps it once, at definition, and from there the handler runs exactly as the bare one does.
- */
-export interface ReadLoadStep<
-  InputSchema extends Schema.ConstraintDecoder<unknown>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown>,
-  Services,
-  Error,
-  Requirements = never,
-> {
-  readonly load: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
-}
-
 /** The context of a handler written as `{ load: handler }`: the context the bare handler gets. */
 export type ReadLoadContext<Services> = ReadHandlerContext<Services>;
 
@@ -971,7 +957,7 @@ const validateReadVocabulary = <
 
 /**
  * The three spellings of a read. `{ load }` is typed with the descriptor's questions: without any, its
- * `context.access` holds no answer, exactly the plain `ReadLoadStep` handler.
+ * `context.access` holds no answer, so the handler is the bare one under another spelling.
  */
 type AuthoredReadDefinition<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
