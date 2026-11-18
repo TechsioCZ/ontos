@@ -52,8 +52,14 @@ function bind(
   // A value-only import may legally share a name with a local type alias. The local
   // type declaration owns type lookups; an otherwise unresolved import stays opaque.
   if (existing?.kind === "declaration") {
-    if (existing.declaration.type === "TSTypeAliasDeclaration" && declaration.type === "ImportSpecifier") return;
-    if (existing.declaration.type === "ImportSpecifier" && declaration.type === "TSTypeAliasDeclaration") {
+    if (
+      existing.declaration.type === "TSTypeAliasDeclaration" &&
+      (declaration.type === "ImportSpecifier" || declaration.type === "ImportDefaultSpecifier")
+    ) return;
+    if (
+      (existing.declaration.type === "ImportSpecifier" || existing.declaration.type === "ImportDefaultSpecifier") &&
+      declaration.type === "TSTypeAliasDeclaration"
+    ) {
       bindings.set(name, { kind: "declaration", declaration });
       return;
     }

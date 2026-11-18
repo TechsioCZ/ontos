@@ -32,6 +32,14 @@ const objectParameter = (parameter: string) => ({ data: { parameter }, messageId
 
 register('no-unknown-type-aliases', {
   invalid: [
+    [
+      "import Hidden from './value.js'; type Hidden = unknown; type Linked = Hidden;",
+      [unknownAlias('Hidden'), unknownAlias('Linked')],
+    ],
+    [
+      "type Hidden = unknown; import Hidden from './value.js'; type Linked = Hidden;",
+      [unknownAlias('Hidden'), unknownAlias('Linked')],
+    ],
     ['function read() { type Hidden = unknown; return 1; }', [unknownAlias('Hidden')]],
     [
       'function read() { type Hidden = Later; type Later = unknown; return 1; }',
@@ -58,6 +66,8 @@ register('no-unknown-type-aliases', {
 
 register('no-unknown-returns', {
   invalid: [
+    ["import Result from './value.js'; type Result = unknown; declare function read(): Result;", [unknownReturn]],
+    ["type Result = unknown; import Result from './value.js'; declare function read(): Result;", [unknownReturn]],
     ['type Value = unknown; declare function read(): Promise<Value>;', [unknownReturn]],
     ['type Wrap<T> = Promise<T>; declare function read(): Wrap<unknown>;', [unknownReturn]],
     ['type Box<T> = T; declare function read(): Box<Box<unknown>>;', [unknownReturn]],
@@ -66,6 +76,7 @@ register('no-unknown-returns', {
     ['type Promise<T> = T; declare function read(): Promise<unknown>;', [unknownReturn]],
   ],
   valid: [
+    "import Result from './value.js'; declare function read(): Result;",
     'function isText(value: unknown): value is string { return value === "text"; }',
     'type Envelope = { readonly payload: unknown }; declare function read(): Envelope;',
     'type Value = unknown; declare function read<Value>(): Value;',
@@ -81,6 +92,14 @@ register('no-unknown-returns', {
 
 register('no-object-parameters', {
   invalid: [
+    [
+      "import Input from './value.js'; type Input = object; function take(value: Input) { return [Input(), value]; }",
+      [objectParameter('value')],
+    ],
+    [
+      "type Input = object; import Input from './value.js'; function take(value: Input) { return [Input(), value]; }",
+      [objectParameter('value')],
+    ],
     [
       'type Input = object; switch ((value: Input) => value) { default: type Input = { id: string }; }',
       [objectParameter('value')],
@@ -106,6 +125,7 @@ register('no-object-parameters', {
     ],
   ],
   valid: [
+    "import Input from './value.js'; function take(value: Input) { return value; }",
     'type Input = object; switch (1) { default: type Input = { id: string }; const take = (value: Input) => value; }',
     "import { parse as Input } from 'node:path'; function take(value: Input) { return value; }",
     'type Input = object; declare function take<Input>(value: Input): void;',
