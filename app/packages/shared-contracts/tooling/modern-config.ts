@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { AppUserConfig } from '@modern-js/app-tools';
@@ -57,15 +57,17 @@ interface DevelopmentMiddlewareSetup {
   unshift: (
     middleware: (
       request: { url?: string | undefined },
-      response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void },
+      response: { end: (body?: Buffer) => void; setHeader: (name: string, value: string) => void; statusCode: number },
       next: () => void,
     ) => void,
   ) => void;
 }
 
+const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
+
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
-  '/.well-known/ontos-module-mcp-tools.json',
+  DEVELOPMENT_MCP_TOOL_CATALOG,
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
@@ -78,7 +80,14 @@ export const createDevelopmentContractMiddleware =
         next();
         return;
       }
-      const contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+      const artifactPath = fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl));
+      // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
+      if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && !existsSync(artifactPath)) {
+        response.statusCode = 404;
+        response.end();
+        return;
+      }
+      const contract = readFileSync(artifactPath);
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
