@@ -119,6 +119,23 @@ const heldSince = (held: number, moves: number): Effect.Effect<void> =>
 export const networkQuietExcept = (held: number): Effect.Effect<void> =>
   Effect.suspend(() => heldSince(held, traffic.moves));
 
+const steadySince = (moves: number): Effect.Effect<number> =>
+  macrotask.pipe(
+    Effect.andThen(macrotask),
+    Effect.andThen(
+      Effect.suspend(() => (traffic.moves === moves ? Effect.succeed(traffic.inFlight) : steadySince(traffic.moves))),
+    ),
+  );
+
+/**
+ * Waits until no request arrived or was answered during two full macrotask turns, and returns how many requests the
+ * servers still hold open then. For a suite whose handlers hold requests open that no test releases (an
+ * `Effect.never` answer): read the held count once the network is steady, act, then `networkQuietExcept(held)`
+ * before a "nothing more was sent" check. A wrong request either reaches its handler or stays held, so the check
+ * fails or the wait never ends.
+ */
+export const networkSteady: Effect.Effect<number> = Effect.suspend(() => steadySince(traffic.moves));
+
 /** The web handler `HttpRouter.toWebHandler` builds over the applications, disposed with the scope. */
 const served = (applications: readonly [InProcessApplication, ...InProcessApplication[]]) =>
   Effect.acquireRelease(
@@ -297,12 +314,21 @@ const forbidden = GatewayForbiddenProblemSchema.make({
  * The Shell's session gateway-context issuer, served through the real `GatewayContextApi`. Each module audience in
  * `apiBaseUrls` gets a fresh single-use token bound to its API base URL and the requested composition revision, as
  * the Shell issues them; any other audience is refused with the issuer's own GatewayForbiddenProblem. The API-key and
- * delegated issuers are not part of a browser session and fail the test when called.
+ * delegated issuers are not part of a browser session and fail the test when called. `refusal` is asked first for each
+ * audience on each request: a problem it returns is the Shell's answer instead of a token (for example the
+ * not-installed refusal, `GATEWAY_MODULE_NOT_INSTALLED_TYPE`), so one served issuer can refuse in one case only.
  */
-export const shellGatewayIssuer = (apiBaseUrls: Readonly<Record<string, string>>) => {
+export const shellGatewayIssuer = (
+  apiBaseUrls: Readonly<Record<string, string>>,
+  refusal?: (audience: string) => typeof GatewayForbiddenProblemSchema.Type | undefined,
+) => {
   const issued: IssuedGatewayContext[] = [];
   const issue = (payload: { readonly audience: string; readonly compositionRevision: string }) =>
     Effect.gen(function* issueGatewayContext() {
+      const refused = refusal?.(payload.audience);
+      if (refused !== undefined) {
+        return yield* Effect.fail(refused);
+      }
       const apiBaseUrl = apiBaseUrls[payload.audience];
       if (apiBaseUrl === undefined) {
         return yield* Effect.fail(forbidden);

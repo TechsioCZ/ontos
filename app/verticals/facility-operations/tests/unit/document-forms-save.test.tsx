@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -83,6 +84,7 @@ const saveSent = () =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => sent.length === 1)),
     Effect.andThen(waitUntil(() => saveButton().textContent.trim() === labels.save)),
+    Effect.andThen(networkIdle),
     Effect.andThen(settle),
   );
 const toastTitles = () => [...document.querySelectorAll('[data-scope="toast"][data-part="title"]')];

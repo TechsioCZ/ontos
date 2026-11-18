@@ -6,6 +6,7 @@ import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-
 import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -14,7 +15,7 @@ import { settle as uiSettle, waitUntil as uiWaitUntil, unmountAll } from '@app/a
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act } from 'react';
 import { ProductRecordSchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
@@ -192,8 +193,8 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-describe('product editor with one Save button', () => {
-  it.live('typing and leaving a field send nothing, not after a delay and not on unmount', () =>
+it.layer(network, { excludeTestServices: true })('product editor with one Save button', (suite) => {
+  suite.effect('typing and leaving a field send nothing, not after a delay and not on unmount', () =>
     Effect.gen(function* noAutomaticSave() {
       const view = yield* Effect.promise(mount);
       expect(buttons('Uložit')).toHaveLength(1);
@@ -206,22 +207,26 @@ describe('product editor with one Save button', () => {
       // Longer than any debounce the form ever had.
       yield* Effect.sleep('1 second');
       yield* Effect.promise(() => act(settle));
-      view.unmount();
-      yield* Effect.promise(() => act(settle));
+      yield* networkIdle;
       expect(commands()).toEqual([]);
-    }).pipe(Effect.provide(network)),
+      view.unmount();
+      // A save the unmount wrongly started goes through the gateway and then the Action; it has arrived by now.
+      yield* networkIdle;
+      expect(commands()).toEqual([]);
+    }),
   );
 
-  it.live('an empty name holds the Save button back', () =>
+  suite.effect('an empty name holds the Save button back', () =>
     Effect.gen(function* invalid() {
       yield* Effect.promise(mount);
       yield* Effect.promise(() => typeName(''));
       expect(button('Uložit').disabled).toBe(true);
+      yield* networkIdle;
       expect(commands()).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a blocked navigation asks; Zahodit změny lets it go without saving', () =>
+  suite.effect('a blocked navigation asks; Zahodit změny lets it go without saving', () =>
     Effect.gen(function* blockedNavigation() {
       const view = yield* Effect.promise(mount);
       yield* Effect.promise(() => typeName('Etiopie B'));
@@ -231,11 +236,12 @@ describe('product editor with one Save button', () => {
       yield* Effect.promise(() => click(button('Zahodit změny')));
       expect(view.router.state.location.pathname).toBe('/cs/away');
       expect(nameField().value).toBe('Etiopie');
+      yield* networkIdle;
       expect(commands()).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('Zůstat keeps the draft and cancels the navigation', () =>
+  suite.effect('Zůstat keeps the draft and cancels the navigation', () =>
     Effect.gen(function* stay() {
       const view = yield* Effect.promise(mount);
       yield* Effect.promise(() => typeName('Etiopie B'));
@@ -244,10 +250,10 @@ describe('product editor with one Save button', () => {
       expect(buttons('Zůstat')).toHaveLength(0);
       expect(view.router.state.location.pathname).toBe('/cs/test');
       expect(nameField().value).toBe('Etiopie B');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a reloaded product keeps the unsaved draft of another tab and asks before it is left', () =>
+  suite.effect('a reloaded product keeps the unsaved draft of another tab and asks before it is left', () =>
     Effect.gen(function* keepTabDraft() {
       const view = yield* Effect.promise(mount);
       yield* Effect.promise(() => typeInto('content-image-alt', 'Balení kávy'));
@@ -260,19 +266,21 @@ describe('product editor with one Save button', () => {
 
       yield* view.attemptLeave;
       expect(buttons('Zůstat').length).toBeGreaterThan(0);
+      yield* networkIdle;
       expect(commands()).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a clean tab takes the reloaded product', () =>
+  suite.effect('a clean tab takes the reloaded product', () =>
     Effect.gen(function* cleanTabFollows() {
       const view = yield* Effect.promise(mount);
       shown = reloaded({ imageAlt: 'Nový popis', slug: 'etiopie-nova' });
       yield* Effect.promise(view.rerender);
       expect(fieldById('content-image-alt').value).toBe('Nový popis');
       expect(fieldById('eshop-slug').value).toBe('etiopie-nova');
+      yield* networkIdle;
       expect(commands()).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });
 
@@ -302,8 +310,8 @@ const sentPatches = () =>
     .map(({ command }) => command)
     .flatMap((command) => (Predicate.isTagged(command, 'UpdateProduct') ? [command.patch] : []));
 
-describe('VAT classification on the product editor', () => {
-  it.live("names both classifications with today's rate and hints a scheduled change", () =>
+it.layer(network, { excludeTestServices: true })('VAT classification on the product editor', (suite) => {
+  suite.effect("names both classifications with today's rate and hints a scheduled change", () =>
     Effect.gen(function* namedByTax() {
       yield* Effect.promise(mount);
       expect(vatOptions()).toEqual([
@@ -318,10 +326,10 @@ describe('VAT classification on the product editor', () => {
 
       yield* Effect.promise(() => pickVat(CZ_VAT_STANDARD));
       expect(text()).toContain('Od 1. 1. 2099 23\u00A0%');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a classification the company has no rule for is offered disabled, with the reason', () =>
+  suite.effect('a classification the company has no rule for is offered disabled, with the reason', () =>
     Effect.gen(function* missingRule() {
       vat = { ...vat, rates: companyRates.filter((entry) => entry.code === CZ_VAT_STANDARD) };
       yield* Effect.promise(mount);
@@ -331,10 +339,10 @@ describe('VAT classification on the product editor', () => {
       ]);
       // The product keeps its classification and its stored price including VAT.
       expect(fieldById('detail-price-gross').value).toContain('289');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a company Tax gives no rate at all shows that explicitly, never a number', () =>
+  suite.effect('a company Tax gives no rate at all shows that explicitly, never a number', () =>
     Effect.gen(function* noRates() {
       vat = { ...vat, rates: [] };
       yield* Effect.promise(mount);
@@ -347,23 +355,24 @@ describe('VAT classification on the product editor', () => {
       // The stored price including VAT is still the price; no rate is shown anywhere.
       expect(fieldById('detail-price-gross').value).toContain('289');
       expect(text()).not.toMatch(/\d\s?%/u);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a picked classification is a draft change: nothing is sent until Save, then only the code', () =>
+  suite.effect('a picked classification is a draft change: nothing is sent until Save, then only the code', () =>
     Effect.gen(function* throughTheDraft() {
       yield* Effect.promise(mount);
       yield* Effect.promise(() => pickVat(CZ_VAT_STANDARD));
       expect(text()).toContain('Neuložené změny');
+      yield* networkIdle;
       expect(commands()).toEqual([]);
 
       yield* Effect.promise(() => click(button('Uložit')));
       yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
       expect(sentPatches()).toEqual([{ taxClassificationCode: CZ_VAT_STANDARD }]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('leaving with a picked classification unsaved asks first', () =>
+  suite.effect('leaving with a picked classification unsaved asks first', () =>
     Effect.gen(function* guarded() {
       const view = yield* Effect.promise(mount);
       yield* Effect.promise(() => pickVat(CZ_VAT_STANDARD));
@@ -371,8 +380,9 @@ describe('VAT classification on the product editor', () => {
       expect(buttons('Zůstat')).toHaveLength(1);
       yield* Effect.promise(() => click(button('Zahodit změny')));
       expect(vatSelect().value).toBe(CZ_VAT_REDUCED);
+      yield* networkIdle;
       expect(commands()).toEqual([]);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });
 
@@ -407,8 +417,8 @@ const withVariants = (variants: readonly (readonly [string, number, number | und
     {},
   );
 
-describe('the price including VAT on the product editor', () => {
-  it.live(
+it.layer(network, { excludeTestServices: true })('the price including VAT on the product editor', (suite) => {
+  suite.effect(
     'shows the stored gross, even when it is not net plus VAT, and keeps it when only the classification changes',
     () =>
       Effect.gen(function* storedGross() {
@@ -420,10 +430,10 @@ describe('the price including VAT on the product editor', () => {
         // The server keeps the stored gross on a classification change: the field says the same and why.
         expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('12,11 Kč');
         expect(text()).toContain('Cena s DPH zůstává stejná, změní se jen podíl DPH v ní.');
-      }).pipe(Effect.provide(network)),
+      }),
   );
 
-  it.live('without a stored gross a classification change says nothing about the VAT share', () =>
+  suite.effect('without a stored gross a classification change says nothing about the VAT share', () =>
     Effect.gen(function* noStoredGross() {
       const { grossPriceMinor: _none, ...withoutGross } = productInput;
       void _none;
@@ -432,10 +442,10 @@ describe('the price including VAT on the product editor', () => {
       expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
       yield* Effect.promise(() => pickVat(CZ_VAT_REDUCED));
       expect(text()).not.toContain('změní se jen podíl DPH');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a product with variants shows its lowest variant price as such, unmoved by the product net price', () =>
+  suite.effect('a product with variants shows its lowest variant price as such, unmoved by the product net price', () =>
     Effect.gen(function* fromVariants() {
       // Its variants sell at 2,40 and 2,60 Kč net (2,90 and 3,15 Kč stored with VAT); the 9,99 Kč on the product
       // itself is never what it sells at.
@@ -452,77 +462,85 @@ describe('the price including VAT on the product editor', () => {
       expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('2,90 Kč');
       expect(text()).not.toContain('Cena s DPH po uložení (náhled, Kč)');
       expect(text()).not.toContain('nová cena bez DPH uloží novou cenu s DPH');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a product whose variants have no gross yet shows none under the variants label', () =>
+  suite.effect('a product whose variants have no gross yet shows none under the variants label', () =>
     Effect.gen(function* noVariantGross() {
       shown = withVariants([['v1', 240, undefined]]);
       yield* Effect.promise(mount);
       expect(text()).toContain('Cena s DPH od (nejnižší cena varianty, Kč)');
       expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('an edited net price shows a preview of the gross saving will store, labelled as such', () =>
+  suite.effect('an edited net price shows a preview of the gross saving will store, labelled as such', () =>
     Effect.gen(function* preview() {
       shown = { ...product, currentPriceMinor: 1000, grossPriceMinor: 1211, taxClassificationCode: CZ_VAT_STANDARD };
       yield* Effect.promise(mount);
       yield* Effect.promise(() => typeInto('detail-price', '20'));
       expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('24,20 Kč');
       expect(text()).toContain('Cena s DPH po uložení (náhled, Kč)');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });
 
-it.live('variant base-price editing omits inherited tiers while metadata-only editing keeps them', () =>
-  Effect.gen(function* variantTierSubmission() {
-    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
-    const original = withVariants([
-      ['v1', 1000, 1210],
-      ['v2', 1000, 1210],
-    ]);
-    shown = {
-      ...original,
-      variants: original.variants?.map((variant) => ({ ...variant, priceTiers: [tier] })),
-    };
-    shownTab = 'variants';
-    yield* Effect.promise(mount);
-    yield* Effect.promise(() => typeInto('variant-price-v1', '20'));
-    yield* Effect.promise(() => typeInto('variant-label-v2', 'Renamed'));
-    // Every mounted tab has its own save bar; the variants tab saves its own drafts.
-    const variantsPanel = fieldById('variant-price-v1').closest('[role="tabpanel"]');
-    const saveVariants = [...(variantsPanel?.querySelectorAll('button') ?? [])].find(
-      (entry) => entry.textContent?.trim() === 'Uložit',
-    );
-    expect(saveVariants?.disabled).toBe(false);
-    yield* Effect.promise(() => click(saveVariants ?? document.createElement('button')));
-    yield* Effect.promise(() => waitUntil(() => catalogRequests.length === 1));
-    const command = catalogRequests[0]?.command;
-    expect(Predicate.isTagged(command, 'UpdateProduct')).toBe(true);
-    if (Predicate.isTagged(command, 'UpdateProduct')) {
-      expect(command.patch.variants?.[0]?.priceMinor).toBe(2000);
-      expect(command.patch.variants?.[0]).not.toHaveProperty('priceTiers');
-      expect(command.patch.variants?.[1]?.priceTiers).toEqual([tier]);
-    }
-  }).pipe(Effect.provide(network)),
-);
+it.layer(network, { excludeTestServices: true })('variant editing', (suite) => {
+  suite.effect('variant base-price editing omits inherited tiers while metadata-only editing keeps them', () =>
+    Effect.gen(function* variantTierSubmission() {
+      const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
+      const original = withVariants([
+        ['v1', 1000, 1210],
+        ['v2', 1000, 1210],
+      ]);
+      shown = {
+        ...original,
+        variants: original.variants?.map((variant) => ({ ...variant, priceTiers: [tier] })),
+      };
+      shownTab = 'variants';
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => typeInto('variant-price-v1', '20'));
+      yield* Effect.promise(() => typeInto('variant-label-v2', 'Renamed'));
+      // Every mounted tab has its own save bar; the variants tab saves its own drafts.
+      const variantsPanel = fieldById('variant-price-v1').closest('[role="tabpanel"]');
+      const saveVariants = [...(variantsPanel?.querySelectorAll('button') ?? [])].find(
+        (entry) => entry.textContent?.trim() === 'Uložit',
+      );
+      expect(saveVariants?.disabled).toBe(false);
+      yield* Effect.promise(() => click(saveVariants ?? document.createElement('button')));
+      yield* Effect.promise(() => waitUntil(() => catalogRequests.length === 1));
+      yield* networkIdle;
+      expect(catalogRequests).toHaveLength(1);
+      const command = catalogRequests[0]?.command;
+      expect(Predicate.isTagged(command, 'UpdateProduct')).toBe(true);
+      if (Predicate.isTagged(command, 'UpdateProduct')) {
+        expect(command.patch.variants?.[0]?.priceMinor).toBe(2000);
+        expect(command.patch.variants?.[0]).not.toHaveProperty('priceTiers');
+        expect(command.patch.variants?.[1]?.priceTiers).toEqual([tier]);
+      }
+    }),
+  );
 
-it.live('the variant movement form submits a fractional receipt without rounding it', () =>
-  Effect.gen(function* fractionalVariantForm() {
-    shown = withVariants([['v1', 1000, 1210]]);
-    shownTab = 'variants';
-    yield* Effect.promise(mount);
-    yield* Effect.promise(() => typeInto('variant-stock-quantity', '0,125'));
-    yield* Effect.promise(() => click(button('Zapsat pohyb')));
-    yield* Effect.promise(() => waitUntil(() => movementRequests.length === 1));
-    expect(movementRequests[0]?.command).toMatchObject({
-      delta: 0.125,
-      productId: 'product-1',
-      variantId: 'v1',
-    });
-    yield* Effect.promise(() => typeInto('variant-stock-quantity', '1000001'));
-    yield* Effect.promise(() => click(button('Zapsat pohyb')));
-    expect(movementRequests).toHaveLength(1);
-  }).pipe(Effect.provide(network)),
-);
+  suite.effect('the variant movement form submits a fractional receipt without rounding it', () =>
+    Effect.gen(function* fractionalVariantForm() {
+      shown = withVariants([['v1', 1000, 1210]]);
+      shownTab = 'variants';
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => typeInto('variant-stock-quantity', '0,125'));
+      yield* Effect.promise(() => click(button('Zapsat pohyb')));
+      yield* Effect.promise(() => waitUntil(() => movementRequests.length === 1));
+      yield* networkIdle;
+      expect(movementRequests).toHaveLength(1);
+      expect(movementRequests[0]?.command).toMatchObject({
+        delta: 0.125,
+        productId: 'product-1',
+        variantId: 'v1',
+      });
+      yield* Effect.promise(() => typeInto('variant-stock-quantity', '1000001'));
+      yield* Effect.promise(() => click(button('Zapsat pohyb')));
+      // A movement the refused quantity wrongly sent goes through the gateway and then the Action; it has arrived by now.
+      yield* networkIdle;
+      expect(movementRequests).toHaveLength(1);
+    }),
+  );
+});

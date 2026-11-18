@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
-import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle } from '@app/shared-contracts/testing/http-double';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { beforeAll, beforeEach, expect, it } from 'effect-rstest';
@@ -46,11 +46,13 @@ it.live('never caches or joins identical module search requests', () =>
     const second = yield* readSequence(searchUrl, request);
     expect(first).toEqual({ sequence: 1 });
     expect(second).toEqual({ sequence: 2 });
+    yield* networkIdle;
     expect(received).toHaveLength(2);
     received.length = 0;
     yield* Effect.promise(() =>
       Promise.all([globalThis.fetch(searchUrl, request), globalThis.fetch(searchUrl, request)]),
     );
+    yield* networkIdle;
     expect(received).toHaveLength(2);
   }).pipe(Effect.provide(network)),
 );
@@ -61,13 +63,16 @@ it.live('an explicit no-store owner target read bypasses stored answers without 
     const first = yield* readSequence(readUrl, request);
     const retained = yield* readSequence(readUrl, request);
     expect(retained).toEqual(first);
+    yield* networkIdle;
     expect(received).toHaveLength(1);
     const second = yield* readSequence(readUrl, { ...request, cache: 'no-store' });
     const third = yield* readSequence(readUrl, { ...request, cache: 'no-store' });
     expect(second).toEqual({ sequence: 2 });
     expect(third).toEqual({ sequence: 3 });
+    yield* networkIdle;
     expect(received).toHaveLength(3);
     expect(yield* readSequence(readUrl, request)).toEqual(first);
+    yield* networkIdle;
     expect(received).toHaveLength(3);
   }).pipe(Effect.provide(network)),
 );
@@ -83,6 +88,7 @@ it.live('the public no-store transport header bypasses cached exact-target reads
       sequence: 3,
     });
     expect(yield* readSequence(readUrl, request)).toEqual({ sequence: 1 });
+    yield* networkIdle;
     expect(received).toHaveLength(3);
   }).pipe(Effect.provide(network)),
 );
@@ -98,6 +104,7 @@ it.live('a no-store action still performs ordinary write invalidation', () =>
       }),
     );
     expect(yield* readSequence(readUrl, request)).toEqual({ sequence: 3 });
+    yield* networkIdle;
     expect(received).toHaveLength(3);
   }).pipe(Effect.provide(network)),
 );
@@ -114,6 +121,7 @@ it.live('search reads never become writes or invalidate unrelated cached owner d
       const cached = yield* readSequence(readUrl, request);
       yield* Effect.promise(() => globalThis.fetch(searchUrl, request));
       expect(yield* readSequence(readUrl, request)).toEqual(cached);
+      yield* networkIdle;
       expect(writes).toBe(0);
       expect(received).toHaveLength(2);
     } finally {

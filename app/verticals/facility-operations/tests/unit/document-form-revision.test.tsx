@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -84,6 +85,7 @@ const save = (agenda: Agenda, count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => agenda.applied.length >= count)),
     Effect.andThen(waitUntil(() => text().includes(labels.conflict) || text().includes(labels.saved))),
+    Effect.andThen(networkIdle),
   );
 const toPage = (): void => {};
 

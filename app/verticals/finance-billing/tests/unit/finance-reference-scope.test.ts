@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   ProductRecordSchema,
   RecordsApi as MerchandiseRecordsApi,
@@ -14,6 +14,8 @@ import {
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkQuietExcept,
+  networkSteady,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -341,13 +343,15 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
       const scopedReferences = yield* renderReferences(scope);
       yield* waitUntil(() => scopedRecords().actorLabel !== undefined && scopedReferences().products.length === 1);
       expect(names(scopedReferences())).toEqual(['Alfa a.s.']);
+      // The scoped records read stays open: its handler never answers.
+      const held = yield* networkSteady;
       const reads = readCounts();
 
       yield* preloadFinanceDirectory(contextlessShellProps.context);
       yield* preloadFinanceDirectory({ ...companyContext, legalEntityId: '' });
       const references = yield* renderReferences();
       const records = yield* renderRecords();
-      yield* settle;
+      yield* networkQuietExcept(held);
       const value = references();
       const vm = records();
 

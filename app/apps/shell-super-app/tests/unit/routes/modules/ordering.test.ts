@@ -2,6 +2,7 @@
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Cause, ConfigProvider, Deferred, Effect, Exit, Fiber, FiberSet, Layer, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
 import { beforeEach, expect, it } from 'effect-rstest';
 
 import {
@@ -199,6 +200,7 @@ it.live('rejects an invalid document revision without any target or composition 
     document.head.append(meta);
     yield* Effect.gen(function* rejectInvalidRevision() {
       expect(yield* load()).toMatchObject({ state: 'reload_required' });
+      yield* networkIdle;
       expect(reads(bff, 'resolveModuleTarget')).toHaveLength(0);
       expect(reads(bff, 'shellComposition')).toHaveLength(0);
     }).pipe(Effect.ensuring(Effect.sync(() => meta.remove())));
@@ -213,6 +215,8 @@ it.live('waits for a valid composition revision when the document has no revisio
     yield* Effect.gen(function* waitForRevision() {
       const fiber = yield* Effect.forkChild(load());
       yield* composed.started;
+      // Only the held composition read stays open: a target read sent too early has arrived by now.
+      yield* networkQuietExcept(1);
       expect(reads(bff, 'resolveModuleTarget')).toHaveLength(0);
       yield* composed.release;
       expect(yield* Fiber.join(fiber)).toMatchObject({ state: 'resolved' });
@@ -244,6 +248,8 @@ it.live('starts all independent reads and target after identity, before composit
     yield* Effect.gen(function* startReadsAfterIdentity() {
       const fiber = yield* Effect.forkChild(load());
       yield* auth.started;
+      // Only the held identity read stays open: a read started before identity has arrived by now.
+      yield* networkQuietExcept(1);
       for (const endpoint of endpoints.filter((candidate) => candidate !== 'currentSession')) {
         expect(reads(bff, endpoint)).toHaveLength(0);
       }
@@ -252,6 +258,7 @@ it.live('starts all independent reads and target after identity, before composit
       yield* resolved.release;
       yield* Effect.all([composed.release, people.release, legal.release, tenant.release]);
       expect(yield* Fiber.join(fiber)).toMatchObject({ state: 'resolved', target });
+      yield* networkIdle;
       for (const endpoint of endpoints) {
         expect(reads(bff, endpoint)).toHaveLength(1);
       }
@@ -260,6 +267,7 @@ it.live('starts all independent reads and target after identity, before composit
       expect(new URL(received?.url ?? '', origin).origin).toBe(origin);
       expect(new URL(received?.url ?? '', origin).pathname).toBe('/shell-super-app-api/shell/module-target');
       yield* load();
+      yield* networkIdle;
       for (const endpoint of endpoints) {
         expect(reads(bff, endpoint)).toHaveLength(1);
       }
@@ -290,10 +298,12 @@ it.live('retains composition failure precedence during overlap and does not cach
       yield* composed.release;
       expect(yield* Fiber.join(fiber)).toMatchObject({ shell: { state: 'unavailable' }, state: 'unavailable' });
       yield* resolved.interrupted;
+      yield* networkIdle;
       for (const endpoint of endpoints) {
         expect(reads(bff, endpoint)).toHaveLength(1);
       }
       expect(yield* load()).toMatchObject({ state: 'resolved' });
+      yield* networkIdle;
       expect(reads(bff, 'shellComposition')).toHaveLength(2);
       expect(reads(bff, 'resolveModuleTarget')).toHaveLength(2);
     }).pipe(Effect.provide(bff.layer));
@@ -322,6 +332,7 @@ it.live('does not cache denied targets or infer their authority from navigation'
     yield* coldDocument;
     expect(yield* load()).toMatchObject({ state: 'forbidden' });
     expect(yield* load()).toMatchObject({ state: 'forbidden' });
+    yield* networkIdle;
     expect(reads(bff, 'resolveModuleTarget')).toHaveLength(2);
     expect(reads(bff, 'shellComposition')).toHaveLength(1);
   }).pipe(Effect.provide(bff.layer));
@@ -373,6 +384,7 @@ it.live.each(['anonymous', 'selection_required', 'tenant_authenticated'] as cons
       yield* coldDocument;
       const model = yield* load();
       expect(model.state).toBe('selection_required');
+      yield* networkIdle;
       expect(reads(bff, 'resolveModuleTarget')).toHaveLength(0);
       expect(reads(bff, 'shellComposition')).toHaveLength(0);
       expect(reads(bff, 'demoAccountCapability')).toHaveLength(0);

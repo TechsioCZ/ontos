@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { browserNetwork, serveApi } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle, serveApi } from '@app/shared-contracts/testing/http-double';
 import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { isRedirect } from '@modern-js/plugin-tanstack/runtime';
@@ -199,6 +199,7 @@ it.live.each([
     const result = yield* rejected(params);
     expect(isRedirect(result)).toBe(true);
     expect(result).toMatchObject({ options: { to: href } });
+    yield* networkIdle;
     expect(resourceRequests(bff)).toHaveLength(1);
     expect(resourceRequests(bff)[0]?.body).toMatchObject({
       ...params,
@@ -348,6 +349,7 @@ it.live('a new scope makes a fresh resource read and cannot reuse another compan
     expect(yield* Effect.promise(() => loader({ params, request: requestFor(params) }))).toMatchObject({
       state: 'unavailable',
     });
+    yield* networkIdle;
     expect(resourceRequests(bff)).toHaveLength(2);
     expect(sessionRequests(bff)).toHaveLength(2);
   }).pipe(Effect.provide(bff.browser));
@@ -359,6 +361,7 @@ it.live('does not read or redirect before composition admission', () => {
     expect(
       yield* Effect.promise(() => loader({ params: counterparty, request: requestFor(counterparty) })),
     ).toMatchObject({ state: 'reload_required' });
+    yield* networkIdle;
     expect(resourceRequests(bff)).toHaveLength(0);
   }).pipe(Effect.provide(bff.browser));
 });
@@ -386,6 +389,7 @@ it.live('does not carry private details from a successful read into a later deni
     const denied = yield* Effect.promise(() => loader({ params: counterparty, request: requestFor(counterparty) }));
     expect(denied).toEqual({ shell: shellInOtherCompany, state: 'forbidden' });
     expect(JSON.stringify(denied)).not.toContain('private@example.test');
+    yield* networkIdle;
     expect(resourceRequests(bff)).toHaveLength(2);
   }).pipe(Effect.provide(bff.browser));
 });

@@ -3,7 +3,7 @@ import { AgentActivityResponseSchema, AgentQueueResponseSchema } from '@app/shar
 import type { AgentActivityRequest, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import { browserNetwork, pinTestDocument, serveApi } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle, pinTestDocument, serveApi } from '@app/shared-contracts/testing/http-double';
 import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Schema } from 'effect';
@@ -94,11 +94,13 @@ it.live('an agent change in another module reloads the mounted activity and appr
         ),
         (unsubscribe) => Effect.sync(unsubscribe),
       );
+      yield* networkIdle;
       expect(activityReads).toHaveLength(1);
       expect(queueReads).toHaveLength(1);
       dispatchChange(['merchandise']);
       yield* Deferred.await(activityReloaded);
       yield* Deferred.await(queueReloaded);
+      yield* networkIdle;
       expect(activityReads).toHaveLength(2);
       expect(queueReads).toHaveLength(2);
       yield* agentActivityData.preload(DEFAULT_ACTIVITY_REQUEST);

@@ -286,8 +286,11 @@ it.live('never renders a customer or Counterparty route', () =>
     yield* mount(<PartyIdentityPageView input={readyInput} onBack={noop} onReload={noop} read={readyRead} />);
 
     expect(document.querySelector('a[href*="zakaznici"]')).toBeNull();
-    expect(document.body.textContent).not.toContain('party-registry.pages.customers');
-    expect(document.body.textContent?.toLowerCase()).not.toContain('counterparty');
+    const shown = document.body.textContent?.toLowerCase() ?? '';
+    // The customer pages' own Czech copy: "Zákazník" is also inside "Zákazníci" and "Nový zákazník".
+    expect(shown).not.toContain(czech('party-registry.pages.customers.detail.title').toLowerCase());
+    expect(shown).not.toContain(czech('party-registry.pages.customers.description').toLowerCase());
+    expect(shown).not.toContain('counterparty');
   }),
 );
 

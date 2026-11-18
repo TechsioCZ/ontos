@@ -3,6 +3,7 @@ import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -169,6 +170,7 @@ it.layer(network, { excludeTestServices: true })('customer create save', (suite)
       yield* renderDialog();
       yield* type('customer-name', 'Nová firma');
       yield* type('customer-email', 'obchod@example.test');
+      yield* networkIdle;
       expect(partyRequests).toEqual([]);
       expect(onboardRequests).toEqual([]);
       expect(button(labels.save).hasAttribute('disabled')).toBe(false);
@@ -195,6 +197,7 @@ it.layer(network, { excludeTestServices: true })('customer create save', (suite)
       });
       yield* Deferred.await(completed);
       yield* settle;
+      yield* networkIdle;
       expect(createdCustomers).toHaveLength(1);
       expect(partyRequests).toHaveLength(1);
       expect(onboardRequests).toHaveLength(1);
@@ -211,6 +214,7 @@ it.layer(network, { excludeTestServices: true })('customer create save', (suite)
       });
       yield* waitUntil(() => findButton(labels.stay) !== undefined);
       expect(findButton(labels.stay)).toBeDefined();
+      yield* networkIdle;
       expect(partyRequests).toEqual([]);
       expect(onboardRequests).toEqual([]);
       expect(openChanges).not.toContain(false);

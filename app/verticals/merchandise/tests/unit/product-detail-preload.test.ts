@@ -5,6 +5,7 @@ import { Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
 import { unmountAll } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   networkQuietExcept,
   pinTestDocument,
   serveApi,
@@ -196,6 +197,7 @@ it.live(
     Effect.gen(function* warmOpen() {
       yield* pinTestDocument;
       yield* preloadProductDetails(context, 7, [product]);
+      yield* networkIdle;
       expect(reads).toHaveLength(1);
       expect(reads[0]).toEqual({
         view: { categoryTrails: true, ordersLimit: 0, productId: product.id },
@@ -231,6 +233,7 @@ it.live(
         '<output>Cable 1|BLACK|1|receipt-1|Electronics / Cables|AKROS-SK|7</output>',
       );
       expect(productDetailData.snapshot(input)).toBe(cached);
+      yield* networkIdle;
       expect(reads).toHaveLength(0);
       expect(commands).toHaveLength(0);
     }).pipe(Effect.provide(network)),
@@ -256,6 +259,7 @@ it.live('warming preserves read-only capabilities without requesting mutations o
     expect(reads[0]).toEqual({
       view: { categoryTrails: true, ordersLimit: 0, productId: product.id },
     });
+    yield* networkIdle;
     expect(reads).toHaveLength(1);
     expect(commands).toHaveLength(0);
   }).pipe(Effect.provide(network)),
@@ -268,6 +272,7 @@ it.live('an obsolete table model cannot prefetch a new source page or scope', ()
     const nextSource = products.map((entry) => ({ ...entry }));
     expect(currentProductRows(old, nextSource)).toEqual([]);
     yield* preloadProductDetails(context, 7, currentProductRows(old, nextSource));
+    yield* networkIdle;
     expect(reads).toHaveLength(0);
   }).pipe(Effect.provide(network)),
 );
@@ -301,6 +306,7 @@ it.live('two background requests at most; cancelling a page stops its active req
     yield* Fiber.interrupt(background);
     yield* Deferred.await(stopped);
     expect(active).toBe(0);
+    yield* networkIdle;
     expect(reads).toHaveLength(2);
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
   }).pipe(Effect.provide(cancellationNetwork)),
@@ -319,6 +325,7 @@ it.live('a foreground opening joins the row in flight and keeps it alive when th
     yield* Fiber.interrupt(background);
     yield* Deferred.succeed(gate, true);
     yield* Fiber.join(foreground);
+    yield* networkIdle;
     expect(reads).toHaveLength(1);
     expect(productDetailData.snapshot(input).state).toBe('ready');
   }).pipe(Effect.provide(network)),
@@ -349,6 +356,7 @@ it.live('foreground work bypasses two unrelated background rows', () =>
     const foregroundInput = Option.getOrThrow(detailInput(context.legalEntityId, third.id, context, 7));
     const foreground = yield* Effect.forkChild(productDetailData.read(foregroundInput));
     yield* Deferred.await(thirdStarted);
+    yield* networkQuietExcept(3);
     expect(reads).toHaveLength(3);
     yield* Fiber.interrupt(foreground);
     yield* Fiber.interrupt(background);
@@ -391,6 +399,7 @@ it.live('missing products are not filled from fixtures or retained as reusable n
     yield* Effect.exit(productDetailData.read(missing));
     expect(detailState(true, productDetailData.snapshot(missing))).toEqual({ status: 'not-found' });
     yield* Effect.exit(productDetailData.read(missing));
+    yield* networkIdle;
     expect(reads).toHaveLength(2);
   }).pipe(Effect.provide(network)),
 );
@@ -404,6 +413,7 @@ it.live('native settled-write and live events invalidate details without request
     yield* productDetailData.read(input);
     window.dispatchEvent(new Event(moduleChangeEvent));
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
+    yield* networkIdle;
     expect(reads).toHaveLength(2);
   }).pipe(Effect.provide(network)),
 );
@@ -451,6 +461,7 @@ it.live('missing Shell identity never starts background detail reads', () =>
     yield* pinTestDocument;
     yield* preloadProductDetails(undefined, 7, [product]);
     yield* prepareProductDetail({ routeParams: { id: product.id }, search: '?productRevision=7' });
+    yield* networkIdle;
     expect(reads).toHaveLength(0);
     expect(productDetailSearch(undefined, 7)()).toEqual({});
   }).pipe(Effect.provide(network)),

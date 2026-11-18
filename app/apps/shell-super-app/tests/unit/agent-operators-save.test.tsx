@@ -9,7 +9,7 @@ import {
   PrincipalRefSchema,
 } from '@app/shared-contracts/agent-access';
 import type { AgentOperatorsRequest } from '@app/shared-contracts/agent-access';
-import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle } from '@app/shared-contracts/testing/http-double';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
@@ -143,6 +143,7 @@ it.live('ticking sends nothing; Uložit sends the selection once with the revisi
     yield* acted(() => {
       fireEvent.click(checkbox(jana));
     });
+    yield* networkIdle;
     expect(fixture.requests).toHaveLength(0);
     yield* expectDirtyNavigation(router);
     yield* acted(() => {
@@ -150,6 +151,7 @@ it.live('ticking sends nothing; Uložit sends the selection once with the revisi
     });
     yield* waitUntil(() => screen.queryByText(labels.saved) !== null);
     expect(screen.getByText(labels.saved)).toBeTruthy();
+    yield* networkIdle;
     expect(fixture.requests).toEqual([
       {
         agentPrincipalId: '00000000-0000-4000-8000-000000000004',
@@ -197,6 +199,7 @@ it.live('a refused stale save shows a conflict and reloads the latest version', 
     expect(refreshed).toBe(1);
     expect(checkbox(petr).getAttribute('aria-checked')).toBe('true');
     expect(checkbox(jana).getAttribute('aria-checked')).toBe('false');
+    yield* networkIdle;
     expect(fixture.requests).toHaveLength(1);
   }).pipe(Effect.provide(fixture.network));
 });
@@ -221,6 +224,7 @@ it.live('leaving with an unsaved selection asks, and Zahodit změny leaves', () 
     });
     yield* waitUntil(() => view.router.state.location.pathname === '/cs');
     expect(departures).toHaveLength(1);
+    yield* networkIdle;
     expect(fixture.requests).toHaveLength(0);
     yield* view.rerender(block([]));
     yield* expectCleanNavigation(view.router);
@@ -253,6 +257,7 @@ it.live('Uložit in the leave question saves once and leaves', () => {
     });
     yield* waitUntil(() => view.router.state.location.pathname === '/cs');
     expect(departures).toHaveLength(1);
+    yield* networkIdle;
     expect(fixture.requests).toHaveLength(1);
     unsubscribe();
   }).pipe(Effect.provide(fixture.network));

@@ -8,6 +8,7 @@ import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   networkQuietExcept,
   pinTestDocument,
   serveApi,
@@ -142,6 +143,7 @@ const preloadWhileReadOpen = Effect.fn('orders-directory-test.preload')(function
   const whileOpen = directoryRequests();
   yield* Deferred.succeed(opened, true);
   yield* Effect.promise(() => done);
+  yield* networkIdle;
   if (answer || whileOpen > 0) {
     // A stale directory preload returns its cached value while HTTP revalidation finishes in the background.
     yield* waitUntil(() => {

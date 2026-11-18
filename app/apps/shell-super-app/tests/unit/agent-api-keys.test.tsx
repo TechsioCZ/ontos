@@ -4,7 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { networkIdle, streamingBrowserNetwork } from '@app/shared-contracts/testing/http-double';
+import { networkIdle, networkQuietExcept, streamingBrowserNetwork } from '@app/shared-contracts/testing/http-double';
 import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { HttpApiBuilder, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
@@ -406,6 +406,7 @@ it.live('interrupts an owned in-flight read when the agent detail closes', () =>
       );
     const view = yield* mountKeys(<AgentApiKeys agent={agent} />);
     yield* Deferred.await(received);
+    yield* networkQuietExcept(1);
     expect(lists).toHaveLength(1);
     view.unmount();
     expect(yield* Deferred.await(interrupted)).toBe(true);
@@ -424,6 +425,7 @@ it.live('disables and re-enables only the exact binding with its current expecte
     listAnswer = firstPage;
     yield* click(button(labels.save));
     yield* waitUntil(() => statuses.length === 2);
+    yield* networkIdle;
     expect(statuses.map(({ payload }) => payload)).toEqual([
       {
         authBindingId,
@@ -477,6 +479,7 @@ it.live('keeps a committed key change pending until the reread confirms the actu
     listAnswer = () => listOf([withKey({ bindingStatus: 'disabled' })]);
     // The list re-reads by itself until the projection shows the committed change.
     expect(yield* shownOnFakeClock(() => screen.queryByText(copy('updated')))).toBeTruthy();
+    yield* networkIdle;
     expect(statuses).toHaveLength(1);
   }).pipe(Effect.provide(network)),
 );

@@ -1,6 +1,6 @@
 import { createHook } from 'node:async_hooks';
 
-import { inProcessFetch } from '@app/shared-contracts/testing/http-double';
+import { inProcessFetch, networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
 import { ConfigProvider, Console, Deferred, Duration, Effect, Exit, Fiber, Schema, Scope } from 'effect';
 import { FetchHttpClient, HttpRouter, HttpServerResponse } from 'effect/http';
 import { expect, it, rstest } from 'effect-rstest';
@@ -88,6 +88,7 @@ it.effect('does nothing when dispatch is not configured; rejects partial or unsa
   Effect.gen(function* validateConfiguration() {
     const transport = yield* dispatchTransport();
     yield* openTrigger({}).pipe(transport.provide);
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(0);
     for (const values of [
       { ONTOS_EMAIL_DISPATCH_SECRET: configuration.ONTOS_EMAIL_DISPATCH_SECRET },
@@ -115,6 +116,7 @@ it.effect('does nothing when dispatch is not configured; rejects partial or unsa
       expect(Schema.is(EmailDispatchConfigurationInvalid)(failure)).toBe(true);
       expect(failure.message).toContain('must be configured together');
     }
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(0);
   }).pipe(Effect.scoped),
 );
@@ -124,6 +126,7 @@ it.effect('posts an immediate bearer-authenticated tick every 10 seconds and sto
     const transport = yield* dispatchTransport();
     const scope = yield* openTrigger().pipe(transport.provide);
     yield* Deferred.await(transport.first);
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(1);
     expect(transport.requests[0]?.url).toEqual(new URL(configuration.ONTOS_EMAIL_DISPATCH_URL));
     expect(transport.requests[0]?.init?.method).toBe('POST');
@@ -131,9 +134,11 @@ it.effect('posts an immediate bearer-authenticated tick every 10 seconds and sto
     expect(transport.requests[0]?.init?.headers).toEqual({ authorization: 'Bearer fixture-secret' });
     yield* TestClock.adjust('10 seconds');
     yield* Deferred.await(transport.second);
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(2);
     yield* Scope.close(scope, Exit.void);
     yield* TestClock.adjust(twoDispatchIntervals);
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(2);
   }).pipe(Effect.scoped),
 );
@@ -261,12 +266,15 @@ it.effect('skips busy windows without a catch-up request when a slow dispatch fi
     yield* openTrigger().pipe(transport.provide);
     yield* Deferred.await(transport.first);
     yield* TestClock.adjust('25 seconds');
+    // Only the held first tick stays open: a tick that overlapped it has arrived by now.
+    yield* networkQuietExcept(1);
     expect(transport.requests).toHaveLength(1);
     yield* Deferred.complete(pending, Effect.void);
     yield* Deferred.await(transport.completed);
-    yield* Effect.yieldNow;
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(1);
     yield* TestClock.adjust('4 seconds');
+    yield* networkIdle;
     expect(transport.requests).toHaveLength(1);
     yield* TestClock.adjust('1 second');
     yield* Deferred.await(transport.second);
@@ -281,6 +289,8 @@ it.effect('aborts an owned in-flight request on Scope close without logging canc
     const scope = yield* openTrigger().pipe(transport.provide, diagnostics.provide);
     yield* Deferred.await(transport.first);
     yield* TestClock.adjust(twoDispatchIntervals);
+    // Only the never-answered tick stays open: an overlapping tick has arrived by now.
+    yield* networkQuietExcept(1);
     expect(transport.requests).toHaveLength(1);
     yield* Scope.close(scope, Exit.void);
     expect(transport.requests[0]?.init?.signal?.aborted).toBe(true);

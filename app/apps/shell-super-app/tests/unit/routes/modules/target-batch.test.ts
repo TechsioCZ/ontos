@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { pinTestDocument, testCompositionRevision } from '@app/shared-contracts/testing/http-double';
+import { networkIdle, pinTestDocument, testCompositionRevision } from '@app/shared-contracts/testing/http-double';
 import { ConfigProvider, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -96,6 +96,7 @@ it.live('resolves the menu targets in one request, so each destination loader fi
     yield* pinTestDocument;
     yield* resetSessionScope;
     yield* prepare(['/batch-open', '/batch-closed']);
+    yield* networkIdle;
     expect(batches(bff)).toHaveLength(1);
     expect(batches(bff)[0]?.body).toEqual({
       compositionRevision: revision,
@@ -106,13 +107,16 @@ it.live('resolves the menu targets in one request, so each destination loader fi
       state: 'resolved',
       target: { entrypointKey: 'party.registry.page.batch-open' },
     });
+    yield* networkIdle;
     expect(singles(bff)).toHaveLength(0);
     // A failed target is not kept: its loader reads it alone and shows that read's own state.
     expect(yield* browserModel('/batch-closed')).toMatchObject({ state: 'forbidden' });
+    yield* networkIdle;
     expect(singles(bff)).toHaveLength(1);
 
     // Targets the browser already holds are not asked for again.
     yield* prepare(['/batch-open']);
+    yield* networkIdle;
     expect(batches(bff)).toHaveLength(1);
   }).pipe(Effect.provide(bff.browser));
 });
@@ -137,6 +141,7 @@ it.live('keeps prepared targets to the company they were resolved for', () => {
     expect(yield* browserModel('/company-only')).toMatchObject({
       target: { entrypointKey: 'party.registry.page.other-company' },
     });
+    yield* networkIdle;
     expect(singles(bff)).toHaveLength(1);
   }).pipe(Effect.provide(bff.browser));
 });
@@ -157,6 +162,7 @@ it.live('leaves every target to its own loader when the batch fails', () => {
     yield* resetSessionScope;
     expect(yield* Effect.flip(prepare(['/failed-batch']))).toEqual(unavailable);
     expect(yield* browserModel('/failed-batch')).toMatchObject({ state: 'resolved' });
+    yield* networkIdle;
     expect(singles(bff)).toHaveLength(1);
   }).pipe(Effect.provide(bff.browser));
 });
@@ -167,6 +173,7 @@ it.live('does not ask before the company and its release are known', () => {
     yield* pinTestDocument;
     yield* resetSessionScope;
     yield* prepare(['/anonymous']);
+    yield* networkIdle;
     expect(batches(bff)).toHaveLength(0);
   }).pipe(Effect.provide(bff.browser));
 });

@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle } from '@app/shared-contracts/testing/http-double';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Option } from 'effect';
 import { beforeAll, beforeEach, expect, it } from 'effect-rstest';
@@ -63,6 +63,7 @@ it.live('a tab told "reload required" asks the Shell for no further gateway cont
     // Neither does the document's batch renewal nor its assertion lookup ask again.
     yield* warmDocumentGatewayAssertions(staleRevision, ['party-registry', 'crm']);
     expect(Option.isNone(yield* documentGatewayAssertion('crm', staleRevision))).toBe(true);
+    yield* networkIdle;
     expect(requests).toHaveLength(1);
   }).pipe(Effect.provide(network)),
 );

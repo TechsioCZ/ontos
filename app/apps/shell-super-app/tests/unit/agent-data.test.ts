@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 import { AGENT_ACCESS_PATHS } from '@app/shared-contracts/agent-access';
-import { browserNetwork, inProcessFetch } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, inProcessFetch, networkIdle } from '@app/shared-contracts/testing/http-double';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Clock, Deferred, Effect, Fiber } from 'effect';
 import { FetchHttpClient } from 'effect/http';
@@ -142,10 +142,12 @@ it.live('starts the selected company agent list when the People page loads, not 
     );
     yield* Effect.gen(function* verifyPageLoadWarmup() {
       yield* warmAgentEntities();
+      yield* networkIdle;
       expect(requested).toEqual([]);
       yield* warmAgentEntities('71000000-0000-4000-8000-000000000022');
       yield* Deferred.await(received);
       yield* agentEntitiesData.preload('71000000-0000-4000-8000-000000000022');
+      yield* networkIdle;
       expect(requested).toHaveLength(1);
       expect(requested[0]?.endsWith(AGENT_ACCESS_PATHS.list)).toBe(true);
       yield* Effect.sync(() => agentEntitiesData.invalidate());

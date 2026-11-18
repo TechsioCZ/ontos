@@ -9,6 +9,7 @@ import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/tes
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -219,6 +220,7 @@ it.live('a price changed before saving is refused, taken onto the line with a no
     // Uložit again sends the current price and is not refused.
     yield* click(button('Uložit'));
     yield* waitUntil(() => sentBeans().length === 2);
+    yield* networkIdle;
     expect(sentBeans().map((line) => line.offeredUnitPriceMinor)).toEqual([1000, 1200]);
     yield* waitUntil(() => !text().includes('Cena přidaného zboží se mezitím změnila'));
   }).pipe(Effect.provide(network)),
@@ -235,6 +237,7 @@ it.live('picking a product already added again takes its current price onto that
     expect(addedPrice()).toContain('12');
     yield* click(button('Uložit'));
     yield* waitUntil(() => sentBeans().length === 1);
+    yield* networkIdle;
     expect(sentBeans()).toEqual([{ offeredUnitPriceMinor: 1200, productId: 'product-2', quantity: 2 }]);
   }).pipe(Effect.provide(network)),
 );
@@ -254,6 +257,7 @@ it.live('a market order offers an added line in its own currency, as the server 
     yield* click(button('Uložit'));
     yield* waitUntil(() => sentBeans().length === 1);
     // 10 Kč with VAT at 0.04 EUR per Kč, rounded to 0.10 EUR: 0.40 EUR, never the CZK amount.
+    yield* networkIdle;
     expect(sentBeans()).toEqual([
       { offeredUnitPriceMinor: convertGrossMinor(1000, market), productId: 'product-2', quantity: 1 },
     ]);
@@ -279,6 +283,7 @@ it.live(
       expect(text()).not.toContain('Řádky teď nesou aktuální cenu');
       yield* click(button('Uložit'));
       yield* waitUntil(() => sentBeans().length === 2);
+      yield* networkIdle;
       yield* settle;
       expect(text()).toContain(unreadable);
       // A save that succeeds ends it.

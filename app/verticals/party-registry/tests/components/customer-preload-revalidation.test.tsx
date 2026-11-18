@@ -7,6 +7,7 @@ import { useSyncExternalStore } from 'react';
 import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -325,6 +326,7 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
       expect(yield* customerDetailPageData.read(pageInput)).toBe(warmed);
       expect(customerDetailPageData.snapshot(pageInput).state).toBe('ready');
       expect(yield* customerDetailPageData.read(pageInput)).toBe(warmed);
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(0);
       expect(partyReads).toHaveLength(0);
       expect(contactReads).toHaveLength(0);
@@ -456,6 +458,7 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
         clearReadCalls();
         const failure = yield* Effect.flip(loadCustomerDetailPageRecord(pageInput));
         expect(failure.reason).toBe('not-found');
+        yield* networkIdle;
         expect(counterpartyReads).toHaveLength(0);
       }
     }),
@@ -468,6 +471,7 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
         loadCustomerDetailPageRecord({ ...pageInput, context: { ...context, principalId: '' } }),
       );
       expect(failure.reason).toBe('unavailable');
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(0);
     }),
   );
@@ -488,6 +492,8 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
       expect(result.current.party).toBeUndefined();
       expect(result.current.contactRows.every((row) => row.existing === undefined)).toBe(true);
       expect(result.current.draft).toEqual({ unrelated: 'unsaved' });
+      // A refetch the prop change wrongly started goes through the gateway to the owner; it has arrived by now.
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(0);
     }),
   );

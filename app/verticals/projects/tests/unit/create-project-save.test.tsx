@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -131,10 +132,12 @@ it.live('typing and Enter send nothing; Uložit creates once and the page can be
     yield* expectAllowed(router, '/cs/projects/create-project?clean=1');
     yield* fill;
     yield* acted(() => field('#project-name').form?.requestSubmit());
+    yield* networkIdle;
     expect(commands).toHaveLength(0);
     yield* expectBlocked(router);
     yield* acted(() => buttonNamed(labels.save).click());
     yield* waitUntil(() => text().includes(labels.saved));
+    yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(commands[0]?.payload).toMatchObject({
       name: 'Nový web',
@@ -159,6 +162,7 @@ it.live('an uncertain create locks the inputs, and Uložit retries the same draf
     answer = Effect.succeed(created);
     yield* acted(() => buttonNamed(labels.save).click());
     yield* waitUntil(() => text().includes(labels.saved));
+    yield* networkIdle;
     expect(commands).toHaveLength(2);
     expect(commands[1]?.payload).toEqual(commands[0]?.payload);
     expect(commands[0]?.key).toEqual(expect.any(String));
@@ -185,6 +189,7 @@ it.live('leaving with typed input asks, and Zahodit změny leaves without creati
     yield* waitUntil(() => router.state.location.pathname === '/cs/other');
     expect(arrivals).toEqual(['/cs/other']);
     unsubscribe();
+    yield* networkIdle;
     expect(commands).toHaveLength(0);
     yield* rerender(<CreateProjectForm />);
     expect(field('#project-name').value).toBe('');

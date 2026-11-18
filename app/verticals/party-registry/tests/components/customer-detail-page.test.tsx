@@ -9,6 +9,8 @@ import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/modu
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkQuietExcept,
+  networkSteady,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -531,6 +533,8 @@ it.layer(network, { excludeTestServices: true })('customer detail page', (suite)
       });
       expect(saveButtons()).toHaveLength(1);
       expect(saveButton().disabled).toBe(false);
+      // Earlier cases leave Counterparty reads their handler never answers open on the shared network.
+      const held = yield* networkSteady;
       expect(updates).toEqual([]);
       // Closing the tab with the unsaved draft asks the browser's own question.
       const unload = new Event('beforeunload', { cancelable: true });
@@ -541,7 +545,7 @@ it.layer(network, { excludeTestServices: true })('customer detail page', (suite)
       });
       // Party Registry answered the one update; the page has taken the answer in before anything else could go out.
       yield* Deferred.await(updateAnswered);
-      yield* settle;
+      yield* networkQuietExcept(held);
       expect(updates).toHaveLength(1);
     }),
   );

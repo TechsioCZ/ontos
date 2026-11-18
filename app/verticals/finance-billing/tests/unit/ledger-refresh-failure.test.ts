@@ -2,12 +2,13 @@
 import { acted, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Schema } from 'effect';
+import { Deferred, Effect, Schema } from 'effect';
 import { HttpServerResponse } from 'effect/http';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
@@ -210,7 +211,10 @@ const preload = (
 /** Wait for recorded owner reads and the mounted view's settled feedback, never for spy calls. */
 const settleLedgerReads = (label: string, count: number) =>
   Effect.gen(function* settled() {
-    yield* waitUntil(() => reads.length >= count && currentLedger().vm.feedback !== 'loading');
+    yield* waitUntil(() => reads.length >= count);
+    // The read arrived; let its answer reach the hook before looking at the feedback it leads to.
+    yield* networkIdle;
+    yield* waitUntil(() => currentLedger().vm.feedback !== 'loading');
     expect(reads.length, label).toBeGreaterThanOrEqual(count);
     return currentLedger();
   });
@@ -268,7 +272,8 @@ it.layer(network, { excludeTestServices: true })('finance ledger after a success
     Effect.gen(function* pendingLoad() {
       yield* pinTestDocument;
       query = '?partyId=ledger-refresh-pending';
-      answer = Effect.never;
+      const held = yield* Deferred.make<boolean>();
+      answer = Deferred.await(held).pipe(Effect.as(emptyLedger));
       const { html, vm } = yield* renderLedger();
 
       expect(vm.feedback).toBe('loading');
@@ -279,6 +284,8 @@ it.layer(network, { excludeTestServices: true })('finance ledger after a success
         showsFailure: false,
         showsSuccessfulEmpty: false,
       });
+      // Release the held read, so the next test starts on an idle network.
+      yield* Deferred.succeed(held, true);
     }).pipe(Effect.ensuring(Effect.sync(unmountAll))),
   );
 

@@ -260,9 +260,11 @@ it.live('invites a person by email and explicit affiliation, never by principal 
     yield* Effect.promise(() => user.type(screen.getByLabelText(/E-mail/u), 'jana@example.test'));
     yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Zařazení ve firmě'), 'external'));
     // Typing sends nothing; the one shared Save button sends the invitation once.
+    yield* networkIdle;
     expect(invites).toHaveLength(0);
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* waitUntil(() => invites.length === 1 && committed.length === 1);
+    yield* networkIdle;
     expect(invites).toContainEqual({
       affiliation: 'external',
       displayName: 'Jana Nováková',
@@ -293,6 +295,7 @@ it.live('an invitation with typed input asks before closing; an untouched one cl
     yield* Effect.promise(() => user.click(discard));
     yield* waitUntil(() => screen.queryByLabelText(/Jméno a příjmení/u, { selector: 'input' }) === null);
     expect(screen.queryByLabelText(/Jméno a příjmení/u, { selector: 'input' })).toBeNull();
+    yield* networkIdle;
     expect(invites).toHaveLength(0);
   }).pipe(Effect.provide(network)),
 );
@@ -330,10 +333,11 @@ it.live('confirms a committed membership change from the organisation row it rea
     });
     // Filling in the change sends nothing; the one Save button sends it once.
     expect(screen.getAllByRole('button', { name: labels.save })).toHaveLength(1);
-    yield* Effect.sleep('1 second');
+    yield* networkIdle;
     expect(memberships).toHaveLength(0);
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Uložit' })));
     yield* waitUntil(() => memberships.length === 1);
+    yield* networkIdle;
     expect(memberships).toContainEqual({
       affiliation: 'external',
       expectedRevision: 1,
@@ -514,6 +518,7 @@ it.live('reloads on a live change of Core-owned people data, not on other module
       window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['shell'] } }));
     });
     yield* Effect.promise(() => screen.findByText('Jana Svobodová'));
+    yield* networkIdle;
     expect(lists.length).toBe(before + 1);
   }).pipe(Effect.provide(network)),
 );

@@ -5,6 +5,8 @@ import { createElement } from 'react';
 import { settle, unmountAll } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -203,6 +205,7 @@ it.live(
       yield* ordersPageData.read(source);
       reads.length = 0;
       yield* preloadOrderDetails(source, base);
+      yield* networkIdle;
       expect(reads).toHaveLength(3);
       expect(reads.every((request) => request.view?.orderId === undefined)).toBe(true);
       const ready = orderDetailData.snapshot(detail);
@@ -240,6 +243,7 @@ it.live(
         revision: 7,
         vat: { rates: [], regime: null },
       });
+      yield* networkIdle;
       expect(reads).toHaveLength(0);
     }).pipe(Effect.provide(network)),
 );
@@ -255,6 +259,7 @@ it.live('a write preserves the caller revision, invalidates the row and refetche
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
     reads.length = 0;
     yield* orderDetailData.read(detail);
+    yield* networkIdle;
     expect(reads).toHaveLength(4);
   }).pipe(Effect.provide(network)),
 );
@@ -312,6 +317,7 @@ it.live('unknown orders do not acquire fixture data or a reusable negative resul
     yield* Effect.exit(orderDetailData.read(unknown));
     expect(orderDetailData.snapshot(unknown).state).toBe('failed');
     yield* Effect.exit(orderDetailData.read(unknown));
+    yield* networkIdle;
     expect(reads).toHaveLength(2);
   }).pipe(Effect.provide(network)),
 );
@@ -357,11 +363,13 @@ it.live('only current-page rows are prefetched and cancellation stops queued row
     const prefetch = yield* Effect.forkChild(preloadOrderDetails(currentPage, records));
     yield* Deferred.await(started);
     yield* Effect.yieldNow;
+    yield* networkQuietExcept(2);
     expect(requests).toBe(2);
     yield* Fiber.interrupt(prefetch);
     expect(requests).toBe(2);
     yield* Deferred.succeed(gate, true);
     yield* settle;
+    yield* networkIdle;
     expect(requests).toBe(2);
   }).pipe(Effect.provide(network)),
 );

@@ -187,6 +187,8 @@ it.live('hands each read of one module its own pooled assertion, and asks a dry 
     expect(claimed.every(({ status }) => status === 200)).toBe(true);
     // Every read got its own assertion, and none asked the single issuer.
     expect(new Set(claimed.map(({ body }) => body.token)).size).toBe(5);
+    // Any refill those reads started has landed, so a batch or single request too many is counted.
+    yield* networkIdle;
     expect(gatewayRequests()).toHaveLength(0);
     // The waiting reads were answered by batches that asked for several assertions of this one module.
     // Five reads of one module cost at most two batches, each asking several assertions of it, never one call a read.
@@ -241,6 +243,7 @@ it.live('never hands out a pooled assertion of a context that ended', () =>
     batchAnswer = () => Effect.succeed({ assertions: [] });
     const afterBoundary = yield* askAssertion({ audience, compositionRevision: revision });
     expect(held.map(({ token }) => token)).not.toContain(afterBoundary.body.token);
+    yield* networkIdle;
     // It came from the single issuer, which decides for the person signed in now.
     expect(gatewayRequests()).toHaveLength(1);
   }).pipe(Effect.provide(network)),
@@ -262,12 +265,14 @@ it.live('obtains every audience of a client-side navigation in one batch that co
     yield* Deferred.succeed(release, true);
     const answers = yield* Fiber.join(asking);
     expect(answers.map(({ body }) => body)).toEqual(audiences.map((audience) => withoutAudience(assertion(audience))));
+    yield* networkIdle;
     expect(batchRequests).toHaveLength(1);
     expect(batchRequests[0]).toEqual({ audiences, compositionRevision: revision });
     expect(gatewayRequests()).toHaveLength(0);
     // Consumed slots need fresh tokens even though the original tokens have not expired.
     yield* warmDocumentGatewayAssertions(revision, audiences);
     yield* askAssertion({ audience: 'warm-a', compositionRevision: revision });
+    yield* networkIdle;
     expect(batchRequests).toHaveLength(2);
   }).pipe(Effect.provide(network)),
 );
@@ -314,6 +319,7 @@ it.live('renews the document assertions in one batch once they near expiry, neve
       { concurrency: 'unbounded' },
     );
     expect(answers.map(({ body }) => body.expiresAt)).toEqual([FAR_EXPIRY, FAR_EXPIRY]);
+    yield* networkIdle;
     expect(batchRequests).toHaveLength(2);
     const renewal = askedOf(batchRequests[1]);
     expect(renewal.audiences).toEqual([...audiences].toSorted());
@@ -335,6 +341,7 @@ it.live('leaves other companies, other releases and unknown audiences to the sin
     });
     yield* askAssertion({ audience: 'known', compositionRevision: otherRevision });
     yield* askAssertion({ audience: 'unknown', compositionRevision: revision });
+    yield* networkIdle;
     expect(gatewayRequests()).toHaveLength(3);
 
     // An audience a remote asked for alone joins the document, so the next renewal covers it with the others.
@@ -366,6 +373,7 @@ it.live('lets each remote ask alone when the batch fails', () =>
     yield* warmDocumentGatewayAssertions(revision, ['failing-a']);
     const answer = yield* askAssertion({ audience: 'failing-a', compositionRevision: revision });
     expect(answer).toEqual({ body: withoutAudience(assertion('failing-a')), status: 200 });
+    yield* networkIdle;
     expect(gatewayRequests()).toHaveLength(1);
   }).pipe(Effect.provide(network)),
 );
@@ -384,6 +392,7 @@ it.effect('hands out an assertion only while more than the margin of its lifetim
     );
     yield* TestClock.adjust('1 millis');
     expect(yield* documentGatewayAssertion(atMargin.audience, revision)).toEqual(Option.none());
+    yield* networkIdle;
     // The expiring one was renewed with the others in one batch, not handed out.
     expect(batchRequests).toHaveLength(2);
     const marginRenewal = askedOf(batchRequests[1]);
@@ -406,6 +415,7 @@ it.live('answers no remote with an assertion of a context that ended while its b
     yield* clearBrowserRequestCache;
     yield* Deferred.succeed(release, true);
     expect(Exit.isFailure(yield* Fiber.await(asking))).toBe(true);
+    yield* networkIdle;
     expect(gatewayRequests()).toHaveLength(0);
   }).pipe(Effect.provide(network)),
 );
@@ -440,6 +450,7 @@ it.live('asks no further batch for a release the Shell no longer issues for', ()
       { concurrency: 1 },
     );
     expect(answers.map(({ status }) => status)).toEqual([409, 409, 409]);
+    yield* networkIdle;
     // Every remote gets the refusal and asks for a reload, but only the first reaches the Shell: the document
     // answers the rest with that refusal itself, and no batch repeats it.
     expect(batchRequests).toHaveLength(1);
@@ -511,6 +522,7 @@ it.live('serves the orders list and the warm-up of five order details from batch
       { concurrency: 1 },
     );
     const tokens = [...page, ...warm.flat()].map(({ body }) => body.token);
+    yield* networkIdle;
     expect(tokens).toHaveLength(15);
     expect(new Set(tokens).size).toBe(15);
     // With one assertion per audience and batch this load took 6 batches and 7 single requests after the document's

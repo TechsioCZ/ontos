@@ -7,6 +7,8 @@ import { Deferred, Effect, Schema } from 'effect';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -119,20 +121,24 @@ it.layer(network, { excludeTestServices: true })('customers preload retry', (sui
       const { rerender, unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
 
       yield* Deferred.await(twoActive);
+      // Only the two held reads are open: a third the hook wrongly started would have reached the owner by now.
+      yield* networkQuietExcept(2);
       expect(active).toBe(2);
       expect(reads).toHaveLength(2);
       yield* Deferred.succeed(initialGate, true);
       yield* waitUntil(allFailed);
+      yield* networkIdle;
       expect(allFailed()).toBe(true);
       expect(active).toBe(0);
       expect(reads).toHaveLength(LIST_WARM_ROWS);
       rerender();
+      yield* networkIdle;
       expect(reads).toHaveLength(LIST_WARM_ROWS);
 
       // A batch is warmed once: an invalidation or another render does not start a second one for the same rows.
       act(() => customerDetailData.invalidate());
       rerender();
-      yield* Effect.sleep('10 millis');
+      yield* networkIdle;
       expect(reads).toHaveLength(LIST_WARM_ROWS);
       expect(peak).toBe(2);
       expect(overflow.map((customer) => customerDetailData.snapshot({ customer, scope }).state)).toEqual(

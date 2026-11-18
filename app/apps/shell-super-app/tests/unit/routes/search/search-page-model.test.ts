@@ -4,11 +4,9 @@ import { Effect, Schema } from 'effect';
 import { expect, it, test } from 'effect-rstest';
 
 import {
-  AvailableLegalEntitiesResponseSchema,
   LegalEntityIdSchema,
   ModuleIdSchema,
   ResourceIdSchema,
-  ShellDocumentContextSchema,
   ShellTargetForbiddenProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/browser-api.ts';
@@ -289,61 +287,6 @@ it.effect('a partial inventory answer issues one request and offers no filter', 
 );
 
 const searchUrl = 'https://ontos.test/en/search?q=Morava';
-
-/** Server rendering: no browser document, as the SSR loader on Node and Workers runs. */
-const asServerRender = <Value, Failure, Requirements>(operation: Effect.Effect<Value, Failure, Requirements>) => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
-  return Effect.acquireUseRelease(
-    Effect.sync(() => Reflect.deleteProperty(globalThis, 'document')),
-    () => operation,
-    () =>
-      Effect.sync(() => {
-        if (descriptor !== undefined) {
-          Object.defineProperty(globalThis, 'document', descriptor);
-        }
-      }),
-  );
-};
-// happy-dom's Request drops the cookie header (a browser-forbidden name); the server's request carries it.
-const serverRequest = () =>
-  Object.defineProperty(new Request(searchUrl), 'headers', {
-    value: new Headers({ cookie: 'better-auth.session_token=test-session' }),
-  });
-
-/** The document context the BFF answers server rendering with: Ada, signed in, one available composition. */
-const signedInDocument = Schema.decodeUnknownSync(ShellDocumentContextSchema)({
-  canManagePeople: false,
-  composition: {
-    compositionRevision: shellCompositionRevision,
-    deniedAppIds: [],
-    gatewayAudiences: [],
-    homeComponents: [],
-    navigation: [],
-    state: 'available',
-    unavailableDeployments: [],
-  },
-  home: { contribution: { state: 'forbidden' } },
-  legalEntities: Schema.encodeSync(AvailableLegalEntitiesResponseSchema)(
-    Schema.decodeUnknownSync(AvailableLegalEntitiesResponseSchema)({
-      legalEntities: [{ legalEntityId: '20000000-0000-4000-8000-000000000001', legalName: 'Alpha company' }],
-      selectedLegalEntityId: '20000000-0000-4000-8000-000000000001',
-      state: 'authenticated',
-      tenantContextAvailable: false,
-    }),
-  ),
-  session: { identity: adaSignedIn.identity, state: 'authenticated' },
-  tenants: { state: 'available', tenants: [] },
-});
-
-it.live('a server render returns the shell with the query pending and never runs the search', () => {
-  const bff = searchBff(unfilteredHit, { documentContext: () => Effect.succeed(signedInDocument) });
-  return Effect.gen(function* serverRenderSearch() {
-    const model = yield* asServerRender(Effect.promise(() => loader({ request: serverRequest() })));
-    expect(recordedPayloads(bff)).toEqual([]);
-    expect(model).toMatchObject({ query: 'Morava', state: 'pending' });
-    expect(model.shell.state).toBe('authenticated');
-  }).pipe(Effect.provide(bff.browser));
-});
 
 it.live('the browser loader still returns the answered search', () => {
   const bff = searchBff(unfilteredHit, signedInShellReads(adaSignedIn));

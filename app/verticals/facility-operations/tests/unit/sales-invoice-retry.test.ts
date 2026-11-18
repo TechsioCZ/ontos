@@ -2,6 +2,7 @@
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -195,6 +196,7 @@ it.live('Finance drafts the invoice under the identity of the order, never under
     yield* pinTestDocument;
     const runner = recordingRunner();
     const outcome = yield* attempt(runner);
+    yield* networkIdle;
     expect(outcome).toMatchObject({ number: invoice.number, ok: true });
     const [payload] = creates;
     expect(payload).toMatchObject({ command: { sourceOrder: { id: order.id, number: order.number } } });
@@ -216,9 +218,11 @@ it.live('after a failed link a fresh attempt links the invoice Finance holds for
     yield* pinTestDocument;
     const runner = recordingRunner(['unavailable']);
     const failedLink = yield* attempt(runner);
+    yield* networkIdle;
     expect(failedLink).toMatchObject({ number: invoice.number, ok: false, reason: 'link' });
     financeRecords = snapshot([invoice]);
     const linked = yield* attempt(runner);
+    yield* networkIdle;
     expect(linked).toMatchObject({ number: invoice.number, ok: true });
     expect(creates).toHaveLength(1);
     expect(vatReads).toHaveLength(1);
@@ -251,12 +255,14 @@ it.live('when Finance stored the invoice but its answer was lost, the retry link
       ),
     );
     const lost = yield* attempt(runner);
+    yield* networkIdle;
     expect(lost.ok).toBe(false);
     expect(runner.sent).toEqual([]);
     // Finance is read again, so the panel shows the invoice that now waits for its link.
     expect(failures).toHaveLength(1);
     financeRecords = snapshot([invoice]);
     const linked = yield* attempt(runner);
+    yield* networkIdle;
     expect(linked).toMatchObject({ number: invoice.number, ok: true });
     expect(creates).toHaveLength(1);
     expect(runner.sent).toHaveLength(1);
@@ -279,6 +285,7 @@ it.live('an invoice of another order, an advance or a voided one is not the orde
     // Finance answering with an invoice that is not this order's is refused, not linked.
     createAnswer = Effect.succeed(createdInvoice({ ...invoice, sourceOrder: { id: 'order-2', number: 'X' } }));
     const outcome = yield* attempt(runner);
+    yield* networkIdle;
     expect(outcome.ok).toBe(false);
     expect(creates).toHaveLength(1);
     expect(runner.sent).toEqual([]);
@@ -296,6 +303,7 @@ it.live('the order invoice issued to another customer in Finance is refused, nev
       },
     ]);
     const outcome = yield* attempt(runner);
+    yield* networkIdle;
     expect(outcome).toMatchObject({ ok: false, reason: 'customer' });
     expect(creates).toHaveLength(0);
     expect(runner.sent).toEqual([]);
@@ -317,6 +325,7 @@ it.live("Finance's refusal for another customer reads as that, not as a generic 
       }),
     );
     const outcome = yield* attempt(runner);
+    yield* networkIdle;
     expect(outcome).toMatchObject({ ok: false, reason: 'customer' });
     expect(runner.sent).toEqual([]);
   }).pipe(Effect.provide(network)),
@@ -328,6 +337,7 @@ it.live('amounts edited in Finance are still the order invoice; the link takes n
     const runner = recordingRunner();
     financeRecords = snapshot([{ ...invoice, number: 'FV-2026-0002', totalMinor: 36_300 }]);
     const outcome = yield* attempt(runner);
+    yield* networkIdle;
     expect(outcome).toMatchObject({ number: 'FV-2026-0002', ok: true });
     expect(creates).toHaveLength(0);
     expect(runner.sent).toEqual([
@@ -351,6 +361,7 @@ it.live('already linked orders refuse Finance creation before any read or write'
       invoices: [{ invoiceId: invoice.ref.resourceId, linkedAt: timestamp, linkedBy: actor, number: invoice.number }],
     });
     const outcome = yield* attempt(runner, linkedOrder);
+    yield* networkIdle;
     expect(outcome.ok).toBe(false);
     expect(creates).toHaveLength(0);
     expect(reads).toHaveLength(0);

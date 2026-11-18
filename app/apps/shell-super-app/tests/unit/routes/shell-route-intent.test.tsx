@@ -31,7 +31,7 @@ const IntentContext = ({ initiallyDisabled = false }: { readonly initiallyDisabl
   return (
     <StaffRoutePreloadContext value={preload}>
       <ShellRouteLink to="/finance">Finance</ShellRouteLink>
-      <output aria-label="Intent readiness">{preload.enabled ? 'ready' : 'blocked'}</output>
+      <output>{preload.enabled ? 'ready' : 'blocked'}</output>
       <button onClick={() => setContext('company-b')} type="button">
         Switch company
       </button>
@@ -89,7 +89,7 @@ const mountLinks = (element: ReactElement, navigation: Effect.Effect<unknown> = 
     return { prepared, router, starts };
   });
 
-const ready = () => screen.getByLabelText('Intent readiness').textContent === 'ready';
+const ready = () => screen.getByRole('status').textContent === 'ready';
 
 beforeEach(() => {
   browserRuntime.runSync(staffRoutePreloads.invalidate);

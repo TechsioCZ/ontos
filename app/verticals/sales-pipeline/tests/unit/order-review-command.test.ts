@@ -12,6 +12,7 @@ import type { ReviewOrderChangesActionProblem } from '@app/merchandise/apis/revi
 import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -99,6 +100,7 @@ it.live('sends the human decision to the published narrow client with fresh revi
   Effect.gen(function* committedReview() {
     yield* pinTestDocument;
     yield* sendOrderReview(command);
+    yield* networkIdle;
     expect(review).toHaveLength(1);
     const [received] = review;
     expect(received?.payload).toEqual({ command, expectedRevision: 7 });
@@ -129,6 +131,7 @@ it.live('retains a parked proposal as pending, never a committed decision and ne
         proposalId: proposal.proposalId,
       });
     }
+    yield* networkIdle;
     expect(review).toHaveLength(1);
     expect(records).toHaveLength(1);
   }).pipe(Effect.provide(network)),
@@ -152,6 +155,7 @@ it.live('re-reads once for an explicit owner revision conflict but does not repl
     );
     recordsAnswer = Effect.sync(() => recordsResponse(records.length === 1 ? 7 : 8));
     yield* sendOrderReview(command);
+    yield* networkIdle;
     expect(review).toHaveLength(2);
     expect(review[1]?.payload).toEqual({ command, expectedRevision: 8 });
     review.length = 0;
@@ -169,6 +173,7 @@ it.live('re-reads once for an explicit owner revision conflict but does not repl
     );
     const result = yield* sendOrderReview(command).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
+    yield* networkIdle;
     expect(review).toHaveLength(1);
     expect(records).toHaveLength(1);
   }).pipe(Effect.provide(network)),

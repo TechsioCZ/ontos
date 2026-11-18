@@ -209,6 +209,7 @@ test.live('the header filter dispatches only the exact observed admitted types',
       expect(result.current.state.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
       expect(result.current.state.filters.selectedFamilies).toEqual([]);
     }
+    yield* networkIdle;
     expect(searches(bff)[0]).toEqual({
       compositionRevision: 'a'.repeat(64),
       query: 'dvorak',
@@ -218,6 +219,7 @@ test.live('the header filter dispatches only the exact observed admitted types',
       result.current.handleFamiliesChange(['companies']);
     });
     yield* waitUntil(() => result.current.state.status !== 'loading');
+    yield* networkIdle;
     expect(searches(bff).at(-1)).toEqual({
       compositionRevision: 'a'.repeat(64),
       query: 'dvorak',
@@ -241,6 +243,7 @@ test.live('a header family filter asks the inventory alone first and never an un
 
     act(() => result.current.handleFamiliesChange(['companies']));
     yield* waitUntil(() => result.current.state.status !== 'loading');
+    yield* networkIdle;
     const filteredCalls = searches(bff).slice(callsBeforeFilter);
     // The first filtered request is the explicit empty inventory selector; the second is the exact selected type.
     expect(filteredCalls).toEqual([
@@ -261,6 +264,7 @@ test.live('an unknown header family shows nothing and never widens to the unfilt
 
     act(() => result.current.handleFamiliesChange(['missing']));
     yield* waitUntil(() => result.current.state.status !== 'loading');
+    yield* networkIdle;
     const filteredCalls = searches(bff).slice(callsBeforeFilter);
     expect(filteredCalls).toEqual([{ compositionRevision: 'a'.repeat(64), query: 'dvorak', resourceTypes: [] }]);
     expect(filteredCalls.some(({ resourceTypes }) => resourceTypes === undefined)).toBe(false);
@@ -289,6 +293,7 @@ test.live('a query change resets the selected header filter and sends no stale t
       expect(result.current.state.query).toBe('jiný');
       expect(result.current.state.filters.selectedFamilies).toEqual([]);
     }
+    yield* networkIdle;
     expect(searches(bff).at(-1)).toEqual({
       compositionRevision: 'a'.repeat(64),
       query: 'jiný',
@@ -384,6 +389,7 @@ test.live('missing trusted principal refuses header search', () => {
     yield* networkIdle;
     yield* settle;
     expect(result.current.state.status).toBe('idle');
+    yield* networkIdle;
     expect(searches(bff)).toEqual([]);
   }).pipe(Effect.provide(bff.browser));
 });

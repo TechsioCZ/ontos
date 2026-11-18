@@ -5,6 +5,7 @@ import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -132,6 +133,8 @@ it.layer(network, { excludeTestServices: true })('customers list held', (suite) 
       answer = Deferred.await(gate).pipe(Effect.as({ items: [customerOf('After')] }));
       shown.length = 0;
       liveChange();
+      // The reads this started have all arrived; the gate holds one of them open.
+      yield* networkQuietExcept(1);
       expect(customersData.snapshot(customersQuery(company)).state).toBe('pending');
       expect(shown.length).toBeGreaterThan(0);
       expect(new Set(shown)).toEqual(new Set(['rows:Before']));
@@ -155,6 +158,8 @@ it.layer(network, { excludeTestServices: true })('customers list held', (suite) 
       liveChange();
       shown.length = 0;
       rerender({ context: otherCompany });
+      // The read this started has arrived; the gate holds it open.
+      yield* networkQuietExcept(1);
       expect(new Set(shown)).toEqual(new Set(['pending']));
       yield* Deferred.succeed(gate, true);
       yield* waitUntil(() => customersData.snapshot(customersQuery(company)).state === 'ready');

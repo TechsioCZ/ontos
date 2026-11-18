@@ -114,6 +114,7 @@ it.live('sends the classification staff picked in the CreateProduct payload', ()
     yield* pickVat(CZ_VAT_REDUCED);
     yield* acted(() => saveButton().click());
     yield* waitUntil(() => commands.length > 0);
+    yield* networkIdle;
     expect(sentClassifications()).toEqual([CZ_VAT_REDUCED]);
   }).pipe(Effect.provide(network)),
 );
@@ -126,6 +127,7 @@ it.live('starts on the first classification with a rate when the standard one ha
     yield* fillRequired;
     yield* acted(() => saveButton().click());
     yield* waitUntil(() => commands.length > 0);
+    yield* networkIdle;
     expect(sentClassifications()).toEqual([CZ_VAT_REDUCED]);
   }).pipe(Effect.provide(network)),
 );

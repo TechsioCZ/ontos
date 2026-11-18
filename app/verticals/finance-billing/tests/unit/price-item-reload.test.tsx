@@ -13,6 +13,7 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -178,6 +179,7 @@ it.layer(network, { excludeTestServices: true })('price list item editor across 
 
       // The reload brings a newer revision of the ledger; the item itself is unchanged.
       yield* Deferred.succeed(gate, ledgerAt(4, 10_000));
+      yield* networkIdle;
       yield* waitUntil(() => reads.length >= 2);
       yield* waitUntil(() => buttons(labels.save).length > 0);
       expect(value(name)).toBe('typed-name');

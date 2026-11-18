@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -193,6 +194,8 @@ const answerRead = (index: number, product: ProductRecord) =>
     const read = yield* pendingRead(index);
     yield* Deferred.succeed(read.gate, recordsWith([product]));
     yield* Deferred.await(read.returned);
+    // The answer reaches the dialog while the reads still held stay open.
+    yield* networkQuietExcept(reads.filter((held) => !Deferred.isDoneUnsafe(held.returned)).length);
     yield* settle;
   });
 
@@ -273,6 +276,7 @@ it.live('does not permit a receipt when the selected product record cannot be lo
     // The retry reads the same product again; its record then lets the receipt choose a variant.
     yield* click(button(copy.retry));
     yield* pendingRead(1);
+    yield* networkQuietExcept(1);
     expect(reads).toHaveLength(2);
     expect(reads[1]?.request).toEqual(reads[0]?.request);
     yield* answerRead(1, receiptProduct);

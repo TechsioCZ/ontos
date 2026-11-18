@@ -6,6 +6,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -139,11 +140,13 @@ it.live('the category change is sent once, from Uložit only, never on Enter', (
     const option = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="option"]')));
     yield* click(option);
     yield* pressEnter('bulk-category-input');
+    yield* networkIdle;
     expect(sent()).toEqual([]);
     expect(saveButton().disabled).toBe(false);
 
     yield* click(saveButton());
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { categoryId: category.id } }]);
     expect(openChanges).toEqual([false]);
   }).pipe(Effect.provide(network)),
@@ -154,10 +157,12 @@ it.live('the price change it opens with is sent by the first Uložit', () =>
     yield* pinTestDocument;
     yield* mount(<PriceChangeDialog {...priceProps} />);
     expect(saveButton().disabled).toBe(false);
+    yield* networkIdle;
     expect(sent()).toEqual([]);
 
     yield* click(saveButton());
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { priceChangePercent: 5 } }]);
   }).pipe(Effect.provide(network)),
 );
@@ -181,6 +186,7 @@ it.live('the price change becomes savable when rows are selected after the page 
 
     yield* click(saveButton());
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { priceChangePercent: 5 } }]);
   }).pipe(Effect.provide(network)),
 );
@@ -228,6 +234,7 @@ it.live('names the selected products priced by variants before anything is typed
       copy('merchandise.pages.products.priceDialog.variantProducts', { names: 'Šroub M8' }),
     );
     expect(saveButton().disabled).toBe(true);
+    yield* networkIdle;
     expect(sent()).toEqual([]);
   }).pipe(Effect.provide(network)),
 );
@@ -240,6 +247,7 @@ it.live('a company without a storefront tree types the category label as before'
     yield* typeInto('bulk-category', '  Nářadí  ');
     yield* click(saveButton());
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { category: 'Nářadí' } }]);
   }).pipe(Effect.provide(network)),
 );

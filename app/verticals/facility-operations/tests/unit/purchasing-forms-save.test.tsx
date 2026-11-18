@@ -12,6 +12,7 @@ import {
 } from '@app/work-tasks/contracts/records';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -121,6 +122,7 @@ const saveSent = (count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => sent.length >= count)),
     Effect.andThen(waitUntil(() => saveButton().textContent.trim() === labels.save)),
+    Effect.andThen(networkIdle),
   );
 
 const audit = {

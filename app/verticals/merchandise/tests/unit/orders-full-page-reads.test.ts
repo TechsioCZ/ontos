@@ -226,6 +226,7 @@ it.live('a list mounted after the preload of its first page reads neither the pa
     yield* Effect.promise(() =>
       browserRuntime.runPromise(preloadOrdersPage(company.legalEntityId, PAGE_SIZE, company)),
     );
+    yield* networkIdle;
     expect(count('list-50')).toBe(1);
     expect(count('count')).toBe(2);
     reads.length = 0;

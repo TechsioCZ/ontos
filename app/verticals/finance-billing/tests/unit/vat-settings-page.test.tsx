@@ -5,7 +5,11 @@
 // proves that refusal on the server). The page runs on its real i18n, router and Tax clients; the Shell's gateway
 // issuer and Tax's reads answer in process through their HttpApi contracts.
 import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
-import { pinDocumentNavigationModules } from '@app/shared-contracts';
+import {
+  GATEWAY_MODULE_NOT_INSTALLED_TYPE,
+  GatewayForbiddenProblemSchema,
+  pinDocumentNavigationModules,
+} from '@app/shared-contracts';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
@@ -160,6 +164,15 @@ const regimeHistory = Schema.decodeUnknownSync(SellerVatRegimeHistoryResponseSch
 /** Which VAT changes Tax lets the signed-in person make, and whether the company declared a regime; each test sets it. */
 let rights: VatChangeRights = { createRevision: false, createRule: false, declareRegime: false, endRevision: false };
 let declared = true;
+/** Whether Tax is installed for the tenant; when it is not, the Shell refuses the Tax audience as not installed. */
+let taxInstalled = true;
+const taxNotInstalled = GatewayForbiddenProblemSchema.make({
+  detail: 'The module the call is for is not installed for the tenant.',
+  reason: 'audience_module_not_installed',
+  status: 403,
+  title: 'Module not installed',
+  type: GATEWAY_MODULE_NOT_INSTALLED_TYPE,
+});
 
 const Applicable = ApplicableTaxRuleSetApi.prefix('/tax-api');
 const RuleHistory = TaxRuleHistoryApi.prefix('/tax-api');
@@ -167,7 +180,9 @@ const RegimeAt = SellerVatRegimeAtInstantApi.prefix('/tax-api');
 const RegimeHistory = SellerVatRegimeHistoryApi.prefix('/tax-api');
 const ChangeRights = VatChangeRightsApi.prefix('/tax-api');
 const network = browserNetwork(
-  shellGatewayIssuer({ tax: '/tax-api' }).application,
+  shellGatewayIssuer({ tax: '/tax-api' }, (audience) =>
+    audience === 'tax' && !taxInstalled ? taxNotInstalled : undefined,
+  ).application,
   serveApi(
     Applicable,
     HttpApiBuilder.group(Applicable, 'applicableTaxRuleSet', (group) =>
@@ -217,6 +232,7 @@ const showWith = (granted: VatChangeRights) =>
 
 beforeEach(() => {
   declared = true;
+  taxInstalled = true;
   // As on stage: the Shell pins the navigation of the person's company, and Tax has no navigation entry of its own.
   pinDocumentNavigationModules(['finance.billing', 'demo.merchandise', 'sales.pipeline'], document);
   vatSettingsData.invalidate();
@@ -265,6 +281,16 @@ it.layer(network, { excludeTestServices: true })('vat settings page', (suite) =>
       yield* waitUntil(() => text().includes(say('notDeclared')));
       expect(text()).toContain(say('notDeclaredDescription'));
       expect(text()).not.toContain(say('notInstalled'));
+    }),
+  );
+
+  suite.effect("Tax not installed for the tenant: the page says exactly that, from the Shell's own answer", () =>
+    Effect.gen(function* notInstalled() {
+      taxInstalled = false;
+      yield* render;
+      yield* waitUntil(() => text().includes(say('notInstalled')));
+      expect(text()).toContain(say('notInstalledDescription'));
+      expect(text()).not.toContain(say('forbidden'));
     }),
   );
 

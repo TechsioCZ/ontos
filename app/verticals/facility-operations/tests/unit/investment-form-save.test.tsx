@@ -8,6 +8,7 @@ import {
 } from '@app/property-portfolio/contracts/records';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -136,6 +137,7 @@ const save = (count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => commands.length >= count)),
     Effect.andThen(waitUntil(() => buttons(labels.save).length > 0)),
+    Effect.andThen(networkIdle),
   );
 
 beforeEach(() => {
@@ -157,6 +159,7 @@ describe('investment plan item', () => {
       yield* typeInto('#investment-planned-date', '2027-06-01');
       yield* save(1);
       yield* waitUntil(() => saved.length === 1);
+      yield* networkIdle;
       expect(commands.map((entry) => entry.command)).toEqual([
         expect.objectContaining({
           _tag: 'AssetInvestmentCreate',
@@ -178,6 +181,7 @@ describe('investment plan item', () => {
       yield* panel.rerender(editOf(theirs, 4));
       yield* save(1);
       yield* waitUntil(() => text().includes(labels.conflict));
+      yield* networkIdle;
       expect(commands.map((entry) => entry.expectedRevision)).toEqual([3]);
       expect(text()).toContain(labels.conflict);
       expect(saved).toEqual([]);
@@ -186,6 +190,7 @@ describe('investment plan item', () => {
       yield* typeInto('#investment-responsible', 'Petr Dvořák');
       yield* save(2);
       yield* waitUntil(() => saved.length === 1);
+      yield* networkIdle;
       expect(commands.map((entry) => entry.expectedRevision)).toEqual([3, 4]);
       expect(Predicate.isTagged(commands[1]?.command, 'AssetInvestmentUpdate')).toBe(true);
       expect(commands[1]?.command).toMatchObject({ investmentId: opened.id, responsible: 'Petr Dvořák' });

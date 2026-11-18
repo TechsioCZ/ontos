@@ -758,6 +758,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
           expect(detail.status === 'ready' ? detail.value.candidateCase.revision : undefined).toBe(5);
         }),
       );
+      yield* networkIdle;
       expect(listCalls).toHaveLength(1);
       expect(detailCalls).toHaveLength(1);
       // The background read never blanks the panel and keeps the reviewer's draft.
@@ -866,6 +867,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         act(() => review.result.current.retryDetail());
         yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
         expect(review.result.current.canResolve).toBe(false);
+        yield* networkIdle;
         expect(matchCalls).toHaveLength(1);
       }),
   );

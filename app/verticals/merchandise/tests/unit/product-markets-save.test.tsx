@@ -7,6 +7,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -122,11 +123,13 @@ it.live('toggling a market offer writes nothing; Save writes the offer once', ()
 
     yield* click(offerSwitch('AKROS-PL'));
     expect(offerSwitch('AKROS-PL').checked).toBe(true);
+    yield* networkIdle;
     expect(sent()).toEqual([]);
     expect(saveButton().disabled).toBe(false);
 
     yield* click(saveButton());
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([
       {
         command: { _tag: 'SetProductMarketOffer', expectedOffered: false, marketId: PL, offered: true, productId },
@@ -147,10 +150,12 @@ it.live('one Save sends every changed market once, each naming the offer it was 
     // Switching a market back leaves nothing to send for it.
     yield* click(offerSwitch('AKROS-PL'));
     yield* click(offerSwitch('AKROS-PL'));
+    yield* networkIdle;
     expect(sent()).toEqual([]);
 
     yield* click(saveButton());
     yield* waitUntil(() => committed.length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([
       {
         command: { _tag: 'SetProductMarketOffer', expectedOffered: true, marketId: SK, offered: false, productId },
@@ -175,6 +180,7 @@ it.live('a save over a newer offer change by someone else is refused and keeps t
     yield* click(saveButton());
     yield* waitUntil(() => text().includes(labels.conflict));
     // The first offer is refused; the rest of the save is not sent.
+    yield* networkIdle;
     expect(sent().map(({ command }) => command)).toEqual([
       { _tag: 'SetProductMarketOffer', expectedOffered: true, marketId: SK, offered: false, productId },
     ]);

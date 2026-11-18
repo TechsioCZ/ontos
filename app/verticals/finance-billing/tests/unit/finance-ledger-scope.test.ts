@@ -2,6 +2,8 @@
 import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -192,6 +194,8 @@ it.layer(network, { excludeTestServices: true })('finance ledger cache per verif
       answer = Deferred.await(late);
       yield* acted(() => inCompany.reload());
       yield* waitUntil(() => reads.length >= 2);
+      // Only the held refresh is open; a second one the reload wrongly started would have arrived by now.
+      yield* networkQuietExcept(1);
       expect(reads).toHaveLength(2);
 
       // Same filter in the other company is its own read, never the cached ledger of the first company.
@@ -218,6 +222,7 @@ it.layer(network, { excludeTestServices: true })('finance ledger cache per verif
       // A write from the switched page is based on its own ledger revision, not the late one.
       const outcome = yield* afterLate.execute(priceItemCommand);
       yield* settle;
+      yield* networkIdle;
       expect(outcome).toEqual({ ok: true });
       expect(commands).toHaveLength(1);
       expect(commands[0]).toMatchObject({ expectedRevision: 7 });
@@ -243,9 +248,12 @@ it.layer(network, { excludeTestServices: true })('finance ledger cache per verif
       expect(vm.feedback).toBe('forbidden');
 
       yield* acted(() => vm.reload());
+      // A read the reload wrongly started goes through the gateway and then the records endpoint; it has by now.
+      yield* networkIdle;
       expect(reads.length).toBe(readCount);
 
       expect(yield* vm.execute(priceItemCommand)).toEqual({ feedback: 'unavailable', ok: false });
+      yield* networkIdle;
       expect(commands).toHaveLength(0);
     }),
   );

@@ -14,6 +14,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -79,6 +80,7 @@ const saveSent = (runner: ReturnType<typeof recordingRunner>, count: number) =>
   click(labels.save).pipe(
     Effect.andThen(waitUntil(() => runner.sent.length >= count)),
     Effect.andThen(waitUntil(() => calls.length > 0)),
+    Effect.andThen(networkIdle),
     Effect.andThen(settle),
   );
 const tenantId = '70000000-0000-4000-8000-000000000020';

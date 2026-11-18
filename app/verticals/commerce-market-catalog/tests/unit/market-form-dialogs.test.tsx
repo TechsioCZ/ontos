@@ -3,6 +3,7 @@
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -189,15 +190,18 @@ describe('edit market dialog', () => {
       );
       yield* typeInto('edit-market-purpose', 'Nový účel');
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       expect(revisions.length).toBe(0);
       expect(buttonNamed('Uložit').disabled).toBe(true);
 
       yield* typeInto('edit-market-reason', 'Oprava názvu');
       expect(buttonNamed('Uložit').disabled).toBe(false);
+      yield* networkIdle;
       expect(revisions.length).toBe(0);
 
       yield* clickButton('Uložit');
       yield* waitUntil(() => revisions.length > 0);
+      yield* networkIdle;
       expect(revisions.length).toBe(1);
       yield* waitUntil(() => done.length > 0);
       expect(done).toHaveLength(1);
@@ -219,10 +223,13 @@ describe('edit market dialog', () => {
       expect(isOpen('Zůstat')).toBe(true);
       expect(isOpen('Zahodit změny')).toBe(true);
       expect(closed).toHaveLength(0);
+      yield* networkIdle;
       expect(revisions.length).toBe(0);
 
       yield* clickButton('Zůstat');
       expect(closed).toHaveLength(0);
+      yield* networkIdle;
+      expect(revisions.length).toBe(0);
     }).pipe(Effect.provide(network)),
   );
 });
@@ -251,11 +258,13 @@ describe('new market dialog', () => {
       yield* typeInto('new-market-locales', 'cs-CZ');
       yield* typeInto('new-market-valid-from', '2026-11-10');
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       expect(creations.length).toBe(0);
       expect(buttonNamed('Uložit').disabled).toBe(false);
 
       yield* clickButton('Uložit');
       yield* waitUntil(() => creations.length > 0);
+      yield* networkIdle;
       expect(creations.length).toBe(1);
       yield* waitUntil(() => createdResults.length > 0);
       expect(createdResults).toHaveLength(1);
@@ -283,6 +292,7 @@ describe('new market dialog', () => {
       yield* clickButton(keyOf('form.cancel'));
       expect(isOpen('Zůstat')).toBe(true);
       expect(closed).toHaveLength(0);
+      yield* networkIdle;
       expect(creations.length).toBe(0);
     }).pipe(Effect.provide(network)),
   );
@@ -311,10 +321,12 @@ describe('storefront association dialog', () => {
       yield* clickButton(keyOf('detail.storefronts.associate'));
       yield* typeInto('association-valid-from', '2026-11-10');
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       expect(associations.length).toBe(0);
 
       yield* clickButton('Uložit');
       yield* waitUntil(() => associations.length > 0);
+      yield* networkIdle;
       expect(associations.length).toBe(1);
       yield* waitUntil(() => done.length > 0);
       expect(done).toHaveLength(1);
@@ -333,6 +345,7 @@ describe('storefront association dialog', () => {
       yield* clickButton(keyOf('detail.storefronts.associate'));
       yield* clickButton('Uložit');
       yield* waitUntil(() => associations.length > 0);
+      yield* networkIdle;
       expect(associations.length).toBe(1);
     }).pipe(Effect.provide(network)),
   );
@@ -345,6 +358,7 @@ describe('storefront association dialog', () => {
       yield* typeInto('association-valid-from', '2026-11-10');
       yield* clickButton(keyOf('form.cancel'));
       expect(isOpen('Zůstat')).toBe(true);
+      yield* networkIdle;
       expect(associations.length).toBe(0);
     }).pipe(Effect.provide(network)),
   );

@@ -9,6 +9,7 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import { RecordsApi, RecordsResponseSchema } from '@app/work-tasks/contracts/records';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -163,6 +164,7 @@ it.live('never retries an unavailable owner by dropping contextRefs', () =>
     });
     answer = Effect.fail(unavailable);
     expect(yield* createServiceTask(draft, { device, tenantId })).toEqual({ status: 'failed' });
+    yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(commands[0]?.payload.command).toHaveProperty('contextRefs');
   }).pipe(Effect.provide(network)),
@@ -186,6 +188,7 @@ it.live('retries only one revision conflict, still carrying the unit link and cr
     } satisfies typeof device;
     const created = yield* createServiceTask(draft, { device: unit, tenantId });
     expect(created.status).toBe('created');
+    yield* networkIdle;
     expect(commands).toHaveLength(2);
     for (const [index, call] of commands.entries()) {
       expect(call.payload.command).toMatchObject({ contextRefs: [{ resourceType: 'property.portfolio.unit' }] });
@@ -205,6 +208,7 @@ it.live('reports a parked proposal as pending approval without a task and never 
       }),
     );
     expect(yield* createServiceTask(draft, { device, tenantId })).toEqual({ status: 'pending_approval' });
+    yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(commands[0]?.referenceCredentials).toBe(propertyCredentials(0));
   }).pipe(Effect.provide(network)),

@@ -1,6 +1,8 @@
 // @rstest-environment happy-dom
-// The document pin guards the real Federation runtime: no Federation host is created in this file, so any load
-// that reaches Federation answers `unavailable`, and only a load stopped before it can fail with a revision conflict.
+// The Shell's native load runs on the real Federation runtime: a real host named as the Shell's, whose SDK fetches each
+// remote's manifest and asks a runtime plugin for the remote's container (./routes/modules/federation-host.ts). Without
+// that host a load that reaches Federation answers `unavailable`, and a load stopped before it fails with a revision
+// conflict.
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -9,6 +11,7 @@ import {
   loadBrowserModuleEntrypoint,
 } from '../../src/routes/module-entrypoint-loader.ts';
 import { ResolvedModuleTargetSchema } from '../../shared/browser-api.ts';
+import { makeFederationHost } from './routes/modules/federation-host.ts';
 
 const View = () => null;
 const pageContract = Schema.Struct({
@@ -30,10 +33,39 @@ const targetOf = (owner: string) =>
     writable: false,
   });
 
+it.live('loads the exact pinned native expose through the scheduler and validates its export', () =>
+  Effect.gen(function* loadPinnedExpose() {
+    const target = targetOf('native-success');
+    const host = yield* makeFederationHost({
+      answer: () => Effect.succeed({ default: View }),
+      refusedRemotes: [],
+    });
+    const result = yield* loadBrowserModuleEntrypoint(target, pageContract);
+    expect(result).toMatchObject({ state: 'ready', value: { default: View } });
+    expect(host.registered).toEqual([{ entry: target.federation.manifest.url, name: 'native-success' }]);
+    expect(host.requests).toEqual(['native-success/Widget']);
+  }),
+);
+
+it.live('rejects a native namespace that does not satisfy the caller contract', () =>
+  Effect.gen(function* rejectIncompatibleExpose() {
+    const target = targetOf('native-invalid');
+    const host = yield* makeFederationHost({
+      answer: () => Effect.succeed({ default: 'not a page' }),
+      refusedRemotes: [],
+    });
+    expect(yield* loadBrowserModuleEntrypoint(target, pageContract)).toMatchObject({
+      reason: 'incompatible',
+      state: 'unavailable',
+    });
+    expect(host.requests).toEqual(['native-invalid/Widget']);
+  }),
+);
+
 it.effect('fails before consulting Federation when a document is already pinned to another release', () =>
   Effect.gen(function* rejectChangedRelease() {
     const target = targetOf('native-revision');
-    // Federation has no host instance here: a load that reaches it answers unavailable.
+    // No Federation host instance is registered in this case: a load that reaches Federation answers unavailable.
     expect(yield* loadBrowserModuleEntrypoint(target, pageContract)).toEqual({
       reason: 'unavailable',
       state: 'unavailable',

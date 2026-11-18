@@ -122,6 +122,7 @@ it.layer(network, { excludeTestServices: true })('customer create ares', (suite)
       yield* passFakeTime('800 millis');
       yield* waitUntilOnFakeTimers(() => field('customer-name').value === 'Příklad s.r.o.');
       expect(field('customer-name').value).toBe('Příklad s.r.o.');
+      yield* networkIdle;
       expect(requests).toHaveLength(1);
       expect(requests[0]).toEqual({ ico: validIco });
       expect(field('customer-vat-id').value).toBe(`CZ${validIco}`);
@@ -177,6 +178,7 @@ it.layer(network, { excludeTestServices: true })('customer create ares', (suite)
       yield* type('customer-ico', validIco);
       yield* passFakeTime('800 millis');
       yield* waitUntilOnFakeTimers(() => requests.length === 1);
+      yield* networkIdle;
       expect(requests).toHaveLength(1);
       expect(requests[0]).toEqual({ ico: validIco });
     }),

@@ -2,6 +2,7 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -79,6 +80,7 @@ it.live('a parked proposal never reaches committed command callbacks or revision
     );
     expect(receipt).toStrictEqual(proposal);
     expect(committed).toBe(false);
+    yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(reads).toEqual([]);
   }).pipe(Effect.provide(network)),
@@ -88,6 +90,7 @@ it.live('a parked guarded save reports proposed rather than adopting a fabricate
     yield* pinTestDocument;
     const result = yield* opportunitySaveResult(applyPipelineCommandIfUnchanged(command, 7, () => true));
     expect(result).toBe('proposed');
+    yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(reads).toEqual([]);
   }).pipe(Effect.provide(network)),

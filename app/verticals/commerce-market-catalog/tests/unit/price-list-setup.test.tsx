@@ -7,6 +7,7 @@ import type { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-ma
 import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -107,6 +108,7 @@ describe('setting up the price list of a market', () => {
       yield* pinTestDocument;
       yield* mount();
       yield* click(setupButton());
+      yield* networkIdle;
       yield* settle;
       expect(commands).toHaveLength(0);
       expect(document.body.textContent).toContain(copy.title);
@@ -127,6 +129,7 @@ describe('setting up the price list of a market', () => {
       yield* click(confirmButton());
       yield* settle;
       yield* waitUntil(() => done.length === 1);
+      yield* networkIdle;
       yield* settle;
       expect(commands).toHaveLength(1);
       expect(done).toHaveLength(1);

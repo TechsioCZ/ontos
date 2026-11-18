@@ -2,6 +2,7 @@
 import { acted } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   testCompositionRevision,
@@ -152,6 +153,8 @@ it.live('a link qualified with another company is refused instead of selecting t
 it.live('a malformed person link is refused while a valid agent link keeps its own tab', () =>
   Effect.gen(function* malformedPerson() {
     yield* mountPeople('agent=00000000-0000-4000-8000-000000000099&person=broken-person');
+    // The directory read the page started has been answered, so a person it wrongly selected would be open by now.
+    yield* networkIdle;
     expect(screen.getByRole('button', { name: 'AI agenti' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('dialog')).toBeNull();
   }).pipe(Effect.provide(network)),

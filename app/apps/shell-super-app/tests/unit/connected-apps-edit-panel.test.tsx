@@ -7,7 +7,7 @@ import {
 } from '@app/shared-contracts/agent-access';
 import type { ConnectionLimits, ConnectionSummary, ConnectionUpdateRequest } from '@app/shared-contracts/agent-access';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
-import { browserNetwork, serveApi } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle, serveApi } from '@app/shared-contracts/testing/http-double';
 import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { cleanup, screen } from '@testing-library/react';
@@ -147,10 +147,11 @@ it.live('changing the access writes nothing until Uložit, which writes once', (
   return Effect.gen(function* editThenSave() {
     yield* renderPanel(callbacks().props);
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    yield* Effect.sleep('1 second');
+    yield* networkIdle;
     expect(bff.requests).toHaveLength(0);
     yield* click(saveButton());
     yield* waitUntil(() => document.querySelector('[data-save-state="saved"]') !== null);
+    yield* networkIdle;
     expect(bff.requests).toHaveLength(1);
     expect(bff.requests[0]).toMatchObject({ grantId: 'g1', writePolicy: 'read_only' });
   }).pipe(Effect.provide(bff.network));
@@ -165,6 +166,7 @@ it.live('leaving with unsaved changes asks first, and Zahodit změny sends nothi
     yield* click(closeButton());
     expect(events.closed).toHaveLength(0);
     yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
+    yield* networkIdle;
     expect(bff.requests).toHaveLength(0);
     expect(events.closed).toHaveLength(1);
   }).pipe(Effect.provide(bff.network));
@@ -207,6 +209,7 @@ it.live('a route change with unsaved changes asks first, and Zahodit změny lets
     yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
     expect(router.state.location.pathname).toBe('/cs');
     expect(navigations).toEqual(['/cs']);
+    yield* networkIdle;
     expect(bff.requests).toHaveLength(0);
   }).pipe(Effect.scoped, Effect.provide(bff.network));
 });

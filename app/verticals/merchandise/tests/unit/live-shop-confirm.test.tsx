@@ -5,6 +5,7 @@
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -155,10 +156,12 @@ it.live('archiving a DEMO product asks first, naming the product, and runs once 
     );
     yield* type('demo-archive-reason', 'Testovací produkt');
     yield* click(byTestId('demo-archive'));
+    yield* networkIdle;
     expect(commands).toEqual([]);
     expect(text()).toContain(copy.archiveTitle);
     yield* click(byTestId('live-shop-confirm'));
     yield* waitUntil(() => archived.length > 0);
+    yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({
       command: { _tag: 'ArchiveDemoProduct', reason: 'Testovací produkt' },

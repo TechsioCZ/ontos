@@ -9,6 +9,8 @@ import type { ShellSearchResponse } from '../../shared/browser-api.ts';
 import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/browser-api.ts';
 import { useShellSearchSuggestions } from '../../src/routes/shell-search-suggestions.ts';
 
+import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
+
 import { makeShellBff } from '../support/shell-bff-double.ts';
 import { ShellI18n, shellLocaleCopy } from '../support/shell-i18n.tsx';
 import type { ShellLanguage } from '../support/shell-i18n.tsx';
@@ -78,6 +80,8 @@ test.live('a new composition revision clears old results and an old response can
         result.current.handleQueryChange('dvorak');
       });
       yield* Deferred.await(received);
+      // Only the held search stays open: a second search sent by mistake has arrived by now.
+      yield* networkQuietExcept(1);
       expect(result.current.state.status).toBe('loading');
       expect(bff.requests).toEqual([
         expect.objectContaining({
@@ -92,6 +96,8 @@ test.live('a new composition revision clears old results and an old response can
       expect(result.current.state.status).toBe('idle');
       yield* Deferred.succeed(deferred, response);
       yield* Deferred.await(answered);
+      // The old answer has travelled back to the page, so it would be visible now if it could win.
+      yield* networkIdle;
       yield* settle;
       expect(result.current.state.status).toBe('idle');
     }).pipe(Effect.provide(bff.browser));

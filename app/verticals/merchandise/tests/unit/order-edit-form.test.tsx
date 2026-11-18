@@ -1,16 +1,17 @@
 // @rstest-environment happy-dom
 // The order edit form through its real i18n, router, product picker and generated HTTP clients.
-import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
 import { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
 import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
@@ -208,8 +209,8 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-describe('order edit form with one Save button', () => {
-  it.live('has one Save button, disabled until something changes, and typing sends nothing', () =>
+it.layer(network, { excludeTestServices: true })('order edit form with one Save button', (suite) => {
+  suite.effect('has one Save button, disabled until something changes, and typing sends nothing', () =>
     Effect.gen(function* oneButton() {
       yield* mount;
       expect(buttons('Uložit')).toHaveLength(1);
@@ -221,23 +222,24 @@ describe('order edit form with one Save button', () => {
       expect(text()).toContain('Neuložené změny');
       // Longer than any debounce the form ever had.
       yield* Effect.sleep('1 second');
-      yield* settle;
+      yield* networkIdle;
       expect(edits()).toBe(0);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('one click on Save sends one edit and shows it saved', () =>
+  suite.effect('one click on Save sends one edit and shows it saved', () =>
     Effect.gen(function* saveOnce() {
       yield* mount;
       yield* typeNote('Zavolat předem');
       yield* click(button('Uložit'));
       yield* waitUntil(() => text().includes('Uloženo'));
+      yield* networkIdle;
       expect(edits()).toBe(1);
       expect(button('Uložit').disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('leaving with unsaved changes asks first; Zůstat keeps the form, Zahodit změny leaves unsaved', () =>
+  suite.effect('leaving with unsaved changes asks first; Zůstat keeps the form, Zahodit změny leaves unsaved', () =>
     Effect.gen(function* leave() {
       const view = yield* mount;
       yield* typeNote('Zavolat předem');
@@ -253,11 +255,12 @@ describe('order edit form with one Save button', () => {
       yield* click(button(copy('merchandise.pages.orders.detail.backToDetail')));
       yield* click(button('Zahodit změny'));
       expect(view.cancelled).toEqual(['cancel']);
+      yield* networkIdle;
       expect(edits()).toBe(0);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('Uložit in the question saves once and then leaves', () =>
+  suite.effect('Uložit in the question saves once and then leaves', () =>
     Effect.gen(function* saveAndLeave() {
       const view = yield* mount;
       yield* typeNote('Zavolat předem');
@@ -267,32 +270,33 @@ describe('order edit form with one Save button', () => {
       expect(inDialog).toBeDefined();
       yield* click(inDialog ?? document.createElement('button'));
       yield* waitUntil(() => view.saved.length === 1);
+      yield* networkIdle;
       expect(edits()).toBe(1);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('an unchanged form leaves without asking', () =>
+  suite.effect('an unchanged form leaves without asking', () =>
     Effect.gen(function* cleanLeave() {
       const view = yield* mount;
       yield* click(button(copy('merchandise.pages.orders.detail.backToDetail')));
       expect(buttons('Zůstat')).toHaveLength(0);
       expect(view.cancelled).toEqual(['cancel']);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });
 
-describe('VAT of the order lines', () => {
-  it.live("an order's own line shows the VAT it was snapshotted with, named by its classification", () =>
+it.layer(network, { excludeTestServices: true })('VAT of the order lines', (suite) => {
+  suite.effect("an order's own line shows the VAT it was snapshotted with, named by its classification", () =>
     Effect.gen(function* snapshot() {
       yield* mount;
       expect(text()).toContain(`${copy('merchandise.pages.orders.detail.lineVat')} Základní (21 %)`);
       expect(text()).not.toContain('23 %');
       // 2 × 1 Kč net + 21 % VAT, as the order already counted it.
       expect(text()).toContain('2,42 Kč');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live("an added product takes its classification from the product and today's rate from Tax", () =>
+  suite.effect("an added product takes its classification from the product and today's rate from Tax", () =>
     Effect.gen(function* added() {
       yield* mount;
       yield* pickProduct;
@@ -300,21 +304,22 @@ describe('VAT of the order lines', () => {
       expect(text()).toContain(`${copy('merchandise.pages.orders.detail.lineVat')} Snížená (12 %)`);
       // 2,42 Kč for the order's line, plus 8 Kč net and 0,96 Kč VAT for the new one.
       expect(text()).toContain('11,38 Kč');
+      yield* networkIdle;
       expect(edits()).toBe(0);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a product whose classification has no rate in force cannot be added, and the form says why', () =>
+  suite.effect('a product whose classification has no rate in force cannot be added, and the form says why', () =>
     Effect.gen(function* missing() {
       vat = { ...payer, rates: [standardRate] };
       yield* mount;
       yield* pickProduct;
       expect(text()).toContain('Sazba DPH „Snížená“ není pro tuto firmu nastavená, produkt nelze přidat.');
       expect(button('Přidat').disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a product without a VAT classification cannot be added, and the form says why', () =>
+  suite.effect('a product without a VAT classification cannot be added, and the form says why', () =>
     Effect.gen(function* unclassified() {
       const { taxClassificationCode: _code, ...withoutClassification } = beans;
       void _code;
@@ -324,10 +329,10 @@ describe('VAT of the order lines', () => {
       expect(text()).toContain('Produkt nemá zařazení do sazby DPH, proto ho nelze přidat.');
       expect(text()).not.toContain('„není nastaveno“');
       expect(button('Přidat').disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
+    }),
   );
 
-  it.live('a company that is not a VAT payer adds a product at 0 % and the line says so', () =>
+  suite.effect('a company that is not a VAT payer adds a product at 0 % and the line says so', () =>
     Effect.gen(function* nonPayer() {
       vat = { rates: [], regime: 'NON_PAYER' };
       yield* mount;
@@ -338,12 +343,12 @@ describe('VAT of the order lines', () => {
       // 2,42 Kč for the order's line, plus 8 Kč net and no VAT for the new one.
       expect(text()).toContain('10,42 Kč');
       expect(text()).not.toContain('není nastaveno');
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });
 
-describe('a line added to a storefront order (prices include VAT)', () => {
-  it.live('takes the stored price including VAT and sends it as the offered price unless staff change it', () =>
+it.layer(network, { excludeTestServices: true })('a line added to a storefront order (prices include VAT)', (suite) => {
+  suite.effect('takes the stored price including VAT and sends it as the offered price unless staff change it', () =>
     Effect.gen(function* storedGross() {
       shownOrder = { ...orderOf({ updatedAt: opened }), pricesIncludeVat: true };
       // Stored gross 10 Kč, not 8 Kč net plus 12 % (8,96 Kč).
@@ -355,12 +360,14 @@ describe('a line added to a storefront order (prices include VAT)', () => {
       expect(text()).toContain('10 Kč');
       yield* click(button('Uložit'));
       yield* waitUntil(() => commands.length === 1);
+      yield* networkIdle;
+      expect(commands).toHaveLength(1);
       // The offered price travels with the line: the server stores that price or refuses when it changed meanwhile.
       expect(sentLines().find((line) => line.productId === beans.id)).toEqual({
         offeredUnitPriceMinor: 1000,
         productId: beans.id,
         quantity: 1,
       });
-    }).pipe(Effect.provide(network)),
+    }),
   );
 });

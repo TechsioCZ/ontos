@@ -3,9 +3,10 @@
 // stores and the ui-kit table, with the real records client served in process and controlled time. An idle page
 // reloads what it shows after the 20 s freshness window, after a live change and after a write: a few reads a minute.
 // The details warmed for the list's rows are read once per list revision, not again whenever they expire.
-import '@app/admin-ui/testing/module-ui';
+import { passFakeTime } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -156,15 +157,8 @@ const mount = (component: () => ReturnType<typeof createElement>) =>
     });
   });
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each step starts reach the owner before the next one. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
 /** The Shell's live channel reports a change committed elsewhere (another module, session or worker). */
 const liveChange = Effect.sync(() => window.dispatchEvent(new Event(moduleChangeEvent)));
@@ -205,6 +199,7 @@ it.live('an opened products list warms its rows only once the browser is idle', 
   Effect.gen(function* warmWhenIdle() {
     yield* pinTestDocument;
     yield* mount(ProductsList);
+    yield* networkIdle;
     expect([count('list'), count('detail')]).toEqual([1, 0]);
     yield* idle(1);
     expect(count('detail')).toBe(LIST_WARM_ROWS);

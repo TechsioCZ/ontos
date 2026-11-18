@@ -297,6 +297,8 @@ export const makeShellBff = (script: ShellBffScript) => {
     Layer.provide(HttpServer.layerServices),
   );
   return {
+    /** The BFF as one in-process application, for a test that serves it itself (a loopback server rendering reads). */
+    application,
     /** Serves the page's own browser-runtime requests through the test DOM's network. */
     browser: browserNetwork(application),
     /** Serves the client Effects a test runs itself, through `FetchHttpClient.Fetch`. */

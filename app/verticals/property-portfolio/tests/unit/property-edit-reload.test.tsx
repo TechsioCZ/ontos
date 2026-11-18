@@ -5,7 +5,7 @@
 // draft was read at, and a draft with nothing typed takes the reloaded building.
 // The page runs on its real i18n, router and generated clients; the Shell's gateway issuer, the property owner's
 // records and Action endpoints and Workforce's records endpoint answer in process through their HttpApi contracts.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
@@ -205,6 +205,15 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 it.layer(network, { excludeTestServices: true })('property edit dialog across a background reload', (suite) => {
+  suite.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* openEdit(firstId);
+      expect(text()).toContain(requiredLabelFor('cs'));
+      expect(text()).not.toContain('(required)');
+      expect(document.querySelector(`label[for="${name}"]`)?.textContent).toContain(requiredLabelFor('cs'));
+    }),
+  );
+
   suite.effect('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
     Effect.gen(function* typedSurvives() {
       yield* openEdit(firstId);

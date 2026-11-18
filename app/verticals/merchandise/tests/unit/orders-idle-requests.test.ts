@@ -203,6 +203,7 @@ it.live('an idle orders list reloads its page every 20 s and warms its rows once
 it.live('an opened orders list warms its rows only once the browser is idle', () =>
   Effect.gen(function* warmWhenIdle() {
     yield* mount(OrdersList);
+    yield* networkIdle;
     expect([count('list'), count('detail')]).toEqual([1, 0]);
     yield* idle(1);
     expect(count('detail')).toBe(WARMED * DETAIL_READS);

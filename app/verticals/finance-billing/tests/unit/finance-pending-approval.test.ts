@@ -3,6 +3,7 @@ import { Toaster } from '@app/admin-ui';
 import { settle, unmountAll } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -192,12 +193,14 @@ it.layer(network, { excludeTestServices: true })('finance commands parked for ap
 
       const repeated = yield* perform(vm.execute(priceItem(150_000), 'Položka ceníku přidána'));
       expect(repeated).toEqual({ feedback: 'pendingApproval', ok: false });
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
 
       // A different edit is a new intent and is sent.
       answer = committed;
       const edited = yield* perform(vm.execute(priceItem(160_000), 'Položka ceníku přidána'));
       expect(edited).toEqual({ ok: true });
+      yield* networkIdle;
       expect(commands).toHaveLength(2);
       expect(toastTypes()).toEqual(['info', 'info', 'success']);
     }),
@@ -222,6 +225,7 @@ it.layer(network, { excludeTestServices: true })('finance commands parked for ap
       answer = proposal;
 
       expect(yield* perform(inCompany.execute(priceItem(150_000)))).toEqual({ feedback: 'pendingApproval', ok: false });
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
 
       // The other company's identical intent is its own proposal, sent once and then suppressed in that scope.
@@ -229,11 +233,13 @@ it.layer(network, { excludeTestServices: true })('finance commands parked for ap
         feedback: 'pendingApproval',
         ok: false,
       });
+      yield* networkIdle;
       expect(commands).toHaveLength(2);
       expect(yield* perform(inOtherCompany.execute(priceItem(150_000)))).toEqual({
         feedback: 'pendingApproval',
         ok: false,
       });
+      yield* networkIdle;
       expect(commands).toHaveLength(2);
     }),
   );
@@ -285,6 +291,7 @@ it.layer(network, { excludeTestServices: true })('finance commands parked for ap
 
       // Running the same period again does not send a second proposal for the approver.
       yield* perform(recurringPanelGenerateProgram(context, [template]));
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
       expect(results.at(-1)).toEqual({ created: [], duplicates: [], failed: [], pending: ['Nájem kancelář'] });
     }),

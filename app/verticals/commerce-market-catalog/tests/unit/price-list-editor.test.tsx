@@ -135,6 +135,7 @@ describe('price list editor', () => {
       yield* typeRate('24,5');
       expect(saveButton().disabled).toBe(false);
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       yield* settle;
       expect(commands).toHaveLength(0);
     }).pipe(Effect.provide(network)),

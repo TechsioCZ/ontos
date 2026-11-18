@@ -6,6 +6,8 @@ import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/tes
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -179,6 +181,7 @@ it.live('customer first, then a product whose record loads later: Uložit enable
     yield* pickProduct();
     // The product record is still loading: the line cannot be priced yet.
     yield* waitUntil(() => productReads.length === 1);
+    yield* networkQuietExcept(1);
     expect(productReads).toEqual(['product-1']);
     expect(buttonNamed(labels.save).disabled).toBe(true);
 
@@ -189,6 +192,7 @@ it.live('customer first, then a product whose record loads later: Uložit enable
 
     yield* click(labels.save);
     yield* waitUntil(() => created.length === 1);
+    yield* networkIdle;
     expect(sent()).toHaveLength(1);
     expect(Predicate.isTagged(sent()[0], 'CreateOrder')).toBe(true);
     expect(sent()[0]).toMatchObject({
@@ -239,6 +243,7 @@ it.live('a product whose classification has no rate in force says so and cannot 
     yield* fillOneLine(reducedProduct);
     expect(text()).toContain('DPH Snížená (není nastaveno)');
     expect(buttonNamed(labels.save).disabled).toBe(true);
+    yield* networkIdle;
     expect(sent()).toEqual([]);
   }).pipe(Effect.provide(network)),
 );
@@ -253,6 +258,7 @@ it.live('a company that is not a VAT payer orders at 0 %: the line says so and t
     expect(buttonNamed(labels.save).disabled).toBe(false);
     yield* click(labels.save);
     yield* waitUntil(() => sent().length === 1);
+    yield* networkIdle;
     expect(sent()).toEqual([expect.objectContaining({ _tag: 'CreateOrder' })]);
   }).pipe(Effect.provide(network)),
 );
@@ -280,6 +286,7 @@ it.live('two rules in force at once for the classification: the line says why an
       'Pro sazbu DPH „Základní“ platí v modulu Daně více pravidel zároveň, produkt nelze přidat.',
     );
     expect(buttonNamed(labels.save).disabled).toBe(true);
+    yield* networkIdle;
     expect(sent()).toEqual([]);
   }).pipe(Effect.provide(network)),
 );

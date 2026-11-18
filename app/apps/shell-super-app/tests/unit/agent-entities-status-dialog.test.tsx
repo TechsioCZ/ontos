@@ -6,7 +6,7 @@ import {
   ManageAgentEntityRequestSchema,
 } from '@app/shared-contracts/agent-access';
 import type { AgentEntitySchema, ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
-import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle } from '@app/shared-contracts/testing/http-double';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -94,6 +94,7 @@ for (const status of ['active', 'disabled'] as const) {
           fireEvent.click(screen.getByRole('button', { name: confirmName }));
         });
         expect(screen.getByText(copy('shell.agents.section.dialog.reasonRequired'))).toBeTruthy();
+        yield* networkIdle;
         expect(requests).toHaveLength(0);
         yield* Effect.promise(() => userEvent.type(screen.getByRole('textbox'), '  Ukončení provozu  '));
         yield* acted(() => {
@@ -108,6 +109,7 @@ for (const status of ['active', 'disabled'] as const) {
           fireEvent.click(screen.getByRole('button', { name: confirmName }));
         });
         yield* waitUntil(() => requests.length === 2);
+        yield* networkIdle;
         expect(requests).toHaveLength(2);
         expect(requests[0]).toEqual({
           key: expect.stringMatching(/^agent-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u),

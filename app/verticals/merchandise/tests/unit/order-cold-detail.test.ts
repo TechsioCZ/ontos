@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -187,6 +188,7 @@ it.live('a cold table click renders the authorized row while the detail enriches
     reads.length = 0;
 
     expect(renderToStaticMarkup(createElement(DetailStateProbe))).toBe('<output>loading:ORD-1</output>');
+    yield* networkIdle;
     expect(reads).toHaveLength(0);
 
     holdDetails = true;

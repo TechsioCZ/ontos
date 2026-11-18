@@ -166,6 +166,7 @@ it.live('retains the original decision and key after a lost response, note edit 
     answers = [applied()];
     yield* click(retry);
     yield* waitUntil(() => queueReads === beforeRetry + 1);
+    yield* networkIdle;
     expect(mutations).toHaveLength(2);
     expect(mutations[0]?.idempotencyKey).toBeTruthy();
     expect(mutations[0]?.credentials).toBe('same-origin');
@@ -194,6 +195,7 @@ it.live('creates a new key for an intentionally changed decision and clears it a
     );
     yield* click('Zamítnout dávku');
     yield* waitUntil(() => queueReads === reads + 2);
+    yield* networkIdle;
     expect(mutations).toHaveLength(3);
     expect(mutations[2]?.idempotencyKey).not.toBe(mutations[1]?.idempotencyKey);
   }).pipe(Effect.provide(platform)),
@@ -243,6 +245,7 @@ it.live('keeps a mutation single-flight through body consumption and finalizes i
       fireEvent.click(approve);
     });
     yield* waitUntil(() => queueReads === reads + 2);
+    yield* networkIdle;
     expect(mutations).toHaveLength(2);
     expect(mutations[1]?.idempotencyKey).not.toBe(mutations[0]?.idempotencyKey);
   }).pipe(Effect.provide(platform)),

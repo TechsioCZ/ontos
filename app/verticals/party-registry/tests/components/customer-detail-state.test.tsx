@@ -229,6 +229,7 @@ it.layer(network, { excludeTestServices: true })('customer detail state', (suite
         fireEvent.change(nameField(), { target: { value: 'After' } });
       });
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       expect(commands).toHaveLength(0);
       expect(saveButton().disabled).toBe(false);
       yield* acted(() => {
@@ -245,6 +246,7 @@ it.layer(network, { excludeTestServices: true })('customer detail state', (suite
         document.querySelector<HTMLElement>('[data-save-state]')?.dataset['saveState'],
       );
       expect(saveButton().disabled).toBe(true);
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
     }),
   );
@@ -259,6 +261,7 @@ it.layer(network, { excludeTestServices: true })('customer detail state', (suite
       });
       yield* Effect.sleep('1 second');
       expect(saveButton().disabled).toBe(true);
+      yield* networkIdle;
       expect(commands).toHaveLength(0);
     }),
   );
@@ -312,6 +315,7 @@ it.layer(network, { excludeTestServices: true })('customer detail state', (suite
       expect(screen.queryByRole('button', { name: 'Zůstat' })).toBeNull();
       expect(router.state.location.searchStr).toBe('?clean=1');
       expect(nameField().value).toBe('After');
+      yield* networkIdle;
       expect(commands).toHaveLength(0);
     }),
   );

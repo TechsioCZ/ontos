@@ -358,6 +358,8 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       expect(result.current.detailValue?.contacts).toEqual(snapshot.contacts);
       expect(result.current.detailValue?.identifiers).toEqual(snapshot.identifiers);
       expect(result.current.detailFailure).toBeUndefined();
+      // A detail read the opening wrongly started goes through the gateway to the owner; it has arrived by now.
+      yield* networkIdle;
       expectNoReads();
     }),
   );
@@ -549,6 +551,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
     Effect.gen(function* customerPreloadTest() {
       yield* pinTestDocument;
       yield* preloadCustomerDetails(undefined, [customer]);
+      yield* networkIdle;
       expectNoReads();
       const values: CustomerDetailSnapshot[] = [];
       loadCustomerDetailInto(customer, (loaded) => {

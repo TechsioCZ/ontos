@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -131,6 +132,7 @@ describe('stock item edit', () => {
     Effect.gen(function* savedItem() {
       yield* editName;
       yield* waitUntil(() => toasts().length === 1);
+      yield* networkIdle;
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'StockItemUpdate')).toBe(true);
       expect(toasts()).toEqual([{ title: t('facility-operations.common.saved'), type: 'success' }]);
@@ -142,6 +144,7 @@ describe('stock item edit', () => {
       answer = Effect.fail(forbidden);
       yield* editName;
       yield* waitUntil(() => text().includes(t('facility-operations.common.errors.forbidden')));
+      yield* networkIdle;
       expect(sent).toHaveLength(1);
       expect(text()).toContain(t('facility-operations.common.errors.forbidden'));
       expect(text()).not.toContain(labels.failed);

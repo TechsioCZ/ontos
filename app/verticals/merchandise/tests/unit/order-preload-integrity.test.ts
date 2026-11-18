@@ -2,6 +2,7 @@
 import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -256,6 +257,7 @@ it.live('a complete warm order keeps the full variant read revision and retries 
     expect(ready).toEqual({ movesStock: true, order, products: [full], revision: 9, vat: { rates: [], regime: null } });
     reads.length = 0;
     expect(yield* orderDetailData.read(detail)).toBe(ready);
+    yield* networkIdle;
     expect(reads).toHaveLength(0);
   }).pipe(Effect.provide(network)),
 );
