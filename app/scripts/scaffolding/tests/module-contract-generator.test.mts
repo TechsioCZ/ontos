@@ -1204,6 +1204,19 @@ it.live(
           /verticals\/property-registry\/dist\/public\/\.well-known\/ontos-module-manifest\.json$/u,
         );
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
+        // A catalog the contract does not pin, e.g. restored from an earlier release, must not pass as served output.
+        const unpinnedToolCatalog = path.join(
+          root,
+          'verticals/property-registry/dist/public/.well-known/ontos-module-mcp-tools.json',
+        );
+        yield* Effect.promise(() => writeFile(unpinnedToolCatalog, '{"definitions":{},"tools":[]}', 'utf-8'));
+        yield* expectFailure(checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer)), (error) => {
+          if (Schema.is(OntosModuleContractCheckError)(error)) {
+            expect(error.reason).toMatch(/serves \/\.well-known\/ontos-module-mcp-tools\.json that its contract/u);
+          } else {
+            throw new Error(EXPECTED_CHECKER_ERROR);
+          }
+        });
       }),
     );
   }),

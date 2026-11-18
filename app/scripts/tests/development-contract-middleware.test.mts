@@ -91,7 +91,13 @@ it('serves the prepared MCP tool catalog next to the module contract', () => {
 it('answers 404 for the tool catalog of a module without an MCP contribution', () => {
   const middleware = installMiddleware({ toolCatalog: 'absent' });
   const catalog = request(middleware, TOOL_CATALOG_URL);
-  expect(catalog).toEqual({ body: null, ended: true, headers: {}, nextCalled: false, statusCode: 404 });
+  expect(catalog).toEqual({
+    body: '',
+    ended: true,
+    headers: { 'cache-control': 'no-cache' },
+    nextCalled: false,
+    statusCode: 404,
+  });
   const manifest = request(middleware, '/.well-known/ontos-module-manifest.json');
   expect(manifest.statusCode).toBe(200);
   expect(JSON.parse(manifest.body ?? '')).toEqual({ moduleId: 'party.registry' });

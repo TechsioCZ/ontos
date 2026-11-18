@@ -116,8 +116,8 @@ interface Value {
   /**
    * `true`: data a native String/Trim/NonEmptyString schema or a closed template literal decodes to, and combinators
    * that keep the decoded value (brand, filters, decodeTo onto such a target, a one-member Union, fromJsonString)
-   * carry it unchanged. `false`: a nullable or optional wrapper may yield null or undefined, which vetoes any string
-   * evidence, a string literal included. Only `isClosedString` reads it.
+   * carry it unchanged. `false`: a nullable or optional wrapper, or a record key that may be absent, may yield null or
+   * undefined, which vetoes any string evidence, a string literal included. Only `isClosedString` reads it.
    */
   readonly stringData?: boolean;
 }
@@ -126,14 +126,50 @@ type Completion = 'bad' | 'falls' | 'returns';
 const isClosedString = (value: Value): boolean =>
   !metadataOnly(value) && value.kind === 'data' && value.stringData !== false &&
   (value.stringData === true || ('literal' in value && typeof value.literal === 'string'));
-/** The same data without string evidence: a nullable or optional wrapper may yield null or undefined instead. */
-const possiblyAbsentString = (value: Value | undefined): Value | undefined =>
-  value !== undefined && isClosedString(value) ? { ...value, stringData: false } : value;
+/**
+ * The same value without string or exact literal evidence, at any depth: a nullable or optional wrapper, a record key
+ * or an array index that may be absent, may yield null or undefined instead, so neither `entry === "ok"`,
+ * `entry?.kind === "ok"` nor a template part may rely on a value inside it.
+ */
+const possiblyAbsent = (value: Value | undefined, depth = 0): Value | undefined => {
+  if (value === undefined || depth > 64) return value;
+  if (value.kind === 'data') {
+    if (value.stringData !== true && !('literal' in value)) return value;
+    const { literal: _exact, ...widened } = value;
+    return { ...widened, stringData: false };
+  }
+  if (value.kind !== 'record' && value.kind !== 'array') return value;
+  const fields = value.fields === undefined ? undefined
+    : new Map([...value.fields].map(([name, field]) => [name, possiblyAbsent(field, depth + 1) ?? field]));
+  const element = possiblyAbsent(value.element, depth + 1);
+  return element === value.element && [...(fields ?? [])].every(([name, field]) => value.fields?.get(name) === field)
+    ? value
+    : { ...value, ...(fields === undefined ? {} : { fields }), ...(element === undefined ? {} : { element }) };
+};
 /** A schema whose decoded and encoded values are both closed strings. */
 const isClosedStringSchema = (value: Value): boolean =>
   value.kind === 'schema' && isClosedString(value.payload ?? BAD) && isClosedString(value.encoded ?? value.payload ?? BAD);
 const isFactoryResult = (value: Value): boolean =>
   isClosedData(value) || (value.kind === 'codec-effect' && isClosedData(value.payload ?? BAD));
+/**
+ * A value with a `Schema.Json` leaf somewhere. Effect validates a Json value by its enumerable string keys and returns the
+ * very object it was given, so a non-enumerable or symbol-keyed function on that object survives the decode.
+ */
+const holdsJson = (value: Value, depth = 0): boolean =>
+  depth < 64 && ((value.kind === 'data' && value.native === 'json') ||
+    [...(value.fields?.values() ?? []), ...(value.element === undefined ? [] : [value.element])].some((child) => holdsJson(child, depth + 1)));
+/** Whether `input` is closed data wherever `shape`, one side of a codec, holds a Json leaf. Elsewhere a Struct rebuilds it. */
+const closedAtJson = (shape: Value, input: Value, depth = 0): boolean => {
+  if (!holdsJson(shape)) return true;
+  if (depth >= 64 || shape.kind === 'data' || input.kind === 'data') return isClosedData(input);
+  // A dictionary walks every own key, so an open input may hide one.
+  if (input.kind !== shape.kind || (shape.element !== undefined && input.open === true)) return false;
+  const children = [...(input.fields?.values() ?? []), ...(input.element === undefined ? [] : [input.element])];
+  return [...(shape.fields ?? [])].every(([name, field]) => {
+    const child = input.fields?.get(name) ?? (input.open === true ? BAD : input.element);
+    return child === undefined || closedAtJson(field, child, depth + 1);
+  }) && (shape.element === undefined || children.every((child) => closedAtJson(shape.element ?? BAD, child, depth + 1)));
+};
 const BAD: Value = { kind: 'bad' };
 const DATA: Value = { kind: 'data' };
 /** A `let` local: it only ever holds closed data and every read sees opaque data, never a literal. */
@@ -249,14 +285,15 @@ const mergeBase = (values: readonly Value[]): Value => {
   if (
     values.every(isClosedData) &&
     values.some((value) => value.kind === 'record') &&
-    values.every((value) => value.kind === 'record' || value.kind === 'data')
+    values.every((value) => value.kind === 'record' || (value.kind === 'data' && !holdsJson(value)))
   ) {
     const records = values.filter((value) => value.kind === 'record');
     const shape = merge(records);
     return { ...shape, native: 'union-data' };
   }
-  // Erasing heterogeneous shapes is safe only after their entire payload is known closed.
-  return values.every(isClosedData) ? DATA : BAD;
+  // Erasing heterogeneous shapes is safe only after their entire payload is known closed. An erased Json member stays
+  // a Json leaf, so a decoder still sees that it may return its input.
+  return values.every(isClosedData) ? (values.some((value) => holdsJson(value)) ? { kind: 'data', native: 'json' } : DATA) : BAD;
 };
 const hasStaticWire = (value: Value, depth = 0): boolean => depth < 64 && (value.wire === true ||
   [...(value.fields?.values() ?? []), ...(value.element === undefined ? [] : [value.element]),
@@ -708,7 +745,17 @@ class DataFactoryProof {
           callee.type === 'Identifier' ||
           (callee.type === 'CallExpression' &&
             ['deferred-effect', 'schema-class', 'deferred-runtime'].includes(origin ?? ''));
-        if (origin !== null && creation) {
+        // A schema `.pipe` calls each stage now, during initialisation. `safe` admits a function, a name or a member
+        // without its body, so every stage but a Schema combinator call takes the normal callback proof below instead.
+        const eagerStage =
+          origin === 'deferred-schema' &&
+          callee.type === 'MemberExpression' &&
+          !callee.computed &&
+          callee.property.name === 'pipe' &&
+          node.arguments.some(
+            (argument: Node) => unwrap(argument).type !== 'CallExpression' || deferredOrigin(argument) !== 'deferred-schema',
+          );
+        if (origin !== null && creation && !eagerStage) {
           const receiverSafe =
             callee.type === 'MemberExpression' ? safe(callee.object) : callee.type !== 'CallExpression' || safe(callee);
           return receiverSafe && node.arguments.every((argument: Node) => fnNode(unwrap(argument)) || safe(argument));
@@ -734,6 +781,15 @@ class DataFactoryProof {
       for (const id of this.values.keys()) if (id.startsWith(`${model.filename}:`)) this.values.delete(id);
     this.initialized.set(model.filename, result);
     return result;
+  }
+
+  /**
+   * What a codec of `codec` accepts as input. A Json leaf hands back the very object it was given, so in data-factory
+   * mode the input at a Json position must be closed data, not an open caller object that may carry a hidden function.
+   */
+  codecInput(codec: Value): (input: Value) => boolean {
+    return (input) => isData(input) && (this.publicCodecs ||
+      (closedAtJson(codec.payload ?? BAD, input) && closedAtJson(codec.encoded ?? codec.payload ?? BAD, input)));
   }
 
   metadataAlias(input: Node, model: Model, seen = new Set<Node>()): boolean {
@@ -1998,7 +2054,7 @@ class DataFactoryProof {
       for (const [index, element] of pattern.elements.entries()) {
         if (
           element !== null &&
-          !this.bind(element, this.metadataProjection(input, input.fields?.get(String(index)) ?? input.element ?? BAD), model, env, local || this.strictSchemaExports)
+          !this.bind(element, this.metadataProjection(input, input.fields?.get(String(index)) ?? possiblyAbsent(input.element) ?? BAD), model, env, local || this.strictSchemaExports)
         )
           return false;
       }
@@ -2467,8 +2523,9 @@ class DataFactoryProof {
     if (value.kind === 'record') {
       if (value.omittedFields?.has(name)) return { kind: 'data', literal: undefined };
       // A record's element only stands for its own keys. An inherited Object member (`toString`,
-      // `constructor`, `__proto__`, ...) is not one of them, so it falls through to the guard below.
-      const field = value.fields?.get(name) ?? (name in Object.prototype ? undefined : value.element);
+      // `constructor`, `__proto__`, ...) is not one of them, so it falls through to the guard below. Nothing proves
+      // the key present, so the read may be undefined and keeps no exact literal of the element.
+      const field = value.fields?.get(name) ?? (name in Object.prototype ? undefined : possiblyAbsent(value.element));
       if (field !== undefined) return field;
       // A closed plain-data record has no other own field. Inherited Object members and the members
       // of a native object behind a record stay unmodeled.
@@ -2592,13 +2649,13 @@ class DataFactoryProof {
       if (node.property.type === 'Literal' && typeof node.property.value === 'string')
         return this.property(owner, node.property.value, model);
       if (['array', 'data'].includes(owner.kind) && this.expression(node.property, model, env).native === 'number')
-        return this.metadataProjection(owner, owner.kind === 'array' ? (owner.element ?? BAD) : DATA);
+        return this.metadataProjection(owner, owner.kind === 'array' ? (possiblyAbsent(owner.element) ?? BAD) : DATA);
       if (
         node.property.type === 'Literal' &&
         typeof node.property.value === 'number' &&
         ['array', 'data'].includes(owner.kind)
       )
-        return this.metadataProjection(owner, owner.kind === 'array' ? (owner.fields?.get(String(node.property.value)) ?? owner.element ?? BAD) : DATA);
+        return this.metadataProjection(owner, owner.kind === 'array' ? (owner.fields?.get(String(node.property.value)) ?? possiblyAbsent(owner.element) ?? BAD) : DATA);
       return BAD;
     }
     if (
@@ -3044,8 +3101,10 @@ class DataFactoryProof {
         args.length > 0 &&
         args.every(isClosedData)
       ) {
+        // The pushed values are new positions, so the positional fields no longer list every part.
+        const { fields: _positions, ...grown } = owner;
         this.arrayStates.set(owner, {
-          ...owner,
+          ...grown,
           element: merge([...(owner.empty ? [] : [owner.element ?? BAD]), ...args]),
           empty: false,
         });
@@ -3065,7 +3124,7 @@ class DataFactoryProof {
             : array(DATA, true);
       }
       if (operation === 'at' && owner.kind === 'array' && args.length === 1 && args.every(isData))
-        return owner.empty === true ? { kind: 'data', literal: undefined } : (owner.element ?? BAD);
+        return owner.empty === true ? { kind: 'data', literal: undefined } : (possiblyAbsent(owner.element) ?? BAD);
       if (
         operation === 'reduce' &&
         owner.kind === 'array' &&
@@ -3235,7 +3294,7 @@ class DataFactoryProof {
       return {
         kind: 'function',
         ...(this.publicCodecs ? { native: 'schema-codec' } : {}),
-        apply: (inputs) => inputs.every(isData) ? { kind: 'codec-effect',
+        apply: (inputs) => inputs.every(this.codecInput(value)) ? { kind: 'codec-effect',
           payload: this.publicCodecs ? this.wired(['encodeEffect', 'encodeUnknownEffect'].includes(operation) ? value.encoded ?? value.payload ?? BAD : value.payload ?? BAD) : value.payload,
           ...(this.publicCodecs ? { validationInputs: inputs } : {}) } : BAD,
       };
@@ -3244,7 +3303,7 @@ class DataFactoryProof {
       const value = args[0];
       if (value?.native === 'encoder-only-schema' && !['encodeResult', 'encodeSync', 'encodeEffect'].includes(operation)) return BAD;
       if (value?.kind !== 'schema' || !isData(value.payload ?? BAD) || !args.slice(1).every(isData)) return BAD;
-      return { kind: 'function', ...(this.publicCodecs ? { native: 'schema-data-codec' } : {}), apply: (inputs) => (inputs.every(isData) ? outcome(value.payload, ISSUE) : BAD) };
+      return { kind: 'function', ...(this.publicCodecs ? { native: 'schema-data-codec' } : {}), apply: (inputs) => (inputs.every(this.codecInput(value)) ? outcome(value.payload, ISSUE) : BAD) };
     }
     if (['decodeUnknownSync', 'decodeSync', 'encodeSync', 'encodeResult'].includes(operation)) {
       const value = args[0];
@@ -3254,7 +3313,7 @@ class DataFactoryProof {
         kind: 'function',
         ...(this.publicCodecs ? { native: 'schema-data-codec' } : {}),
         apply: (inputs) =>
-          inputs.every(isData)
+          inputs.every(this.codecInput(value))
             ? operation === 'encodeSync' || operation === 'encodeResult'
               ? DATA
               : (value.payload ?? BAD)
@@ -3329,8 +3388,11 @@ class DataFactoryProof {
     if (operation === 'Literal' && args.length === 1 && isData(args[0])) return { ...schema(args[0]), ...(this.strictSchemaExports ? { astTag: 'Literal' } : {}),
       ...(this.defaultStructEquivalence && typeof args[0].literal === 'string' ? {defaultEquivalenceKind: 'literal'} : {}) };
     if (operation === 'Literals' && args.every(isData)) {
-      if (!this.strictSchemaExports) return schema(DATA);
       const values = args.length === 1 && args[0].kind === 'array' && args[0].fields !== undefined ? [...args[0].fields.values()] : null;
+      // An explicit list of string literals decodes and encodes only those strings, so it is a closed string schema.
+      if (!this.strictSchemaExports)
+        return schema(values !== null && values.length > 0 && values.every((value) => typeof value.literal === 'string' && isClosedString(value))
+          ? { kind: 'data', stringData: true } : DATA);
       if (values === null) return { ...schema(DATA), astOpaque: true };
       const members = values.map((value): Value => ({ ...schema(value), astTag: 'Literal' }));
       return { ...schema(DATA), astTag: 'Union', astMembers: members };
@@ -3369,8 +3431,8 @@ class DataFactoryProof {
       args.length === 1 &&
       args[0]?.kind === 'schema'
     ) {
-      const payload = possiblyAbsentString(args[0].payload);
-      const encoded = possiblyAbsentString(args[0].encoded);
+      const payload = possiblyAbsent(args[0].payload);
+      const encoded = possiblyAbsent(args[0].encoded);
       return payload === args[0].payload && encoded === args[0].encoded ? args[0] : { ...args[0], payload, encoded };
     }
     if (this.coreHashDepth > 0 && operation === 'fromJsonString' && args.length === 1 && args[0].native === 'encoder-only-schema') return args[0];
@@ -3555,7 +3617,9 @@ class DataFactoryProof {
     // `Schema.Json` (resolved by its import from effect, never by name) decodes to the type
     // `Json = null | number | boolean | string | JsonArray | JsonObject`, whose arrays and objects hold only `Json`.
     // That type admits no function, class instance, symbol, bigint, undefined or unknown member, which is exactly what
-    // `isClosedData` excludes, so it is the same opaque closed data leaf public-codec mode already accepts.
+    // `isClosedData` excludes, so it is the same opaque closed data leaf public-codec mode already accepts. The type is
+    // not the runtime value: Effect checks only enumerable string keys and returns the input object itself, so a codec
+    // with a Json leaf takes only closed input (`codecInput`).
     if (name === 'effect:Schema.Json') return schema({ kind: 'data', native: 'json' });
     if (name === 'effect:Schema.Unknown') return schema(BAD);
     if (this.strictSchemaExports && ['effect:Schema.Finite', 'effect:Schema.Int'].includes(name)) return { ...schema(DATA), astTag: 'Number', astChecks: [this.nativeSchemaFilter(name.endsWith('.Int') ? 'isInt' : 'isFinite', [])] };

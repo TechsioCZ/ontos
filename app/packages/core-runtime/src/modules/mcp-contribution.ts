@@ -359,7 +359,7 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
     fail('MCP contribution needs Czech and English label and description');
   }
   validateToolTexts(input);
-  if (input.approvalReview !== undefined && !(input.approvalReview.read in input.reads)) {
+  if (input.approvalReview !== undefined && !Object.hasOwn(input.reads, input.approvalReview.read)) {
     fail(`MCP approval review read ${input.approvalReview.read} is not one of the module's reads`);
   }
   if (input.approvalsPage !== undefined && input.ownProposalEngine !== true) {
@@ -371,7 +371,7 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
   if (input.commandFieldLabels !== undefined && !input.approvals) {
     fail('MCP command field labels need approvals');
   }
-  if (input.revision !== undefined && !(input.revision.read in input.reads)) {
+  if (input.revision !== undefined && !Object.hasOwn(input.reads, input.revision.read)) {
     fail(`MCP revision read ${input.revision.read} is not one of the module's reads`);
   }
   if (input.recordLinks !== undefined) {

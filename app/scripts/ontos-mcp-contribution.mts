@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { Array as EffectArray, Order, Predicate, Result, Schema } from 'effect';
+import { Array as EffectArray, JsonPointer, Order, Predicate, Result, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { HttpApi } from 'effect/http-api';
 
@@ -98,8 +98,13 @@ const resolveRef = (node: Json | undefined, definitions: JsonObject): Json | und
   if (!isJsonObject(node) || !isString(node.$ref)) {
     return node;
   }
-  const name = node.$ref.replace(/^#\/(?:\$defs|definitions)\//u, '');
-  return definitions[name] ?? node;
+  // Effect writes the ref as a URI fragment: JSON Pointer escapes (`~1`, `~0`), then percent-encoding.
+  const path = JsonPointer.parseUriFragment(node.$ref);
+  if (path?.length !== 2 || (path[0] !== '$defs' && path[0] !== 'definitions')) {
+    return node;
+  }
+  const [, name] = path;
+  return name !== undefined && Object.hasOwn(definitions, name) ? definitions[name] : node;
 };
 
 interface TaggedVariant {
@@ -135,8 +140,11 @@ const taggedVariants = (node: Json | undefined, definitions: JsonObject): Tagged
   );
 };
 
-/** Command arguments: the variant's fields without `_tag`, plus an optional integer `expectedRevision`. */
-const commandInputSchema = (variant: JsonObject) => {
+/**
+ * Command arguments: the variant's fields without `_tag`, plus an optional integer `expectedRevision` that also meets
+ * the Action's own `expectedRevision` schema, so the tool never admits a revision the Action rejects.
+ */
+const commandInputSchema = (variant: JsonObject, revision: Json) => {
   const sourceProperties = isJsonObject(variant.properties) ? variant.properties : {};
   const { _tag: _omitted, ...properties } = sourceProperties;
   const required = isJsonArray(variant.required)
@@ -147,6 +155,7 @@ const commandInputSchema = (variant: JsonObject) => {
     properties: {
       ...properties,
       expectedRevision: {
+        allOf: [revision],
         description: 'Revize pro kontrolu souběžných změn; když chybí, OntOS ji načte sám. / Optional revision.',
         minimum: 0,
         type: 'integer',
@@ -195,10 +204,13 @@ const readEndpointsOf = (
     HttpApi.reflect(value, {
       onEndpoint: ({ endpoint }) => {
         const slug = READ_PATH.exec(endpoint.path)?.groups?.slug;
-        const schema = endpoint.payload.get('application/json')?.schemas[0];
-        if (slug === undefined || schema === undefined) {
+        const schemas = endpoint.payload.get('application/json')?.schemas ?? [];
+        const [first] = schemas;
+        if (slug === undefined || first === undefined) {
           return;
         }
+        // The BFF decodes a JSON body against the union of all its payload schemas.
+        const schema = schemas.length === 1 ? first : Schema.Union(schemas);
         const label = `${apiKey} ${endpoint.path}`;
         const read = documentOf(schema, label).pipe(
           Result.map((document) => ({ document, path: endpoint.path, slug })),
@@ -222,6 +234,8 @@ const ActionValueSchema = Schema.Struct({
 interface ActionEndpoint {
   readonly document: SchemaDocument;
   readonly path: string;
+  /** The Action's own `expectedRevision` schema; meaningful only with `variants`. */
+  readonly revision: Json;
   readonly slug: string;
   /** Present for command-union Actions (`{ command, expectedRevision }`). */
   readonly variants: readonly TaggedVariant[] | undefined;
@@ -258,6 +272,7 @@ const actionEndpointsOf = (
         return {
           document,
           path: `/${appId}/actions/${slug}`,
+          revision: properties.expectedRevision ?? {},
           slug,
           variants: variants.length > 0 ? variants : undefined,
         } satisfies ActionEndpoint;
@@ -389,7 +404,7 @@ const mergeDefinitions = (
   Result.gen(function* mergeSchemaDefinitions() {
     for (const [name, value] of Object.entries(source)) {
       const previous = target[name];
-      if (name in target && previous !== undefined) {
+      if (Object.hasOwn(target, name) && previous !== undefined) {
         // Definition identity is byte-order-sensitive, just like the catalog and subtree digest inputs.
         const previousText = yield* encodeJson(previous);
         const nextText = yield* encodeJson(value);
@@ -558,7 +573,7 @@ const collectDrafts = (
       const { action, variant } = yield* selectCommandCandidate(candidates, entry.actionSlug, tag, moduleId);
       yield* mergeDefinitions(definitions, action.document.definitions, `${moduleId} command ${tag}`);
       drafts.push({
-        schema: commandInputSchema(variant.schema),
+        schema: commandInputSchema(variant.schema, action.revision),
         tool: {
           access: 'write',
           id: `${moduleId}/command/${tag}`,
@@ -687,7 +702,14 @@ const deriveContributionResult = (
     const actions = yield* actionEndpointsOf(input.actions, moduleId, appId);
     const commandActions = actions.filter((action) => action.variants !== undefined);
     const namedActions = actions.filter((action) => action.variants === undefined);
-    yield* checkCoverage('reads', authored.reads, new Set(reads.map((read) => read.slug)), moduleId);
+    const readSlugs = new Set(reads.map((read) => read.slug));
+    yield* checkCoverage('reads', authored.reads, readSlugs, moduleId);
+    // The contribution points the approval platform at these reads; each must be one the module publishes.
+    for (const read of [authored.approvalReview?.read, authored.revision?.read]) {
+      if (read !== undefined && !readSlugs.has(read)) {
+        return yield* fail(`${moduleId}: MCP read ${read} is not one of the module's reads`);
+      }
+    }
     yield* checkCoverage(
       'commands',
       authored.commands ?? {},
