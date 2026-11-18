@@ -95,7 +95,7 @@ export const workspaceClosure = (directory: string, packages: readonly Workspace
  *   `build` script runs, with their reference graphs;
  * - every other path at the repository or app root that is not classified below (lockfile, workspace and tool
  *   pins, patches, tsconfigs, topology, Module Federation sharing, Git ignore rules and any new root file);
- * - the build variables of the environment, as values (see buildEnvironment).
+ * - the build variables of the environment, as values, and the build switches (see buildEnvironment).
  * Excluded, each with its reason: tests and fixtures (never bundled; a test file a build does import is reached
  * and included), documentation, the files of other workspace packages and the tool scripts the build neither runs
  * nor reaches, and NON_BUILD_PATHS. The commit is NOT part of the identity: a kept unit keeps the release identity it was built with.
@@ -207,9 +207,23 @@ const SOURCE_EXTENSIONS = new Map([
  * identities to keep the units CI built (.mise.toml and the lockfile pin the toolchain and dependencies instead).
  */
 const BUILD_VARIABLE =
-  /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|RSPACK_|RSBUILD_|BROWSERSLIST|ONTOS_[A-Z0-9_]*ORIGIN$|NODE_ENV$|NODE_OPTIONS$|BABEL_ENV$)/u;
+  /^(?:MODERN_|MODERNJS_|ULTRAMODERN_|PUBLIC_|RSPACK_|RSBUILD_|BROWSERSLIST|ONTOS_[A-Z0-9_]*ORIGIN$|NODE_ENV$|NODE_OPTIONS$|BABEL_ENV$)/u;
+/**
+ * Switches a unit's build configuration reads outside the variable families above, with what each changes. Stage does
+ * not support them (scripts/zerops/build-environment.sh unsets them); every identity hashes their effective value.
+ */
+export const BUILD_SWITCHES = new Map([
+  ['ONTOS_CI_TYPECHECK_SEPARATE', 'drops JavaScript source maps and server declarations (shared-contracts tooling)'],
+  ['ONTOS_INTERNAL_SYMMY_INGRESS', "mounts the Symmy REST prefix on the Shell's BFF (Shell modern.config.ts)"],
+]);
 /** A forced revision or marker would only relabel output; the commit is deliberately not an input. */
-const IDENTITY_OVERRIDE = /^ULTRAMODERN_(?:SOURCE_REVISION|BUILD_MARKER)$/u;
+export const IDENTITY_OVERRIDES: ReadonlySet<string> = new Set([
+  'ULTRAMODERN_BUILD_MARKER',
+  'ULTRAMODERN_SOURCE_REVISION',
+]);
+/** Whether a unit build reads this variable, so an identity hashes its value. */
+export const isBuildVariable = (name: string): boolean =>
+  (BUILD_VARIABLE.test(name) || BUILD_SWITCHES.has(name)) && !IDENTITY_OVERRIDES.has(name);
 
 /** Modern.js's file-system router scans src/routes, so nothing there counts as a test. */
 export const isTestInput = (filepath: string): boolean =>
@@ -226,7 +240,7 @@ export const isReferenceSource = (filepath: string): boolean =>
 /** The build variables among `name=value` pairs of an environment, sorted by name. */
 export const buildEnvironment = (variables: readonly (readonly [string, string])[]) =>
   sortArray(Order.mapInput(Order.String, ([name]: readonly [string, string]) => name))(
-    variables.filter(([name]) => BUILD_VARIABLE.test(name) && !IDENTITY_OVERRIDE.test(name)),
+    variables.filter(([name]) => isBuildVariable(name)),
   );
 
 /** A unit identity's view of one commit: tracked paths, the package graph and the text of reference sources. */
@@ -755,6 +769,8 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       inputs: graph.workspace.entries.filter((entry) => included.has(entry.path)),
       /** Why each input is one: the file that reached it, or the rule that included it. */
       reachedFrom,
+      /** The scripts the build runs: the driver's, its extra inputs and those of the unit's `build` script. */
+      scripts: runs,
     };
   });
 

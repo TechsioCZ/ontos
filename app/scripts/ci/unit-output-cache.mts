@@ -40,7 +40,15 @@ import {
 } from './unit-output-receipt.mts';
 import type { CacheIdentity, CacheReceipt, OutputFile } from './unit-output-receipt.mts';
 import { loadCiMatrices } from './ci-matrices.mts';
-import { readSources, readWorkspace, unitIdentity, unitInputDigest, unitInputGraph } from './unit-inputs.mts';
+import {
+  IDENTITY_OVERRIDES,
+  isBuildVariable,
+  readSources,
+  readWorkspace,
+  unitIdentity,
+  unitInputDigest,
+  unitInputGraph,
+} from './unit-inputs.mts';
 import type { BuildDriver, UnitInputGraph } from './unit-inputs.mts';
 
 const APP_ROOT = path.resolve(import.meta.dirname, '../..');
@@ -188,10 +196,9 @@ const run = (executable: string, args: readonly string[], cwd: string) =>
     return yield* Effect.succeed(text.trim());
   }).pipe(Effect.scoped);
 const git = (args: readonly string[], root: string) => run('git', args, root);
-const identityOverride = /^(?:ULTRAMODERN_SOURCE_REVISION|ULTRAMODERN_BUILD_MARKER)$/u;
-// ONTOS_CI_TYPECHECK_SEPARATE drops the JavaScript source maps and server declarations (shared-contracts modern-config.ts).
-const buildVariable =
-  /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|ONTOS_CI_TYPECHECK_SEPARATE$|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
+/** The stage build variables and switches (isBuildVariable), and what else the gates' runner may vary. */
+const buildVariable = (name: string) =>
+  isBuildVariable(name) || /^(?:ONTOS_.*ORIGIN|NODE_PATH$|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u.test(name);
 /** `name=value` pairs of the environment every build child inherits, NUL-separated so values may hold newlines. */
 const inheritedEnvironment = (root: string) =>
   run('env', ['-0'], root).pipe(
@@ -204,7 +211,7 @@ const inheritedEnvironment = (root: string) =>
   );
 const readProfile = Effect.fn('UnitOutputCache.profile')(function* readBuildProfile(root: string, servedEntry: string) {
   const environment = (yield* inheritedEnvironment(root))
-    .filter(([name]) => buildVariable.test(name) && !identityOverride.test(name))
+    .filter(([name]) => buildVariable(name) && !IDENTITY_OVERRIDES.has(name))
     .toSorted(([left], [right]) => left.localeCompare(right));
   return yield* Schema.decodeUnknownEffect(CacheProfileSchema)({
     architecture: process.arch,

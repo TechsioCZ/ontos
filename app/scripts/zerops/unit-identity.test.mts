@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { readUnitIdentities } from './delivery-plan-cli.mts';
@@ -13,7 +13,9 @@ import {
   unitInputs,
 } from './delivery-plan.mts';
 import type { ExcludedInput, UnitInputGraph, WorkspacePackage } from './delivery-plan.mts';
-import { packageEntries } from '../ci/unit-inputs.mts';
+import { BUILD_SWITCHES, IDENTITY_OVERRIDES, matches, packageEntries } from '../ci/unit-inputs.mts';
+
+const BUILD_ENVIRONMENT = 'app/scripts/zerops/build-environment.sh';
 
 const CRM = 'app/verticals/crm';
 const PARTY = 'app/verticals/party';
@@ -402,6 +404,122 @@ it.effect(
         const { excluded } = yield* unitInputs(directory, graph);
         expect({ directory, unsafe: unsafeExclusions(directory, excluded) }).toEqual({ directory, unsafe: [] });
       }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  60_000,
+);
+
+/** How build code reads a variable: `process.env`, the framework's build-environment readers, Effect Config. */
+const ENVIRONMENT_READS = [
+  /\bprocess\.env\.(?<value>[A-Z][A-Z0-9_]*)/gu,
+  /\bprocess\.env\[\s*["'`](?<value>[A-Z][A-Z0-9_]*)["'`]\s*\]/gu,
+  /\b\w*[Ee]nv\w*\s*\(\s*["'](?<value>[A-Z][A-Z0-9_]*)["']/gu,
+  /\bConfig\.\w+\(\s*["'](?<value>[A-Z][A-Z0-9_]*)["']/gu,
+];
+/** Readers that take their variable from inside the installed tool. */
+const IMPLICIT_READS = new Map([['resolveDeployTarget(', 'MODERNJS_DEPLOY']]);
+/** Variables a build reads that reach no unit output, each with why. */
+const NO_OUTPUT_VARIABLES = new Map([
+  ['CI', "the Shell's modern.config.ts sets dev.lazyCompilation from it, which only the dev server applies"],
+  ['PATH', 'owner-entry.mts proof: finds the node that runs the built entry; it writes nothing'],
+  ['PORT', 'owner-entry.mts: text of the generated entry it rewrites, read by the served unit at runtime'],
+  ['BUILD_DECLARED_VARIABLES', 'build-environment.sh: its own list of declared variables'],
+  ['BUILD_UNSUPPORTED_SWITCHES', 'build-environment.sh: its own list of switches it unsets'],
+  ['BUILD_JOBS', 'how many units build at once'],
+  ['BUILD_LOG_DIR', 'where build logs go'],
+  ['BUILD_UNITS', 'which units the gates shard builds'],
+  ['PWD', 'the app directory build-app.sh runs from'],
+  ['SECONDS', 'build timing'],
+  ['TMPDIR', 'where the identity table is written'],
+  ['UNIT_CACHE_DIR', 'where kept units are stored'],
+  ['UNIT_POST_BUILD', 'the post-build script, an input of every gates unit (gatesBuildDriver)'],
+  ['UNIT_SERVED_ENTRY', 'the entry the gates check, named in the cache profile'],
+  ['ZEROPS_FORCE_BUILD', 'rebuilds every unit; never keeps a stale one'],
+  ['ZEROPS_UNIT_DIGESTS', 'the identity table itself'],
+]);
+const UNSUPPORTED_SWITCHES = /^BUILD_UNSUPPORTED_SWITCHES='(?<value>[^']*)'/mu;
+/**
+ * Every variable a unit build's configuration or build scripts read is hashed with its value (buildEnvironment) or
+ * listed with why it reaches no output; each build switch is also unset by stage's build-environment.sh.
+ */
+it.effect(
+  'hashes or unsets every environment variable a unit build configuration or build script reads',
+  () =>
+    Effect.gen(function* environmentReads() {
+      const { graph, units } = yield* readUnitIdentities('HEAD');
+      const unset = new Set(
+        (UNSUPPORTED_SWITCHES.exec(graph.workspace.sources.get(BUILD_ENVIRONMENT) ?? '')?.groups?.value ?? '').split(
+          /\s+/u,
+        ),
+      );
+      const scanned = new Set<string>();
+      for (const { directory } of units) {
+        const { scripts } = yield* unitInputs(directory, graph);
+        // The configurations the build evaluates, and the scripts it runs.
+        const pending = [
+          ...[...graph.tracked].filter((file) =>
+            new RegExp(
+              `^${directory}/(?:modern|module-federation|backend-federation|tailwind|postcss)\\.config\\.[cm]?[jt]s$`,
+              'u',
+            ).test(file),
+          ),
+          ...scripts,
+          ...[...graph.tracked].filter((file) => file.startsWith('app/patches/')),
+        ];
+        // What they import at build time, never the runtime code a configuration names as a bundle entry.
+        for (const file of pending) {
+          if (!scanned.has(file)) {
+            scanned.add(file);
+            pending.push(
+              ...graph
+                .reach(file)
+                .files.filter(
+                  (reached) =>
+                    /\.[cm]?[jt]sx?$/u.test(reached) &&
+                    !isTestInput(reached) &&
+                    !/\/(?:api|src|shared)\//u.test(reached),
+                ),
+            );
+          }
+        }
+      }
+      const reads = new Map<string, string>();
+      const fs = yield* FileSystem.FileSystem;
+      for (const file of scanned) {
+        // A patch is no reference source; the checkout holds the committed text (tests run on a clean tree).
+        const text = file.endsWith('.patch')
+          ? yield* fs.readFileString(file.slice('app/'.length))
+          : (graph.workspace.sources.get(file) ?? '');
+        const names = file.endsWith('.sh')
+          ? matches(/\$\{?(?<value>[A-Z][A-Z0-9_]*)/gu, text.replaceAll(/^[\t ]*#.*$/gmu, ''))
+          : [
+              ...ENVIRONMENT_READS.flatMap((pattern) =>
+                matches(
+                  pattern,
+                  file.endsWith('.patch')
+                    ? text
+                        .split('\n')
+                        .filter((line) => line.startsWith('+'))
+                        .join('\n')
+                    : text,
+                ),
+              ),
+              ...[...IMPLICIT_READS].filter(([call]) => text.includes(call)).map(([, name]) => name),
+            ];
+        for (const name of names) {
+          reads.set(name, file);
+        }
+      }
+      const unlisted = [...reads]
+        .filter(
+          ([name]) =>
+            buildEnvironment([[name, 'value']]).length === 0 &&
+            !NO_OUTPUT_VARIABLES.has(name) &&
+            !IDENTITY_OVERRIDES.has(name),
+        )
+        .map(([name, file]) => `${name} <- ${file}`);
+      expect(unlisted).toEqual([]);
+      // Stage supports no switch: build-environment.sh unsets each. Each is read somewhere, or it is no switch.
+      expect([...BUILD_SWITCHES.keys()].filter((name) => !unset.has(name) || !reads.has(name))).toEqual([]);
     }).pipe(Effect.provide(NodeServices.layer)),
   60_000,
 );
