@@ -1154,15 +1154,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       );
   /**
    * The saved reply of this exact invocation, if it committed inside the recovery window. The window
-   * is measured from PostgreSQL's transaction time, never the process clock.
+   * is measured with the clock that stamps the invocation's `completedAt` when it commits (the Effect
+   * clock, see `flushSuccess`): a bound read from another clock would compare two different times.
    */
   const loadAnswerableReply = (
-    transaction: CoreTransaction,
+    reader: Pick<CoreDatabaseExecutor, 'select'>,
     replyInput: Omit<LoadActionCommittedReplyInput, 'committedSince'>,
-    reader: Pick<CoreDatabaseExecutor, 'select'> = transaction,
   ) =>
-    Effect.suspend(() => trustedTransactionTime(transaction)).pipe(
-      Effect.mapError(committedReplyPersistenceFailure),
+    DateTime.now.pipe(
       Effect.flatMap((now) =>
         repository.loadCommittedReply(reader, {
           ...replyInput,
@@ -2852,15 +2851,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               requestHash,
               repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
               stageSavedReply(
-                loadAnswerableReply(
-                  drizzleTransaction,
-                  {
-                    actionInvocationId: runningInvocation.actionInvocationId,
-                    principal,
-                    requestHash,
-                  },
-                  scopedTransaction,
-                ),
+                loadAnswerableReply(scopedTransaction, {
+                  actionInvocationId: runningInvocation.actionInvocationId,
+                  principal,
+                  requestHash,
+                }),
                 runningInvocation.actionInvocationId,
               ),
             );
