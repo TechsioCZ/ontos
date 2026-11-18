@@ -742,6 +742,29 @@ const committedReplyPersistenceFailure = (cause: unknown) =>
 const encodeCommittedReplyJson = <Value>(schema: Schema.Constraint, value: Value) =>
   Schema.encodeUnknownResult(Schema.toCodecJson(Schema.make<Schema.ConstraintEncoder<unknown>>(schema.ast)))(value);
 
+/** Whether an attempt ended in ActionAlreadyCommitted: it met a committed invocation of its own request. */
+const failsWithAlreadyCommitted = <Success, Failure>(exit: Exit.Exit<Success, Failure>) =>
+  Exit.isFailure(exit) &&
+  exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && Schema.is(ActionAlreadyCommitted)(reason.error));
+
+/**
+ * Whether PostgreSQL jsonb can hold an encoded reply. JSON and the result schema accept every string,
+ * but jsonb refuses the NUL character (U+0000) and a lone UTF-16 surrogate in any string or object key,
+ * so writing such a reply would fail the commit of an Action that otherwise succeeds.
+ */
+const jsonbCanHold = (value: Schema.Json): boolean => {
+  if (Predicate.isString(value)) {
+    return !value.includes('\u0000') && value.isWellFormed();
+  }
+  if (value === null || Predicate.isNumber(value) || Predicate.isBoolean(value)) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(jsonbCanHold);
+  }
+  return Object.entries(value).every(([key, item]) => jsonbCanHold(key) && jsonbCanHold(item));
+};
+
 /**
  * How long after its commit a saved reply is still answered to a same-key retry. After it the reply
  * is withheld and the retry answers ActionAlreadyCommitted, as for an invocation without one.
@@ -998,6 +1021,13 @@ interface ActionSavedReply<Success, DomainError> {
   readonly reply: Result.Result<Success, DomainError>;
 }
 interface ActionAttemptState<Payload, Success, DomainError> {
+  /**
+   * This request met its invocation already succeeded (at the first lookup, after the invocation lock,
+   * or when a Policy denial found it committed). Set before the saved reply is loaded, so a commit
+   * Core has seen stays a commit for the post-attempt hook whatever the lookup or the replay decision
+   * answers afterwards.
+   */
+  commitObserved: boolean;
   committedRejection: DomainError | undefined;
   disposition: 'unstarted' | 'uncommitted' | 'indeterminate' | 'committed';
   original: ActionAttemptOriginal<Payload> | undefined;
@@ -1321,6 +1351,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
 
     const postAttemptHook = getActionPostAttemptHook(input.registration);
     const attempt: ActionAttemptState<PayloadSchema['Type'], ResultSchema['Type'], DomainErrorSchema['Type']> = {
+      commitObserved: false,
       committedRejection: undefined,
       disposition: 'unstarted',
       original: undefined,
@@ -1329,9 +1360,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       savedReply: undefined,
     };
     /**
-     * Decodes the reply the succeeded invocation saved and keeps it for this attempt's answer. A
-     * missing reply (committed before replies were saved) or one the current schemas no longer accept
-     * prepares nothing, so the request keeps answering ActionAlreadyCommitted; nothing runs again.
+     * Records that this request met its committed invocation, then decodes the reply the invocation
+     * saved and keeps it for this attempt's answer. A missing reply (committed before replies were
+     * saved, or one PostgreSQL could not hold) or one the current schemas no longer accept prepares
+     * nothing, so the request keeps answering ActionAlreadyCommitted; nothing runs again.
      */
     const stageSavedReply = (
       load: Effect.Effect<
@@ -1340,7 +1372,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       >,
       invocationId: string,
     ): Effect.Effect<void, ActionInvocationPersistenceError> =>
-      load.pipe(
+      Effect.sync(() => {
+        attempt.commitObserved = true;
+      }).pipe(
+        Effect.andThen(load),
         Effect.flatMap((saved) => {
           if (Option.isNone(saved)) {
             return Effect.void;
@@ -2265,7 +2300,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           }),
         );
         attempt.replayAllowed = Exit.isSuccess(allowed) && allowed.value;
-        return yield* Exit.isSuccess(allowed) ? Effect.fail(committed) : allowed;
+        return yield* Exit.isSuccess(allowed) ? Effect.fail(committed) : Effect.failCause(allowed.cause);
       });
 
       if (replay) {
@@ -2378,13 +2413,25 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 ),
               )
               .pipe(
-                Effect.tapError((error) =>
+                Effect.tapErrorTag('ActionInvocationPersistenceError', (error) =>
                   logInvocationPersistenceFailure(error, {
                     actionKey: input.registration.descriptor.actionKey,
                     correlationId: transport.correlationId,
                     invocationId: invocation.actionInvocationId,
                     policyKey: policy.policyKey,
                   }),
+                ),
+                // The Policy judged the state before a concurrent same-key attempt committed: this
+                // request met that commit and stages its saved reply for `decideReplay`.
+                Effect.catchTag('ActionAlreadyCommitted', (committed) =>
+                  stageSavedReply(
+                    loadCommittedReplyInScope(scope, {
+                      actionInvocationId: committed.invocationId,
+                      principal,
+                      requestHash,
+                    }),
+                    committed.invocationId,
+                  ).pipe(Effect.andThen(Effect.fail(committed))),
                 ),
               );
             if (
@@ -2440,7 +2487,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           return { admittedCompositionRevision, allowedPolicies };
         },
       );
-      const { admittedCompositionRevision, allowedPolicies } = yield* authorizeAndEvaluatePolicies();
+      // A Policy denial that found the invocation committed by a concurrent same-key attempt is decided
+      // as a replay once the Policy evaluation has ended.
+      const { admittedCompositionRevision, allowedPolicies } = yield* authorizeAndEvaluatePolicies().pipe(
+        Effect.catchIf(Schema.is(ActionAlreadyCommitted), (committed) => decideReplay(committed.invocationId)),
+      );
 
       /** The same gate under the shared writer fence: the answer this transaction acts on (R5a-2). */
       const decideAccessInTransaction = Effect.fn('ActionRuntime.decideAccessInTransaction')(
@@ -2666,7 +2717,17 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           : Effect.try({
               catch: (cause) => attachFailureCause(failure(), cause),
               try: () => ({ encoded: Result.getOrThrow(encodeCommittedReplyJson(schema, value)), kind }),
-            });
+            }).pipe(
+              // Decided before the flush: a reply jsonb cannot hold is not saved, the Action commits as
+              // it did before replies were saved, and a same-key retry answers ActionAlreadyCommitted.
+              Effect.flatMap((reply) =>
+                jsonbCanHold(reply.encoded)
+                  ? Effect.succeed(reply)
+                  : Effect.logWarning('An Action reply cannot be saved: PostgreSQL jsonb cannot hold it', kind).pipe(
+                      Effect.as(null),
+                    ),
+              ),
+            );
 
       const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
         function* executeTransactionAndHandleExitEffect() {
@@ -3076,11 +3137,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         } else if (executionExit.cause.reasons.some(Cause.isInterruptReason)) {
           outcome = Object.freeze({ _tag: 'Interrupted' });
         } else if (
-          // A replay refused for an undecidable admission or access still met a committed invocation.
-          attempt.replayAllowed === false ||
-          executionExit.cause.reasons.some(
-            (reason) => Cause.isFailReason(reason) && Schema.is(ActionAlreadyCommitted)(reason.error),
-          )
+          // A commit this request saw stays a commit, even when reading its saved reply or deciding the
+          // replay then failed with a persistence or availability error.
+          attempt.commitObserved ||
+          failsWithAlreadyCommitted(executionExit)
         ) {
           outcome = Object.freeze({ _tag: 'AlreadyCommitted' });
         } else if (
@@ -3260,9 +3320,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             : withRegisteredSourceExecutionFence(original.scope, settleAndConfirm);
         });
         const settled = yield* Effect.exit(settleAttempt);
-        // A refused replay is terminal: the hook still sees its AlreadyCommitted attempt once, but
-        // neither a recovered value nor a hook failure replaces the refusal.
-        return yield* attempt.replayAllowed === false && !mode.interrupted ? executionExit : settled;
+        // A request that met its committed invocation keeps its own answer when the replay was refused
+        // or the saved reply could not be read: the hook still sees its AlreadyCommitted attempt once,
+        // but neither a recovered value nor a hook failure replaces the refusal or the retryable failure.
+        // Only a plain ActionAlreadyCommitted without a saved reply leaves the answer to the owner's recovery.
+        const keepsOwnAnswer =
+          attempt.replayAllowed === false ||
+          (attempt.commitObserved && attempt.replayAllowed === undefined && !failsWithAlreadyCommitted(executionExit));
+        return yield* keepsOwnAnswer && !mode.interrupted ? executionExit : settled;
       }),
     );
   });

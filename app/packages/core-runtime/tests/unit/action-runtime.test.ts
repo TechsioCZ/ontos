@@ -214,6 +214,8 @@ interface HarnessOptions {
   readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
   readonly commitFailureCode?: string;
+  /** Reading the saved reply of a succeeded invocation fails as an unavailable database would. */
+  readonly committedReplyLookupFailure?: boolean;
   readonly compositionAuthority?: TestCompositionAuthority | 'missing';
   readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
   readonly createRecord?: ActionInvocationRecord;
@@ -346,7 +348,14 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     },
     loadCommittedReply: (_executor, input) => {
       committedReplyLoads.push(input);
-      return Effect.succeed(Option.fromNullishOr(options.savedReply));
+      return options.committedReplyLookupFailure === true
+        ? Effect.fail(
+            new ActionInvocationPersistenceError({
+              code: 'action_invocation_persistence_failed',
+              reason: 'test saved reply unavailable',
+            }),
+          )
+        : Effect.succeed(Option.fromNullishOr(options.savedReply));
     },
     loadRecordedRejection: () => {
       const [policyDenial] = finalized;
@@ -6273,6 +6282,54 @@ it.effect('shows a replay to the post-attempt hook as AlreadyCommitted and answe
   }),
 );
 
+it.effect('keeps a seen commit AlreadyCommitted for the hook when reading or deciding the replay fails', () =>
+  Effect.gen(function* seenCommitStaysCommitted() {
+    for (const failing of ['lookup', 'decision'] as const) {
+      for (const settlement of [{ _tag: 'Settled' as const }, { _tag: 'Recovered' as const, result: { total: 9 } }]) {
+        const harness = yield* makeHarness({
+          createRecord: succeededRecord,
+          savedReply: { encoded: { total: 7 }, kind: 'result' },
+          ...(failing === 'lookup' ? { committedReplyLookupFailure: true } : { permissionFailure: true }),
+        });
+        const seen: string[] = [];
+        const action = defineAction(
+          registration().descriptor,
+          () => Effect.die('A request that met its commit must not run the handler'),
+          () => Effect.succeed({}),
+          () => Effect.die('A request that met its commit must not run the decoded-success hook'),
+          (context) =>
+            Effect.sync(() => {
+              seen.push(context.outcome._tag);
+              return settlement;
+            }),
+        );
+        const failure = yield* harness.runtime
+          .runAction({
+            payload: { amount: 1 },
+            principal,
+            registration: action,
+            transport: transport(`saved-reply-${failing}-fails`),
+          })
+          .pipe(Effect.flip);
+
+        // The hook sees the commit Core saw; the caller gets the typed retryable failure, never the
+        // hook's recovered value and never a fresh execution.
+        expect(seen).toEqual(['AlreadyCommitted']);
+        if (failing === 'lookup') {
+          expect(Predicate.isTagged(failure, 'ActionInvocationPersistenceError')).toBe(true);
+          expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 0, rejectionCount: 0 });
+        } else {
+          expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+          expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 0 });
+        }
+        expect(harness.committedReplyLoads).toHaveLength(1);
+        expect(harness.counts()).toMatchObject({ lockCount: 0, transitionCount: 0 });
+        expect(harness.flushed).toHaveLength(0);
+      }
+    }
+  }),
+);
+
 it.effect('saves the encoded result with the success it commits', () =>
   Effect.gen(function* savedReplyWritten() {
     const harness = yield* makeHarness();
@@ -6317,6 +6374,45 @@ it.layer(NodeCrypto.layer)('Action saved reply persistence', (suite) => {
       expect(updates[0]?.sql).toContain('"committed_reply_json" =');
       expect(updates[0]?.sql).toContain('"status" =');
       expect(updates[0]?.values).toContain('{"encoded":{"total":4},"kind":"result"}');
+    }),
+  );
+
+  suite.effect('answers a Policy denial that meets a committed invocation as ActionAlreadyCommitted', () =>
+    Effect.gen(function* policyDenialMeetsCommit() {
+      const statements: string[] = [];
+      const executor = yield* makeTestDatabase((statement) => {
+        statements.push(statement);
+        return Effect.succeed(
+          statement.startsWith('select')
+            ? [
+                {
+                  actionInvocationId: 'invocation-1',
+                  completedAt: transactionOperationAt,
+                  requestHash: 'b'.repeat(64),
+                  status: 'succeeded',
+                },
+              ]
+            : [],
+        );
+      });
+      const repository = makeActionRepository(yield* Crypto.Crypto);
+      const failure = yield* repository
+        .finalizePolicyDenial(executor, {
+          actionInvocationId: 'invocation-1',
+          actionKey: 'shell.counter.change',
+          auditProfile: 'standard',
+          policy: { policyKey: 'global.counter-locked.v1', scope: 'global' },
+          principal,
+          reasonCode: 'counter_locked',
+          transport: transport('policy-denial-meets-commit'),
+        })
+        .pipe(Effect.flip);
+
+      expect(Predicate.isTagged(failure, 'ActionAlreadyCommitted')).toBe(true);
+      expect(failure).toMatchObject({ invocationId: 'invocation-1' });
+      // Nothing is written: no denial audit and no rejected status.
+      expect(statements.some((statement) => statement.startsWith('select'))).toBe(true);
+      expect(statements.filter((statement) => /^(?:insert|update)/u.test(statement))).toEqual([]);
     }),
   );
 
