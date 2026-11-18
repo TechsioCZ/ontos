@@ -13,6 +13,7 @@ const MANIFEST = 'package.json';
 const WORKSPACE_FILE = 'pnpm-workspace.yaml';
 /** The only programs the listing step runs (sha256sum is in /sbin on macOS); a fixed PATH keeps the run hermetic. */
 const STEP_PATH = '/usr/bin:/bin:/sbin';
+const KEY_STEP = 'Name the installed workspace';
 const APP = new URL('../..', import.meta.url).pathname;
 const expression = (body: string) => `\${{ ${body} }}`;
 const DERIVED_PATHS = expression('steps.packages.outputs.paths');
@@ -206,7 +207,7 @@ it('refuses a workspace file it cannot expand exactly', () => {
 });
 
 it('restores and saves exactly the derived paths under a key that names every package manifest', () => {
-  const key = step('Name the installed workspace');
+  const key = step(KEY_STEP);
   const restore = step('Restore the installed workspace');
   const save = step('Save the installed workspace');
   expect(restore.with?.path).toBe(DERIVED_PATHS);
@@ -223,7 +224,7 @@ it('restores and saves exactly the derived paths under a key that names every pa
 });
 
 it('keys the installed workspace on its install code and both hosted runner image variables', () => {
-  const key = step('Name the installed workspace');
+  const key = step(KEY_STEP);
   expect(key.id).toBe('workspace-key');
   expect(key.run).toContain("hashFiles('.github/actions/install-app/action.yml',");
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-key-'));
@@ -241,9 +242,7 @@ it('keys the installed workspace on its install code and both hosted runner imag
         env: { GITHUB_OUTPUT: output, ImageOS, ImageVersion, PATH: STEP_PATH },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      expect(readFileSync(output, UTF8)).toBe(
-        `key=pnpm-workspace-hash-hash-${ImageOS}-${ImageVersion}-hash-hash\n`,
-      );
+      expect(readFileSync(output, UTF8)).toBe(`key=pnpm-workspace-hash-hash-${ImageOS}-${ImageVersion}-hash-hash\n`);
     }
   } finally {
     rmSync(scratch, { force: true, recursive: true });
@@ -254,7 +253,7 @@ it('never saves an exact hit again and lets a caller opt out of the gates tree',
   const optedIn = "inputs.restore-node-modules == 'true'";
   for (const name of [
     'List the workspace packages',
-    'Name the installed workspace',
+    KEY_STEP,
     'Restore the installed workspace',
     'Verify the restored workspace resolves',
   ]) {
