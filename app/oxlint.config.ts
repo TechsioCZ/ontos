@@ -1554,7 +1554,7 @@ export default defineConfig({
     'perfectionist/sort-objects': [
       'error',
       {
-        // Core's staged reads infer `prepared` from the prepare/load/finish order (demo-only exception 3).
+        // Core's staged reads infer `prepared` from the prepare/load/finish order.
         type: 'unsorted',
         useConfigurationIf: {
           allNamesMatchPattern: '^(?:prepare|load|finish)$',

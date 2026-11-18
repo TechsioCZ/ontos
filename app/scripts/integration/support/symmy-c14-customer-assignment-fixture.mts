@@ -263,8 +263,8 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       mode: 'schema-only',
       purpose: 'implementation-1096-registered-workload-gateway',
     });
-    const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
+    const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const ownerAppIds = appIds.filter((appId) => appId !== symmyAppId);
     const shell = yield* makeApiKeyGatewayNativeFixture({
       additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
