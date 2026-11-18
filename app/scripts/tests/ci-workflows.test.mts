@@ -3400,10 +3400,13 @@ it('starts the producers with the run and every consumer in the slot its produce
     [UNIT_AFTER_TOOLING_JOB, WORKSPACE_GATE_JOB, 'unitAfterTooling'],
   ] as const) {
     expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, predecessor]);
-    expect(all[job]?.if).toContain(`${neededResult(predecessor)} && `);
-    if (output !== undefined) {
-      expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
-    }
+    // A failed or cancelled build shard never lets a unit row start on a partial set of Node artifacts.
+    const planned = output === undefined ? '' : ` && needs.ci-plan.outputs.${output} != '[]'`;
+    expect(all[job]?.if, job).toBe(
+      expression(
+        `!cancelled() && needs.ci-plan.result == 'success' && ${neededResult(NODE_ARTIFACT_BUILD_JOB)} && ${neededResult(predecessor)} && fromJSON(needs.ci-plan.outputs.expected)['${WORKSPACE_UNIT_JOB}'] == 'success'${planned}`,
+      ),
+    );
   }
   for (const [job, output] of [
     [OWNER_INTEGRATION_JOB, 'integrationOwners'],
@@ -3486,15 +3489,17 @@ type RuleWorkflow = typeof RuleWorkflowSchema.Type;
 type RuleStep = typeof RuleStepSchema.Type;
 const isSuiteRows = Schema.is(Schema.Array(Schema.Struct({ suite: Schema.optional(Schema.String) })));
 const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
-/** A step that waits for jobs, or reads the jobs or artifacts of the run it runs in. */
-const RUN_POLLING = [
-  /wait-for-[\w-]+\.sh/u,
-  /actions\/runs\/(?:\$\{?GITHUB_RUN_ID\}?|\$\{\{\s*github\.run_id\s*\}\})\/(?:artifacts|jobs|attempts)/u,
-  /gh run (?:watch|view)\b/u,
-];
-/** This run's id as a step script names it. */
+/** A step that waits for jobs of a run: no job of the workflow may hold a runner for that. */
+const RUN_WAITS = [/wait-for-[\w-]+\.sh/u, /gh run (?:watch|view)\b/u];
+/**
+ * A step that reads the jobs or artifacts of a run, or the repository's artifacts: what a poll for this run's
+ * output reads. A run id held in a variable cannot be told apart from this run's, so any run counts.
+ */
+const RUN_READS = [/actions\/(?:artifacts\b|runs\/[^/\s"']+\/(?:artifacts|jobs|attempts))/u];
+/** This run's id as a step script or an action input names it. */
 const SAME_RUN_ID = /^["']?(?:\$\{?GITHUB_RUN_ID\}?|\$\{\{\s*github\.run_id\s*\}\})["']?$/u;
-const GH_RUN_DOWNLOAD = /gh run download\s+(?<run>\S+)(?<options>[^\n]*)/gu;
+/** A `gh run download`; its run id may come before or after the options. */
+const GH_RUN_DOWNLOAD = /gh run download(?<options>[^\n]*)/gu;
 const DOWNLOAD_SELECTOR = /(?:--name|--pattern|-n|-p)[\s=]+["']?(?<selector>[^"'\s]+)/gu;
 const SUITE_CLAUSE = /^matrix\.suite (?<operator>==|!=) '(?<suite>[a-z]+)'$/u;
 
@@ -3518,7 +3523,12 @@ const artifactMayMatch = (uploaded: string, selector: string) => {
 /** The artifacts a script downloads with `gh run download` from the run it runs in; `*` for every one. */
 const scriptDownloads = (run: string) =>
   [...run.matchAll(GH_RUN_DOWNLOAD)]
-    .filter(({ groups }) => SAME_RUN_ID.test(groups?.run ?? ''))
+    .filter(({ groups }) =>
+      (groups?.options ?? '')
+        .trim()
+        .split(/\s+/u)
+        .some((token) => SAME_RUN_ID.test(token)),
+    )
     .flatMap(({ groups }) => {
       const selectors = [...(groups?.options ?? '').matchAll(DOWNLOAD_SELECTOR)].map(
         (match) => match.groups?.selector ?? '*',
@@ -3530,7 +3540,8 @@ const sameRunDownloads = (step: RuleStep): readonly string[] => {
   if (step.uses?.startsWith(DOWNLOAD_ARTIFACT) !== true) {
     return scriptDownloads(step.run ?? '');
   }
-  return step.with?.['run-id'] === undefined ? [step.with?.name ?? step.with?.pattern ?? '*'] : [];
+  const runId = step.with?.['run-id'];
+  return runId === undefined || SAME_RUN_ID.test(runId) ? [step.with?.name ?? step.with?.pattern ?? '*'] : [];
 };
 /** The scripts a step runs, read from the repository, so a wait cannot hide behind a script name. */
 const stepScripts = (run: string) =>
@@ -3576,9 +3587,9 @@ interface RuleContext {
   readonly jobs: RuleWorkflow['jobs'];
   readonly uploads: readonly { readonly job: string; readonly name: string }[];
 }
-const pollViolations = (where: string, run: string) =>
+const pollViolations = (where: string, run: string, patterns: readonly RegExp[]) =>
   [{ script: 'the step', source: run }, ...stepScripts(run)]
-    .filter(({ source }) => RUN_POLLING.some((pattern) => pattern.test(source)))
+    .filter(({ source }) => patterns.some((pattern) => pattern.test(source)))
     .map(({ script }) => `${where} waits for this run in ${script}`);
 const downloadViolations = (context: RuleContext, job: string, where: string, selector: string) => {
   const producers = [
@@ -3593,29 +3604,32 @@ const downloadViolations = (context: RuleContext, job: string, where: string, se
     .filter((producer) => producer !== job && !needed.has(producer))
     .map((producer) => `${where} downloads ${selector} from ${producer} without needing it`);
 };
-const stepViolations = (context: RuleContext, job: string, step: RuleStep) => {
+const stepViolations = (context: RuleContext, job: string, step: RuleStep, reads: boolean) => {
   const where = `${job}: ${step.name ?? step.uses ?? step.run ?? ''}`;
+  if (!reads) {
+    return pollViolations(where, step.run ?? '', RUN_WAITS);
+  }
   return [
-    ...pollViolations(where, step.run ?? ''),
+    ...pollViolations(where, step.run ?? '', [...RUN_WAITS, ...RUN_READS]),
     ...sameRunDownloads(step).flatMap((selector) => downloadViolations(context, job, where, selector)),
   ];
 };
 
 /**
  * Every way a job could hold a runner while it waits for output of another job of the same run: a step (or a
- * script it runs) that waits for jobs or reads the run's jobs or artifacts, and a same-run download whose
- * producing job is not among the job's needs, directly or through a needed job. Only the jobs `inScope`
- * accepts are checked; every job of the workflow counts as a producer.
+ * script it runs) that waits for jobs, one that reads a run's jobs or artifacts, and a same-run download whose
+ * producing job is not among the job's needs, directly or through a needed job. Every job is checked for
+ * waits; only the jobs `readScope` accepts are checked for reads and downloads. Every job counts as a producer.
  */
-const runWaitViolations = ({ jobs }: RuleWorkflow, inScope: (job: string) => boolean): readonly string[] => {
+const runWaitViolations = ({ jobs }: RuleWorkflow, readScope: (job: string) => boolean): readonly string[] => {
   const uploads = Object.keys(jobs).flatMap((job) =>
     runningSteps(jobs, job).flatMap(({ uses, with: inputs }) =>
       uses?.startsWith(UPLOAD_ARTIFACT) === true && inputs?.name !== undefined ? [{ job, name: inputs.name }] : [],
     ),
   );
-  return Object.keys(jobs)
-    .filter(inScope)
-    .flatMap((job) => runningSteps(jobs, job).flatMap((step) => stepViolations({ jobs, uploads }, job, step)));
+  return Object.keys(jobs).flatMap((job) =>
+    runningSteps(jobs, job).flatMap((step) => stepViolations({ jobs, uploads }, job, step, readScope(job))),
+  );
 };
 const everyJob = () => true;
 
@@ -3623,8 +3637,9 @@ const everyJob = () => true;
 // runner with jobs that had taken one and then polled for builds that had none, until the 30-minute limit.
 it('holds no runner while a job waits for output of another job of the same run', () => {
   const workflow = Schema.decodeUnknownSync(RuleWorkflowSchema)(readGateWorkflow());
-  // The deploy chain hangs off deploy-target, is switched off on main and reads back its own uploads of
-  // earlier attempts; every other job of the workflow is in scope, the gates and the retired builds included.
+  // No job waits for jobs. The deploy chain hangs off deploy-target, is switched off on main and reads back its
+  // own uploads of earlier attempts once; every other job is checked for reads and downloads too, the gates and
+  // the retired builds included.
   const gates = (job: string) => job !== DEPLOY_TARGET_JOB && !neededJobs(workflow.jobs, job).has(DEPLOY_TARGET_JOB);
   const scoped = Object.keys(workflow.jobs).filter(gates);
   for (const job of [
@@ -3647,6 +3662,7 @@ const fixtureDownload = (inputs: RuleStep['with']): RuleStep => ({
 const onSuite = (suite: string, step: RuleStep): RuleStep => ({ ...step, if: `matrix.suite == '${suite}'` });
 const suiteRow = (suite: string) => ({ matrix: { include: [{ suite }] } });
 const FIXTURE_DOWNLOAD_UNIT = `gh run download "$GITHUB_RUN_ID" --name units-1 --dir out`;
+const FIXTURE_DOWNLOAD_UNIT_LAST = `gh run download --name units-1 --dir out "$GITHUB_RUN_ID"`;
 
 it('finds every job that polls its own run or downloads an artifact its needs do not produce', () => {
   // Two jobs share one step list, as the integration jobs do; each runs only the steps of its suites.
@@ -3680,10 +3696,20 @@ it('finds every job that polls its own run or downloads an artifact its needs do
           { name: 'Wait', run: "bash scripts/wait-for-build-shards.sh 'Build x (' 3" },
           { name: 'Poll', run: 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"' },
           { name: 'Watch', run: 'gh run watch "$GITHUB_RUN_ID"' },
+          // The repository's artifact list filtered by this run, and this run's id held in a variable.
+          { name: 'Repository', run: 'gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=units-1"' },
+          { name: 'Variable', run: 'run="$GITHUB_RUN_ID"\ngh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs"' },
         ],
       },
+      // Names this run's id after the options.
+      reordered: { needs: ['plan'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT_LAST }] },
       // A job may read back its own upload of an earlier attempt.
       retry: { steps: [fixtureDownload({ name: 'own-plan' }), fixtureUpload('own-plan')] },
+      // Names this run's id as the action's run id.
+      sameRun: {
+        needs: ['plan'],
+        steps: [fixtureDownload({ name: 'units-1', 'run-id': expression('github.run_id') })],
+      },
       // Needs a job that needs the shards: the artifacts exist when it starts.
       through: { needs: ['later'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT }] },
     },
@@ -3700,11 +3726,20 @@ it('finds every job that polls its own run or downloads an artifact its needs do
     'poller: Wait waits for this run in the step',
     'poller: Poll waits for this run in the step',
     'poller: Watch waits for this run in the step',
+    'poller: Repository waits for this run in the step',
+    'poller: Variable waits for this run in the step',
+    `reordered: ${FIXTURE_DOWNLOAD_UNIT_LAST} downloads units-1 from build without needing it`,
+    'sameRun: actions/download-artifact@pin downloads units-1 from build without needing it',
   ]);
   // The owners of the shared step list are fine once they need the database producer.
   expect(
     runWaitViolations({ jobs: { ...workflow.jobs, owners: { ...owners, needs: ['database'] } } }, everyJob),
   ).not.toContain(ownersWithoutDatabase);
+  // A job outside the read scope may read the run's artifacts, but it may still never wait for jobs.
+  expect(runWaitViolations(workflow, (job) => job !== 'poller').filter((line) => line.startsWith('poller'))).toEqual([
+    'poller: Wait waits for this run in the step',
+    'poller: Watch waits for this run in the step',
+  ]);
 });
 
 it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
