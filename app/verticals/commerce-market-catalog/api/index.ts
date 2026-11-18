@@ -53,6 +53,7 @@ import {
   PreparedMarketRetirementImpactLive,
 } from '../src/services/market-retirement-admission.service.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { GatewayDelegationLive, ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
@@ -231,6 +232,19 @@ const productionReadRuntimeLive = makeReadRuntimeLive(
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  // verify-market-eligibility-v1 calls Customer Context through the SDK's governed module route.
+  Layer.provide(
+    ModuleCallRouteLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          GatewayDelegationLive.pipe(Layer.provide(nodeCryptoLayer)),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+          ),
+        ),
+      ),
+    ),
+  ),
 );
 
 const MARKET_RUNTIME_AUDIENCE = 'commerce-market-catalog' as const;
