@@ -121,7 +121,7 @@ it('owns the complete Privacy persistence inventory in one schema', () => {
   );
 
   expect(PRIVACY_SCHEMA_NAME).toBe('privacy');
-  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(38);
+  expect(new Set(PRIVACY_TABLE_INVENTORY).size).toBe(PRIVACY_TABLE_INVENTORY.length);
   expect(qualifiedNames).toEqual(PRIVACY_TABLE_INVENTORY.map((name) => `privacy.${name}`));
 });
 

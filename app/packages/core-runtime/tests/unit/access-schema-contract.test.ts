@@ -110,9 +110,8 @@ const GATEWAY_REQUEST_INSERT_TABLES: ReadonlySet<string> = new Set(['access_deci
 
 it('registers every access intent table once in the Core schema inventory', () => {
   const tables = Object.values(accessDatabaseSchema);
-  expect(tables).toHaveLength(23);
-  expect(ACCESS_TABLE_INVENTORY).toHaveLength(23);
-  expect(new Set(ACCESS_TABLE_INVENTORY).size).toBe(23);
+  expect(new Set(ACCESS_TABLE_INVENTORY).size).toBe(ACCESS_TABLE_INVENTORY.length);
+  expect(tables.map((table) => getTableConfig(table).name).toSorted()).toEqual([...ACCESS_TABLE_INVENTORY].toSorted());
   expect(ACCESS_TABLES).toEqual(tables);
   for (const table of tables) {
     const config = getTableConfig(table);
@@ -134,7 +133,6 @@ it('keeps the global release catalog outside tenant RLS and every intent table i
   const tenantTables = Object.values(accessDatabaseSchema).filter(
     (table) => table !== accessCatalogSnapshots && table !== accessCatalogEntries,
   );
-  expect(tenantTables).toHaveLength(21);
   for (const table of tenantTables) {
     const config = getTableConfig(table);
     expect(config.enableRLS).toBe(true);

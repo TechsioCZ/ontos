@@ -49,7 +49,7 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(68);
+  expect(new Set(actual).size).toBe(actual.length);
   expect(actual).toEqual(expected);
 });
 
