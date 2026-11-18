@@ -59,6 +59,7 @@ const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
 const OWNER_INTEGRATION_JOB = 'owner-integration';
 const BROWSER_INTEGRATION_JOB = 'browser-integration';
+const DEFERRED_BROWSER_JOB = 'browser-integration-after-static';
 const STATIC_CONTRACTS_JOB = 'static-contracts';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
@@ -70,6 +71,7 @@ const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
 
 /** Every job that receives a planner matrix, with the ci-plan output it expands. */
 const PLANNED_MATRIX_JOBS = [
+  ['format-and-lint', 'lint'],
   [WORKSPACE_GATE_JOB, 'source'],
   [WORKSPACE_UNIT_JOB, 'unit'],
   [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
@@ -77,6 +79,7 @@ const PLANNED_MATRIX_JOBS = [
   [UNIT_AFTER_TOOLING_JOB, 'unitAfterTooling'],
   [SERVICE_INTEGRATION_JOB, 'integration'],
   [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+  [DEFERRED_BROWSER_JOB, 'integrationBrowserAfterStatic'],
   [OWNER_INTEGRATION_JOB, 'integrationOwners'],
   [NODE_ARTIFACT_BUILD_JOB, 'integrationBuild'],
   [TOPOLOGY_PROOF_JOB, 'integrationTopology'],
@@ -94,11 +97,11 @@ const fullPlanMatrices = (lintSweep: 'all' | 'changed' = 'changed') => {
 };
 
 /** Expand every planner matrix reference with its own phase of the full run; separately test the actual planner. */
-const readGateWorkflow = () => {
+const readGateWorkflow = (lintSweep: 'all' | 'changed' = 'changed') => {
   const record = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
   const workflow = record(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   const jobs = { ...record(workflow.jobs) };
-  const matrices = fullPlanMatrices();
+  const matrices = fullPlanMatrices(lintSweep);
   for (const [job, key] of PLANNED_MATRIX_JOBS) {
     const entry = record(jobs[job]);
     const strategy = record(entry.strategy);
@@ -325,6 +328,7 @@ const STOPPED_CHECKS = {
   'stop-red-queue-run-after-browser': BROWSER_INTEGRATION_JOB,
   'stop-red-queue-run-after-build': NODE_ARTIFACT_BUILD_JOB,
   'stop-red-queue-run-after-database': SERVICE_INTEGRATION_JOB,
+  'stop-red-queue-run-after-deferred-browser': DEFERRED_BROWSER_JOB,
   'stop-red-queue-run-after-lint': FORMAT_AND_LINT_JOB,
   'stop-red-queue-run-after-source-contracts': SOURCE_CONTRACTS_JOB,
   'stop-red-queue-run-after-static-contracts': STATIC_CONTRACTS_JOB,
@@ -688,6 +692,7 @@ const PLANNED_HELPERS = [
   [UNIT_AFTER_TOOLING_JOB, 'unitAfterTooling'],
   [OWNER_INTEGRATION_JOB, 'integrationOwners'],
   [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+  [DEFERRED_BROWSER_JOB, 'integrationBrowserAfterStatic'],
 ] as const;
 
 it('requires the exact CI plan and rejects missing, failed or unplanned skipped gates', () => {
@@ -707,6 +712,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     FORMAT_AND_LINT_JOB,
     SERVICE_INTEGRATION_JOB,
     BROWSER_INTEGRATION_JOB,
+    DEFERRED_BROWSER_JOB,
     OWNER_INTEGRATION_JOB,
     NODE_ARTIFACT_BUILD_JOB,
     TOPOLOGY_PROOF_JOB,
@@ -796,9 +802,11 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
   noIntegration[CI_PLAN_JOB].outputs.integrationOwners = '[]';
   noIntegration[CI_PLAN_JOB].outputs.integrationBrowser = '[]';
+  noIntegration[CI_PLAN_JOB].outputs.integrationBrowserAfterStatic = '[]';
   const integrationSkipped = {
     ...noIntegration,
     [BROWSER_INTEGRATION_JOB]: { result: 'skipped' },
+    [DEFERRED_BROWSER_JOB]: { result: 'skipped' },
     [OWNER_INTEGRATION_JOB]: { result: 'skipped' },
     [SERVICE_INTEGRATION_JOB]: { result: 'skipped' },
     [TOPOLOGY_PROOF_JOB]: { result: 'skipped' },
@@ -1077,10 +1085,13 @@ const GateCommandsWorkflowSchema = Schema.Struct({
     [FORMAT_AND_LINT_JOB]: Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
+          background: Schema.optional(Schema.Boolean),
           env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+          if: Schema.optional(Schema.String),
           name: Schema.optional(Schema.String),
           run: Schema.optional(Schema.String),
           uses: Schema.optional(Schema.String),
+          wait: Schema.optional(Schema.String),
           with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
         }),
       ),
@@ -1871,9 +1882,7 @@ it('names every package integration suite and keeps native proofs one per runner
 
 it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
-  // One row over the run's changed files: the whole-tree sweep only ever proved that committed files
-  // are already formatted, which the same hook proves at commit time.
-  expect(lint.strategy).toBeUndefined();
+  expect(lint.strategy).toEqual({ 'fail-fast': true, matrix: { include: [{ row: 1, rows: 1 }] } });
   const download = lint.steps.find(({ name }) => name === 'Download the exact changed-path list');
   expect(download?.with).toEqual({
     name: CHANGED_PATHS_ARTIFACT,
@@ -1881,7 +1890,11 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   });
   const step = lint.steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
   // ci-plan decides the sweep from the exact changed paths, so its successors can plan around it.
-  expect(step?.env).toEqual({ LINT_SWEEP: expression('needs.ci-plan.outputs.lintSweep') });
+  expect(step?.env).toEqual({
+    LINT_ROW: expression('matrix.row'),
+    LINT_ROWS: expression('matrix.rows'),
+    LINT_SWEEP: expression('needs.ci-plan.outputs.lintSweep'),
+  });
   const run = step?.run ?? 'exit 1';
   // The hook sees the selected files, and a file it fixes fails the gate.
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
@@ -1908,7 +1921,14 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
     }
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', select], {
       cwd: repository,
-      env: { LINT_SWEEP: 'changed', PATH: STEP_PATH, RUNNER_TEMP: directory, ...environment },
+      env: {
+        LINT_ROW: '1',
+        LINT_ROWS: '1',
+        LINT_SWEEP: 'changed',
+        PATH: STEP_PATH,
+        RUNNER_TEMP: directory,
+        ...environment,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return readFileSync(path.join(directory, 'hook-files'), 'utf-8').split('\0').filter(Boolean);
@@ -1953,7 +1973,27 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
     // to check, and nothing else rides along.
     expect(sorted(selectFiles([...specialPaths, 'app/removed.ts', untrackedPath]))).toEqual(sorted(specialPaths));
     // A sweep of every tracked file ignores the list; ci-plan selects it for tool configuration changes.
-    expect(sorted(selectFiles([CHANGED_SOURCE_PATH], { LINT_SWEEP: 'all' }))).toEqual(sorted(tracked));
+    expect(selectFiles([CHANGED_SOURCE_PATH], { LINT_SWEEP: 'all' })).toEqual(tracked);
+    // Execute the workflow's real selection on even and odd lists, including special file names.
+    for (const extra of [false, true]) {
+      if (extra) {
+        writeFileSync(path.join(repository, 'odd.txt'), 'odd\n');
+        execFileSync(nativeGit, ['add', 'odd.txt'], { cwd: repository, env: { PATH: STEP_PATH } });
+      }
+      const expected = execFileSync(nativeGit, ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
+        .split('\0')
+        .filter(Boolean);
+      expect(expected.length % 2).toBe(extra ? 1 : 0);
+      const slices = fullPlanMatrices('all').lint.map(({ row, rows }) =>
+        selectFiles([], { LINT_ROW: String(row), LINT_ROWS: String(rows), LINT_SWEEP: 'all' }),
+      );
+      expect(slices.map((slice) => slice.length)).toEqual([
+        Math.floor(expected.length / 2),
+        Math.ceil(expected.length / 2),
+      ]);
+      expect(slices.flat()).toEqual(expected);
+      expect(new Set(slices.flat()).size).toBe(expected.length);
+    }
     // An empty list where the planner selected the changed files, a missing list and an unknown sweep fail.
     expect(() => selectFiles([])).toThrow();
     expect(() => selectFiles()).toThrow();
@@ -1961,6 +2001,33 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
+});
+
+it('runs the compiler, generators, repository tooling and their waits on lint row 1 only', () => {
+  const { steps } = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
+  const backgrounds = steps.filter(({ background }) => background === true);
+  const waits = steps.filter(({ wait }) => wait !== undefined);
+  expect(backgrounds.map(({ name }) => name)).toEqual([
+    'Typecheck the workspace',
+    'Check OntOS APIs and generator behavior',
+    'Check lint rules and shared contract types',
+  ]);
+  expect(waits.map(({ wait }) => wait)).toEqual(['lint-rule-checks', 'generator-checks', 'typecheck']);
+  for (const step of [...backgrounds, ...waits]) {
+    expect(step.if, step.name).toBe('matrix.row == 1');
+  }
+  const lint = steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
+  expect(lint?.if).toBeUndefined();
+  expect(lint?.run).toContain(
+    'if [[ "$LINT_ROW" == 1 ]]; then\n  mise exec --cd app -- pnpm lint:effect-diagnostics\nfi',
+  );
+  expect(
+    Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(readGateWorkflow('all')).jobs[FORMAT_AND_LINT_JOB].strategy,
+  ).toEqual({ 'fail-fast': true, matrix: { include: fullPlanMatrices('all').lint } });
+  // A failed row cancels its sibling, so the existing stop-after-lint job observes a failed matrix
+  // promptly. Workspace gates still needs that same aggregate format-and-lint verdict.
+  expect(readCancelWorkflow().jobs['stop-red-queue-run-after-lint']?.needs).toEqual([FORMAT_AND_LINT_JOB]);
+  expect(readTargetWorkflow().jobs['workspace-gates'].needs).toContain(FORMAT_AND_LINT_JOB);
 });
 
 const RUNTIME_IDENTITY_URLS = Object.fromEntries(
@@ -2144,21 +2211,25 @@ it('starts at most 17 gate jobs and hands every finished slot to at most one lat
   const staticRows = readGateCommandJobs()[STATIC_CONTRACTS_JOB].strategy.matrix.row.length;
   for (const lintSweep of ['changed', 'all'] as const) {
     const plan = fullPlanMatrices(lintSweep);
-    const lint = 1;
+    const lint = plan.lint.length;
     const sourceContracts = 1;
     const producers = plan.integrationBuild.length + plan.integration.length;
     const first = producers + plan.integrationBrowser.length + plan.source.length + sourceContracts + staticRows + lint;
-    expect(first, lintSweep).toBeLessThanOrEqual(17);
+    expect(first, lintSweep).toBe(17);
     // The owner rows and the bootstrap need the producers, so they take the producers' slots.
     expect(plan.integrationOwners.length + plan.integrationTopology.length, lintSweep).toBeLessThanOrEqual(producers);
     expect(plan.unit.length, lintSweep).toBeLessThanOrEqual(sourceContracts);
     expect(plan.unitAfterLint.length, lintSweep).toBeLessThanOrEqual(lint);
     expect(plan.unitAfterTooling.length, lintSweep).toBeLessThanOrEqual(plan.source.length);
-    // A whole-tree lint keeps its slot for minutes, so its row follows the static contracts too. By then the
-    // Quality Audit has ended, so the gates hold at most 18.
-    expect(plan.unitAfterStatic.length, lintSweep).toBeLessThanOrEqual(staticRows + (lintSweep === 'all' ? 1 : 0));
+    expect(plan.unitAfterStatic.length + plan.integrationBrowserAfterStatic.length, lintSweep).toBeLessThanOrEqual(
+      staticRows,
+    );
   }
-  expect(fullPlanMatrices('all').unitAfterLint).toEqual([]);
+  expect(fullPlanMatrices('all').unitAfterLint).toHaveLength(2);
+  const deferredBrowser = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow('all')).jobs[DEFERRED_BROWSER_JOB];
+  expect(deferredBrowser?.needs).toEqual([CI_PLAN_JOB, STATIC_CONTRACTS_JOB]);
+  expect(deferredBrowser?.if).toContain("needs.static-contracts.result == 'success'");
+  expect(deferredBrowser?.if).toContain("needs.ci-plan.outputs.integrationBrowserAfterStatic != '[]'");
 });
 
 it('starts the producers with the run and every consumer in the slot its producers or predecessor free', () => {
@@ -2200,6 +2271,7 @@ it('starts the producers with the run and every consumer in the slot its produce
   for (const [job, output] of [
     [OWNER_INTEGRATION_JOB, 'integrationOwners'],
     [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+    [DEFERRED_BROWSER_JOB, 'integrationBrowserAfterStatic'],
   ] as const) {
     expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
   }
@@ -2411,6 +2483,9 @@ it('holds no runner while a job waits for output of another job of the same run'
     expect(Object.keys(workflow.jobs)).toContain(job);
   }
   expect(runWaitViolations(workflow, everyJob)).toEqual([]);
+  expect(runWaitViolations(Schema.decodeUnknownSync(RuleWorkflowSchema)(readGateWorkflow('all')), everyJob)).toEqual(
+    [],
+  );
   expect(existsSync(new URL('../wait-for-build-shards.sh', import.meta.url))).toBe(false);
 });
 

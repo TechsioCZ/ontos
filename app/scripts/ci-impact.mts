@@ -40,11 +40,11 @@ export type LintSweep = (typeof lintSweeps)[number];
  * when none of its rows is selected, the first selected row is promoted into it. The other rows follow the
  * changed-file lint, the static contracts and the repository tooling tests, which free their runners after
  * the owner rows and the bootstrap have taken the build shards' and the database producer's. A whole-tree
- * lint keeps the lint slot busy for minutes, so the row that follows lint follows the static contracts.
+ * lint frees two slots, so the static-contracts successor moves there while browser checks take its slot.
  */
 export const unitPhases = (entries: Templates['unit'], lintSweep: LintSweep) => {
   const phase = (row: Templates['unit'][number]) =>
-    row['after-check'] === 'lint' && lintSweep === 'all' ? 'static' : row['after-check'];
+    row['after-check'] === 'static' && lintSweep === 'all' ? 'lint' : row['after-check'];
   const work = entries.filter((row) => phase(row) === undefined);
   const promoted = work.length === 0 ? entries[0] : undefined;
   const deferred = entries.filter((row) => row !== promoted);
@@ -445,10 +445,16 @@ export const ciPlanOutputs = (plan: ReturnType<typeof planCiChecks>, lintSweep: 
   return {
     expected: plan.expected,
     integration: phases.database,
-    integrationBrowser: phases.browser,
+    integrationBrowser: lintSweep === 'all' ? [] : phases.browser,
+    integrationBrowserAfterStatic: lintSweep === 'all' ? phases.browser : [],
     integrationBuild: phases.build,
     integrationOwners: phases.owners,
     integrationTopology: phases.topology,
+    // Run 44300520644: 653s in the hook/diagnostics step plus 71s setup/cleanup. Two rows target ~400s each.
+    lint: Array.from({ length: lintSweep === 'all' ? 2 : 1 }, (_, index) => ({
+      row: index + 1,
+      rows: lintSweep === 'all' ? 2 : 1,
+    })),
     source: plan.source,
     unit: units.work,
     unitAfterLint: units.afterLint,

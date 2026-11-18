@@ -19,7 +19,8 @@ jq -e '
     ["workspace-unit-after-static", "unitAfterStatic", "workspace-unit"],
     ["workspace-unit-after-tooling", "unitAfterTooling", "workspace-unit"],
     ["owner-integration", "integrationOwners", "service-integration"],
-    ["browser-integration", "integrationBrowser", "service-integration"]
+    ["browser-integration", "integrationBrowser", "service-integration"],
+    ["browser-integration-after-static", "integrationBrowserAfterStatic", "service-integration"]
   ] as $planned |
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
