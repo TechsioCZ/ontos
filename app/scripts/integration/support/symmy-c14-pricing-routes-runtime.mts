@@ -50,12 +50,12 @@ const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
 const pricingModule = 'commerce.pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
-// Current-read controls must cross the real start boundary. In run 44368821085, job 135026610683,
-// retained request diagnostics peaked at 5.281s (Shell), 1.753s (gateway), and 0.654s (Group create).
-// Budget six serial admission/head/write hops at the largest observed request: 6 * 5.281s = 31.686s.
-// The 45s lead leaves another 13.314s for worker delivery and contention. This is fixture headroom,
-// not a latency guarantee: a refusal still fails with its native reason, and every caller waits for Current.
-export const internalC14CurrentGroupLeadTime = { seconds: 45 } as const;
+// Current-read controls must cross the real start boundary, so each caller waits this long once per
+// scheduled Group. In queue run 44367482839, job 135026610683, one create answered `conflict` instead of
+// `accepted_change` while a second heavy task shared the runner; the largest request then took 5.3s. Whether
+// that create reached the owner after its own start is not proven, so the lead stays at the 15s that every
+// other run met, and a refusal now fails with the owner's native reason instead of a bare status.
+export const internalC14CurrentGroupLeadTime = { seconds: 15 } as const;
 /** One authority-only enrollment: an owner operation the route may use, never an intent. */
 const enrolled = (
   entityKind: 'PRICE' | 'PRICE_GROUP',
@@ -403,7 +403,7 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ...environment,
       ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES',
     });
-    const at = DateTime.formatIso(DateTime.add(yield* DateTime.now, internalC14CurrentGroupLeadTime));
+    const at = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 30 }));
     // The route enrolls operations and grant refs, never a list or a price: the admission builds the plan.
     const configuredPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
       items: [
