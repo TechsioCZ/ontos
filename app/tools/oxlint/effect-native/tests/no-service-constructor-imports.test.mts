@@ -793,6 +793,17 @@ it('proves the callbacks a module-level schema pipe calls during initialisation'
       initialisedFactory(
         'const stage = <S,>(schema: S): S => { fetch("stage"); return schema; }; const Name = Schema.String.pipe(stage);',
       ),
+      // A stage reached through a member or returned by a call runs just as eagerly.
+      initialisedFactory(
+        'const stages = { evil: <S,>(schema: S): S => { fetch("stage"); return schema; } }; const Name = Schema.String.pipe(stages.evil);',
+      ),
+      initialisedFactory(
+        'const make = () => <S,>(schema: S): S => { fetch("stage"); return schema; }; const Name = Schema.String.pipe(make());',
+      ),
+      initialisedFactory(
+        'const stages = { evil: <S,>(schema: S): S => { fetch("stage"); return schema; } }; const Name = Schema.String.pipe(Schema.brand("Tag"), stages.evil);',
+      ),
+      initialisedFactory('const stages = { evil: () => () => 1 }; const Name = Schema.String.pipe(stages.evil);'),
     ],
   );
 });
@@ -815,6 +826,7 @@ it('keeps no exact literal for a nullable value or an absent Record key, so a br
       ),
       // A required literal is exact: the other branch is unreachable.
       literalBranchFactory('Schema.Literal("ok")', 'value', '', '"ok"', '() => 1'),
+      literalBranchFactory('Schema.Struct({ k: Schema.Literal("ok") })', '{ k: value }', '.k', '"ok"', '() => 1'),
     ],
     [
       // null, undefined or an absent key reaches the function branch at runtime.
@@ -827,6 +839,31 @@ it('keeps no exact literal for a nullable value or an absent Record key, so a br
         '"ok"',
         '() => 1',
       ),
+      // The literal sits inside a value that may be absent, so `?.` yields undefined instead.
+      literalBranchFactory(
+        'Schema.NullOr(Schema.Struct({ k: Schema.Literal("ok") }))',
+        'null',
+        '?.k',
+        '"ok"',
+        '() => 1',
+      ),
+      literalBranchFactory(
+        'Schema.optionalKey(Schema.Struct({ k: Schema.Literal("ok") }))',
+        '{ k: "ok" }',
+        '?.k',
+        '"ok"',
+        '() => 1',
+      ),
+      literalBranchFactory(
+        'Schema.Record(Schema.String, Schema.Struct({ k: Schema.Literal("ok") }))',
+        '{ a: { k: value } }',
+        '.missing?.k',
+        '"ok"',
+        '() => 1',
+      ),
+      // An index the array does not list may be past its end.
+      literalBranchFactory('Schema.Array(Schema.Literal("ok"))', '[value]', '[3]', '"ok"', '() => 1'),
+      literalBranchFactory('Schema.Array(Schema.Literal("ok"))', '[value]', '.at(3)', '"ok"', '() => 1'),
     ],
   );
 });
