@@ -4394,7 +4394,7 @@ const makeStagedRead = (
     readonly duringFinish?: () => void;
     readonly onOwnerStateServices?: (services: StagedReadServices) => void;
     readonly ownerState?: boolean;
-    readonly ownerStateFailure?: ReadHandlerNotFound | ReadPermissionDenied;
+    readonly ownerStateFailure?: ReadHandlerNotFound | ReadPermissionDenied | SqlError;
     readonly policy?: ReturnType<typeof defineGlobalPolicy<Readonly<Record<string, never>>>>;
     readonly prepareFailure?: ReadHandlerNotFound;
   } = {},
@@ -4885,6 +4885,28 @@ for (const failure of [
       const events: string[] = [];
       const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events, { ownerStateFailure: failure }));
       expect(Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()).toEqual(Option.some(failure));
+      expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
+    }),
+  );
+}
+
+// An owner-state statement that loses its connection is the same outage it is during `load`; any other SQL
+// failure there (a write the READ ONLY transaction refuses included) is an execution failure, as during `load`.
+for (const [reason, expected] of [
+  [new ConnectionError({ cause: new Error('connection lost during finish') }), 'ReadHandlerUnavailable'],
+  [
+    new UnknownError({ cause: new Error('cannot execute UPDATE in a read-only transaction') }),
+    'ReadHandlerExecutionError',
+  ],
+] as const) {
+  it.effect(`classifies a finish owner-state ${reason._tag} as it is classified during load`, () =>
+    Effect.gen(function* finishSqlFailure() {
+      const events: string[] = [];
+      const { exit, harness } = yield* runStagedRead(
+        events,
+        makeStagedRead(events, { ownerStateFailure: new SqlError({ reason }) }),
+      );
+      expect(stagedFailureTag(exit)).toBe(expected);
       expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
     }),
   );

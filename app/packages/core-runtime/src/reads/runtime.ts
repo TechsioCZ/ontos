@@ -597,19 +597,25 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
     writable: false,
   });
 
-const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
+const readConnectionUnavailable = (failure: SqlError): ReadHandlerUnavailable =>
   preserveFailureCause(
-    Schema.is(ConnectionError)(failure.reason)
-      ? new ReadHandlerUnavailable({
-          code: 'read_handler_unavailable',
-          reason: 'The governed read database connection is temporarily unavailable',
-        })
-      : new ReadHandlerExecutionError({
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The governed read database connection is temporarily unavailable',
+    }),
+    failure,
+  );
+
+const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
+  Schema.is(ConnectionError)(failure.reason)
+    ? readConnectionUnavailable(failure)
+    : preserveFailureCause(
+        new ReadHandlerExecutionError({
           code: 'read_handler_execution_failed',
           reason: 'The governed read transaction failed',
         }),
-    failure,
-  );
+        failure,
+      );
 
 /**
  * Effect promotes a transaction body's typed failure to a defect when SQL settlement also defects.
@@ -1978,7 +1984,17 @@ const readRuntimeFromDependencies = <
                     gateAuthorization.listAccess,
                     shellAccessFor(transaction),
                   ).pipe(Effect.provideContext(readRequirements));
-                  return yield* Effect.exit(Effect.suspend(() => use(services)));
+                  // A lost connection under the callback is the same outage it is during `load`; every other
+                  // callback failure, another SQL failure included, is the owner's and reaches `finish`.
+                  return yield* Effect.exit(
+                    Effect.suspend(() => use(services)).pipe(
+                      Effect.mapError((failure) =>
+                        Schema.is(SqlError)(failure) && Schema.is(ConnectionError)(failure.reason)
+                          ? readConnectionUnavailable(failure)
+                          : failure,
+                      ),
+                    ),
+                  );
                 }),
               )
               .pipe(
