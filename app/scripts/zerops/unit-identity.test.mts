@@ -319,24 +319,32 @@ it.effect('counts the route metadata of every app for a unit whose build generat
     const meta = `${OTHER}/src/routes/[lang]/route.meta.ts`;
     const metaImport = `${OTHER}/src/routes/route-ids.ts`;
     const page = `${OTHER}/src/routes/[lang]/page.tsx`;
+    const pageImport = `${OTHER}/src/components/page-body.tsx`;
     const manifest = JSON.stringify({
       name: '@app/crm',
       scripts: { build: 'modern build && ultramodern-create ultramodern public-surface --app crm --target dist' },
     });
     const added = [
       [`${CRM}/package.json`, manifest],
+      [page, "import { body } from '../../components/page-body.tsx';\nexport const Page = () => body;"],
+      [pageImport, 'export const body = null;'],
       [meta, "import { id } from '../route-ids.ts';\nexport const routeMeta = { id };"],
       [metaImport, "export const id = 'other';"],
-      [page, 'export const Page = () => null;'],
     ] as const;
     const baseline = yield* identity(graphOf([], added));
     // The generator imports and validates every topology app's route metadata before it selects --app.
     expect(yield* identity(graphOf([meta], added))).not.toBe(baseline);
     expect(yield* identity(graphOf([metaImport], added))).not.toBe(baseline);
-    // A new app route metadata file counts; another route file's text does not.
+    // A new app route metadata file counts, and the existence of each app's src/routes; another route file's text and
+    // imports do not.
     const added2 = [...added, [`${OTHER}/src/routes/[lang]/about/route.meta.ts`, EMPTY_MODULE]] as const;
     expect(yield* identity(graphOf([], added2))).not.toBe(baseline);
     expect(yield* identity(graphOf([page], added))).toBe(baseline);
+    expect(yield* identity(graphOf([pageImport], added))).toBe(baseline);
+    const withoutRoutes = added.filter(([file]) => !file.startsWith(`${OTHER}/src/routes/`));
+    expect(yield* identity(graphOf([], withoutRoutes))).not.toBe(
+      yield* identity(graphOf([], [...withoutRoutes, [`${OTHER}/src/routes/index.css`, '']])),
+    );
   }),
 );
 

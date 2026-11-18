@@ -595,34 +595,34 @@ const appDirectories = (graph: UnitInputGraph) =>
 /**
  * What an installed tool a unit's `build` script runs reads across the workspace, before or besides selecting the unit
  * (read in node_modules/@bleedingdev/modern-js-ultramodern-create; topology, overlays and root manifests are root
- * inputs already). Each read is followed through its imports.
+ * inputs already). `reads` are evaluated and followed through their imports; of `directories` only the existence is
+ * read, so each existing one counts as a path without content.
  */
 const TOOL_READS: readonly {
   readonly command: RegExp;
+  readonly directories: (graph: UnitInputGraph) => readonly string[];
   readonly reads: (graph: UnitInputGraph) => readonly string[];
 }[] = [
   {
     // templates/workspace-scripts/generate-public-surface-assets.mjs imports and validates every topology app's
-    // route.meta.ts (tsImport, imports included) before it selects --app, and throws on a symbolic link or a missing
-    // src/routes; the first file below each app's src/routes witnesses that directory.
+    // route.meta.ts (tsImport, imports included) before it selects --app, and throws on a symbolic link below an app's
+    // src/routes or on a missing src/routes.
     command: /\bultramodern-create\s+ultramodern\s+public-surface\b/u,
+    directories: (graph) => appDirectories(graph).map((directory) => `${directory}/src/routes`),
     reads: (graph) => {
       const symlinks = new Set(
         graph.workspace.entries.filter((entry) => entry.identity.startsWith('120000 ')).map((entry) => entry.path),
       );
-      return appDirectories(graph).flatMap((directory) => {
-        const routes = graph.under(`${directory}/src/routes`);
-        return [
-          ...routes.slice(0, 1),
-          ...routes.filter((file) => file.endsWith('/route.meta.ts') || symlinks.has(file)),
-        ];
-      });
+      return appDirectories(graph).flatMap((directory) =>
+        graph.under(`${directory}/src/routes`).filter((file) => file.endsWith('/route.meta.ts') || symlinks.has(file)),
+      );
     },
   },
   {
     // dist/esm-node/ultramodern-tooling/config (readUltramodernWorkspaceInputs) reads and checks every topology app's
     // package.json before routes-generate selects --app.
     command: /\bultramodern-create\s+ultramodern\s+routes-generate\b/u,
+    directories: () => [],
     reads: (graph) => appDirectories(graph).map((directory) => `${directory}/package.json`),
   },
 ];
@@ -690,6 +690,8 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
         pending.push(filepath);
       }
     };
+    /** Directories whose existence a build step reads: each counts as its path, without content. */
+    const existing = new Set<string>();
     const packagesAdded = new Set<string>();
     const addPackage = (root: string) => {
       if (packagesAdded.has(root)) {
@@ -747,6 +749,9 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       for (const file of tool.reads(graph)) {
         add(file);
       }
+      for (const scanned of tool.directories(graph).filter((entry) => graph.under(entry).length > 0)) {
+        existing.add(scanned);
+      }
     }
     const walksExports = runs.some((script) => EXPORT_WALKING_STEPS.has(script));
     for (const filepath of pending) {
@@ -766,7 +771,10 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
     }
     return {
       excluded: excluded.filter((entry) => !included.has(entry.path)),
-      inputs: graph.workspace.entries.filter((entry) => included.has(entry.path)),
+      inputs: [
+        ...graph.workspace.entries.filter((entry) => included.has(entry.path)),
+        ...[...existing].toSorted().map((scanned) => ({ identity: 'directory', path: scanned })),
+      ],
       /** Why each input is one: the file that reached it, or the rule that included it. */
       reachedFrom,
       /** The scripts the build runs: the driver's, its extra inputs and those of the unit's `build` script. */
