@@ -119,15 +119,19 @@ it('keeps every stage-delivery file out of everything a scoped plan skips', () =
             referrer === 'app/scripts/zerops/delivery-plan.mts' &&
             (file === '.github/workflows/zerops-stage.yml' || file.startsWith('.github/actions/deliver-stage/'))
           ) &&
+          // The merge planner reads its verdict table from this document. No gate runs the planner; its tooling
+          // test, which every scoped plan runs, reads the real table and refuses a malformed one.
+          !(referrer === 'app/scripts/merge/plan.mts' && file === 'app/docs/architecture/MERGING.md') &&
           names(file).some((name) => text.includes(name)),
       )
       .map(([referrer]) => `${referrer} names ${file}`),
   );
   expect(readers).toEqual([]);
-  // Only tooling tests and their one fixture among the tests: an integration suite or a package test is never scoped.
+  // Only tooling tests, their one fixture and the merge verdict table that a tooling test reads: an integration suite
+  // or a package test is never scoped.
   expect(
     scoped.filter((file) => file.startsWith('app/') && !file.startsWith('app/scripts/zerops/') && !toolingTest(file)),
-  ).toEqual(['app/scripts/tests/zerops-deployment.fixture.mts']);
+  ).toEqual(['app/docs/architecture/MERGING.md', 'app/scripts/tests/zerops-deployment.fixture.mts']);
 });
 
 it('keeps every scoped storefront file out of everything a scoped plan skips', () => {
