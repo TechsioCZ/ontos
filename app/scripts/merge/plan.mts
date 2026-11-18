@@ -41,14 +41,16 @@ const OWNER_CONTRACT_GLOBS = [
   'app/verticals/*/vertical.registration.ts',
   'app/verticals/*/vertical.runtime-declaration.ts',
   'app/verticals/*/package.json',
-  'app/verticals/*/drizzle/**',
+  'app/verticals/*/drizzle*/**',
   'app/topology/*.json',
+  'app/packages/core-runtime/drizzle/**',
   'app/packages/core-runtime/src/**',
 ] as const;
 
 const WORKSPACE_PACKAGE_JSON = /^app\/(?:(?:apps|packages|verticals)\/)?[^/]+\/package\.json$/u;
 const WORKSPACE_PACKAGE_DIRECTORY = /^app\/(?:(?:apps|packages|verticals)\/)?[^/]+/u;
-const MIGRATION_FOLDER = /^app\/verticals\/(?<owner>[^/]+)\/drizzle\/(?<folder>(?<timestamp>\d+)_[^/]+)\//u;
+const MIGRATION_FOLDER =
+  /^(?<directory>app\/(?:apps|packages|verticals)\/[^/]+\/drizzle[^/]*)\/(?<folder>(?<timestamp>\d+)_[^/]+)\//u;
 const IMPORT_SPECIFIER = /(?:from\s+|import\s*\(\s*)['"](?<specifier>@app\/[^'"]+)['"]/gu;
 const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[cm]?tsx?$/u;
 const CONFLICT_LABEL = /^CONFLICT \((?<label>[^)]+)\)/u;
@@ -105,9 +107,9 @@ const OwnerConsumersSchema = Schema.Struct({
 });
 
 const InterleavedMigrationSchema = Schema.Struct({
+  directory: Schema.String,
   folder: Schema.String,
   newestDemoOnlyFolder: Schema.String,
-  owner: Schema.String,
 });
 
 const ImportEdgeSchema = Schema.Struct({
@@ -411,8 +413,8 @@ const existingImportEdges = (output: string, ref: string): ReadonlySet<string> =
   );
 
 interface MigrationFolder {
+  readonly directory: string;
   readonly folder: string;
-  readonly owner: string;
   readonly timestamp: string;
 }
 
@@ -423,12 +425,16 @@ const migrationFolders = (paths: readonly string[]): ReadonlyMap<string, Migrati
       if (groups === undefined) {
         return [];
       }
-      const folder = { folder: groups.folder ?? '', owner: groups.owner ?? '', timestamp: groups.timestamp ?? '' };
-      return [[`${folder.owner}/${folder.folder}`, folder] as const];
+      const folder = {
+        directory: groups.directory ?? '',
+        folder: groups.folder ?? '',
+        timestamp: groups.timestamp ?? '',
+      };
+      return [[`${folder.directory}/${folder.folder}`, folder] as const];
     }),
   );
 
-/** Main-added migration folders older than the newest demo-only folder of the same owner. */
+/** Main-added migration folders older than the newest demo-only folder of the same migration directory. */
 const interleavedMigrationsOf = (
   baseFiles: readonly string[],
   demoFiles: readonly string[],
@@ -437,17 +443,17 @@ const interleavedMigrationsOf = (
   const [baseFolders, demoFolders, mainFolders] = [baseFiles, demoFiles, mainFiles].map(migrationFolders);
   const newestDemoOnly = new Map<string, MigrationFolder>();
   for (const [key, folder] of demoFolders ?? []) {
-    const newest = newestDemoOnly.get(folder.owner);
+    const newest = newestDemoOnly.get(folder.directory);
     const demoOnly = !(baseFolders?.has(key) ?? false) && !(mainFolders?.has(key) ?? false);
     if (demoOnly && (newest === undefined || folder.timestamp > newest.timestamp)) {
-      newestDemoOnly.set(folder.owner, folder);
+      newestDemoOnly.set(folder.directory, folder);
     }
   }
   return [...(mainFolders ?? [])].flatMap(([key, folder]) => {
-    const newest = newestDemoOnly.get(folder.owner);
+    const newest = newestDemoOnly.get(folder.directory);
     const mainOnly = !(baseFolders?.has(key) ?? false) && !(demoFolders?.has(key) ?? false);
     return mainOnly && newest !== undefined && folder.timestamp < newest.timestamp
-      ? [{ folder: folder.folder, newestDemoOnlyFolder: newest.folder, owner: folder.owner }]
+      ? [{ directory: folder.directory, folder: folder.folder, newestDemoOnlyFolder: newest.folder }]
       : [];
   });
 };
@@ -707,7 +713,7 @@ const summaryOf = (plan: MergePlan, out: string) => {
   ].join('\n');
 };
 
-const requireRerere = git(['config', '--get', 'rerere.enabled'], [0, 1]).pipe(
+const requireRerere = git(['config', '--type=bool', '--get', 'rerere.enabled'], [0, 1]).pipe(
   Effect.filterOrFail(
     (value) => value.trim() === 'true',
     () =>
