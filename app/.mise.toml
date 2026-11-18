@@ -6,4 +6,4 @@ pnpm = { version = "12.16.1", allow_builds = ["pnpm"] }
 [tasks.deps]
 description = "Install the pinned workspace dependencies"
 run = "pnpm install --frozen-lockfile --reporter append-only"
-env = { RAYON_NUM_THREADS = "2" }
+env = { PNPM_MACOS_LINK_THREADS = "2" }
