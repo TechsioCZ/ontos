@@ -1022,6 +1022,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   PACKAGE_MANIFEST,
   'pnpm-lock.yaml',
   'scripts/generate-ontos-module-contract.mts',
+  'scripts/ontos-mcp-contribution.mts',
   'scripts/generate-ontos-shell-runtime-contract.mts',
   'scripts/ontos-shell-runtime-contract.ts',
   'scripts/application-migration-inventory.mts',
