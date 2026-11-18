@@ -671,10 +671,12 @@ on the same zone.
 
 The gate workflow builds the delivery units in parallel shards: each `node-artifact-build` or
 `cloudflare-artifact-build` matrix job builds a few units for its target (`node` with `build`,
-`cloudflare` with `cloudflare:build`) and uploads their git-ignored outputs. Every Node shard is an
-owner integration row (its `shard` and `units` in `scripts/ci-matrices.json`): after its upload it
-runs its own owner tasks. The `Deployment Bootstrap and Node Federation Proof` row, the owner rows and
-the unit rows each wait inside the job for every shard's upload step, then download them all
+`cloudflare` with `cloudflare:build`) and uploads their git-ignored outputs. Every Node shard is a
+`node-artifact-build` row (its `shard` and `units` in the `build` list of `scripts/ci-matrices.json`)
+that only builds, packs and uploads. The `Deployment Bootstrap and Node Federation Proof` job, the owner
+rows (`owner-integration`, which also need the `Prepare integration database` producer) and the unit
+rows list `node-artifact-build` in `needs`, so GitHub starts them only once every shard has uploaded and
+none of them holds a runner while it waits; they then download them all
 (`scripts/unpack-unit-build-outputs.sh` fails naming any unit no shard built). A new unit joins one
 shard of each target; `Repository Tooling Tests` fails until it does. The Cloudflare proof runs as two jobs over the same outputs: one verifies the
 Worker outputs and their SSR, the other proves the Worker topology below.
