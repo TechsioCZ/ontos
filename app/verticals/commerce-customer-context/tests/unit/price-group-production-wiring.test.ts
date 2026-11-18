@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Hex } from 'effect/encoding';
@@ -96,32 +97,41 @@ const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
 });
 const trustedOperationAt = Schema.decodeSync(PriceGroupInstantSchema)('2026-09-23T10:00:00.000Z');
 
-it('attaches every Price Group Action and the governed resolution Read to production catalog wiring', () => {
-  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
-  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
-    assignCounterpartyPriceGroupServicesForTransaction,
-  );
-  expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(
-    migrateCustomerPriceGroupServicesForTransaction,
-  );
-  expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(
-    migrateCounterpartyPriceGroupServicesForTransaction,
-  );
+const readResolutionSource = Effect.promise(() =>
+  readFile(new URL('../../src/api/customer-price-group-resolution.read.ts', import.meta.url), 'utf-8'),
+);
 
-  expect(getActionServiceFactory(removeCustomerPriceGroupAction).toString()).toContain(
-    'priceGroupActionServicesForTransaction',
-  );
-  expect(getActionServiceFactory(removeCounterpartyPriceGroupAction).toString()).toContain(
-    'priceGroupActionServicesForTransaction',
-  );
+it.effect('attaches every Price Group Action and the governed resolution Read to production catalog wiring', () =>
+  Effect.gen(function* readProductionWiring() {
+    expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(
+      assignCustomerPriceGroupServicesForTransaction,
+    );
+    expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+      assignCounterpartyPriceGroupServicesForTransaction,
+    );
+    expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(
+      migrateCustomerPriceGroupServicesForTransaction,
+    );
+    expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(
+      migrateCounterpartyPriceGroupServicesForTransaction,
+    );
 
-  expect(getReadServiceFactory(customerPriceGroupResolutionRead)).toBe(
-    customerPriceGroupResolutionServicesForTransaction,
-  );
-  const readFactorySource = customerPriceGroupResolutionServicesForTransaction.toString();
-  expect(readFactorySource).toContain('priceGroupCatalogPortFromEnvironment');
-  expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
-});
+    expect(getActionServiceFactory(removeCustomerPriceGroupAction).toString()).toContain(
+      'priceGroupActionServicesForTransaction',
+    );
+    expect(getActionServiceFactory(removeCounterpartyPriceGroupAction).toString()).toContain(
+      'priceGroupActionServicesForTransaction',
+    );
+
+    expect(getReadServiceFactory(customerPriceGroupResolutionRead)).toBe(
+      customerPriceGroupResolutionServicesForTransaction,
+    );
+    const readFactorySource = customerPriceGroupResolutionServicesForTransaction.toString();
+    expect(readFactorySource).toContain('customerPriceGroupCatalogForScope');
+    expect(yield* readResolutionSource).toContain('priceGroupCatalogPortFromEnvironment');
+    expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
+  }),
+);
 
 it('declares the Pricing caller with an identity subject on the customer Price Group resolution Read', () => {
   expect(customerPriceGroupResolutionRead.descriptor.accessActor).toMatchObject({
@@ -206,7 +216,7 @@ it.effect('sends the verified request scope to the catalog as an Assertion subje
         .pipe(Effect.provide(delegatedCallerConfiguration)),
     );
     expect(readFailure).toMatchObject({ cause: { code: 'module_operation_requirement_unavailable' } });
-    expect(customerPriceGroupResolutionServicesForTransaction.toString()).toMatch(/_tag:\s*["']Assertion["']/u);
+    expect(yield* readResolutionSource).toMatch(/_tag:\s*["']Assertion["']/u);
   }),
 );
 

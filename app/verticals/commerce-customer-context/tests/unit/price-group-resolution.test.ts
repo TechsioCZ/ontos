@@ -9,12 +9,16 @@ import {
 import {
   customerPriceGroupResolutionRead,
   resolveCustomerPriceGroupFromServices,
+  loadCustomerPriceGroupSnapshot,
+  recheckCustomerPriceGroupSnapshot,
+  finishCustomerPriceGroupSnapshot,
 } from '../../src/api/customer-price-group-resolution.read.ts';
 import {
   CustomerPriceGroupResolutionRequestSchema,
   CustomerPriceGroupResolutionResponseSchema,
   customerPriceGroupResolutionPredicateRef,
 } from '../../shared/apis/customer-price-group-resolution.ts';
+import type { CustomerPriceGroupResolutionServices } from '../../src/api/customer-price-group-resolution.read.ts';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCatalogOutcome,
@@ -108,6 +112,96 @@ const unreachableStore: CustomerPriceGroupAssignmentStorePort = {
   remove: unavailableStore,
   resolve: unavailableStore,
 };
+
+it.effect('releases the owner snapshot before catalog I/O and revalidates the current set afterwards', () =>
+  Effect.gen(function* phasedResolution() {
+    let inTransaction = true;
+    let catalogCalls = 0;
+    const events: string[] = [];
+    const services: CustomerPriceGroupResolutionServices = {
+      catalog: {
+        resolveCurrent: () =>
+          Effect.sync(() => {
+            expect(inTransaction).toBe(false);
+            catalogCalls += 1;
+            events.push('catalog');
+            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
+          }),
+      },
+      now: Effect.succeed(observedAt),
+      profileValidation: {
+        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+      },
+      store: {
+        ...unreachableStore,
+        resolve: () =>
+          Effect.sync(() => {
+            expect(inTransaction).toBe(true);
+            events.push('snapshot');
+            return { _tag: 'found', assignments: [assignment('current')] } as const;
+          }),
+      },
+    };
+    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
+    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
+    expect(catalogCalls).toBe(0);
+    inTransaction = false;
+    const result = yield* finishCustomerPriceGroupSnapshot(
+      input,
+      snapshot,
+      services.catalog,
+      Effect.sync(() => {
+        inTransaction = true;
+      }).pipe(
+        Effect.andThen(recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot)),
+        Effect.ensuring(
+          Effect.sync(() => {
+            inTransaction = false;
+          }),
+        ),
+      ),
+      services.now,
+    );
+    expect(result.resolution._tag).toBe('ASSIGNED');
+    expect(events).toEqual(['snapshot', 'catalog', 'snapshot']);
+    expect(catalogCalls).toBe(1);
+  }),
+);
+
+it.effect('fails closed when an assignment changes while the catalog request is in flight', () =>
+  Effect.gen(function* concurrentAssignmentChange() {
+    let assignments = [assignment('current')];
+    const services: CustomerPriceGroupResolutionServices = {
+      catalog: {
+        resolveCurrent: () =>
+          Effect.sync(() => {
+            assignments = [];
+            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
+          }),
+      },
+      now: Effect.succeed(observedAt),
+      profileValidation: {
+        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+      },
+      store: {
+        ...unreachableStore,
+        resolve: () => Effect.sync(() => ({ _tag: 'found' as const, assignments })),
+      },
+    };
+    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
+    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
+    const failure = yield* Effect.flip(
+      finishCustomerPriceGroupSnapshot(
+        input,
+        snapshot,
+        services.catalog,
+        recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot),
+        services.now,
+      ),
+    );
+    expect(failure._tag).toBe('ReadHandlerUnavailable');
+  }),
+);
 
 it.effect('resolves NONE only when there is no current temporal assignment', () =>
   Effect.gen(function* noCurrentAssignment() {
