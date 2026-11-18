@@ -35,8 +35,14 @@ url="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per
 # the list the download reads names every shard's artifact.
 artifacts_filter='[.artifacts[] | select(.expired | not) | .name
   | select(if (env.PATTERN | endswith("*")) then startswith(env.PATTERN | rtrimstr("*")) else . == env.PATTERN end)]
-  | unique | length'
+  | unique | .[]'
 artifacts_url="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100"
+# The list names an artifact within seconds of its upload step: in runs 44211156881 and 44217917701 every
+# artifact's created_at is its upload step's completed_at. An artifact the list still lacks this long after
+# every shard reported its upload has expired or was deleted; a re-run more than a day later, when the kept
+# shards' one-day artifacts are gone, meets exactly that. It never comes back, so the wait fails by name.
+listing_bound="${WAIT_FOR_ARTIFACT_LISTING_SECONDS:-60}"
+uploaded_at=''
 
 while :; do
   # `filter=latest` lists the jobs of the newest attempt, including the ones a re-run kept. An
@@ -55,11 +61,19 @@ while :; do
   fi
   succeeded="$(printf '%s\n' "$jobs" | grep -c -E "^(success|uploaded)${tab}" || true)"
   if [ "$succeeded" -eq "$expected" ]; then
-    if ! listed="$(PATTERN="$artifact_pattern" gh api "$artifacts_url" --jq "$artifacts_filter")"; then
+    [ -n "$uploaded_at" ] || uploaded_at="$SECONDS"
+    if ! names="$(PATTERN="$artifact_pattern" gh api "$artifacts_url" --jq "$artifacts_filter")"; then
       echo "::warning title=Run artifacts unreadable::Reading this run's artifacts failed; polling again."
-    elif [ "$listed" -eq "$count" ]; then
-      echo "Every other shard of $prefix uploaded its outputs, and the run lists all $count $artifact_pattern artifacts."
-      exit 0
+    else
+      listed="$(printf '%s\n' "$names" | grep -c . || true)"
+      if [ "$listed" -eq "$count" ]; then
+        echo "Every other shard of $prefix uploaded its outputs, and the run lists all $count $artifact_pattern artifacts."
+        exit 0
+      fi
+      if [ "$((SECONDS - uploaded_at))" -ge "$listing_bound" ]; then
+        echo "::error title=Build artifacts missing::Every shard of $prefix uploaded its outputs, but ${listing_bound} s later the run lists $listed of $count $artifact_pattern artifacts: $(printf '%s' "$names" | tr '\n' ' '). An expired or deleted artifact never returns; re-run all jobs so every shard uploads again."
+        exit 1
+      fi
     fi
   fi
   sleep "$interval"

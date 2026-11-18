@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -2001,6 +2001,7 @@ const NodeBuildJobSchema = Schema.Struct({
       if: Schema.optional(Schema.String),
       name: Schema.String,
       run: Schema.optional(Schema.String),
+      'timeout-minutes': Schema.optional(Schema.Number),
       uses: Schema.optional(Schema.String),
       wait: Schema.optional(Schema.String),
       with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -2011,6 +2012,7 @@ const NodeBuildJobSchema = Schema.Struct({
       include: Schema.Array(Schema.Struct({ name: Schema.String, shard: Schema.Number, units: Schema.String })),
     }),
   }),
+  'timeout-minutes': Schema.Number,
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
@@ -2096,13 +2098,16 @@ it('uploads each Node build shard before its row waits for, downloads or tests a
 });
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const { steps, 'timeout-minutes': rowTimeout } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const build = steps.findIndex(({ name }) => name === NODE_BUILD_STEP);
   const pack = steps.findIndex(({ name }) => name === "Pack the shard's build outputs");
   const upload = steps.findIndex(({ name }) => name === UPLOAD_STEP);
   expect(build).toBeGreaterThan(-1);
   expect(build < pack && pack < upload).toBe(true);
   expect(steps[build]?.if).toBe(BUILDING_ROW_CONDITION);
+  // A slow build fails on its own bound, never only once build and owner tasks together pass the row's.
+  expect(steps[build]?.['timeout-minutes']).toBe(10);
+  expect(rowTimeout).toBeGreaterThan(10);
   expect(steps[pack]?.if).toBe(BUILDING_ROW_CONDITION);
   expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
   // The integration lanes' single-thread cap must not reach the compilers.
@@ -2113,6 +2118,49 @@ it('builds every Node release from this commit rather than restoring another rel
     ULTRAMODERN_SOURCE_REVISION: CURRENT_SOURCE_REVISION,
   });
   expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
+});
+
+// The integration jobs share their steps and number their rows from 0. A failure upload under a name the run
+// already holds fails instead of keeping its evidence, so a second failing job or a failing re-run lost it.
+it('names every failure-diagnostics upload per job, row and attempt', () => {
+  const { jobs } = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          steps: Schema.optional(
+            Schema.Array(
+              Schema.Struct({
+                if: Schema.optional(Schema.String),
+                uses: Schema.optional(Schema.String),
+                with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+              }),
+            ),
+          ),
+        }),
+      ),
+    }),
+  )(readGateWorkflow());
+  const names = new Map<string, string>();
+  for (const [job, { steps = [] }] of Object.entries(jobs)) {
+    for (const step of steps) {
+      if (step.uses?.startsWith('actions/upload-artifact@') === true && step.if?.includes('failure()') === true) {
+        names.set(`${job}: ${String(step.with?.name)}`, String(step.with?.name));
+      }
+    }
+  }
+  expect(names.size).toBeGreaterThanOrEqual(3);
+  for (const [where, name] of names) {
+    expect(name, where).toContain(expression('github.run_attempt'));
+  }
+  for (const job of [NODE_ARTIFACT_BUILD_JOB, 'service-integration', 'node-topology-proof']) {
+    expect(
+      names.get(
+        `${job}: native-startup-${expression('github.job')}-${expression('strategy.job-index')}-${expression('github.run_attempt')}`,
+      ),
+      job,
+    ).toBeDefined();
+  }
 });
 
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
@@ -2141,6 +2189,11 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
 
 /** The shard a test wait runs on, in a three-shard target named `Build x (`. */
 const WAITING_SHARD = 'Build x (1/3)';
+/** The target's two other shards, both done with their uploads. */
+const UPLOADED_SHARDS = [
+  { conclusion: 'success', name: 'Build x (2/3)' },
+  { conclusion: 'success', name: 'Build x (3/3)' },
+];
 /** One answer of the run's artifacts API: these names, an expired artifact under the pattern and an unrelated one. */
 const artifactListing = (names: readonly string[]) =>
   JSON.stringify({
@@ -2156,13 +2209,15 @@ const artifactListing = (names: readonly string[]) =>
  * these artifact names in turn, as `gh api --jq` would. Expired and unrelated artifacts never count.
  * With `failAfterArtifactReads`, the jobs API reports a failed shard once the artifacts were read that many
  * times, so a wait that keeps waiting ends by itself: killing it on a timeout would leave its running `gh`
- * writing into the directory while it is removed.
+ * writing into the directory while it is removed. `listingSeconds` bounds how long the list may stay short
+ * once every shard uploaded.
  */
-const waitForBuildShards = (
+const runShardWait = (
   jobs: readonly { conclusion: string | null; name: string }[],
   own = WAITING_SHARD,
   listings: readonly (readonly string[])[] = [own ? ['x-1', 'x-2', 'x-3'] : ['x-2', 'x-3']],
   failAfterArtifactReads = 0,
+  listingSeconds = 60,
 ) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
   try {
@@ -2196,16 +2251,18 @@ const waitForBuildShards = (
       ].join('\n'),
     );
     chmodSync(gh, 0o755);
-    execFileSync(
+    const { status, stdout } = spawnSync(
       '/bin/bash',
       [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', own ? '3' : '2', own],
       {
+        encoding: 'utf-8',
         env: {
           FAIL_AFTER_ARTIFACT_READS: String(failAfterArtifactReads),
           FAKE_JOBS: JSON.stringify({ jobs }),
           GITHUB_REPOSITORY: 'owner/repository',
           GITHUB_RUN_ID: '1',
           PATH: `${directory}:${STEP_PATH}`,
+          WAIT_FOR_ARTIFACT_LISTING_SECONDS: String(listingSeconds),
           WAIT_FOR_ARTIFACT_PATTERN: 'x-*',
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
         },
@@ -2213,13 +2270,13 @@ const waitForBuildShards = (
         timeout: 10_000,
       },
     );
-    return true;
-  } catch {
-    return false;
+    return { output: stdout, passed: status === 0 };
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
 };
+
+const waitForBuildShards = (...args: Parameters<typeof runShardWait>) => runShardWait(...args).passed;
 
 it('waits for the other build shards of its own target and fails when one does not succeed', () => {
   const last = 'Build x (3/3)';
@@ -2257,20 +2314,28 @@ it('waits for the other build shards of its own target and fails when one does n
 // Run 44176588644: the last shard's upload step had just succeeded, the download listed the run's artifacts
 // a moment later without that shard's, and the bootstrap went on without two delivery units.
 it('ends the wait only once the run lists every shard artifact the next download reads', () => {
-  const uploaded = [
-    { conclusion: 'success', name: 'Build x (2/3)' },
-    { conclusion: 'success', name: 'Build x (3/3)' },
-  ];
   expect(
-    waitForBuildShards(uploaded, WAITING_SHARD, [
+    waitForBuildShards(UPLOADED_SHARDS, WAITING_SHARD, [
       ['x-1', 'x-2'],
       ['x-1', 'x-2', 'x-3'],
     ]),
   ).toBe(true);
   // Three reads of an incomplete list do not end the wait; only the failed shard reported afterwards does.
-  expect(waitForBuildShards(uploaded, WAITING_SHARD, [['x-1', 'x-2']], 3)).toBe(false);
+  expect(waitForBuildShards(UPLOADED_SHARDS, WAITING_SHARD, [['x-1', 'x-2']], 3)).toBe(false);
   // An expired artifact under the pattern never stands in for a missing one.
-  expect(waitForBuildShards(uploaded, '', [['x-2']], 3)).toBe(false);
+  expect(waitForBuildShards(UPLOADED_SHARDS, '', [['x-2']], 3)).toBe(false);
+});
+
+// A re-run more than a day later keeps the shards' successful jobs, but their one-day artifacts are gone: the
+// list never names them again, so the wait fails by name instead of holding a runner until the job's timeout.
+it('fails by name when the list still lacks an artifact once its bound after every upload has passed', () => {
+  const expired = runShardWait(UPLOADED_SHARDS, '', [['x-2']], 0, 0);
+  expect(expired.passed).toBe(false);
+  expect(expired.output).toContain(
+    '::error title=Build artifacts missing::Every shard of Build x ( uploaded its outputs, but 0 s later the run lists 1 of 2 x-* artifacts: x-2.',
+  );
+  // Within the bound, a list that names the last artifact a moment later still ends the wait.
+  expect(runShardWait(UPLOADED_SHARDS, '', [['x-2'], ['x-2', 'x-3']]).passed).toBe(true);
 });
 
 it('makes every shard wait name the artifacts its next download reads', () => {
@@ -2888,7 +2953,7 @@ it('prefetches only this run and propagates a failed shard or artifact download'
       [
         '#!/bin/bash',
         'if [ "$1" = api ]; then',
-        String.raw`  case "$2" in */artifacts\?*) echo 11; exit 0 ;; esac`,
+        String.raw`  case "$2" in */artifacts\?*) seq -f 'node-units-%g' 1 11; exit 0 ;; esac`,
         String.raw`  for shard in $(seq 1 11); do printf "%s\tBuild node artifacts (%s/11)\n" "$SHARD_STATE" "$shard"; done`,
         '  exit 0',
         'fi',
