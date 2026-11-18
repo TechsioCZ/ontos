@@ -76,7 +76,7 @@ import {
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
-import type { ReadFinishContext, ReadLoadContext } from '../../src/reads/context.ts';
+import type { ReadFinishContext, ReadLoadContext, ReadOwnerTransaction } from '../../src/reads/context.ts';
 import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
@@ -4395,11 +4395,15 @@ const makeStagedRead = (
   events: string[],
   options: {
     readonly duringFinish?: () => void;
+    /** The typed failure `finish` ends with after its owner-state step, e.g. a remote target that is absent. */
+    readonly finishFailure?: ReadHandlerNotFound;
     readonly onOwnerStateServices?: (services: StagedReadServices) => void;
     /** Declare an owner-facts resolver (O70), so the owner's rule decides this Read. */
     readonly ownerFacts?: boolean;
     readonly ownerState?: boolean;
     readonly ownerStateFailure?: ReadHandlerNotFound | ReadPermissionDenied | SqlError;
+    /** Replaces finish's owner-state step: what an owner does with `context.transaction`. */
+    readonly ownerStep?: (transaction: ReadOwnerTransaction<StagedReadServices>) => Effect.Effect<void>;
     readonly policy?: ReturnType<typeof defineGlobalPolicy<Readonly<Record<string, never>>>>;
     readonly prepareFailure?: ReadHandlerNotFound;
   } = {},
@@ -4430,7 +4434,9 @@ const makeStagedRead = (
         Effect.gen(function* finishAfterCommit() {
           events.push('finish');
           options.duringFinish?.();
-          if (options.ownerState !== false) {
+          if (options.ownerStep !== undefined) {
+            yield* options.ownerStep(context.transaction);
+          } else if (options.ownerState !== false) {
             yield* context.transaction((services) =>
               Effect.suspend(() => {
                 events.push('owner-state');
@@ -4438,6 +4444,9 @@ const makeStagedRead = (
                 return options.ownerStateFailure === undefined ? Effect.void : Effect.fail(options.ownerStateFailure);
               }),
             );
+          }
+          if (options.finishFailure !== undefined) {
+            return yield* options.finishFailure;
           }
           return { evidence: { resultCount: context.loaded.length }, result: [...context.loaded] };
         }),
@@ -4976,3 +4985,48 @@ it.effect('refuses a Read whose owner facts name an owner record when no owner a
     expect(neutral.exit).toEqual(Exit.succeed(['prepared-owner-value']));
   }),
 );
+
+/** An owner rule that answers each decision of one Read in turn: load, each finish transaction, then release. */
+const decisionsInTurn = (
+  decisions: readonly (() => Effect.Effect<'allowed' | 'denied' | 'unavailable'>)[],
+  onDecision?: (turn: number) => void,
+): OwnerAuthorizationOverlayService => {
+  let turn = 0;
+  return {
+    authorize: () =>
+      Effect.suspend(() => {
+        const decide = decisions[Math.min(turn, decisions.length - 1)];
+        onDecision?.(turn);
+        turn += 1;
+        return decide === undefined ? Effect.succeed('unavailable' as const) : decide();
+      }),
+  };
+};
+const allowDecision = () => Effect.succeed('allowed' as const);
+
+for (const [name, unsuccessful] of [
+  ['defect', () => Effect.die(new Error('owner rule defect'))],
+  ['interruption', () => Effect.interrupt],
+] as const) {
+  it.effect(`refuses a Read whose finish caught an owner re-decision ${name} even when release would allow`, () =>
+    Effect.gen(function* caughtRedecision() {
+      const events: string[] = [];
+      const read = makeStagedRead(events, {
+        // The owner catches every cause of its owner transaction and returns what load read.
+        ownerStep: (transaction) =>
+          transaction(() => Effect.sync(() => events.push('owner-state'))).pipe(
+            Effect.asVoid,
+            Effect.catchCause(() => Effect.void),
+          ),
+      });
+      const { exit, harness } = yield* runStagedRead(events, read, {
+        ownerAuthorizationOverlay: decisionsInTurn([allowDecision, unsuccessful, allowDecision]),
+        verified: true,
+      });
+      expect(stagedFailureTag(exit)).toBe('ReadPermissionUnavailable');
+      expect(events).not.toContain('owner-state');
+      expect(visibleOutcome(exit)).not.toContain('prepared-owner-value');
+      expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
+    }),
+  );
+}

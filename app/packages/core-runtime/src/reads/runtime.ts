@@ -1166,6 +1166,21 @@ const fenceDetachedVerifiedRead = Effect.fn('ReadRuntime.fenceDetachedVerifiedRe
   },
 );
 
+/** The refusal an unsuccessful owner decision after commit stands for: a denial stays a denial, anything else is unavailable. */
+const ownerRefusalOf = (cause: Cause.Cause<unknown>): ReadPermissionDenied | ReadPermissionUnavailable => {
+  const failure = Cause.findErrorOption(cause);
+  return Option.isSome(failure) &&
+    (Schema.is(ReadPermissionDenied)(failure.value) || Schema.is(ReadPermissionUnavailable)(failure.value))
+    ? failure.value
+    : preserveFailureCause(
+        new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'Owner-local Read authorization is temporarily unavailable',
+        }),
+        cause,
+      );
+};
+
 const readEvidenceFailure = (cause: unknown) =>
   preserveFailureCause(
     new ReadEvidencePersistenceError({
@@ -1928,23 +1943,23 @@ const readRuntimeFromDependencies = <
               return yield* Effect.void;
             },
           );
-          /** The first refusal the owner rule answered after commit; it refuses the Read whatever `finish` did with it. */
+          /**
+           * The first owner decision after commit that did not allow; it refuses the Read whatever `finish`
+           * did with it. A denial stays a denial; a failure, a defect or an interruption is unavailable.
+           */
           let ownerRefusalAfterCommit: ReadPermissionDenied | ReadPermissionUnavailable | undefined;
-          /** The owner rule decided again after the read transaction committed, in a later short transaction. */
+          /**
+           * The owner rule decided again after the read transaction committed, in a later short transaction.
+           * Every unsuccessful decision is recorded from its full Exit, so `finish` cannot catch a defect or an
+           * interruption and carry on; the Exit itself is left as it is, so an interruption still interrupts.
+           */
           const redecideOwnerAuthorization = (admitted: ScopedTransactionExecutor, transaction: CoreTransaction) =>
             decideOwnerAuthorization(admitted, transaction).pipe(
-              Effect.tapError((failure) =>
+              Effect.onExit((decisionExit) =>
                 Effect.sync(() => {
-                  ownerRefusalAfterCommit ??=
-                    Schema.is(ReadPermissionDenied)(failure) || Schema.is(ReadPermissionUnavailable)(failure)
-                      ? failure
-                      : preserveFailureCause(
-                          new ReadPermissionUnavailable({
-                            code: 'read_permission_unavailable',
-                            reason: 'Owner-local Read authorization is temporarily unavailable',
-                          }),
-                          failure,
-                        );
+                  if (Exit.isFailure(decisionExit)) {
+                    ownerRefusalAfterCommit ??= ownerRefusalOf(decisionExit.cause);
+                  }
                 }),
               ),
             );
