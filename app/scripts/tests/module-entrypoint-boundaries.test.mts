@@ -2016,3 +2016,122 @@ it.live(
     expect(yield* acceptedReadSources(root, refused), 'unproven service factories the gate accepted').toEqual([]);
   }),
 );
+
+it.live(
+  'reads a member only of a descriptor a library built, never of an object owner code handed through a library call',
+  Effect.fn(function* readLoadWorkLibraryBuiltDescriptor() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
+    const withHelper = (body: string, declarations: string): string =>
+      [
+        bareRead
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Schema } from 'effect';\n`)
+          .replace(bareHandler, HELPER_LOAD + LAYER_ARGUMENT),
+        declarations,
+        stockLoadHelper(body),
+      ].join('\n');
+    const provenFind = '{ find: (input: unknown, tenantId: string) => Effect.succeed({ input, tenantId }) }';
+    const service = (initializer: string, call = 'stockService.find(input, tenantId)'): string =>
+      withHelper(`  return yield* ${call};`, `const stockService: any = ${initializer};\n`);
+    // A schema the library built, branded through `pipe` with library calls, is read through its members.
+    const accepted = [
+      withHelper(
+        '  return yield* Effect.succeed({ keys: Object.keys(stockSchema.fields), input, tenantId });',
+        "const stockSchema = Schema.Struct({ a: Schema.String.pipe(Schema.brand('StockA')) });\n",
+      ),
+    ];
+    expect(yield* acceptedReadSources(root, accepted), 'library-built descriptors the gate refused').toEqual([0]);
+    // `pipe`, `call`, `apply` and `bind` return what owner code gave them, and a curried call returns its argument.
+    const refused = [
+      service(`Schema.String.pipe(() => (${provenFind}))`),
+      service(`Schema.String.pipe(Schema.brand('StockA'), () => (${provenFind}))`),
+      service(`Schema.String.pipe.call(Schema.String, () => (${provenFind}))`),
+      service(`Schema.String.pipe.apply(Schema.String, [() => (${provenFind})])`),
+      service(`Schema.decodeUnknownOption(Schema.Unknown)(${provenFind})`, 'stockService.value.find(input, tenantId)'),
+    ];
+    expect(yield* acceptedReadSources(root, refused), 'owner objects the gate took for descriptors').toEqual([]);
+  }),
+);
+
+it.live(
+  'refuses proven load work while any deployable module writes a property of a global or a prototype',
+  Effect.fn(function* readLoadWorkRealmWrites() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    yield* write(root, REMOTE_STOCK_FILE, REMOTE_STOCK_SOURCE);
+    const bareRead = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+    const bareHandler = `() => Effect.succeed({})${LAYER_ARGUMENT}`;
+    const read = [
+      bareRead
+        .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n`)
+        .replace(bareHandler, HELPER_LOAD + LAYER_ARGUMENT),
+      stockLoadHelper('  return yield* Effect.succeed({ body: JSON.stringify(input), rows: [tenantId].map(String) });'),
+    ].join('\n');
+    const patchFile = 'verticals/inventory-stock/src/json-patch.ts';
+    const otherOwnerPatchFile = 'verticals/other-owner/src/realm-patch.ts';
+    const remote = "void Effect.runPromise(fetchRemoteStock(value, 'tenant'));";
+    const patchImports = `import { Effect } from 'effect';\nimport { fetchRemoteStock } from './integrations/remote-stock.ts';\n`;
+    const verdict = Effect.fn(function* verdict(file: string, patch: string) {
+      yield* write(root, file, patch);
+      const accepted = (yield* acceptedReadSources(root, [read])).length === 1;
+      yield* write(root, file, 'export const patched = false;\n');
+      return accepted;
+    });
+    // Load work that reads `JSON.stringify` and `String` passes while nothing writes to them, and a module that
+    // writes only its own objects changes nothing.
+    expect(yield* verdict(patchFile, 'export const patched = false;\n'), 'no realm write').toBe(true);
+    expect(
+      yield* verdict(
+        patchFile,
+        'const own = { stringify: (value: unknown) => String(value) };\nown.stringify = (value: unknown) => String(value).trim();\nexport const patched = own;\n',
+      ),
+      'own object write',
+    ).toBe(true);
+    const patches: readonly (readonly [string, string])[] = [
+      [patchFile, `${patchImports}JSON.stringify = (value: unknown) => {\n  ${remote}\n  return '';\n};\n`],
+      [
+        patchFile,
+        `${patchImports}(globalThis as any).JSON.stringify = (value: unknown) => {\n  ${remote}\n  return '';\n};\n`,
+      ],
+      [
+        patchFile,
+        `${patchImports}Object.assign(JSON, { stringify: (value: unknown) => {\n  ${remote}\n  return '';\n} });\n`,
+      ],
+      [
+        patchFile,
+        `${patchImports}Reflect.set(JSON, 'stringify', (value: unknown) => {\n  ${remote}\n  return '';\n});\n`,
+      ],
+      [
+        patchFile,
+        `${patchImports}Object.defineProperty(String, 'fromCharCode', { value: (value: unknown) => {\n  ${remote}\n  return '';\n} });\n`,
+      ],
+      [
+        patchFile,
+        `${patchImports}(Array.prototype as any).map = function map(value: unknown) {\n  ${remote}\n  return [];\n};\n`,
+      ],
+      [
+        patchFile,
+        `${patchImports}(Object.getPrototypeOf([]) as any).map = (value: unknown) => {\n  ${remote}\n  return [];\n};\n`,
+      ],
+      [patchFile, `${patchImports}([] as any).__proto__.map = (value: unknown) => {\n  ${remote}\n  return [];\n};\n`],
+      [
+        patchFile,
+        `${patchImports}// @ts-expect-error a global replaced whole\nJSON = { stringify: (value: unknown) => {\n  ${remote}\n  return '';\n} };\n`,
+      ],
+      // Another owner's module, which the Read never imports, shares the same process and realm.
+      [
+        otherOwnerPatchFile,
+        `export const patch = (): void => {\n  JSON.stringify = (value: unknown) => String(value);\n};\n`,
+      ],
+    ];
+    const accepted: number[] = [];
+    for (const [index, [file, patch]] of patches.entries()) {
+      if (yield* verdict(file, patch)) {
+        accepted.push(index);
+      }
+    }
+    expect(accepted, 'realm writes the gate accepted').toEqual([]);
+  }),
+);

@@ -3465,13 +3465,15 @@ interface LoadWorkReference {
 
 /**
  * One owner module as the load-work proof sees it: name reads, lexical scopes and refused syntax, by span,
- * and the names anything in the module writes a property of (`written`).
+ * the names anything in the module writes a property of (`written`), and whether it writes the shared realm
+ * (`realmWritten`, see `isLoadWorkRealmWrite`) or assigns a realm name.
  */
 interface LoadWorkModule {
   readonly assigned: ReadonlySet<Span>;
   readonly dynamicImports: readonly (string | undefined)[];
   readonly members: ReadonlyMap<Span, string>;
   readonly program: Program;
+  readonly realmWritten: boolean;
   readonly references: readonly LoadWorkIdentifier[];
   readonly refusals: readonly Span[];
   readonly scopes: readonly LoadWorkScope[];
@@ -3484,6 +3486,68 @@ const LOAD_WORK_PROPERTY_WRITERS: ReadonlyMap<string, ReadonlySet<string>> = new
   ['Object', new Set(['assign', 'defineProperties', 'defineProperty', 'setPrototypeOf'])],
   ['Reflect', new Set(['defineProperty', 'deleteProperty', 'set', 'setPrototypeOf'])],
 ]);
+
+/**
+ * The names of the realm every module shares: the ECMAScript intrinsics, whose objects and prototypes all load
+ * work reaches through the globals it reads and the values it handles, and the global object itself.
+ */
+const LOAD_WORK_REALM_NAMES: ReadonlySet<string> = new Set([
+  'AggregateError',
+  'Array',
+  'ArrayBuffer',
+  'Atomics',
+  'BigInt',
+  'BigInt64Array',
+  'BigUint64Array',
+  'Boolean',
+  'DataView',
+  'Date',
+  'Error',
+  'EvalError',
+  'FinalizationRegistry',
+  'Float32Array',
+  'Float64Array',
+  'Function',
+  'Int16Array',
+  'Int32Array',
+  'Int8Array',
+  'Intl',
+  'Iterator',
+  'JSON',
+  'Map',
+  'Math',
+  'Number',
+  'Object',
+  'Promise',
+  'Proxy',
+  'RangeError',
+  'ReferenceError',
+  'Reflect',
+  'RegExp',
+  'Set',
+  'SharedArrayBuffer',
+  'String',
+  'Symbol',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+  'Uint16Array',
+  'Uint32Array',
+  'Uint8Array',
+  'Uint8ClampedArray',
+  'WeakMap',
+  'WeakRef',
+  'WeakSet',
+  'global',
+  'globalThis',
+  'self',
+  'window',
+]);
+
+/** The keys that lead from any object to an intrinsic. */
+const LOAD_WORK_REALM_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+/** The `Object` and `Reflect` functions that hand out the prototype of any object, an intrinsic for most. */
+const LOAD_WORK_PROTOTYPE_READERS: ReadonlySet<string> = new Set(['getPrototypeOf']);
 
 /** `node` without the parentheses and type assertions around it, which do not change the value. */
 const loadWorkUnwrapped = (node: Expression): Expression =>
@@ -3575,6 +3639,46 @@ const isForbiddenLoadWorkKey = (key: PropertyKey, computed: boolean): boolean =>
 };
 
 /**
+ * Whether writing a property of `node` changes the shared realm as written: `node` is, or is reached through, a
+ * realm name, a `prototype`, `__proto__` or `constructor` key, a computed key the proof cannot name, or
+ * `Object.getPrototypeOf` / `Reflect.getPrototypeOf` (`Object.getPrototypeOf([]).map`, `[].constructor.from`).
+ */
+const isLoadWorkRealmObject = (node: Expression): boolean => {
+  const value = loadWorkUnwrapped(node);
+  if (value.type === 'Identifier') {
+    return LOAD_WORK_REALM_NAMES.has(value.name);
+  }
+  if (value.type === 'ChainExpression') {
+    return isLoadWorkRealmObject(value.expression);
+  }
+  if (value.type === 'CallExpression') {
+    const callee = loadWorkUnwrapped(value.callee);
+    return (
+      callee.type === 'MemberExpression' &&
+      callee.object.type === 'Identifier' &&
+      (callee.object.name === 'Object' || callee.object.name === 'Reflect') &&
+      LOAD_WORK_PROTOTYPE_READERS.has(loadWorkKeyName(callee.property, callee.computed) ?? '')
+    );
+  }
+  if (value.type !== 'MemberExpression') {
+    return false;
+  }
+  const key = loadWorkKeyName(value.property, value.computed);
+  return (
+    value.property.type !== 'PrivateIdentifier' &&
+    (key === undefined || LOAD_WORK_REALM_KEYS.has(key) || isLoadWorkRealmObject(value.object))
+  );
+};
+
+/** Whether a write to `target`, one of its properties or the object itself, writes the shared realm. */
+const isLoadWorkRealmWrite = (target: Expression): boolean => {
+  const value = loadWorkUnwrapped(target);
+  return value.type === 'MemberExpression'
+    ? value.property.type !== 'PrivateIdentifier' && isLoadWorkRealmObject(value.object)
+    : isLoadWorkRealmObject(value);
+};
+
+/**
  * Reads one module for the load-work proof. Every identifier is a name read unless it is a binding, a
  * static member or property key, a label, or inside a type. Scopes are recorded by span, so a name read
  * is bound exactly when a function, block, loop, `switch` or `catch` around it declares the name.
@@ -3595,6 +3699,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
   const assigned = new Set<Span>();
   const members = new Map<Span, string>();
   const written = new Set<string>();
+  let realmWritten = false;
   const spread = new Set<Span>();
   // The specifier of each dynamic `import()`: its string literal, or `undefined` when it is computed.
   const dynamicImports: (string | undefined)[] = [];
@@ -3606,6 +3711,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     if (root !== undefined) {
       written.add(root);
     }
+    realmWritten ||= isLoadWorkRealmWrite(target);
   };
   const bind = (patterns: readonly (BindingPattern | ParamPattern)[]): readonly string[] =>
     patterns.flatMap(loadWorkPatternBindings).map((binding) => {
@@ -3623,6 +3729,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     }
     if (target.type === 'Identifier') {
       assigned.add(target);
+      realmWritten ||= LOAD_WORK_REALM_NAMES.has(target.name);
     } else if (target.type === 'ObjectPattern') {
       for (const property of target.properties) {
         assign(property.type === 'RestElement' ? property.argument : property.value);
@@ -3779,6 +3886,7 @@ const loadWorkModule = (file: string, source: string): LoadWorkModule | undefine
     dynamicImports,
     members,
     program: parsed.program,
+    realmWritten,
     references: identifiers.filter(
       (identifier) => !excluded.has(identifier) && !types.some((typeSpan) => spanWithin(typeSpan, identifier)),
     ),
@@ -3913,7 +4021,10 @@ const isLoadWorkFrozenLiteral = (program: Program, node: Expression): boolean =>
 
 const loadWorkCodeFileLists = new WeakMap<ReadonlyMap<string, string>, readonly string[]>();
 
-/** The workspace's deployable code modules: every script source outside a test directory or test file. */
+/**
+ * The workspace's deployable code modules: every script source outside a test directory, a test file or the
+ * test runner's configuration.
+ */
 const loadWorkCodeFiles = (sources: ReadonlyMap<string, string>): readonly string[] => {
   const cached = loadWorkCodeFileLists.get(sources);
   if (cached !== undefined) {
@@ -3923,10 +4034,31 @@ const loadWorkCodeFiles = (sources: ReadonlyMap<string, string>): readonly strin
     (file) =>
       /\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) &&
       !/(?:^|\/)(?:tests?|__tests__)\//u.test(file) &&
-      !/\.(?:test|spec)\.[^/]+$/u.test(file),
+      !/\.(?:test|spec)\.[^/]+$/u.test(file) &&
+      !/(?:^|\/)rstest\.config\.[^/]+$/u.test(file),
   );
   loadWorkCodeFileLists.set(sources, files);
   return files;
+};
+
+const loadWorkRealmWrites = new WeakMap<ReadonlyMap<string, string>, boolean>();
+
+/**
+ * Whether any deployable workspace module writes the shared realm (`isLoadWorkRealmWrite`), or does not parse.
+ * Every module of a deployment shares one realm, so the globals load work reads and the prototypes of the values
+ * it handles are fixed only while no module anywhere writes them, whether the Read imports it or not.
+ */
+const isLoadWorkRealmWritten = (sources: ReadonlyMap<string, string>): boolean => {
+  const cached = loadWorkRealmWrites.get(sources);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const written = loadWorkCodeFiles(sources).some((file) => {
+    const source = sources.get(file);
+    return source === undefined || loadWorkModule(file, source)?.realmWritten !== false;
+  });
+  loadWorkRealmWrites.set(sources, written);
+  return written;
 };
 
 interface LoadWorkProof {
@@ -4208,31 +4340,65 @@ const loadWorkDeclaredInitializer = (
   return bindings.length === 1 && binding?.kind === 'code' ? binding.initializer : undefined;
 };
 
-/** The name a call chain starts from: `Schema` of `Schema.String.check(...).pipe(...)`, or `undefined`. */
-const loadWorkCallRoot = (value: Expression): string | undefined => {
-  let node = loadWorkUnwrapped(value);
-  for (;;) {
-    if (node.type === 'CallExpression') {
-      node = loadWorkUnwrapped(node.callee);
-    } else if (node.type === 'MemberExpression') {
-      node = loadWorkUnwrapped(node.object);
-    } else if (node.type === 'ChainExpression') {
-      node = node.expression;
-    } else {
-      return node.type === 'Identifier' ? node.name : undefined;
-    }
+/** The `Function.prototype` members that call a function on the receiver and arguments owner code hands them. */
+const LOAD_WORK_RECEIVER_CALLS: ReadonlySet<string> = new Set(['apply', 'bind', 'call']);
+
+/**
+ * The name a builder chain starts from: `Schema` of `Schema.String.check(...).pipe(Schema.brand('A'))`, or
+ * `undefined` when a step of the chain can return what owner code handed it: a call of a call's result
+ * (`Schema.decodeUnknownOption(Schema.Unknown)(value)`), `call`, `apply` or `bind`, a computed member, or a
+ * `pipe` given anything but a library-built descriptor (`Schema.String.pipe(() => owner)`).
+ */
+const loadWorkBuilderRoot = (
+  value: Expression,
+  isDescriptor: (argument: Expression) => boolean,
+): string | undefined => {
+  const node = loadWorkUnwrapped(value);
+  if (node.type === 'Identifier') {
+    return node.name;
   }
+  if (node.type === 'MemberExpression') {
+    return loadWorkKeyName(node.property, node.computed) === undefined
+      ? undefined
+      : loadWorkBuilderRoot(node.object, isDescriptor);
+  }
+  if (node.type !== 'CallExpression') {
+    return undefined;
+  }
+  const callee = loadWorkUnwrapped(node.callee);
+  if (callee.type === 'Identifier') {
+    return callee.name;
+  }
+  const member = callee.type === 'MemberExpression' ? loadWorkKeyName(callee.property, callee.computed) : undefined;
+  if (
+    callee.type !== 'MemberExpression' ||
+    member === undefined ||
+    LOAD_WORK_RECEIVER_CALLS.has(member) ||
+    (member === 'pipe' &&
+      !node.arguments.every(
+        (argument) =>
+          argument.type !== 'SpreadElement' &&
+          loadWorkUnwrapped(argument).type === 'CallExpression' &&
+          isDescriptor(argument),
+      ))
+  ) {
+    return undefined;
+  }
+  return loadWorkBuilderRoot(callee.object, isDescriptor);
 };
 
 /**
  * Whether `value` is a descriptor a library built: a call whose callee is read from one of
  * `LOAD_WORK_DESCRIPTOR_BUILDERS`, directly or through members and calls on it or on another top-level
  * binding built the same way, in this module or one it imports. A call that can return an object owner code
- * wrote (`identity`, `pipe`, `Option.*`, any global, any owner function) is not: its members are whatever
- * the owner put there.
+ * wrote (`identity`, `pipe` of an owner function, `call`, a curried call, `Option.*`, any global, any owner
+ * function) is not: its members are whatever the owner put there.
  */
 const isLoadWorkLibraryBuilt = (proof: LoadWorkProof, file: string, value: Expression, depth = 0): boolean => {
-  const root = loadWorkUnwrapped(value).type === 'CallExpression' && depth <= 16 ? loadWorkCallRoot(value) : undefined;
+  const root =
+    loadWorkUnwrapped(value).type === 'CallExpression' && depth <= 16
+      ? loadWorkBuilderRoot(value, (argument) => isLoadWorkLibraryBuilt(proof, file, argument, depth + 1))
+      : undefined;
   const module = loadWorkProofModule(proof, file);
   const bindings = root === undefined || module === undefined ? [] : loadWorkBindings(module.program, root);
   const [binding] = bindings;
@@ -4349,9 +4515,13 @@ const isProvenLoadWorkReference = (proof: LoadWorkProof, file: string, reference
 /**
  * Proves a load step written in the Read module: a name is proven as a binding, any other step by the
  * names its own source reads. The step is found by its text, so every occurrence of that text in the
- * module must prove, and the one the gate read is among them.
+ * module must prove, and the one the gate read is among them. Nothing proves while any deployable module
+ * writes the shared realm, since every global and prototype the step reaches could then be replaced.
  */
 const isProvenLoadWorkStep = (proof: LoadWorkProof, file: string, source: string, step: string): boolean => {
+  if (isLoadWorkRealmWritten(proof.sources)) {
+    return false;
+  }
   if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(step)) {
     return isProvenLoadWorkReference(proof, file, { name: step });
   }
