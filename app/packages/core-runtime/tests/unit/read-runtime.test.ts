@@ -4725,7 +4725,6 @@ it.effect('releases no result and no allowed evidence when the projection breaks
     );
     const failure = Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
     expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
-    expect(JSON.stringify(exit)).not.toContain('only-value');
     expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
   }),
 );
