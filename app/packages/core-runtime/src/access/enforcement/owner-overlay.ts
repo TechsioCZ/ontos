@@ -112,8 +112,14 @@ export const allowOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = 
  *
  * An owner may explicitly declare a target whose authority requires only trusted scope and Current
  * Permission, with no owner-held record. That declaration still cannot bypass scope validation.
+ *
+ * A v2 operation names its owner records through owner facts (O70) instead of legacy targets: an
+ * entrypoint that declares a facts resolver is decided by its owner's rule, even when the bag it
+ * resolves is empty (a move to the root still has a source to decide), so without that owner's
+ * adapter it is unavailable as well.
  */
 export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision =>
+  input.ownerFacts !== undefined ||
   input.targets.some((target) =>
     Match.value(target).pipe(
       Match.when(

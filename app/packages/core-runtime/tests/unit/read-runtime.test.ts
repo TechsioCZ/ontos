@@ -4387,38 +4387,44 @@ interface StagedReadAuthority {
   replace?: () => void;
 }
 
+/** The owner record the staged Read's owner-facts resolver names (O70). */
+const stagedOwnerFacts = () => ({ counterpartyId: 'owner-record-1' });
+
 /** A staged Read that records each owner step beside the SQL and authority events of its harness. */
 const makeStagedRead = (
   events: string[],
   options: {
     readonly duringFinish?: () => void;
     readonly onOwnerStateServices?: (services: StagedReadServices) => void;
+    /** Declare an owner-facts resolver (O70), so the owner's rule decides this Read. */
+    readonly ownerFacts?: boolean;
     readonly ownerState?: boolean;
     readonly ownerStateFailure?: ReadHandlerNotFound | ReadPermissionDenied | SqlError;
     readonly policy?: ReturnType<typeof defineGlobalPolicy<Readonly<Record<string, never>>>>;
     readonly prepareFailure?: ReadHandlerNotFound;
   } = {},
-) =>
-  defineRead(
-    {
-      accessDeclaration: fixtureReadAccess('test.read-stages'),
-      accessKind: 'list',
-      entrypoint: defineTenantModuleEntrypoint({
-        access: 'read',
-        authorization: { kind: 'protected' },
-        entrypointKey: 'test.read-stages.value',
-        moduleKey: 'test.read-stages',
-        role: 'api',
-      }),
-      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.read-stages.evidence.v1' },
-      inputSchema: StagedReadInputSchema,
-      legalEntityScope: 'forbidden',
-      owningModuleKey: 'test.read-stages',
-      policies: options.policy === undefined ? [] : [{ denialStatus: 422, policyKey: options.policy.policyKey }],
-      readKey: 'test.read-stages.value',
-      resultSchema: Schema.Array(Schema.String),
-      schemaVersion: '1',
-    },
+) => {
+  const descriptor = {
+    accessDeclaration: fixtureReadAccess('test.read-stages'),
+    accessKind: 'list' as const,
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'test.read-stages.value',
+      moduleKey: 'test.read-stages',
+      role: 'api',
+    }),
+    evidencePolicy: { captureMode: 'metadata_only' as const, policyKey: 'test.read-stages.evidence.v1' },
+    inputSchema: StagedReadInputSchema,
+    legalEntityScope: 'forbidden' as const,
+    owningModuleKey: 'test.read-stages',
+    policies: options.policy === undefined ? [] : [{ denialStatus: 422 as const, policyKey: options.policy.policyKey }],
+    readKey: 'test.read-stages.value',
+    resultSchema: Schema.Array(Schema.String),
+    schemaVersion: '1',
+  };
+  return defineRead(
+    options.ownerFacts === true ? { ...descriptor, accessOwnerFacts: stagedOwnerFacts } : descriptor,
     {
       finish: (_input: StagedReadInput, context: ReadFinishContext<string, readonly string[], StagedReadServices>) =>
         Effect.gen(function* finishAfterCommit() {
@@ -4453,6 +4459,7 @@ const makeStagedRead = (
     undefined,
     options.policy === undefined ? [] : [options.policy],
   );
+};
 
 const runStagedRead = Effect.fn(function* runStagedRead(
   events: string[],
@@ -4460,6 +4467,8 @@ const runStagedRead = Effect.fn(function* runStagedRead(
   options: {
     readonly access?: 'allowed' | 'denied';
     readonly authority?: StagedReadAuthority;
+    /** Install no owner adapter at all, so Core's own fallback decides the owner rule. */
+    readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
     readonly statements?: string[];
     /** Run the Read for a gateway-verified principal that carries the inbound composition revision. */
@@ -4480,6 +4489,7 @@ const runStagedRead = Effect.fn(function* runStagedRead(
     get compositionAuthority() {
       return authority;
     },
+    omitOwnerAuthorizationOverlay: options.omitOwnerAuthorizationOverlay === true,
     ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
     runtimeAdmission: {
       applicationComposition: owner.applicationComposition,
@@ -4947,3 +4957,22 @@ it('defines a Read from a bare handler or an owner pipeline whose steps are func
     ).toThrow(/Read pipeline steps must be functions/u);
   }
 });
+
+it.effect('refuses a Read whose owner facts name an owner record when no owner adapter is installed', () =>
+  Effect.gen(function* ownerFactsWithoutAdapter() {
+    const events: string[] = [];
+    const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events, { ownerFacts: true }), {
+      omitOwnerAuthorizationOverlay: true,
+    });
+    expect(stagedFailureTag(exit)).toBe('ReadPermissionUnavailable');
+    expect(events.filter((event) => ['prepare', 'load', 'finish'].includes(event))).toEqual(['prepare']);
+    expect(visibleOutcome(exit)).not.toContain('prepared-owner-value');
+    expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
+    // Negative control: the same Read without an owner-facts resolver is owner-neutral and still answers.
+    const neutralEvents: string[] = [];
+    const neutral = yield* runStagedRead(neutralEvents, makeStagedRead(neutralEvents), {
+      omitOwnerAuthorizationOverlay: true,
+    });
+    expect(neutral.exit).toEqual(Exit.succeed(['prepared-owner-value']));
+  }),
+);
