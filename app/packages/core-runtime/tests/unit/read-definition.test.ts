@@ -868,6 +868,8 @@ const withHiddenLoad = Object.defineProperties({ load: loadFormHandler }, { load
 const withLoadThatIsNoHandler = Object.defineProperties({ load: loadFormHandler }, { load: { value: 'no handler' } });
 const withInheritedLoad = Object.setPrototypeOf(Object.defineProperties({}, {}), withExtraKey) satisfies object;
 const handlerArray = Object.assign([loadFormHandler], { load: loadFormHandler });
+// The own key is `load` alone; the steps sit on the prototype, where an own-key check does not look.
+const withStepsOnPrototype = Object.setPrototypeOf({ load: loadFormHandler }, { prepare: () => Effect.undefined });
 
 it('refuses every other shape of the { load } form at definition', () => {
   const define = (definition: typeof withGetter) => () =>
@@ -882,6 +884,8 @@ it('refuses every other shape of the { load } form at definition', () => {
   expect(define(withLoadThatIsNoHandler)).toThrow(loadFormRefusal);
   expect(define(withInheritedLoad)).toThrow(loadFormRefusal);
   expect(define(handlerArray)).toThrow(loadFormRefusal);
+  expect(define(withStepsOnPrototype)).toThrow(loadFormRefusal);
+  expect(define(Object.setPrototypeOf({ load: loadFormHandler }, null))).not.toThrow();
   // Control: the bare handler and the exact `{ load }` object are both accepted.
   expect(() =>
     defineRead(loadFormDescriptor('test.read-load.refused'), loadFormHandler, loadFormServices),

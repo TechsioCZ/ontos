@@ -942,7 +942,10 @@ const readHandlerOf = <
   if (Predicate.isFunction(definition)) {
     return definition;
   }
-  const keys = Predicate.isObject(definition) ? Reflect.ownKeys(definition) : [];
+  const plain =
+    Predicate.isObject(definition) &&
+    (Object.getPrototypeOf(definition) === Object.prototype || Object.getPrototypeOf(definition) === null);
+  const keys = plain ? Reflect.ownKeys(definition) : [];
   const steps = keys.filter((key) => key === 'prepare' || key === 'prepared' || key === 'finish');
   if (steps.length > 0) {
     return failReadDefinition(
