@@ -61,7 +61,7 @@ import {
   hasValidActionGateway,
 } from './published-outbox-contracts.mts';
 import { isAllowedCompositionSeam } from './check-lean-core-dependencies.mts';
-import { isProblemDetailsFactory } from './api-contract-schema-rules.mts';
+import { isProblemDetailsFactory, isSdkOperationReferenceFactory } from './api-contract-schema-rules.mts';
 import {
   PublicContractOwnerAppIdSchema,
   PublicContractOwnerModuleIdSchema,
@@ -1187,7 +1187,12 @@ const hasOnlyNativeContractLeaves = (
   const result =
     nativeApiSpine ||
     state.graph.evaluate(module, expression).every((value) => {
-      if (nativeContractLeaf(value) || isCanonicalContractImport(state, value) || isProblemDetailsFactory(value)) {
+      if (
+        nativeContractLeaf(value) ||
+        isCanonicalContractImport(state, value) ||
+        isProblemDetailsFactory(value) ||
+        isSdkOperationReferenceFactory(value)
+      ) {
         return true;
       }
       if (value.kind !== 'unresolved' && value.kind !== 'node') {

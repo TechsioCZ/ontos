@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { hasCompleteGeneratedModuleApiSeam, readSdkFormViolations } from '../generated-governed-http-boundary.mts';
@@ -15,7 +15,6 @@ const readName = 'demoLookupRead';
 const entrypointKey = 'demo.module.api.demo-lookup';
 const SDK_DECLARED_CALL_IMPORT = "import { declaredCall } from '@app/core-runtime/sdk';";
 const PROVIDER_PACKAGE_FILE = 'packages/provider-contracts/package.json';
-const MISSING_CALLERS = 'must list its permitted callers';
 const CALLS_ONLY_BESIDE_RUN = 'calls stand only beside { run }';
 const providerRequirement = 'demo.module.requirement.demo-lookup-provider';
 const coreRequirement = 'demo.module.requirement.demo-lookup-assignees';
@@ -44,70 +43,6 @@ const otherPackage = JSON.stringify({
     packageName: '@app/other',
   },
 });
-
-const PERSON_CALLER = "callers: [{ kind: 'person', legalEntityScope: 'subject' }],";
-
-interface RequirementOverrides {
-  readonly callers?: string;
-  readonly entrypoint?: string;
-  readonly key?: string;
-  readonly providerModuleId?: string;
-}
-
-const requirementSource = (fixture: RequirementOverrides, fallbackKey: string, fallbackProvider: string): string =>
-  [
-    '      {',
-    ...(fixture.callers === undefined || fixture.callers === '' ? [] : [`        ${fixture.callers}`]),
-    "        condition: 'demo.module.condition.lookup',",
-    `        entrypointKey: ${fixture.entrypoint ?? 'demoLookupRead.descriptor.entrypoint.entrypointKey'},`,
-    "        evidence: ['demo.module.evidence.lookup'],",
-    `        key: '${fixture.key ?? fallbackKey}',`,
-    '        provider: {',
-    "          entrypointKey: 'provider.module.api.provider-facts',",
-    `          moduleId: ${fixture.providerModuleId ?? fallbackProvider},`,
-    "          schemaVersion: '1',",
-    '        },',
-    '      },',
-  ].join('\n');
-
-const requirementsBlock = (provider: RequirementOverrides, core: RequirementOverrides): string =>
-  [
-    '  requirements: {',
-    '    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],',
-    '    intrinsic: [],',
-    '    operations: [',
-    requirementSource({ callers: PERSON_CALLER, ...provider }, providerRequirement, 'providerModuleId'),
-    requirementSource(core, coreRequirement, "'core.identity'"),
-    '    ],',
-    "    schemaVersion: '1',",
-    '  },',
-  ].join('\n');
-
-const declarationHeader = [
-  "import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';",
-  "import { demoLookupRead } from './src/api/demo-lookup.read.ts';",
-  '',
-  "const providerModuleId = 'provider.module';",
-  '',
-].join('\n');
-
-const RequirementsHomeSchema = Schema.Literals(['manifest', 'runtime-declaration']);
-type RequirementsHome = typeof RequirementsHomeSchema.Type;
-
-const declarationSources = (
-  home: RequirementsHome,
-  provider: RequirementOverrides = {},
-  core: RequirementOverrides = {},
-): readonly (readonly [string, string])[] => {
-  const withRequirements = `${declarationHeader}export const demoManifest = defineOntosModuleManifest({\n  moduleId: 'demo.module',\n${requirementsBlock(provider, core)}\n});\n`;
-  const withoutRequirements = `${declarationHeader}export const demoManifest = defineOntosModuleManifest({\n  moduleId: 'demo.module',\n});\n`;
-  return home === 'manifest'
-    ? [[`${ownerPath}/vertical.manifest.ts`, withRequirements]]
-    : [
-        [`${ownerPath}/vertical.manifest.ts`, withoutRequirements],
-        [`${ownerPath}/vertical.runtime-declaration.ts`, withRequirements],
-      ];
-};
 
 const readImports = [
   "import { defineRead } from '@app/core-runtime';",
@@ -155,125 +90,49 @@ const readSource = (fixture: ReadFixture): string =>
     '',
   ].join('\n');
 
-const violations = (
-  fixture: ReadFixture,
-  home: RequirementsHome = 'manifest',
-  provider: RequirementOverrides = {},
-  core: RequirementOverrides = {},
-): readonly string[] =>
+// Whether the manifest covers each call is Core's registration check (`declaredCallsIssues`), so the
+// gate reads no manifest: it judges the read file and the contract packages its calls import from.
+const violations = (fixture: ReadFixture): readonly string[] =>
   readSdkFormViolations({
-    entrypointKey,
-    ownerPath,
     readFile,
     readName,
     sources: new Map([
       [readFile, readSource(fixture)],
       [PROVIDER_PACKAGE_FILE, providerPackage],
       ['packages/other-contracts/package.json', otherPackage],
-      ...declarationSources(home, provider, core),
     ]),
   });
 
 const BOTH_CALLS = `{ provider: ${PROVIDER_CALL}, assignees: ${CORE_CALL} }`;
 
 describe('the read SDK form gate', () => {
-  for (const home of RequirementsHomeSchema.literals) {
-    describe(`with requirements in the ${home}`, () => {
-      it('accepts a bare handler', () => {
-        expect(violations({ definition: BARE_HANDLER }, home)).toEqual([]);
-      });
-      it('accepts { load }', () => {
-        expect(violations({ definition: LOAD_HANDLER }, home)).toEqual([]);
-      });
-      it('accepts { load } with accessQuestions', () => {
-        expect(violations({ accessQuestions: ACCESS_QUESTIONS, definition: LOAD_HANDLER }, home)).toEqual([]);
-      });
-      it('accepts { run } with a vertical call', () => {
-        expect(violations({ calls: `{ provider: ${PROVIDER_CALL} }`, definition: RUN_HANDLER }, home)).toEqual([]);
-      });
-      it('accepts { run } with a coreOperations call', () => {
-        expect(violations({ calls: `{ assignees: ${CORE_CALL} }`, definition: RUN_HANDLER }, home)).toEqual([]);
-      });
-      it('accepts { run } with both calls bound to a const and accessQuestions', () => {
-        expect(
-          violations(
-            {
-              accessQuestions: ACCESS_QUESTIONS,
-              calls: 'calls',
-              definition: RUN_HANDLER,
-              preamble: `const calls = ${BOTH_CALLS} as const;`,
-            },
-            home,
-          ),
-        ).toEqual([]);
-      });
-    });
-  }
-
-  it('accepts a requirement entrypoint written as the literal key', () => {
+  it('accepts a bare handler', () => {
+    expect(violations({ definition: BARE_HANDLER })).toEqual([]);
+  });
+  it('accepts { load }', () => {
+    expect(violations({ definition: LOAD_HANDLER })).toEqual([]);
+  });
+  it('accepts { load } with accessQuestions', () => {
+    expect(violations({ accessQuestions: ACCESS_QUESTIONS, definition: LOAD_HANDLER })).toEqual([]);
+  });
+  it('accepts { run } with a vertical call', () => {
+    expect(violations({ calls: `{ provider: ${PROVIDER_CALL} }`, definition: RUN_HANDLER })).toEqual([]);
+  });
+  it('accepts { run } with a coreOperations call', () => {
+    expect(violations({ calls: `{ assignees: ${CORE_CALL} }`, definition: RUN_HANDLER })).toEqual([]);
+  });
+  it('accepts { run } with both calls bound to a const and accessQuestions', () => {
     expect(
-      violations({ calls: BOTH_CALLS, definition: RUN_HANDLER }, 'manifest', { entrypoint: `'${entrypointKey}'` }),
+      violations({
+        accessQuestions: ACCESS_QUESTIONS,
+        calls: 'calls',
+        definition: RUN_HANDLER,
+        preamble: `const calls = ${BOTH_CALLS} as const;`,
+      }),
     ).toEqual([]);
   });
 
   const refused: readonly (readonly [string, () => readonly string[], string])[] = [
-    [
-      'an unknown requirement key',
-      () =>
-        violations({
-          calls: `{ provider: declaredCall(providerFactsOperation, 'demo.module.requirement.unknown') }`,
-          definition: RUN_HANDLER,
-        }),
-      'declares no single requirement demo.module.requirement.unknown',
-    ],
-    [
-      'a requirement declared for another entrypoint',
-      () =>
-        violations({ calls: BOTH_CALLS, definition: RUN_HANDLER }, 'runtime-declaration', {
-          entrypoint: "'demo.module.api.other-read'",
-        }),
-      `is not declared for ${entrypointKey}`,
-    ],
-    [
-      'a vertical requirement without callers',
-      () => violations({ calls: BOTH_CALLS, definition: RUN_HANDLER }, 'manifest', { callers: 'callers: [],' }),
-      MISSING_CALLERS,
-    ],
-    [
-      'a vertical requirement with no callers key',
-      () =>
-        violations({ calls: BOTH_CALLS, definition: RUN_HANDLER }, 'manifest', {
-          callers: '',
-        }),
-      MISSING_CALLERS,
-    ],
-    [
-      'callers on a core.* requirement',
-      () => violations({ calls: BOTH_CALLS, definition: RUN_HANDLER }, 'manifest', {}, { callers: PERSON_CALLER }),
-      'on a Core operation declares no callers',
-    ],
-    [
-      'a Core operation covered by a vertical requirement',
-      () =>
-        violations(
-          { calls: BOTH_CALLS, definition: RUN_HANDLER },
-          'manifest',
-          {},
-          {
-            providerModuleId: "'provider.module'",
-          },
-        ),
-      'must name a core.* provider for a Core operation',
-    ],
-    [
-      'a provider mismatch',
-      () =>
-        violations({
-          calls: `{ provider: declaredCall(otherFactsOperation, '${providerRequirement}') }`,
-          definition: RUN_HANDLER,
-        }),
-      'must name provider other.module',
-    ],
     [
       'coreOperations imported from @app/core-runtime/sdk',
       () =>
@@ -364,16 +223,6 @@ describe('the read SDK form gate', () => {
       'instead of using requireModuleOperation',
     ],
     [
-      'a non-literal requirement key',
-      () =>
-        violations({
-          calls: '{ provider: declaredCall(providerFactsOperation, providerKey) }',
-          definition: RUN_HANDLER,
-          preamble: `const providerKey = '${providerRequirement}';`,
-        }),
-      'must name its requirement key as a string literal',
-    ],
-    [
       'a spread in calls',
       () => violations({ calls: `{ ...${BOTH_CALLS} }`, definition: RUN_HANDLER }),
       'calls must be an object literal of named entries',
@@ -390,38 +239,16 @@ describe('the read SDK form gate', () => {
     });
   }
 
-  it('refuses requirements declared in both the manifest and the runtime declaration', () => {
-    const [[, declared] = ['', '']] = declarationSources('manifest');
-    const found = readSdkFormViolations({
-      entrypointKey,
-      ownerPath,
-      readFile,
-      readName,
-      sources: new Map([
-        [readFile, readSource({ calls: BOTH_CALLS, definition: RUN_HANDLER })],
-        [PROVIDER_PACKAGE_FILE, providerPackage],
-        [`${ownerPath}/vertical.manifest.ts`, declared],
-        [`${ownerPath}/vertical.runtime-declaration.ts`, declared],
-      ]),
-    });
-    expect(
-      found.some((violation) => violation.includes('exactly one of')),
-      found.join('\n'),
-    ).toBe(true);
-  });
-
   it('refuses a declaredCall imported from elsewhere', () => {
     const source = readSource({ calls: BOTH_CALLS, definition: RUN_HANDLER }).replace(
       SDK_DECLARED_CALL_IMPORT,
       "import { declaredCall } from './local-sdk.ts';",
     );
     const found = readSdkFormViolations({
-      entrypointKey,
-      ownerPath,
       readFile,
       readName,
       source,
-      sources: new Map([[PROVIDER_PACKAGE_FILE, providerPackage], ...declarationSources('manifest')]),
+      sources: new Map([[PROVIDER_PACKAGE_FILE, providerPackage]]),
     });
     expect(
       found.some((violation) => violation.includes('must be declaredCall(')),
@@ -440,7 +267,6 @@ const seam = (candidate: ReadonlyMap<string, string>) => {
 
 describe('the read SDK form inside the generated module API seam', () => {
   const pricingRead = 'verticals/pricing/src/api/quotation-verification.read.ts';
-  const pricingManifest = 'verticals/pricing/vertical.manifest.ts';
   const retirementPackage = 'packages/customer-market-retirement-contracts/package.json';
   const requirementKey = 'commerce.pricing.requirement.quotation-verify-purchase-context';
   const bareHandler = '  readVerification,\n  servicesForScope,';
@@ -461,13 +287,7 @@ describe('the read SDK form inside the generated module API seam', () => {
   const withRunForm = (
     sources: ReadonlyMap<string, string>,
     readEdits: (read: string) => string,
-    manifestEdits: (manifest: string) => string = (manifest) => manifest,
-  ): ReadonlyMap<string, string> =>
-    new Map([
-      ...sources,
-      [pricingRead, readEdits(sources.get(pricingRead) ?? '')],
-      [pricingManifest, manifestEdits(sources.get(pricingManifest) ?? '')],
-    ]);
+  ): ReadonlyMap<string, string> => new Map([...sources, [pricingRead, readEdits(sources.get(pricingRead) ?? '')]]);
 
   const runRead = (read: string): string =>
     `${sdkImports}\n${read}`
@@ -476,48 +296,30 @@ describe('the read SDK form inside the generated module API seam', () => {
         `    schemaVersion: '1',\n    calls: { subjectRestrictions: declaredCall(marketSubjectRestrictionsCurrentOperation, '${requirementKey}') },\n  },\n  readVerification,`,
       )
       .replace(bareHandler, '  { run: readVerification },\n  servicesForScope,');
-  const withCallers = (manifest: string): string =>
-    manifest.replace(
-      `        key: '${requirementKey}',`,
-      `        callers: [{ kind: 'person', legalEntityScope: 'subject' }],\n        key: '${requirementKey}',`,
-    );
 
   it.live('accepts a { run } read with a declared call and refuses its nearby controls', () =>
     Effect.gen(function* runFormSeam() {
       const sources = yield* pricingSources;
       const read = sources.get(pricingRead) ?? '';
-      const manifest = sources.get(pricingManifest) ?? '';
       expect(read).toContain(bareHandler);
       expect(read).toContain(descriptorEnd);
-      expect(withCallers(manifest)).not.toBe(manifest);
       const why = (candidate: ReadonlyMap<string, string>) =>
         readSdkFormViolations({
-          entrypointKey: 'commerce.pricing.api.quotation-verification',
-          ownerPath: 'verticals/pricing',
           readFile: pricingRead,
           readName: 'quotationVerificationRead',
           sources: candidate,
         }).join('\n');
-      const accepted = seam(withRunForm(sources, runRead, withCallers));
-      expect(why(withRunForm(sources, runRead, withCallers))).toBe('');
+      const accepted = seam(withRunForm(sources, runRead));
+      expect(why(withRunForm(sources, runRead))).toBe('');
       expect(accepted.valid, accepted.diagnostics).toBe(true);
       // `{ run }` is judged by the bare handler rule, exactly as `{ load }` is.
       const notAHandler = seam(
-        withRunForm(
-          sources,
-          (source) => runRead(source).replace('{ run: readVerification }', '{ run: undefined }'),
-          withCallers,
-        ),
+        withRunForm(sources, (source) => runRead(source).replace('{ run: readVerification }', '{ run: undefined }')),
       );
       expect(notAHandler.valid).toBe(false);
-      // The manifest's real requirement lists no callers: the gate refuses the call until it does.
-      expect(seam(withRunForm(sources, runRead)).valid).toBe(false);
-      expect(why(withRunForm(sources, runRead))).toContain(MISSING_CALLERS);
       // Calls are refused beside `{ load }`.
-      const callsOnLoad = withRunForm(
-        sources,
-        (source) => runRead(source).replace('{ run: readVerification }', '{ load: readVerification }'),
-        withCallers,
+      const callsOnLoad = withRunForm(sources, (source) =>
+        runRead(source).replace('{ run: readVerification }', '{ load: readVerification }'),
       );
       expect(seam(callsOnLoad).valid).toBe(false);
       expect(why(callsOnLoad)).toContain(CALLS_ONLY_BESIDE_RUN);
@@ -526,7 +328,6 @@ describe('the read SDK form inside the generated module API seam', () => {
         sources,
         (source) =>
           `import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';\n${runRead(source)}`,
-        withCallers,
       );
       expect(seam(handBuilt).valid).toBe(false);
       expect(why(handBuilt)).toContain('imports nothing from @app/shared-contracts/gateway-context-server');

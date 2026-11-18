@@ -3350,9 +3350,7 @@ const SDK_MODULE = '@app/core-runtime/sdk';
 const SDK_READ_MODULE = '@app/core-runtime/sdk/read';
 const SDK_CORE_MODULE = '@app/core-runtime/sdk/core';
 const GATEWAY_CONTEXT_SERVER_MODULE = '@app/shared-contracts/gateway-context-server';
-const CORE_PROVIDER_PREFIX = 'core.';
 const CONTRACT_CLIENT_SUBPATH = /^@app\/[^/]+\/(?:.+\/)?client$/u;
-const REQUIREMENT_CALLER_KINDS = new Set(['person', 'registered', 'workload']);
 const ACCESS_QUESTION_ARITY = new Map([
   ['canList', 1],
   ['canRun', 1],
@@ -3369,30 +3367,8 @@ interface ParsedImport {
   readonly typeOnly: boolean;
 }
 
-interface DeclaredRequirement {
-  /** `absent`, `empty`, `listed` (every entry a known caller kind) or `invalid`. */
-  readonly callers: 'absent' | 'empty' | 'invalid' | 'listed';
-  readonly entrypointKey: string | undefined;
-  readonly key: string | undefined;
-  readonly providerModuleId: string | undefined;
-}
-
-interface RequirementDeclarations {
-  readonly file: string;
-  readonly requirements: readonly DeclaredRequirement[];
-}
-
-/** Why the calling module's requirements could not be read. */
-interface RequirementDeclarationProblem {
-  readonly problem: string;
-}
-
 /** What the gate knows about the read whose `{ run }`, `calls` and `accessQuestions` it judges. */
 export interface ReadSdkFormInput {
-  /** The read's own entrypoint key: every call's requirement must be declared for exactly this entrypoint. */
-  readonly entrypointKey: string;
-  /** The vertical root: requirements come from its `vertical.runtime-declaration.ts` or `vertical.manifest.ts`. */
-  readonly ownerPath: string;
   readonly readFile: string;
   /** The exported `defineRead` binding, e.g. `quotationVerificationRead`. */
   readonly readName: string;
@@ -3584,7 +3560,7 @@ const accessQuestionViolations = (
 /** The provider a declared call's operation reference belongs to, as the gate can see it from imports. */
 type DeclaredCallProvider =
   | { readonly kind: 'core' }
-  | { readonly kind: 'module'; readonly moduleId: string }
+  | { readonly kind: 'module' }
   | { readonly kind: 'invalid'; readonly reason: string };
 
 const declaredCallProvider = (
@@ -3616,220 +3592,27 @@ const declaredCallProvider = (
   const manifests = publicContractPackageManifests(sources, parts.packageName);
   const [manifest] = manifests.map(([, decoded]) => decoded);
   return manifests.length === 1 && manifest?.exports[parts.exportName] !== undefined
-    ? { kind: 'module', moduleId: manifest.ontosContractOwner.moduleId }
+    ? { kind: 'module' }
     : { kind: 'invalid', reason: `${binding.source} is no public subpath of one contract package` };
 };
 
-/* Requirements, read from whichever of the runtime declaration or the manifest declares them. */
-
-interface ManifestValueContext {
-  readonly entrypointKey: string;
-  readonly file: string;
-  readonly imports: ReadonlyMap<string, ParsedImport>;
-  readonly initializers: ReadonlyMap<string, Expression>;
-  readonly readFile: string;
-  readonly readName: string;
-}
-
-/** `<thisRead>.descriptor.entrypoint.entrypointKey`, where `<thisRead>` is imported from the read file itself. */
-const readEntrypointKeyReference = (value: Expression, context: ManifestValueContext): string | undefined => {
-  const members: string[] = [];
-  let current: Expression = value;
-  while (current.type === 'MemberExpression' && !current.computed && current.property.type === 'Identifier') {
-    members.unshift(current.property.name);
-    current = current.object;
-  }
-  const binding = current.type === 'Identifier' ? context.imports.get(current.name) : undefined;
-  const importedFile =
-    binding === undefined || !binding.source.startsWith('.')
-      ? undefined
-      : path.posix.normalize(path.posix.join(path.posix.dirname(context.file), binding.source));
-  return members.join('.') === 'descriptor.entrypoint.entrypointKey' &&
-    binding?.imported === context.readName &&
-    !binding.typeOnly &&
-    importedFile === context.readFile
-    ? context.entrypointKey
-    : undefined;
-};
-
-/** A string a manifest writes as a literal, a top-level `const` literal, or this read's entrypoint key. */
-const manifestStringValue = (expression: Expression | undefined, context: ManifestValueContext): string | undefined => {
-  const value = expression === undefined ? undefined : unwrapTypeAssertion(expression);
-  if (value?.type === 'Identifier') {
-    const bound = context.initializers.get(value.name);
-    return bound === undefined ? undefined : stringLiteralValue(unwrapTypeAssertion(bound));
-  }
-  if (value?.type === 'TemplateLiteral') {
-    return value.expressions.length === 0 && value.quasis.length === 1
-      ? (value.quasis[0]?.value.cooked ?? undefined)
-      : undefined;
-  }
-  return value?.type === 'MemberExpression' ? readEntrypointKeyReference(value, context) : stringLiteralValue(value);
-};
-
-const requirementCallers = (requirement: ObjectExpression): DeclaredRequirement['callers'] => {
-  const declared = objectPropertiesNamed(requirement, 'callers');
-  if (declared.length === 0) {
-    return 'absent';
-  }
-  const [callers] = declared;
-  const list = callers === undefined || declared.length !== 1 ? undefined : unwrapTypeAssertion(callers.value);
-  if (list?.type !== 'ArrayExpression') {
-    return 'invalid';
-  }
-  if (list.elements.length === 0) {
-    return 'empty';
-  }
-  return list.elements.every((caller) => {
-    const [kind, ...repeated] = caller?.type === 'ObjectExpression' ? objectPropertiesNamed(caller, 'kind') : [];
-    const value = kind === undefined ? undefined : stringLiteralValue(unwrapTypeAssertion(kind.value));
-    return repeated.length === 0 && value !== undefined && REQUIREMENT_CALLER_KINDS.has(value);
-  })
-    ? 'listed'
-    : 'invalid';
-};
-
-/** Every `requirements: { ... }` object a declaration file holds. */
-const requirementObjects = (program: Program): readonly ObjectExpression[] => {
-  const found: ObjectExpression[] = [];
-  new Visitor({
-    ObjectExpression: (object) => {
-      for (const property of objectPropertiesNamed(object, 'requirements')) {
-        const value = unwrapTypeAssertion(property.value);
-        if (value.type === 'ObjectExpression') {
-          found.push(value);
-        }
-      }
-    },
-  }).visit(program);
-  return found;
-};
-
-const singlePropertyValue = (object: ObjectExpression, name: string): Expression | undefined => {
-  const properties = objectPropertiesNamed(object, name);
-  return properties.length === 1 ? properties[0]?.value : undefined;
-};
-
 /**
- * The calling module's requirements, read from whichever of `vertical.runtime-declaration.ts` or
- * `vertical.manifest.ts` declares `requirements`. Both declaring it, or neither, is no declaration.
+ * A declared call names an operation reference the gate can trace to a public contract package or to
+ * `coreOperations`. Whether the calling module's manifest covers it (requirement, entrypoint, provider,
+ * callers) is decided by Core when the registration is built (`declaredCallsIssues`), not re-parsed here.
  */
-const declaredRequirements = (input: ReadSdkFormInput): RequirementDeclarationProblem | RequirementDeclarations => {
-  const declarations = ['vertical.runtime-declaration.ts', 'vertical.manifest.ts'].flatMap((name) => {
-    const file = `${input.ownerPath}/${name}`;
-    const source = input.sources.get(file);
-    const program = source === undefined ? undefined : parseTypeScript(file, source);
-    return program === undefined
-      ? []
-      : requirementObjects(program).map((requirements) => ({ file, program, requirements }));
-  });
-  const [declaration] = declarations;
-  if (declaration === undefined || declarations.length !== 1) {
-    return {
-      problem: `exactly one of ${input.ownerPath}/vertical.runtime-declaration.ts or vertical.manifest.ts must declare requirements`,
-    };
-  }
-  const operations = singlePropertyValue(declaration.requirements, 'operations');
-  const list = operations === undefined ? undefined : unwrapTypeAssertion(operations);
-  if (list?.type !== 'ArrayExpression') {
-    return { problem: `${declaration.file} requirements.operations must be an array literal` };
-  }
-  const context = {
-    entrypointKey: input.entrypointKey,
-    file: declaration.file,
-    imports: topLevelImports(declaration.program),
-    initializers: topLevelConstInitializers(declaration.program),
-    readFile: input.readFile,
-    readName: input.readName,
-  };
-  return {
-    file: declaration.file,
-    requirements: list.elements.flatMap((element) => {
-      if (element?.type !== 'ObjectExpression') {
-        return [];
-      }
-      const provider = singlePropertyValue(element, 'provider');
-      const providerObject = provider === undefined ? undefined : unwrapTypeAssertion(provider);
-      return [
-        {
-          callers: requirementCallers(element),
-          entrypointKey: manifestStringValue(singlePropertyValue(element, 'entrypointKey'), context),
-          key: manifestStringValue(singlePropertyValue(element, 'key'), context),
-          providerModuleId:
-            providerObject?.type === 'ObjectExpression'
-              ? manifestStringValue(singlePropertyValue(providerObject, 'moduleId'), context)
-              : undefined,
-        },
-      ];
-    }),
-  };
-};
-
-const declaredCallRequirementViolations = (
-  requirement: DeclaredRequirement,
-  provider: Exclude<DeclaredCallProvider, { readonly kind: 'invalid' }>,
-  label: string,
-  entrypointKey: string,
-): readonly string[] => {
-  const violations: string[] = [];
-  if (requirement.entrypointKey !== entrypointKey) {
-    violations.push(`${label} is not declared for ${entrypointKey}`);
-  }
-  const coreProvider = requirement.providerModuleId?.startsWith(CORE_PROVIDER_PREFIX) === true;
-  if (provider.kind === 'core') {
-    if (!coreProvider) {
-      violations.push(`${label} must name a core.* provider for a Core operation`);
-    }
-    if (requirement.callers !== 'absent') {
-      violations.push(`${label} on a Core operation declares no callers`);
-    }
-    return violations;
-  }
-  if (coreProvider || requirement.providerModuleId !== provider.moduleId) {
-    violations.push(`${label} must name provider ${provider.moduleId}`);
-  }
-  if (requirement.callers !== 'listed') {
-    violations.push(`${label} must list its permitted callers`);
-  }
-  return violations;
-};
-
 const declaredCallViolations = (
   name: string,
   declared: Expression,
-  context: Readonly<{
-    readonly imports: ReadonlyMap<string, ParsedImport>;
-    readonly input: ReadSdkFormInput;
-    readonly requirements: () => RequirementDeclarationProblem | RequirementDeclarations;
-  }>,
+  imports: ReadonlyMap<string, ParsedImport>,
+  sources: ReadonlyMap<string, string>,
 ): readonly string[] => {
-  const call = plainCall(declared, context.imports, SDK_MODULE);
-  const [operation, requirementArgument] = call?.arguments ?? [];
+  const call = plainCall(declared, imports, SDK_MODULE);
   if (call?.callee !== 'declaredCall' || call.arguments.length !== 2) {
-    return [`calls.${name} must be declaredCall(<operation>, '<requirement key>') from ${SDK_MODULE}`];
+    return [`calls.${name} must be declaredCall(<operation>, <requirement key>) from ${SDK_MODULE}`];
   }
-  const requirementKey = requirementArgument?.type === 'Literal' ? stringLiteralValue(requirementArgument) : undefined;
-  if (requirementKey === undefined) {
-    return [`calls.${name} must name its requirement key as a string literal`];
-  }
-  const provider = declaredCallProvider(operation, context.imports, context.input.sources);
-  if (provider.kind === 'invalid') {
-    return [`calls.${name}: ${provider.reason}`];
-  }
-  const declarations = context.requirements();
-  if ('problem' in declarations) {
-    return [`calls.${name}: ${declarations.problem}`];
-  }
-  const matching = declarations.requirements.filter((requirement) => requirement.key === requirementKey);
-  const [requirement] = matching;
-  return requirement === undefined || matching.length !== 1
-    ? [`calls.${name}: ${declarations.file} declares no single requirement ${requirementKey}`]
-    : declaredCallRequirementViolations(
-        requirement,
-        provider,
-        `calls.${name}: requirement ${requirementKey}`,
-        context.input.entrypointKey,
-      );
+  const provider = declaredCallProvider(call.arguments[0], imports, sources);
+  return provider.kind === 'invalid' ? [`calls.${name}: ${provider.reason}`] : [];
 };
 
 /** A `{ run }` read reaches other operations only through `call`: no hand-built gateway call. */
@@ -3876,16 +3659,7 @@ const declaredCallsViolations = (
   if (entries === undefined) {
     return ['calls must be an object literal of named entries'];
   }
-  let requirements: RequirementDeclarationProblem | RequirementDeclarations | undefined;
-  const context = {
-    imports,
-    input,
-    requirements: () => {
-      requirements ??= declaredRequirements(input);
-      return requirements;
-    },
-  };
-  return entries.flatMap(([name, declared]) => declaredCallViolations(name, declared, context));
+  return entries.flatMap(([name, declared]) => declaredCallViolations(name, declared, imports, input.sources));
 };
 
 const readDefinitionObjectViolations = (form: ReadDefinitionForm, definition: Argument | undefined): string[] => {
@@ -3906,9 +3680,9 @@ const readDefinitionObjectViolations = (form: ReadDefinitionForm, definition: Ar
  * The parser-visible rules of the read SDK form. The second `defineRead` argument is a bare handler,
  * `{ load }` or `{ run }` (the handler itself is judged by `hasReadCallbacks`). `accessQuestions` stand
  * only beside `{ load }` or `{ run }`, `calls` only beside `{ run }`; each call names an operation
- * reference and a requirement of the calling module declared for this read's entrypoint, with permitted
- * callers for a vertical provider and none for a Core one. Matching registered callers against
- * `registeredWorkloadCalls` is `validateDeclaredCalls`' job at registration. Returns every violation.
+ * reference of a public contract package or `coreOperations`, and a `{ run }` read builds no gateway
+ * call by hand. Whether the manifest covers each call is decided by Core at registration
+ * (`declaredCallsIssues`). Returns every violation.
  */
 export const readSdkFormViolations = (input: ReadSdkFormInput): readonly string[] => {
   const source = input.source ?? input.sources.get(input.readFile);
@@ -4050,8 +3824,6 @@ const hasReadContract = (
     readCall: isWholeObjectCall(readExpression, read, /^defineRead\(/u),
     sdkForm:
       readSdkFormViolations({
-        entrypointKey: contributionKey,
-        ownerPath,
         readFile,
         readName: `${camel}Read`,
         source,
