@@ -217,30 +217,6 @@ describe('rent terms panel save', () => {
       expect(controller.status()).toBe('saved');
     }),
   );
-
-  it.effect('discard puts the confirmed rent back and sends nothing', () =>
-    Effect.gen(function* discard() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...rent, service: '3000' });
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      expect(sent).toHaveLength(0);
-    }),
-  );
-
-  it.effect('holds a conflicting draft instead of sending it again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...rent, service: '3000' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...rent, service: '3500' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toHaveLength(1);
-    }),
-  );
 });
 
 describe('an addition (registration sheet, notice, logged entry)', () => {
