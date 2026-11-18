@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -13,6 +14,7 @@ import {
   ONTOS_MODULE_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
+  OntosMcpToolCatalogJsonSchema,
   OntosModuleIdSchema,
   buildInstalledModuleCatalog,
 } from '../packages/core-runtime/src/index.ts';
@@ -96,10 +98,13 @@ const ModulePackageSchema = Schema.Struct({
 
 export class OntosModuleContractCheckError extends Schema.TaggedError<OntosModuleContractCheckError>()(
   'OntosModuleContractCheckError',
-  { reason: Schema.String },
+  { cause: Schema.optional(Schema.Defect()), message: Schema.String, reason: Schema.String },
 ) {}
 
-const failure = (reason: string): OntosModuleContractCheckError => new OntosModuleContractCheckError({ reason });
+// `message` carries the full `${filePath} ${reason}` diagnostic; `reason` exposes the same text for
+// callers that match on the failure cause alone.
+const failure = (message: string, cause?: unknown): OntosModuleContractCheckError =>
+  new OntosModuleContractCheckError({ cause, message, reason: message });
 
 const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 
@@ -238,7 +243,7 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
     const serialized = new TextDecoder().decode(content);
     const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
       onExcessProperty: 'error',
-    })(serialized);
+    })(serialized).pipe(Effect.mapError((cause) => failure(`${contractPath} has an invalid module contract`, cause)));
     if (
       contract.deployment.appId !== expected.deployment.appId ||
       contract.manifest.module.id !== expected.manifest.module.id
@@ -250,6 +255,23 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
     }
     if (/sourcePath|importPath|exportPath|registrationPath|handlerPath|migrationPath/u.test(serialized)) {
       yield* failure(`${contractPath} contains forbidden private path metadata`);
+    }
+    const toolCatalogReference = contract.manifest.publicSurface.mcp?.toolCatalog;
+    if (toolCatalogReference !== undefined) {
+      const toolCatalogPath = path.join(publicDirectory, toolCatalogReference.path.slice(1));
+      if (!(yield* fileSystem.exists(toolCatalogPath))) {
+        yield* failure(`${target} output is missing ${toolCatalogReference.path}`);
+      }
+      const toolCatalog = yield* fileSystem.readFile(toolCatalogPath);
+      if (createHash('sha256').update(toolCatalog).digest('hex') !== toolCatalogReference.sha256) {
+        yield* failure(`${toolCatalogPath} does not match the digest its contract pins`);
+      }
+      const tools = yield* Schema.decodeUnknownEffect(OntosMcpToolCatalogJsonSchema, { onExcessProperty: 'error' })(
+        new TextDecoder().decode(toolCatalog),
+      );
+      if (tools.tools.length !== toolCatalogReference.toolCount) {
+        yield* failure(`${toolCatalogPath} does not hold the tool count its contract declares`);
+      }
     }
     const validateResponseHeaders = Effect.gen(function* validateResponseHeadersEffect() {
       const headersPath = path.join(publicDirectory, '_headers');
@@ -492,7 +514,7 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     const derived = yield* deriveOntosModuleDeploymentContract({
       vertical: verticalName,
       workspaceRoot,
-    }).pipe(Effect.mapError(() => failure(`${appId} authored module contract could not be derived`)));
+    }).pipe(Effect.mapError((cause) => failure(`${appId} authored module contract could not be derived`, cause)));
     if (declaration !== undefined) {
       yield* validateSplitContributionMarkers(declaration.content, verticalName, derived);
     }
