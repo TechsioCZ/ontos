@@ -293,7 +293,7 @@ New connections can fail after the migrator changes PostgreSQL's password until 
 
 ### Module credentials and bindings
 
-Every module deployment that calls another module presents its own module credential, `ONTOS_GATEWAY_MODULE_API_KEY`, to the Shell's delegated issuance. The Shell binds each credential to exactly one module through `ONTOS_GATEWAY_MODULE_BINDINGS` and attests that module's identity on every call, so no module admits another by Principal ID or grant list. `scripts/ops/owner-runtime-configuration.mts` names every value each module reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues one module credential per module in Shell (one service Principal with one managed API key) and records the values. For each module:
+Every module deployment that calls another module presents its own module credential, `ONTOS_GATEWAY_MODULE_API_KEY`, to the Shell's delegated issuance. The Shell binds each credential to exactly one module through `ONTOS_GATEWAY_MODULE_BINDINGS` and attests that module's identity on every call, so no module admits another by Principal ID or grant list. A binding carries the module's identity only; the Shell takes that module's registered-workload rules from its reviewed manifest (`registeredWorkloadCalls`) in the installed release, and only while the installed receiver declares each call. `scripts/ops/owner-runtime-configuration.mts` names every value each module reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues one module credential per module in Shell (one service Principal with one managed API key) and records the values. For each module:
 
 1. In the platform tenant, run `core.identity.create-non-human-principal` with `kind: service` and the module's name as the display name. Record the returned principal ID.
 2. Issue a managed API key for that principal through Shell's API key service. Its Better Auth key ID is the provider key ID.
@@ -338,22 +338,7 @@ Before a tenant uses a payment gateway, a human operator, never an agent, provis
 
 Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload binding makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
 
-**Payment evidence workers.** Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own public `accept-payment-observation` Action with a registered-workload assertion. Besides the usual four keys, the Payment binding in `ONTOS_GATEWAY_MODULE_BINDINGS` therefore carries one `registeredWorkloads` rule per worker; without them the Shell refuses the assertion and the evidence stays pending as reconciliation debt:
-
-```json
-{
-  "audience": "payment",
-  "declarationKey": "payment.core.observation.accept",
-  "entrypointKey": "payment.core.accept-payment-observation",
-  "jobKey": "payment.core.process-provider-notification",
-  "legalEntityScope": "required",
-  "schemaVersion": "1",
-  "workerKey": "payment.core.process-provider-notification",
-  "workloadKey": "payment.source-ingress"
-}
-```
-
-The second rule is the same with `jobKey` and `workerKey` set to `payment.core.recover-gateway-operation`. The Shell admits a request only for a live claim of that worker's delivery whose original invocation came from an active integration principal through one of Payment's `originatorActions`, in that invocation's own company. Each tenant needs exactly one active system principal bound to `payment.source-ingress`; it is the A8 executor. The Payment Outbox Worker reads `ONTOS_GATEWAY_MODULE_API_KEY` and `ONTOS_SHELL_GATEWAY_BASE_URL` like the request service. The issuer admits the `payment` audience only while Payment is in the installed composition.
+**Payment evidence workers.** Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own public `accept-payment-observation` Action with a registered-workload assertion. Payment's manifest declares both calls (`verticals/payment/src/registered-workload-calls.ts`), one per worker; the Payment binding in `ONTOS_GATEWAY_MODULE_BINDINGS` carries only the usual four keys. The Shell admits a request only for a live claim of that worker's delivery whose original invocation came from an active integration principal through one of Payment's `originatorActions`, in that invocation's own company. Each tenant needs exactly one active system principal bound to `payment.source-ingress`; it is the A8 executor. The Payment Outbox Worker reads `ONTOS_GATEWAY_MODULE_API_KEY` and `ONTOS_SHELL_GATEWAY_BASE_URL` like the request service. The issuer admits the `payment` audience only while Payment is in the installed composition.
 
 The bindings pin the release. The Shell accepts a module's call only while `compositionRevision` and `sourceBuildMarker` equal the current release, so every composition publish and every module redeploy changes what the bindings must say. Refresh `ONTOS_GATEWAY_MODULE_BINDINGS` in the same deploy that changes a release, before the module calls it. Until the refresh, every module-to-module call fails closed. The Worker secrets step checks the shape only: one binding per module credential, all for one composition revision. It does not compare the revision or build markers with the published release, so the operator must.
 

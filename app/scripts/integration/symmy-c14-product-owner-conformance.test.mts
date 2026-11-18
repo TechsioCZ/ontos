@@ -88,16 +88,6 @@ const priceOperation = {
   moduleId: pricingModule,
   schemaVersion: '2',
 };
-const priceRule = {
-  audience: 'pricing',
-  declarationKey: 'commerce.pricing.price.define',
-  entrypointKey: priceOperation.entrypointKey,
-  jobKey: workerKey,
-  legalEntityScope: 'required' as const,
-  schemaVersion: priceOperation.schemaVersion,
-  workerKey,
-  workloadKey: priceWrite,
-};
 const createProductAction = 'commerce.catalog.create-product';
 const productEffectKey = 'product-create';
 const variantFactsWorkload = 'commerce.catalog.symmy-variant-localized-facts';
@@ -107,115 +97,6 @@ const variantFactsOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 };
-const rules = [
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.product.create',
-    entrypointKey: createProductAction,
-    schemaVersion: '2',
-    workloadKey: catalogImport,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.variant.create',
-    entrypointKey: 'commerce.catalog.create-variant',
-    schemaVersion: '2',
-    workloadKey: catalogImport,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.product.update',
-    entrypointKey: 'commerce.catalog.update-product',
-    schemaVersion: '1',
-    workloadKey: catalogImport,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.variant-localized-facts.set',
-    entrypointKey: variantFactsOperation.entrypointKey,
-    schemaVersion: variantFactsOperation.schemaVersion,
-    workloadKey: variantFactsWorkload,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.catalog-source-products.read',
-    entrypointKey: 'commerce.catalog.api.catalog-source-products',
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.catalog-source-product-page.read',
-    entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, legalEntityScope: 'forbidden' as const, workerKey }));
-const recoveryRules = [
-  {
-    actionKey: createProductAction,
-    declarationKey: 'commerce.catalog.create-product-recovery.read',
-    entrypointKey: 'commerce.catalog.api.create-product-recovery',
-  },
-  {
-    actionKey: 'commerce.catalog.create-variant',
-    declarationKey: 'commerce.catalog.create-variant-recovery.read',
-    entrypointKey: 'commerce.catalog.api.create-variant-recovery',
-  },
-].map(({ actionKey, ...rule }) => ({
-  ...rule,
-  audience: catalogApp,
-  jobKey: workerKey,
-  legalEntityScope: 'forbidden' as const,
-  recoveryOf: { actionKey, jobKey: workerKey },
-  schemaVersion: '1',
-  workerKey,
-  workloadKey: catalogRead,
-}));
-
-const historicalRecoveryRules = recoveryRules.map((rule) => ({ ...rule, allowHistoricalDeliveryRecovery: true }));
-const variantFactsRecoveryRule = {
-  audience: catalogApp,
-  declarationKey: 'commerce.catalog.set-variant-localized-facts-recovery.read',
-  entrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery',
-  jobKey: workerKey,
-  legalEntityScope: 'forbidden' as const,
-  recoveryOf: { actionKey: variantFactsOperation.entrypointKey, jobKey: workerKey },
-  schemaVersion: '1',
-  workerKey,
-  workloadKey: variantFactsRecoveryWorkload,
-};
-const priceRecoveryRule = {
-  allowHistoricalDeliveryRecovery: true,
-  audience: 'pricing',
-  declarationKey: 'commerce.pricing.price-source-result-lookup.read',
-  entrypointKey: 'commerce.pricing.api.price-source-result-lookup',
-  jobKey: workerKey,
-  legalEntityScope: 'required' as const,
-  recoveryOf: { actionKey: priceOperation.entrypointKey, jobKey: workerKey },
-  schemaVersion: '1',
-  workerKey,
-  workloadKey: priceRead,
-};
-const pricingDelegationRules = [
-  {
-    audience: catalogApp,
-    declarationKey: catalogSelectionRead,
-    entrypointKey: 'commerce.catalog.api.selection-evidence',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-  {
-    audience: marketApp,
-    declarationKey: 'commerce.market-catalog.market-catalog.read',
-    entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: marketRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, sourceWorkloadKey: priceWrite }));
-
 const catalogRecoveryRequirementFor = Effect.fn('InternalC14Product.catalogRecoveryRequirement')(
   function* catalogRecoveryRequirementFor(
     symmy: OntosModuleDeploymentContract,
@@ -459,23 +340,14 @@ it.live(
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
         const shell = yield* makeApiKeyGatewayNativeFixture({
           additionalRelaySources: [
-            { registeredWorkloads: [], sourceAppId: 'party-registry' },
-            { registeredWorkloads: [], sourceAppId: 'commerce-customer-context' },
-            { registeredWorkloads: [], sourceAppId: 'privacy' },
-            { registeredWorkloads: pricingDelegationRules, sourceAppId: 'pricing' },
+            { sourceAppId: 'party-registry' },
+            { sourceAppId: 'commerce-customer-context' },
+            { sourceAppId: 'privacy' },
+            { sourceAppId: 'pricing' },
           ],
           ownedDatabase: isolated,
           productionGate: true,
-          relaySource: {
-            registeredWorkloads: [
-              ...rules,
-              ...historicalRecoveryRules,
-              variantFactsRecoveryRule,
-              priceRule,
-              priceRecoveryRule,
-            ],
-            sourceAppId: 'symmy-integration',
-          },
+          relaySource: { sourceAppId: 'symmy-integration' },
           snapshotJson: yield* encodeProductComposition(snapshot),
         });
         const tenantId = randomUUID();

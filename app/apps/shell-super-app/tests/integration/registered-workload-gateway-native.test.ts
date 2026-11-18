@@ -35,6 +35,8 @@ import {
   OntosModuleRequirementsSchema,
   ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ONTOS_SHELL_CONTRIBUTION_ABI,
+  OntosRegisteredWorkloadCallSchema,
+  OntosRegisteredWorkloadCallsSchema,
 } from '@app/core-runtime';
 import {
   AccessDecisionGate,
@@ -93,12 +95,23 @@ import { importJobResourceDescriptor } from '@app/symmy-integration/resources/im
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import {
+  Cause,
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt, exportJWK, generateKeyPair } from 'jose';
 import { Base64Url } from 'effect/encoding';
-import type { GatewayRegisteredWorkloadRule } from '../../api/auth/gateway-delegation-policy.ts';
 import { loadGatewayModuleBindings } from '../../api/auth/gateway-delegation-policy.ts';
 import { admitAssertionSubject, readVerifiedGatewayAssertion } from '../../api/auth/gateway-assertion-evidence.ts';
 import {
@@ -114,6 +127,7 @@ import {
   makeGatewayIssuerLayer,
 } from '../../api/auth/gateway-issuer.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
+import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
@@ -452,6 +466,94 @@ const processingRuntimeFixture = (
     read,
   };
 };
+// The registered-workload calls of the three calling modules. Each calling module declares them in its own contract,
+// the only source of these rules; the Shell keeps a call only while the installed receiver declares it.
+const rule = {
+  audience: 'party-registry',
+  declarationKey: targetCapability,
+  entrypointKey: targetKey,
+  jobKey: workerKey,
+  legalEntityScope: 'required',
+  schemaVersion: '1',
+  workloadKey: targetWorkload,
+} as const;
+const recoveryRule = {
+  audience: 'party-registry',
+  declarationKey: recoveryCapability,
+  entrypointKey: recoveryKey,
+  jobKey: 'integration.fixture.recovery',
+  legalEntityScope: 'required',
+  recoveryOf: { actionKey: originalWriteKey, jobKey: workerKey },
+  schemaVersion: '1',
+  workloadKey: recoveryWorkload,
+} as const;
+const recoveryTenantRule = {
+  ...recoveryRule,
+  declarationKey: recoveryTenantCapability,
+  entrypointKey: recoveryTenantKey,
+  legalEntityScope: 'forbidden',
+  recoveryOf: { actionKey: originalTenantWriteKey, jobKey: workerKey },
+} as const;
+const privacyNormalRule = {
+  audience: 'privacy',
+  declarationKey: privacyCapability,
+  entrypointKey: privacyKey,
+  jobKey: 'party-privacy-check',
+  legalEntityScope: 'required',
+  schemaVersion: '1',
+  sourceWorkloadKey: targetWorkload,
+  workloadKey: privacyWorkload,
+} as const;
+const privacyRecoveryRule = {
+  ...privacyNormalRule,
+  allowRecoverySource: true,
+  jobKey: 'party-privacy-recovery-check',
+  sourceWorkloadKey: recoveryWorkload,
+} as const;
+const sourceCalls = [
+  { ...rule, sourceActionKey: sourceAction },
+  { ...rule, workerKey },
+  { ...rule, declarationKey: originalWriteCapability, entrypointKey: originalWriteKey, sourceActionKey: sourceAction },
+  { ...rule, declarationKey: originalWriteCapability, entrypointKey: originalWriteKey, workerKey },
+  { ...recoveryRule, sourceActionKey: sourceAction },
+  { ...recoveryRule, allowHistoricalDeliveryRecovery: true, workerKey },
+  { ...recoveryTenantRule, sourceActionKey: sourceAction },
+  { ...recoveryTenantRule, workerKey },
+];
+const partyCalls = [
+  {
+    ...privacyNormalRule,
+    declarationKey: organizationBusinessCapability,
+    entrypointKey: organizationBusinessKey,
+    workloadKey: organizationBusinessWorkload,
+  },
+  privacyNormalRule,
+  { ...privacyNormalRule, allowRecoverySource: true },
+  {
+    audience: 'privacy',
+    declarationKey: privacyTenantCapability,
+    entrypointKey: privacyTenantKey,
+    jobKey: 'party-privacy-tenant-check',
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    sourceWorkloadKey: targetWorkload,
+    workloadKey: privacyWorkload,
+  },
+  { ...privacyRecoveryRule, allowRecoverySource: false },
+  privacyRecoveryRule,
+];
+const privacyCalls = [
+  {
+    audience: sourceApp,
+    declarationKey: sourceFactsCapability,
+    entrypointKey: sourceFactsKey,
+    jobKey: 'privacy.core.organization-business-source-facts',
+    legalEntityScope: 'required',
+    schemaVersion: sourceFactsVersion,
+    sourceWorkloadKey: organizationBusinessWorkload,
+    workloadKey: sourceFactsWorkload,
+  },
+];
 /** What a receiving operation publishes about the registered workloads it admits. */
 const carrier = (declarationKey: string, workload: string) => ({ declarationKey, workloads: [workload] });
 
@@ -529,6 +631,7 @@ const contractInputs = () => {
           ],
           resourceTypes: [importJobResourceDescriptor],
         },
+        registeredWorkloadCalls: sourceCalls,
         requirements: {
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
           intrinsic: [
@@ -616,33 +719,39 @@ const contractInputs = () => {
               entrypoint: targetEntrypoint,
               operationKey: 'sourceResult.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(targetCapability, targetWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: originalWriteEntrypoint,
               operationKey: 'sourceWrite.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(originalWriteCapability, targetWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: originalTenantWriteEntrypoint,
               operationKey: 'sourceCreate.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(originalWriteCapability, targetWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: recoveryEntrypoint,
               operationKey: 'sourceRecovery.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(recoveryCapability, recoveryWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: recoveryTenantEntrypoint,
               operationKey: 'sourceRecoveryTenant.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(recoveryTenantCapability, recoveryWorkload),
             },
           ],
         },
+        registeredWorkloadCalls: partyCalls,
         requirements: {
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
           intrinsic: [],
@@ -702,21 +811,25 @@ const contractInputs = () => {
               entrypoint: organizationBusinessEntrypoint,
               operationKey: 'organizationBusinessApplicability.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(organizationBusinessCapability, organizationBusinessWorkload),
             },
             {
               apiKey: 'privacy.core.source-processing-eligibility',
               entrypoint: privacyEntrypoint,
               operationKey: 'sourceProcessingEligibility.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(privacyCapability, privacyWorkload),
             },
             {
               apiKey: 'privacy.core.source-processing-eligibility',
               entrypoint: privacyTenantEntrypoint,
               operationKey: 'tenantCheck.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(privacyTenantCapability, privacyWorkload),
             },
           ],
         },
+        registeredWorkloadCalls: privacyCalls,
         requirements: {
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
           intrinsic: [],
@@ -777,6 +890,18 @@ const nativeRedemption = (database: Effect.Success<ReturnType<typeof makeCoreDat
     return yield* Effect.void;
   }),
 });
+
+/** The code a delegated issuance was refused with, or `issued`. */
+const refusalOf = <A, R>(issuance: Effect.Effect<A, unknown, R>) =>
+  Effect.exit(issuance).pipe(
+    Effect.map((exit) => {
+      if (Exit.isSuccess(exit)) {
+        return 'issued';
+      }
+      const failure = Cause.squash(exit.cause);
+      return Schema.is(GatewayDelegationError)(failure) ? failure.code : 'other';
+    }),
+  );
 
 it.live(
   'issues native workload, nested, and exact receipt-recovery capabilities with tenant, actor, binding, and claim restrictions',
@@ -908,135 +1033,23 @@ it.live(
           ONTOS_GATEWAY_ISSUER: issuer,
           ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }),
         });
-        const rule = {
-          audience: 'party-registry',
-          declarationKey: targetCapability,
-          entrypointKey: targetKey,
-          jobKey: workerKey,
-          legalEntityScope: 'required',
-          schemaVersion: '1',
-          workloadKey: targetWorkload,
-        };
-        const recoveryRule = {
-          audience: 'party-registry',
-          declarationKey: recoveryCapability,
-          entrypointKey: recoveryKey,
-          jobKey: 'integration.fixture.recovery',
-          legalEntityScope: 'required',
-          recoveryOf: { actionKey: originalWriteKey, jobKey: workerKey },
-          schemaVersion: '1',
-          workloadKey: recoveryWorkload,
-        };
-        const recoveryTenantRule = {
-          ...recoveryRule,
-          declarationKey: recoveryTenantCapability,
-          entrypointKey: recoveryTenantKey,
-          legalEntityScope: 'forbidden',
-          recoveryOf: { actionKey: originalTenantWriteKey, jobKey: workerKey },
-        };
-        const privacyNormalRule: GatewayRegisteredWorkloadRule = {
-          audience: 'privacy',
-          declarationKey: privacyCapability,
-          entrypointKey: privacyKey,
-          jobKey: 'party-privacy-check',
-          legalEntityScope: 'required',
-          schemaVersion: '1',
-          sourceWorkloadKey: targetWorkload,
-          workloadKey: privacyWorkload,
-        };
-        const privacyRecoveryRule: GatewayRegisteredWorkloadRule = {
-          ...privacyNormalRule,
-          allowRecoverySource: true,
-          jobKey: 'party-privacy-recovery-check',
-          sourceWorkloadKey: recoveryWorkload,
-        };
-        const partyModeConfiguration = (rules: readonly GatewayRegisteredWorkloadRule[]) =>
-          ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-              {
-                compositionRevision: snapshot.composition.revision,
-                providerKeyId: partyProviderKey,
-                registeredWorkloads: rules,
-                sourceAppId: 'party-registry',
-                sourceBuildMarker: 'party-registry-build',
-              },
-            ]),
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-              keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
-            }),
-          });
+        // Each binding carries the calling module's identity only; its calls come from the module's installed contract.
         const configuration = ConfigProvider.fromUnknown({
           ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
+          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify(
+            (
+              [
+                [sourceApp, providerKey],
+                ['party-registry', partyProviderKey],
+                ['privacy', privacyProviderKey],
+              ] as const
+            ).map(([sourceAppId, providerKeyId]) => ({
               compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [
-                { ...rule, sourceActionKey: sourceAction },
-                { ...rule, workerKey },
-                {
-                  ...rule,
-                  declarationKey: originalWriteCapability,
-                  entrypointKey: originalWriteKey,
-                  sourceActionKey: sourceAction,
-                },
-                { ...rule, declarationKey: originalWriteCapability, entrypointKey: originalWriteKey, workerKey },
-                { ...recoveryRule, sourceActionKey: sourceAction },
-                { ...recoveryRule, allowHistoricalDeliveryRecovery: true, workerKey },
-                { ...recoveryTenantRule, sourceActionKey: sourceAction },
-                { ...recoveryTenantRule, workerKey },
-              ],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: partyProviderKey,
-              registeredWorkloads: [
-                {
-                  ...privacyNormalRule,
-                  declarationKey: organizationBusinessCapability,
-                  entrypointKey: organizationBusinessKey,
-                  workloadKey: organizationBusinessWorkload,
-                },
-                privacyNormalRule,
-                { ...privacyNormalRule, allowRecoverySource: true },
-                {
-                  audience: 'privacy',
-                  declarationKey: privacyTenantCapability,
-                  entrypointKey: privacyTenantKey,
-                  jobKey: 'party-privacy-tenant-check',
-                  legalEntityScope: 'forbidden',
-                  schemaVersion: '1',
-                  sourceWorkloadKey: targetWorkload,
-                  workloadKey: privacyWorkload,
-                },
-                { ...privacyRecoveryRule, allowRecoverySource: false },
-                privacyRecoveryRule,
-              ],
-              sourceAppId: 'party-registry',
-              sourceBuildMarker: 'party-registry-build',
-            },
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: privacyProviderKey,
-              registeredWorkloads: [
-                {
-                  audience: sourceApp,
-                  declarationKey: sourceFactsCapability,
-                  entrypointKey: sourceFactsKey,
-                  jobKey: 'privacy.core.organization-business-source-facts',
-                  legalEntityScope: 'required',
-                  schemaVersion: sourceFactsVersion,
-                  sourceWorkloadKey: organizationBusinessWorkload,
-                  workloadKey: sourceFactsWorkload,
-                },
-              ],
-              sourceAppId: 'privacy',
-              sourceBuildMarker: 'privacy-build',
-            },
-          ]),
+              providerKeyId,
+              sourceAppId,
+              sourceBuildMarker: `${sourceAppId}-build`,
+            })),
+          ),
           ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
             keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
           }),
@@ -1069,7 +1082,7 @@ it.live(
           audience = 'party-registry',
           verifiedProviderKeyId = providerKey,
           legalEntityScope: 'subject' | 'tenant' = 'subject',
-          issuerConfiguration = configuration,
+          catalog = installed,
         ) =>
           Effect.gen(function* issueNative() {
             const payload = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)({
@@ -1085,13 +1098,45 @@ it.live(
               verifiedProviderKeyId,
             });
           }).pipe(
+            Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
             Effect.provide(signer),
             Effect.provide(GatewayDelegationVerificationLive),
             Effect.provide(GatewayOriginatorEvidenceLive),
             Effect.provideService(OperationalScopeResolver, scopeResolver),
             Effect.provide(services),
-            Effect.provideService(ConfigProvider.ConfigProvider, issuerConfiguration),
+            Effect.provideService(ConfigProvider.ConfigProvider, configuration),
           );
+        // The same installed release in which one module's contract declares other registered-workload calls (the
+        // checked manifest schema refuses repeated or ambiguous calls; `unchecked` models a contract that bypassed it).
+        const decodeCheckedCalls = Schema.decodeUnknownSync(OntosRegisteredWorkloadCallsSchema);
+        const decodeUncheckedCalls = Schema.decodeUnknownSync(Schema.Array(OntosRegisteredWorkloadCallSchema));
+        const replacing = (appId: string, change: (contract: (typeof installed.contracts)[number]) => object) => ({
+          ...installed,
+          contracts: installed.contracts.map((contract) =>
+            contract.deployment.appId === appId ? { ...contract, ...change(contract) } : contract,
+          ),
+        });
+        const declaring = (appId: string, calls: readonly unknown[], decode = decodeCheckedCalls) =>
+          replacing(appId, (contract) => ({
+            manifest: { ...contract.manifest, registeredWorkloadCalls: decode(calls) },
+          }));
+        /** The receiver's published operation without the registered workload it admitted. */
+        const undeclaredBy = (appId: string, entrypointKey: string) =>
+          replacing(appId, (contract) => ({
+            manifest: {
+              ...contract.manifest,
+              publicSurface: {
+                ...contract.manifest.publicSurface,
+                operationContracts: (contract.manifest.publicSurface.operationContracts ?? []).map((operation) => {
+                  if (operation.entrypoint.entrypointKey !== entrypointKey) {
+                    return operation;
+                  }
+                  const { workloadCarrier: _undeclared, ...withoutWorkload } = operation;
+                  return withoutWorkload;
+                }),
+              },
+            },
+          }));
         const admission = {
           _tag: 'RegisteredAdmission' as const,
           actionInvocationId: admissionId,
@@ -1162,36 +1207,44 @@ it.live(
           sourceAssertion: issued.token,
         };
         const nested = yield* issue(nestedSubject, 'privacy', partyProviderKey);
-        // Explicit paired modes do not count as duplicate authority; duplicates within one mode do.
-        yield* issue(
-          nestedSubject,
-          'privacy',
-          partyProviderKey,
-          'subject',
-          partyModeConfiguration([privacyNormalRule]),
-        );
+        // The calling module's own contract is the only source of its calls. One exact call issues, and explicit paired
+        // modes are two calls; a repeated mode never passes the contract schema and, carried anyway, is as refused as a
+        // wrong mode, workload, declaration, provider version or scope, a receiver that does not declare the workload,
+        // a caller whose contract does not declare the call, or a key whose bound build is not the installed one.
+        const nestedWith = (catalog: typeof installed) =>
+          refusalOf(issue(nestedSubject, 'privacy', partyProviderKey, 'subject', catalog));
+        expect(yield* nestedWith(declaring('party-registry', [privacyNormalRule]))).toBe('issued');
+        expect(
+          yield* nestedWith(
+            declaring('party-registry', [privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: true }]),
+          ),
+        ).toBe('issued');
+        expect(() =>
+          decodeCheckedCalls([privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: false }]),
+        ).toThrow();
         yield* Effect.forEach(
           [
-            [privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: false }],
-            [{ ...privacyNormalRule, allowRecoverySource: true }],
+            declaring(
+              'party-registry',
+              [privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: false }],
+              decodeUncheckedCalls,
+            ),
+            declaring('party-registry', [{ ...privacyNormalRule, allowRecoverySource: true }]),
+            declaring('party-registry', [{ ...privacyNormalRule, workloadKey: 'privacy.core.other-check' }]),
+            declaring('party-registry', [{ ...privacyNormalRule, declarationKey: privacyTenantCapability }]),
+            declaring('party-registry', [{ ...privacyNormalRule, schemaVersion: '2' }]),
+            declaring('party-registry', [{ ...privacyNormalRule, legalEntityScope: 'forbidden' }]),
+            declaring('party-registry', []),
+            undeclaredBy('privacy', privacyKey),
+            replacing('party-registry', () => ({
+              deployment: { appId: 'party-registry', buildMarker: 'party-registry-build-next' },
+            })),
           ],
-          (sameOrWrongMode) =>
-            Effect.gen(function* rejectAmbiguousOrWrongMode() {
-              expect(
-                Exit.isFailure(
-                  yield* Effect.exit(
-                    issue(
-                      nestedSubject,
-                      'privacy',
-                      partyProviderKey,
-                      'subject',
-                      partyModeConfiguration(sameOrWrongMode),
-                    ),
-                  ),
-                ),
-              ).toBe(true);
-            }),
+          (catalog) => nestedWith(catalog).pipe(Effect.map((refusal) => expect(refusal).toBe('forbidden'))),
+          { discard: true },
         );
+        // A module whose contract does not declare the call is refused, even with a valid source assertion.
+        expect(yield* refusalOf(issue(nestedSubject, 'privacy', privacyProviderKey))).toBe('forbidden');
         expect(
           Exit.isFailure(
             yield* Effect.exit(issue({ ...nestedSubject, sourceAssertion: 'not-a-jwt' }, 'privacy', partyProviderKey)),
@@ -1227,34 +1280,7 @@ it.live(
             ),
           ),
         ).toBe(true);
-        const wrongProviderVersion = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: partyProviderKey,
-              registeredWorkloads: [
-                {
-                  audience: 'privacy',
-                  declarationKey: privacyCapability,
-                  entrypointKey: privacyKey,
-                  jobKey: 'party-privacy-check',
-                  legalEntityScope: 'required',
-                  schemaVersion: '2',
-                  sourceWorkloadKey: targetWorkload,
-                  workloadKey: privacyWorkload,
-                },
-              ],
-              sourceAppId: 'party-registry',
-              sourceBuildMarker: 'party-registry-build',
-            },
-          ]),
-        });
-        expect(
-          Exit.isFailure(
-            yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey, 'subject', wrongProviderVersion)),
-          ),
-        ).toBe(true);
+        // A required-scope call without a company is refused.
         expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey, 'tenant')))).toBe(
           true,
         );
@@ -1563,25 +1589,17 @@ it.live(
         expect(
           Exit.isFailure(yield* Effect.exit(issue({ ...conditionalWorker, workerKey: `${workerKey}.sibling` }))),
         ).toBe(true);
-        const wrongWorkerProviderVersion = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [{ ...rule, schemaVersion: '2', workerKey }],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-          ]),
-        });
         expect(
-          Exit.isFailure(
-            yield* Effect.exit(
-              issue(conditionalWorker, 'party-registry', providerKey, 'subject', wrongWorkerProviderVersion),
+          yield* refusalOf(
+            issue(
+              conditionalWorker,
+              'party-registry',
+              providerKey,
+              'subject',
+              declaring(sourceApp, [{ ...rule, schemaVersion: '2', workerKey }]),
             ),
           ),
-        ).toBe(true);
+        ).toBe('forbidden');
         const workerPrincipal = yield* receive(worker.token);
         const workerScope = yield* receiverScopes.resolve({
           audience: 'party-registry',
@@ -1635,39 +1653,17 @@ it.live(
           expect(Exit.isFailure(yield* Effect.exit(issue(missingProcessingHash, sourceApp, privacyProviderKey)))).toBe(
             true,
           );
-          const wrongProcessingVersion = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-              {
-                compositionRevision: snapshot.composition.revision,
-                providerKeyId: privacyProviderKey,
-                registeredWorkloads: [
-                  {
-                    audience: sourceApp,
-                    declarationKey: sourceFactsCapability,
-                    entrypointKey: sourceFactsKey,
-                    jobKey: 'privacy.core.organization-business-source-facts',
-                    legalEntityScope: 'required',
-                    schemaVersion: '1',
-                    sourceWorkloadKey: organizationBusinessWorkload,
-                    workloadKey: sourceFactsWorkload,
-                  },
-                ],
-                sourceAppId: 'privacy',
-                sourceBuildMarker: 'privacy-build',
-              },
-            ]),
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-              keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
-            }),
-          });
           expect(
-            Exit.isFailure(
-              yield* Effect.exit(
-                issue(processingSubject, sourceApp, privacyProviderKey, 'subject', wrongProcessingVersion),
+            yield* refusalOf(
+              issue(
+                processingSubject,
+                sourceApp,
+                privacyProviderKey,
+                'subject',
+                declaring('privacy', [{ ...privacyCalls[0], schemaVersion: '1' }]),
               ),
             ),
-          ).toBe(true);
+          ).toBe('forbidden');
           yield* Effect.gen(function* proveOpaqueProcessingEvidence() {
             const bindings = yield* loadGatewayModuleBindings;
             const binding = Option.getOrThrow(
@@ -2125,61 +2121,40 @@ it.live(
         };
         const recovered = yield* issue(admissionRecovery);
         expect(recovered.machineContext?.principalId).toBe(recoveryPrincipalId);
-        const forbiddenWriteRecoveryConfiguration = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [
+        // A recovery call may not name the original write, nor a provider version the receiver does not publish.
+        expect(
+          yield* refusalOf(
+            issue(
+              {
+                ...admissionRecovery,
+                declarationKey: originalWriteCapability,
+                operationRequirementKey: forbiddenRecoveryWriteRequirement,
+              },
+              'party-registry',
+              providerKey,
+              'subject',
+              declaring(sourceApp, [
                 {
                   ...recoveryRule,
                   declarationKey: originalWriteCapability,
                   entrypointKey: originalWriteKey,
                   sourceActionKey: sourceAction,
                 },
-              ],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-          ]),
-        });
-        expect(
-          Exit.isFailure(
-            yield* Effect.exit(
-              issue(
-                {
-                  ...admissionRecovery,
-                  declarationKey: originalWriteCapability,
-                  operationRequirementKey: forbiddenRecoveryWriteRequirement,
-                },
-                'party-registry',
-                providerKey,
-                'subject',
-                forbiddenWriteRecoveryConfiguration,
-              ),
+              ]),
             ),
           ),
-        ).toBe(true);
-        const wrongRecoveryProviderConfiguration = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [{ ...recoveryRule, schemaVersion: '2', sourceActionKey: sourceAction }],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-          ]),
-        });
+        ).toBe('forbidden');
         expect(
-          Exit.isFailure(
-            yield* Effect.exit(
-              issue(admissionRecovery, 'party-registry', providerKey, 'subject', wrongRecoveryProviderConfiguration),
+          yield* refusalOf(
+            issue(
+              admissionRecovery,
+              'party-registry',
+              providerKey,
+              'subject',
+              declaring(sourceApp, [{ ...recoveryRule, schemaVersion: '2', sourceActionKey: sourceAction }]),
             ),
           ),
-        ).toBe(true);
+        ).toBe('forbidden');
         const recoveredPrincipal = yield* receive(recovered.token);
         const recoveredScope = yield* receiverScopes.resolve({
           audience: 'party-registry',
@@ -2210,31 +2185,17 @@ it.live(
           sourceAssertion: recovered.token,
         };
         const recoveryPrivacy = yield* issue(recoveryPrivacySubject, 'privacy', partyProviderKey);
-        yield* issue(
-          recoveryPrivacySubject,
-          'privacy',
-          partyProviderKey,
-          'subject',
-          partyModeConfiguration([privacyRecoveryRule]),
-        );
+        const recoveryPrivacyWith = (catalog: typeof installed) =>
+          refusalOf(issue(recoveryPrivacySubject, 'privacy', partyProviderKey, 'subject', catalog));
+        expect(yield* recoveryPrivacyWith(declaring('party-registry', [privacyRecoveryRule]))).toBe('issued');
+        expect(() => decodeCheckedCalls([privacyRecoveryRule, { ...privacyRecoveryRule }])).toThrow();
         yield* Effect.forEach(
           [[privacyRecoveryRule, { ...privacyRecoveryRule }], [{ ...privacyRecoveryRule, allowRecoverySource: false }]],
-          (sameOrWrongMode) =>
-            Effect.gen(function* rejectAmbiguousOrWrongMode() {
-              expect(
-                Exit.isFailure(
-                  yield* Effect.exit(
-                    issue(
-                      recoveryPrivacySubject,
-                      'privacy',
-                      partyProviderKey,
-                      'subject',
-                      partyModeConfiguration(sameOrWrongMode),
-                    ),
-                  ),
-                ),
-              ).toBe(true);
-            }),
+          (calls) =>
+            recoveryPrivacyWith(declaring('party-registry', calls, decodeUncheckedCalls)).pipe(
+              Effect.map((refusal) => expect(refusal).toBe('forbidden')),
+            ),
+          { discard: true },
         );
         // A caller cannot choose provenance mode by copying metadata into an otherwise real token.
         expect(
@@ -2497,35 +2458,23 @@ it.live(
         for (const invalid of invalidHistoricalRecoveries) {
           expect(Exit.isFailure(yield* Effect.exit(issue(invalid)))).toBe(true);
         }
-        for (const invalidRule of [
-          { ...recoveryRule, workerKey },
-          {
-            ...recoveryRule,
-            allowHistoricalDeliveryRecovery: true,
-            recoveryOf: { actionKey: originalWriteKey, jobKey: `${workerKey}.other` },
-            workerKey,
-          },
-        ]) {
-          const invalidConfiguration = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-              {
-                compositionRevision: snapshot.composition.revision,
-                providerKeyId: providerKey,
-                registeredWorkloads: [invalidRule],
-                sourceAppId: sourceApp,
-                sourceBuildMarker: `${sourceApp}-build`,
-              },
-            ]),
-          });
-          expect(
-            Exit.isFailure(
-              yield* Effect.exit(
-                issue(historicalRecovery, 'party-registry', providerKey, 'subject', invalidConfiguration),
-              ),
-            ),
-          ).toBe(true);
-        }
+        // Historical delivery recovery needs its own explicit call whose original job is the worker's.
+        yield* Effect.forEach(
+          [
+            { ...recoveryRule, workerKey },
+            {
+              ...recoveryRule,
+              allowHistoricalDeliveryRecovery: true,
+              recoveryOf: { actionKey: originalWriteKey, jobKey: `${workerKey}.other` },
+              workerKey,
+            },
+          ],
+          (invalidCall) =>
+            refusalOf(
+              issue(historicalRecovery, 'party-registry', providerKey, 'subject', declaring(sourceApp, [invalidCall])),
+            ).pipe(Effect.map((refusal) => expect(refusal).toBe('forbidden'))),
+          { discard: true },
+        );
         const wrongWorkerContextRef = `job:${workerKey}.other:run:${deliveryId}`;
         yield* insert(
           sql`update core.action_invocations set auth_context_ref=${wrongWorkerContextRef} where action_invocation_id=${originalWorkerInvocation}::uuid`,

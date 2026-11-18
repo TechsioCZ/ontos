@@ -38,11 +38,7 @@ import {
   issueMembershipFixtureRecovery,
   MembershipNativeInvocationSchema,
 } from './support/symmy-c14-membership-recovery.mts';
-import {
-  membershipActionKey,
-  membershipReceiptKey,
-  membershipWorkerRules,
-} from './support/symmy-c14-membership-rules.mts';
+import { membershipActionKey, membershipReceiptKey } from './support/symmy-c14-membership-rules.mts';
 import {
   startProductOwner,
   startProductWorker,
@@ -104,7 +100,6 @@ it.live(
                 writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId, tenantId }),
               ),
             ),
-          workerRules: membershipWorkerRules,
         });
         const { admin, integration, isolated, legalEntityId, shell, systemId, tenantId } = fixture;
         const sourceRouteId = yield* uuid;

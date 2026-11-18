@@ -43,10 +43,7 @@ import { customerItemSource, customerOccurrenceId, customersBody } from './suppo
 import {
   customerFixtureWorkloads,
   customerIntakeContext,
-  customerOwnerRelaySources,
-  customerRecoveryRules,
   customerWorkerKey,
-  customerWorkerRules,
 } from './support/symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
@@ -362,7 +359,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* actualCustomerConformance() {
-        const appIds = ['party-registry', 'commerce-customer-context', 'privacy', symmyAppId] as const;
+        const ownerAppIds = ['party-registry', 'commerce-customer-context', 'privacy'] as const;
+        const appIds = [...ownerAppIds, symmyAppId] as const;
         const ports = yield* nativePorts(appIds);
         const { contracts, snapshot } = yield* productComposition(
           Object.fromEntries([...ports].map(([appId, port]) => [appId, `http://127.0.0.1:${port}/`])),
@@ -374,13 +372,10 @@ it.live(
         });
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
         const shell = yield* makeApiKeyGatewayNativeFixture({
-          additionalRelaySources: customerOwnerRelaySources,
+          additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
           ownedDatabase: isolated,
           productionGate: true,
-          relaySource: {
-            registeredWorkloads: [...customerWorkerRules, ...customerRecoveryRules],
-            sourceAppId: symmyAppId,
-          },
+          relaySource: { sourceAppId: symmyAppId },
           // A search composes three owner reads, each behind its own gateway assertion.
           requestDeadlineSeconds: 60,
           snapshotJson: yield* encodeProductComposition(snapshot),

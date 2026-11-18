@@ -142,6 +142,20 @@ const actionContract = (actionKey: string, carriers: PaymentActionCarriers) => (
   schemaVersion: '1',
 });
 
+/** The exact registered-workload calls the Payment credential needs; production declares them in its manifest. */
+const paymentRegisteredWorkloads: readonly GatewayRegisteredWorkloadRule[] = [notifyWorker, recoverWorker].map(
+  (workerKey) => ({
+    audience: paymentApp,
+    declarationKey: a8Declaration,
+    entrypointKey: a8Key,
+    jobKey: workerKey,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    workerKey,
+    workloadKey: sourceIngress,
+  }),
+);
+
 const paymentContract = (options: { readonly a8Operation: boolean; readonly selfIntrinsic?: boolean }) => {
   const base = makeModuleContractFixture({
     appId: paymentApp,
@@ -190,10 +204,15 @@ const paymentContract = (options: { readonly a8Operation: boolean; readonly self
                 entrypoint: actionEntrypoint(a8Key),
                 operationKey: a8OperationKey,
                 schemaVersion: '1',
+                workloadCarrier: {
+                  declarationKey: a8AccessDeclaration.key,
+                  workloads: a8AccessWorkload.workloads,
+                },
               },
             ]
           : [],
       },
+      registeredWorkloadCalls: paymentRegisteredWorkloads,
       requirements: {
         coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
         intrinsic:
@@ -219,20 +238,6 @@ const paymentContract = (options: { readonly a8Operation: boolean; readonly self
     },
   };
 };
-
-/** The exact issuer rules (ONTOS_GATEWAY_MODULE_BINDINGS `registeredWorkloads`) the Payment credential needs. */
-const paymentRegisteredWorkloads: readonly GatewayRegisteredWorkloadRule[] = [notifyWorker, recoverWorker].map(
-  (workerKey) => ({
-    audience: paymentApp,
-    declarationKey: a8Declaration,
-    entrypointKey: a8Key,
-    jobKey: workerKey,
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-    workerKey,
-    workloadKey: sourceIngress,
-  }),
-);
 
 const replaceIdentity = (connectionString: string, role: string) => {
   const url = new URL(connectionString);
@@ -418,7 +423,6 @@ it.live(
         const paymentBinding = {
           compositionRevision: snapshot.composition.revision,
           providerKeyId: shellProviderKey,
-          registeredWorkloads: paymentRegisteredWorkloads,
           sourceAppId: paymentApp,
           sourceBuildMarker: paymentBuild,
         };
