@@ -203,6 +203,7 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
     },
   });
   const commandProperties = { note: { type: 'string' } };
+  const actionRevision = Schema.decodeUnknownSync(Schema.JsonObject)(Schema.toJsonSchemaDocument(Schema.Int).schema);
   const expectedCatalog = Schema.encodeSync(OntosMcpToolCatalogJsonSchema)({
     definitions: {},
     tools: [
@@ -228,6 +229,7 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
           properties: {
             ...commandProperties,
             expectedRevision: {
+              allOf: [actionRevision],
               description: 'Revize pro kontrolu souběžných změn; když chybí, OntOS ji načte sám. / Optional revision.',
               minimum: 0,
               type: 'integer',
@@ -411,6 +413,24 @@ it.each(['inventory/commands', 'InventoryCommands'])(
     expect(contribution.commandActions).toEqual({ CancelBooking: ['execute'], KeepBooking: ['execute'] });
   },
 );
+
+it('gives a command tool the Action revision constraint and keeps the revision optional', () => {
+  const action = {
+    descriptor: {
+      actionKey: 'booking.keep',
+      payloadSchema: Schema.Struct({
+        command: Schema.Struct({ _tag: Schema.Literal('KeepBooking') }),
+        expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      }),
+    },
+  };
+  const { catalog } = catalogOf({ actions: [action], authored: { ...authored, commands: { KeepBooking: { title } } } });
+  const [tool] = catalog.tools;
+  expect(tool?.inputSchema.required).toEqual([]);
+  expect(tool?.inputSchema.properties).toMatchObject({
+    expectedRevision: { allOf: [{ minimum: 1, type: 'integer' }], minimum: 0, type: 'integer' },
+  });
+});
 
 it('adds a definition named like an Object prototype member and still rejects its conflicting redefinition', () => {
   const payloadSchema = Schema.Struct({ value: Schema.String }).annotate({ identifier: 'constructor' });

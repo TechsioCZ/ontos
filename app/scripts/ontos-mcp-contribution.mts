@@ -139,8 +139,11 @@ const taggedVariants = (node: Json | undefined, definitions: JsonObject): Tagged
   );
 };
 
-/** Command arguments: the variant's fields without `_tag`, plus an optional integer `expectedRevision`. */
-const commandInputSchema = (variant: JsonObject) => {
+/**
+ * Command arguments: the variant's fields without `_tag`, plus an optional integer `expectedRevision` that also meets
+ * the Action's own `expectedRevision` schema, so the tool never admits a revision the Action rejects.
+ */
+const commandInputSchema = (variant: JsonObject, revision: Json) => {
   const sourceProperties = isJsonObject(variant.properties) ? variant.properties : {};
   const { _tag: _omitted, ...properties } = sourceProperties;
   const required = isJsonArray(variant.required)
@@ -151,6 +154,7 @@ const commandInputSchema = (variant: JsonObject) => {
     properties: {
       ...properties,
       expectedRevision: {
+        allOf: [revision],
         description: 'Revize pro kontrolu souběžných změn; když chybí, OntOS ji načte sám. / Optional revision.',
         minimum: 0,
         type: 'integer',
@@ -226,6 +230,8 @@ const ActionValueSchema = Schema.Struct({
 interface ActionEndpoint {
   readonly document: SchemaDocument;
   readonly path: string;
+  /** The Action's own `expectedRevision` schema; meaningful only with `variants`. */
+  readonly revision: Json;
   readonly slug: string;
   /** Present for command-union Actions (`{ command, expectedRevision }`). */
   readonly variants: readonly TaggedVariant[] | undefined;
@@ -262,6 +268,7 @@ const actionEndpointsOf = (
         return {
           document,
           path: `/${appId}/actions/${slug}`,
+          revision: properties.expectedRevision ?? {},
           slug,
           variants: variants.length > 0 ? variants : undefined,
         } satisfies ActionEndpoint;
@@ -562,7 +569,7 @@ const collectDrafts = (
       const { action, variant } = yield* selectCommandCandidate(candidates, entry.actionSlug, tag, moduleId);
       yield* mergeDefinitions(definitions, action.document.definitions, `${moduleId} command ${tag}`);
       drafts.push({
-        schema: commandInputSchema(variant.schema),
+        schema: commandInputSchema(variant.schema, action.revision),
         tool: {
           access: 'write',
           id: `${moduleId}/command/${tag}`,
