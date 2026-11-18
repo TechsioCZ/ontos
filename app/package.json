@@ -140,7 +140,7 @@
     "@app/symmy-integration": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@effect/sql-pg": "4.0.7",
-    "better-auth": "1.7.6",
+    "better-auth": "1.7.23",
     "drizzle-orm": "1.0.0-rc.5-ab785fc"
   },
   "devDependencies": {

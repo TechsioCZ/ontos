@@ -6,9 +6,9 @@ set -eu
 
 node_version="${1:?Node version from .mise.toml is required}"
 pnpm_version="${2:?pnpm version from package.json#packageManager is required}"
-# linux-x64-musl SHA-256: https://nodejs.org/dist/v26.13.0/SHASUMS256.txt
+# linux-x64-musl SHA-256: https://nodejs.org/dist/v26.13.1/SHASUMS256.txt
 case "${node_version}" in
-  26.13.0) node_checksum='9ba151a0510789460837798f8a0632623ede121a695754a76a181baf95237bd2' ;;
+  26.13.1) node_checksum='baa23b6ecd8555804bf7a4e8702f1637203916a10d286d3ee16fce8bf5637b83' ;;
   *)
     printf 'No pinned checksum for Node %s: add the linux-x64-musl SHA-256 from the official SHASUMS256.txt to install-zerops-node.sh\n' "${node_version}" >&2
     exit 1
