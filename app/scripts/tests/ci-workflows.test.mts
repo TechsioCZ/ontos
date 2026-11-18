@@ -111,6 +111,8 @@ const readGateWorkflow = () => {
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
 const INSTALL_APP_STEP = 'Install the app workspace';
+/** The composite action every job uses to install the app workspace. */
+const INSTALL_APP_ACTION = './.github/actions/install-app';
 /** The last step of a build shard: its consumers need the shard, so they start once this upload exists. */
 const UPLOAD_STEP = "Upload the shard's build outputs";
 const NODE_BUILD_STEP = "Build the shard's Node artifacts";
@@ -552,7 +554,7 @@ it('plans without app dependencies and publishes only the exact changed paths', 
   )(readGateWorkflow()).jobs[CI_PLAN_JOB];
   const install = steps.find(({ name }) => name === 'Install the app workspace for code impact analysis');
   expect(install).toBeUndefined();
-  expect(steps.some(({ uses }) => uses === './.github/actions/install-app')).toBe(false);
+  expect(steps.some(({ uses }) => uses === INSTALL_APP_ACTION)).toBe(false);
   // Only the planner's changed-path list leaves this job; $RUNNER_TEMP is job-local.
   const publish = steps.find(({ name }) => name === 'Publish the exact changed-path list');
   expect(publish?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
@@ -892,6 +894,53 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
   });
   expect(warm.steps.some(({ run }) => (run ?? '').includes('run build'))).toBe(false);
   expect(warm.steps.some(({ run }) => (run ?? '').includes(TYPECHECK_COMMAND))).toBe(true);
+});
+
+// 18 Nov: the warmer ran on ubuntu-24.04 while ubuntu-latest had moved the gates to 26.04, so the toolchain
+// and apt package entries it saved carried image names no gate job asked for.
+it('warms the caches on the image of every gate job that restores them', () => {
+  const schema = Schema.Struct({
+    jobs: Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        needs: Schema.optional(Schema.Array(Schema.String)),
+        'runs-on': Schema.optional(Schema.String),
+        steps: Schema.optional(Schema.Array(Schema.Struct({ uses: Schema.optional(Schema.String) }))),
+      }),
+    ),
+  });
+  const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
+  const { jobs } = Schema.decodeUnknownSync(schema)(parse(source));
+  const image = jobs['warm-caches']?.['runs-on'];
+  const restorers = (jobs['workspace-gates']?.needs ?? []).filter((job) =>
+    (jobs[job]?.steps ?? []).some(({ uses }) => uses === INSTALL_APP_ACTION),
+  );
+  expect(restorers.length).toBeGreaterThan(10);
+  for (const job of restorers) {
+    expect(jobs[job]?.['runs-on'], job).toBe(image);
+  }
+  // One label, written once: a job cannot follow a new image without the warmer following it too.
+  expect(source.match(/runs-on: &gate-image /gu)).toHaveLength(1);
+  expect(source.match(/runs-on: \*gate-image$/gmu)).toHaveLength(restorers.length);
+});
+
+it('saves no toolchain under a merge group ref, which no later run can read', () => {
+  const schema = Schema.Struct({
+    runs: Schema.Struct({
+      steps: Schema.Array(
+        Schema.Struct({
+          name: Schema.optional(Schema.String),
+          uses: Schema.optional(Schema.String),
+          with: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+        }),
+      ),
+    }),
+  });
+  const action = Schema.decodeUnknownSync(schema)(
+    parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
+  );
+  const mise = action.runs.steps.filter(({ uses }) => (uses ?? '').startsWith('jdx/mise-action@'));
+  expect(mise.map((step) => step.with?.cache_save)).toEqual([expression("github.event_name != 'merge_group'")]);
 });
 
 const CommandMatrixJobSchema = Schema.Struct({

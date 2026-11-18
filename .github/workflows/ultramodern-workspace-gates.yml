@@ -208,10 +208,13 @@ jobs:
   # never run on a proven push to main: this job publishes the shared caches. The planner reads
   # authored JSON without installing this workspace.
   # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
+  # The toolchain and apt package keys name the runner image, so every gate job that restores these caches
+  # runs on this job's image through the gate-image anchor: pinned apart, the warmer ran on Ubuntu 24.04
+  # while ubuntu-latest moved the gates to 26.04, and every run missed both entries.
   warm-caches:
     name: Warm the gate caches on main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: &gate-image ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Harden Runner
@@ -302,7 +305,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env:
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
@@ -356,7 +359,7 @@ jobs:
     name: Source, Generation, and Deployment Contracts
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env:
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
@@ -397,7 +400,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, workspace-source-contracts]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] && needs.workspace-source-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env: &unit-check-environment
       RAYON_NUM_THREADS: '1'
@@ -445,7 +448,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, format-and-lint]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] && needs.format-and-lint.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterLint != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
@@ -458,7 +461,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, static-contracts]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterStatic != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
@@ -471,7 +474,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, workspace-gate]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] && needs.workspace-gate.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterTooling != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
@@ -486,7 +489,7 @@ jobs:
     name: Static Contracts (${{ matrix.row }})
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -610,7 +613,7 @@ jobs:
     name: Format, Lint, and Repository Tooling
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     env:
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
@@ -730,7 +733,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1131,7 +1134,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1146,7 +1149,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' && needs.ci-plan.outputs.integrationBrowser != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1165,7 +1168,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1186,7 +1189,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *gate-image
     timeout-minutes: 20
     strategy:
       fail-fast: false

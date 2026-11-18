@@ -31,12 +31,16 @@ outputs:
 runs:
   using: composite
   steps:
+    # A merge group's ref (gh-readonly-queue/main/pr-<number>-<base>) belongs to one queue entry, so no later
+    # run reads a toolchain saved there, and inside the run a fresh install of the two tools (about 4 s) is
+    # as fast as a restore (2 to 6 s) while the save costs 9 to 12 s: 13 such 132 MB entries sat unread.
     - name: Setup mise
       uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
       with:
         working_directory: app
         env: ${{ inputs.mise-env }}
         minimum_release_age: 24h
+        cache_save: ${{ github.event_name != 'merge_group' }}
 
     # The installed tree, not just the store pnpm installs it from. A store restore followed by
     # `pnpm install --frozen-lockfile` downloads nothing on a hit and still spends ~30 s linking 1461
