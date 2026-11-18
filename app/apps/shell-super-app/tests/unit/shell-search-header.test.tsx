@@ -1,6 +1,9 @@
-import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+// @rstest-environment happy-dom
+import { settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { networkIdle } from '@app/shared-contracts/testing/http-double';
+import { act, cleanup, fireEvent, renderHook, screen } from '@testing-library/react';
 import { Deferred, Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it as test, rstest } from 'effect-rstest';
+import { afterEach, expect, it as test } from 'effect-rstest';
 
 import type {
   ShellSearchPayload,
@@ -8,7 +11,13 @@ import type {
   ShellSearchResponse,
   ShellSearchResult,
 } from '../../shared/browser-api.ts';
-import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/browser-api.ts';
+import {
+  LegalEntityIdSchema,
+  ModuleIdSchema,
+  ResourceIdSchema,
+  ShellTargetForbiddenProblemSchema,
+  TenantIdSchema,
+} from '../../shared/browser-api.ts';
 import { ShellSearchBar } from '../../src/routes/shell-search-bar.tsx';
 import { shellSearchPresentationIndex, shellSearchResultTarget } from '../../src/routes/shell-search-resource-types.ts';
 import type { ShellSearchFamilyAvailability } from '../../src/routes/shell-search-match.ts';
@@ -18,47 +27,20 @@ import type {
   ShellSearchSuggestionsState,
 } from '../../src/routes/shell-search-suggestions.ts';
 
+import type { ReactNode } from 'react';
+
+import { makeShellBff } from '../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../support/shell-bff-double.ts';
+import { ShellI18n, shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
+
 const noop = (): void => {};
-
-const { languageState, searchResourcesMock } = rstest.hoisted(() => ({
-  languageState: { current: 'en' },
-  searchResourcesMock: rstest.fn(),
-}));
-
-const translations = new Map(
-  Object.entries({
-    'shell.search.archived': 'Archived',
-    'shell.search.clear': 'Clear search',
-    'shell.search.groups.counterparty': 'Customers and suppliers',
-    'shell.search.groups.product': 'Products',
-    'shell.search.groups.task': 'Tasks',
-    'shell.search.label': 'Search',
-    'shell.search.notGranted': "Search isn't part of your access. Ask your administrator for it.",
-    'shell.search.partial': 'Some providers are unavailable.',
-    'shell.search.placeholder': 'Search clients, tasks, invoices, contracts…',
-    'shell.search.suggestions.all': 'Show all results for “{{query}}”',
-    'shell.search.suggestions.empty': 'Nothing found for “{{query}}”.',
-    'shell.search.suggestions.label': 'Search suggestions',
-    'shell.search.suggestions.loading': 'Searching…',
-    'shell.search.unavailable': 'Search is temporarily unavailable. Try again.',
-  }),
+const english = shellLocaleCopy('en');
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={english}>{children}</ShellI18n>
 );
-
-const translate = (key: string, values?: Readonly<Record<string, string>>): string => {
-  let sentence = translations.get(key) ?? key;
-  for (const [name, value] of Object.entries(values ?? {})) {
-    sentence = sentence.replaceAll(`{{${name}}}`, value);
-  }
-  return sentence;
-};
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: languageState.current, t: translate }),
-}));
-
-rstest.mock('../../src/api/auth-client.ts', () => ({
-  searchResources: searchResourcesMock,
-}));
+const renderBar = (element: ReactNode) =>
+  renderShellRoute(makeShellRouter({ page: { component: () => element, path: '/' }, url: '/en' }), english);
 
 const tenantId = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
 const legalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
@@ -193,45 +175,41 @@ const readySuggestions = ({
   status: 'ready',
 });
 
-beforeEach(() => {
-  languageState.current = 'en';
-  rstest.useFakeTimers();
-  searchResourcesMock.mockImplementation((payload: ShellSearchPayload) => {
-    if (payload.resourceTypes === undefined) {
-      return Effect.succeed(unfiltered);
-    }
-    return Effect.succeed(payload.resourceTypes.length === 0 ? inventoryOnly : filtered);
+afterEach(cleanup);
+
+const defaultSearch = (payload: ShellSearchPayload) => {
+  if (payload.resourceTypes === undefined) {
+    return Effect.succeed(unfiltered);
+  }
+  return Effect.succeed(payload.resourceTypes.length === 0 ? inventoryOnly : filtered);
+};
+const searchBff = (search: NonNullable<ShellBffScript['search']> = defaultSearch) => {
+  const payloads: ShellSearchPayload[] = [];
+  const bff = makeShellBff({
+    search: (payload) => {
+      payloads.push(payload);
+      return search(payload);
+    },
   });
-});
+  return { ...bff, payloads };
+};
+const searches = (bff: ReturnType<typeof searchBff>) => bff.payloads;
 
-afterEach(() => {
-  cleanup();
-  rstest.useRealTimers();
-  languageState.current = 'en';
-  rstest.clearAllMocks();
-});
-
-const settle = () =>
-  Effect.promise(() =>
-    act(async () => {
-      await rstest.advanceTimersByTimeAsync(200);
-    }),
-  );
-
-test.effect('the header filter dispatches only the exact observed admitted types', () =>
-  Effect.gen(function* headerFilterPayload() {
-    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'));
+test.live('the header filter dispatches only the exact observed admitted types', () => {
+  const bff = searchBff();
+  return Effect.gen(function* headerFilterPayload() {
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'), { wrapper: ShellCopy });
 
     act(() => {
       result.current.handleQueryChange('dvorak');
     });
-    yield* settle();
+    yield* waitUntil(() => result.current.state.status !== 'loading');
     expect(result.current.state.status).toBe('ready');
     if (result.current.state.status === 'ready') {
       expect(result.current.state.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
       expect(result.current.state.filters.selectedFamilies).toEqual([]);
     }
-    expect(searchResourcesMock.mock.calls[0]?.[0]).toEqual({
+    expect(searches(bff)[0]).toEqual({
       compositionRevision: 'a'.repeat(64),
       query: 'dvorak',
     });
@@ -239,8 +217,8 @@ test.effect('the header filter dispatches only the exact observed admitted types
     act(() => {
       result.current.handleFamiliesChange(['companies']);
     });
-    yield* settle();
-    expect(searchResourcesMock.mock.calls.at(-1)?.[0]).toEqual({
+    yield* waitUntil(() => result.current.state.status !== 'loading');
+    expect(searches(bff).at(-1)).toEqual({
       compositionRevision: 'a'.repeat(64),
       query: 'dvorak',
       resourceTypes: ['party.registry.counterparty'],
@@ -250,38 +228,40 @@ test.effect('the header filter dispatches only the exact observed admitted types
       expect(result.current.state.filters.selectedFamilies).toEqual(['companies']);
       expect(result.current.state.groups.map(({ presentation }) => presentation.key)).toEqual(['counterparty']);
     }
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-test.effect('a header family filter asks the inventory alone first and never an unfiltered request', () =>
-  Effect.gen(function* headerFilterInventoryFirst() {
-    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'));
+test.live('a header family filter asks the inventory alone first and never an unfiltered request', () => {
+  const bff = searchBff();
+  return Effect.gen(function* headerFilterInventoryFirst() {
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'), { wrapper: ShellCopy });
     act(() => result.current.handleQueryChange('dvorak'));
-    yield* settle();
-    const callsBeforeFilter = searchResourcesMock.mock.calls.length;
+    yield* waitUntil(() => result.current.state.status !== 'loading');
+    const callsBeforeFilter = searches(bff).length;
 
     act(() => result.current.handleFamiliesChange(['companies']));
-    yield* settle();
-    const filteredCalls = searchResourcesMock.mock.calls.slice(callsBeforeFilter).map(([payload]) => payload);
+    yield* waitUntil(() => result.current.state.status !== 'loading');
+    const filteredCalls = searches(bff).slice(callsBeforeFilter);
     // The first filtered request is the explicit empty inventory selector; the second is the exact selected type.
     expect(filteredCalls).toEqual([
       { compositionRevision: 'a'.repeat(64), query: 'dvorak', resourceTypes: [] },
       { compositionRevision: 'a'.repeat(64), query: 'dvorak', resourceTypes: ['party.registry.counterparty'] },
     ]);
     expect(filteredCalls.some(({ resourceTypes }) => resourceTypes === undefined)).toBe(false);
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-test.effect('an unknown header family shows nothing and never widens to the unfiltered answer', () =>
-  Effect.gen(function* headerUnknownFamily() {
-    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'));
+test.live('an unknown header family shows nothing and never widens to the unfiltered answer', () => {
+  const bff = searchBff();
+  return Effect.gen(function* headerUnknownFamily() {
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'), { wrapper: ShellCopy });
     act(() => result.current.handleQueryChange('dvorak'));
-    yield* settle();
-    const callsBeforeFilter = searchResourcesMock.mock.calls.length;
+    yield* waitUntil(() => result.current.state.status !== 'loading');
+    const callsBeforeFilter = searches(bff).length;
 
     act(() => result.current.handleFamiliesChange(['missing']));
-    yield* settle();
-    const filteredCalls = searchResourcesMock.mock.calls.slice(callsBeforeFilter).map(([payload]) => payload);
+    yield* waitUntil(() => result.current.state.status !== 'loading');
+    const filteredCalls = searches(bff).slice(callsBeforeFilter);
     expect(filteredCalls).toEqual([{ compositionRevision: 'a'.repeat(64), query: 'dvorak', resourceTypes: [] }]);
     expect(filteredCalls.some(({ resourceTypes }) => resourceTypes === undefined)).toBe(false);
     expect(result.current.state.status).toBe('ready');
@@ -290,241 +270,272 @@ test.effect('an unknown header family shows nothing and never widens to the unfi
       // The canonical inventory survives, so the declared families stay selectable.
       expect(result.current.state.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
     }
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-test.effect('a query change resets the selected header filter and sends no stale types', () =>
-  Effect.gen(function* headerQueryReset() {
-    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'));
+test.live('a query change resets the selected header filter and sends no stale types', () => {
+  const bff = searchBff();
+  return Effect.gen(function* headerQueryReset() {
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'), { wrapper: ShellCopy });
     act(() => result.current.handleQueryChange('dvorak'));
-    yield* settle();
+    yield* waitUntil(() => result.current.state.status !== 'loading');
     act(() => result.current.handleFamiliesChange(['companies']));
-    yield* settle();
+    yield* waitUntil(() => result.current.state.status !== 'loading');
 
     act(() => result.current.handleQueryChange('jiný'));
-    yield* settle();
+    yield* waitUntil(() => result.current.state.status !== 'loading');
     expect(result.current.state.status).toBe('ready');
     if (result.current.state.status === 'ready') {
       expect(result.current.state.query).toBe('jiný');
       expect(result.current.state.filters.selectedFamilies).toEqual([]);
     }
-    expect(searchResourcesMock.mock.calls.at(-1)?.[0]).toEqual({
+    expect(searches(bff).at(-1)).toEqual({
       compositionRevision: 'a'.repeat(64),
       query: 'jiný',
     });
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-test.effect('a company/tenant scope change rejects the old header response and clears filters', () =>
+test.live('a company/tenant scope change rejects the old header response and clears filters', () =>
   Effect.gen(function* headerScopeRegression() {
     const deferred = yield* Deferred.make<ShellSearchResponse>();
-    searchResourcesMock.mockReturnValue(Deferred.await(deferred));
-    const { rerender, result } = renderHook(
-      ({ scopeKey }: { readonly scopeKey: string }) => useShellSearchSuggestions('b'.repeat(64), scopeKey),
-      { initialProps: { scopeKey: 'tenant-a/company-a' } },
-    );
+    const answered = yield* Deferred.make<boolean>();
+    const bff = searchBff(() => Deferred.await(deferred).pipe(Effect.tap(() => Deferred.succeed(answered, true))));
+    yield* Effect.gen(function* scopeChange() {
+      const { rerender, result } = renderHook(
+        ({ scopeKey }: { readonly scopeKey: string }) => useShellSearchSuggestions('b'.repeat(64), scopeKey),
+        { initialProps: { scopeKey: 'tenant-a/company-a' }, wrapper: ShellCopy },
+      );
 
-    act(() => result.current.handleQueryChange('dvorak'));
-    yield* settle();
-    expect(result.current.state.status).toBe('loading');
+      act(() => result.current.handleQueryChange('dvorak'));
+      yield* waitUntil(() => searches(bff).length === 1);
+      expect(result.current.state.status).toBe('loading');
 
-    rerender({ scopeKey: 'tenant-b/company-b' });
-    expect(result.current.state.status).toBe('idle');
-    yield* Deferred.succeed(deferred, unfiltered);
-    yield* Effect.promise(() =>
-      act(async () => {
-        await rstest.advanceTimersByTimeAsync(0);
-      }),
-    );
-    expect(result.current.state.status).toBe('idle');
+      rerender({ scopeKey: 'tenant-b/company-b' });
+      expect(result.current.state.status).toBe('idle');
+      yield* Deferred.succeed(deferred, unfiltered);
+      // The stale answer was served and has reached the page before the page is checked.
+      yield* Deferred.await(answered);
+      yield* networkIdle;
+      yield* settle;
+      expect(result.current.state.status).toBe('idle');
+    }).pipe(Effect.provide(bff.browser));
   }),
 );
 
-test('the header bar renders a family filter and reports the selection', () => {
-  const onFamiliesChange = rstest.fn<(families: readonly string[]) => void>();
-  render(
-    <ShellSearchBar
-      onDismissSuggestions={noop}
-      onFamiliesChange={onFamiliesChange}
-      onSearch={noop}
-      onValueChange={noop}
-      SuggestionLink={() => null}
-      suggestions={readySuggestions()}
-      value="dvorak"
-    />,
-  );
+test.live('the header bar renders a family filter and reports the selection', () =>
+  Effect.gen(function* headerView() {
+    const selections: (readonly string[])[] = [];
+    const onFamiliesChange = (families: readonly string[]) => {
+      selections.push(families);
+    };
+    yield* renderBar(
+      <ShellSearchBar
+        onDismissSuggestions={noop}
+        onFamiliesChange={onFamiliesChange}
+        onSearch={noop}
+        onValueChange={noop}
+        SuggestionLink={() => null}
+        suggestions={readySuggestions()}
+        value="dvorak"
+      />,
+    );
 
-  fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Customers and suppliers' }));
-  expect(onFamiliesChange).toHaveBeenCalledWith(['companies']);
-});
+    fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Customers and suppliers' }));
+    expect(selections).toContainEqual(['companies']);
+  }),
+);
 
-test('Escape on a header filter closes the panel and returns to the field', () => {
-  const onDismissSuggestions = rstest.fn<() => void>();
-  render(
-    <ShellSearchBar
-      onDismissSuggestions={onDismissSuggestions}
-      onFamiliesChange={noop}
-      onSearch={noop}
-      onValueChange={noop}
-      SuggestionLink={() => null}
-      suggestions={readySuggestions()}
-      value="dvorak"
-    />,
-  );
+test.live('Escape on a header filter closes the panel and returns to the field', () =>
+  Effect.gen(function* headerView() {
+    const dismissals: true[] = [];
+    const onDismissSuggestions = () => {
+      dismissals.push(true);
+    };
+    yield* renderBar(
+      <ShellSearchBar
+        onDismissSuggestions={onDismissSuggestions}
+        onFamiliesChange={noop}
+        onSearch={noop}
+        onValueChange={noop}
+        SuggestionLink={() => null}
+        suggestions={readySuggestions()}
+        value="dvorak"
+      />,
+    );
 
-  fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
-  fireEvent.keyDown(screen.getByRole('button', { name: 'Customers and suppliers' }), { key: 'Escape' });
-  expect(onDismissSuggestions).toHaveBeenCalled();
-});
+    fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Customers and suppliers' }), { key: 'Escape' });
+    expect(dismissals.length).toBeGreaterThan(0);
+  }),
+);
 
-test.effect('missing trusted principal refuses header search', () =>
-  Effect.gen(function* missingPrincipal() {
+test.live('missing trusted principal refuses header search', () => {
+  const bff = searchBff();
+  return Effect.gen(function* missingPrincipal() {
     const missingScope: string | undefined = ['principal'][1];
-    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), missingScope));
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), missingScope), {
+      wrapper: ShellCopy,
+    });
     act(() => {
       result.current.handleQueryChange('dvorak');
     });
-    yield* settle();
+    yield* networkIdle;
+    yield* settle;
     expect(result.current.state.status).toBe('idle');
-    expect(searchResourcesMock).not.toHaveBeenCalled();
-  }),
-);
+    expect(searches(bff)).toEqual([]);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-test.effect('a person whose Roles exclude search is told so once, and typing asks nothing more', () =>
-  Effect.gen(function* searchNotGranted() {
-    searchResourcesMock.mockReturnValue(
-      Effect.fail({ _tag: 'ShellTargetForbiddenProblem', status: 403, title: 'Forbidden', type: 'about:blank' }),
-    );
-    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'));
+test.live('a person whose Roles exclude search is told so once, and typing asks nothing more', () => {
+  const bff = searchBff(() =>
+    Effect.fail(
+      ShellTargetForbiddenProblemSchema.make({
+        detail: 'Search is not granted in this scope.',
+        status: 403,
+        title: 'Forbidden',
+        type: 'about:blank',
+      }),
+    ),
+  );
+  return Effect.gen(function* searchNotGranted() {
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'), { wrapper: ShellCopy });
     act(() => result.current.handleQueryChange('dvorak'));
-    yield* settle();
+    yield* waitUntil(() => result.current.state.status !== 'loading');
     expect(result.current.state.status).toBe('forbidden');
     act(() => result.current.handleQueryChange('dvorakova'));
-    yield* settle();
-    expect({ calls: searchResourcesMock.mock.calls.length, status: result.current.state.status }).toEqual({
+    yield* networkIdle;
+    yield* settle;
+    expect({ calls: searches(bff).length, status: result.current.state.status }).toEqual({
       calls: 1,
       status: 'forbidden',
     });
+  }).pipe(Effect.provide(bff.browser));
+});
+
+test.live('the header bar says plainly that search is not granted, not that it is unavailable', () =>
+  Effect.gen(function* headerView() {
+    yield* renderBar(
+      <ShellSearchBar
+        onDismissSuggestions={noop}
+        onFamiliesChange={noop}
+        onSearch={noop}
+        onValueChange={noop}
+        SuggestionLink={() => null}
+        suggestions={{ filters: { availableFamilies: [], selectedFamilies: [] }, query: 'dvorak', status: 'forbidden' }}
+        value="dvorak"
+      />,
+    );
+    fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
+    expect(screen.getByText("Search isn't part of your access. Ask your administrator for it.")).toBeTruthy();
+    expect(screen.queryByText('Search is temporarily unavailable. Try again.')).toBeNull();
   }),
 );
 
-test('the header bar says plainly that search is not granted, not that it is unavailable', () => {
-  render(
-    <ShellSearchBar
-      onDismissSuggestions={noop}
-      onFamiliesChange={noop}
-      onSearch={noop}
-      onValueChange={noop}
-      SuggestionLink={() => null}
-      suggestions={{ filters: { availableFamilies: [], selectedFamilies: [] }, query: 'dvorak', status: 'forbidden' }}
-      value="dvorak"
-    />,
-  );
-  fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
-  expect(screen.getByText("Search isn't part of your access. Ask your administrator for it.")).toBeTruthy();
-  expect(screen.queryByText('Search is temporarily unavailable. Try again.')).toBeNull();
-});
-
-test('a header suggestion shows the matched variant name/SKU under the parent product title', () => {
-  const result = variantProductHit();
-  const groups: readonly ShellSearchSuggestionGroup[] = [
-    {
-      presentation: {
-        ...presentationMetadata('product', 10, 'Produkty', 'Products'),
-        resourceTypes: ['demo.merchandise.product'],
+test.live('a header suggestion shows the matched variant name/SKU under the parent product title', () =>
+  Effect.gen(function* headerView() {
+    const result = variantProductHit();
+    const groups: readonly ShellSearchSuggestionGroup[] = [
+      {
+        presentation: {
+          ...presentationMetadata('product', 10, 'Produkty', 'Products'),
+          resourceTypes: ['demo.merchandise.product'],
+        },
+        suggestions: [
+          {
+            archived: false,
+            key: 'demo.merchandise:demo.merchandise.product:product-1',
+            result,
+            roles: [],
+            target: shellSearchResultTarget(result, searchIndex),
+            title: result.title,
+          },
+        ],
+        total: 1,
       },
-      suggestions: [
-        {
-          archived: false,
-          key: 'demo.merchandise:demo.merchandise.product:product-1',
-          result,
-          roles: [],
-          target: shellSearchResultTarget(result, searchIndex),
-          title: result.title,
+    ];
+    yield* renderBar(
+      <ShellSearchBar
+        onDismissSuggestions={noop}
+        onFamiliesChange={noop}
+        onSearch={noop}
+        onValueChange={noop}
+        SuggestionLink={({ children }) => <a href="/product-parent">{children}</a>}
+        suggestions={readySuggestions({ groups, query: 'adapt' })}
+        value="adapt"
+      />,
+    );
+
+    fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
+    const link = screen.getByRole('link', { name: /Product parent/u });
+    expect(link.textContent).toContain('Adaptér 18 mm');
+    expect(link.textContent).toContain('18kop009');
+  }),
+);
+
+test.live('header shows the approved generic subtitle and archive badge in its one context line', () =>
+  Effect.gen(function* headerView() {
+    const base = {
+      ...hit('projects.core', 'projects.project', 'Projekt Praha'),
+      matchedVariant: { id: 'variant-9', name: 'Adaptér 18 mm', sku: '18kop009' },
+    };
+    const archived = { ...base, archived: true, subtitle: 'PRJ-2026-14' };
+    const plain = { ...hit('inventory.stock', 'inventory.stock.item', 'Bez archivu'), archived: false };
+    const groups: readonly ShellSearchSuggestionGroup[] = [
+      {
+        presentation: {
+          ...presentationMetadata('project', 10, 'Projekty', 'Projects'),
+          resourceTypes: ['projects.project'],
         },
-      ],
-      total: 1,
-    },
-  ];
-  render(
-    <ShellSearchBar
-      onDismissSuggestions={noop}
-      onFamiliesChange={noop}
-      onSearch={noop}
-      onValueChange={noop}
-      SuggestionLink={({ children }) => <a href="/product-parent">{children}</a>}
-      suggestions={readySuggestions({ groups, query: 'adapt' })}
-      value="adapt"
-    />,
-  );
-
-  fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
-  const link = screen.getByRole('link', { name: /Product parent/u });
-  expect(link.textContent).toContain('Adaptér 18 mm');
-  expect(link.textContent).toContain('18kop009');
-});
-
-test('header shows the approved generic subtitle and archive badge in its one context line', () => {
-  const base = {
-    ...hit('projects.core', 'projects.project', 'Projekt Praha'),
-    matchedVariant: { id: 'variant-9', name: 'Adaptér 18 mm', sku: '18kop009' },
-  };
-  const archived = { ...base, archived: true, subtitle: 'PRJ-2026-14' };
-  const plain = { ...hit('inventory.stock', 'inventory.stock.item', 'Bez archivu'), archived: false };
-  const groups: readonly ShellSearchSuggestionGroup[] = [
-    {
-      presentation: {
-        ...presentationMetadata('project', 10, 'Projekty', 'Projects'),
-        resourceTypes: ['projects.project'],
+        suggestions: [
+          {
+            archived: true,
+            key: 'projects.core:projects.project:project-1',
+            result: archived,
+            roles: [],
+            target: shellSearchResultTarget(archived, searchIndex),
+            title: archived.title,
+          },
+          {
+            archived: false,
+            key: 'inventory.stock:inventory.stock.item:item-1',
+            result: plain,
+            roles: [],
+            target: shellSearchResultTarget(plain, searchIndex),
+            title: plain.title,
+          },
+        ],
+        total: 2,
       },
-      suggestions: [
-        {
-          archived: true,
-          key: 'projects.core:projects.project:project-1',
-          result: archived,
-          roles: [],
-          target: shellSearchResultTarget(archived, searchIndex),
-          title: archived.title,
-        },
-        {
-          archived: false,
-          key: 'inventory.stock:inventory.stock.item:item-1',
-          result: plain,
-          roles: [],
-          target: shellSearchResultTarget(plain, searchIndex),
-          title: plain.title,
-        },
-      ],
-      total: 2,
-    },
-  ];
-  render(
-    <ShellSearchBar
-      onDismissSuggestions={noop}
-      onFamiliesChange={noop}
-      onSearch={noop}
-      onValueChange={noop}
-      SuggestionLink={({ 'aria-label': ariaLabel, children }) => (
-        <a aria-label={ariaLabel} href="/suggestion">
-          {children}
-        </a>
-      )}
-      suggestions={readySuggestions({ groups, query: 'praha' })}
-      value="praha"
-    />,
-  );
+    ];
+    yield* renderBar(
+      <ShellSearchBar
+        onDismissSuggestions={noop}
+        onFamiliesChange={noop}
+        onSearch={noop}
+        onValueChange={noop}
+        SuggestionLink={({ 'aria-label': ariaLabel, children }) => (
+          <a aria-label={ariaLabel} href="/suggestion">
+            {children}
+          </a>
+        )}
+        suggestions={readySuggestions({ groups, query: 'praha' })}
+        value="praha"
+      />,
+    );
 
-  fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
-  const link = screen.getByRole('link', { name: /Projekt Praha.*PRJ-2026-14.*Adaptér 18 mm.*18kop009.*Archived/u });
-  // The accessible name keeps the whole highlighted word and every visible approved detail.
-  expect(link.getAttribute('aria-label')).toContain('Projekt Praha');
-  expect(link.getAttribute('aria-label')).toContain('PRJ-2026-14');
-  expect(link.getAttribute('aria-label')).toContain('Adaptér 18 mm');
-  expect(link.getAttribute('aria-label')).toContain('18kop009');
-  expect(link.textContent?.match(/PRJ-2026-14/gu)).toHaveLength(1);
-  expect(screen.getByText('Archived')).toBeTruthy();
+    fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
+    const link = screen.getByRole('link', { name: /Projekt Praha.*PRJ-2026-14.*Adaptér 18 mm.*18kop009.*Archived/u });
+    // The accessible name keeps the whole highlighted word and every visible approved detail.
+    expect(link.getAttribute('aria-label')).toContain('Projekt Praha');
+    expect(link.getAttribute('aria-label')).toContain('PRJ-2026-14');
+    expect(link.getAttribute('aria-label')).toContain('Adaptér 18 mm');
+    expect(link.getAttribute('aria-label')).toContain('18kop009');
+    expect(link.textContent?.match(/PRJ-2026-14/gu)).toHaveLength(1);
+    expect(screen.getByText('Archived')).toBeTruthy();
 
-  const plainLink = screen.getByRole('link', { name: /Bez archivu/u });
-  expect(plainLink.getAttribute('aria-label')).not.toContain('Archived');
-});
+    const plainLink = screen.getByRole('link', { name: /Bez archivu/u });
+    expect(plainLink.getAttribute('aria-label')).not.toContain('Archived');
+  }),
+);

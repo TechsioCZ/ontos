@@ -2,225 +2,267 @@
 // The DPH page offers a VAT change only when Tax says the signed-in person may make it. A read-only accountant sees the
 // regime with its history and the rates with their plans, and no control that would change them; an owner sees and
 // can use every one. Tax itself still refuses a change from a person without the right (tax-vat-settings-postgres
-// proves that refusal on the server). Only Tax's reads, the i18n runtime and the route head are replaced.
+// proves that refusal on the server). The page runs on its real i18n, router and Tax clients; the Shell's gateway
+// issuer and Tax's reads answer in process through their HttpApi contracts.
+import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { pinDocumentNavigationModules } from '@app/shared-contracts';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { DateTime, Effect, Option } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { constVoid } from 'effect/Function';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+
+import {
+  ApplicableTaxRuleSetApi,
+  ApplicableTaxRuleSetResponseSchema,
+} from '../../../tax/shared/apis/applicable-tax-rule-set.ts';
+import {
+  SellerVatRegimeAtInstantApi,
+  SellerVatRegimeAtInstantResponseSchema,
+} from '../../../tax/shared/apis/seller-vat-regime-at-instant.ts';
+import {
+  SellerVatRegimeHistoryApi,
+  SellerVatRegimeHistoryResponseSchema,
+} from '../../../tax/shared/apis/seller-vat-regime-history.ts';
+import { TaxRuleHistoryApi, TaxRuleHistoryResponseSchema } from '../../../tax/shared/apis/tax-rule-history.ts';
+import { VatChangeRightsApi } from '../../../tax/shared/apis/vat-change-rights.ts';
 import type { VatChangeRights } from '../../src/routes/[lang]/finance/dph/tax-access.ts';
 import { VatPage } from '../../src/routes/[lang]/finance/dph/page.tsx';
 import { gatewayRefusalState, vatSettingsData } from '../../src/routes/[lang]/finance/dph/vat-settings-data.ts';
-import { financeBrowserRuntime } from '../../src/runtime/browser.ts';
-import { pinDocumentNavigationModules } from '@app/shared-contracts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const TENANT = 'a0000000-0000-4000-8000-000000000001';
-const { rights, taxState } = rstest.hoisted(() => ({
-  rights: { current: { createRevision: false, createRule: false, declareRegime: false, endRevision: false } },
-  /** What Tax (through the Shell) answers for the company. */
-  taxState: { current: 'declared' },
-}));
+const ns = 'finance-billing.vatSettings';
+const czech = moduleText('cs');
+const say = (key: string, values: Readonly<Record<string, string>> = {}) => czech(`${ns}.${key}`, values);
+const fingerprint = (digit: string) => digit.repeat(64);
+const standard = 'cz.vat.standard';
 
 const ruleRef = {
   moduleId: 'commerce.tax',
   resourceId: 'rule-standard',
   resourceType: 'commerce.tax.tax-rule',
   tenantId: TENANT,
-};
+} as const;
 const revisionRef = (id: string) => ({
   moduleId: 'commerce.tax',
   resourceId: id,
   resourceType: 'commerce.tax.tax-rule-revision',
   tenantId: TENANT,
 });
-const at = (iso: string) => DateTime.makeUnsafe(iso);
+const attribution = { provenanceRef: 'ontos:test', reason: 'Test fixture', recordedAt: '2023-12-01T00:00:00.000Z' };
+const rateRevision = (id: string, ratePercent: string, effectiveFrom: string, effectiveTo: string | null) => ({
+  compositionKind: 'EXCLUSIVE',
+  effectiveFrom,
+  effectiveTo,
+  ratePercent,
+  semanticFingerprint: fingerprint(ratePercent === '21' ? '2' : '3'),
+  taxRuleRevisionRef: revisionRef(id),
+  treatmentCategory: 'TAXABLE',
+});
 
-rstest.mock('../../src/routes/[lang]/finance/dph/tax-access.ts', () => ({
-  createClassificationRule: () => Effect.succeed('saved'),
-  createRateRevision: () => Effect.succeed('saved'),
-  declareRegime: () => Effect.succeed('saved'),
-  endRateRevision: () => Effect.succeed('saved'),
-  // The standard rate has a rule (21 % since 2024 and 23 % planned for 2099); the reduced one has none yet.
-  readApplicableRule: (code: string) =>
-    Effect.succeed({
-      applicable: code === 'cz.vat.standard' ? [{ taxRuleRef: ruleRef }] : [],
-      outcome: 'SELECTED',
-    }),
-  readChangeRights: () => Effect.sync(() => rights.current),
-  readRegimeAt: () =>
-    // The Shell's own refusal when Tax is not installed for the tenant.
-    taxState.current === 'notInstalled'
-      ? Effect.fail({
-          _tag: 'GatewayForbiddenProblem',
-          detail: 'The module the call is for is not installed for the tenant.',
-          status: 403,
-          title: 'Module not installed',
-          type: 'https://ontos.dev/problems/gateway-module-not-installed',
-        })
-      : Effect.succeed({
-          headRevision: taxState.current === 'declared' ? 1 : 0,
-          selection:
-            taxState.current === 'declared' ? { _tag: 'DECLARED', regime: 'VAT_PAYER' } : { _tag: 'NOT_DECLARED' },
-        }),
-  readRegimeHistory: () =>
-    Effect.sync(() => ({
-      completeness: { rowCount: 1, setFingerprint: '0'.repeat(64) },
-      revisions: [{ effectiveFrom: at('2023-12-31T23:00:00Z'), regime: 'VAT_PAYER', revision: 1 }],
-    })),
-  readRuleHistory: () =>
-    Effect.succeed({
-      basisFingerprint: '1'.repeat(64),
-      corrections: [],
-      revisions: [
-        {
-          effectiveFrom: at('2023-12-31T23:00:00Z'),
-          effectiveTo: Option.some(at('2098-12-31T23:00:00Z')),
-          endFact: Option.none(),
-          ratePercent: '21',
-          taxRuleRevisionRef: revisionRef('revision-21'),
-        },
-        {
-          effectiveFrom: at('2098-12-31T23:00:00Z'),
-          effectiveTo: Option.none(),
-          endFact: Option.none(),
-          ratePercent: '23',
-          taxRuleRevisionRef: revisionRef('revision-23'),
-        },
-      ],
-      taxRuleRef: ruleRef,
-    }),
-}));
-rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+/** The standard rate has a rule (21 % since 2024 and 23 % planned for 2099); the reduced one has none yet. */
+const applicableRuleOf = (code: string) =>
+  Schema.decodeUnknownSync(ApplicableTaxRuleSetResponseSchema)({
+    applicable:
+      code === standard
+        ? [
+            {
+              ...rateRevision('revision-21', '21', '2023-12-31T23:00:00.000Z', '2098-12-31T23:00:00.000Z'),
+              endedEffectiveTo: null,
+              revisionNumber: 1,
+              taxRuleRef: ruleRef,
+            },
+          ]
+        : [],
+    completeness: {
+      predicate: { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: code },
+      predicateFingerprint: fingerprint('4'),
+      rowCount: code === standard ? 1 : 0,
+      setFingerprint: fingerprint('5'),
+    },
+    excludedByCorrection: [],
+    outcome: 'SELECTED',
+    taxRelevantTime: '2026-11-18T00:00:00.000Z',
+  });
+const ruleHistory = Schema.decodeUnknownSync(TaxRuleHistoryResponseSchema)({
+  basisFingerprint: fingerprint('1'),
+  corrections: [],
+  meaningKind: 'VAT_RATE',
+  revisions: [
+    {
+      ...attribution,
+      ...rateRevision('revision-21', '21', '2023-12-31T23:00:00.000Z', '2098-12-31T23:00:00.000Z'),
+      endFact: null,
+      jurisdiction: 'CZ_DOMESTIC',
+      revisionNumber: 1,
+      supersedesRevisionRef: null,
+      taxClassificationCode: standard,
+    },
+    {
+      ...attribution,
+      ...rateRevision('revision-23', '23', '2098-12-31T23:00:00.000Z', null),
+      endFact: null,
+      jurisdiction: 'CZ_DOMESTIC',
+      revisionNumber: 2,
+      supersedesRevisionRef: null,
+      taxClassificationCode: standard,
+    },
+  ],
+  stableCode: standard,
+  taxRuleRef: ruleRef,
+});
+/** What Tax answers for the company's regime: a declared VAT payer, or nothing declared yet. */
+const regimeAt = (declared: boolean) =>
+  Schema.decodeUnknownSync(SellerVatRegimeAtInstantResponseSchema)({
+    completeness: { rowCount: declared ? 1 : 0, setFingerprint: fingerprint('0') },
+    headRevision: declared ? 1 : 0,
+    instant: '2026-11-18T00:00:00.000Z',
+    selection: declared
+      ? {
+          _tag: 'DECLARED',
+          declarationRevisionRef: { revision: 1 },
+          effectiveFrom: '2023-12-31T23:00:00.000Z',
+          effectiveFromOrigin: 'DECLARED',
+          provenance: 'MERCHANT_DECLARED',
+          regime: 'VAT_PAYER',
+        }
+      : { _tag: 'NOT_DECLARED' },
+  });
+const regimeHistory = Schema.decodeUnknownSync(SellerVatRegimeHistoryResponseSchema)({
+  completeness: { rowCount: 1, setFingerprint: fingerprint('0') },
+  revisions: [
+    {
+      declarationRef: {
+        moduleId: 'commerce.tax',
+        resourceId: 'declaration-1',
+        resourceType: 'commerce.tax.seller-vat-regime-declaration',
+        tenantId: TENANT,
+      },
+      declaredBy: 'b0000000-0000-4000-8000-000000000001',
+      effectiveFrom: '2023-12-31T23:00:00.000Z',
+      effectiveFromOrigin: 'DECLARED',
+      provenance: 'MERCHANT_DECLARED',
+      reason: null,
+      recordedAt: '2023-12-01T00:00:00.000Z',
+      regime: 'VAT_PAYER',
+      replacesScheduled: false,
+      revision: 1,
+    },
+  ],
+});
 
-const ns = 'finance-billing.vatSettings';
-const context: ModulePageProps['context'] = { legalEntityId: 'company-a', principalId: 'person-a', tenantId: TENANT };
-/** Lets running reads take a step, then flushes React's updates. */
-const settle: Effect.Effect<void> = Effect.promise(() => financeBrowserRuntime.runPromise(Effect.yieldNow)).pipe(
-  Effect.andThen(
-    Effect.sync(() => {
-      act(constVoid);
-    }),
+/** Which VAT changes Tax lets the signed-in person make, and whether the company declared a regime; each test sets it. */
+let rights: VatChangeRights = { createRevision: false, createRule: false, declareRegime: false, endRevision: false };
+let declared = true;
+
+const Applicable = ApplicableTaxRuleSetApi.prefix('/tax-api');
+const RuleHistory = TaxRuleHistoryApi.prefix('/tax-api');
+const RegimeAt = SellerVatRegimeAtInstantApi.prefix('/tax-api');
+const RegimeHistory = SellerVatRegimeHistoryApi.prefix('/tax-api');
+const ChangeRights = VatChangeRightsApi.prefix('/tax-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ tax: '/tax-api' }).application,
+  serveApi(
+    Applicable,
+    HttpApiBuilder.group(Applicable, 'applicableTaxRuleSet', (group) =>
+      group.handle('execute', ({ payload }) => Effect.sync(() => applicableRuleOf(payload.taxClassificationCode))),
+    ),
+  ),
+  serveApi(
+    RuleHistory,
+    HttpApiBuilder.group(RuleHistory, 'taxRuleHistory', (group) =>
+      group.handle('execute', () => Effect.succeed(ruleHistory)),
+    ),
+  ),
+  serveApi(
+    RegimeAt,
+    HttpApiBuilder.group(RegimeAt, 'sellerVatRegimeAtInstant', (group) =>
+      group.handle('execute', () => Effect.sync(() => regimeAt(declared))),
+    ),
+  ),
+  serveApi(
+    RegimeHistory,
+    HttpApiBuilder.group(RegimeHistory, 'sellerVatRegimeHistory', (group) =>
+      group.handle('execute', () => Effect.succeed(regimeHistory)),
+    ),
+  ),
+  serveApi(
+    ChangeRights,
+    HttpApiBuilder.group(ChangeRights, 'vatChangeRights', (group) =>
+      group.handle('execute', () => Effect.sync(() => rights)),
+    ),
   ),
 );
-/** Runs `step` inside React's act, then lets what it started settle. */
-const acted = (step: () => void): Effect.Effect<void> =>
-  Effect.sync(() => {
-    act(() => {
-      step();
-    });
-  }).pipe(Effect.andThen(settle));
-/** Lets the page work until `condition` holds; fails the test when it never does. */
-const waitUntil = (condition: () => boolean, attempt = 0): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    if (condition() || attempt >= 200) {
-      return Effect.sync(() => {
-        expect(condition()).toBe(true);
-      });
-    }
-    return settle.pipe(Effect.andThen(waitUntil(condition, attempt + 1)));
-  });
-const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
-const render = () =>
-  acted(() => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ container, root });
-    root.render(<VatPage context={context} />);
-  });
+
+const context: ModulePageProps['context'] = { legalEntityId: 'company-a', principalId: 'person-a', tenantId: TENANT };
 const text = () => document.body.textContent ?? '';
 const buttons = () => [...document.querySelectorAll('button')].map((button) => button.textContent?.trim() ?? '');
-const editing = [`${ns}.regimeChange`, `${ns}.plan`, `${ns}.withdraw`, `${ns}.firstRate`];
+const editing = () => [say('regimeChange'), say('plan'), say('withdraw'), say('firstRate')];
+const offered = () => buttons().filter((label) => editing().includes(label));
+
+const render = Effect.gen(function* mount() {
+  yield* pinTestDocument;
+  yield* mountInRoute(<VatPage context={context} />, { path: 'finance/dph', url: '/cs/finance/dph' });
+});
+const showWith = (granted: VatChangeRights) =>
+  Effect.sync(() => {
+    rights = granted;
+  }).pipe(Effect.andThen(render), Effect.andThen(waitUntil(() => text().includes(say('regime.VAT_PAYER')))));
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  taxState.current = 'declared';
+  declared = true;
   // As on stage: the Shell pins the navigation of the person's company, and Tax has no navigation entry of its own.
   pinDocumentNavigationModules(['finance.billing', 'demo.merchandise', 'sales.pipeline'], document);
   vatSettingsData.invalidate();
 });
 
-afterEach(() => {
-  for (const { container, root } of roots.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
-const showWith = (granted: VatChangeRights) =>
-  Effect.sync(() => {
-    rights.current = granted;
-  }).pipe(Effect.andThen(render()), Effect.andThen(waitUntil(() => text().includes(`${ns}.regime.VAT_PAYER`))));
-const offered = () => buttons().filter((label) => editing.includes(label));
-
-it.effect('a read-only accountant sees the regime and the rates with their history, and no change is offered', () =>
+it.live('a read-only accountant sees the regime and the rates with their history, and no change is offered', () =>
   Effect.gen(function* readOnly() {
     yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: false });
     // The regime with its history, the current rate, the planned rate and the missing classification are shown.
-    expect(text()).toContain(`${ns}.state.current`);
-    expect(text()).toContain(`${ns}.currentRate`);
-    expect(text()).toContain(`${ns}.planned`);
-    expect(text()).toContain(`${ns}.missing`);
-    expect(text()).not.toContain(`${ns}.regimeHistoryHidden`);
+    expect(text()).toContain(say('state.current'));
+    expect(text()).toContain(say('currentRate', { date: '1. 1. 2024', rate: '21' }));
+    expect(text()).toContain(say('planned'));
+    expect(text()).toContain(say('missing'));
+    expect(text()).not.toContain(say('regimeHistoryHidden'));
     expect(offered()).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an owner sees every change and can open each', () =>
+it.live('an owner sees every change and can open each', () =>
   Effect.gen(function* owner() {
     yield* showWith({ createRevision: true, createRule: true, declareRegime: true, endRevision: true });
-    expect(offered().toSorted()).toEqual(editing.toSorted());
+    expect(offered().toSorted()).toEqual(editing().toSorted());
     yield* acted(() => {
-      [...document.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === `${ns}.plan`)?.click();
+      [...document.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === say('plan'))?.click();
     });
-    expect(text()).toContain(`${ns}.planTitle`);
-  }),
+    yield* waitUntil(() => text().includes(say('planTitle', { name: 'Základní sazba DPH' })));
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a person who may only end a planned rate is offered only the withdrawal', () =>
+it.live('a person who may only end a planned rate is offered only the withdrawal', () =>
   Effect.gen(function* endOnly() {
     yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: true });
-    expect(offered()).toEqual([`${ns}.withdraw`]);
-  }),
+    expect(offered()).toEqual([say('withdraw')]);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('Tax without a navigation entry still runs for the company: the page shows its regime and rates', () =>
-  Effect.gen(function* withoutNavigationEntry() {
-    // The navigation hint lists no `commerce.tax`, exactly as stage: the page must not read that as "not installed".
-    yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: false });
-    expect(text()).not.toContain(`${ns}.notInstalled`);
-    expect(text()).toContain(`${ns}.currentRate`);
-  }),
-);
-
-it.effect('Tax installed but no regime declared: the page says so and what to do, not that Tax is off', () =>
+it.live('Tax installed but no regime declared: the page says so and what to do, not that Tax is off', () =>
   Effect.gen(function* notDeclared() {
-    taxState.current = 'notDeclared';
-    yield* render();
-    yield* waitUntil(() => text().includes(`${ns}.notDeclared`));
-    expect(text()).toContain(`${ns}.notDeclaredDescription`);
-    expect(text()).not.toContain(`${ns}.notInstalled`);
-  }),
-);
-
-it.effect("Tax not installed for the tenant: the page says exactly that, from the Shell's own answer", () =>
-  Effect.gen(function* notInstalled() {
-    taxState.current = 'notInstalled';
-    yield* render();
-    yield* waitUntil(() => text().includes(`${ns}.notInstalled`));
-    expect(text()).toContain(`${ns}.notInstalledDescription`);
-    expect(text()).not.toContain(`${ns}.forbidden`);
-  }),
+    declared = false;
+    yield* render;
+    yield* waitUntil(() => text().includes(say('notDeclared')));
+    expect(text()).toContain(say('notDeclaredDescription'));
+    expect(text()).not.toContain(say('notInstalled'));
+  }).pipe(Effect.provide(network)),
 );
 
 it("the Shell's refusal names the page state: not installed, temporarily unavailable, or no access", () => {

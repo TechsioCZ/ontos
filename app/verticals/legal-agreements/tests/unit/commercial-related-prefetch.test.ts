@@ -1,10 +1,26 @@
-import { Deferred, Effect, Fiber, Match, Option, Result, Schema } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+import { Deferred, Effect, Fiber, FiberSet, Layer, Match, Option, Result, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
-import type ReactRuntime from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { moduleChangeEvent, moduleWriteEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsResponseSchema, RecordsForbiddenProblemSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import {
+  CounterpartyReadApi,
+  CounterpartyReadResponseSchema,
+  CounterpartyReadForbiddenProblemSchema,
+  CounterpartyReadUnavailableProblemSchema,
+} from '@app/party-registry/api';
+import type { CounterpartyReadRequest, CounterpartyReadResponse } from '@app/party-registry/api';
+import {
+  CustomerListApi,
+  CustomerListForbiddenProblemSchema,
+} from '../../../party-registry/shared/apis/customer-list.ts';
+import type { CustomerListResponse } from '../../../party-registry/shared/apis/customer-list.ts';
+import { pinTestDocument, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
+import { mountInRoute } from '../support/module-ui.ts';
 import {
   agreementCustomerData,
   agreements,
@@ -14,38 +30,6 @@ import {
   useAgreementCustomer,
 } from '../../src/routes/[lang]/smlouvy/agreements-data.ts';
 
-const mocks = rstest.hoisted(() => ({ customer: rstest.fn(), customers: rstest.fn(), records: rstest.fn() }));
-rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
-  executeCounterpartyRead: mocks.customer,
-}));
-rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
-  listCustomers: mocks.customers,
-}));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('../../src/routes/[lang]/smlouvy/rental-reference-access.ts', () => ({
-  rentalReferenceAccess: Effect.succeed(false),
-}));
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-const events = new EventTarget();
-const globals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(globals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(globals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
 const context = { legalEntityId: 'company-a', principalId: 'principal-a', tenantId: 'tenant-a' };
 const scope = pageDataScopeKey(context, 'legal.agreements') ?? '';
 const id = '10000000-0000-4000-8000-000000000001';
@@ -86,52 +70,201 @@ const records = Schema.decodeSync(RecordsResponseSchema)({
 const contract = Option.getOrThrow(Option.fromUndefinedOr(records.contracts[0]));
 const input = { contract, revision: 7, scope };
 const props = { context, routeParams: {}, search: `?resourceId=${id}` };
+const customer = (displayName: string): CounterpartyReadResponse =>
+  Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
+    counterpartyRef: contract.counterpartyRef,
+    createdAt: '2026-11-03T00:00:00.000Z',
+    currentRoles: [],
+    legalEntityRef: {
+      moduleId: 'core.identity',
+      resourceId: id,
+      resourceType: 'core.identity.legal-entity',
+      tenantId: ref.tenantId,
+    },
+    party: {
+      archived: false,
+      canonicalPartyRef: {
+        moduleId: 'party.registry',
+        resourceId: id,
+        resourceType: 'party.registry.party',
+        tenantId: ref.tenantId,
+      },
+      displayName,
+      partyType: 'ORGANIZATION',
+      storedPartyRef: {
+        moduleId: 'party.registry',
+        resourceId: id,
+        resourceType: 'party.registry.party',
+        tenantId: ref.tenantId,
+      },
+    },
+  });
+const customerForbidden = CounterpartyReadForbiddenProblemSchema.make({
+  detail: 'Customer read denied',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/counterparty-read-forbidden',
+});
+const customerUnavailable = CounterpartyReadUnavailableProblemSchema.make({
+  detail: 'Customer unavailable',
+  retryable: true,
+  status: 503,
+  title: 'Unavailable',
+  type: 'https://ontos.dev/problems/counterparty-read-unavailable',
+});
+const recordsForbidden = RecordsForbiddenProblemSchema.make({
+  detail: 'Records read denied',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/records-forbidden',
+});
+const customerListForbidden = CustomerListForbiddenProblemSchema.make({
+  detail: 'Customer list denied',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/customer-list-forbidden',
+});
+const customerReads: CounterpartyReadRequest[] = [];
+const recordsReads: RecordsRequest[] = [];
+let customerAnswer: Effect.Effect<CounterpartyReadResponse, typeof customerForbidden | typeof customerUnavailable> =
+  Effect.succeed(customer('Authorized customer'));
+let recordsAnswer: Effect.Effect<RecordsResponse, typeof recordsForbidden> = Effect.succeed(records);
+let customerListAnswer: Effect.Effect<CustomerListResponse, typeof customerListForbidden> = Effect.succeed({
+  items: [],
+});
+const Owner = RecordsApi.prefix('/legal-agreements-api');
+const Party = CounterpartyReadApi.prefix('/party-registry-api');
+const Customers = CustomerListApi.prefix('/party-registry-api');
+const applications = [
+  shellGatewayIssuer({ 'legal-agreements': '/legal-agreements-api', 'party-registry': '/party-registry-api' })
+    .application,
+  serveApi(
+    Owner,
+    HttpApiBuilder.group(Owner, 'records', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          recordsReads.push(payload);
+          return recordsAnswer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Party,
+    HttpApiBuilder.group(Party, 'counterpartyRead', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          customerReads.push(payload);
+          return customerAnswer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Customers,
+    HttpApiBuilder.group(Customers, 'customerList', (g) =>
+      g.handle('execute', () => Effect.suspend(() => customerListAnswer)),
+    ),
+  ),
+] as const;
+type BrowserRequest = Parameters<
+  NonNullable<Window['happyDOM']['settings']['fetch']['interceptor']>['beforeAsyncRequest']
+>[0];
+const forwardBrowserRequest = (
+  handler: (request: Request) => Promise<Response>,
+  { request, window: sourceWindow }: BrowserRequest,
+) =>
+  Effect.gen(function* forward() {
+    const head = { headers: [...request.headers], method: request.method, signal: request.signal };
+    const forwarded =
+      request.method === 'GET' || request.method === 'HEAD'
+        ? new Request(request.url, head)
+        : new Request(request.url, { ...head, body: yield* Effect.promise(() => request.arrayBuffer()) });
+    const response = yield* Effect.promise(() => handler(forwarded));
+    const bytes = yield* Effect.promise(() => response.arrayBuffer());
+    return new sourceWindow.Response(bytes, {
+      headers: [...response.headers],
+      status: response.status,
+      statusText: response.statusText,
+    });
+  });
+// Keep the browser request's abort signal when forwarding it to the in-process owner.
+// The shared browserNetwork currently rebuilds the request without that signal.
+const network = Layer.effectDiscard(
+  Effect.gen(function* browserTransport() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(Layer.mergeAll(...applications), { disableLogger: true })),
+      (value) => Effect.promise(() => value.dispose()),
+    );
+    const run = yield* FiberSet.makeRuntimePromise();
+    const settings = window.happyDOM.settings.fetch;
+    const previous = settings.interceptor;
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        settings.interceptor = {
+          beforeAsyncRequest: (request) => run(forwardBrowserRequest(server.handler, request)),
+        };
+      }),
+      () =>
+        Effect.sync(() => {
+          settings.interceptor = previous;
+        }),
+    );
+  }),
+);
+afterEach(unmountAll);
 beforeEach(() => {
-  rstest.resetAllMocks();
+  customerReads.length = 0;
+  recordsReads.length = 0;
   agreements.invalidate();
   agreementCustomerData.invalidate();
-  mocks.records.mockReturnValue(Effect.succeed(records));
-  mocks.customers.mockReturnValue(Effect.succeed([]));
-  mocks.customer.mockReturnValue(Effect.succeed({ party: { displayName: 'Authorized customer' } }));
+  recordsAnswer = Effect.succeed(records);
+  customerListAnswer = Effect.succeed({ items: [] });
+  customerAnswer = Effect.succeed(customer('Authorized customer'));
 });
 const Detail = () => {
   const value = useAgreementCustomer(context, contract, 7);
   return createElement('p', null, value.customerName ?? value.customerNameFeedback);
 };
-it.effect('warms the real name and the first selected render makes no extra request', () =>
+it.live('warms the real name and the first selected render makes no extra request', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadAgreementCustomers(context, [contract], 7);
-    expect(mocks.customer).toHaveBeenCalledTimes(1);
-    expect(renderToStaticMarkup(createElement(Detail))).toContain('Authorized customer');
+    expect(customerReads).toHaveLength(1);
+    yield* mountInRoute(createElement(Detail));
+    expect(text()).toContain('Authorized customer');
     yield* agreementCustomerData.read(input);
-    expect(mocks.customer).toHaveBeenCalledTimes(1);
-  }),
+    expect(customerReads).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 it.live('preloads the exact cold deep link, then another selection reuses base records without rereading them', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* Effect.promise(() => preloadPage(props));
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-    expect(mocks.customer).toHaveBeenCalledTimes(1);
-    expect(mocks.customer.mock.calls[0]?.[0]).toEqual({ counterpartyRef: contract.counterpartyRef });
+    expect(recordsReads).toHaveLength(1);
+    expect(customerReads).toHaveLength(1);
+    expect(customerReads[0]).toEqual({ counterpartyRef: contract.counterpartyRef });
     const selected = agreementCustomerData.snapshot(input);
     expect(selected.state).toBe('ready');
     const next = { ...props, search: `?resourceId=${otherId}` };
     yield* Effect.promise(() => preloadPage(next));
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-    expect(mocks.customer).toHaveBeenCalledTimes(2);
+    expect(recordsReads).toHaveLength(1);
+    expect(customerReads).toHaveLength(2);
     expect(agreements.key(agreementsInputOf(props, ''))).toBe(agreements.key(agreementsInputOf(next, '')));
-  }),
+  }).pipe(Effect.provide(network)),
 );
 it.live('never translates a missing or invalid contract identity into a customer lookup', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* Effect.promise(() => preloadPage({ ...props, search: '?resourceId=10000000-0000-4000-8000-000000000099' }));
     yield* Effect.promise(() => preloadPage({ ...props, search: '?resourceId=invalid' }));
-    expect(mocks.customer).not.toHaveBeenCalled();
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-  }),
+    expect(customerReads).toHaveLength(0);
+    expect(recordsReads).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('separates every scope field, revision, module and reference tenant', () =>
+it.live('separates every scope field, revision, module and reference tenant', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadAgreementCustomers(context, [contract], 7);
     for (const next of [
       { ...context, tenantId: 'other' },
@@ -147,92 +280,106 @@ it.effect('separates every scope field, revision, module and reference tenant', 
     yield* agreementCustomerData.read({ ...input, scope: pageDataScopeKey(context, 'other.module') ?? '' });
     yield* agreementCustomerData.read({
       ...input,
-      contract: { ...contract, counterpartyRef: { ...contract.counterpartyRef, tenantId: 'other-tenant' } },
+      contract: {
+        ...contract,
+        counterpartyRef: { ...contract.counterpartyRef, tenantId: '10000000-0000-4000-8000-000000000004' },
+      },
     });
-    expect(mocks.customer).toHaveBeenCalledTimes(7);
-  }),
+    expect(customerReads).toHaveLength(7);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('skips speculative reads without full identity and never caches a denied name as success', () =>
+it.live('skips speculative reads without full identity and never caches a denied name as success', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadAgreementCustomers(undefined, [contract], 7);
     yield* preloadAgreementCustomers({ ...context, tenantId: '' }, [contract], 7);
-    expect(mocks.customer).not.toHaveBeenCalled();
-    mocks.customer.mockReturnValue(Effect.fail({ _tag: 'CounterpartyReadForbiddenProblem', status: 403 }));
+    expect(customerReads).toHaveLength(0);
+    customerAnswer = Effect.fail(customerForbidden);
     yield* preloadAgreementCustomers(context, [contract], 7);
     expect(agreementCustomerData.snapshot(input).state).toBe('failed');
-    mocks.customer.mockReturnValue(Effect.succeed({ party: { displayName: 'Now allowed' } }));
+    customerAnswer = Effect.succeed(customer('Now allowed'));
     expect(yield* agreementCustomerData.read(input)).toBe('Now allowed');
-    expect(mocks.customer).toHaveBeenCalledTimes(2);
-  }),
+    expect(customerReads).toHaveLength(2);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('preserves the base contract when name lookup fails and drops it after a primary denial', () =>
+it.live('preserves the base contract when name lookup fails and drops it after a primary denial', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     const query = agreementsInputOf(props, '');
     yield* agreements.read(query);
-    mocks.customer.mockReturnValue(Effect.fail({ _tag: 'CounterpartyReadUnavailableProblem' }));
+    customerAnswer = Effect.fail(customerUnavailable);
     yield* preloadAgreementCustomers(context, [contract], 7);
     const base = agreements.snapshot(query);
     expect(base.state).toBe('ready');
     if (base.state === 'ready') {
       expect(Option.getOrUndefined(base.value)?.records.contracts[0]?.contractRef.resourceId).toBe(id);
     }
-    mocks.records.mockReturnValue(Effect.fail({ _tag: 'RecordsForbiddenProblem', status: 403 }));
+    recordsAnswer = Effect.fail(recordsForbidden);
     yield* agreements.refresh(query);
     expect(agreements.snapshot(query).state).toBe('failed');
-  }),
+  }).pipe(Effect.provide(network)),
 );
-it.effect('starts at most two visible rows and aborts active/queued prefetch on page change', () =>
+it.live('starts at most two visible rows and aborts active/queued prefetch on page change', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     const started = yield* Deferred.make<boolean>();
+    const stopped = yield* Deferred.make<boolean>();
     let active = 0;
     let aborted = 0;
-    mocks.customer.mockImplementation(() =>
-      Effect.gen(function* blocked() {
-        active += 1;
-        if (active === 2) {
-          yield* Deferred.succeed(started, true);
-        }
-        return yield* Effect.never;
-      }).pipe(
-        Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            aborted += 1;
-          }),
-        ),
+    customerAnswer = Effect.gen(function* blocked() {
+      active += 1;
+      if (active === 2) {
+        yield* Deferred.succeed(started, true);
+      }
+      return yield* Effect.never;
+    }).pipe(
+      Effect.onInterrupt(() =>
+        Effect.gen(function* recordAbort() {
+          aborted += 1;
+          if (aborted === 2) {
+            yield* Deferred.succeed(stopped, true);
+          }
+        }),
       ),
     );
-    const third = { ...contract, contractRef: { ...contract.contractRef, resourceId: 'third' } };
+    const third = {
+      ...contract,
+      contractRef: { ...contract.contractRef, resourceId: '10000000-0000-4000-8000-000000000005' },
+    };
     const fiber = yield* Effect.forkChild(preloadAgreementCustomers(context, [...records.contracts, third], 7));
     yield* Deferred.await(started);
     expect(active).toBe(2);
     yield* Fiber.interrupt(fiber);
+    yield* Deferred.await(stopped);
     expect(aborted).toBe(2);
-    expect(mocks.customer).toHaveBeenCalledTimes(2);
-  }),
+    expect(customerReads).toHaveLength(2);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('never returns an old name after live invalidation, including a newly denied owner read', () =>
+it.live('never returns an old name after live invalidation, including a newly denied owner read', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadAgreementCustomers(context, [contract], 7);
-    events.dispatchEvent(new Event(moduleChangeEvent));
+    window.dispatchEvent(new Event(moduleChangeEvent));
     expect(agreementCustomerData.snapshot(input).state).toBe('pending');
-    mocks.customer.mockReturnValue(Effect.fail({ _tag: 'CounterpartyReadForbiddenProblem', status: 403 }));
+    customerAnswer = Effect.fail(customerForbidden);
     yield* agreementCustomerData.read(input).pipe(Effect.ignore);
     expect(agreementCustomerData.snapshot(input).state).toBe('failed');
-    expect(renderToStaticMarkup(createElement(Detail))).not.toContain('Authorized customer');
-    events.dispatchEvent(new Event(moduleWriteEvent));
+    yield* mountInRoute(createElement(Detail));
+    expect(text()).not.toContain('Authorized customer');
+    unmountAll();
+    window.dispatchEvent(new Event(moduleWriteEvent));
     expect(agreementCustomerData.snapshot(input).state).toBe('pending');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a foreground name read shares prefetch and survives cancellation of the old visible page', () =>
+it.live('a foreground name read shares prefetch and survives cancellation of the old visible page', () =>
   Effect.gen(function* sharedForeground() {
+    yield* pinTestDocument;
     const started = yield* Deferred.make<boolean>();
     const release = yield* Deferred.make<boolean>();
-    mocks.customer.mockImplementation(() =>
-      Deferred.succeed(started, true).pipe(
-        Effect.andThen(Deferred.await(release)),
-        Effect.as({ party: { displayName: 'Joined customer' } }),
-      ),
+    customerAnswer = Deferred.succeed(started, true).pipe(
+      Effect.andThen(Deferred.await(release)),
+      Effect.as(customer('Joined customer')),
     );
     const background = yield* Effect.forkChild(preloadAgreementCustomers(context, [contract], 7));
     yield* Deferred.await(started);
@@ -241,13 +388,14 @@ it.effect('a foreground name read shares prefetch and survives cancellation of t
     yield* Fiber.interrupt(background);
     yield* Deferred.succeed(release, true);
     expect(yield* Fiber.join(foreground)).toBe('Joined customer');
-    expect(mocks.customer).toHaveBeenCalledTimes(1);
-  }),
+    expect(customerReads).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('keeps independently denied customer-list feedback alongside the authorized base contract', () =>
+it.live('keeps independently denied customer-list feedback alongside the authorized base contract', () =>
   Effect.gen(function* independentCustomerList() {
-    mocks.customers.mockReturnValue(Effect.fail({ _tag: 'CounterpartyReadForbiddenProblem', status: 403 }));
+    yield* pinTestDocument;
+    customerListAnswer = Effect.fail(customerListForbidden);
     yield* agreements.read(agreementsInputOf(props, '')).pipe(Effect.ignore);
     const partial = agreements.snapshot(agreementsInputOf(props, ''));
     expect(partial.state).toBe('failed');
@@ -264,5 +412,5 @@ it.effect('keeps independently denied customer-list feedback alongside the autho
     // The selected counterparty has its own governed read, not the customer-list authorization.
     yield* preloadAgreementCustomers(context, [contract], 7);
     expect(yield* agreementCustomerData.read(input)).toBe('Authorized customer');
-  }),
+  }).pipe(Effect.provide(network)),
 );

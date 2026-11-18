@@ -1,33 +1,26 @@
-// Scope fence for the Facility agenda records store (use-agenda.ts). The store keys entries by agenda names only
-// (agendaRecordsData.key), which is safe only while the Shell forces a full document reload on every identity or
-// company switch: use-shell-controls.ts runSwitch -> endBrowserSession -> navigate({ reloadDocument: true }), and
-// browser-request-cache.ts reloads every other document of this browser when a session boundary is announced.
-// These tests drive the real store, preload and hook, and pin the document-scoped lifecycle that argument depends
-// on: one document shares one entry per agenda list, and a reset document starts pending and reads again instead of
-// serving the previous scope's records.
+// @rstest-environment happy-dom
+// One document shares an entry per agenda list; reads go through the real gateway and records client.
+import '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { createElement } from 'react';
-import type ReactRuntime from 'react';
+import { afterAll, afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { emptyAssetsState } from '../../shared/domain/assets.ts';
 import type { AgendaId } from '../../shared/domain/common.ts';
 import { emptyMetersState } from '../../shared/domain/meters.ts';
 import { emptyPurchasingState } from '../../shared/domain/purchasing.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { agendaRecordsData, preloadAgendaRecords, useAgendaRecords } from '../../src/ui/use-agenda.ts';
-
-// `useSyncExternalStore` is the React boundary; calling the snapshot directly runs the hook outside a component.
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-
-const { reads } = rstest.hoisted(() => ({ reads: { records: rstest.fn() } }));
-rstest.mock('../../src/api/records-client.ts', () => ({
-  executeRecords: (...invocation: readonly unknown[]) => reads.records(...invocation),
-}));
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const principalId = '72000000-0000-4000-8000-000000000021';
@@ -70,89 +63,107 @@ const probe = (agenda: AgendaId) => {
   return Probe;
 };
 
-const events = new EventTarget();
+const reads: { readonly correlation: string | undefined; readonly payload: RecordsRequest }[] = [];
+let revision = 3;
+const OwnerRecordsApi = RecordsApi.prefix('/facility-operations-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'facility-operations': '/facility-operations-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload, request }) =>
+        Effect.sync(() => {
+          reads.push({ correlation: request.headers['x-correlation-id'], payload });
+          const response = recordsResponse(revision);
+          revision += 1;
+          return response;
+        }),
+      ),
+    ),
+  ),
+);
 
-beforeAll(() => {
-  rstest.stubGlobal('document', {});
-  rstest.stubGlobal('addEventListener', events.addEventListener.bind(events));
-  rstest.stubGlobal('removeEventListener', events.removeEventListener.bind(events));
-  rstest.stubGlobal('dispatchEvent', events.dispatchEvent.bind(events));
+const unmounts: (() => void)[] = [];
+const mountProbe = (agenda: AgendaId) => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  unmounts.push(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+  act(() => root.render(createElement(probe(agenda))));
+  return container;
+};
+
+afterAll(() => browserRuntime.dispose());
+afterEach(() => {
+  for (const unmount of unmounts.splice(0)) {
+    unmount();
+  }
 });
-
-afterAll(() => {
-  rstest.unstubAllGlobals();
-  return browserRuntime.dispose();
-});
-
 beforeEach(() => {
-  rstest.resetAllMocks();
+  reads.length = 0;
+  agendaRecordsData.invalidate();
 });
 
 it.live('a preloaded page reveals the agenda records to the hook without a second read', () =>
   Effect.gen(function* preloadReveal() {
-    reads.records.mockReturnValueOnce(Effect.succeed(recordsResponse(3)));
+    yield* pinTestDocument;
+    revision = 3;
     yield* Effect.promise(() => preloadAgendaRecords(['assets'])(moduleProps));
-    expect(reads.records).toHaveBeenCalledTimes(1);
-    expect(reads.records).toHaveBeenCalledWith({ agendas: ['assets'] }, expect.any(String));
-    expect(renderToStaticMarkup(createElement(probe('assets')))).toBe('<output>ready:3</output>');
-    // A different agenda list is a different entry: the preloaded assets records never leak into another agenda.
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toEqual({ correlation: expect.any(String), payload: { agendas: ['assets'] } });
+    const mounted = mountProbe('assets');
+    expect(mounted.childNodes).toHaveLength(1);
+    expect(mounted.firstElementChild?.tagName).toBe('OUTPUT');
+    expect(mounted.firstElementChild?.getAttributeNames()).toEqual([]);
+    expect(mounted.textContent).toBe('ready:3');
+    // Server rendering does not run the mount effect; the other agenda remains a separate pending entry.
+    expect(agendaRecordsData.snapshot(['security'])).toEqual({ state: 'pending' });
     expect(renderToStaticMarkup(createElement(probe('security')))).toBe('<output>loading:none</output>');
-    expect(reads.records).toHaveBeenCalledTimes(1);
-    // What the hook's mount effect calls.
+    expect(reads).toHaveLength(1);
     agendaRecordsData.ensure(['assets']);
-    expect(reads.records).toHaveBeenCalledTimes(1);
+    expect(reads).toHaveLength(1);
     const read = yield* agendaRecordsData.read(['assets']);
     expect(read.agendas.assets?.revision).toBe(3);
-    expect(reads.records).toHaveBeenCalledTimes(1);
-  }),
+    expect(reads).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 
-it.live('a forced document reset drops the ready entry and the fresh document reads again', () =>
-  Effect.gen(function* documentReset() {
-    reads.records.mockReturnValueOnce(Effect.succeed(recordsResponse(3)));
-    yield* Effect.promise(() => preloadAgendaRecords(['meters'])(moduleProps));
-    expect(reads.records).toHaveBeenCalledTimes(1);
-    expect(renderToStaticMarkup(createElement(probe('meters')))).toBe('<output>ready:3</output>');
-
-    // What navigate({ reloadDocument: true }) does to module-scope state: the next document evaluates the module
-    // again, so the previous scope's entry cannot be reached from it.
-    rstest.resetModules();
-    const fresh = yield* Effect.promise(() => import('../../src/ui/use-agenda.ts'));
-    const freshRuntime = yield* Effect.promise(() => import('../../src/runtime/browser-effect-runtime.ts'));
-    yield* Effect.gen(function* freshDocument() {
-      expect(fresh.agendaRecordsData.snapshot(['meters'])).toEqual({ state: 'pending' });
-      reads.records.mockReturnValueOnce(Effect.succeed(recordsResponse(4)));
-      yield* Effect.promise(() => fresh.preloadAgendaRecords(['meters'])(moduleProps));
-      expect(reads.records).toHaveBeenCalledTimes(2);
-      const freshRead = yield* fresh.agendaRecordsData.read(['meters']);
-      expect(freshRead.agendas.meters?.revision).toBe(4);
-      const FreshProbe = () => {
-        const ops = fresh.useAgendaRecords(['meters']);
-        return createElement('output', null, `${ops.status}:${ops.data?.agendas.meters?.revision ?? 'none'}`);
-      };
-      expect(renderToStaticMarkup(createElement(FreshProbe))).toBe('<output>ready:4</output>');
-    }).pipe(Effect.ensuring(Effect.promise(() => freshRuntime.browserRuntime.dispose())));
-  }),
-);
+/** Everything a storage object holds, by key. */
+const contentsOf = (storage: Storage) =>
+  Object.fromEntries(
+    Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? '').map((key) => [
+      key,
+      storage.getItem(key),
+    ]),
+  );
 
 it.live('the agenda store keeps nothing outside the document', () =>
   Effect.gen(function* noDurableStorage() {
-    const storage = {
-      clear: rstest.fn(),
-      getItem: rstest.fn(),
-      key: rstest.fn(),
-      removeItem: rstest.fn(),
-      setItem: rstest.fn(),
-    };
-    rstest.stubGlobal('localStorage', storage);
-    rstest.stubGlobal('sessionStorage', storage);
-    reads.records
-      .mockReturnValueOnce(Effect.succeed(recordsResponse(5)))
-      .mockReturnValueOnce(Effect.succeed(recordsResponse(6)));
+    yield* pinTestDocument;
+    // What another part of the page already keeps in both real storages; the agenda store must leave it as it is.
+    localStorage.setItem('facility-cache-scope.local', 'kept');
+    sessionStorage.setItem('facility-cache-scope.session', 'kept');
+    const before = { local: contentsOf(localStorage), session: contentsOf(sessionStorage) };
+    revision = 5;
     yield* Effect.promise(() => preloadAgendaRecords(['purchasing'])(moduleProps));
+    // Nothing was restored from storage: the preload read the owner, and the store holds the owner's answer.
+    expect(reads).toHaveLength(1);
+    expect(agendaRecordsData.snapshot(['purchasing'])).toMatchObject({
+      state: 'ready',
+      value: { agendas: { purchasing: { revision: 5 } } },
+    });
     yield* agendaRecordsData.refresh(['purchasing']);
-    expect(storage.getItem).not.toHaveBeenCalled();
-    expect(storage.setItem).not.toHaveBeenCalled();
-    expect(storage.removeItem).not.toHaveBeenCalled();
-  }),
+    expect(reads).toHaveLength(2);
+    expect(agendaRecordsData.snapshot(['purchasing'])).toMatchObject({
+      state: 'ready',
+      value: { agendas: { purchasing: { revision: 6 } } },
+    });
+    // Nothing was written, replaced or removed in either storage.
+    expect({ local: contentsOf(localStorage), session: contentsOf(sessionStorage) }).toEqual(before);
+    localStorage.removeItem('facility-cache-scope.local');
+    sessionStorage.removeItem('facility-cache-scope.session');
+  }).pipe(Effect.provide(network)),
 );

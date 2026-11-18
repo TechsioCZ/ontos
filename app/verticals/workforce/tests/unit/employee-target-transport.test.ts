@@ -1,74 +1,76 @@
+// @rstest-environment happy-dom
+import {
+  inProcessFetch,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  testCompositionRevision,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/http';
-import { expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
+import { EmployeeIdSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { executeRecords } from '../../src/api/records-client.ts';
 import { executeFreshRecords } from '../../src/routes/[lang]/prodej/zamestnanci/employee-records.ts';
-import { EmployeeIdSchema } from '../../shared/apis/records.ts';
 
-rstest.mock('../../src/api/action-gateway.ts', () => ({
-  operationGateway: {
-    invoke: <Success, Failure>(
-      attempt: (
-        authorization: string,
-        target: { readonly apiBaseUrl: string; readonly compositionRevision: string },
-      ) => Effect.Effect<Success, Failure>,
-    ) =>
-      attempt('Bearer test-transport-credential', {
-        apiBaseUrl: 'https://owner.example/workforce-api',
-        compositionRevision: 'a'.repeat(64),
-      }),
-  },
-}));
-
-it.effect(
+it.live(
   'the actual generated owner client forwards fresh-read transport policy without changing the request or ordinary reads',
   () =>
     Effect.gen(function* targetReadTransport() {
+      yield* pinTestDocument;
       const employeeId = Schema.decodeUnknownSync(EmployeeIdSchema)('50000000-0000-4000-8000-000000000002');
-      const requests: Request[] = [];
-      const fakeFetch: typeof fetch = (input, init) => {
-        requests.push(new Request(input, init));
-        return Promise.resolve(
-          Response.json({
-            actorPrincipalRef: {
-              principalId: '30000000-0000-4000-8000-000000000001',
-              tenantId: '10000000-0000-4000-8000-000000000001',
-            },
-            availablePrincipals: [],
-            canWrite: false,
-            indicators: {
-              active: 0,
-              byDepartment: [],
-              byRole: { ACCOUNTANT: 0, SALES_HEAD: 0, SALES_REP: 0, SUPPORT: 0, WAREHOUSE: 0 },
-              total: 0,
-            },
-            items: [],
-            revision: 7,
-          }),
-        );
-      };
-      yield* executeRecords({ employeeId }, 'ordinary-record').pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      const response = Schema.decodeUnknownSync(RecordsResponseSchema)({
+        actorPrincipalRef: {
+          principalId: '30000000-0000-4000-8000-000000000001',
+          tenantId: '10000000-0000-4000-8000-000000000001',
+        },
+        availablePrincipals: [],
+        canWrite: false,
+        indicators: {
+          active: 0,
+          byDepartment: [],
+          byRole: { ACCOUNTANT: 0, SALES_HEAD: 0, SALES_REP: 0, SUPPORT: 0, WAREHOUSE: 0 },
+          total: 0,
+        },
+        items: [],
+        revision: 7,
+      });
+      const requests: { readonly body: unknown; readonly headers: Headers; readonly url: string }[] = [];
+      const issuer = shellGatewayIssuer({ workforce: '/workforce-api' });
+      const OwnerRecordsApi = RecordsApi.prefix('/workforce-api');
+      const owner = serveApi(
+        OwnerRecordsApi,
+        HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+          group.handle('execute', () =>
+            Effect.gen(function* receiveRecords() {
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              const body = yield* request.json;
+              requests.push({ body, headers: new Headers(request.headers), url: request.originalUrl });
+              return response;
+            }).pipe(Effect.orDie),
+          ),
+        ),
       );
-      yield* executeFreshRecords({ employeeId }, 'current-target').pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-      );
+      yield* Effect.gen(function* readEmployeeThroughGateway() {
+        yield* executeRecords({ employeeId }, 'ordinary-record');
+        yield* executeFreshRecords({ employeeId }, 'current-target');
+      }).pipe(Effect.provide(inProcessFetch(issuer.application, owner)));
       expect(requests.map(({ headers }) => headers.get('cache-control'))).toEqual([null, 'no-store']);
       expect(requests.map(({ headers }) => headers.get('authorization'))).toEqual([
-        'Bearer test-transport-credential',
-        'Bearer test-transport-credential',
+        'Bearer workforce-assertion-1',
+        'Bearer workforce-assertion-2',
       ]);
       expect(requests.map(({ headers }) => headers.get('x-ontos-composition-revision'))).toEqual([
-        'a'.repeat(64),
-        'a'.repeat(64),
+        testCompositionRevision,
+        testCompositionRevision,
       ]);
       expect(requests.map(({ url }) => url)).toEqual([
-        'https://owner.example/workforce-api/reads/records',
-        'https://owner.example/workforce-api/reads/records',
+        new URL('/workforce-api/reads/records', window.location.href).href,
+        new URL('/workforce-api/reads/records', window.location.href).href,
       ]);
       for (const request of requests) {
-        expect(yield* Effect.promise(() => request.json())).toEqual({ employeeId });
+        expect(request.body).toEqual({ employeeId });
       }
     }),
 );

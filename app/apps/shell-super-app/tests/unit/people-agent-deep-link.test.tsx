@@ -1,104 +1,157 @@
+// @rstest-environment happy-dom
+import { settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { AGENT_ACCESS_PATHS, AgentEntityOverviewSchema } from '@app/shared-contracts/agent-access';
+import type { AgentEntityOverview } from '@app/shared-contracts/agent-access';
+import { browserNetwork, pinTestDocument, serveApi } from '@app/shared-contracts/testing/http-double';
+import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
+import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { cleanup, screen } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
-import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
-import type { AgentEntity } from '@app/shared-contracts/agent-access';
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, expect, it } from 'effect-rstest';
 
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
+import { agentEntitiesData } from '../../src/routes/people/agent-data.ts';
 import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
+import { shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 
-const { fixture } = rstest.hoisted(() => ({
-  fixture: {
-    agent: {
-      connections: [],
-      description: null,
-      displayName: 'Asistent provozu',
-      hasProfile: true,
-      operators: [],
-      operatorsRevision: 0,
-      owner: null,
-      principalId: '00000000-0000-4000-8000-000000000003',
-      roles: [],
-      status: 'active',
-      usable: [],
-      writePolicy: 'approval',
-    },
-    forbidden: false,
-    target: '00000000-0000-4000-8000-000000000003',
-  },
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useRouterState: ({
-    select,
-  }: {
-    readonly select: (state: { readonly location: { readonly search: { readonly agent: string } } }) => string | null;
-  }) => select({ location: { search: { agent: fixture.target } } }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
-  usePageData: () =>
-    fixture.forbidden
-      ? { error: { reason: 'forbidden' }, refreshing: false, state: 'failed' }
-      : {
-          refreshing: false,
-          state: 'ready',
-          value: {
-            agents: [Schema.decodeUnknownSync(AgentEntitySchema)(fixture.agent)],
-            audit: [],
-            company: { legalEntityId: 'company', legalName: 'Firma' },
-            members: [],
-            roles: [],
-            rolesRevision: 'r0',
-          },
-        },
-}));
-rstest.mock('../../src/routes/people/agent-editor-panel.tsx', () => ({
-  AgentEditorPanel: ({ agent }: { readonly agent: AgentEntity | null }) => (
-    <div data-testid="agent-editor">{agent?.displayName}</div>
+const target = '00000000-0000-4000-8000-000000000003';
+const agentName = 'Asistent provozu';
+const linkedUrl = `/cs/people?agent=${target}`;
+const czech = shellLocaleCopy('cs');
+const copy = (key: string) => {
+  expect(czech.exists(key), `${key} has cs copy`).toBe(true);
+  return czech.t(key);
+};
+const editorTitle = () => {
+  expect(czech.exists('shell.agents.editor.editTitle')).toBe(true);
+  return czech.t('shell.agents.editor.editTitle', { name: agentName });
+};
+
+const overview = (hasProfile = true, principalId = target) =>
+  Schema.decodeUnknownSync(AgentEntityOverviewSchema)({
+    agents: [
+      {
+        connections: [],
+        description: null,
+        displayName: agentName,
+        hasProfile,
+        operators: [],
+        operatorsRevision: 0,
+        owner: null,
+        principalId,
+        roles: [],
+        status: 'active',
+        usable: [],
+        writePolicy: 'approval',
+      },
+    ],
+    audit: [],
+    company: { legalEntityId: 'company', legalName: 'Firma' },
+    members: [],
+    roles: [],
+    rolesRevision: 'r0',
+  });
+
+// Opening the real editor also reads the agent's keys through the Shell's typed identity endpoint.
+const keysApi = HttpApi.make('linkedAgentKeys')
+  .add(HttpApiGroup.make('identity').add(ShellAuthenticationApi.groups.identity.endpoints.listManagedApiKeys))
+  .prefix(shellAuthenticationApiContract.apiPrefix);
+const keys = serveApi(
+  keysApi,
+  HttpApiBuilder.group(keysApi, 'identity', (group) =>
+    group.handle('listManagedApiKeys', () => Effect.succeed({ items: [], nextOffset: null })),
   ),
-}));
-afterEach(() => {
-  cleanup();
-  fixture.forbidden = false;
-  fixture.agent.hasProfile = true;
-  fixture.agent.principalId = fixture.target;
-});
+);
+
+const agentNetwork = (read: () => AgentEntityOverview, forbidden = false) =>
+  browserNetwork(
+    HttpRouter.add(
+      'POST',
+      AGENT_ACCESS_PATHS.list,
+      Effect.suspend(() =>
+        forbidden
+          ? HttpServerResponse.json({ detail: copy('shell.agents.errors.forbidden') }, { status: 403 })
+          : Schema.encodeEffect(AgentEntityOverviewSchema)(read()).pipe(Effect.flatMap(HttpServerResponse.json)),
+      ).pipe(Effect.orDie),
+    ),
+    keys,
+  );
+
+// A company change comes through the route loader while the same section remains mounted.
+const AgentsPage = () => {
+  const company = Schema.decodeUnknownSync(Schema.String)(useLoaderData({ strict: false }));
+  return <AgentEntitiesSection legalEntityId={company} onNotify={() => {}} />;
+};
+const agentRouter = (company: () => string = () => 'company') =>
+  makeShellRouter({
+    page: { component: AgentsPage, loaderData: company, path: 'people' },
+    url: linkedUrl,
+  });
+
+const editorName = () => screen.getByRole('textbox', { name: new RegExp(copy('shell.agents.editor.name'), 'u') });
+const editor = () => screen.queryByRole('dialog', { name: editorTitle() });
+
+afterEach(cleanup);
 
 it.live('opens the linked real agent editor in-place, without a workforce route or redirect', () =>
   Effect.gen(function* openLinkedAgent() {
-    HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
-    render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-    const editor = yield* Effect.promise(() => screen.findByTestId('agent-editor'));
-    expect(editor.textContent).toBe('Asistent provozu');
-  }),
+    yield* pinTestDocument;
+    yield* agentEntitiesData.refresh('company');
+    const router = agentRouter();
+    yield* renderShellRoute(router, czech);
+    yield* waitUntil(() => editor() !== null);
+    expect(editorName().getAttribute('value')).toBe(agentName);
+    expect(router.state.location.href).toBe(linkedUrl);
+    yield* waitUntil(() => screen.queryByText(copy('shell.agents.keys.empty')) !== null);
+  }).pipe(Effect.provide(agentNetwork(() => overview()))),
 );
 
-it('shows an absent profile honestly and an agent without roles as having no rights', () => {
-  fixture.agent.hasProfile = false;
-  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-  expect(screen.getByText('shell.agents.section.noProfile')).toBeTruthy();
-  expect(screen.queryByText('shell.agents.connections.policy.approval')).toBeNull();
-  // Rights come only from roles: an agent with none says so, and nothing it could use is listed.
-  expect(screen.getByText('shell.agents.roles.badgeNone')).toBeTruthy();
-  expect(screen.getByText('shell.agents.roles.none')).toBeTruthy();
-  expect(screen.getByText('shell.agents.roles.usableNone')).toBeTruthy();
-});
-
-it.live('drops an old agent detail when the selected company no longer admits that principal', () =>
-  Effect.gen(function* dropUnadmittedAgent() {
-    HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
-    const view = render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-    yield* Effect.promise(() => screen.findByTestId('agent-editor'));
-    fixture.agent = { ...fixture.agent, principalId: '00000000-0000-4000-8000-000000000009' };
-    view.rerender(<AgentEntitiesSection legalEntityId="other-company" onNotify={() => {}} />);
-    expect(screen.queryByTestId('agent-editor')).toBeNull();
-  }),
+it.live('shows an absent profile honestly and an agent without roles as having no rights', () =>
+  Effect.gen(function* absentAgentProfile() {
+    yield* pinTestDocument;
+    yield* agentEntitiesData.refresh('company');
+    yield* renderShellRoute(agentRouter(), czech);
+    yield* waitUntil(() => editor() !== null);
+    expect(screen.getByText(copy('shell.agents.section.noProfile'))).toBeTruthy();
+    expect(screen.queryByText(copy('shell.agents.connections.policy.approval'))).toBeNull();
+    // Rights come only from roles: an agent with none says so, and nothing it could use is listed.
+    expect(screen.getByText(copy('shell.agents.roles.badgeNone'))).toBeTruthy();
+    expect(screen.getByText(copy('shell.agents.roles.none'))).toBeTruthy();
+    expect(screen.getByText(copy('shell.agents.roles.usableNone'))).toBeTruthy();
+  }).pipe(Effect.provide(agentNetwork(() => overview(false)))),
 );
 
-it('does not render an admin-only creation control for a member without agent administration', () => {
-  fixture.forbidden = true;
-  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-  expect(screen.queryByRole('button', { name: 'shell.agents.section.create' })).toBeNull();
+it.live('drops an old agent detail when the selected company no longer admits that principal', () => {
+  let company = 'company';
+  let answer = overview();
+  return Effect.gen(function* dropUnadmittedAgent() {
+    yield* pinTestDocument;
+    yield* agentEntitiesData.refresh(company);
+    const router = agentRouter(() => company);
+    yield* renderShellRoute(router, czech);
+    yield* waitUntil(() => editor() !== null);
+    yield* waitUntil(() => screen.queryByText(copy('shell.agents.keys.empty')) !== null);
+
+    company = 'other-company';
+    answer = overview(true, '00000000-0000-4000-8000-000000000009');
+    yield* agentEntitiesData.refresh(company);
+    yield* Effect.promise(async () => await router.invalidate());
+    yield* settle;
+    expect(editor()).toBeNull();
+  }).pipe(Effect.provide(agentNetwork(() => answer)));
 });
+
+it.live('does not render an admin-only creation control for a member without agent administration', () =>
+  Effect.gen(function* forbiddenAgentAdministration() {
+    yield* pinTestDocument;
+    yield* agentEntitiesData.refresh('forbidden-company');
+    yield* renderShellRoute(
+      agentRouter(() => 'forbidden-company'),
+      czech,
+    );
+    yield* waitUntil(() => screen.queryByText(copy('shell.agents.errors.forbidden')) !== null);
+    expect(screen.queryByRole('button', { name: copy('shell.agents.section.create') })).toBeNull();
+  }).pipe(Effect.provide(agentNetwork(() => overview(), true))),
+);

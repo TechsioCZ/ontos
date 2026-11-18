@@ -12,11 +12,13 @@ import { ReservePrincipalBindingPayloadSchema } from '../../../../packages/core-
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { Context, Crypto, Effect, FiberSet, Layer, Redacted, Schema } from 'effect';
 import { HttpRouter, HttpServerResponse } from 'effect/http';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
+import { exportJWK, generateKeyPair } from 'jose';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 
 import { callModuleAs } from '../../api/agent-platform/module-call.ts';
 import { AgentReadRequestIdentity } from '../../api/auth/agent-request-identity.ts';
-import { GatewayIssuer, ShellCryptoLive } from '../../api/auth/gateway-issuer.ts';
+import { makeGatewayIssuerLayer, ShellCryptoLive } from '../../api/auth/gateway-issuer.ts';
 import { GatewayTimings, observeGatewayPhase } from '../../api/auth/gateway-timing.ts';
 import { serveMcp } from '../../api/mcp/http.ts';
 import type { McpConnectionTools, McpEndpointConfig } from '../../api/mcp/http.ts';
@@ -24,33 +26,42 @@ import { buildConnectionTools } from '../../api/mcp/tools.ts';
 import type { McpBackend } from '../../api/mcp/types.ts';
 import { ModuleUnavailable } from '../../api/mcp/module-unavailable.ts';
 import { NoServerTimingLive } from '../../api/no-server-timing.ts';
-import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../../src/module-api/transport.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeCompositionSnapshot, sealComposition } from '../fixtures/application-composition.ts';
 import { connectionDescription, fixtureCatalog } from './mcp/fixture-vertical.ts';
+import { startNativeHttpServer } from '../support/native-http-server.ts';
+import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
 const OWNER_TIMING = 'owner-total;dur=40, owner-gate;dur=12';
 
-const owner = rs.hoisted(() => ({ calls: 0 }));
-
-rs.mock('../../src/module-api/admission.ts', () => ({
-  admitModuleApiRequest: (request: Request) =>
-    Effect.succeed({
-      forwardedRequest: request,
-      module: { deployment: { appId: 'fixture-notes' } },
-      responseCookieNames: [],
-    }),
-}));
-rs.mock('@app/core-runtime/unit-service-fetch', () => ({
-  moduleReleaseFetch: () =>
-    Effect.sync(() => {
-      owner.calls += 1;
-      return Response.json(
+/** A real admitted owner release, reached by the Shell's native Node transport. */
+const makeOwner = Effect.gen(function* makeTimingOwner() {
+  const calls: Request[] = [];
+  const server = yield* startNativeHttpServer((request) => {
+    calls.push(request);
+    return Promise.resolve(
+      Response.json(
         { canWrite: true, notes: [{ text: 'první' }], revision: 7 },
         { headers: { 'server-timing': OWNER_TIMING } },
-      );
+      ),
+    );
+  });
+  const original = yield* makeCompositionSnapshot([
+    makeModuleContractFixture({ appId: 'fixture-notes', buildMarker: 'build', moduleId: 'fixture.notes' }),
+  ]);
+  const snapshot = {
+    ...original,
+    composition: sealComposition({
+      ...original.composition,
+      modules: original.composition.modules.map((module) => ({
+        ...module,
+        backend: { baseUrl: `${server.origin}/`, transport: 'node-http' as const },
+      })),
     }),
-}));
+  };
+  const composition = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  return { calls, composition, snapshot };
+});
 
 // As the Shell API root wraps each gateway request: its phases are measured and logged.
 const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
@@ -63,11 +74,6 @@ const expectNoOwnerTiming = (header: string | null | undefined) => {
   }
 };
 
-const composition = Layer.effect(
-  ActiveApplicationCompositionService,
-  makeCompositionSnapshot([]).pipe(Effect.map((snapshot) => ({ load: Effect.succeed(snapshot) }))),
-);
-
 /** One request to `routes` served as the Shell serves them, with or without its global `server-timing` strip. */
 const served = (routes: Layer.Layer<never, never, HttpRouter.HttpRouter>, request: Request, stripped = true) =>
   Effect.acquireRelease(
@@ -77,29 +83,26 @@ const served = (routes: Layer.Layer<never, never, HttpRouter.HttpRouter>, reques
     (handler) => Effect.promise(() => handler.dispose()),
   ).pipe(Effect.flatMap((route) => Effect.promise(() => route.handler(request, Context.empty()))));
 
-const ownerRead = () =>
+const ownerRead = (revision: string) =>
   new Request('https://shell.test/module-api/fixture-notes/build/fixture-notes-api/reads/records', {
     body: '{}',
+    headers: { 'x-ontos-composition-revision': revision },
     method: 'POST',
   });
 
 /** The storefront API-key gateway read's tail: in-process owner dispatch inside its measured gateway phase. */
-const gatewayReadRoute = HttpRouter.add(
-  'POST',
-  '/shell-super-app-api/auth/api-key/gateway-read',
-  dispatchModuleApiRequest(
-    new Request('https://shell.invalid/module-api/fixture-notes/build/fixture-notes-api/reads/records', {
-      body: '{}',
-      method: 'POST',
-    }),
-  ).pipe(
-    observeGatewayPhase('owner-dispatch'),
-    Effect.map(HttpServerResponse.fromWeb),
-    withGatewayTimings,
-    Effect.provide(composition),
-    Effect.orDie,
-  ),
-);
+const gatewayReadRoute = (revision: string, composition: Layer.Layer<ActiveApplicationCompositionService>) =>
+  HttpRouter.add(
+    'POST',
+    '/shell-super-app-api/auth/api-key/gateway-read',
+    dispatchModuleApiRequest(ownerRead(revision)).pipe(
+      observeGatewayPhase('owner-dispatch'),
+      Effect.map(HttpServerResponse.fromWeb),
+      withGatewayTimings,
+      Effect.provide(composition),
+      Effect.orDie,
+    ),
+  );
 
 const actionPrincipal: TrustedPrincipalContext = {
   authBindingId: '00000000-0000-4000-8000-000000000014',
@@ -151,11 +154,14 @@ const reserveRoute = HttpRouter.add(
 );
 
 describe('no server-timing leaves the Shell, from an owner or from the Shell itself', () => {
-  it.effect('browser: the /module-api relay route answers without it', () =>
+  it.live('browser: the /module-api relay route answers without it', () =>
     Effect.gen(function* browserPath() {
-      owner.calls = 0;
-      const response = yield* served(ModuleApiTransportLive.pipe(Layer.provide(composition), Layer.orDie), ownerRead());
-      expect(owner.calls).toBe(1);
+      const owner = yield* makeOwner;
+      const response = yield* served(
+        ModuleApiTransportLive.pipe(Layer.provide(owner.composition), Layer.orDie),
+        ownerRead(owner.snapshot.composition.revision),
+      );
+      expect(owner.calls.length).toBe(1);
       expect(response.status).toBe(200);
       expect(response.headers.get('server-timing')).toBeNull();
       expect(yield* Effect.promise(() => response.json())).toEqual({
@@ -166,20 +172,20 @@ describe('no server-timing leaves the Shell, from an owner or from the Shell its
     }).pipe(Effect.scoped),
   );
 
-  it.effect("storefront: the API-key gateway read sends neither the owner's nor the gateway's own phases", () =>
+  it.live("storefront: the API-key gateway read sends neither the owner's nor the gateway's own phases", () =>
     Effect.gen(function* storefrontPath() {
-      owner.calls = 0;
+      const owner = yield* makeOwner;
       const response = yield* served(
-        gatewayReadRoute,
+        gatewayReadRoute(owner.snapshot.composition.revision, owner.composition),
         new Request('https://shell.test/shell-super-app-api/auth/api-key/gateway-read', { method: 'POST' }),
       );
-      expect(owner.calls).toBe(1);
+      expect(owner.calls.length).toBe(1);
       expect(response.status).toBe(200);
       expect(response.headers.get('server-timing')).toBeNull();
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reserve: an Action the Shell runs in-process answers without the runner's owner phases", () =>
+  it.live("reserve: an Action the Shell runs in-process answers without the runner's owner phases", () =>
     Effect.gen(function* reservePath() {
       // Without the Shell's strip the runner's owner phases and counts would reach the API-key client.
       const unstripped = yield* served(reserveRoute, reserveRequest(), false);
@@ -190,11 +196,13 @@ describe('no server-timing leaves the Shell, from an owner or from the Shell its
     }).pipe(Effect.scoped),
   );
 
-  it.effect('MCP: a tool call that reads an owner answers the MCP client without it', () =>
+  it.live('MCP: a tool call that reads an owner answers the MCP client without it', () =>
     Effect.gen(function* mcpPath() {
-      owner.calls = 0;
+      const owner = yield* makeOwner;
       const crypto = yield* Effect.service(Crypto.Crypto).pipe(Effect.provide(ShellCryptoLive));
-      const snapshot = yield* makeCompositionSnapshot([]);
+      const { snapshot } = owner;
+      const { privateKey } = yield* Effect.promise(() => generateKeyPair('EdDSA', { extractable: true }));
+      const privateJwk = yield* Effect.promise(() => exportJWK(privateKey));
       const principal: TrustedPrincipalContext = {
         authBindingId: '00000000-0000-4000-8000-000000000004',
         authContextRef: 'session:owner-timing',
@@ -204,18 +212,28 @@ describe('no server-timing leaves the Shell, from an owner or from the Shell its
         tenantId: '00000000-0000-4000-8000-000000000001',
       };
       const services = Layer.mergeAll(
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        owner.composition,
         Layer.succeed(AgentReadRequestIdentity, { correlationId: 'owner-timing' }),
-        Layer.mock(GatewayIssuer, {
-          issue: () =>
-            Effect.succeed({
-              apiBaseUrl: '/fixture-api',
-              compositionRevision: snapshot.composition.revision,
-              expiresAt: 0,
-              token: 't',
-            }),
-        }),
-        Layer.mock(ShellInstalledModuleCatalog, {}),
+        makeGatewayIssuerLayer({
+          currentTimeSeconds: Effect.succeed(1_700_000_000),
+          generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+          loadAdmission: Effect.succeed({
+            audiences: new Map([['fixture-notes', 'build']]),
+            revision: snapshot.composition.revision,
+          }),
+          loadConfig: Effect.succeed({
+            issuer: 'https://shell.test',
+            privateJwk: {
+              alg: 'EdDSA',
+              crv: 'Ed25519',
+              d: privateJwk.d ?? '',
+              kid: 'owner-timing',
+              kty: 'OKP',
+              use: 'sig',
+              x: privateJwk.x ?? '',
+            },
+          }),
+        }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       );
       // The real module call of an MCP tool; only the proposal queue is out of this path.
       const backend: McpBackend = {
@@ -284,7 +302,7 @@ describe('no server-timing leaves the Shell, from an owner or from the Shell its
         client.callTool({ arguments: {}, name: 'fixture_notes__read_records' }),
       );
       expect(result.isError).not.toBe(true);
-      expect(owner.calls).toBe(1);
+      expect(owner.calls.length).toBe(1);
       expect(timings.length).toBeGreaterThan(0);
       expect(timings.every((timing) => timing === null)).toBe(true);
       const text = JSON.stringify(result);

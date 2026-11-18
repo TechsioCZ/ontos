@@ -3,13 +3,25 @@
 // test, so what starts before it returns is visible. A remembered "may edit orders" answer starts the directory with
 // the page; without one the directory waits for the read, as it always did. The tab's sessionStorage carries the
 // answer to the next document.
-import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import {
+  browserNetwork,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Schema } from 'effect';
-import { expect, it, rstest } from 'effect-rstest';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { expect, it } from 'effect-rstest';
+import {
+  CustomerListApi,
+  CustomerListInternalProblemSchema,
+} from '../../../party-registry/shared/apis/customer-list.ts';
+import type { CustomerListRequest, CustomerListResponse } from '../../../party-registry/shared/apis/customer-list.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { customerDirectoryData } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
 import {
   orderCountsData,
@@ -17,9 +29,6 @@ import {
   preloadOrdersPage,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('@app/party-registry/apis/customer-list/client');
 
 const PAGE_SIZE = 50;
 const TENANT = 'tenant-1';
@@ -65,22 +74,48 @@ const recordsOf = (canEditOrders: boolean) =>
 let mayEdit = true;
 /** Holds the first read open until the test opens the gate; null outside a run. */
 let gate: Deferred.Deferred<boolean> | null = null;
-/** Enough scheduler turns for the preload to start whatever it starts without a timer. */
-const TURNS = 50;
+/** Records the real owner requests, including a directory read that fails. */
+const directoryReads: CustomerListRequest[] = [];
+let directoryAnswer: Effect.Effect<CustomerListResponse, typeof CustomerListInternalProblemSchema.Type> =
+  Effect.succeed({ items: [] });
+let firstReadStarted: Deferred.Deferred<boolean> | null = null;
 
-const serveRecords = () => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.ordersLimit === 0) {
-      return Effect.succeed(recordsOf(mayEdit));
-    }
-    return Effect.andThen(
-      Effect.suspend(() => (gate === null ? Effect.succeed(true) : Deferred.await(gate))),
-      Effect.succeed(recordsOf(mayEdit)),
-    );
-  });
-};
+const Owner = RecordsApi.prefix('/merchandise-api');
+const Customers = CustomerListApi.prefix('/party-registry-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api', 'party-registry': '/party-registry-api' }).application,
+  serveApi(
+    Owner,
+    HttpApiBuilder.group(Owner, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.gen(function* readOrders() {
+          if (payload.view?.ordersLimit !== 0) {
+            if (firstReadStarted !== null) {
+              yield* Deferred.succeed(firstReadStarted, true);
+            }
+            if (gate !== null) {
+              yield* Deferred.await(gate);
+            }
+          }
+          return recordsOf(mayEdit);
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Customers,
+    HttpApiBuilder.group(Customers, 'customerList', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          directoryReads.push(payload);
+          return directoryAnswer;
+        }),
+      ),
+    ),
+  ),
+);
 
-const directoryRequests = () => rstest.mocked(executeCustomerList).mock.calls.length;
+const directoryRequests = () => directoryReads.length;
 
 /**
  * One document's preload with the first read held open. Returns how many directory requests had started while that
@@ -94,26 +129,40 @@ const preloadWhileReadOpen = Effect.fn('orders-directory-test.preload')(function
   ordersPageData.invalidate();
   orderCountsData.invalidate();
   customerDirectoryData.invalidate();
-  rstest.mocked(executeCustomerList).mockClear();
+  directoryReads.length = 0;
   const opened = yield* Deferred.make<boolean>();
   gate = opened;
+  const started = yield* Deferred.make<boolean>();
+  firstReadStarted = started;
   const done = browserRuntime.runPromise(preloadOrdersPage(who.legalEntityId, PAGE_SIZE, who));
-  for (let turn = 0; turn < TURNS; turn += 1) {
-    yield* Effect.promise(() => browserRuntime.runPromise(Effect.yieldNow));
-  }
+  yield* Deferred.await(started);
+  // Every request the preload starts next to the held read has reached its server (and been answered) by now; a
+  // directory request sent with the page is counted, one that waits for the read cannot have been sent.
+  yield* networkQuietExcept(1);
   const whileOpen = directoryRequests();
   yield* Deferred.succeed(opened, true);
   yield* Effect.promise(() => done);
+  if (answer || whileOpen > 0) {
+    // A stale directory preload returns its cached value while HTTP revalidation finishes in the background.
+    yield* waitUntil(() => {
+      const snapshot = customerDirectoryData.snapshot(who.legalEntityId);
+      return snapshot.state !== 'pending' && !snapshot.refreshing;
+    });
+  }
   gate = null;
+  firstReadStarted = null;
   return whileOpen;
 });
 
-const setUp = Effect.sync(() => {
-  rstest.mocked(executeCustomerList).mockImplementation(() => Effect.succeed({ items: [] }));
-  serveRecords();
-});
+const setUp = pinTestDocument.pipe(
+  Effect.andThen(
+    Effect.sync(() => {
+      directoryAnswer = Effect.succeed({ items: [] });
+    }),
+  ),
+);
 
-it.effect('a remembered yes starts the customer list before the first orders read returns', () =>
+it.live('a remembered yes starts the customer list before the first orders read returns', () =>
   Effect.gen(function* rememberedYes() {
     yield* setUp;
     const who = contextOf(REMEMBERED_PERSON);
@@ -121,29 +170,29 @@ it.effect('a remembered yes starts the customer list before the first orders rea
     expect(globalThis.sessionStorage.getItem(storageKeyOf(who))).toBe(REMEMBERED_YES);
 
     expect(yield* preloadWhileReadOpen(who, true)).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a yes kept by an earlier document of the tab starts the customer list with the first read', () =>
+it.live('a yes kept by an earlier document of the tab starts the customer list with the first read', () =>
   Effect.gen(function* earlierDocument() {
     yield* setUp;
     const who = contextOf(EARLIER_DOCUMENT_PERSON);
     globalThis.sessionStorage.setItem(storageKeyOf(who), REMEMBERED_YES);
 
     expect(yield* preloadWhileReadOpen(who, true)).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('with nothing remembered the customer list starts only after the first read says the person may edit', () =>
+it.live('with nothing remembered the customer list starts only after the first read says the person may edit', () =>
   Effect.gen(function* nothingRemembered() {
     yield* setUp;
     const who = contextOf(FRESH_PERSON);
     expect(yield* preloadWhileReadOpen(who, true)).toBe(0);
     expect(directoryRequests()).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a remembered yes is forgotten when the first read says the person may not edit', () =>
+it.live('a remembered yes is forgotten when the first read says the person may not edit', () =>
   Effect.gen(function* revoked() {
     yield* setUp;
     const who = contextOf(REVOKED_PERSON);
@@ -154,27 +203,34 @@ it.effect('a remembered yes is forgotten when the first read says the person may
     expect(globalThis.sessionStorage.getItem(storageKeyOf(who))).toBeNull();
     expect(yield* preloadWhileReadOpen(who, false)).toBe(0);
     expect(directoryRequests()).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a remembered yes of one person or company is not used for another', () =>
+it.live('a remembered yes of one person or company is not used for another', () =>
   Effect.gen(function* otherScope() {
     yield* setUp;
     expect(yield* preloadWhileReadOpen(contextOf(FIRST_PERSON), true)).toBe(0);
 
     expect(yield* preloadWhileReadOpen(contextOf(SECOND_PERSON), true)).toBe(0);
     expect(yield* preloadWhileReadOpen(contextOf(FIRST_PERSON, OTHER_COMPANY), true)).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a customer list that fails at once is asked for once, not again when the first read returns', () =>
+it.live('a customer list that fails at once is asked for once, not again when the first read returns', () =>
   Effect.gen(function* failingDirectory() {
     yield* setUp;
     const who = contextOf(FAILING_DIRECTORY_PERSON);
     expect(yield* preloadWhileReadOpen(who, true)).toBe(0);
-    rstest.mocked(executeCustomerList).mockImplementation(() => Effect.die('The customer list is down'));
+    directoryAnswer = Effect.fail(
+      CustomerListInternalProblemSchema.make({
+        detail: 'The customer list is down',
+        status: 500,
+        title: 'Customer list unavailable',
+        type: 'https://ontos.dev/problems/customer-list-internal',
+      }),
+    );
 
     expect(yield* preloadWhileReadOpen(who, true)).toBe(1);
     expect(directoryRequests()).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );

@@ -1,57 +1,48 @@
+// @rstest-environment happy-dom
+// @rstest-environment-options {"url":"https://shell.example.test/cs"}
+import { inProcessFetch, serveApi } from '@app/shared-contracts/testing/http-double';
 import { Effect, Inspectable, Redacted, Result, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/http';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { HttpServerRequest } from 'effect/http';
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { expect, it } from 'effect-rstest';
 
 import { makeReferenceGatewayCredentials } from '../../src/operation-gateway.ts';
 import { makeGovernedEffectBffClient } from '../../src/client-runtime.ts';
 import { pinDocumentCompositionRevision } from '../../src/document-composition-revision.ts';
-import { GatewayContextRequestSchema } from '../../src/gateway-context.ts';
+import { GatewayContextApiGroup } from '../../src/gateway-context.ts';
+import type { GatewayContextRequestSchema } from '../../src/gateway-context.ts';
 import {
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
   ReferenceGatewayCredentialsSchema,
 } from '../../src/reference-gateway.ts';
 
 const compositionRevision = 'a'.repeat(64);
-const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
-const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'location');
-beforeEach(() => {
-  Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelectorAll: () => [] } });
-  Object.defineProperty(globalThis, 'location', {
-    configurable: true,
-    value: { origin: 'https://shell.example.test', pathname: '/cs' },
-  });
-});
-afterEach(() => {
-  if (documentDescriptor === undefined) {
-    Reflect.deleteProperty(globalThis, 'document');
-  } else {
-    Object.defineProperty(globalThis, 'document', documentDescriptor);
-  }
-  if (locationDescriptor === undefined) {
-    Reflect.deleteProperty(globalThis, 'location');
-  } else {
-    Object.defineProperty(globalThis, 'location', locationDescriptor);
-  }
-});
-
 it.effect('acquires a fresh browser assertion for every provider attempt and redacts the transport bundle', () =>
   Effect.gen(function* acquireFreshReferences() {
     yield* pinDocumentCompositionRevision(compositionRevision);
-    const requests: Request[] = [];
-    const transport: typeof fetch = (input, init) => {
-      requests.push(new Request(input, init));
-      return Promise.resolve(
-        Response.json({
-          apiBaseUrl: '/shell-super-app-api/module-api/party-registry/provider-build/party-registry-api',
-          compositionRevision,
-          expiresAt: 1_700_000_300,
-          token: `fresh-attempt-${requests.length}`,
-        }),
-      );
-    };
+    const requests: HttpServerRequest.HttpServerRequest[] = [];
+    const calls: (typeof GatewayContextRequestSchema.Type)[] = [];
+    const api = HttpApi.make('ReferenceGatewayIssuer').add(GatewayContextApiGroup).prefix('/shell-super-app-api');
+    const handlers = HttpApiBuilder.group(api, 'gatewayContext', (group) =>
+      group
+        .handle('issueGatewayContext', ({ payload }) =>
+          Effect.gen(function* issueReference() {
+            requests.push(yield* HttpServerRequest.HttpServerRequest);
+            calls.push(payload);
+            return {
+              apiBaseUrl: '/shell-super-app-api/module-api/party-registry/provider-build/party-registry-api',
+              compositionRevision,
+              expiresAt: 1_700_000_300,
+              token: `fresh-attempt-${requests.length}`,
+            };
+          }),
+        )
+        .handle('issueApiKeyGatewayContext', () => Effect.die('Unexpected API-key context request'))
+        .handle('issueDelegatedGatewayContext', () => Effect.die('Unexpected delegated context request')),
+    );
+    const network = inProcessFetch(serveApi(api, handlers));
     const acquisition = makeReferenceGatewayCredentials(['party-registry', 'party-registry', 'billing']).pipe(
-      Effect.provideService(FetchHttpClient.Fetch, transport),
+      Effect.provide(network),
     );
     const bundle = yield* acquisition;
     expect(Redacted.isRedacted(bundle)).toBe(true);
@@ -66,17 +57,9 @@ it.effect('acquires a fresh browser assertion for every provider attempt and red
       { audience: 'party-registry', authorization: 'Bearer fresh-attempt-2' },
       { audience: 'billing', authorization: 'Bearer fresh-attempt-3' },
     ]);
-    const calls = yield* Effect.forEach(
-      requests,
-      (request) =>
-        Effect.promise(() => request.json()).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextRequestSchema)),
-        ),
-      { concurrency: 1 },
-    );
     expect(
       requests.every(
-        (request) => request.url === 'https://shell.example.test/shell-super-app-api/auth/gateway-context',
+        (request) => request.originalUrl === 'https://shell.example.test/shell-super-app-api/auth/gateway-context',
       ),
     ).toBe(true);
     expect(calls).toEqual(
@@ -116,11 +99,20 @@ it.effect(
   'governed clients forward reference authority only in transport and omit an absent bundle without changing business payload',
   () =>
     Effect.gen(function* forwardTransportOnly() {
-      const requests: Request[] = [];
-      const transport: typeof fetch = (input, init) => {
-        requests.push(new Request(input, init));
-        return Promise.resolve(Response.json({ revision: 1 }));
-      };
+      const requests: HttpServerRequest.HttpServerRequest[] = [];
+      const bodies: unknown[] = [];
+      const api = ReferenceTransportApi.prefix('/shell-super-app-api/module-api/billing/owner-build/billing-api');
+      const handlers = HttpApiBuilder.group(api, 'commands', (group) =>
+        group.handle('apply', () =>
+          Effect.gen(function* receiveCommand() {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            requests.push(request);
+            bodies.push(yield* request.json.pipe(Effect.orDie));
+            return { revision: 1 };
+          }),
+        ),
+      );
+      const network = inProcessFetch(serveApi(api, handlers));
       const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ReferenceGatewayCredentialsSchema))([
         { audience: 'party-registry', authorization: Redacted.make('Bearer fresh-provider-assertion') },
       ]);
@@ -134,19 +126,16 @@ it.effect(
       const payload = { command: 'ConfirmInvoice', expectedRevision: 0 } as const;
       yield* makeGovernedEffectBffClient(config, { referenceCredentials: Redacted.make(encoded) }).pipe(
         Effect.flatMap((client) => client.commands.apply({ payload })),
-        Effect.provideService(FetchHttpClient.Fetch, transport),
+        Effect.provide(network),
       );
       yield* makeGovernedEffectBffClient(config, {}).pipe(
         Effect.flatMap((client) => client.commands.apply({ payload })),
-        Effect.provideService(FetchHttpClient.Fetch, transport),
+        Effect.provide(network),
       );
-      expect(requests[0]?.headers.get(REFERENCE_GATEWAY_CREDENTIALS_HEADER)).toBe(encoded);
-      expect(requests[1]?.headers.has(REFERENCE_GATEWAY_CREDENTIALS_HEADER)).toBe(false);
-      expect(requests[0]?.headers.get('authorization')).toBe('Bearer receiving-owner-assertion');
-      expect(requests[0]?.headers.get('idempotency-key')).toBe('finance-confirm-idempotency');
-      const bodies = yield* Effect.forEach(requests, (request) => Effect.promise(() => request.json()), {
-        concurrency: 1,
-      });
+      expect(requests[0]?.headers[REFERENCE_GATEWAY_CREDENTIALS_HEADER]).toBe(encoded);
+      expect(requests[1] && Object.hasOwn(requests[1].headers, REFERENCE_GATEWAY_CREDENTIALS_HEADER)).toBe(false);
+      expect(requests[0]?.headers['authorization']).toBe('Bearer receiving-owner-assertion');
+      expect(requests[0]?.headers['idempotency-key']).toBe('finance-confirm-idempotency');
       expect(bodies).toEqual([payload, payload]);
       expect(bodies).not.toContain(encoded);
     }),

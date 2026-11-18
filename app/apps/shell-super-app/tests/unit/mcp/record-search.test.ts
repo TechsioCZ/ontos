@@ -1,4 +1,3 @@
-import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 // @rstest-environment node
 import {
   ContextAccess,
@@ -25,7 +24,7 @@ import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { Crypto, Effect, Layer, Option, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { HttpRouter, HttpServerRequest } from 'effect/http';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
@@ -69,12 +68,7 @@ import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-
 import { connectionDescription, fixtureCatalog, FIXTURE_MODULE_ID } from './fixture-vertical.ts';
 import { agentConnectionStoreDouble } from '../../support/agent-connection-store-double.ts';
 import { tenantModuleTargetTestCarrier } from '../../support/tenant-module-target-carrier.ts';
-
-rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
-  get loadOAuthServerConfig() {
-    return Effect.succeed({ issuer: 'https://ontos.test/oauth', resource: 'https://ontos.test/mcp' });
-  },
-}));
+import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 
 const alphaModule = 'fixture.notes';
 const alphaType = 'fixture.notes.record';

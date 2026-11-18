@@ -1,33 +1,24 @@
 // @rstest-environment happy-dom
 // The contract terms panel as the person sees it: one Save button in the panel footer, the draft's status next to it,
-// and a question before unsaved changes are left. Only the generated clients, the i18n runtime and the router are
-// replaced.
-import { Effect, Option } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Contract } from '../../shared/apis/records.ts';
+// and a question before unsaved changes are left. The real client, i18n and router run against the Shell gateway
+// issuer and the agreement owner's Action contract in process.
+import { acted, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { ContractSchema } from '../../shared/apis/records.ts';
 import { ContractTermsPanel } from '../../src/routes/[lang]/smlouvy/contract-terms.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-const { apply, records } = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
-
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: apply }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
-  executeCounterpartyRead: rstest.fn(),
-}));
-rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
-  listCustomers: rstest.fn(),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useNavigate: () => () => {},
-  useRouterState: () => '',
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const contractRef = {
@@ -36,7 +27,7 @@ const contractRef = {
   resourceType: 'legal.agreements.contract',
   tenantId,
 } as const;
-const contract: Contract = {
+const contract = Schema.decodeUnknownSync(ContractSchema)({
   contractRef,
   counterpartyRef: {
     moduleId: 'party.registry',
@@ -58,28 +49,31 @@ const contract: Contract = {
   subject: 'Nájem kanceláře',
   supersedesContractRef: null,
   unitRef: null,
-};
+});
 
-const sends = () => apply.mock.calls.length;
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+const saved = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: contractRef, revision: 5 });
+const OwnerActionApi = ApplyCommandActionApi.prefix('/legal-agreements-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'legal-agreements': '/legal-agreements-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return saved;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+);
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-interface View {
-  readonly closed: string[];
-  readonly unmount: () => void;
-}
-
-const views: View[] = [];
-
-const mount = async (): Promise<View> => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  const closed: string[] = [];
-  await act(async () => {
-    root.render(
+const mount = () =>
+  Effect.gen(function* mountPanel() {
+    yield* pinTestDocument;
+    const closed: string[] = [];
+    yield* mountInRoute(
       <ContractTermsPanel
         contract={contract}
         onClose={() => {
@@ -87,25 +81,10 @@ const mount = async (): Promise<View> => {
         }}
         revision={4}
       />,
+      { path: 'smlouvy', url: '/cs/smlouvy' },
     );
-    await settle();
+    return { closed, unmount: unmountAll };
   });
-  let live = true;
-  const view: View = {
-    closed,
-    unmount: () => {
-      if (live) {
-        live = false;
-        act(() => {
-          root.unmount();
-          container.remove();
-        });
-      }
-    },
-  };
-  views.push(view);
-  return view;
-};
 
 const buttons = (name: string): HTMLButtonElement[] =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
@@ -120,137 +99,116 @@ const field = (id: string): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${id}"]`)));
 
 /** Types like a person: React sees a native input event, then focus leaves the field. */
-const type = async (id: string, value: string) => {
-  await act(async () => {
+const type = (id: string, value: string) =>
+  acted(() => {
     const input = field(id);
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-    await settle();
   });
-};
 
-const click = async (target: HTMLElement) => {
-  await act(async () => {
-    target.click();
-    await settle();
-  });
-};
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
-const text = () => document.body.textContent ?? '';
+const click = (target: HTMLElement) => acted(() => target.click());
 
 const notice = 'contract-terms-notice';
-const close = 'legal-agreements.detail.close';
+const close = moduleText('cs')('legal-agreements.detail.close');
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  apply.mockReset();
-  records.mockReset();
-  apply.mockReturnValue(Effect.succeed({ resourceRef: contractRef, revision: 5 }));
+  commands.length = 0;
 });
 
-afterEach(() => {
-  for (const view of views) {
-    view.unmount();
-  }
-  views.length = 0;
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('contract terms panel with one Save button', () => {
   it.live('typing, waiting and closing the panel send nothing', () =>
     Effect.gen(function* typing() {
-      const view = yield* Effect.promise(mount);
+      yield* pinTestDocument;
+      const view = yield* mount();
       expect(buttons('Uložit')).toHaveLength(1);
       expect(button('Uložit').disabled).toBe(true);
       expect(text()).not.toMatch(/automat/iu);
 
-      yield* Effect.promise(() => type(notice, '3 měsíce'));
+      yield* type(notice, '3 měsíce');
       expect(button('Uložit').disabled).toBe(false);
       expect(text()).toContain('Neuložené změny');
       // Enter submits the form natively: it must not save.
       document.querySelector('form')?.requestSubmit();
       yield* Effect.sleep('1 second');
-      yield* Effect.promise(() => act(settle));
-      expect(sends()).toBe(0);
+      yield* settle;
+      expect(commands.length).toBe(0);
 
       view.unmount();
       yield* Effect.sleep('1 second');
-      expect(sends()).toBe(0);
-    }),
+      expect(commands.length).toBe(0);
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('one click on Save sends the terms once and shows them saved', () =>
+  it.live('one click on Save sends the terms once and shows them saved', () =>
     Effect.gen(function* saveOnce() {
-      yield* Effect.promise(mount);
-      yield* Effect.promise(() => type(notice, '3 měsíce'));
-      yield* Effect.promise(() => click(button('Uložit')));
-      yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
-      expect(sends()).toBe(1);
-      expect(apply.mock.calls[0]?.[0]).toMatchObject({
+      yield* pinTestDocument;
+      yield* mount();
+      yield* type(notice, '3 měsíce');
+      yield* click(button('Uložit'));
+      yield* waitUntil(() => text().includes('Uloženo'));
+      expect(commands.length).toBe(1);
+      expect(commands[0]).toMatchObject({
         command: { _tag: 'SetContractTerms', noticePeriod: '3 měsíce' },
         expectedRevision: 4,
       });
       expect(button('Uložit').disabled).toBe(true);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('an invalid rent keeps Save disabled', () =>
+  it.live('an invalid rent keeps Save disabled', () =>
     Effect.gen(function* invalid() {
-      yield* Effect.promise(mount);
-      yield* Effect.promise(() => type('contract-terms-monthly', 'hodně'));
+      yield* pinTestDocument;
+      yield* mount();
+      yield* type('contract-terms-monthly', 'hodně');
       expect(button('Uložit').disabled).toBe(true);
-      expect(sends()).toBe(0);
-    }),
+      expect(commands.length).toBe(0);
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('closing with unsaved changes asks first; Zůstat keeps the draft, Zahodit změny closes unsaved', () =>
+  it.live('closing with unsaved changes asks first; Zůstat keeps the draft, Zahodit změny closes unsaved', () =>
     Effect.gen(function* leave() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(() => type(notice, '3 měsíce'));
-      yield* Effect.promise(() => click(button(close)));
+      yield* pinTestDocument;
+      const view = yield* mount();
+      yield* type(notice, '3 měsíce');
+      yield* click(button(close));
       expect(buttons('Zahodit změny')).toHaveLength(1);
       expect(view.closed).toEqual([]);
 
-      yield* Effect.promise(() => click(button('Zůstat')));
-      yield* Effect.promise(() => waitUntil(() => buttons('Zůstat').length === 0));
+      yield* click(button('Zůstat'));
+      yield* waitUntil(() => buttons('Zůstat').length === 0);
       expect(field(notice).value).toBe('3 měsíce');
 
-      yield* Effect.promise(() => click(button(close)));
-      yield* Effect.promise(() => click(button('Zahodit změny')));
+      yield* click(button(close));
+      yield* click(button('Zahodit změny'));
       expect(view.closed).toEqual(['close']);
-      expect(sends()).toBe(0);
-    }),
+      expect(commands.length).toBe(0);
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('Uložit in the question saves once and then closes', () =>
+  it.live('Uložit in the question saves once and then closes', () =>
     Effect.gen(function* saveAndLeave() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(() => type(notice, '3 měsíce'));
-      yield* Effect.promise(() => click(button(close)));
+      yield* pinTestDocument;
+      const view = yield* mount();
+      yield* type(notice, '3 měsíce');
+      yield* click(button(close));
       const inDialog = buttons('Uložit').at(-1);
       expect(inDialog).toBeDefined();
-      yield* Effect.promise(() => click(inDialog ?? document.createElement('button')));
-      yield* Effect.promise(() => waitUntil(() => view.closed.length === 1));
-      expect(sends()).toBe(1);
-    }),
+      yield* click(inDialog ?? document.createElement('button'));
+      yield* waitUntil(() => view.closed.length === 1);
+      expect(commands.length).toBe(1);
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('an unchanged panel closes without asking', () =>
+  it.live('an unchanged panel closes without asking', () =>
     Effect.gen(function* cleanLeave() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(() => click(button(close)));
+      yield* pinTestDocument;
+      const view = yield* mount();
+      yield* click(button(close));
       expect(buttons('Zůstat')).toHaveLength(0);
       expect(view.closed).toEqual(['close']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

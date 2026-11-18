@@ -45,7 +45,7 @@ it.effect(
           expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-10T12:00:00.000Z')),
           proposalId: ProposalIdSchema.make('60000000-0000-4000-8000-000000000001'),
         };
-        const { compositionRevision, harness, requestContext, router } = yield* makeFixture({
+        const { authorization, compositionRevision, harness, requestContext, router } = yield* makeFixture({
           access: 'needs_approval',
           mandateDispatch: {
             claim: () => Effect.die('A proposal cannot claim a mandate'),
@@ -62,7 +62,7 @@ it.effect(
         const statuses: number[] = [];
         const receipt = yield* executeUpdateTagWithAuthorization(
           Schema.decodeUnknownSync(UpdateTagPayloadSchema)({ command, expectedRevision: 1 }),
-          'Bearer fixture',
+          yield* authorization,
           'pending-update',
           {
             baseUrl: 'https://owner.test',

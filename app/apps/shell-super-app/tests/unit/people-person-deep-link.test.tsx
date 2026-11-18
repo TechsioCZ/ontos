@@ -1,55 +1,30 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { Effect } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import type { ReactNode } from 'react';
+// @rstest-environment happy-dom
+import { acted } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  testCompositionRevision,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { cleanup, screen } from '@testing-library/react';
+import { Effect, Layer, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 
+import {
+  ListAccessPeopleOptionsResponseSchema,
+  ListAccessPeopleResponseSchema,
+} from '../../shared/access-admin-api.ts';
+import { ShellAuthenticationApi, ShellTargetForbiddenProblemSchema } from '../../shared/browser-api.ts';
+import type { ShellTargetForbiddenProblem } from '../../shared/browser-api.ts';
+import { PeopleListResponseSchema } from '../../shared/people-api.ts';
+import type { PeopleList } from '../../shared/people-api.ts';
 import { PeopleView } from '../../src/routes/people/people-view.tsx';
 import type { PeoplePageModel } from '../../src/routes/people/people-page-model.ts';
-import type { DetailSearch, PeopleDetailQuery } from '../../src/routes/people/people-detail-selection.ts';
+import { shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
-
-const { commands, state } = rstest.hoisted(() => ({
-  commands: {
-    access: rstest.fn(),
-    list: rstest.fn(),
-  },
-  state: {
-    search: {},
-  },
-}));
-
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useRouterState: ({
-    select,
-  }: {
-    readonly select: (value: { readonly location: { readonly search: DetailSearch } }) => PeopleDetailQuery;
-  }) => select({ location: { search: state.search } }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('../../src/routes/shell-content-layout.tsx', () => ({
-  ShellContentLayout: ({ children }: { readonly children?: ReactNode }) => <div>{children}</div>,
-}));
-rstest.mock('../../src/routes/sign-in-redirect.tsx', () => ({
-  SignInRedirect: () => null,
-}));
-rstest.mock('../../src/routes/use-shell-controls.ts', () => ({
-  useShellControls: () => ({ reloadRequired: false }),
-}));
-rstest.mock('../../src/routes/people/agent-entities-section.tsx', () => ({
-  AgentEntitiesSection: () => null,
-}));
-rstest.mock('../../src/routes/people/invite-person-button.tsx', () => ({
-  InvitePersonButton: () => null,
-}));
-rstest.mock('../../src/routes/people/people-client.ts', () => ({
-  changeCompanyMembership: rstest.fn(),
-  changePersonRole: rstest.fn(),
-  invitePerson: rstest.fn(),
-  loadAllPeople: commands.list,
-  loadPeopleAccess: commands.access,
-}));
 
 const companyId = '20000000-0000-4000-8000-000000000001';
 const otherCompanyId = '20000000-0000-4000-8000-000000000002';
@@ -79,162 +54,189 @@ const list = {
   scope: { _tag: 'company', legalEntityId: companyId },
   tenantId,
 } as const;
-const model = (): PeoplePageModel => ({ peoplePage: true, shell: authenticatedShellFixture() });
+const czech = shellLocaleCopy('cs');
+const model = (): PeoplePageModel => ({
+  peoplePage: true,
+  shell: { ...authenticatedShellFixture(), compositionRevision: testCompositionRevision },
+});
+const contract = ShellAuthenticationApi.groups;
+const PeopleApi = HttpApi.make('peopleDeepLink')
+  .add(HttpApiGroup.make('peopleAdministration').add(contract.peopleAdministration.endpoints.listCompanyPeople))
+  .add(
+    HttpApiGroup.make('accessAdminPeople')
+      .add(contract.accessAdminPeople.endpoints.listAccessPeople)
+      .add(contract.accessAdminPeople.endpoints.listAccessPeopleOptions),
+  )
+  .add(HttpApiGroup.make('oauthConnectionsAdmin').add(contract.oauthConnectionsAdmin.endpoints.listAgentEntities))
+  .prefix('/shell-super-app-api');
+const accessOptions = Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+  admissionCandidates: [],
+  capabilities: [],
+  managers: [],
+  people: [],
+  revision: 'people-revision-1',
+  roles: [],
+  scopes: [],
+  teams: [],
+  writeAvailability: {
+    canAdmitMember: false,
+    canAssign: false,
+    canDelegate: false,
+    canEndMembership: false,
+    canManageTeams: false,
+    canRevokeDelegation: false,
+    canTransferOwnership: false,
+    canUnassign: false,
+  },
+});
+const accessPeople = Schema.decodeUnknownSync(ListAccessPeopleResponseSchema)({
+  items: [],
+  nextCursor: null,
+  revision: 'people-revision-1',
+});
+const forbidden = ShellTargetForbiddenProblemSchema.make({
+  detail: 'K této správě nemáte oprávnění.',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/shell-target-forbidden',
+});
+let directoryAnswer: Effect.Effect<PeopleList, ShellTargetForbiddenProblem>;
+const handlers = Layer.mergeAll(
+  HttpApiBuilder.group(PeopleApi, 'peopleAdministration', (group) =>
+    group.handle('listCompanyPeople', () => Effect.suspend(() => directoryAnswer)),
+  ),
+  HttpApiBuilder.group(PeopleApi, 'accessAdminPeople', (group) =>
+    group
+      .handle('listAccessPeople', () => Effect.succeed(accessPeople))
+      .handle('listAccessPeopleOptions', () => Effect.succeed(accessOptions)),
+  ),
+  HttpApiBuilder.group(PeopleApi, 'oauthConnectionsAdmin', (group) =>
+    group.handle('listAgentEntities', () => Effect.fail(forbidden)),
+  ),
+);
+const network = browserNetwork(serveApi(PeopleApi, handlers));
+const mountPeople = (search = '') =>
+  Effect.gen(function* mountPeopleRoute() {
+    yield* pinTestDocument;
+    expect(czech.exists('shell.people.detail.foreignCompany')).toBe(true);
+    const query = search === '' ? '' : `?${search}`;
+    const router = makeShellRouter({
+      page: { component: () => <PeopleView model={model()} />, path: 'people' },
+      url: `/cs/people${query}`,
+    });
+    yield* renderShellRoute(router, czech);
+  });
 
 afterEach(cleanup);
 beforeEach(() => {
-  state.search = {};
-  commands.access.mockReturnValue(
-    Effect.succeed({
-      status: 'ok',
-      value: {
-        options: {
-          admissionCandidates: [],
-          capabilities: [],
-          managers: [],
-          people: [],
-          revision: 'people-revision-1',
-          roles: [],
-          scopes: [],
-          teams: [],
-          writeAvailability: {
-            canAdmitMember: false,
-            canAssign: false,
-            canDelegate: false,
-            canEndMembership: false,
-            canManageTeams: false,
-            canRevokeDelegation: false,
-            canTransferOwnership: false,
-            canUnassign: false,
-          },
-        },
-        people: { items: [], nextCursor: null, revision: 'people-revision-1' },
-      },
-    }),
-  );
-  commands.list.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
+  directoryAnswer = Effect.succeed(Schema.decodeUnknownSync(PeopleListResponseSchema)(list));
 });
 
 it.live('a cold company-qualified link opens the real person detail and its existing administration actions', () =>
   Effect.gen(function* qualifiedColdLink() {
-    state.search = { person: `${companyId}.${principalId}` };
-    render(<PeopleView model={model()} />);
+    yield* mountPeople(`person=${companyId}.${principalId}`);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
     expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Upravit členství' })).toBeDefined();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a link qualified with another company is refused instead of selecting the same principal locally', () =>
   Effect.gen(function* foreignCompany() {
-    state.search = { person: `${otherCompanyId}.${principalId}` };
-    render(<PeopleView model={model()} />);
-    yield* Effect.promise(() => screen.findByText('shell.people.detail.foreignCompany'));
+    yield* mountPeople(`person=${otherCompanyId}.${principalId}`);
+    yield* Effect.promise(() => screen.findByText(czech.t('shell.people.detail.foreignCompany')));
     expect(screen.queryByRole('dialog')).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it('a malformed person link is refused while a valid agent link keeps its own tab', () => {
-  state.search = { agent: '00000000-0000-4000-8000-000000000099', person: 'broken-person' };
-  render(<PeopleView model={model()} />);
-  expect(screen.getByRole('button', { name: 'AI agenti' }).getAttribute('aria-pressed')).toBe('true');
-  expect(screen.queryByRole('dialog')).toBeNull();
-});
+it.live('a malformed person link is refused while a valid agent link keeps its own tab', () =>
+  Effect.gen(function* malformedPerson() {
+    yield* mountPeople('agent=00000000-0000-4000-8000-000000000099&person=broken-person');
+    expect(screen.getByRole('button', { name: 'AI agenti' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  }).pipe(Effect.provide(network)),
+);
 
 it.live('a qualified person absent from the governed directory stays a truthful missing state', () =>
   Effect.gen(function* missingPerson() {
-    state.search = { person: `${companyId}.${missingPrincipalId}` };
-    render(<PeopleView model={model()} />);
+    yield* mountPeople(`person=${companyId}.${missingPrincipalId}`);
     yield* Effect.promise(() =>
       screen.findByText('Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'),
     );
     expect(screen.queryByRole('dialog')).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a forbidden governed directory read shows its denial and never claims or opens a person', () =>
   Effect.gen(function* forbiddenRead() {
-    state.search = { person: `${companyId}.${principalId}` };
-    commands.list.mockReturnValue(
-      Effect.succeed({ message: 'K této správě nemáte oprávnění.', status: 'failed' as const }),
-    );
-    render(<PeopleView model={model()} />);
+    directoryAnswer = Effect.fail(forbidden);
+    yield* mountPeople(`person=${companyId}.${principalId}`);
     yield* Effect.promise(() => screen.findByText('K této správě nemáte oprávnění.'));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('table')).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a refused reread removes a previously opened person and administration actions', () =>
   Effect.gen(function* refusedReread() {
-    state.search = { person: `${companyId}.${principalId}` };
-    render(<PeopleView model={model()} />);
+    yield* mountPeople(`person=${companyId}.${principalId}`);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
-    commands.list.mockReturnValue(
-      Effect.succeed({ message: 'K této správě nemáte oprávnění.', status: 'failed' as const }),
-    );
-    document.dispatchEvent(new Event('visibilitychange'));
+    directoryAnswer = Effect.fail(forbidden);
+    yield* acted(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     yield* Effect.promise(() => screen.findByText('K této správě nemáte oprávnění.'));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Spravovat role' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Upravit členství' })).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a row with the same principal but another company membership is not the linked person', () =>
   Effect.gen(function* foreignMembership() {
-    state.search = { person: `${companyId}.${principalId}` };
-    commands.list.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: {
-          ...list,
-          items: [{ ...person, selectedCompanyMembership: { ...membership, legalEntityId: otherCompanyId } }],
-        },
+    directoryAnswer = Effect.succeed(
+      Schema.decodeUnknownSync(PeopleListResponseSchema)({
+        ...list,
+        items: [{ ...person, selectedCompanyMembership: { ...membership, legalEntityId: otherCompanyId } }],
       }),
     );
-    render(<PeopleView model={model()} />);
+    yield* mountPeople(`person=${companyId}.${principalId}`);
     yield* Effect.promise(() =>
       screen.findByText('Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'),
     );
     expect(screen.queryByRole('dialog')).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a row from another tenant is not the linked person', () =>
   Effect.gen(function* foreignTenant() {
-    state.search = { person: `${companyId}.${principalId}` };
-    commands.list.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: {
-          ...list,
-          items: [{ ...person, principalRef: { ...principalRef, tenantId: otherTenantId } }],
-        },
+    directoryAnswer = Effect.succeed(
+      Schema.decodeUnknownSync(PeopleListResponseSchema)({
+        ...list,
+        items: [{ ...person, principalRef: { ...principalRef, tenantId: otherTenantId } }],
       }),
     );
-    render(<PeopleView model={model()} />);
+    yield* mountPeople(`person=${companyId}.${principalId}`);
     yield* Effect.promise(() =>
       screen.findByText('Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'),
     );
     expect(screen.queryByRole('dialog')).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('the existing people page still lists people without a deep link', () =>
   Effect.gen(function* existingPage() {
-    render(<PeopleView model={model()} />);
+    yield* mountPeople();
     yield* Effect.promise(() => screen.findByRole('table'));
     expect(screen.getByText('Jana Nováková')).toBeDefined();
     expect(screen.queryByRole('dialog')).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('the existing unqualified person bookmark keeps working', () =>
   Effect.gen(function* legacyBookmark() {
-    state.search = { person: principalId };
-    render(<PeopleView model={model()} />);
+    yield* mountPeople(`person=${principalId}`);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
-  }),
+  }).pipe(Effect.provide(network)),
 );

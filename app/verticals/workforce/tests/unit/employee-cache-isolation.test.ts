@@ -1,41 +1,20 @@
-import { afterAll, beforeAll, expect, it, rstest } from 'effect-rstest';
-import { Effect, Result, Schema } from 'effect';
-import { createElement } from 'react';
-import type ReactRuntime from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+// @rstest-environment happy-dom
+import { acted, settle, unmountAll } from '@app/admin-ui/testing/module-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-client.ts';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Result, Schema } from 'effect';
+import { afterEach, expect, it } from 'effect-rstest';
+import { createElement } from 'react';
+import { RecordsApi, RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { employeesData } from '../../src/routes/[lang]/prodej/zamestnanci/employees-data.ts';
 import { usePageData } from '../../src/runtime/use-page-data.ts';
-
-rstest.mock('../../src/api/records-client.ts');
-// Renders the real `usePageData` snapshot without React's client subscription: the probe shows what the page's
-// `loadStateOf` turns into rows (`ready`) or into the forbidden empty state (`failed`).
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-
-beforeAll(() => {
-  for (const [name, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, name, value);
-  }
-});
-
-afterAll(() => {
-  for (const name of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, name);
-  }
-});
+import { mountInRoute } from '../support/module-ui.ts';
 
 /**
  * The candidate: the employees entry is keyed by the legal entity alone, and a denied revalidation keeps the old
@@ -89,27 +68,39 @@ const denied = Schema.decodeUnknownSync(RecordsForbiddenProblemSchema)({
 
 const EmployeesProbe = () => createElement('output', null, usePageData(employeesData, company).state);
 
-it.effect('a denied revalidation clears the rows the allowed read left on the same company', () =>
+let answer: Effect.Effect<typeof allowed, typeof denied> = Effect.succeed(allowed);
+const OwnerRecordsApi = RecordsApi.prefix('/workforce-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ workforce: '/workforce-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', () => Effect.suspend(() => answer)),
+    ),
+  ),
+);
+
+afterEach(unmountAll);
+
+it.live('a denied revalidation clears the rows the allowed read left on the same company', () =>
   Effect.gen(function* deniedRevalidation() {
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(allowed));
+    yield* pinTestDocument;
+    answer = Effect.succeed(allowed);
     yield* employeesData.read(company);
     expect(employeesData.snapshot(company)).toEqual({ refreshing: false, state: 'ready', value: allowed });
-    expect(renderToStaticMarkup(createElement(EmployeesProbe))).toBe('<output>ready</output>');
+    yield* mountInRoute(createElement(EmployeesProbe), { url: '/cs/prodej/zamestnanci' });
+    expect(document.querySelector('output')?.outerHTML).toBe('<output>ready</output>');
 
-    // The page is shown: its hook keeps the entry mounted while the live channel announces a committed change.
-    const unmount = employeesData.subscribe(() => {
-      employeesData.snapshot(company);
-    }, company);
-    try {
-      rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
-      globalThis.dispatchEvent(new Event(moduleChangeEvent));
-      // Await the revalidation the mounted list started; the strict read path already propagates the denial.
-      expect(yield* Effect.result(employeesData.read(company))).toEqual(Result.fail('forbidden'));
-      // The rows must not survive it: the page shows the forbidden state, never the previous reader's list.
-      expect(employeesData.snapshot(company)).toEqual({ error: 'forbidden', refreshing: false, state: 'failed' });
-      expect(renderToStaticMarkup(createElement(EmployeesProbe))).toBe('<output>failed</output>');
-    } finally {
-      unmount();
-    }
-  }),
+    // The real hook keeps the list mounted while the live channel announces a committed change.
+    answer = Effect.fail(denied);
+    yield* acted(() => {
+      window.dispatchEvent(new Event(moduleChangeEvent));
+    });
+    // Await the revalidation the mounted list started; the strict read path propagates the denial.
+    expect(yield* Effect.result(employeesData.read(company))).toEqual(Result.fail('forbidden'));
+    // The rows must not survive it: the page shows the forbidden state, never the previous reader's list.
+    expect(employeesData.snapshot(company)).toEqual({ error: 'forbidden', refreshing: false, state: 'failed' });
+    yield* settle;
+    expect(document.querySelector('output')?.outerHTML).toBe('<output>failed</output>');
+  }).pipe(Effect.provide(network)),
 );

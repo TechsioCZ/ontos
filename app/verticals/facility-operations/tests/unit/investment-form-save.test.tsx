@@ -1,41 +1,33 @@
 // @rstest-environment happy-dom
-// An investment plan item is created or edited on the shared Uložit only. An edit saves against the read its draft
-// came from: someone else's newer change is refused as a conflict, and "Načíst aktuální verzi" opens the latest.
-import { Effect, Predicate, Schema } from 'effect';
-import { constUndefined } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { createElement } from 'react';
+// Investment saves use the real router, i18n, generated clients and owner HTTP contracts.
+import { saveLabelsFor } from '@app/admin-ui';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  RecordsApi as PropertyRecordsApi,
+  RecordsResponseSchema as PropertyRecordsResponseSchema,
+} from '@app/property-portfolio/contracts/records';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import {
+  ApplyCommandActionApi,
+  ApplyCommandActionConflictProblemSchema,
+} from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { AssetsStateSchema, InvestmentSchema } from '../../shared/domain/assets.ts';
 import type { Investment } from '../../shared/domain/assets.ts';
+import type { OpsCommand } from '../../shared/agendas.ts';
 import { InvestmentForm } from '../../src/routes/[lang]/provoz/majetek/investments.tsx';
-import {
-  agendaAt,
-  bodyText,
-  changeElsewhere,
-  click,
-  fieldValue,
-  labels,
-  mountPanel,
-  runnerAt,
-  save,
-  typeInto,
-  unmountPanels,
-} from './draft-base-fixture.ts';
-import type { FakeAgenda } from './draft-base-fixture.ts';
-import { recordingRunner, saveSent } from './form-save-fixture.ts';
-
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('../../src/routes/[lang]/provoz/majetek/property-tree.ts', () => ({
-  locationItems: () => [],
-  owningPropertyId: constUndefined,
-  usePropertyTree: () => ({ status: 'loading' }),
-}));
-rstest.mock('../../src/ui/change-history.tsx', () => ({ ChangeHistory: () => null }));
+import { runCommand } from '../../src/ui/use-agenda.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId: '70000000-0000-4000-8000-000000000020' };
 const investmentAt = (updatedAt: string, responsible: string): Investment =>
@@ -63,33 +55,109 @@ const saved: string[] = [];
 const onSaved = () => {
   saved.push('saved');
 };
-const editOf = (investment: Investment, agenda: FakeAgenda, revision: number) =>
-  createElement(InvestmentForm, {
-    investment: opened,
-    onSubmit: { onSaved, run: runnerAt(agenda, revision) },
-    state: stateWith(investment),
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+let revision = 3;
+const conflict = Schema.decodeUnknownSync(ApplyCommandActionConflictProblemSchema)({
+  _tag: 'ApplyCommandActionConflictProblem',
+  code: 'facility_operations_revision_conflict',
+  detail: 'The investment changed after this draft was opened.',
+  status: 409,
+  title: 'Revision conflict',
+  type: 'urn:ontos:test:revision-conflict',
+});
+const history = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  access: [],
+  actorPrincipalRef: actor,
+  agendas: {},
+  history: [],
+});
+const properties = Schema.decodeUnknownSync(PropertyRecordsResponseSchema)({
+  assets: [],
+  properties: [],
+  revision: 0,
+  units: [],
+});
+const OwnerAction = ApplyCommandActionApi.prefix('/facility-operations-api');
+const OwnerRecords = RecordsApi.prefix('/facility-operations-api');
+const PropertyOwner = PropertyRecordsApi.prefix('/property-portfolio-api');
+const network = browserNetwork(
+  shellGatewayIssuer({
+    'facility-operations': '/facility-operations-api',
+    'property-portfolio': '/property-portfolio-api',
+  }).application,
+  serveApi(
+    OwnerAction,
+    HttpApiBuilder.group(OwnerAction, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          commands.push(payload);
+          if (payload.expectedRevision < revision) {
+            return Effect.fail(conflict);
+          }
+          revision += 1;
+          return Effect.succeed({ entityIds: [], revision });
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerRecords,
+    HttpApiBuilder.group(OwnerRecords, 'records', (group) => group.handle('execute', () => Effect.succeed(history))),
+  ),
+  serveApi(
+    PropertyOwner,
+    HttpApiBuilder.group(PropertyOwner, 'records', (group) =>
+      group.handle('execute', () => Effect.succeed(properties)),
+    ),
+  ),
+);
+const runnerAt = (expectedRevision: number) => (command: OpsCommand) => runCommand(command, expectedRevision);
+const editOf = (investment: Investment, expectedRevision: number) => (
+  <InvestmentForm
+    investment={opened}
+    onSubmit={{ onSaved, run: runnerAt(expectedRevision) }}
+    state={stateWith(investment)}
+  />
+);
+const labels = saveLabelsFor('cs');
+const field = (selector: string) =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(selector)));
+const typeInto = (selector: string, value: string) =>
+  acted(() => {
+    const input = field(selector);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
   });
+const click = (label: string) =>
+  acted(() => {
+    Option.getOrThrow(Option.fromUndefinedOr(buttons(label)[0])).click();
+  });
+const save = (count: number) =>
+  click(labels.save).pipe(
+    Effect.andThen(waitUntil(() => commands.length >= count)),
+    Effect.andThen(waitUntil(() => buttons(labels.save).length > 0)),
+  );
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   saved.length = 0;
+  commands.length = 0;
+  revision = 3;
 });
-
-afterEach(() => {
-  unmountPanels();
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('investment plan item', () => {
   it.live('a new item is created once with the typed values', () =>
     Effect.gen(function* scenario() {
-      const runner = recordingRunner();
-      yield* mountPanel(createElement(InvestmentForm, { onSubmit: { onSaved, run: runner.run }, state: stateWith() }));
+      yield* pinTestDocument;
+      yield* mountInRoute(<InvestmentForm onSubmit={{ onSaved, run: runnerAt(3) }} state={stateWith()} />, {
+        url: '/cs/provoz/majetek',
+      });
       yield* typeInto('#investment-title', 'Nová střecha');
       yield* typeInto('#investment-planned', '400 000');
       yield* typeInto('#investment-planned-date', '2027-06-01');
-      yield* saveSent(runner, 1);
-      expect(runner.sent).toEqual([
+      yield* save(1);
+      yield* waitUntil(() => saved.length === 1);
+      expect(commands.map((entry) => entry.command)).toEqual([
         expect.objectContaining({
           _tag: 'AssetInvestmentCreate',
           plannedAmountMinor: 40_000_000,
@@ -98,28 +166,30 @@ describe('investment plan item', () => {
         }),
       ]);
       expect(saved).toEqual(['saved']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('an edit over someone else’s newer change is refused as a conflict; reload latest takes their version', () =>
     Effect.gen(function* scenario() {
-      const agenda = agendaAt(3);
-      const panel = yield* mountPanel(editOf(opened, agenda, 3));
+      yield* pinTestDocument;
+      const panel = yield* mountInRoute(editOf(opened, 3), { url: '/cs/provoz/majetek' });
       yield* typeInto('#investment-responsible', 'Petr Dvořák');
-      changeElsewhere(agenda);
-      yield* panel.render(editOf(theirs, agenda, 4));
-      yield* save(agenda, 1);
-      expect(agenda.applied.map((entry) => entry.expectedRevision)).toEqual([3]);
-      expect(bodyText()).toContain(labels.conflict);
+      revision = 4;
+      yield* panel.rerender(editOf(theirs, 4));
+      yield* save(1);
+      yield* waitUntil(() => text().includes(labels.conflict));
+      expect(commands.map((entry) => entry.expectedRevision)).toEqual([3]);
+      expect(text()).toContain(labels.conflict);
       expect(saved).toEqual([]);
       yield* click(labels.reloadLatest);
-      expect(fieldValue('#investment-responsible')).toBe('Eva Malá');
+      expect(field('#investment-responsible').value).toBe('Eva Malá');
       yield* typeInto('#investment-responsible', 'Petr Dvořák');
-      yield* save(agenda, 2);
-      expect(agenda.applied.map((entry) => entry.expectedRevision)).toEqual([3, 4]);
-      expect(Predicate.isTagged(agenda.applied[1]?.command, 'AssetInvestmentUpdate')).toBe(true);
-      expect(agenda.applied[1]?.command).toMatchObject({ investmentId: opened.id, responsible: 'Petr Dvořák' });
+      yield* save(2);
+      yield* waitUntil(() => saved.length === 1);
+      expect(commands.map((entry) => entry.expectedRevision)).toEqual([3, 4]);
+      expect(Predicate.isTagged(commands[1]?.command, 'AssetInvestmentUpdate')).toBe(true);
+      expect(commands[1]?.command).toMatchObject({ investmentId: opened.id, responsible: 'Petr Dvořák' });
       expect(saved).toEqual(['saved']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

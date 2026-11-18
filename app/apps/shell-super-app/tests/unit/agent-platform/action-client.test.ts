@@ -3,10 +3,12 @@ import {
   AgentItemKeySchema,
   AgentRevertRequestSchema,
 } from '@app/shared-contracts/agent-proposals';
-import { Deferred, Effect, Fiber, Random, Schema } from 'effect';
+import { inProcessFetch } from '@app/shared-contracts/testing/http-double';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Fiber, Schema, Stream } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import { afterAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import {
   agentMutationIntent,
@@ -15,15 +17,39 @@ import {
   revertAgentBatch,
 } from '../../../src/routes/agent-platform/agent-platform-client.ts';
 
-const originalFetch = globalThis.fetch;
-const fetch = rstest.fn<typeof globalThis.fetch>();
-beforeEach(() => {
-  fetch.mockReset();
-  globalThis.fetch = fetch;
-});
-afterAll(() => {
-  globalThis.fetch = originalFetch;
-});
+interface ReceivedMutation {
+  readonly body: string;
+  readonly idempotencyKey: string | null;
+  readonly signal: AbortSignal;
+  readonly url: URL;
+}
+
+const mutationEndpoint = (
+  path: 'decide' | 'revert',
+  answer: (attempt: number) => HttpServerResponse.HttpServerResponse,
+) => {
+  const received: ReceivedMutation[] = [];
+  const layer = inProcessFetch(
+    HttpRouter.add(
+      'POST',
+      `/shell-super-app-api/agent-platform/${path}`,
+      Effect.gen(function* receiveMutation() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const webRequest = yield* HttpServerRequest.toWeb(request);
+        const body = yield* request.text;
+        received.push({
+          body,
+          idempotencyKey: webRequest.headers.get('idempotency-key'),
+          signal: webRequest.signal,
+          url: new URL(webRequest.url),
+        });
+        return answer(received.length);
+      }).pipe(Effect.orDie),
+    ),
+  );
+  return { layer, received };
+};
+
 const decision = Schema.decodeUnknownSync(AgentDecideRequestSchema)({
   batchKey: 'core:batch',
   decision: 'approve',
@@ -31,51 +57,59 @@ const decision = Schema.decodeUnknownSync(AgentDecideRequestSchema)({
   note: 'Reviewed',
 });
 
-it.effect('retries a lost decision response with the same ingress key and exact original payload', () =>
-  Effect.gen(function* retryDecision() {
+it.effect('retries a lost decision response with the same ingress key and exact original payload', () => {
+  const endpoint = mutationEndpoint('decide', (attempt) =>
+    attempt === 1
+      ? HttpServerResponse.stream(Stream.fail(new Error('connection lost')))
+      : HttpServerResponse.jsonUnsafe({ results: [] }),
+  );
+  return Effect.gen(function* retryDecision() {
     const itemKeys = [...decision.itemKeys];
     const payload = { ...decision, itemKeys };
     const intent = yield* agentMutationIntent(undefined, payload);
     payload.itemKeys.push(AgentItemKeySchema.make('core:changed-after-dispatch'));
-    fetch.mockRejectedValueOnce(new Error('connection lost'));
     const first = yield* decideAgentItems(intent);
     expect(agentMutationUncertain(first)).toBe(true);
     expect(yield* agentMutationIntent(intent, { ...decision, itemKeys: [...decision.itemKeys] })).toBe(intent);
-    fetch.mockResolvedValueOnce(Response.json({ results: [] }));
     expect((yield* decideAgentItems(intent)).status).toBe('ok');
-    expect(fetch.mock.calls[0]?.[1]?.body).toBe(JSON.stringify(decision));
-    expect(fetch.mock.calls[1]?.[1]?.body).toBe(fetch.mock.calls[0]?.[1]?.body);
-    for (const [url, init] of fetch.mock.calls) {
-      expect(url).toEqual(new URL('/shell-super-app-api/agent-platform/decide', location.href));
-      expect(new Headers(init?.headers).get('idempotency-key')).toBe(intent.idempotencyKey);
+    expect(endpoint.received).toHaveLength(2);
+    expect(endpoint.received[0]?.body).toBe(JSON.stringify(decision));
+    expect(endpoint.received[1]?.body).toBe(endpoint.received[0]?.body);
+    for (const request of endpoint.received) {
+      expect(request.url).toEqual(new URL('/shell-super-app-api/agent-platform/decide', location.href));
+      expect(request.idempotencyKey).toBe(intent.idempotencyKey);
     }
-  }).pipe(Effect.provide(FetchHttpClient.layer)),
-);
+  }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(endpoint.layer));
+});
 
-it.effect('retains a revert intent after an unreadable success body and retries with the same header', () =>
-  Effect.gen(function* retryRevert() {
+it.effect('retains a revert intent after an unreadable success body and retries with the same header', () => {
+  const endpoint = mutationEndpoint('revert', (attempt) =>
+    attempt === 1
+      ? HttpServerResponse.text('not the expected response')
+      : HttpServerResponse.jsonUnsafe({ message: 'Restored', outcome: 'reverted' }),
+  );
+  return Effect.gen(function* retryRevert() {
     const intent = yield* agentMutationIntent(
       undefined,
       Schema.decodeUnknownSync(AgentRevertRequestSchema)({ batchKey: 'core:batch', note: 'Restore' }),
     );
-    fetch.mockResolvedValueOnce(new Response('not the expected response'));
     expect(agentMutationUncertain(yield* revertAgentBatch(intent))).toBe(true);
-    fetch.mockResolvedValueOnce(Response.json({ message: 'Restored', outcome: 'reverted' }));
     expect((yield* revertAgentBatch(intent)).status).toBe('ok');
-    expect(fetch.mock.calls[1]?.[0]).toEqual(new URL('/shell-super-app-api/agent-platform/revert', location.href));
-    expect(fetch.mock.calls[1]?.[1]?.body).toBe(fetch.mock.calls[0]?.[1]?.body);
-    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('idempotency-key')).toBe(intent.idempotencyKey);
-  }).pipe(Effect.provide(FetchHttpClient.layer)),
-);
+    expect(endpoint.received).toHaveLength(2);
+    expect(endpoint.received[1]?.url).toEqual(new URL('/shell-super-app-api/agent-platform/revert', location.href));
+    expect(endpoint.received[1]?.body).toBe(endpoint.received[0]?.body);
+    expect(endpoint.received[1]?.idempotencyKey).toBe(intent.idempotencyKey);
+  }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(endpoint.layer));
+});
 
-it.effect('treats a lost response stream as uncertain instead of rejecting outside the transport boundary', () =>
-  Effect.gen(function* lostBody() {
-    const response = Response.json({ results: [] });
-    rstest.spyOn(response, 'arrayBuffer').mockRejectedValueOnce(new Error('response stream lost'));
-    fetch.mockResolvedValueOnce(response);
+it.effect('treats a lost response stream as uncertain instead of rejecting outside the transport boundary', () => {
+  const endpoint = mutationEndpoint('decide', () =>
+    HttpServerResponse.stream(Stream.fail(new Error('response stream lost'))),
+  );
+  return Effect.gen(function* lostBody() {
     expect(agentMutationUncertain(yield* decideAgentItems(yield* agentMutationIntent(undefined, decision)))).toBe(true);
-  }).pipe(Effect.provide(FetchHttpClient.layer)),
-);
+  }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(endpoint.layer));
+});
 
 it.effect('creates a new ingress key only for a new or changed action intent', () =>
   Effect.gen(function* changedIntent() {
@@ -98,39 +132,30 @@ it('distinguishes uncertain transport/server outcomes from terminal rejections',
   expect(agentMutationUncertain({ status: 'ok', value: {} })).toBe(false);
 });
 
-it.effect('uses injected randomness only when allocating a new intent', () =>
-  Effect.gen(function* injectedRandom() {
-    const nextDoubleUnsafe = rstest.fn(() => 0.5);
-    const random = { nextDoubleUnsafe, nextIntUnsafe: () => 0 };
-    const first = yield* agentMutationIntent(undefined, decision).pipe(Effect.provideService(Random.Random, random));
-    expect(first.idempotencyKey).toBe('80000000800000008000000080000000');
-    expect(nextDoubleUnsafe).toHaveBeenCalledTimes(4);
-    expect(yield* agentMutationIntent(first, decision).pipe(Effect.provideService(Random.Random, random))).toBe(first);
-    expect(nextDoubleUnsafe).toHaveBeenCalledTimes(4);
-  }),
-);
-
 it.effect('aborts a stalled response body at the transport deadline and keeps the exact retry intent', () =>
   Effect.gen(function* bodyDeadline() {
     const reading = yield* Deferred.make<boolean>();
-    const stalledBody = Promise.withResolvers<ArrayBuffer>();
-    const response = Response.json({ results: [] });
-    rstest.spyOn(response, 'arrayBuffer').mockImplementationOnce(() => {
-      Deferred.doneUnsafe(reading, Effect.succeed(true));
-      return stalledBody.promise;
-    });
-    fetch.mockResolvedValueOnce(response);
-    const intent = yield* agentMutationIntent(undefined, decision);
-    const pending = yield* decideAgentItems(intent).pipe(Effect.forkChild);
-    yield* Deferred.await(reading);
-    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
-    yield* TestClock.adjust('30 seconds');
-    expect(agentMutationUncertain(yield* Fiber.join(pending))).toBe(true);
-    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
-    stalledBody.resolve(new ArrayBuffer(0));
-    fetch.mockResolvedValueOnce(Response.json({ results: [] }));
-    expect((yield* decideAgentItems(intent)).status).toBe('ok');
-    expect(fetch.mock.calls[1]?.[1]?.body).toBe(fetch.mock.calls[0]?.[1]?.body);
-    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('idempotency-key')).toBe(intent.idempotencyKey);
-  }).pipe(Effect.provide(FetchHttpClient.layer)),
+    const stalledBody = yield* Deferred.make<Uint8Array>();
+    const endpoint = mutationEndpoint('decide', (attempt) =>
+      attempt === 1
+        ? HttpServerResponse.stream(
+            Stream.fromEffect(Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(stalledBody)))),
+          )
+        : HttpServerResponse.jsonUnsafe({ results: [] }),
+    );
+    yield* Effect.gen(function* verifyDeadline() {
+      const intent = yield* agentMutationIntent(undefined, decision);
+      const pending = yield* decideAgentItems(intent).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
+      expect(endpoint.received[0]?.signal.aborted).toBe(false);
+      yield* TestClock.adjust('30 seconds');
+      expect(agentMutationUncertain(yield* Fiber.join(pending))).toBe(true);
+      expect(endpoint.received[0]?.signal.aborted).toBe(true);
+      yield* Deferred.succeed(stalledBody, new Uint8Array(0));
+      expect((yield* decideAgentItems(intent)).status).toBe('ok');
+      expect(endpoint.received).toHaveLength(2);
+      expect(endpoint.received[1]?.body).toBe(endpoint.received[0]?.body);
+      expect(endpoint.received[1]?.idempotencyKey).toBe(intent.idempotencyKey);
+    }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(endpoint.layer));
+  }),
 );

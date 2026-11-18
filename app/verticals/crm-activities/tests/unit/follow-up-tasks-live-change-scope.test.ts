@@ -1,78 +1,109 @@
+// @rstest-environment happy-dom
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import React from 'react';
-import type { ReactNode } from 'react';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { RecordsApi, RecordsResponseSchema } from '@app/work-tasks/contracts/records';
+import type { RecordsRequest } from '@app/work-tasks/contracts/records';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { beforeEach, expect, it } from 'effect-rstest';
 import { followUpTasks } from '../../src/routes/[lang]/aktivity/page.tsx';
 
-const mocks = rstest.hoisted(() => ({ workRecords: rstest.fn() }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: rstest.fn() }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: mocks.workRecords }));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useRouterState: () => '',
-}));
-rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: String }),
-}));
+const reads: RecordsRequest[] = [];
+const emptyList = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  assignablePrincipals: [],
+  canWrite: true,
+  collection: {
+    properties: {
+      dueDate: { locked: true, type: 'DATE' },
+      ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+      status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+      title: { locked: true, type: 'TEXT' },
+    },
+    ref: {
+      moduleId: 'work.tasks',
+      resourceId: 'default',
+      resourceType: 'work.tasks.task-collection',
+      tenantId: '20000000-0000-4000-8000-000000000001',
+    },
+    title: 'Tasks',
+  },
+  indicators: { open: 0, openByAssignee: [], overdue: 0 },
+  items: [],
+  lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+  principalNames: [],
+  referenceDate: '2026-11-04',
+  revision: 1,
+});
 
-const events = new EventTarget();
-const globals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  // The owner's Node-only test config compiles TSX with the classic React runtime.
-  rstest.stubGlobal('React', React);
-  for (const [key, value] of Object.entries(globals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  rstest.unstubAllGlobals();
-  for (const key of Object.keys(globals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
+const OwnerRecordsApi = RecordsApi.prefix('/work-tasks-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'work-tasks': '/work-tasks-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return emptyList;
+        }),
+      ),
+    ),
+  ),
+);
 
 const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  events.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
+  window.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
 };
 
 beforeEach(() => {
-  rstest.resetAllMocks();
+  reads.length = 0;
   followUpTasks.invalidate();
-  mocks.workRecords.mockReturnValue(Effect.succeed({ items: [] }));
 });
 
 it.live('live changes of apps the follow-up tasks do not show read nothing', () =>
   Effect.gen(function* unrelatedChange() {
+    yield* pinTestDocument;
     yield* followUpTasks.preload('company-a');
+    yield* followUpTasks.read('company-a');
     const unsubscribe = followUpTasks.subscribe(() => {
       followUpTasks.snapshot('company-a');
     }, 'company-a');
-    expect(mocks.workRecords).toHaveBeenCalledTimes(1);
-    dispatchChange(['party-registry']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.workRecords).toHaveBeenCalledTimes(1);
-    unsubscribe();
-  }),
+    try {
+      expect(reads).toHaveLength(1);
+      dispatchChange(['party-registry']);
+      yield* Effect.sleep('10 millis');
+      expect(reads).toHaveLength(1);
+    } finally {
+      unsubscribe();
+    }
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a live change of work-tasks reloads the mounted follow-up tasks', () =>
   Effect.gen(function* taskChange() {
+    yield* pinTestDocument;
     yield* followUpTasks.preload('company-a');
+    yield* followUpTasks.read('company-a');
     const unsubscribe = followUpTasks.subscribe(() => {
       followUpTasks.snapshot('company-a');
     }, 'company-a');
-    dispatchChange(['work-tasks']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.workRecords).toHaveBeenCalledTimes(2);
-    unsubscribe();
-  }),
+    try {
+      dispatchChange(['work-tasks']);
+      yield* waitUntil(() => reads.length >= 2);
+      expect(reads).toHaveLength(2);
+    } finally {
+      unsubscribe();
+    }
+  }).pipe(Effect.provide(network)),
 );

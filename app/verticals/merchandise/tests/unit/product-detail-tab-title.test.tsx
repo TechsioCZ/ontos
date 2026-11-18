@@ -1,136 +1,118 @@
 // @rstest-environment happy-dom
-// A product page names the browser tab after the product through the Shell frame's title. Only the product read, the
-// detail view and the router are replaced.
+// The real product page names the browser tab through the Shell frame's title.
+// Its records client reaches the real HTTP contract over an in-process network.
 import { useDocumentTitle } from '@app/admin-ui';
-import { constVoid } from 'effect/Function';
-import { Effect } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-import ProductDetailRoute from '../../src/routes/[lang]/provoz/produkty/[id]/page.tsx';
+import { settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
-  detailInput,
-  prepareProductDetail,
-  productDetailData,
-  productListData,
-  productNavigationFailureKey,
-  productRevisionOf,
-  productScope,
-} from '../../src/routes/[lang]/provoz/produkty/products-api.ts' with { rstest: 'importActual' };
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Helmet } from '@modern-js/runtime/head';
+import { Deferred, Effect, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import type { ReactNode } from 'react';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsResponse } from '../../shared/apis/records.ts';
+import ProductDetailRoute from '../../src/routes/[lang]/provoz/produkty/[id]/page.tsx';
+import { productDetailData } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const copy = {
   productTab: 'product-name | OntOS',
   shellName: 'shell-destination',
   shellTitle: 'shell-destination | OntOS',
 } as const;
-
-const mocks = rstest.hoisted(() => ({ ready: true }));
-rstest.mock('../../src/routes/[lang]/provoz/produkty/products-api.ts', () => ({
-  detailInput,
-  prepareProductDetail,
-  productDetailData,
-  productListData,
-  productNavigationFailureKey,
-  productRevisionOf,
-  productScope,
-  useProductDetail: () =>
-    mocks.ready
-      ? {
-          product: { categoryId: null, id: 'product-1', name: 'product-name' },
-          response: { canWrite: false, movements: [], revision: 1 },
-          status: 'ready',
-        }
-      : { status: 'loading' },
-}));
-rstest.mock('../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx', () => ({
-  ProductDetailView: () => null,
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
-  useNavigate: () => () => Promise.resolve(),
-  useParams: () => ({ id: 'product-1', lang: 'cs' }),
-  useRouterState: () => '',
-}));
-// The module's own head is not the tab's title in the Shell; only the frame's title is.
-rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-
-const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
+const context = {
+  legalEntityId: 'company-1',
+  principalId: '20000000-0000-4000-8000-000000000002',
+  tenantId: '20000000-0000-4000-8000-000000000001',
+};
+const instant = '2026-10-15T10:00:00Z';
+const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: { principalId: context.principalId, tenantId: context.tenantId },
+  canWrite: false,
+  indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 1, stockValueMinor: 0 },
+  movements: [],
+  orders: [],
+  products: [
+    {
+      active: true,
+      category: 'IT',
+      createdAt: instant,
+      currentPriceMinor: 0,
+      id: 'product-1',
+      lowStock: false,
+      lowStockThreshold: 0,
+      name: 'product-name',
+      priceHistory: [],
+      sku: 'PRODUCT-1',
+      stockOnHand: 0,
+      stockValueMinor: 0,
+      unit: 'ks',
+      updatedAt: instant,
+    },
+  ],
+  revision: 1,
+});
+let answer: Effect.Effect<RecordsResponse> = Effect.succeed(records);
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const owner = HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+  group.handle('execute', () => Effect.suspend(() => answer)),
+);
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(OwnerRecordsApi, owner),
+);
 
 /** The Shell's frame: its title names the record a page gives, else its own destination. */
 const Frame = ({ children }: { readonly children: ReactNode }) => {
   const title = useDocumentTitle();
   return (
     <>
-      <title>{`${title ?? copy.shellName} | OntOS`}</title>
       {children}
+      <Helmet>
+        <title>{`${title ?? copy.shellName} | OntOS`}</title>
+      </Helmet>
     </>
   );
 };
 
-const mount = (page: ReactNode = <ProductDetailRoute />) =>
-  Effect.sync(() => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ container, root });
-    act(() => {
-      root.render(<Frame>{page}</Frame>);
-    });
-  });
+const mount = () =>
+  mountInRoute(
+    <Frame>
+      <ProductDetailRoute context={context} />
+    </Frame>,
+    { path: 'provoz/produkty/$id', url: '/cs/provoz/produkty/product-1' },
+  );
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  mocks.ready = true;
+  answer = Effect.succeed(records);
+  productDetailData.invalidate();
 });
+afterEach(unmountAll);
 
-afterEach(() => {
-  for (const { container, root } of roots.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-  rstest.unstubAllGlobals();
-});
-
-it.effect('names the browser tab after the product once it is loaded', () =>
-  mount().pipe(
-    Effect.andThen(
-      Effect.sync(() => {
-        expect(document.title).toBe(copy.productTab);
-      }),
-    ),
-  ),
+it.live('names the browser tab after the product once it is loaded', () =>
+  Effect.gen(function* loaded() {
+    yield* pinTestDocument;
+    yield* mount();
+    yield* waitUntil(() => text().includes('product-name'));
+    yield* settle;
+    expect(document.title).toBe(copy.productTab);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('gives the tab back to the Shell once the page is left', () =>
-  mount().pipe(
-    Effect.andThen(
-      Effect.sync(() => {
-        act(() => {
-          roots[0]?.root.render(<Frame>{null}</Frame>);
-        });
-        expect(document.title).toBe(copy.shellTitle);
-      }),
-    ),
-  ),
-);
-
-it.effect('does not name the tab before the product has loaded', () =>
-  Effect.sync(() => {
-    mocks.ready = false;
-  }).pipe(
-    Effect.andThen(mount()),
-    Effect.andThen(
-      Effect.sync(() => {
-        expect(document.title).toBe(copy.shellTitle);
-      }),
-    ),
-  ),
+it.live('does not name the tab before the product has loaded', () =>
+  Effect.gen(function* loading() {
+    yield* pinTestDocument;
+    const arrived = yield* Deferred.make<boolean>();
+    answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Effect.never));
+    yield* mount();
+    yield* Deferred.await(arrived);
+    yield* settle;
+    expect(text()).toContain(moduleText('cs')('merchandise.pages.products.states.loading'));
+    expect(document.title).toBe(copy.shellTitle);
+  }).pipe(Effect.provide(network)),
 );

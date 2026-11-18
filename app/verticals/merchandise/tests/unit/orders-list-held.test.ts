@@ -1,20 +1,29 @@
 // @rstest-environment happy-dom
-// The orders list across a reload: the real `useOrders` over the real strict stores, with only the generated records
-// client replaced. A write, a live change and the freshness window all make the strict page read as pending, so
+// The orders list across a reload: the real `useOrders`, strict stores and generated records client
+// over the real HTTP contract served in process. A write, a live change and the freshness window all make the strict page read as pending, so
 // without a held read the table drops to its loading rows and the page loses the write capability its buttons need.
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   OrderSchema,
+  RecordsApi,
   RecordsForbiddenProblemSchema,
   RecordsResponseSchema,
   ProductRecordSchema,
 } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import {
   firstOrdersPage,
   forgetRememberedOrders,
@@ -24,12 +33,6 @@ import {
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { OrdersQuery, OrdersState } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const otherTenant: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-2' };
@@ -107,19 +110,33 @@ interface Register {
   readonly revision: number;
 }
 
-/** The register behind the mocked client; with a gate, every read waits until the gate opens. */
+let answer: (payload: RecordsRequest) => Effect.Effect<RecordsResponse, typeof denied> = (_payload: RecordsRequest) =>
+  Effect.never;
+
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) => Effect.suspend(() => answer(payload))),
+    ),
+  ),
+);
+
+/** The register behind the real endpoint; with a gate, every read waits until the gate opens. */
 const serve = (register: Register, gate?: Deferred.Deferred<boolean>) => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
+  answer = ({ view }) => {
     const page = recordsOf(register.pages[view?.ordersOffset ?? 0] ?? [], register.revision, register.counted);
     const lineProducts = view?.productId !== undefined || view?.productIds !== undefined;
-    const answer = lineProducts ? { ...page, orders: [], products: [product] } : page;
-    return gate === undefined ? Effect.succeed(answer) : Deferred.await(gate).pipe(Effect.as(answer));
-  });
+    const response = lineProducts ? { ...page, orders: [], products: [product] } : page;
+    return gate === undefined ? Effect.succeed(response) : Deferred.await(gate).pipe(Effect.as(response));
+  };
 };
 
 /** Every read is refused from now on. */
 const refuse = () => {
-  rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
+  answer = () => Effect.fail(denied);
 };
 
 /** What the table showed on every render, and how often its rows mounted. */
@@ -156,19 +173,6 @@ const OrdersTable = ({ context, offset }: { readonly context: ModulePageContext;
   return table.startsWith('rows:') ? createElement(Rows, { text: table }) : null;
 };
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
 interface Mounted {
   readonly show: (context: ModulePageContext, offset: number) => Effect.Effect<void>;
 }
@@ -186,32 +190,23 @@ const mount = (context: ModulePageContext, offset: number): Effect.Effect<Mounte
     });
   };
   const show = (nextContext: ModulePageContext, nextOffset: number) =>
-    Effect.promise(() =>
-      act(async () => {
-        root.render(createElement(OrdersTable, { context: nextContext, offset: nextOffset }));
-        await settle();
-      }),
-    );
+    acted(() => {
+      root.render(createElement(OrdersTable, { context: nextContext, offset: nextOffset }));
+    });
   return show(context, offset).pipe(Effect.as({ show }));
 };
 
 /** An order command settled, or a live change arrived: the strict stores drop what they have and read again. */
-const invalidate = Effect.promise(async () => {
-  await act(async () => {
-    forgetRememberedOrders();
-    ordersPageData.invalidate();
-    orderCountsData.invalidate();
-    orderDetailData.invalidate();
-    await settle();
-  });
-  await act(settle);
-});
+const invalidate = acted(() => {
+  forgetRememberedOrders();
+  ordersPageData.invalidate();
+  orderCountsData.invalidate();
+  orderDetailData.invalidate();
+}).pipe(Effect.andThen(settle));
 
 const before = 'rows:ORD-1,ORD-2|write|shipped:3';
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
   forgetRememberedOrders();
   orderDetailData.invalidate();
   ordersPageData.invalidate();
@@ -223,14 +218,14 @@ beforeEach(() => {
 afterEach(() => {
   unmount?.();
   unmount = null;
-  rstest.unstubAllGlobals();
 });
 
-it.effect('the rows, the write capability and the header counts stay on screen while the same page reloads', () =>
+it.live('the rows, the write capability and the header counts stay on screen while the same page reloads', () =>
   Effect.gen(function* held() {
+    yield* pinTestDocument;
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'] }, revision: 7 });
     yield* mount(company, 0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
+    yield* waitUntil(() => shown.at(-1) === before);
     expect(mounts).toBe(1);
 
     const gate = yield* Deferred.make<boolean>();
@@ -241,36 +236,38 @@ it.effect('the rows, the write capability and the header counts stay on screen w
     expect(new Set(shown)).toEqual(new Set([before]));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'rows:ORD-3,ORD-1|write|shipped:4'));
+    yield* waitUntil(() => shown.at(-1) === 'rows:ORD-3,ORD-1|write|shipped:4');
     expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
     expect(mounts).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('another page never shows the rows of the page before it', () =>
+it.live('another page never shows the rows of the page before it', () =>
   Effect.gen(function* otherPage() {
+    yield* pinTestDocument;
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'], 2: ['ORD-3', 'ORD-4'] }, revision: 7 });
     const view = yield* mount(company, 0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
+    yield* waitUntil(() => shown.at(-1) === before);
 
     const gate = yield* Deferred.make<boolean>();
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'], 2: ['ORD-3', 'ORD-4'] }, revision: 7 }, gate);
     shown.length = 0;
     yield* view.show(company, 2);
-    yield* Effect.promise(() => act(settle));
+    yield* settle;
     expect(new Set(shown)).toEqual(new Set(['loading']));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'rows:ORD-3,ORD-4|write|shipped:3'));
+    yield* waitUntil(() => shown.at(-1) === 'rows:ORD-3,ORD-4|write|shipped:3');
     expect(shown.filter((table) => table.startsWith('rows:ORD-1'))).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('the page held through a write is not shown for another page', () =>
+it.live('the page held through a write is not shown for another page', () =>
   Effect.gen(function* otherPageAfterWrite() {
+    yield* pinTestDocument;
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'], 2: ['ORD-3', 'ORD-4'] }, revision: 7 });
     const view = yield* mount(company, 0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
+    yield* waitUntil(() => shown.at(-1) === before);
 
     // A write reloads the first page; while it is on its way the person moves to the second page.
     const gate = yield* Deferred.make<boolean>();
@@ -278,44 +275,46 @@ it.effect('the page held through a write is not shown for another page', () =>
     yield* invalidate;
     shown.length = 0;
     yield* view.show(company, 2);
-    yield* Effect.promise(() => act(settle));
+    yield* settle;
     expect(new Set(shown)).toEqual(new Set(['loading']));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'rows:ORD-2,ORD-3|write|shipped:3'));
+    yield* waitUntil(() => shown.at(-1) === 'rows:ORD-2,ORD-3|write|shipped:3');
     expect(shown.filter((table) => table.startsWith('rows:ORD-1'))).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('another tenant never shows the rows of the tenant before it', () =>
+it.live('another tenant never shows the rows of the tenant before it', () =>
   Effect.gen(function* otherTenantRows() {
+    yield* pinTestDocument;
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'] }, revision: 7 });
     const view = yield* mount(company, 0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
+    yield* waitUntil(() => shown.at(-1) === before);
     expect(pageDataScopeKey(otherTenant, 'demo.merchandise')).not.toBe(pageDataScopeKey(company, 'demo.merchandise'));
 
     const gate = yield* Deferred.make<boolean>();
     serve({ counted: 1, pages: { 0: ['ORD-9'] }, revision: 2 }, gate);
     shown.length = 0;
     yield* view.show(otherTenant, 0);
-    yield* Effect.promise(() => act(settle));
+    yield* settle;
     expect(new Set(shown)).toEqual(new Set(['loading']));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'rows:ORD-9|write|shipped:1'));
+    yield* waitUntil(() => shown.at(-1) === 'rows:ORD-9|write|shipped:1');
     expect(shown.filter((table) => table.startsWith('rows:ORD-1'))).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a refused reload takes the held rows away at once', () =>
+it.live('a refused reload takes the held rows away at once', () =>
   Effect.gen(function* refused() {
+    yield* pinTestDocument;
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'] }, revision: 7 });
     yield* mount(company, 0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
+    yield* waitUntil(() => shown.at(-1) === before);
 
     refuse();
     yield* invalidate;
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'forbidden'));
+    yield* waitUntil(() => shown.at(-1) === 'forbidden');
     expect(mounts).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );

@@ -1,10 +1,20 @@
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import type React from 'react';
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
-import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { OrderSchema, ProductRecordSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 import { OrderDetailDialog } from '../../src/routes/[lang]/prodej/objednavky/order-detail-dialog.tsx';
 import {
   firstOrdersPage,
@@ -15,59 +25,6 @@ import {
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { OrderDetailState } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { CustomerDirectory } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
-
-const { createElement } = rstest.requireActual<typeof React>('react');
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
-// Execute the first-render branch without running effects.
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof React>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, params?: { readonly number?: string }) =>
-      params?.number === undefined ? key : `${key}:${params.number}`,
-  }),
-}));
-// The portal shell is not the behavior under test; the panel body is.
-rstest.mock('@app/admin-ui', () => {
-  const react = rstest.requireActual<typeof React>('react');
-  return {
-    ...rstest.requireActual('@app/admin-ui'),
-    SidePanel: ({
-      actions,
-      children,
-      title,
-    }: {
-      readonly actions?: React.ReactNode;
-      readonly children?: React.ReactNode;
-      readonly title?: React.ReactNode;
-    }) => react.createElement('section', null, react.createElement('h2', null, title), children, actions),
-  };
-});
-
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
 
 const context = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const otherContext = { ...context, legalEntityId: 'company-2' };
@@ -155,20 +112,43 @@ const customers: CustomerDirectory = {
   status: 'ready',
 };
 
+const reads: RecordsRequest[] = [];
+let holdDetails = false;
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          reads.push(payload);
+          const { view } = payload;
+          if (holdDetails) {
+            return Effect.never;
+          }
+          if (view?.productId !== undefined) {
+            return Effect.succeed({ ...base, movements: [], orders: [], products: [product] });
+          }
+          if (view?.productIds !== undefined) {
+            return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? product : fullProduct] });
+          }
+          return Effect.succeed(base);
+        }),
+      ),
+    ),
+  ),
+);
+const czech = moduleText('cs');
+
 beforeEach(() => {
-  rstest.resetAllMocks();
+  reads.length = 0;
+  holdDetails = false;
   orderDetailData.invalidate();
   ordersPageData.invalidate();
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.productId !== undefined) {
-      return Effect.succeed({ ...base, movements: [], orders: [], products: [product] });
-    }
-    if (view?.productIds !== undefined) {
-      return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? product : fullProduct] });
-    }
-    return Effect.succeed(base);
-  });
 });
+
+afterEach(unmountAll);
 
 const detailLabel = (state: OrderDetailState): string => {
   if (state.status === 'ready') {
@@ -200,42 +180,50 @@ const ColdOrderDialog = () => {
   });
 };
 
-it.effect('a cold table click renders the authorized row while the detail enriches', () =>
+it.live('a cold table click renders the authorized row while the detail enriches', () =>
   Effect.gen(function* coldClick() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
-    rstest.mocked(executeRecords).mockClear();
+    reads.length = 0;
 
     expect(renderToStaticMarkup(createElement(DetailStateProbe))).toBe('<output>loading:ORD-1</output>');
-    expect(executeRecords).not.toHaveBeenCalled();
+    expect(reads).toHaveLength(0);
 
-    const html = renderToStaticMarkup(createElement(ColdOrderDialog));
-    expect(html).toContain('merchandise.pages.orders.detail.title:ORD-1');
-    expect(html).toContain('merchandise.pages.orders.detail.customer');
+    holdDetails = true;
+    yield* mountInRoute(createElement(ColdOrderDialog), { url: '/cs/prodej/objednavky' });
+    yield* waitUntil(() => text().includes(czech('merchandise.pages.orders.detail.loading')));
+    const html = text();
+    expect(html).toContain(czech('merchandise.pages.orders.detail.title', { number: 'ORD-1' }));
+    expect(html).toContain(czech('merchandise.pages.orders.detail.customer'));
     expect(html).toContain('Ada Guest');
-    expect(html).toContain('merchandise.ui.deliveryAddress');
-    expect(html).toContain('merchandise.pages.orders.detail.grossTotal');
-    expect(html).toContain('merchandise.pages.orders.detail.loading');
-    expect(html).not.toContain('merchandise.pages.orders.detail.loadingTitle');
-    expect(html).not.toContain('merchandise.pages.orders.detail.lines');
-    expect(html).not.toContain('merchandise.pages.orders.detail.updatedAt');
-    expect(html).not.toContain('merchandise.pages.orders.actions.cancel');
+    expect(html).toContain(czech('merchandise.ui.deliveryAddress'));
+    expect(html).toContain(czech('merchandise.pages.orders.detail.grossTotal'));
+    expect(html).toContain(czech('merchandise.pages.orders.detail.loading'));
+    expect([...document.querySelectorAll('h1, h2, h3')].map((heading) => heading.textContent)).not.toContain(
+      czech('merchandise.pages.orders.detail.loadingTitle'),
+    );
+    expect(html).not.toContain(czech('merchandise.pages.orders.detail.lines'));
+    expect(html).not.toContain(czech('merchandise.pages.orders.detail.updatedAt'));
+    expect(html).not.toContain(czech('merchandise.pages.orders.actions.cancel'));
     expect(html).not.toContain('Upravit objednávku');
     expect(html).not.toContain('Odstranit DEMO objednávku');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a warm detail shows canonical order data instead of the list summary', () =>
+it.live('a warm detail shows canonical order data instead of the list summary', () =>
   Effect.gen(function* warmDetail() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detailInput)).toMatchObject({ state: 'ready' });
 
     expect(renderToStaticMarkup(createElement(DetailStateProbe))).toBe('<output>ready:ORD-1</output>');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a scope change neither reuses the old detail nor summarizes its stale row', () =>
+it.live('a scope change neither reuses the old detail nor summarizes its stale row', () =>
   Effect.gen(function* scopeChange() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detailInput)).toMatchObject({ state: 'ready' });
@@ -245,5 +233,5 @@ it.effect('a scope change neither reuses the old detail nor summarizes its stale
       return createElement('output', null, detailLabel(state));
     };
     expect(renderToStaticMarkup(createElement(ScopeChangeProbe))).toBe('<output>loading:none</output>');
-  }),
+  }).pipe(Effect.provide(network)),
 );

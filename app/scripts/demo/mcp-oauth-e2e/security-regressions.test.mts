@@ -1,7 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Fiber, FiberSet, FileSystem, Redacted } from 'effect';
 import { TestClock } from 'effect/testing';
-import { expect, it, rs } from 'effect-rstest';
+import type { FetchLike } from '@modelcontextprotocol/client';
+import { expect, it } from 'effect-rstest';
 import { refreshIsRejected } from './flow.mts';
 import { E2eOAuthProvider } from './provider.mts';
 import { Recorder } from './report.mts';
@@ -22,12 +23,29 @@ const metadata = {
 };
 const stableWrite = { id: 'work.tasks/command/CreateTask', idempotencyKey: 'same-operation' };
 
+/**
+ * The authorization server as the SDK reaches it through its fetch: the discovery answer first, then whatever the
+ * case scripts for the token endpoint. Every request is recorded; one nobody scripted is refused.
+ */
+const makeAuthorizationServer = Effect.gen(function* authorizationServer() {
+  const run = yield* FiberSet.makeRuntimePromise<never, Response, Error>();
+  const requests: string[] = [];
+  const answers: Effect.Effect<Response, Error>[] = [Effect.sync(() => Response.json(metadata))];
+  const answer = (url: string | URL) =>
+    Effect.suspend(() => {
+      requests.push(String(url));
+      return answers.shift() ?? Effect.fail(new Error('Unexpected HTTP request'));
+    });
+  // The SDK's fetch seam is Promise-shaped; the answer stays an Effect up to that edge.
+  const fetchFn: FetchLike = (url) => run(answer(url));
+  const answerNext = (next: Effect.Effect<Response, Error>) => {
+    answers.push(next);
+  };
+  return { answerNext, fetchFn, requests } as const;
+});
+
 const replayFixture = Effect.gen(function* makeReplayFixture() {
-  const fetch = yield* Effect.acquireRelease(
-    Effect.sync(() => rs.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected HTTP request'))),
-    (spy) => Effect.sync(() => spy.mockRestore()),
-  );
-  fetch.mockResolvedValueOnce(Response.json(metadata));
+  const server = yield* makeAuthorizationServer;
   const runtime = yield* FiberSet.makeRuntimePromise<never, string, Cause.NoSuchElementError>();
   const provider = new E2eOAuthProvider(
     {
@@ -39,61 +57,72 @@ const replayFixture = Effect.gen(function* makeReplayFixture() {
   );
   provider.saveTokens(storedTokens);
   const replay = refreshIsRejected({
+    fetchFn: server.fetchFn,
     issuer,
     provider,
     refreshToken: Redacted.make(storedTokens.refresh_token),
     resource: 'https://resource.example/mcp',
   });
-  return { fetch, provider, replay };
+  return { provider, replay, server };
 });
 
 it.effect('accepts only a real SDK invalid_grant rejection as refresh-replay evidence without saving tokens', () =>
   Effect.gen(function* invalidGrantEvidence() {
-    const { fetch, provider, replay } = yield* replayFixture;
-    fetch.mockResolvedValueOnce(
-      Response.json({ error: 'invalid_grant', error_description: privateDiagnostic }, { status: 400 }),
+    const { provider, replay, server } = yield* replayFixture;
+    server.answerNext(
+      Effect.sync(() =>
+        Response.json({ error: 'invalid_grant', error_description: privateDiagnostic }, { status: 400 }),
+      ),
     );
     expect(yield* replay).toBe(true);
     expect(yield* provider.currentTokens()).toBe(storedTokens);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(server.requests).toEqual([`${issuer}/.well-known/oauth-authorization-server`, metadata.token_endpoint]);
   }).pipe(Effect.scoped),
 );
 
 it.effect('reports a successful replay as failed rejection evidence and never saves the returned token pair', () =>
   Effect.gen(function* successfulReplayIsNotRejection() {
-    const { fetch, provider, replay } = yield* replayFixture;
-    fetch.mockResolvedValueOnce(
-      Response.json({ access_token: 'must-not-be-saved', refresh_token: 'must-not-be-saved', token_type: 'Bearer' }),
+    const { provider, replay, server } = yield* replayFixture;
+    server.answerNext(
+      Effect.sync(() =>
+        Response.json({
+          access_token: 'must-not-be-saved',
+          refresh_token: 'must-not-be-saved',
+          token_type: 'Bearer',
+        }),
+      ),
     );
     expect(yield* replay).toBe(false);
     expect(yield* provider.currentTokens()).toBe(storedTokens);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(server.requests).toEqual([`${issuer}/.well-known/oauth-authorization-server`, metadata.token_endpoint]);
   }).pipe(Effect.scoped),
 );
 
 for (const error of ['invalid_client', 'server_error']) {
   it.effect(`keeps ${error} as a typed failure rather than accepting it as refresh-replay evidence`, () =>
     Effect.gen(function* unrelatedOAuthError() {
-      const { fetch, provider, replay } = yield* replayFixture;
-      fetch.mockResolvedValueOnce(Response.json({ error, error_description: privateDiagnostic }, { status: 400 }));
+      const { provider, replay, server } = yield* replayFixture;
+      server.answerNext(
+        Effect.sync(() => Response.json({ error, error_description: privateDiagnostic }, { status: 400 })),
+      );
       const failure = yield* replay.pipe(Effect.flip);
       expect(failure.message).toContain('invalid_grant rejection');
       expect(failure.message).not.toContain(privateDiagnostic);
       expect(yield* provider.currentTokens()).toBe(storedTokens);
-      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(server.requests).toEqual([`${issuer}/.well-known/oauth-authorization-server`, metadata.token_endpoint]);
     }).pipe(Effect.scoped),
   );
 }
 
 it.effect('keeps a network error mentioning invalid_grant as a typed failure, never rejection evidence', () =>
   Effect.gen(function* transportFailureIsNotRejection() {
-    const { fetch, provider, replay } = yield* replayFixture;
-    fetch.mockRejectedValueOnce(new TypeError(`invalid_grant ${privateDiagnostic}`));
+    const { provider, replay, server } = yield* replayFixture;
+    server.answerNext(Effect.fail(new TypeError(`invalid_grant ${privateDiagnostic}`)));
     const failure = yield* replay.pipe(Effect.flip);
     expect(failure.message).toContain('invalid_grant rejection');
     expect(failure.message).not.toContain(privateDiagnostic);
     expect(yield* provider.currentTokens()).toBe(storedTokens);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(server.requests).toEqual([`${issuer}/.well-known/oauth-authorization-server`, metadata.token_endpoint]);
   }).pipe(Effect.scoped),
 );
 

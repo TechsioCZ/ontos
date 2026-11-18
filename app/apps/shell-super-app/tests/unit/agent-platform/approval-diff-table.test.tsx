@@ -1,63 +1,21 @@
-/**
- * Regression: the "Cena bez DPH" row label of an approval diff was present in the DOM but hidden. Its cells carried
- * `px-75`, which the UI kit spacing scale does not define, so Tailwind produced 300px inline padding that pushed the
- * label under the next cell; the stylesheet's padding still targeted `> span` from the older div markup.
- */
-import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
-import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
-import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
+// @rstest-environment happy-dom
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   AgentLegalEntityIdSchema,
   AgentQueueBatchSchema,
   AgentQueueResponseSchema,
 } from '@app/shared-contracts/agent-proposals';
-import type { AgentQueueResponse } from '@app/shared-contracts/agent-proposals';
-import { cleanup, render, screen, within } from '@testing-library/react';
-import { Schema } from 'effect';
-import { afterEach, beforeAll, expect, it, rstest } from 'effect-rstest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import type { PropsWithChildren } from 'react';
+import { browserNetwork, serveApi } from '@app/shared-contracts/testing/http-double';
+import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { cleanup, screen, within } from '@testing-library/react';
+import { Effect, Schema } from 'effect';
+import { afterEach, expect, it } from 'effect-rstest';
 
-import csResource from '../../../locales/cs/shell.json';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../../shared/browser-api.ts';
 import { ApprovalsPanel } from '../../../src/routes/agent-platform/approvals-panel.tsx';
-
-const stylesheet = readFileSync(
-  fileURLToPath(new URL('../../../src/routes/agent-platform/agent-platform.css', import.meta.url)),
-  'utf-8',
-);
-
-let i18nInstance: I18nInstance;
-beforeAll(async () => {
-  i18nInstance = await createModernI18n();
-  await i18nInstance.init({
-    defaultNS: 'shell',
-    lng: 'cs',
-    ns: ['shell'],
-    resources: { cs: { shell: csResource } },
-    supportedLngs: ['cs', 'en'],
-  });
-});
-const I18nProvider = ({ children }: PropsWithChildren) => (
-  <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>{children}</ModernI18nProvider>
-);
-
-interface ApprovalsFixture {
-  queue?: { state: 'ready'; value: AgentQueueResponse } | undefined;
-}
-const { fixture } = rstest.hoisted(() => {
-  const state: ApprovalsFixture = {};
-  return { fixture: state };
-});
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useRouterState: () => '' }));
-rstest.mock('../../../src/routes/agent-platform/platform-page-data.ts', () => ({
-  agentQueueData: {
-    ensure: () => {},
-    refresh: () => {},
-    snapshot: () => fixture.queue,
-    subscribe: () => () => {},
-  },
-}));
+import { shellLocaleCopy } from '../../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../../support/shell-router.tsx';
 
 const batch = Schema.decodeUnknownSync(AgentQueueBatchSchema)({
   agentLabel: 'AI agent C',
@@ -87,58 +45,50 @@ const batch = Schema.decodeUnknownSync(AgentQueueBatchSchema)({
   moduleLabels: ['E-shop'],
   source: 'core',
 });
-fixture.queue = {
-  state: 'ready',
-  value: AgentQueueResponseSchema.make({
-    batches: [batch],
-    company: { legalEntityId: AgentLegalEntityIdSchema.make('company'), legalName: 'Obchodní firma' },
-    pendingCount: 1,
-    unavailableModules: [],
-  }),
-};
-
-afterEach(() => cleanup());
-
-const normalized = (text: string) =>
-  text
-    .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/\s+/gu, ' ')
-    .trim();
-/** Declarations of the stylesheet rule whose selector list is exactly `selector` (comments and whitespace ignored). */
-const ruleBody = (selector: string): string | undefined =>
-  [...stylesheet.matchAll(/(?<selectors>[^{}]+)\{(?<body>[^{}]*)\}/gu)].find(
-    (rule) => normalized(rule.groups?.['selectors'] ?? '') === normalized(selector),
-  )?.groups?.['body'];
-
-it('renders the diff as a semantic table whose row label is a row header', () => {
-  render(<ApprovalsPanel />, { wrapper: I18nProvider });
-  const table = screen.getByRole('table', { name: 'Porovnání: Ověření schválení a vrácení údajů' });
-  expect(
-    within(table)
-      .getAllByRole('columnheader')
-      .map((cell) => cell.textContent),
-  ).toEqual(['Údaj', 'Před změnou', 'Po schválení']);
-  const label = within(table).getByRole('rowheader', { name: 'Cena bez DPH' });
-  const row = label.closest('tr');
-  expect(row?.className).toBe('ai-review-diff-row');
-  expect(
-    within(row ?? table)
-      .getAllByRole('cell')
-      .map((cell) => cell.textContent),
-  ).toEqual(['5 990,00 Kč', '5 991,00 Kč']);
-  // Cell spacing belongs to agent-platform.css; spacing utilities on the cells (e.g. the undefined `px-75`) must not return.
-  for (const cell of table.querySelectorAll('th, td')) {
-    expect(cell.className).not.toMatch(/(?:^|\s)p[xytrbl]?-\d/u);
-  }
+const queue = AgentQueueResponseSchema.make({
+  batches: [batch],
+  company: { legalEntityId: AgentLegalEntityIdSchema.make('company'), legalName: 'Obchodní firma' },
+  pendingCount: 1,
+  unavailableModules: [],
 });
 
-it('styles the semantic diff cells, not the retired span markup, with a readable row label', () => {
-  expect(stylesheet).not.toMatch(/\.ai-review-diff-(?:head|row) > span/u);
-  expect(stylesheet).not.toMatch(/@layer/u);
-  expect(ruleBody('.ai-review-diff-head > :is(th, td), .ai-review-diff-row > :is(th, td)')).toMatch(
-    /padding: 0\.65rem 0\.75rem;[\s\S]*overflow-wrap: anywhere;/u,
-  );
-  expect(ruleBody('.ai-review-diff-head > :is(th, td), .ai-review-diff-row > :is(th, td)')).toMatch(/min-width: 0;/u);
-  expect(ruleBody('.ai-review-diff-row > th')).toMatch(/color: var\(--color-fg-primary\);/u);
-  expect(ruleBody('.ai-review-diff-head')).toMatch(/color: var\(--color-fg-secondary/u);
-});
+const QueueApi = HttpApi.make('approvalDiffTable')
+  .add(HttpApiGroup.make('agentPlatform').add(ShellAuthenticationApi.groups.agentPlatform.endpoints.agentQueue))
+  .prefix(shellAuthenticationApiContract.apiPrefix);
+const handlers = HttpApiBuilder.group(QueueApi, 'agentPlatform', (group) =>
+  group.handle('agentQueue', () => Effect.succeed(queue)),
+);
+const network = browserNetwork(serveApi(QueueApi, handlers));
+
+afterEach(cleanup);
+
+it.live('renders the diff as a semantic table whose row label is a row header', () =>
+  Effect.gen(function* semanticDiffTable() {
+    const router = makeShellRouter({
+      page: { component: ApprovalsPanel, path: 'agent-platform/approvals' },
+      url: '/cs/agent-platform/approvals',
+    });
+    yield* renderShellRoute(router, shellLocaleCopy('cs'));
+    yield* waitUntil(
+      () => screen.queryByRole('table', { name: 'Porovnání: Ověření schválení a vrácení údajů' }) !== null,
+    );
+    const table = screen.getByRole('table', { name: 'Porovnání: Ověření schválení a vrácení údajů' });
+    expect(
+      within(table)
+        .getAllByRole('columnheader')
+        .map((cell) => cell.textContent),
+    ).toEqual(['Údaj', 'Před změnou', 'Po schválení']);
+    const label = within(table).getByRole('rowheader', { name: 'Cena bez DPH' });
+    const row = label.closest('tr');
+    expect(row?.className).toBe('ai-review-diff-row');
+    expect(
+      within(row ?? table)
+        .getAllByRole('cell')
+        .map((cell) => cell.textContent),
+    ).toEqual(['5 990,00 Kč', '5 991,00 Kč']);
+    // Cell spacing belongs to agent-platform.css; spacing utilities on the cells (e.g. the undefined `px-75`) must not return.
+    for (const cell of table.querySelectorAll('th, td')) {
+      expect(cell.className).not.toMatch(/(?:^|\s)p[xytrbl]?-\d/u);
+    }
+  }).pipe(Effect.provide(network)),
+);

@@ -1,17 +1,51 @@
+// @rstest-environment happy-dom
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Effect, Schema } from 'effect';
-import { beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Schema } from 'effect';
+import { HttpServerRequest } from 'effect/http';
+import { beforeEach, describe, expect, it } from 'effect-rstest';
+import { changeOrderStatusActionSchemaErrorLive } from '../../api/change-order-status-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-import { ChangeOrderStatusActionConflictProblemSchema } from '../../shared/apis/change-order-status-action.ts';
+import {
+  ChangeOrderStatusActionApi,
+  ChangeOrderStatusActionConflictProblemSchema,
+} from '../../shared/apis/change-order-status-action.ts';
+import type { ChangeOrderStatusPayloadSchema } from '../../shared/apis/change-order-status-action.ts';
 import { OrderSchema } from '../../shared/apis/records.ts';
-import { executeChangeOrderStatus } from '../../src/api/change-order-status-action-client.ts';
 import {
   changeOrderStatuses,
   firstOrdersPage,
   ordersPageData,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 
-rstest.mock('../../src/api/change-order-status-action-client.ts');
+type StatusPayload = typeof ChangeOrderStatusPayloadSchema.Encoded;
+type StatusResult = typeof ApplyCommandResultSchema.Type | typeof ActionProposalAcceptedSchema.Type;
+type Conflict = typeof ChangeOrderStatusActionConflictProblemSchema.Type;
+
+const commands: { readonly idempotencyKey: string; readonly payload: StatusPayload }[] = [];
+const responses: Effect.Effect<StatusResult, Conflict>[] = [];
+const OwnerActionApi = ChangeOrderStatusActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'changeOrderStatusAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.gen(function* receiveStatusCommand() {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          commands.push({ idempotencyKey: request.headers['idempotency-key'] ?? '', payload });
+          return yield* responses.shift() ?? Effect.die('Unexpected order status command');
+        }),
+      ),
+    ).pipe(Layer.provide(changeOrderStatusActionSchemaErrorLive)),
+  ),
+);
 
 const order = (id: string) =>
   Schema.decodeSync(OrderSchema)({
@@ -29,12 +63,14 @@ const order = (id: string) =>
   });
 
 beforeEach(() => {
-  rstest.resetAllMocks();
+  commands.length = 0;
+  responses.length = 0;
 });
 
 describe('bulk order status commands', () => {
-  it.effect('counts mixed outcomes and advances the next revision only after confirmed writes', () =>
+  it.live('counts mixed outcomes and advances the next revision only after confirmed writes', () =>
     Effect.gen(function* mixedOutcomes() {
+      yield* pinTestDocument;
       const conflict = yield* Schema.decodeEffect(ChangeOrderStatusActionConflictProblemSchema)({
         _tag: 'ChangeOrderStatusActionConflictProblem',
         code: 'merchandise_revision_conflict',
@@ -51,12 +87,12 @@ describe('bulk order status commands', () => {
         entityIds: ['order-4'],
         revision: 27,
       });
-      rstest
-        .mocked(executeChangeOrderStatus)
-        .mockReturnValueOnce(Effect.fail(conflict))
-        .mockReturnValueOnce(Effect.succeed(firstCommit))
-        .mockReturnValueOnce(Effect.fail(conflict))
-        .mockReturnValueOnce(Effect.succeed(secondCommit));
+      responses.push(
+        Effect.fail(conflict),
+        Effect.succeed(firstCommit),
+        Effect.fail(conflict),
+        Effect.succeed(secondCommit),
+      );
 
       const result = yield* changeOrderStatuses({
         orders: ['order-1', 'order-2', 'order-3', 'order-4'].map(order),
@@ -65,26 +101,26 @@ describe('bulk order status commands', () => {
       });
 
       expect(result).toEqual({ changed: 2, failed: 2, revision: 27 });
-      const { calls } = rstest.mocked(executeChangeOrderStatus).mock;
-      expect(calls.map(([payload]) => payload)).toEqual([
+      expect(commands.map(({ payload }) => payload)).toEqual([
         { command: { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CONFIRMED' }, expectedRevision: 10 },
         { command: { _tag: 'ChangeOrderStatus', id: 'order-2', status: 'CONFIRMED' }, expectedRevision: 10 },
         { command: { _tag: 'ChangeOrderStatus', id: 'order-3', status: 'CONFIRMED' }, expectedRevision: 14 },
         { command: { _tag: 'ChangeOrderStatus', id: 'order-4', status: 'CONFIRMED' }, expectedRevision: 14 },
       ]);
-      const keys = calls.map(({ 2: options }) => options.idempotencyKey);
+      const keys = commands.map(({ idempotencyKey }) => idempotencyKey);
       expect(keys).toHaveLength(4);
       expect(new Set(keys).size).toBe(4);
       for (const key of keys) {
         expect(key.length).toBeGreaterThan(0);
       }
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('sends the cancellation reason with each status command', () =>
+  it.live('sends the cancellation reason with each status command', () =>
     Effect.gen(function* cancellationReason() {
+      yield* pinTestDocument;
       const commit = yield* Schema.decodeEffect(ApplyCommandResultSchema)({ entityIds: ['order-1'], revision: 11 });
-      rstest.mocked(executeChangeOrderStatus).mockReturnValueOnce(Effect.succeed(commit));
+      responses.push(Effect.succeed(commit));
 
       const result = yield* changeOrderStatuses({
         orders: [order('order-1')],
@@ -94,7 +130,7 @@ describe('bulk order status commands', () => {
       });
 
       expect(result).toEqual({ changed: 1, failed: 0, revision: 11 });
-      expect(rstest.mocked(executeChangeOrderStatus).mock.calls.map(([payload]) => payload)).toEqual([
+      expect(commands.map(({ payload }) => payload)).toEqual([
         {
           command: {
             _tag: 'ChangeOrderStatus',
@@ -105,15 +141,16 @@ describe('bulk order status commands', () => {
           expectedRevision: 10,
         },
       ]);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('does not write or advance the revision for an empty selection', () =>
+  it.live('does not write or advance the revision for an empty selection', () =>
     Effect.gen(function* emptySelection() {
+      yield* pinTestDocument;
       const result = yield* changeOrderStatuses({ orders: [], revision: 10, status: 'CONFIRMED' });
       expect(result).toEqual({ changed: 0, failed: 0, revision: 10 });
-      expect(executeChangeOrderStatus).not.toHaveBeenCalled();
-    }),
+      expect(commands).toHaveLength(0);
+    }).pipe(Effect.provide(network)),
   );
 });
 
@@ -127,24 +164,21 @@ it('the first orders page the Shell prepares is the entry the page reads', () =>
   expect(ordersPageData.key({ ...first, legalEntityId: 'entity-2' })).not.toBe(key);
 });
 
-it.effect(
-  'pending status proposals preserve their receipts without advancing revision or claiming changed orders',
-  () =>
-    Effect.gen(function* pendingBatch() {
-      const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
-        _tag: 'ActionProposalAccepted',
-        expiresAt: '2026-11-10T12:00:00.000Z',
-        proposalId: '60000000-0000-4000-8000-000000000001',
-      });
-      rstest.mocked(executeChangeOrderStatus).mockReturnValue(Effect.succeed(receipt));
-      const result = yield* changeOrderStatuses({
-        orders: [order('pending-1'), order('pending-2')],
-        revision: 10,
-        status: 'CONFIRMED',
-      });
-      expect(result).toEqual({ changed: 0, failed: 0, proposals: [receipt, receipt], revision: 10 });
-      expect(rstest.mocked(executeChangeOrderStatus).mock.calls.map(([payload]) => payload.expectedRevision)).toEqual([
-        10, 10,
-      ]);
-    }),
+it.live('pending status proposals preserve their receipts without advancing revision or claiming changed orders', () =>
+  Effect.gen(function* pendingBatch() {
+    yield* pinTestDocument;
+    const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+      _tag: 'ActionProposalAccepted',
+      expiresAt: '2026-11-10T12:00:00.000Z',
+      proposalId: '60000000-0000-4000-8000-000000000001',
+    });
+    responses.push(Effect.succeed(receipt), Effect.succeed(receipt));
+    const result = yield* changeOrderStatuses({
+      orders: [order('pending-1'), order('pending-2')],
+      revision: 10,
+      status: 'CONFIRMED',
+    });
+    expect(result).toEqual({ changed: 0, failed: 0, proposals: [receipt, receipt], revision: 10 });
+    expect(commands.map(({ payload }) => payload.expectedRevision)).toEqual([10, 10]);
+  }).pipe(Effect.provide(network)),
 );

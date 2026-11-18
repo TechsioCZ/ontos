@@ -1,47 +1,72 @@
+// @rstest-environment happy-dom
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { afterAll, beforeAll, expect, it, rstest } from 'effect-rstest';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { aiActivityData } from '../../src/routes/[lang]/prodej/zamestnanci/employees-data.ts';
 
-const { records } = rstest.hoisted(() => ({ records: rstest.fn() }));
-
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  removeEventListener: events.removeEventListener.bind(events),
-};
-
-beforeAll(() => {
-  for (const [name, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, name, value);
-  }
-  Reflect.set(globalThis, 'document', {});
+const reads: RecordsRequest[] = [];
+const emptyActivity = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  aiActivity: [],
+  availablePrincipals: [],
+  canWrite: true,
+  indicators: {
+    active: 0,
+    byDepartment: [],
+    byRole: { ACCOUNTANT: 0, SALES_HEAD: 0, SALES_REP: 0, SUPPORT: 0, WAREHOUSE: 0 },
+    total: 0,
+  },
+  items: [],
+  revision: 1,
 });
 
-afterAll(() => {
-  Reflect.deleteProperty(globalThis, 'document');
-  for (const name of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, name);
-  }
-});
+const OwnerRecordsApi = RecordsApi.prefix('/workforce-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ workforce: '/workforce-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return emptyActivity;
+        }),
+      ),
+    ),
+  ),
+);
 
 // The AI activity feed shows agents' Core audit events in every module, so another module's change re-reads it.
 it.live('AI activity reloads on a change of any module', () =>
   Effect.gen(function* scopedAiActivity() {
-    records.mockReset();
-    records.mockReturnValue(Effect.succeed({ aiActivity: [] }));
+    yield* pinTestDocument;
     yield* aiActivityData.preload('company-a');
-    expect(records).toHaveBeenCalledTimes(1);
-    const unsubscribe = aiActivityData.subscribe(() => {
-      aiActivityData.snapshot('company-a');
-    });
-    events.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['merchandise'] } }));
-    yield* Effect.sleep('10 millis');
-    expect(records).toHaveBeenCalledTimes(2);
-    unsubscribe();
-  }),
+    expect(reads).toHaveLength(1);
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        aiActivityData.subscribe(() => {
+          aiActivityData.snapshot('company-a');
+        }),
+      ),
+      (unsubscribe) => Effect.sync(unsubscribe),
+    );
+    window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['merchandise'] } }));
+    yield* waitUntil(() => reads.length >= 2);
+    yield* aiActivityData.read('company-a');
+    expect(reads).toHaveLength(2);
+  }).pipe(Effect.scoped, Effect.provide(network)),
 );

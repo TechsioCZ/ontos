@@ -1,13 +1,28 @@
+// @rstest-environment happy-dom
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
+import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { beforeAll, beforeEach, expect, it } from 'effect-rstest';
 
 import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
 
-const platformFetch = rstest.fn<typeof globalThis.fetch>();
-const originalFetch = globalThis.fetch;
 const searchUrl = '/shell-super-app-api/module-api/example-owner/build/example-api/search/records';
 const readUrl = '/shell-super-app-api/module-api/example-owner/build/example-api/reads/records';
+const actionUrl = '/shell-super-app-api/module-api/example-owner/build/example-api/actions/change';
+const received: string[] = [];
+let sequence = 0;
+const receiveModuleRequest = Effect.gen(function* receiveModuleRequestEffect() {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  received.push(new URL(request.url, 'http://shell.test').pathname);
+  sequence += 1;
+  return HttpServerResponse.jsonUnsafe({ sequence });
+});
+const network = browserNetwork(
+  HttpRouter.add('POST', searchUrl, receiveModuleRequest),
+  HttpRouter.add('POST', readUrl, receiveModuleRequest),
+  HttpRouter.add('POST', actionUrl, receiveModuleRequest),
+);
 const request = { body: JSON.stringify({ query: 'current' }), method: 'POST' };
 const SequenceJson = Schema.fromJsonString(Schema.Struct({ sequence: Schema.Int }));
 const readSequence = (url: string, init: RequestInit) =>
@@ -17,19 +32,11 @@ const readSequence = (url: string, init: RequestInit) =>
   );
 
 beforeAll(() => {
-  globalThis.fetch = platformFetch;
   installBrowserRequestCache();
 });
-afterAll(() => {
-  globalThis.fetch = originalFetch;
-});
 beforeEach(() => {
-  platformFetch.mockReset();
-  let sequence = 0;
-  platformFetch.mockImplementation(() => {
-    sequence += 1;
-    return Promise.resolve(Response.json({ sequence }));
-  });
+  received.length = 0;
+  sequence = 0;
 });
 
 it.live('never caches or joins identical module search requests', () =>
@@ -39,13 +46,13 @@ it.live('never caches or joins identical module search requests', () =>
     const second = yield* readSequence(searchUrl, request);
     expect(first).toEqual({ sequence: 1 });
     expect(second).toEqual({ sequence: 2 });
-    expect(platformFetch).toHaveBeenCalledTimes(2);
-    platformFetch.mockClear();
+    expect(received).toHaveLength(2);
+    received.length = 0;
     yield* Effect.promise(() =>
       Promise.all([globalThis.fetch(searchUrl, request), globalThis.fetch(searchUrl, request)]),
     );
-    expect(platformFetch).toHaveBeenCalledTimes(2);
-  }),
+    expect(received).toHaveLength(2);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('an explicit no-store owner target read bypasses stored answers without purging ordinary reads', () =>
@@ -54,15 +61,15 @@ it.live('an explicit no-store owner target read bypasses stored answers without 
     const first = yield* readSequence(readUrl, request);
     const retained = yield* readSequence(readUrl, request);
     expect(retained).toEqual(first);
-    expect(platformFetch).toHaveBeenCalledTimes(1);
+    expect(received).toHaveLength(1);
     const second = yield* readSequence(readUrl, { ...request, cache: 'no-store' });
     const third = yield* readSequence(readUrl, { ...request, cache: 'no-store' });
     expect(second).toEqual({ sequence: 2 });
     expect(third).toEqual({ sequence: 3 });
-    expect(platformFetch).toHaveBeenCalledTimes(3);
+    expect(received).toHaveLength(3);
     expect(yield* readSequence(readUrl, request)).toEqual(first);
-    expect(platformFetch).toHaveBeenCalledTimes(3);
-  }),
+    expect(received).toHaveLength(3);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('the public no-store transport header bypasses cached exact-target reads', () =>
@@ -76,8 +83,8 @@ it.live('the public no-store transport header bypasses cached exact-target reads
       sequence: 3,
     });
     expect(yield* readSequence(readUrl, request)).toEqual({ sequence: 1 });
-    expect(platformFetch).toHaveBeenCalledTimes(3);
-  }),
+    expect(received).toHaveLength(3);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('a no-store action still performs ordinary write invalidation', () =>
@@ -85,14 +92,14 @@ it.live('a no-store action still performs ordinary write invalidation', () =>
     yield* clearBrowserRequestCache;
     expect(yield* readSequence(readUrl, request)).toEqual({ sequence: 1 });
     yield* Effect.promise(() =>
-      globalThis.fetch('/shell-super-app-api/module-api/example-owner/build/example-api/actions/change', {
+      globalThis.fetch(actionUrl, {
         ...request,
         headers: { 'cache-control': 'no-store' },
       }),
     );
     expect(yield* readSequence(readUrl, request)).toEqual({ sequence: 3 });
-    expect(platformFetch).toHaveBeenCalledTimes(3);
-  }),
+    expect(received).toHaveLength(3);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('search reads never become writes or invalidate unrelated cached owner data', () =>
@@ -108,9 +115,9 @@ it.live('search reads never become writes or invalidate unrelated cached owner d
       yield* Effect.promise(() => globalThis.fetch(searchUrl, request));
       expect(yield* readSequence(readUrl, request)).toEqual(cached);
       expect(writes).toBe(0);
-      expect(platformFetch).toHaveBeenCalledTimes(2);
+      expect(received).toHaveLength(2);
     } finally {
       globalThis.removeEventListener(moduleWriteEvent, onWrite);
     }
-  }),
+  }).pipe(Effect.provide(network)),
 );

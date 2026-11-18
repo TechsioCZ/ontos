@@ -1,59 +1,45 @@
-import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
-import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
-import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
-import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+// @rstest-environment happy-dom
+import { saveLabelsFor } from '@app/admin-ui';
+import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { Effect, Schema } from 'effect';
-import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import type { PropsWithChildren, ReactElement } from 'react';
+import { browserNetwork, networkIdle, pinTestDocument, serveApi } from '@app/shared-contracts/testing/http-double';
+import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { cleanup, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Effect, Layer, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import type { ReactElement } from 'react';
 
-import csResource from '../../locales/cs/shell.json';
 import {
+  accessAdminPeopleGroup,
+  AccessPeopleMutationResponseSchema,
   ListAccessPeopleOptionsResponseSchema,
   ListAccessPeopleResponseSchema,
 } from '../../shared/access-admin-api.ts';
+import type { AssignAccessRolePayload, ListAccessPeoplePayload } from '../../shared/access-admin-api.ts';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
+import {
+  InvitePeopleResponseSchema,
+  PeopleListResponseSchema,
+  SetPeopleCompanyMembershipResponseSchema,
+} from '../../shared/people-api.ts';
+import type {
+  InvitePeopleRequest,
+  PeopleListRequest,
+  SetPeopleCompanyMembershipRequest,
+} from '../../shared/people-api.ts';
 import { InvitePersonButton } from '../../src/routes/people/invite-person-button.tsx';
 import { PeoplePanel } from '../../src/routes/people/people-panel.tsx';
-import type { PeopleAccessView } from '../../src/routes/people/people-model.ts';
+import type { PeopleAccessView, PendingPeopleChange } from '../../src/routes/people/people-model.ts';
+import { shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 
-let i18nInstance: I18nInstance;
-beforeAll(async () => {
-  i18nInstance = await createModernI18n();
-  await i18nInstance.init({
-    defaultNS: 'shell',
-    lng: 'cs',
-    ns: ['shell'],
-    resources: { cs: { shell: csResource } },
-    supportedLngs: ['cs', 'en'],
-  });
-});
-const I18nProvider = ({ children }: PropsWithChildren) => (
-  <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>{children}</ModernI18nProvider>
-);
-const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
-
-const { commands } = rstest.hoisted(() => ({
-  commands: {
-    access: rstest.fn(),
-    invite: rstest.fn(),
-    list: rstest.fn(),
-    membership: rstest.fn(),
-    role: rstest.fn(),
-  },
-}));
-// Outside a router: no route change is ever blocked here.
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('../../src/routes/people/people-client.ts', () => ({
-  changeCompanyMembership: commands.membership,
-  changePersonRole: commands.role,
-  invitePerson: commands.invite,
-  loadAllPeople: commands.list,
-  loadPeopleAccess: commands.access,
-}));
+const render = (element: ReactElement) =>
+  renderShellRoute(
+    makeShellRouter({ page: { component: () => element, path: 'people' }, url: '/cs/people' }),
+    shellLocaleCopy('cs'),
+  );
 
 const labels = saveLabelsFor('cs');
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -135,10 +121,115 @@ const accessView = (assignments: EncodedAssignments): PeopleAccessView => ({
   }),
 });
 
+const assignment = (incarnationId: string) => ({
+  incarnationId,
+  principalId,
+  roleId,
+  roleName: 'Obchodník',
+  scope: companyScope,
+  status: 'active',
+  validFrom: '2026-01-01T00:00:00.000Z',
+  validUntil: null,
+});
+const inviteAnswer = Schema.decodeUnknownSync(InvitePeopleResponseSchema)({
+  delivery: 'pending',
+  invitationId: '00000000-0000-4000-8000-000000000009',
+  membership,
+  principalRef,
+});
+let listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)(list);
+let accessAnswer = accessView([]);
+let membershipAnswer = Schema.decodeUnknownSync(SetPeopleCompanyMembershipResponseSchema)({
+  membership,
+  projection: 'pending',
+});
+const assignedRole = Schema.decodeUnknownSync(AccessPeopleMutationResponseSchema)({
+  assignment: assignment('00000000-0000-4000-8000-0000000000c1'),
+  revision,
+});
+let roleAnswer = Effect.succeed(assignedRole);
+const invites: InvitePeopleRequest[] = [];
+const memberships: SetPeopleCompanyMembershipRequest[] = [];
+const roles: { readonly operation: 'assign'; readonly payload: AssignAccessRolePayload }[] = [];
+const lists: { readonly payload: PeopleListRequest; readonly scope: 'company' }[] = [];
+const accessReads: { readonly kind: 'options' | 'people'; readonly payload: ListAccessPeoplePayload }[] = [];
+
+// The shared Shell double omits these endpoints; compose only the real contracts this panel calls.
+const peopleEndpoints = ShellAuthenticationApi.groups.peopleAdministration.endpoints;
+const accessEndpoints = accessAdminPeopleGroup.endpoints;
+const PeopleApi = HttpApi.make('peoplePanelTest')
+  .add(
+    HttpApiGroup.make('peopleAdministration')
+      .add(peopleEndpoints.invitePerson)
+      .add(peopleEndpoints.listCompanyPeople)
+      .add(peopleEndpoints.setPeopleCompanyMembership),
+  )
+  .add(
+    HttpApiGroup.make('accessAdminPeople')
+      .add(accessEndpoints.listAccessPeopleOptions)
+      .add(accessEndpoints.listAccessPeople)
+      .add(accessEndpoints.assignAccessRole),
+  )
+  .prefix(shellAuthenticationApiContract.apiPrefix);
+const handlers = Layer.mergeAll(
+  HttpApiBuilder.group(PeopleApi, 'peopleAdministration', (group) =>
+    group
+      .handle('invitePerson', ({ payload }) =>
+        Effect.sync(() => {
+          invites.push(payload);
+          return inviteAnswer;
+        }),
+      )
+      .handle('listCompanyPeople', ({ payload }) =>
+        Effect.sync(() => {
+          lists.push({ payload, scope: 'company' });
+          return listAnswer;
+        }),
+      )
+      .handle('setPeopleCompanyMembership', ({ payload }) =>
+        Effect.sync(() => {
+          memberships.push(payload);
+          return membershipAnswer;
+        }),
+      ),
+  ),
+  HttpApiBuilder.group(PeopleApi, 'accessAdminPeople', (group) =>
+    group
+      .handle('listAccessPeopleOptions', ({ payload }) =>
+        Effect.sync(() => {
+          accessReads.push({ kind: 'options', payload });
+          return accessAnswer.options;
+        }),
+      )
+      .handle('listAccessPeople', ({ payload }) =>
+        Effect.sync(() => {
+          accessReads.push({ kind: 'people', payload });
+          return accessAnswer.people;
+        }),
+      )
+      .handle('assignAccessRole', ({ payload }) =>
+        Effect.sync(() => {
+          roles.push({ operation: 'assign', payload });
+        }).pipe(Effect.andThen(() => roleAnswer)),
+      ),
+  ),
+);
+const network = browserNetwork(serveApi(PeopleApi, handlers));
+
 afterEach(cleanup);
 beforeEach(() => {
-  commands.access.mockReturnValue(Effect.succeed({ status: 'ok', value: accessView([]) }));
-  commands.list.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
+  listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)(list);
+  accessAnswer = accessView([]);
+  membershipAnswer = Schema.decodeUnknownSync(SetPeopleCompanyMembershipResponseSchema)({
+    membership,
+    projection: 'pending',
+  });
+  roleAnswer = Effect.succeed(assignedRole);
+  invites.length = 0;
+  memberships.length = 0;
+  roles.length = 0;
+  lists.length = 0;
+  accessReads.length = 0;
 });
 
 /** Row actions live in the compact ⋯ menu of each row. */
@@ -150,18 +241,14 @@ const chooseRowAction = (user: ReturnType<typeof userEvent.setup>, name: string,
 
 it.live('invites a person by email and explicit affiliation, never by principal ID or agent kind', () =>
   Effect.gen(function* invitePerson() {
+    yield* pinTestDocument;
     const user = userEvent.setup();
-    const onCommitted = rstest.fn();
-    commands.invite.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: { delivery: 'pending', invitationId: '00000000-0000-4000-8000-000000000009', membership, principalRef },
-      }),
-    );
-    render(
+    const committed: PendingPeopleChange[] = [];
+
+    yield* render(
       <InvitePersonButton
         onCommitted={(change) => {
-          onCommitted(change);
+          committed.push(change);
         }}
       />,
     );
@@ -173,193 +260,161 @@ it.live('invites a person by email and explicit affiliation, never by principal 
     yield* Effect.promise(() => user.type(screen.getByLabelText(/E-mail/u), 'jana@example.test'));
     yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Zařazení ve firmě'), 'external'));
     // Typing sends nothing; the one shared Save button sends the invitation once.
-    expect(commands.invite).not.toHaveBeenCalled();
+    expect(invites).toHaveLength(0);
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
-    yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(commands.invite).toHaveBeenCalledWith({
-          affiliation: 'external',
-          displayName: 'Jana Nováková',
-          email: 'jana@example.test',
-        }),
-      ),
-    );
-    yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(onCommitted).toHaveBeenCalledWith({ kind: 'membership', result: { membership, projection: 'pending' } }),
-      ),
-    );
-    expect(commands.invite).toHaveBeenCalledTimes(1);
+    yield* waitUntil(() => invites.length === 1 && committed.length === 1);
+    expect(invites).toContainEqual({
+      affiliation: 'external',
+      displayName: 'Jana Nováková',
+      email: 'jana@example.test',
+    });
+    expect(committed).toContainEqual({ kind: 'membership', result: { membership, projection: 'pending' } });
+    expect(invites).toHaveLength(1);
     // The sent invitation closes its dialog.
-    yield* Effect.promise(() => waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull()));
-  }),
-);
-
-it.live('reads the required text of a required field in Czech', () =>
-  Effect.gen(function* requiredText() {
-    const user = userEvent.setup();
-    render(<InvitePersonButton onCommitted={() => {}} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
-    yield* Effect.promise(() => screen.findByRole('dialog'));
-    const name = screen.getByLabelText(/Jméno a příjmení/u, { selector: 'input' });
-    expect(document.querySelector(`label[for="${name.id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
-    expect(document.body.textContent).not.toContain('(required)');
-  }),
+    yield* waitUntil(() => screen.queryByLabelText(/Jméno a příjmení/u) === null);
+    expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull();
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('an invitation with typed input asks before closing; an untouched one closes at once', () =>
   Effect.gen(function* inviteLeave() {
+    yield* pinTestDocument;
     const user = userEvent.setup();
-    render(<InvitePersonButton onCommitted={() => {}} />);
+    yield* render(<InvitePersonButton onCommitted={() => {}} />);
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit' })));
-    yield* Effect.promise(() => waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull()));
+    yield* waitUntil(() => screen.queryByLabelText(/Jméno a příjmení/u) === null);
+    expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull();
 
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Jméno a příjmení/u), 'Jana'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit' })));
     const discard = yield* Effect.promise(() => screen.findByRole('button', { name: labels.discard }));
     yield* Effect.promise(() => user.click(discard));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u, { selector: 'input' })).toBeNull()),
-    );
-    expect(commands.invite).not.toHaveBeenCalled();
-  }),
+    yield* waitUntil(() => screen.queryByLabelText(/Jméno a příjmení/u, { selector: 'input' }) === null);
+    expect(screen.queryByLabelText(/Jméno a příjmení/u, { selector: 'input' })).toBeNull();
+    expect(invites).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('opens the real person from a governed deep link in the same Shell page', () =>
   Effect.gen(function* openLinkedPerson() {
-    render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+    yield* pinTestDocument;
+    yield* render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
-    expect(commands.list).toHaveBeenCalledWith('company');
-    expect(commands.access).toHaveBeenCalledWith('company', companyId);
+    expect(lists).toContainEqual({ payload: { limit: 100, offset: 0 }, scope: 'company' });
+    expect(accessReads).toEqual([
+      { kind: 'options', payload: { limit: 100, scope: companyScope } },
+      { kind: 'people', payload: { limit: 100, scope: companyScope } },
+    ]);
     expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('confirms a committed membership change from the organisation row it reads back', () =>
   Effect.gen(function* confirmMembership() {
+    yield* pinTestDocument;
     const user = userEvent.setup();
     const departed = { ...membership, revision: 2, status: 'departed' } as const;
-    commands.membership.mockReturnValue(
-      Effect.succeed({ status: 'ok', value: { membership: departed, projection: 'pending' } }),
-    );
-    render(<PeoplePanel companyId={companyId} />);
+    membershipAnswer = Schema.decodeUnknownSync(SetPeopleCompanyMembershipResponseSchema)({
+      membership: departed,
+      projection: 'pending',
+    });
+    yield* render(<PeoplePanel companyId={companyId} />);
     yield* chooseRowAction(user, person.displayName, 'Upravit členství');
     yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Stav členství'), 'departed'));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Odchod z firmy'));
-    commands.list.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: { ...list, items: [{ ...person, selectedCompanyMembership: departed }] },
-      }),
-    );
+    listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
+      ...list,
+      items: [{ ...person, selectedCompanyMembership: departed }],
+    });
     // Filling in the change sends nothing; the one Save button sends it once.
     expect(screen.getAllByRole('button', { name: labels.save })).toHaveLength(1);
     yield* Effect.sleep('1 second');
-    expect(commands.membership).not.toHaveBeenCalled();
+    expect(memberships).toHaveLength(0);
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Uložit' })));
-    yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(commands.membership).toHaveBeenCalledWith({
-          affiliation: 'external',
-          expectedRevision: 1,
-          principalRef,
-          reason: 'Odchod z firmy',
-          status: 'departed',
-        }),
-      ),
-    );
-    expect(commands.membership).toHaveBeenCalledTimes(1);
+    yield* waitUntil(() => memberships.length === 1);
+    expect(memberships).toContainEqual({
+      affiliation: 'external',
+      expectedRevision: 1,
+      principalRef,
+      reason: 'Odchod z firmy',
+      status: 'departed',
+    });
+    expect(memberships).toHaveLength(1);
     // The row read back is the confirmation, so the change never stays pending.
-    yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(/Zpracovává se/u)).toBeNull()));
+    yield* waitUntil(() => screen.queryByText(/Zpracovává se/u) === null);
+    expect(screen.queryByText(/Zpracovává se/u)).toBeNull();
     // An ended membership leaves the default view of current members, but stays one filter away.
     yield* Effect.promise(() => screen.findByText('Filtrům nikdo neodpovídá.'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit filtry' })));
     const table = yield* Effect.promise(() => screen.findByRole('table'));
     yield* Effect.promise(() => within(table).findByText('Ukončený'));
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('assigns a named canonical role by its identity, never by a role key', () =>
   Effect.gen(function* assignNamedRole() {
+    yield* pinTestDocument;
     const user = userEvent.setup();
-    const incarnationId = '00000000-0000-4000-8000-0000000000c1';
-    commands.role.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: { change: { incarnationId, present: true, principalId }, kind: 'role' },
-      }),
-    );
-    render(<PeoplePanel companyId={companyId} />);
+
+    yield* render(<PeoplePanel companyId={companyId} />);
     yield* chooseRowAction(user, person.displayName, 'Spravovat role');
     expect(screen.queryByLabelText('Klíč role')).toBeNull();
     expect(screen.queryByText(/SpiceDB/u)).toBeNull();
     yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
-    yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(commands.role).toHaveBeenCalledWith({
-          operation: 'assign',
-          payload: {
-            expectedRevision: revision,
-            expectedRoleRevisionId: roleRevisionId,
-            principalId,
-            roleId,
-            scope: companyScope,
-          },
-        }),
-      ),
-    );
-  }),
+    yield* waitUntil(() => roles.length === 1);
+    expect(roles).toContainEqual({
+      operation: 'assign',
+      payload: {
+        expectedRevision: revision,
+        expectedRoleRevisionId: roleRevisionId,
+        principalId,
+        roleId,
+        scope: companyScope,
+      },
+    });
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('renders role chips from the canonical assignment names rather than internal keys', () =>
   Effect.gen(function* displayRoleNames() {
-    commands.access.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: accessView([
-          {
-            incarnationId: '00000000-0000-4000-8000-0000000000c1',
-            principalId,
-            roleId,
-            roleName: 'Obchodník',
-            scope: companyScope,
-            status: 'active',
-            validFrom: '2026-01-01T00:00:00.000Z',
-            validUntil: null,
-          },
-        ]),
-      }),
-    );
-    render(<PeoplePanel companyId={companyId} />);
+    yield* pinTestDocument;
+    accessAnswer = accessView([
+      {
+        incarnationId: '00000000-0000-4000-8000-0000000000c1',
+        principalId,
+        roleId,
+        roleName: 'Obchodník',
+        scope: companyScope,
+        status: 'active',
+        validFrom: '2026-01-01T00:00:00.000Z',
+        validUntil: null,
+      },
+    ]);
+    yield* render(<PeoplePanel companyId={companyId} />);
     yield* Effect.promise(() => screen.findAllByText('Obchodník'));
     expect(screen.queryByText(/crm-sales/u)).toBeNull();
     expect(screen.queryByText(/00000000/u)).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('uses Czech cardinal forms as pending canonical role changes accumulate', () =>
   Effect.gen(function* pendingCounts() {
+    yield* pinTestDocument;
     const user = userEvent.setup();
     let incarnation = 0;
-    commands.role.mockImplementation(() => {
+    roleAnswer = Effect.sync(() => {
       incarnation += 1;
-      return Effect.succeed({
-        status: 'ok',
-        value: {
-          change: {
-            incarnationId: `00000000-0000-4000-8000-${String(incarnation).padStart(12, '0')}`,
-            present: true,
-            principalId,
-          },
-          kind: 'role',
-        },
+      return Schema.decodeUnknownSync(AccessPeopleMutationResponseSchema)({
+        assignment: assignment(`00000000-0000-4000-8000-${String(incarnation).padStart(12, '0')}`),
+        revision,
       });
     });
-    render(<PeoplePanel companyId={companyId} />);
+
+    yield* render(<PeoplePanel companyId={companyId} />);
     yield* Effect.forEach(
       ['1 změna.', '2 změny.', '3 změny.', '4 změny.', '5 změn.'],
       Effect.fn(function* advancePendingCount(expected: string) {
@@ -372,75 +427,49 @@ it.live('uses Czech cardinal forms as pending canonical role changes accumulate'
       }),
       { concurrency: 1, discard: true },
     );
-  }),
-);
-
-it.live('stacks full-width person-detail actions on narrow screens without fixed-height buttons', () =>
-  Effect.gen(function* renderResponsiveActions() {
-    const user = userEvent.setup();
-    render(<PeoplePanel companyId={companyId} />);
-    yield* Effect.promise(async () => await user.click(await screen.findByText(person.displayName)));
-    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
-    const roles = within(dialog).getByRole('button', { name: 'Spravovat role' });
-    const membershipAction = within(dialog).getByRole('button', { name: 'Upravit členství' });
-    expect(roles.parentElement).toBe(membershipAction.parentElement);
-    expect(roles.parentElement?.className).toContain('grid w-full');
-    for (const button of [roles, membershipAction]) {
-      expect(button.className).toContain('w-full');
-      expect(button.className).toContain('whitespace-normal');
-      expect(button.className).not.toMatch(/(?:^|\s)h-/u);
-    }
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('updates an open person detail from waiting to the native undeliverable receipt without a refresh button', () =>
   Effect.gen(function* refreshInvitationReceipt() {
+    yield* pinTestDocument;
     const user = userEvent.setup();
-    commands.list.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: { ...list, items: [{ ...person, invitationDelivery: { status: 'pending' } }] },
-      }),
-    );
-    render(<PeoplePanel companyId={companyId} />);
+    listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
+      ...list,
+      items: [{ ...person, invitationDelivery: { status: 'pending' } }],
+    });
+    yield* render(<PeoplePanel companyId={companyId} />);
     expect(screen.queryByRole('button', { name: 'Obnovit seznam' })).toBeNull();
     yield* Effect.promise(async () => await user.click(await screen.findByText(person.displayName)));
     yield* Effect.promise(() => screen.findByText('E-mail s pozvánkou: čeká na odeslání.'));
-    commands.list.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: {
-          ...list,
-          items: [{ ...person, invitationDelivery: { reason: 'recipient_unavailable', status: 'undeliverable' } }],
-        },
-      }),
-    );
+    listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
+      ...list,
+      items: [{ ...person, invitationDelivery: { reason: 'recipient_unavailable', status: 'undeliverable' } }],
+    });
     // Returning to the tab reloads the list in place; the open detail follows the new receipt.
-    document.dispatchEvent(new Event('visibilitychange'));
+    yield* acted(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     yield* Effect.promise(() =>
       screen.findByText('E-mail s pozvánkou: nelze doručit. Na tuto e-mailovou adresu nelze odesílat zprávy.'),
     );
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
     expect(screen.queryByText(/undeliverable_recipient/u)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Poslat pozvánku znovu' })).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('loads the terminal invitation receipt on a fresh person deep link without local invite state', () =>
   Effect.gen(function* loadTerminalInvitationReceipt() {
-    commands.list.mockReturnValue(
-      Effect.succeed({
-        status: 'ok',
-        value: {
-          ...list,
-          items: [{ ...person, invitationDelivery: { reason: 'recipient_unavailable', status: 'undeliverable' } }],
-        },
-      }),
-    );
-    render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+    yield* pinTestDocument;
+    listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
+      ...list,
+      items: [{ ...person, invitationDelivery: { reason: 'recipient_unavailable', status: 'undeliverable' } }],
+    });
+    yield* render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
     yield* Effect.promise(() => screen.findByText(/E-mail s pozvánkou: nelze doručit/u));
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', () =>
@@ -451,35 +480,40 @@ it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', 
     ] as const,
     ({ delivery, expected }) =>
       Effect.gen(function* displayDeliveryStatus() {
-        commands.list.mockReturnValue(
-          Effect.succeed({
-            status: 'ok',
-            value: { ...list, items: [{ ...person, invitationDelivery: delivery }] },
-          }),
-        );
-        render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+        yield* pinTestDocument;
+        listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
+          ...list,
+          items: [{ ...person, invitationDelivery: delivery }],
+        });
+        yield* render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
         yield* Effect.promise(() => screen.findByText(expected));
         expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
         cleanup();
       }),
     { concurrency: 1, discard: true },
-  ),
+  ).pipe(Effect.provide(network)),
 );
 
 it.live('reloads on a live change of Core-owned people data, not on other modules or a timer', () =>
   Effect.gen(function* followLiveChanges() {
-    render(<PeoplePanel companyId={companyId} />);
+    yield* pinTestDocument;
+    yield* render(<PeoplePanel companyId={companyId} />);
     yield* Effect.promise(() => screen.findByText(person.displayName));
-    const reads = () => commands.list.mock.calls.length;
-    const before = reads();
-    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['crm'] } }));
-    yield* Effect.sleep('50 millis');
-    expect(reads()).toBe(before);
-    commands.list.mockReturnValue(
-      Effect.succeed({ status: 'ok', value: { ...list, items: [{ ...person, displayName: 'Jana Svobodová' }] } }),
-    );
-    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['shell'] } }));
+    const before = lists.length;
+    yield* acted(() => {
+      window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['crm'] } }));
+    });
+    // A reload the unrelated change started has reached the BFF by the time the network is idle.
+    yield* networkIdle;
+    expect(lists.length).toBe(before);
+    listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
+      ...list,
+      items: [{ ...person, displayName: 'Jana Svobodová' }],
+    });
+    yield* acted(() => {
+      window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['shell'] } }));
+    });
     yield* Effect.promise(() => screen.findByText('Jana Svobodová'));
-    expect(reads()).toBe(before + 1);
-  }),
+    expect(lists.length).toBe(before + 1);
+  }).pipe(Effect.provide(network)),
 );

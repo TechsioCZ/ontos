@@ -85,7 +85,7 @@ import {
   Schema,
   Scope,
 } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpBody, HttpClient, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 import { createLocalJWKSet, importJWK, jwtVerify, SignJWT } from 'jose';
@@ -496,8 +496,6 @@ const serveTax = Effect.fn('VatDeploy.serveTax')(function* serveTax(
     (root) => Effect.promise(() => root.dispose()),
   );
   roots.set('tax', tax);
-  rs.stubGlobal('fetch', fetchThroughRoots);
-  yield* Effect.addFinalizer(() => Effect.sync(() => rs.unstubAllGlobals()));
   return fetchThroughRoots;
 });
 

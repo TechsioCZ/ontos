@@ -1,15 +1,17 @@
-import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import type { TaggingCommand, TaggingCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
-import { TrustedPrincipalContextSchema, GatewayAssertionRedemptionService } from '@app/core-runtime';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
+import { bindActionTestServices } from '@app/core-runtime/testing/actions';
 import type { ActionTestHarnessOptions } from '@app/core-runtime/testing/actions';
-import { Clock, Effect, Layer, Schema } from 'effect';
+import { Effect, Layer } from 'effect';
 import { HttpRouter, HttpServer } from 'effect/http';
 import { HttpApi, HttpApiBuilder } from 'effect/http-api';
-import { rstest } from 'effect-rstest';
+
+import {
+  registeredActionGateway,
+  relayActionWrite,
+} from '../../../../packages/gateway-principal-verifier/tests/support/registered-action-http.ts';
 import { taggingRegistration } from '../../vertical.registration.ts';
+import { ACTION_GATEWAY_AUDIENCE } from '../../api/auth/action-principal.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { UpdateTagActionApi } from '../../shared/apis/update-tag-action.ts';
 import { DeleteTagActionApi } from '../../shared/apis/delete-tag-action.ts';
@@ -26,22 +28,6 @@ import { updateTagActionApiLive } from '../../api/update-tag-action-server.ts';
 import { deleteTagActionApiLive } from '../../api/delete-tag-action-server.ts';
 import { assignTagActionApiLive } from '../../api/assign-tag-action-server.ts';
 import { unassignTagActionApiLive } from '../../api/unassign-tag-action-server.ts';
-
-// Authentication is an external port here. The real HTTP endpoint, payload decoder, owner binding,
-// canonical gate, handler, invocation repository and commit evidence all remain in the test.
-rstest.mock('../../api/auth/action-principal.ts', () => ({
-  authenticateOperationPrincipal: () =>
-    Effect.succeed(
-      Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-        authBindingId: '40000000-0000-4000-8000-000000000001',
-        authContextRef: 'better-auth-session:tagging-http',
-        authMethod: 'session',
-        legalEntityId: '30000000-0000-4000-8000-000000000001',
-        principalId: '20000000-0000-4000-8000-000000000001',
-        tenantId: '10000000-0000-4000-8000-000000000001',
-      }),
-    ),
-}));
 
 export const registrations = [
   applyCommandAction,
@@ -78,38 +64,30 @@ export const makeFixture = (options: Pick<ActionTestHarnessOptions, 'access' | '
       loadRecords: () => Effect.die('HTTP writes must not read the records endpoint'),
     };
 
-    const owner = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: taggingRegistration });
-    const compositionRevision = owner.snapshot.composition.revision;
-    const clock = yield* Clock.Clock;
-    const harness = yield* makeActionTestHarness({
-      access: 'allowed',
-      applicationComposition: owner.applicationComposition,
-      expectedDeployment: owner.expectedDeployment,
-      ownerRegistration: taggingRegistration,
-      services: [
-        bindActionTestServices(applyCommandAction, services),
-        bindActionTestServices(updateTagAction, services),
-        bindActionTestServices(deleteTagAction, services),
-        bindActionTestServices(assignTagAction, services),
-        bindActionTestServices(unassignTagAction, services),
-      ],
-      ...options,
-    });
-    const requestContext = yield* Layer.build(
-      Layer.mergeAll(
-        harness.layer,
-        Layer.succeed(Clock.Clock, clock),
-        Layer.succeed(ActiveApplicationCompositionService, owner.applicationComposition),
-        Layer.mock(GatewayAssertionRedemptionService, {}),
-        Layer.mock(GatewayPrincipalVerifierConfiguration, {}),
-      ),
+    const gateway = yield* registeredActionGateway(
+      {
+        apiMarker: ultramodernApiMarker,
+        audience: ACTION_GATEWAY_AUDIENCE,
+        ownerRegistration: taggingRegistration,
+      },
+      {
+        services: [
+          bindActionTestServices(applyCommandAction, services),
+          bindActionTestServices(updateTagAction, services),
+          bindActionTestServices(deleteTagAction, services),
+          bindActionTestServices(assignTagAction, services),
+          bindActionTestServices(unassignTagAction, services),
+        ],
+        ...options,
+      },
     );
+    const requestContext = yield* Layer.build(gateway.requestLayer);
     const router = yield* Effect.acquireRelease(
       Effect.sync(() =>
         HttpRouter.toWebHandler(
           HttpApiBuilder.layer(httpApi).pipe(
             Layer.provide(handlers),
-            Layer.provide(harness.layer),
+            Layer.provide(gateway.harness.layer),
             Layer.provide(HttpServer.layerServices),
           ),
           { disableLogger: true },
@@ -122,30 +100,14 @@ export const makeFixture = (options: Pick<ActionTestHarnessOptions, 'access' | '
       command: (typeof TaggingCommandPayloadSchema.Encoded)['command'],
       key: string,
       intent?: 'propose',
-    ) => {
-      const headers = new Headers({
-        authorization: 'Bearer fixture',
-        'content-type': 'application/json',
-        'idempotency-key': key,
-        'x-composition-revision': compositionRevision,
-        'x-correlation-id': key,
+    ) =>
+      relayActionWrite(gateway, async (relayed) => await router.handler(relayed, requestContext), {
+        body: JSON.stringify({ command, expectedRevision: 1 }),
+        intent,
+        key,
+        path,
       });
-      if (intent !== undefined) {
-        headers.set('x-action-intent', intent);
-      }
-      return Effect.promise(
-        async () =>
-          await router.handler(
-            new Request(`https://owner.test${path}`, {
-              body: JSON.stringify({ command, expectedRevision: 1 }),
-              headers,
-              method: 'POST',
-            }),
-            requestContext,
-          ),
-      );
-    };
-    return { compositionRevision, harness, request, requestContext, router, writes };
+    return { ...gateway, request, requestContext, router, writes };
   });
 
 export const cases = [

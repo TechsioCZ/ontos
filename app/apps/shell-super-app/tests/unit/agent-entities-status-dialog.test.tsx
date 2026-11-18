@@ -1,122 +1,127 @@
-import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
-import { Effect, Schema } from 'effect' with { rstest: 'importActual' };
-import type { ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, it, rs } from 'effect-rstest';
-
+// @rstest-environment happy-dom
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
-  loadAgentEntities,
-  revokeAgentConnection,
-  saveAgentOperators,
-} from '../../src/routes/people/agent-entities-client.ts' with { rstest: 'importActual' };
-import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
+  AGENT_ACCESS_PATHS,
+  AgentEntityOverviewSchema,
+  ManageAgentEntityRequestSchema,
+} from '@app/shared-contracts/agent-access';
+import type { AgentEntitySchema, ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
+import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Effect, Layer, Schema } from 'effect';
+import { afterEach, expect, it } from 'effect-rstest';
 
-interface StatusDialogFixture {
-  agent: typeof AgentEntitySchema.Encoded;
-  missing: boolean;
-  requests: { readonly key: string; readonly request: ManageAgentEntityRequest }[];
-  sequence: number;
-}
-const { fixture } = rs.hoisted(() => {
-  const state: StatusDialogFixture = {
-    agent: {
-      connections: [],
-      description: null,
-      displayName: 'Asistent provozu',
-      hasProfile: true,
-      operators: [],
-      operatorsRevision: 0,
-      owner: null,
-      principalId: '00000000-0000-4000-8000-000000000004',
-      roles: [],
-      status: 'active',
-      usable: [],
-      writePolicy: 'approval',
-    },
-    missing: false,
-    requests: [],
-    sequence: 0,
-  };
-  return { fixture: state };
-});
-rs.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useRouterState: () => null,
-}));
-rs.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rs.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
-  usePageData: () => ({
-    refreshing: false,
-    state: 'ready',
-    value: {
-      agents: fixture.missing ? [] : [Schema.decodeUnknownSync(AgentEntitySchema)(fixture.agent)],
-      audit: [],
-      company: { legalEntityId: 'company', legalName: 'Firma' },
-      members: [],
-      roles: [],
-      rolesRevision: 'r0',
-    },
-  }),
-}));
-rs.mock('../../src/routes/people/people-client.ts', () => ({
-  get newRequestToken() {
-    return Effect.sync(() => {
-      fixture.sequence += 1;
-      return `request-${fixture.sequence}`;
-    });
-  },
-}));
-// The section imports the client through `agent-data.ts`, which reads `loadAgentEntities` at module
-// scope; keep the real exports and replace only the transport command under test.
-rs.mock('../../src/routes/people/agent-entities-client.ts', () => ({
-  loadAgentEntities,
-  revokeAgentConnection,
-  runAgentCommand: (request: ManageAgentEntityRequest, key: string) =>
-    Effect.sync(() => {
-      fixture.requests.push({ key, request });
-      // Deliberately fail the transport: this is a producer/confirmation test, not a simulated server commit.
-      return { detail: 'Přerušeno', reason: 'error', status: 'failed' };
-    }),
-  saveAgentOperators,
-}));
-beforeEach(() => {
-  fixture.agent = { ...fixture.agent, status: 'active' };
-  fixture.missing = false;
-  fixture.requests = [];
-  fixture.sequence = 0;
-});
+import { agentEntitiesData } from '../../src/routes/people/agent-data.ts';
+import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
+import { shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
+
+const czech = shellLocaleCopy('cs');
+const copy = (key: string) => {
+  expect(czech.exists(key)).toBe(true);
+  return czech.t(key);
+};
+const company = 'company';
+const principalId = '00000000-0000-4000-8000-000000000004';
+const AgentSection = () => <AgentEntitiesSection legalEntityId={company} onNotify={() => {}} />;
+
 afterEach(cleanup);
 
 for (const status of ['active', 'disabled'] as const) {
-  it.live(`retains the original ${status} archive payload and key after a failed response and directory removal`, () =>
-    Effect.gen(function* retainArchivePayload() {
-      fixture.agent = { ...fixture.agent, status };
-      const view = render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'shell.agents.section.delete' }));
-      const confirmName = 'shell.agents.section.dialog.deleteConfirm';
-      fireEvent.click(screen.getByRole('button', { name: confirmName }));
-      expect(screen.getByText('shell.agents.section.dialog.reasonRequired')).toBeTruthy();
-      expect(fixture.requests).toHaveLength(0);
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: '  Ukončení provozu  ' } });
-      fireEvent.click(screen.getByRole('button', { name: confirmName }));
-      yield* Effect.promise(() => screen.findByText('Přerušeno'));
-      fixture.missing = true;
-      view.rerender(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: confirmName }));
-      yield* Effect.promise(() => waitFor(() => expect(fixture.requests).toHaveLength(2)));
-      expect(fixture.requests[0]).toEqual({
-        key: 'agent-request-1',
-        request: {
-          expectedStatus: status,
-          operation: 'delete',
-          principalId: fixture.agent.principalId,
-          reason: 'Ukončení provozu',
-        },
-      });
-      expect(fixture.requests[1]).toEqual(fixture.requests[0]);
-      expect(fixture.sequence).toBe(1);
-    }),
+  it.live(
+    `retains the original ${status} archive payload and key after a failed response and directory removal`,
+    () => {
+      let missing = false;
+      const requests: { readonly key: string | undefined; readonly request: ManageAgentEntityRequest }[] = [];
+      const agent: typeof AgentEntitySchema.Encoded = {
+        connections: [],
+        description: null,
+        displayName: 'Asistent provozu',
+        hasProfile: true,
+        operators: [],
+        operatorsRevision: 0,
+        owner: null,
+        principalId,
+        roles: [],
+        status,
+        usable: [],
+        writePolicy: 'approval',
+      };
+      const network = browserNetwork(
+        Layer.mergeAll(
+          HttpRouter.add(
+            'POST',
+            AGENT_ACCESS_PATHS.list,
+            Effect.gen(function* listAgents() {
+              const overview = yield* Schema.decodeUnknownEffect(AgentEntityOverviewSchema)({
+                agents: missing ? [] : [agent],
+                audit: [],
+                company: { legalEntityId: company, legalName: 'Firma' },
+                members: [],
+                roles: [],
+                rolesRevision: 'r0',
+              });
+              const encoded = yield* Schema.encodeEffect(AgentEntityOverviewSchema)(overview);
+              return HttpServerResponse.jsonUnsafe(encoded);
+            }).pipe(Effect.orDie),
+          ),
+          HttpRouter.add(
+            'POST',
+            AGENT_ACCESS_PATHS.manage,
+            Effect.gen(function* archiveAgent() {
+              const incoming = yield* HttpServerRequest.HttpServerRequest;
+              const request = yield* Schema.decodeUnknownEffect(ManageAgentEntityRequestSchema)(yield* incoming.json);
+              requests.push({ key: incoming.headers['idempotency-key'], request });
+              return HttpServerResponse.jsonUnsafe({ detail: 'Přerušeno' }, { status: 409 });
+            }).pipe(Effect.orDie),
+          ),
+        ),
+      );
+      return Effect.gen(function* retainArchivePayload() {
+        yield* agentEntitiesData.refresh(company);
+        yield* renderShellRoute(
+          makeShellRouter({ page: { component: AgentSection, path: 'people' }, url: '/cs/people' }),
+          czech,
+        );
+        yield* settle;
+        yield* acted(() => {
+          fireEvent.click(screen.getByRole('button', { name: copy('shell.agents.section.delete') }));
+        });
+        const confirmName = copy('shell.agents.section.dialog.deleteConfirm');
+        yield* acted(() => {
+          fireEvent.click(screen.getByRole('button', { name: confirmName }));
+        });
+        expect(screen.getByText(copy('shell.agents.section.dialog.reasonRequired'))).toBeTruthy();
+        expect(requests).toHaveLength(0);
+        yield* Effect.promise(() => userEvent.type(screen.getByRole('textbox'), '  Ukončení provozu  '));
+        yield* acted(() => {
+          fireEvent.click(screen.getByRole('button', { name: confirmName }));
+        });
+        yield* Effect.promise(() => screen.findByText('Přerušeno'));
+        missing = true;
+        yield* agentEntitiesData.refresh(company);
+        yield* settle;
+        expect(screen.queryByText(agent.displayName)).toBeNull();
+        yield* acted(() => {
+          fireEvent.click(screen.getByRole('button', { name: confirmName }));
+        });
+        yield* waitUntil(() => requests.length === 2);
+        expect(requests).toHaveLength(2);
+        expect(requests[0]).toEqual({
+          key: expect.stringMatching(/^agent-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u),
+          request: {
+            expectedStatus: status,
+            operation: 'delete',
+            principalId,
+            reason: 'Ukončení provozu',
+          },
+        });
+        expect(requests[1]).toEqual(requests[0]);
+        expect(new Set(requests.map(({ key }) => key)).size).toBe(1);
+        yield* Effect.promise(() => screen.findByText('Přerušeno'));
+      }).pipe(Effect.provide(network));
+    },
   );
 }

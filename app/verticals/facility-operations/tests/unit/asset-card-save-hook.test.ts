@@ -1,25 +1,34 @@
 // @rstest-environment happy-dom
-// Mounted asset-card draft: the actual `useAssetCardDraft` with the real `useDraftSave` controller. Only the
-// property-tree read and the page's governed runner are replaced, so this proves the render-phase refresh ordering
-// that the controller-level `asset-card-save-revision.test.ts` cannot: an acknowledged same-record asset that arrives
-// while the save is still pending must move the draft and its base to that read once the save settles.
+// Mounted asset-card draft with real property records and governed Action clients, served in process.
+// Deferred HTTP replies let refreshed reads arrive before the save settles.
 import { useAssetCardDraft } from '../../src/routes/[lang]/provoz/majetek/asset-card-save.ts';
 import type { AssetCardDraftSave, RunAssetCommand } from '../../src/routes/[lang]/provoz/majetek/asset-card-save.ts';
 import { assetCardDraftOf } from '../../src/routes/[lang]/provoz/majetek/asset-card-draft.ts';
 import type { AssetCardDraft } from '../../src/routes/[lang]/provoz/majetek/asset-card-draft.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-import type { CommandOutcome } from '../../src/ui/use-agenda.ts';
-import type { OpsCommand } from '../../shared/agendas.ts';
+import { runCommand } from '../../src/ui/use-agenda.ts';
+import { settle as settleUi, waitUntil as waitForData } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import {
+  ApplyCommandActionApi,
+  ApplyCommandActionConflictProblemSchema,
+} from '../../shared/apis/apply-command-action.ts';
+import type { ApplyCommandPayloadSchema, ApplyCommandResult } from '../../shared/actions/apply-command.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { AssetSchema } from '../../shared/domain/assets.ts';
 import type { Asset } from '../../shared/domain/assets.ts';
-import { DateTime, Deferred, Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import { DateTime, Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, describe, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-
-const { propertyRead } = rstest.hoisted(() => ({ propertyRead: rstest.fn() }));
-
-rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: propertyRead }));
 
 const assetId = 'asset-1';
 const tenantId = '70000000-0000-4000-8000-000000000020';
@@ -63,18 +72,13 @@ interface Snapshot {
   readonly updatedAt: DateTime.Utc;
 }
 
-interface SentSave {
-  readonly command: OpsCommand;
-  readonly expectedRevision: number;
-  readonly snapshotUpdatedAt: DateTime.Utc;
-}
+type Reply = Deferred.Deferred<ApplyCommandResult, typeof ApplyCommandActionConflictProblemSchema.Type>;
 
-/** The assets agenda behind the fake page runner: its revision and the record's own update instant. */
 interface AgendaServer {
   recordUpdatedAt: DateTime.Utc;
-  readonly replies: Deferred.Deferred<CommandOutcome>[];
+  readonly replies: Reply[];
   revision: number;
-  readonly saves: SentSave[];
+  readonly saves: (typeof ApplyCommandPayloadSchema.Encoded)[];
 }
 
 const servers: AgendaServer[] = [];
@@ -85,20 +89,58 @@ const serverOf = (revision: number, recordUpdatedAt: DateTime.Utc): AgendaServer
   return server;
 };
 
-/** The page runner of one read: it sends that read's revision and instant, like `useAgendaRecords` does. */
+const conflict = Schema.decodeUnknownSync(ApplyCommandActionConflictProblemSchema)({
+  _tag: 'ApplyCommandActionConflictProblem',
+  code: 'facility_operations_revision_conflict',
+  detail: 'The asset has changed since this draft was read.',
+  status: 409,
+  title: 'Revision conflict',
+  type: 'urn:problem:facility-operations:revision-conflict',
+});
+
+const OwnerActionApi = ApplyCommandActionApi.prefix('/facility-operations-api');
+const PropertyRecordsApi = RecordsApi.prefix('/property-portfolio-api');
+const network = browserNetwork(
+  shellGatewayIssuer({
+    'facility-operations': '/facility-operations-api',
+    'property-portfolio': '/property-portfolio-api',
+  }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          const server = Option.getOrThrow(Option.fromUndefinedOr(servers.at(-1)));
+          server.saves.push(payload);
+          const reply = Deferred.makeUnsafe<ApplyCommandResult, typeof ApplyCommandActionConflictProblemSchema.Type>();
+          server.replies.push(reply);
+          return Deferred.await(reply);
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    PropertyRecordsApi,
+    HttpApiBuilder.group(PropertyRecordsApi, 'records', (group) =>
+      group.handle('execute', () =>
+        Effect.succeed(
+          Schema.decodeUnknownSync(RecordsResponseSchema)({
+            assets: [],
+            properties: [],
+            revision: 0,
+            units: [],
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+/** The snapshot supplied by the page goes through the real governed command runner. */
 const runnerOf =
-  (server: AgendaServer, snapshot: Snapshot): RunAssetCommand =>
+  (snapshot: Snapshot): RunAssetCommand =>
   (command) =>
-    Effect.suspend(() => {
-      server.saves.push({
-        command,
-        expectedRevision: snapshot.revision,
-        snapshotUpdatedAt: snapshot.updatedAt,
-      });
-      const reply = Deferred.makeUnsafe<CommandOutcome>();
-      server.replies.push(reply);
-      return Deferred.await(reply);
-    });
+    runCommand(command, snapshot.revision, DateTime.formatIso(snapshot.updatedAt));
 
 const replyOf = (server: AgendaServer, index: number) =>
   Option.getOrThrow(Option.fromUndefinedOr(server.replies[index]));
@@ -106,16 +148,11 @@ const replyOf = (server: AgendaServer, index: number) =>
 const answerSaved = (server: AgendaServer, index: number, acknowledged: Snapshot): void => {
   server.revision = acknowledged.revision;
   server.recordUpdatedAt = acknowledged.updatedAt;
-  browserRuntime.runSync(
-    Deferred.succeed(replyOf(server, index), {
-      ok: true,
-      result: { entityIds: [], revision: acknowledged.revision },
-    }),
-  );
+  browserRuntime.runSync(Deferred.succeed(replyOf(server, index), { entityIds: [], revision: acknowledged.revision }));
 };
 
 const answerConflict = (server: AgendaServer, index: number): void => {
-  browserRuntime.runSync(Deferred.succeed(replyOf(server, index), { ok: false, reason: 'conflict' }));
+  browserRuntime.runSync(Deferred.fail(replyOf(server, index), conflict));
 };
 
 let latestDraft: AssetCardDraftSave | undefined;
@@ -139,7 +176,7 @@ interface Mounted {
 const mountedViews: Mounted[] = [];
 
 const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
+  await browserRuntime.runPromise(settleUi);
 };
 
 const mount = async (asset: Asset, run: RunAssetCommand): Promise<Mounted> => {
@@ -176,27 +213,11 @@ const mount = async (asset: Asset, run: RunAssetCommand): Promise<Mounted> => {
   return view;
 };
 
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition()) {
-    return;
-  }
-  if (attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
+const waitUntil = (condition: () => boolean): Promise<void> => browserRuntime.runPromise(waitForData(condition));
 
 const type = (value: AssetCardDraft) => {
   draftOf().setDraft(value);
 };
-
-beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  propertyRead.mockReset();
-  propertyRead.mockReturnValue(Effect.succeed({ properties: [], units: [] }));
-});
 
 afterEach(() => {
   for (const view of mountedViews) {
@@ -206,30 +227,31 @@ afterEach(() => {
   for (const server of servers) {
     for (const reply of server.replies) {
       if (!Deferred.isDoneUnsafe(reply)) {
-        browserRuntime.runSync(Deferred.succeed(reply, { ok: false, reason: 'conflict' }));
+        browserRuntime.runSync(Deferred.fail(reply, conflict));
       }
     }
   }
   servers.length = 0;
-  rstest.unstubAllGlobals();
 });
 
 describe('mounted asset card draft against refreshed reads', () => {
-  it.effect('a settled draft follows a refreshed same-record read and saves on its base', () =>
+  it.live('a settled draft follows a refreshed same-record read and saves on its base', () =>
     Effect.gen(function* cleanRefresh() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      const view = yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
       const refreshed = assetOf({ note: 'Jejich poznámka', updatedAt: later });
 
       yield* Effect.promise(() =>
         act(async () => {
-          view.render(refreshed, runnerOf(server, { revision: 4, updatedAt: laterInstant }));
+          view.render(refreshed, runnerOf({ revision: 4, updatedAt: laterInstant }));
           await settle();
         }),
       );
 
       expect(draftOf().draft.note).toBe('Jejich poznámka');
       expect(draftOf().status).toBe('idle');
+      yield* networkIdle;
       expect(server.saves).toEqual([]);
 
       yield* Effect.promise(() =>
@@ -251,13 +273,14 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('a dirty draft keeps its base, conflicts, and reload adopts the refreshed base', () =>
+  it.live('a dirty draft keeps its base, conflicts, and reload adopts the refreshed base', () =>
     Effect.gen(function* dirtyRefresh() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      const view = yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -269,7 +292,7 @@ describe('mounted asset card draft against refreshed reads', () => {
       const refreshed = assetOf({ note: 'Jejich poznámka', updatedAt: later });
       yield* Effect.promise(() =>
         act(async () => {
-          view.render(refreshed, runnerOf(server, { revision: 4, updatedAt: laterInstant }));
+          view.render(refreshed, runnerOf({ revision: 4, updatedAt: laterInstant }));
           await settle();
         }),
       );
@@ -317,13 +340,14 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('a refreshed read of a different record replaces the draft and its base', () =>
+  it.live('a refreshed read of a different record replaces the draft and its base', () =>
     Effect.gen(function* otherRecord() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      const view = yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -334,7 +358,7 @@ describe('mounted asset card draft against refreshed reads', () => {
       const other = assetOf({ id: 'asset-2', name: 'Kotel', note: 'Nový kotel', updatedAt: later });
       yield* Effect.promise(() =>
         act(async () => {
-          view.render(other, runnerOf(server, { revision: 4, updatedAt: laterInstant }));
+          view.render(other, runnerOf({ revision: 4, updatedAt: laterInstant }));
           await settle();
         }),
       );
@@ -359,13 +383,14 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('a save whose acknowledged read lands while pending settles onto the new base', () =>
+  it.live('a save whose acknowledged read lands while pending settles onto the new base', () =>
     Effect.gen(function* pendingAcknowledgement() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      const view = yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -386,7 +411,7 @@ describe('mounted asset card draft against refreshed reads', () => {
         act(async () => {
           server.revision = 4;
           server.recordUpdatedAt = laterInstant;
-          view.render(acknowledged, runnerOf(server, { revision: 4, updatedAt: laterInstant }));
+          view.render(acknowledged, runnerOf({ revision: 4, updatedAt: laterInstant }));
           await settle();
         }),
       );
@@ -421,13 +446,14 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('typing, waiting and unmounting send nothing; Save sends the draft once', () =>
     Effect.gen(function* explicitSave() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      const view = yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -439,6 +465,7 @@ describe('mounted asset card draft against refreshed reads', () => {
       expect(draftOf().dirty).toBe(true);
       // Longer than any delay the card ever saved after.
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       yield* Effect.promise(() => act(settle));
       expect(server.saves).toEqual([]);
 
@@ -465,14 +492,16 @@ describe('mounted asset card draft against refreshed reads', () => {
       );
       view.unmount();
       yield* Effect.sleep('1 second');
+      yield* networkIdle;
       expect(server.saves).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('an invalid draft cannot be saved, and discard restores the draft without sending', () =>
+  it.live('an invalid draft cannot be saved, and discard restores the draft without sending', () =>
     Effect.gen(function* discardInvalid() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -486,6 +515,7 @@ describe('mounted asset card draft against refreshed reads', () => {
           draftOf().save();
         }),
       );
+      yield* networkIdle;
       expect(server.saves).toEqual([]);
 
       yield* Effect.promise(() =>
@@ -496,21 +526,23 @@ describe('mounted asset card draft against refreshed reads', () => {
       expect(draftOf().draft).toEqual(assetCardDraftOf(opened));
       expect(draftOf().status).toBe('idle');
       expect(draftOf().dirty).toBe(false);
+      yield* networkIdle;
       expect(server.saves).toEqual([]);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('a refresh batched with a typed edit does not overwrite the edit', () =>
+  it.live('a refresh batched with a typed edit does not overwrite the edit', () =>
     Effect.gen(function* refreshRace() {
+      yield* pinTestDocument;
       const server = serverOf(3, atInstant);
-      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+      const view = yield* Effect.promise(() => mount(opened, runnerOf({ revision: 3, updatedAt: atInstant })));
       const mine: AssetCardDraft = { ...assetCardDraftOf(opened), note: 'Moje nová poznámka' };
       const refreshed = assetOf({ note: 'Jejich poznámka', updatedAt: later });
 
       yield* Effect.promise(() =>
         act(async () => {
           type(mine);
-          view.render(refreshed, runnerOf(server, { revision: 4, updatedAt: laterInstant }));
+          view.render(refreshed, runnerOf({ revision: 4, updatedAt: laterInstant }));
           await settle();
         }),
       );
@@ -531,6 +563,6 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'conflict'));
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

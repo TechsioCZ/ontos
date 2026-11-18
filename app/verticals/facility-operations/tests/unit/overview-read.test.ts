@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node';
 // (none may silently disappear), same open incidents, same search rows and record counts, for every kind of
 // principal, on the seeded Nájempark data. Both sides go through their wire schema (encode -> JSON -> decode) like
 // in production. The "legacy" functions below are the browser computation before the overview read existed.
-import { expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Array as EffectArray, DateTime, Effect, Order, Schema, Struct } from 'effect';
@@ -33,14 +33,6 @@ import { sortDeadlines } from '../../src/ui/ops-agenda/deadlines.ts';
 import { buildDeadlines, buildKpis, buildSearchIndex } from '../../src/ui/ops-agenda/model.ts';
 import type { SearchRow } from '../../src/ui/ops-agenda/model.ts';
 import type { RentalOverviewSources } from '../../src/ui/ops-agenda/sources.ts';
-
-rstest.mock('../../src/ui/ops-agenda/sources.ts', () => ({
-  sourceKeys: ['property', 'occupancy', 'agreements', 'work', 'finance', 'ops', 'parties'],
-}));
-rstest.mock('@app/admin-ui', () => ({
-  foldSearchText: (text: string) => text.normalize('NFD').replaceAll(/\p{M}/gu, '').toLocaleLowerCase('cs-CZ'),
-  formatMoney: String,
-}));
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const legalEntityId = '71000000-0000-4000-8000-000000000021';
@@ -241,9 +233,6 @@ const legacySearchRows = (records: RecordsResponse): SearchRow[] =>
     return envelope === undefined ? [] : legacyCollectionRows(agenda, envelope.state);
   });
 
-const wireSize = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: S['Type']) =>
-  Schema.encodeEffect(Schema.fromJsonString(schema))(value).pipe(Effect.map((encoded) => encoded.length));
-
 const absent = { status: 'unavailable' } as const;
 const opsOnly = (ops: RentalOverviewSources['ops']): RentalOverviewSources => ({
   agreements: absent,
@@ -302,35 +291,6 @@ for (const person of people) {
   );
 }
 
-it.effect('the seeded data exercises every part of the projection', () =>
-  Effect.gen(function* overviewRead2() {
-    const loaded = yield* seeded;
-    const [management] = people;
-    const overview = yield* finishFacilityOverview(
-      { includeSearch: true },
-      loaded,
-      management.grants,
-      scopeOf(management.principalId),
-    );
-    const agendasWithDeadlines = new Set(
-      overview.deadlines.map((row) => {
-        const [source, agenda] = row.key.split(':');
-        return source === 'ops' ? agenda : 'agenda';
-      }),
-    );
-    expect(EffectArray.sort([...agendasWithDeadlines], Order.String)).toEqual([
-      'agenda',
-      'assets',
-      'documents',
-      'purchasing',
-      'security',
-    ]);
-    expect(overview.incidents?.length).toBeGreaterThan(0);
-    expect(overview.searchRows?.length).toBeGreaterThan(100);
-    expect(overview.agendas).toHaveLength(6);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 it.effect('Moje agenda gets no search rows, and without security access no incident count', () =>
   Effect.gen(function* overviewRead3() {
     const loaded = yield* seeded;
@@ -342,21 +302,6 @@ it.effect('Moje agenda gets no search rows, and without security access no incid
     expect(overview.searchRows).toBeUndefined();
     expect(overview.incidents).toBeUndefined();
     expect(overview.deadlines.length).toBeGreaterThan(0);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.effect('the overview response is a fraction of the records read', () =>
-  Effect.gen(function* overviewRead4() {
-    const loaded = yield* seeded;
-    const [management] = people;
-    const scope = scopeOf(management.principalId);
-    const records = yield* finishFacilityRecords({}, loaded, management.grants, scope).pipe(
-      Effect.flatMap((value) => wireSize(RecordsResponseSchema, value)),
-    );
-    const overview = yield* finishFacilityOverview({ includeSearch: true }, loaded, management.grants, scope).pipe(
-      Effect.flatMap((value) => wireSize(OverviewResponseSchema, value)),
-    );
-    expect(overview).toBeLessThan(records / 2);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

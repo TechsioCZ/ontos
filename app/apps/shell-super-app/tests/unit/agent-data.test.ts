@@ -1,6 +1,9 @@
+// @rstest-environment happy-dom
 import { AGENT_ACCESS_PATHS } from '@app/shared-contracts/agent-access';
-import { Clock, Effect, Fiber } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/http';
+import { browserNetwork, inProcessFetch } from '@app/shared-contracts/testing/http-double';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
+import { Clock, Deferred, Effect, Fiber } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -19,21 +22,29 @@ const overview = {
   rolesRevision: 'r0',
 };
 
+const agentEndpoint = (
+  answer: Effect.Effect<HttpServerResponse.HttpServerResponse, never, HttpServerRequest.HttpServerRequest>,
+) => HttpRouter.add('POST', AGENT_ACCESS_PATHS.list, answer);
+
 it.effect('recovers a quickly refused agent list soon, then a second later, with no user refresh', () =>
   Effect.gen(function* retryAgentList() {
     const attempts: number[] = [];
-    const client = HttpClient.make((request) =>
+    const clock = yield* Clock.Clock;
+    const endpoint = agentEndpoint(
       Effect.gen(function* respondToAgentRead() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
         expect(request.method).toBe('POST');
         expect(request.url).toBe(AGENT_ACCESS_PATHS.list);
         attempts.push(yield* Clock.currentTimeMillis);
-        return HttpClientResponse.fromWeb(
-          request,
-          attempts.length < 3 ? Response.json({}, { status: 503 }) : Response.json(overview),
-        );
-      }),
+        return attempts.length < 3
+          ? HttpServerResponse.jsonUnsafe({}, { status: 503 })
+          : HttpServerResponse.jsonUnsafe(overview);
+      }).pipe(Effect.provideService(Clock.Clock, clock)),
     );
-    const read = loadAgentEntitiesWithRetry.pipe(Effect.provideService(HttpClient.HttpClient, client));
+    const read = loadAgentEntitiesWithRetry.pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(inProcessFetch(endpoint)),
+    );
     const result = yield* read.pipe(Effect.forkChild);
     yield* TestClock.adjust('2 seconds');
     expect(yield* Fiber.join(result)).toEqual(overview);
@@ -44,14 +55,15 @@ it.effect('recovers a quickly refused agent list soon, then a second later, with
 it.effect('stops after two automatic retries so persistent failures offer the accessible error fallback soon', () =>
   Effect.gen(function* exhaustedAgentRetries() {
     let attempts = 0;
-    const client = HttpClient.make((request) =>
+    const endpoint = agentEndpoint(
       Effect.sync(() => {
         attempts += 1;
-        return HttpClientResponse.fromWeb(request, Response.json({}, { status: 503 }));
+        return HttpServerResponse.jsonUnsafe({}, { status: 503 });
       }),
     );
     const read = yield* loadAgentEntitiesWithRetry.pipe(
-      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(inProcessFetch(endpoint)),
       Effect.flip,
       Effect.forkChild,
     );
@@ -61,23 +73,25 @@ it.effect('stops after two automatic retries so persistent failures offer the ac
   }),
 );
 
-const slowFailures: readonly (readonly [string, Effect.Effect<Response>])[] = [
+const slowFailures: readonly (readonly [string, Effect.Effect<HttpServerResponse.HttpServerResponse>])[] = [
   ['a timed-out', Effect.never],
-  ['a slowly refused', Effect.sleep('6 seconds').pipe(Effect.as(Response.json({}, { status: 503 })))],
+  ['a slowly refused', Effect.sleep('6 seconds').pipe(Effect.as(HttpServerResponse.jsonUnsafe({}, { status: 503 })))],
 ];
 
 for (const [failure, answer] of slowFailures) {
   it.effect(`does not ask again after ${failure} agent-list read`, () =>
     Effect.gen(function* slowAgentFailure() {
       let attempts = 0;
-      const client = HttpClient.make((request) =>
+      const clock = yield* Clock.Clock;
+      const endpoint = agentEndpoint(
         Effect.suspend(() => {
           attempts += 1;
-          return answer.pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response)));
-        }),
+          return answer;
+        }).pipe(Effect.provideService(Clock.Clock, clock)),
       );
       const read = yield* loadAgentEntitiesWithRetry.pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provide(inProcessFetch(endpoint)),
         Effect.flip,
         Effect.forkChild,
       );
@@ -97,14 +111,15 @@ for (const [status, reason] of [
   it.effect(`does not retry a terminal ${status} agent-list response`, () =>
     Effect.gen(function* terminalAgentFailure() {
       let attempts = 0;
-      const client = HttpClient.make((request) =>
+      const endpoint = agentEndpoint(
         Effect.sync(() => {
           attempts += 1;
-          return HttpClientResponse.fromWeb(request, Response.json({ detail: 'Přístup není dostupný.' }, { status }));
+          return HttpServerResponse.jsonUnsafe({ detail: 'Přístup není dostupný.' }, { status });
         }),
       );
       const failure = yield* loadAgentEntitiesWithRetry.pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provide(inProcessFetch(endpoint)),
         Effect.flip,
       );
       expect(failure.reason).toBe(reason);
@@ -116,22 +131,24 @@ for (const [status, reason] of [
 it.live('starts the selected company agent list when the People page loads, not when the tab is clicked', () =>
   Effect.gen(function* warmOnPageLoad() {
     const requested: string[] = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (input) => {
-      requested.push(new Request(input).url);
-      return Response.json(overview);
-    };
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        globalThis.fetch = originalFetch;
+    const received = yield* Deferred.make<true>();
+    const endpoint = agentEndpoint(
+      Effect.gen(function* receiveWarmAgentList() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        requested.push(request.url);
+        yield* Deferred.succeed(received, true);
+        return HttpServerResponse.jsonUnsafe(overview);
       }),
     );
-    yield* warmAgentEntities();
-    expect(requested).toEqual([]);
-    yield* warmAgentEntities('71000000-0000-4000-8000-000000000022');
-    yield* Effect.sleep('50 millis');
-    expect(requested).toHaveLength(1);
-    expect(requested[0]?.endsWith(AGENT_ACCESS_PATHS.list)).toBe(true);
-    yield* Effect.sync(() => agentEntitiesData.invalidate());
+    yield* Effect.gen(function* verifyPageLoadWarmup() {
+      yield* warmAgentEntities();
+      expect(requested).toEqual([]);
+      yield* warmAgentEntities('71000000-0000-4000-8000-000000000022');
+      yield* Deferred.await(received);
+      yield* agentEntitiesData.preload('71000000-0000-4000-8000-000000000022');
+      expect(requested).toHaveLength(1);
+      expect(requested[0]?.endsWith(AGENT_ACCESS_PATHS.list)).toBe(true);
+      yield* Effect.sync(() => agentEntitiesData.invalidate());
+    }).pipe(Effect.provide(browserNetwork(endpoint)));
   }).pipe(Effect.scoped),
 );

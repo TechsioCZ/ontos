@@ -1,9 +1,26 @@
 // @rstest-environment happy-dom
 // The purchasing forms (order or quote, supplier, stock item, stock movement, order from a quote) send their command
 // on the shared Uložit only: one click sends the same command as the old button, and leaving with typed input asks.
-import { Effect, Predicate, Schema } from 'effect';
+import { saveLabelsFor } from '@app/admin-ui';
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  RecordsApi as PropertyRecordsApi,
+  RecordsResponseSchema as PropertyRecordsResponseSchema,
+} from '@app/property-portfolio/contracts/records';
+import {
+  RecordsApi as WorkRecordsApi,
+  RecordsResponseSchema as WorkRecordsResponseSchema,
+} from '@app/work-tasks/contracts/records';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import { PurchasingStateSchema, emptyPurchasingState } from '../../shared/domain/purchasing.ts';
 import type { PurchasingState } from '../../shared/domain/purchasing.ts';
@@ -15,30 +32,116 @@ import {
   draftLine,
 } from '../../src/routes/[lang]/provoz/nakupy/order-forms.tsx';
 import { QuoteToOrderForm } from '../../src/routes/[lang]/provoz/nakupy/other-tabs.tsx';
-import { click, labels, mountPanel, typeInto, unmountPanels } from './draft-base-fixture.ts';
-import { leaveQuestionOpen, recordingRunner, saveButton, saveSent } from './form-save-fixture.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import { OpsCommandSchema } from '../../shared/agendas.ts';
+import type { OpsCommand } from '../../shared/agendas.ts';
+import {
+  ApplyCommandActionApi,
+  ApplyCommandActionUnavailableProblemSchema,
+} from '../../shared/apis/apply-command-action.ts';
+import { runCommand } from '../../src/ui/use-agenda.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('../../src/ui/property-options.ts', () => ({
-  usePropertyOptions: () => ({ status: 'loading' }),
-}));
-rstest.mock('../../src/ui/task-options.ts', () => ({
-  useTaskOptions: () => ({ status: 'loading' }),
-}));
-rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
-  Toaster: () => null,
-  toaster: { attrs: {} },
-  useToast: () => ({ create: constVoid }),
-}));
-
-const copy = { cancel: 'facility-operations.common.cancel' };
+const labels = saveLabelsFor('cs');
+const copy = { cancel: moduleText('cs')('facility-operations.common.cancel') };
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
+const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: ['created-1'], revision: 2 });
+const unavailable = ApplyCommandActionUnavailableProblemSchema.make({
+  code: 'facility_operations_persistence_unavailable',
+  detail: 'The save is unavailable.',
+  retryable: true,
+  status: 503,
+  title: 'Unavailable',
+  type: 'https://ontos.dev/problems/unavailable',
+});
+const propertyRecords = Schema.decodeUnknownSync(PropertyRecordsResponseSchema)({
+  assets: [],
+  properties: [],
+  revision: 0,
+  units: [],
+});
+const workRecords = Schema.decodeUnknownSync(WorkRecordsResponseSchema)({
+  actorPrincipalRef: actor,
+  assignablePrincipals: [],
+  canWrite: false,
+  collection: {
+    properties: {
+      dueDate: { locked: true, type: 'DATE' },
+      ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+      status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+      title: { locked: true, type: 'TEXT' },
+    },
+    ref: { moduleId: 'work.tasks', resourceId: 'tasks', resourceType: 'work.tasks.task-collection', tenantId },
+    title: 'Úkoly',
+  },
+  indicators: { open: 0, openByAssignee: [], overdue: 0 },
+  items: [],
+  principalNames: [],
+  referenceDate: '2026-10-20',
+  revision: 0,
+});
+const sent: OpsCommand[] = [];
+let refuseNextSave = false;
+const OwnerActionApi = ApplyCommandActionApi.prefix('/facility-operations-api');
+const PropertyApi = PropertyRecordsApi.prefix('/property-portfolio-api');
+const WorkApi = WorkRecordsApi.prefix('/work-tasks-api');
+const network = browserNetwork(
+  shellGatewayIssuer({
+    'facility-operations': '/facility-operations-api',
+    'property-portfolio': '/property-portfolio-api',
+    'work-tasks': '/work-tasks-api',
+  }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          sent.push(Schema.decodeUnknownSync(OpsCommandSchema)(payload.command));
+          if (refuseNextSave) {
+            refuseNextSave = false;
+            return Effect.fail(unavailable);
+          }
+          return Effect.succeed(created);
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    PropertyApi,
+    HttpApiBuilder.group(PropertyApi, 'records', (group) =>
+      group.handle('execute', () => Effect.succeed(propertyRecords)),
+    ),
+  ),
+  serveApi(
+    WorkApi,
+    HttpApiBuilder.group(WorkApi, 'records', (group) => group.handle('execute', () => Effect.succeed(workRecords))),
+  ),
+);
+const run = (command: OpsCommand) => runCommand(command, 0);
+const mountPanel = (element: ReturnType<typeof createElement>) =>
+  mountInRoute(element, { path: 'provoz/nakupy', url: '/cs/provoz/nakupy' });
+const saveButton = (): HTMLButtonElement => Option.getOrThrow(Option.fromUndefinedOr(buttons(labels.save)[0]));
+const leaveQuestionOpen = () => buttons(labels.discard).length > 0;
+const click = (name: string) =>
+  acted(() => {
+    Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click();
+  });
+const typeInto = (selector: string, value: string) =>
+  acted(() => {
+    const field = Option.getOrThrow(
+      Option.fromNullOr(document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)),
+    );
+    Reflect.set(Object.getPrototypeOf(field), 'value', value, field);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+const saveSent = (count: number) =>
+  click(labels.save).pipe(
+    Effect.andThen(waitUntil(() => sent.length >= count)),
+    Effect.andThen(waitUntil(() => saveButton().textContent.trim() === labels.save)),
+  );
+
 const audit = {
   createdAt: '2026-10-20T08:00:00Z',
   createdBy: actor,
@@ -87,19 +190,19 @@ const page = (name: string) => () => {
 };
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  sent.length = 0;
+  refuseNextSave = false;
   calls.length = 0;
 });
 
 afterEach(() => {
-  unmountPanels();
-  rstest.unstubAllGlobals();
+  unmountAll();
 });
 
 describe('purchase order, supplier and stock item', () => {
   it.live('an order handed over with its lines can be sent at once; Uložit creates it once', () =>
     Effect.gen(function* scenario() {
-      const runner = recordingRunner();
+      yield* pinTestDocument;
       yield* mountPanel(
         createElement(PurchaseDocumentPanel, {
           initialLines: item === undefined ? [] : [draftLine('suggested', item, 5)],
@@ -107,13 +210,13 @@ describe('purchase order, supplier and stock item', () => {
           kind: 'order',
           onClose: page('close'),
           onCreated: page('created'),
-          run: runner.run,
+          run,
           state,
         }),
       );
       expect(saveButton().disabled).toBe(false);
-      yield* saveSent(runner, 1);
-      expect(runner.sent).toEqual([
+      yield* saveSent(1);
+      expect(sent).toEqual([
         expect.objectContaining({
           _tag: 'PurchaseOrderCreate',
           lines: [expect.objectContaining({ itemId: 'item-1', quantity: 5 })],
@@ -122,99 +225,95 @@ describe('purchase order, supplier and stock item', () => {
         }),
       ]);
       expect(calls).toEqual(['created']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('a supplier is created once with the typed name; Zrušit with input asks', () =>
     Effect.gen(function* scenario() {
-      const runner = recordingRunner();
-      yield* mountPanel(createElement(SupplierPanel, { onClose: page('close'), run: runner.run }));
+      yield* pinTestDocument;
+      yield* mountPanel(createElement(SupplierPanel, { onClose: page('close'), run }));
       yield* typeInto('#supplier-name', 'Čistota a.s.');
       yield* click(copy.cancel);
       expect(leaveQuestionOpen()).toBe(true);
       yield* click(labels.stay);
-      yield* saveSent(runner, 1);
-      expect(runner.sent).toEqual([{ _tag: 'PurchaseSupplierCreate', name: 'Čistota a.s.' }]);
+      yield* saveSent(1);
+      expect(sent).toEqual([{ _tag: 'PurchaseSupplierCreate', name: 'Čistota a.s.' }]);
       expect(calls).toEqual(['close']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('a stock item is created once; a refused save keeps the input', () =>
     Effect.gen(function* scenario() {
-      const runner = recordingRunner(['unavailable']);
+      yield* pinTestDocument;
+      refuseNextSave = true;
       yield* mountPanel(
-        createElement(ItemCreatePanel, { onClose: page('close'), onCreated: page('created'), run: runner.run, state }),
+        createElement(ItemCreatePanel, { onClose: page('close'), onCreated: page('created'), run, state }),
       );
       yield* typeInto('#item-sku', 'FLT-G5');
       yield* typeInto('#item-name', 'Filtr G5');
       yield* typeInto('#item-minimum', '5');
       yield* typeInto('#item-maximum', '20');
-      yield* saveSent(runner, 1);
+      yield* saveSent(1);
       expect(calls).toEqual([]);
       expect(document.querySelector<HTMLInputElement>('#item-name')?.value).toBe('Filtr G5');
-      yield* saveSent(runner, 2);
-      expect(runner.sent[1]).toEqual(runner.sent[0]);
-      expect(Predicate.isTagged(runner.sent[0], 'StockItemCreate')).toBe(true);
-      expect(runner.sent[0]).toMatchObject({ maximum: 20, minimum: 5, sku: 'FLT-G5' });
+      yield* saveSent(2);
+      expect(sent[1]).toEqual(sent[0]);
+      expect(Predicate.isTagged(sent[0], 'StockItemCreate')).toBe(true);
+      expect(sent[0]).toMatchObject({ maximum: 20, minimum: 5, sku: 'FLT-G5' });
       expect(calls).toEqual(['created']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });
 
 describe('stock movement and order from a quote', () => {
   it.live('a receipt is recorded once with the typed quantity and reason', () =>
     Effect.gen(function* scenario() {
+      yield* pinTestDocument;
       if (item === undefined) {
         return;
       }
-      const runner = recordingRunner();
-      yield* mountPanel(
-        createElement(MovementForm, { item, kind: 'receipt', onDone: page('done'), run: runner.run, state }),
-      );
+      yield* mountPanel(createElement(MovementForm, { item, kind: 'receipt', onDone: page('done'), run, state }));
       yield* typeInto('#movement-quantity', '12');
       yield* typeInto('#movement-reason', 'Dodávka');
-      yield* saveSent(runner, 1);
-      expect(runner.sent).toEqual([
+      yield* saveSent(1);
+      expect(sent).toEqual([
         expect.objectContaining({ _tag: 'StockReceipt', itemId: item.id, quantity: 12, reason: 'Dodávka' }),
       ]);
       expect(calls).toEqual(['done']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('an untouched movement closes without asking', () =>
     Effect.gen(function* scenario() {
+      yield* pinTestDocument;
       if (item === undefined) {
         return;
       }
-      yield* mountPanel(
-        createElement(MovementForm, { item, kind: 'issue', onDone: page('done'), run: recordingRunner().run, state }),
-      );
+      yield* mountPanel(createElement(MovementForm, { item, kind: 'issue', onDone: page('done'), run, state }));
       yield* click(copy.cancel);
       expect(leaveQuestionOpen()).toBe(false);
       expect(calls).toEqual(['done']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('a quote becomes an order on Uložit, with the warehouse it opened with', () =>
     Effect.gen(function* scenario() {
+      yield* pinTestDocument;
       if (quote === undefined) {
         return;
       }
-      const runner = recordingRunner();
       yield* mountPanel(
         createElement(QuoteToOrderForm, {
           onOpenOrder: page('order'),
           quote,
-          run: runner.run,
+          run,
           setError: constVoid,
           state,
         }),
       );
-      yield* saveSent(runner, 1);
-      expect(runner.sent).toEqual([
-        { _tag: 'PurchaseOrderCreateFromQuote', quoteId: quote.id, warehouseId: 'warehouse-1' },
-      ]);
+      yield* saveSent(1);
+      expect(sent).toEqual([{ _tag: 'PurchaseOrderCreateFromQuote', quoteId: quote.id, warehouseId: 'warehouse-1' }]);
       expect(calls).toEqual(['order']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

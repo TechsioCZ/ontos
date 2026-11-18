@@ -1,24 +1,33 @@
 // @rstest-environment happy-dom
-// The bulk tag panel as the user sees it: picking the tag and add/remove sends nothing, the shared Save button
-// ("Uložit", last in the footer) applies the tag once to every selected subject, an untouched panel closes without
-// asking and a started choice asks first. The tagging clients, the router, the i18n runtime and the ui-kit combobox
-// are replaced; the combobox by one button per offered tag.
+// The bulk tag panel uses its real router, translations, combobox and generated clients.
+// The owner's HTTP contracts record writes while the Shell issues gateway assertions in process.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act, createElement } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { SubjectIdSchema, TagSchema } from '../../shared/apis/records.ts';
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { assignTagActionSchemaErrorLive } from '../../api/assign-tag-action-problems.ts';
+import { unassignTagActionSchemaErrorLive } from '../../api/unassign-tag-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import { AssignTagActionApi } from '../../shared/apis/assign-tag-action.ts';
+import {
+  RecordsApi,
+  RecordsResponseSchema,
+  SubjectIdSchema,
+  SubjectSchema,
+  TagSchema,
+} from '../../shared/apis/records.ts';
 import type { Subject, Tag, TagId } from '../../shared/apis/records.ts';
+import { UnassignTagActionApi } from '../../shared/apis/unassign-tag-action.ts';
 import { BulkTagDialog } from '../../src/components/tag-controls.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-/** The props the stand-in of the ui-kit combobox reads. */
-interface ComboboxStandInProps {
-  readonly items: readonly { readonly label: string; readonly value: string }[];
-  readonly onChange: (value: string[]) => void;
-}
+import { taggingI18nResources } from '../../src/tags/tag-i18n.tsx';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 interface Write {
   readonly mode: string;
@@ -26,57 +35,9 @@ interface Write {
   readonly tagId: TagId;
 }
 
-const { catalog, writes } = rstest.hoisted(() => {
-  const tags: unknown[] = [];
-  const written: Write[] = [];
-  return { catalog: { tags }, writes: written };
-});
-
-rstest.mock('../../src/tags/tag-records.ts', () => ({
-  get listTags() {
-    return Effect.sync(() => catalog.tags);
-  },
-}));
-rstest.mock('../../src/tags/records-commands.ts', () => ({
-  assignTag: (tagId: TagId, subjects: readonly Subject[]) =>
-    Effect.sync(() => {
-      writes.push({ mode: 'add', subjects, tagId });
-    }),
-  unassignTag: (tagId: TagId, subjects: readonly Subject[]) =>
-    Effect.sync(() => {
-      writes.push({ mode: 'remove', subjects, tagId });
-    }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-// One button per offered tag in place of the ui-kit combobox: a click picks that tag.
-rstest.mock('@techsio/ui-kit/molecules/combobox', () => ({
-  Combobox: ({ items, onChange }: ComboboxStandInProps) =>
-    createElement(
-      'div',
-      null,
-      ...items.map((item) =>
-        createElement(
-          'button',
-          {
-            'data-testid': `tag-option-${item.value}`,
-            key: item.value,
-            onClick: () => onChange([item.value]),
-            type: 'button',
-          },
-          item.label,
-        ),
-      ),
-    ),
-}));
-
+const writes: Write[] = [];
 const labels = saveLabelsFor('cs');
-const copy = { cancel: 'tagging.tags.form.cancel' } as const;
+const copy = moduleText('cs', taggingI18nResources);
 
 const vip: Tag = Schema.decodeUnknownSync(TagSchema)({
   color: 'blue',
@@ -87,34 +48,69 @@ const vip: Tag = Schema.decodeUnknownSync(TagSchema)({
   updatedAt: '2026-10-05T10:00:00.000Z',
 });
 const subjectIds = ['customer-1', 'customer-2'].map((id) => Schema.decodeSync(SubjectIdSchema)(id));
+const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  assignments: [],
+  canWrite: true,
+  indicators: { assignmentCount: 0, tagCount: 1 },
+  revision: 0,
+  tags: [
+    {
+      ...Schema.encodeSync(TagSchema)(vip),
+      counts: { customer: 0, employee: 0, opportunity: 0, order: 0, product: 0 },
+    },
+  ],
+});
+const applied = Schema.decodeUnknownSync(ApplyCommandResultSchema)({
+  affectedAssignments: subjectIds.length,
+  revision: 1,
+  tagId: vip.id,
+});
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
+const OwnerRecordsApi = RecordsApi.prefix('/tagging-api');
+const OwnerAssignApi = AssignTagActionApi.prefix('/tagging-api');
+const OwnerUnassignApi = UnassignTagActionApi.prefix('/tagging-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ tagging: '/tagging-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) => group.handle('execute', () => Effect.succeed(records))),
+  ),
+  serveApi(
+    OwnerAssignApi,
+    HttpApiBuilder.group(OwnerAssignApi, 'assignTagAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          writes.push({
+            mode: 'add',
+            subjects: Schema.decodeSync(Schema.Array(SubjectSchema))(payload.command.subjects),
+            tagId: Schema.decodeSync(TagSchema.fields.id)(payload.command.tagId),
+          });
+          return applied;
+        }),
+      ),
+    ).pipe(Layer.provide(assignTagActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerUnassignApi,
+    HttpApiBuilder.group(OwnerUnassignApi, 'unassignTagAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          writes.push({
+            mode: 'remove',
+            subjects: Schema.decodeSync(Schema.Array(SubjectSchema))(payload.command.subjects),
+            tagId: Schema.decodeSync(TagSchema.fields.id)(payload.command.tagId),
+          });
+          return applied;
+        }),
+      ),
+    ).pipe(Layer.provide(unassignTagActionSchemaErrorLive)),
+  ),
+);
 
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
-interface View {
-  readonly events: string[];
-  readonly unmount: () => void;
-}
-
-const views: View[] = [];
-
-const mount = async (): Promise<View> => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  const events: string[] = [];
-  await act(async () => {
-    root.render(
+const mount = () =>
+  Effect.gen(function* mountPanel() {
+    const events: string[] = [];
+    yield* mountInRoute(
       <BulkTagDialog
         kind="customer"
         onDone={() => {
@@ -126,68 +122,47 @@ const mount = async (): Promise<View> => {
         open
         subjectIds={subjectIds}
       />,
+      { resources: taggingI18nResources },
     );
-    await settle();
+    return { events };
   });
-  const view: View = {
-    events,
-    unmount: () => {
-      act(() => {
-        root.unmount();
-        container.remove();
-      });
-    },
-  };
-  views.push(view);
-  return view;
-};
-
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
 
 const button = (name: string): HTMLButtonElement => Option.getOrThrow(Option.fromNullishOr(buttons(name).at(0)));
-
-const byTestId = (id: string): HTMLElement =>
-  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>(`[data-testid="${id}"]`)));
-
-const click = async (target: HTMLElement) => {
-  await act(async () => {
+const element = (selector: string): HTMLElement =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>(selector)));
+const click = (target: HTMLElement) =>
+  acted(() => {
     target.click();
-    await settle();
   });
-};
-
-const pickVip = async () => {
-  await waitUntil(() => document.querySelector(`[data-testid="tag-option-${vip.id}"]`) !== null);
-  await click(byTestId(`tag-option-${vip.id}`));
-};
+const pickVip = () =>
+  Effect.gen(function* pickTag() {
+    yield* waitUntil(() => document.querySelector('[role="combobox"]') !== null);
+    yield* click(button(copy('tagging.tags.filter.toggle')));
+    yield* waitUntil(() =>
+      [...document.querySelectorAll('[role="option"]')].some((option) => option.textContent?.trim() === vip.name),
+    );
+    yield* click(element(`[role="option"][data-value="${vip.id}"]`));
+  });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  catalog.tags = [vip];
   writes.length = 0;
 });
-
-afterEach(() => {
-  for (const view of views.splice(0)) {
-    view.unmount();
-  }
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('bulk tag panel with the shared Uložit', () => {
-  it.effect('picking sends nothing; one click on Uložit tags every selected subject once and closes', () =>
+  it.live('picking sends nothing; one click on Uložit tags every selected subject once and closes', () =>
     Effect.gen(function* applyOnce() {
-      const view = yield* Effect.promise(mount);
+      yield* pinTestDocument;
+      const view = yield* mount();
       expect(buttons(labels.save)).toHaveLength(1);
       expect(button(labels.save).disabled).toBe(true);
 
-      yield* Effect.promise(pickVip);
+      yield* pickVip();
       expect(writes).toEqual([]);
       expect(button(labels.save).disabled).toBe(false);
 
-      yield* Effect.promise(() => click(button(labels.save)));
-      yield* Effect.promise(() => waitUntil(() => view.events.includes('closed')));
+      yield* click(button(labels.save));
+      yield* waitUntil(() => view.events.includes('closed'));
       expect(writes).toEqual([
         {
           mode: 'add',
@@ -196,29 +171,31 @@ describe('bulk tag panel with the shared Uložit', () => {
         },
       ]);
       expect(view.events).toEqual(['done', 'closed']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('an untouched panel closes without asking', () =>
+  it.live('an untouched panel closes without asking', () =>
     Effect.gen(function* untouched() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(() => click(button(copy.cancel)));
+      yield* pinTestDocument;
+      const view = yield* mount();
+      yield* click(button(copy('tagging.tags.form.cancel')));
       expect(buttons(labels.discard)).toHaveLength(0);
       expect(view.events).toEqual(['closed']);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('a started choice asks before leaving; Zahodit změny leaves without tagging', () =>
+  it.live('a started choice asks before leaving; Zahodit změny leaves without tagging', () =>
     Effect.gen(function* leave() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(pickVip);
-      yield* Effect.promise(() => click(button(copy.cancel)));
+      yield* pinTestDocument;
+      const view = yield* mount();
+      yield* pickVip();
+      yield* click(button(copy('tagging.tags.form.cancel')));
       expect(buttons(labels.discard)).toHaveLength(1);
       expect(view.events).toEqual([]);
 
-      yield* Effect.promise(() => click(button(labels.discard)));
+      yield* click(button(labels.discard));
       expect(view.events).toEqual(['closed']);
       expect(writes).toEqual([]);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

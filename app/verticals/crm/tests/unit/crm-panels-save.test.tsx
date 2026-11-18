@@ -1,13 +1,12 @@
 // @rstest-environment happy-dom
 // The visit and plan panels send their one command only from the shared Save button ("Uložit"), last in the footer:
-// typing and Enter change only the draft. Only the i18n runtime and the router blocker are replaced.
+// typing and Enter change only the draft. The panels use the real module i18n and TanStack router.
 import { saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactElement } from 'react';
-import { createRoot } from 'react-dom/client';
+import { afterEach, describe, expect, it } from 'effect-rstest';
+import { acted, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { mountInRoute } from '../support/module-ui.ts';
 import { PlanContactPanel } from '../../src/routes/[lang]/crm/k-osloveni/plan-panels.tsx';
 import { RecordVisitPanel } from '../../src/routes/[lang]/crm/navstevy/visit-panels.tsx';
 import type { CrmCommandSubmit } from '../../src/crm/records.ts';
@@ -17,15 +16,6 @@ import { CrmViewerSchema } from '../../shared/domain/access.ts';
 import { ClientSchema } from '../../shared/domain/clients.ts';
 import { IsoTimeSchema } from '../../shared/domain/common.ts';
 import { initialCrmState } from '../../shared/domain/state.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
 
 const labels = saveLabelsFor('cs');
 const client = Schema.decodeSync(ClientSchema)({
@@ -54,26 +44,6 @@ const records: RecordsResponse = {
   }),
 };
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const views: (() => void)[] = [];
-
-const mount = async (element: ReactElement) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  views.push(() => {
-    act(() => root.unmount());
-    container.remove();
-  });
-  await act(async () => {
-    root.render(element);
-  });
-  await settle();
-};
-
 const recording =
   (sent: CrmCommandInput[]): CrmCommandSubmit =>
   (command) =>
@@ -93,38 +63,30 @@ const saveButton = (): HTMLButtonElement =>
 const field = (id: string): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
 
-const typeInto = async (id: string, value: string) => {
-  const input = field(id);
-  await act(async () => {
+const typeInto = (id: string, value: string) =>
+  acted(() => {
+    const input = field(id);
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await settle();
-};
 
-const pressEnter = async (id: string) => {
-  await act(async () => {
+const pressEnter = (id: string) =>
+  acted(() => {
     field(id).form?.requestSubmit();
   });
-  await settle();
-};
 
-const clickSave = async () => {
-  await act(async () => {
+const clickSave = () =>
+  acted(() => {
     saveButton().click();
   });
-  await settle();
-};
 
-const clickCancel = async () => {
-  const cancel = Option.getOrThrow(
-    Option.fromNullishOr(footerButtons().find((button) => (button.textContent ?? '').trim() === 'Zrušit')),
-  );
-  await act(async () => {
+const clickCancel = () =>
+  acted(() => {
+    const cancel = Option.getOrThrow(
+      Option.fromNullishOr(footerButtons().find((button) => (button.textContent ?? '').trim() === 'Zrušit')),
+    );
     cancel.click();
   });
-  await settle();
-};
 
 /** A submit the server refuses without a message. */
 const refusing: CrmCommandSubmit = () => Effect.succeed({ entityIds: [], ok: false });
@@ -132,18 +94,14 @@ const refusing: CrmCommandSubmit = () => Effect.succeed({ entityIds: [], ok: fal
 /** Whether the Uložit / Zahodit změny / Zůstat question is up. */
 const leaveQuestion = (): boolean => document.querySelector('[role="alertdialog"]') !== null;
 
-afterEach(() => {
-  for (const unmount of views.splice(0)) {
-    unmount();
-  }
-});
+afterEach(unmountAll);
 
 describe('CRM panels save from Uložit only', () => {
   it.live('a visit is recorded once by Uložit, never by Enter', () =>
-    Effect.promise(async () => {
+    Effect.gen(function* recordVisitFromSave() {
       const sent: CrmCommandInput[] = [];
       const closed: boolean[] = [];
-      await mount(
+      yield* mountInRoute(
         <RecordVisitPanel
           clientId={client.id}
           onOpenChange={(open) => {
@@ -157,11 +115,11 @@ describe('CRM panels save from Uložit only', () => {
       expect(saveButton().disabled).toBe(true);
       expect(footerButtons().at(-1)).toBe(saveButton());
 
-      await typeInto('crm-visit-new-result', 'Objednají v pondělí');
-      await pressEnter('crm-visit-new-result');
+      yield* typeInto('crm-visit-new-result', 'Objednají v pondělí');
+      yield* pressEnter('crm-visit-new-result');
       expect(sent).toEqual([]);
 
-      await clickSave();
+      yield* clickSave();
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'RecordVisit')).toBe(true);
       expect(sent[0]).toMatchObject({ clientId: client.id, result: 'Objednají v pondělí' });
@@ -170,22 +128,22 @@ describe('CRM panels save from Uložit only', () => {
   );
 
   it.live('a contact planned for a known client is sent by the first Uložit', () =>
-    Effect.promise(async () => {
+    Effect.gen(function* planContactFromSave() {
       const sent: CrmCommandInput[] = [];
-      await mount(
+      yield* mountInRoute(
         <PlanContactPanel clientId={client.id} onClose={constVoid} records={records} submit={recording(sent)} />,
       );
       expect(saveButton().disabled).toBe(false);
 
-      await clickSave();
+      yield* clickSave();
       expect(sent).toEqual([{ _tag: 'PlanContact', clientId: client.id, dueDate: '2026-10-22' }]);
     }),
   );
 
   it.live('the planned contact closes untouched without asking, but asks once its save failed', () =>
-    Effect.promise(async () => {
+    Effect.gen(function* guardRefusedPlan() {
       const closed: string[] = [];
-      await mount(
+      yield* mountInRoute(
         <PlanContactPanel
           clientId={client.id}
           onClose={() => {
@@ -195,13 +153,13 @@ describe('CRM panels save from Uložit only', () => {
           submit={refusing}
         />,
       );
-      await clickCancel();
+      yield* clickCancel();
       expect(closed).toEqual(['closed']);
       expect(leaveQuestion()).toBe(false);
 
       // The opening values were sent and refused: they are now the user's unsaved draft.
-      await clickSave();
-      await clickCancel();
+      yield* clickSave();
+      yield* clickCancel();
       expect(closed).toEqual(['closed']);
       expect(leaveQuestion()).toBe(true);
     }),

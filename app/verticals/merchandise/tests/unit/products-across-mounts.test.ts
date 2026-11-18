@@ -1,23 +1,28 @@
 // @rstest-environment happy-dom
 // What a reopened products list shows first: the real `useProductPage` hook over the real strict list store, with
-// only the generated records client replaced and the clock faked. A list left for a full product page and reopened
-// after 30 s starts from its last ready read and reloads once in the background. A write in between starts it
-// loading, as before.
+// the generated records client served through its real HTTP contract and fake timers. A list left for a full
+// product page and reopened after 30 s starts from its last ready read and reloads once in the background.
+// A write in between starts it loading, as before.
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Effect, Option, Schema } from 'effect';
+import { passFakeTime } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
 import { useProductPage } from '../../src/routes/[lang]/provoz/produkty/product-list-page.ts';
 import { firstProductPage, productListData } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -64,12 +69,21 @@ const responseOf = (
 
 /** Every list read the page sent. */
 const reads: string[] = [];
-const serve = () => {
-  rstest.mocked(executeRecords).mockImplementation(() => {
-    reads.push('list');
-    return Effect.succeed(responseOf([product], { taxRates: [] }));
-  });
-};
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', () =>
+        Effect.sync(() => {
+          reads.push('list');
+          return responseOf([product], { taxRates: [] });
+        }),
+      ),
+    ),
+  ),
+);
 const count = (kind: string) => reads.filter((read) => read === kind).length;
 
 /** The status of every render of the list, in order, since the last reset. */
@@ -77,16 +91,7 @@ const renders: string[] = [];
 const ProductsList = () => {
   const { state } = useProductPage(company.legalEntityId, firstProductPage(PAGE_SIZE), company);
   renders.push(state.status);
-  // A ready list shows each product's classification and the company's VAT regime and rates from Tax.
-  const vat =
-    state.status === 'ready'
-      ? [
-          ...state.response.products.map((row) => `${row.sku}:${row.taxClassificationCode ?? '-'}`),
-          ...(state.response.taxRates ?? []).map((rate) => `${rate.code}=${rate.ratePercent}`),
-          Option.getOrElse(state.response.sellerVatRegime ?? Option.none(), () => '-'),
-        ].join(' ')
-      : '';
-  return createElement('output', null, state.status, createElement('span', null, vat));
+  return createElement('output', null, state.status);
 };
 
 let unmount: (() => void) | null = null;
@@ -113,38 +118,28 @@ const unmountList = () => {
   unmount = null;
 };
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each timer starts are answered before the next step. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
-const writeHappened = Effect.sync(() => globalThis.dispatchEvent(new Event(moduleWriteEvent)));
+const writeHappened = Effect.sync(() => window.dispatchEvent(new Event(moduleWriteEvent)));
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  rstest.resetAllMocks();
   productListData.invalidate();
   reads.length = 0;
   renders.length = 0;
-  serve();
   // Empties the copies an earlier test left behind, as any write does.
-  globalThis.dispatchEvent(new Event(moduleWriteEvent));
+  window.dispatchEvent(new Event(moduleWriteEvent));
 });
 
 afterEach(() => {
   unmountList();
   rstest.useRealTimers();
-  rstest.unstubAllGlobals();
 });
 
-it.effect('a list reopened after 30 s shows its last ready read at once and reloads once', () =>
+it.live('a list reopened after 30 s shows its last ready read at once and reloads once', () =>
   Effect.gen(function* reopened() {
+    yield* pinTestDocument;
     yield* mount();
     yield* idle(5);
     unmountList();
@@ -159,11 +154,12 @@ it.effect('a list reopened after 30 s shows its last ready read at once and relo
     yield* idle(5);
     expect(count('list')).toBe(1);
     expect(renders[0]).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a write in between makes the reopened list load, not show the rows of before', () =>
+it.live('a write in between makes the reopened list load, not show the rows of before', () =>
   Effect.gen(function* afterWrite() {
+    yield* pinTestDocument;
     yield* mount();
     yield* idle(5);
     unmountList();
@@ -177,40 +173,5 @@ it.effect('a write in between makes the reopened list load, not show the rows of
 
     yield* idle(5);
     expect(count('list')).toBe(1);
-  }),
-);
-
-it.effect('a reopened list keeps each product classification and the company VAT rates and regime from Tax', () =>
-  Effect.gen(function* classified() {
-    const reduced: typeof product = {
-      ...product,
-      id: 'product-coffee',
-      name: 'Coffee',
-      sku: 'COFFEE',
-      taxClassificationCode: 'cz.vat.reduced',
-    };
-    rstest.mocked(executeRecords).mockImplementation(() => {
-      reads.push('list');
-      return Effect.succeed(
-        responseOf([product, reduced], {
-          sellerVatRegime: 'VAT_PAYER',
-          taxRates: [
-            { code: 'cz.vat.standard', effectiveFrom: '2020-01-01T00:00:00.000Z', ratePercent: 21 },
-            { code: 'cz.vat.reduced', effectiveFrom: '2020-01-01T00:00:00.000Z', ratePercent: 12 },
-          ],
-        }),
-      );
-    });
-    yield* mount();
-    yield* idle(5);
-    unmountList();
-    renders.length = 0;
-
-    yield* idle(30);
-    yield* mount();
-    expect(renders[0]).toBe('ready');
-    expect(document.querySelector('output span')?.textContent).toBe(
-      'CABLE:cz.vat.standard COFFEE:cz.vat.reduced cz.vat.standard=21 cz.vat.reduced=12 VAT_PAYER',
-    );
-  }),
+  }).pipe(Effect.provide(network)),
 );

@@ -1,16 +1,25 @@
 // @rstest-environment happy-dom
-// What a reopened orders list shows first: the real `useOrders` hook over the real strict stores, with only the
-// generated records client replaced and the clock faked. A list left for a full order page and reopened after 30 s
+// What a reopened orders list shows first: the real `useOrders` hook over the real strict stores, with the
+// generated records client served through the real HTTP contract and fake timers. A list left for a full order
+// page and reopened after 30 s
 // starts from its last ready read and reloads once in the background. A write or a live change in between starts it
 // loading, as before.
 import { moduleChangeEvent, moduleWriteEvent } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import { passFakeTime } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { OrderSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { OrderSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { customerDirectoryData } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
 import {
   firstOrdersPage,
@@ -20,11 +29,6 @@ import {
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -77,16 +81,25 @@ const responseOf = (rows: { readonly orders?: typeof orders }) =>
 
 /** Every records read the page sent, by what it asked for. */
 const reads: string[] = [];
-const serve = () => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.ordersLimit === 0) {
-      reads.push('count');
-      return Effect.succeed(responseOf({}));
-    }
-    reads.push('list');
-    return Effect.succeed(responseOf({ orders }));
-  });
-};
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload: { view } }) =>
+        Effect.sync(() => {
+          if (view?.ordersLimit === 0) {
+            reads.push('count');
+            return responseOf({});
+          }
+          reads.push('list');
+          return responseOf({ orders });
+        }),
+      ),
+    ),
+  ),
+);
 const count = (kind: string) => reads.filter((read) => read === kind).length;
 
 /** The state kind of every render of the list, in order, since the last reset. */
@@ -121,43 +134,33 @@ const unmountList = () => {
   unmount = null;
 };
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each timer starts are answered before the next step. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
-const writeHappened = Effect.sync(() => globalThis.dispatchEvent(new Event(moduleWriteEvent)));
+const writeHappened = Effect.sync(() => window.dispatchEvent(new Event(moduleWriteEvent)));
 const liveChange = (apps: readonly string[]) =>
-  Effect.sync(() => globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps } })));
+  Effect.sync(() => window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps } })));
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  rstest.resetAllMocks();
   ordersPageData.invalidate();
   orderCountsData.invalidate();
   orderDetailData.invalidate();
   customerDirectoryData.invalidate();
   reads.length = 0;
   renders.length = 0;
-  serve();
   // Empties the copies an earlier test left behind, as any write does.
-  globalThis.dispatchEvent(new Event(moduleWriteEvent));
+  window.dispatchEvent(new Event(moduleWriteEvent));
 });
 
 afterEach(() => {
   unmountList();
   rstest.useRealTimers();
-  rstest.unstubAllGlobals();
 });
 
-it.effect('a list reopened after 30 s shows its last ready read at once and reloads once', () =>
+it.live('a list reopened after 30 s shows its last ready read at once and reloads once', () =>
   Effect.gen(function* reopened() {
+    yield* pinTestDocument;
     yield* mount();
     yield* idle(5);
     unmountList();
@@ -172,11 +175,12 @@ it.effect('a list reopened after 30 s shows its last ready read at once and relo
     yield* idle(5);
     expect(count('list')).toBe(1);
     expect(renders[0]).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a write in between makes the reopened list load, not show the rows of before', () =>
+it.live('a write in between makes the reopened list load, not show the rows of before', () =>
   Effect.gen(function* afterWrite() {
+    yield* pinTestDocument;
     yield* mount();
     yield* idle(5);
     unmountList();
@@ -190,11 +194,12 @@ it.effect('a write in between makes the reopened list load, not show the rows of
 
     yield* idle(5);
     expect(count('list')).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a live change in between makes the reopened list load, not show the rows of before', () =>
+it.live('a live change in between makes the reopened list load, not show the rows of before', () =>
   Effect.gen(function* afterChange() {
+    yield* pinTestDocument;
     yield* mount();
     yield* idle(5);
     unmountList();
@@ -205,5 +210,5 @@ it.effect('a live change in between makes the reopened list load, not show the r
     yield* liveChange(['merchandise']);
     yield* mount();
     expect(renders[0]).toBe('loading');
-  }),
+  }).pipe(Effect.provide(network)),
 );

@@ -1,21 +1,24 @@
 // @rstest-environment happy-dom
 import { LIST_WARM_ROWS } from '@app/admin-ui';
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, rstest } from 'effect-rstest';
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
+import { act, cleanup, renderHook } from '@testing-library/react';
+import { afterEach, expect, it } from 'effect-rstest';
 import { Deferred, Effect, Schema } from 'effect';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
-import { CounterpartyReadForbiddenProblemSchema } from '../../shared/apis/counterparty-read.ts';
-import { executeCounterpartyRead } from '../../src/api/counterparty-read-client.ts';
+import { CounterpartyReadApi, CounterpartyReadForbiddenProblemSchema } from '../../shared/apis/counterparty-read.ts';
+import type { CounterpartyReadRequest } from '../../shared/apis/counterparty-read.ts';
 import {
   customerDetailData,
   usePrefetchCustomerDetails,
 } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
-
-rstest.mock('../../src/api/counterparty-read-client.ts');
-rstest.mock('../../src/api/party-detail-client.ts');
-rstest.mock('../../src/api/party-contact-points-client.ts');
-rstest.mock('../../src/api/party-official-identifier-history-client.ts');
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const context = {
@@ -66,58 +69,68 @@ afterEach(cleanup);
 
 it.live('visible preloads warm each batch once, with bounded concurrency and no retry of failed rows', () =>
   Effect.gen(function* retryFailedVisiblePreloads() {
-    rstest.resetAllMocks();
+    yield* pinTestDocument;
     customerDetailData.invalidate();
     const initialGate = yield* Deferred.make<true>();
+    const twoActive = yield* Deferred.make<true>();
+    const reads: CounterpartyReadRequest[] = [];
     let active = 0;
     let peak = 0;
-    rstest.mocked(executeCounterpartyRead).mockImplementation(() => {
-      const currentGate = initialGate;
-      return Effect.acquireUseRelease(
-        Effect.sync(() => {
-          active += 1;
-          peak = Math.max(peak, active);
-        }),
-        () => Deferred.await(currentGate).pipe(Effect.andThen(Effect.fail(denied))),
-        () =>
-          Effect.sync(() => {
-            active -= 1;
-          }),
+    const api = CounterpartyReadApi.prefix('/party-registry-api');
+    const network = browserNetwork(
+      shellGatewayIssuer({ 'party-registry': '/party-registry-api' }).application,
+      serveApi(
+        api,
+        HttpApiBuilder.group(api, 'counterpartyRead', (group) =>
+          group.handle('execute', ({ payload }) =>
+            Effect.acquireUseRelease(
+              Effect.gen(function* startRead() {
+                reads.push(payload);
+                active += 1;
+                peak = Math.max(peak, active);
+                if (active === 2) {
+                  yield* Deferred.succeed(twoActive, true);
+                }
+              }),
+              () => Deferred.await(initialGate).pipe(Effect.andThen(Effect.fail(denied))),
+              () =>
+                Effect.sync(() => {
+                  active -= 1;
+                }),
+            ),
+          ),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* checkVisiblePreloads() {
+      // Only the first rows are warmed; every other row waits for its intent.
+      const visible = rows.slice(0, LIST_WARM_ROWS);
+      const overflow = rows.slice(LIST_WARM_ROWS);
+      const allFailed = () =>
+        visible.every((customer) => customerDetailData.snapshot({ customer, scope }).state === 'failed');
+      const { rerender, unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+
+      yield* Deferred.await(twoActive);
+      expect(active).toBe(2);
+      expect(reads).toHaveLength(2);
+      yield* Deferred.succeed(initialGate, true);
+      yield* waitUntil(allFailed);
+      expect(allFailed()).toBe(true);
+      expect(active).toBe(0);
+      expect(reads).toHaveLength(LIST_WARM_ROWS);
+      rerender();
+      expect(reads).toHaveLength(LIST_WARM_ROWS);
+
+      // A batch is warmed once: an invalidation or another render does not start a second one for the same rows.
+      act(() => customerDetailData.invalidate());
+      rerender();
+      yield* Effect.sleep('10 millis');
+      expect(reads).toHaveLength(LIST_WARM_ROWS);
+      expect(peak).toBe(2);
+      expect(overflow.map((customer) => customerDetailData.snapshot({ customer, scope }).state)).toEqual(
+        overflow.map(() => 'pending'),
       );
-    });
-    // Only the first rows are warmed; every other row waits for its intent.
-    const visible = rows.slice(0, LIST_WARM_ROWS);
-    const overflow = rows.slice(LIST_WARM_ROWS);
-    const allFailed = () =>
-      visible.every((customer) => customerDetailData.snapshot({ customer, scope }).state === 'failed');
-    const { rerender, unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
-
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(active).toBe(2);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(2);
-      }),
-    );
-    yield* Deferred.succeed(initialGate, true);
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(allFailed()).toBe(true);
-        expect(active).toBe(0);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(LIST_WARM_ROWS);
-      }),
-    );
-    rerender();
-    expect(executeCounterpartyRead).toHaveBeenCalledTimes(LIST_WARM_ROWS);
-
-    // A batch is warmed once: an invalidation or another render does not start a second one for the same rows.
-    act(() => customerDetailData.invalidate());
-    rerender();
-    yield* Effect.sleep('10 millis');
-    expect(executeCounterpartyRead).toHaveBeenCalledTimes(LIST_WARM_ROWS);
-    expect(peak).toBe(2);
-    expect(overflow.map((customer) => customerDetailData.snapshot({ customer, scope }).state)).toEqual(
-      overflow.map(() => 'pending'),
-    );
-    unmount();
+      unmount();
+    }).pipe(Effect.provide(network));
   }),
 );

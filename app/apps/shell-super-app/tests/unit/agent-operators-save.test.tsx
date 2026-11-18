@@ -1,58 +1,109 @@
-// Operators of an agent: ticking only changes the draft, the shared Uložit sends it once, a server refresh keeps a
-// dirty selection, a conflict offers the latest version, and leaving with unsaved input asks first.
+// @rstest-environment happy-dom
+// Operators use their real browser client, Shell copy, and TanStack navigation guard.
 import { saveLabelsFor } from '@app/admin-ui';
-import { AgentEntitySchema, PrincipalRefSchema } from '@app/shared-contracts/agent-access';
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  AgentEntitySchema,
+  AgentOperatorsRequestSchema,
+  CONNECTION_MANAGEMENT_PATHS,
+  PrincipalRefSchema,
+} from '@app/shared-contracts/agent-access';
 import type { AgentOperatorsRequest } from '@app/shared-contracts/agent-access';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Effect, Schema } from 'effect' with { rstest: 'importActual' };
-import { afterEach, expect, it, rs } from 'effect-rstest';
+import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
+import { Outlet } from '@modern-js/plugin-tanstack/runtime';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { Effect, Schema } from 'effect';
+import { afterEach, expect, it } from 'effect-rstest';
+import { useSyncExternalStore } from 'react';
+import type { ReactElement } from 'react';
 
 import { OperatorsBlock } from '../../src/routes/people/agent-operators-block.tsx';
+import { shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
+import type { ShellRouter } from '../support/shell-router.tsx';
 
 const labels = saveLabelsFor('cs');
+afterEach(cleanup);
 
-interface OperatorsFixture {
-  answer: 'conflict' | 'ok';
-  requests: AgentOperatorsRequest[];
-}
-interface Navigation {
-  proceed: () => void;
-  reset: () => void;
-  shouldBlock: () => boolean;
-  status: 'blocked' | 'idle';
-}
-const { fixture, navigation } = rs.hoisted(() => {
-  const state: OperatorsFixture = { answer: 'ok', requests: [] };
-  const nav: Navigation = { proceed: () => {}, reset: () => {}, shouldBlock: () => false, status: 'idle' };
-  return { fixture: state, navigation: nav };
-});
-rs.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
-    navigation.shouldBlock = options.shouldBlockFn;
-    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
-  },
-}));
-rs.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rs.mock('../../src/routes/people/agent-entities-client.ts', () => ({
-  saveAgentOperators: (request: AgentOperatorsRequest) =>
-    Effect.sync(() => {
-      fixture.requests.push(request);
-      return fixture.answer === 'ok'
-        ? {
-            status: 'ok',
-            value: { agentPrincipalId: request.agentPrincipalId, operators: [], revokedConnections: 0 },
-          }
-        : { detail: null, reason: 'conflict', status: 'failed' };
-    }),
-}));
-afterEach(() => {
-  cleanup();
-  fixture.answer = 'ok';
-  fixture.requests = [];
-  navigation.status = 'idle';
-});
+// The operators endpoint is a native Shell JSON route, rather than an HttpApi endpoint.
+const operatorsEndpoint = (answer: 'conflict' | 'ok' = 'ok') => {
+  const requests: AgentOperatorsRequest[] = [];
+  const application = HttpRouter.add(
+    'POST',
+    CONNECTION_MANAGEMENT_PATHS.operators,
+    Effect.gen(function* receiveOperators() {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const payload = yield* request.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AgentOperatorsRequestSchema)));
+      requests.push(payload);
+      return answer === 'conflict'
+        ? HttpServerResponse.jsonUnsafe({ detail: 'Operators changed' }, { status: 409 })
+        : HttpServerResponse.jsonUnsafe({
+            agentPrincipalId: payload.agentPrincipalId,
+            operators: [],
+            revokedConnections: 0,
+          });
+    }).pipe(Effect.orDie),
+  );
+  return { network: browserNetwork(application), requests };
+};
+
+// Keep the block mounted across navigation so the discarded draft can be inspected after leaving.
+const mountOperators = (initial: ReactElement) =>
+  Effect.gen(function* mountOperatorsRoute() {
+    let current = initial;
+    const listeners = new Set<() => void>();
+    const subscribe = (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    };
+    const Root = () => (
+      <>
+        {useSyncExternalStore(subscribe, () => current)}
+        <Outlet />
+      </>
+    );
+    const router = makeShellRouter({ page: { component: () => null, path: 'people' }, root: Root, url: '/cs/people' });
+    yield* renderShellRoute(router, shellLocaleCopy('cs'));
+    yield* settle;
+    const rerender = (next: ReactElement) =>
+      acted(() => {
+        current = next;
+        for (const listener of listeners) {
+          listener();
+        }
+      });
+    return { rerender, router };
+  });
+
+const navigate = (router: ShellRouter, to: string) =>
+  acted(() => {
+    void router.navigate({ to });
+  });
+const expectCleanNavigation = (router: ShellRouter) =>
+  Effect.gen(function* cleanNavigation() {
+    const start = router.state.location.pathname;
+    const destination = start === '/cs' ? '/cs/people' : '/cs';
+    yield* navigate(router, destination);
+    yield* waitUntil(() => router.state.location.pathname === destination);
+    expect(router.state.location.pathname).toBe(destination);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    yield* navigate(router, start);
+    yield* waitUntil(() => router.state.location.pathname === start);
+  });
+const expectDirtyNavigation = (router: ShellRouter) =>
+  Effect.gen(function* dirtyNavigation() {
+    yield* navigate(router, '/cs');
+    yield* waitUntil(() => screen.queryByRole('alertdialog') !== null);
+    expect(router.state.location.pathname).toBe('/cs/people');
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    yield* acted(() => {
+      fireEvent.click(screen.getByRole('button', { name: labels.stay }));
+    });
+    yield* waitUntil(() => screen.queryByRole('alertdialog') === null);
+  });
 
 const decodePerson = Schema.decodeUnknownSync(PrincipalRefSchema);
 const jana = decodePerson({ displayName: 'Jana', principalId: '00000000-0000-4000-8000-000000000011' });
@@ -84,15 +135,21 @@ const block = (operators: readonly (typeof jana)[], onChanged: () => void = () =
 const checkbox = (person: typeof jana) => screen.getByRole('checkbox', { name: person.displayName });
 const saveButton = () => screen.getByRole('button', { name: labels.save });
 
-it.live('ticking sends nothing; Uložit sends the selection once with the revision it was read from', () =>
-  Effect.gen(function* typeSaveOnce() {
-    render(block([], () => {}, 3));
-    expect(navigation.shouldBlock()).toBe(false);
-    fireEvent.click(checkbox(jana));
+it.live('ticking sends nothing; Uložit sends the selection once with the revision it was read from', () => {
+  const fixture = operatorsEndpoint();
+  return Effect.gen(function* typeSaveOnce() {
+    const { router } = yield* mountOperators(block([], () => {}, 3));
+    yield* expectCleanNavigation(router);
+    yield* acted(() => {
+      fireEvent.click(checkbox(jana));
+    });
     expect(fixture.requests).toHaveLength(0);
-    expect(navigation.shouldBlock()).toBe(true);
-    fireEvent.click(saveButton());
-    yield* Effect.promise(() => waitFor(() => expect(screen.getByText(labels.saved)).toBeTruthy()));
+    yield* expectDirtyNavigation(router);
+    yield* acted(() => {
+      fireEvent.click(saveButton());
+    });
+    yield* waitUntil(() => screen.queryByText(labels.saved) !== null);
+    expect(screen.getByText(labels.saved)).toBeTruthy();
     expect(fixture.requests).toEqual([
       {
         agentPrincipalId: '00000000-0000-4000-8000-000000000004',
@@ -100,87 +157,103 @@ it.live('ticking sends nothing; Uložit sends the selection once with the revisi
         operatorPrincipalIds: [jana.principalId],
       },
     ]);
-    expect(navigation.shouldBlock()).toBe(false);
-  }),
-);
+    yield* expectCleanNavigation(router);
+  }).pipe(Effect.provide(fixture.network));
+});
 
 it.live('a dirty selection survives a server refresh', () =>
   Effect.gen(function* survivesRefresh() {
-    const view = render(block([]));
-    fireEvent.click(checkbox(jana));
-    view.rerender(block([petr]));
+    const view = yield* mountOperators(block([]));
+    yield* acted(() => {
+      fireEvent.click(checkbox(jana));
+    });
+    yield* view.rerender(block([petr]));
     expect(checkbox(jana).getAttribute('aria-checked')).toBe('true');
     expect(checkbox(petr).getAttribute('aria-checked')).toBe('false');
-    expect(navigation.shouldBlock()).toBe(true);
-    yield* Effect.void;
+    yield* expectDirtyNavigation(view.router);
   }),
 );
 
-it.live('a refused stale save shows a conflict and reloads the latest version', () =>
-  Effect.gen(function* conflictReload() {
-    fixture.answer = 'conflict';
+it.live('a refused stale save shows a conflict and reloads the latest version', () => {
+  const fixture = operatorsEndpoint('conflict');
+  return Effect.gen(function* conflictReload() {
     let refreshed = 0;
-    const view = render(
-      block([], () => {
-        refreshed += 1;
-      }),
-    );
-    fireEvent.click(checkbox(jana));
-    fireEvent.click(saveButton());
-    yield* Effect.promise(() => waitFor(() => expect(screen.getByText(labels.conflict)).toBeTruthy()));
-    view.rerender(
-      block([petr], () => {
-        refreshed += 1;
-      }),
-    );
-    fireEvent.click(screen.getByRole('button', { name: labels.reloadLatest }));
+    const onChanged = () => {
+      refreshed += 1;
+    };
+    const view = yield* mountOperators(block([], onChanged));
+    yield* acted(() => {
+      fireEvent.click(checkbox(jana));
+    });
+    yield* acted(() => {
+      fireEvent.click(saveButton());
+    });
+    yield* waitUntil(() => screen.queryByText(labels.conflict) !== null);
+    expect(screen.getByText(labels.conflict)).toBeTruthy();
+    yield* view.rerender(block([petr], onChanged));
+    yield* acted(() => {
+      fireEvent.click(screen.getByRole('button', { name: labels.reloadLatest }));
+    });
     expect(refreshed).toBe(1);
     expect(checkbox(petr).getAttribute('aria-checked')).toBe('true');
     expect(checkbox(jana).getAttribute('aria-checked')).toBe('false');
     expect(fixture.requests).toHaveLength(1);
-  }),
-);
+  }).pipe(Effect.provide(fixture.network));
+});
 
-it.live('leaving with an unsaved selection asks, and Zahodit změny leaves', () =>
-  Effect.gen(function* leaveDiscard() {
-    let proceeded = 0;
-    navigation.proceed = () => {
-      // The router lets the navigation go: the block is no longer asked about.
-      navigation.status = 'idle';
-      proceeded += 1;
-    };
-    const view = render(block([]));
-    fireEvent.click(checkbox(jana));
-    navigation.status = 'blocked';
-    view.rerender(block([]));
-    fireEvent.click(yield* Effect.promise(() => screen.findByRole('button', { name: labels.discard })));
-    expect(proceeded).toBe(1);
+it.live('leaving with an unsaved selection asks, and Zahodit změny leaves', () => {
+  const fixture = operatorsEndpoint();
+  return Effect.gen(function* leaveDiscard() {
+    const view = yield* mountOperators(block([]));
+    const departures: string[] = [];
+    const unsubscribe = view.router.subscribe('onResolved', ({ toLocation }) => {
+      if (toLocation.pathname === '/cs') {
+        departures.push(toLocation.pathname);
+      }
+    });
+    yield* acted(() => {
+      fireEvent.click(checkbox(jana));
+    });
+    yield* navigate(view.router, '/cs');
+    yield* waitUntil(() => screen.queryByRole('button', { name: labels.discard }) !== null);
+    yield* acted(() => {
+      fireEvent.click(screen.getByRole('button', { name: labels.discard }));
+    });
+    yield* waitUntil(() => view.router.state.location.pathname === '/cs');
+    expect(departures).toHaveLength(1);
     expect(fixture.requests).toHaveLength(0);
-    view.rerender(block([]));
-    // The discarded draft is back at the confirmed (empty) selection, and nothing is left to ask about.
-    expect(navigation.shouldBlock()).toBe(false);
-    yield* Effect.promise(() => waitFor(() => expect(checkbox(jana).getAttribute('aria-checked')).toBe('false')));
-  }),
-);
+    yield* view.rerender(block([]));
+    yield* expectCleanNavigation(view.router);
+    expect(checkbox(jana).getAttribute('aria-checked')).toBe('false');
+    unsubscribe();
+  }).pipe(Effect.provide(fixture.network));
+});
 
-it.live('Uložit in the leave question saves once and leaves', () =>
-  Effect.gen(function* leaveSave() {
-    let proceeded = 0;
-    navigation.proceed = () => {
-      // The router lets the navigation go: the block is no longer asked about.
-      navigation.status = 'idle';
-      proceeded += 1;
-    };
-    const view = render(block([]));
-    fireEvent.click(checkbox(petr));
-    navigation.status = 'blocked';
-    view.rerender(block([]));
-    const dialog = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+it.live('Uložit in the leave question saves once and leaves', () => {
+  const fixture = operatorsEndpoint();
+  return Effect.gen(function* leaveSave() {
+    const view = yield* mountOperators(block([]));
+    const departures: string[] = [];
+    const unsubscribe = view.router.subscribe('onResolved', ({ toLocation }) => {
+      if (toLocation.pathname === '/cs') {
+        departures.push(toLocation.pathname);
+      }
+    });
+    yield* acted(() => {
+      fireEvent.click(checkbox(petr));
+    });
+    yield* navigate(view.router, '/cs');
+    yield* waitUntil(() => screen.queryByRole('alertdialog') !== null);
+    const dialog = screen.getByRole('alertdialog');
     const buttons = dialog.querySelectorAll('button');
     const save = [...buttons].find((button) => button.textContent === labels.save);
     expect(save).toBeDefined();
-    fireEvent.click(save ?? dialog);
-    yield* Effect.promise(() => waitFor(() => expect(proceeded).toBe(1)));
+    yield* acted(() => {
+      fireEvent.click(save ?? dialog);
+    });
+    yield* waitUntil(() => view.router.state.location.pathname === '/cs');
+    expect(departures).toHaveLength(1);
     expect(fixture.requests).toHaveLength(1);
-  }),
-);
+    unsubscribe();
+  }).pipe(Effect.provide(fixture.network));
+});

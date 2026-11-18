@@ -1,5 +1,17 @@
-import { Effect, Exit, Schema } from 'effect';
-import { expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Exit, Layer, Schema } from 'effect';
+import { beforeEach, expect, it } from 'effect-rstest';
+import { partyCommandSchemaErrorLive } from '../../api/party-command-problems.ts';
+import { partyRegistryCommandsApi } from '../../shared/command-api.ts';
+import type { UpdatePartyPayloadSchema } from '../../shared/actions/update-party.ts';
+import type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
 import { ContactPointInputSchema, PartyContactPointSchema } from '../../shared/domain/contact-point.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import {
@@ -9,7 +21,6 @@ import {
   customerContactRequiresAuthoritativeEdit,
   discardCustomerDraftKeys,
 } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
-import { updateContactPoint, updateParty } from '../../src/api/party-command-client.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import { saveCustomerFact } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 
@@ -48,6 +59,70 @@ const contact = Schema.decodeUnknownSync(PartyContactPointSchema)({
     lookupValue: '+420777123456',
     extension: '12',
   },
+});
+
+const party = Schema.decodeSync(PartySchema)({
+  partyRef,
+  partyType: 'ORGANIZATION',
+  businessName: 'Before',
+  displayName: 'Before',
+  firstName: null,
+  lastName: null,
+  revision: 9,
+  archivedAt: null,
+  createdAt: now,
+  updatedAt: now,
+});
+const partyUpdates: (typeof UpdatePartyPayloadSchema.Encoded)[] = [];
+const contactUpdates: UpdateContactPointPayload[] = [];
+const OwnerApi = partyRegistryCommandsApi.prefix('/party-registry-api');
+const issuer = shellGatewayIssuer({ 'party-registry': '/party-registry-api' });
+const unexpectedCommand = () => Effect.die('Unexpected Party Registry command');
+const commands = HttpApiBuilder.group(OwnerApi, 'partyCommands', (group) =>
+  group
+    .handle('updateParty', ({ payload }) =>
+      Effect.sync(() => {
+        partyUpdates.push(payload);
+        return { ...party, revision: 10 };
+      }),
+    )
+    .handle('updateContactPoint', ({ payload }) =>
+      Effect.sync(() => {
+        contactUpdates.push(payload);
+        return contact;
+      }),
+    )
+    .handle('acceptRetailEnrollmentEvidence', unexpectedCommand)
+    .handle('addContactPoint', unexpectedCommand)
+    .handle('addPartyOfficialIdentifier', unexpectedCommand)
+    .handle('archiveParty', unexpectedCommand)
+    .handle('confirmDuplicateParties', unexpectedCommand)
+    .handle('correctPartyFact', unexpectedCommand)
+    .handle('counterpartyCreate', unexpectedCommand)
+    .handle('counterpartyCustomerOnboard', unexpectedCommand)
+    .handle('counterpartyRoleAdd', unexpectedCommand)
+    .handle('counterpartyRoleEnd', unexpectedCommand)
+    .handle('createPartyRelationship', unexpectedCommand)
+    .handle('createParty', unexpectedCommand)
+    .handle('dismissDuplicateCandidate', unexpectedCommand)
+    .handle('endContactPoint', unexpectedCommand)
+    .handle('endPartyOfficialIdentifier', unexpectedCommand)
+    .handle('endPartyRelationship', unexpectedCommand)
+    .handle('markDuplicateCandidateNeedsEvidence', unexpectedCommand)
+    .handle('matchParty', unexpectedCommand)
+    .handle('requestSearchRebuild', unexpectedCommand)
+    .handle('resolveDuplicateCandidateCreate', unexpectedCommand)
+    .handle('resolveDuplicateCandidateMatch', unexpectedCommand)
+    .handle('unarchiveParty', unexpectedCommand)
+    .handle('updatePartyOfficialIdentifier', unexpectedCommand)
+    .handle('updatePartyRelationship', unexpectedCommand),
+).pipe(Layer.provide(partyCommandSchemaErrorLive));
+const network = browserNetwork(issuer.application, serveApi(OwnerApi, commands));
+
+beforeEach(() => {
+  partyUpdates.length = 0;
+  contactUpdates.length = 0;
+  issuer.issued.length = 0;
 });
 
 it('preserves contact preference and extension while editing the phone value', () => {
@@ -122,8 +197,9 @@ it('keeps structured address fields, omits blank parts, and uses the corresponde
   expect(Schema.is(ContactPointInputSchema)(input)).toBe(true);
 });
 
-it.effect('rejects an invalid official identifier before issuing an authenticated write', () =>
+it.live('rejects an invalid official identifier before issuing an authenticated write', () =>
   Effect.gen(function* rejectIdentifier() {
+    yield* pinTestDocument;
     const result = yield* Effect.exit(
       saveCustomerFact(
         partyRef,
@@ -133,44 +209,30 @@ it.effect('rejects an invalid official identifier before issuing an authenticate
       ),
     );
     expect(Exit.isFailure(result)).toBe(true);
-    expect(rstest.mocked(updateParty)).not.toHaveBeenCalled();
-    expect(rstest.mocked(updateContactPoint)).not.toHaveBeenCalled();
-  }),
+    expect(partyUpdates).toHaveLength(0);
+    expect(contactUpdates).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
 
-rstest.mock('../../src/api/party-command-client.ts');
-
-it.effect('sends the loaded Party revision and explicit supporting provenance for a name change', () =>
+it.live('sends the loaded Party revision and explicit supporting provenance for a name change', () =>
   Effect.gen(function* saveName() {
-    const party = yield* Schema.decodeEffect(PartySchema)({
-      partyRef,
-      partyType: 'ORGANIZATION',
-      businessName: 'Before',
-      displayName: 'Before',
-      firstName: null,
-      lastName: null,
-      revision: 9,
-      archivedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    });
-    rstest.mocked(updateParty).mockReturnValue(Effect.succeed({ ...party, revision: 10 }));
+    yield* pinTestDocument;
     yield* saveCustomerFact(partyRef, { kind: 'name', party, value: ' After ' }, 'Reviewed name', 'document:42');
-    expect(rstest.mocked(updateParty).mock.calls[0]?.[0]).toMatchObject({
+    expect(partyUpdates[0]).toMatchObject({
       partyRef,
       businessName: 'After',
       expectedRevision: 9,
       provenanceSource: 'document:42',
       provenanceMethod: 'MANUAL_ENTRY',
     });
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect(
+it.live(
   'corrects a contact through its stable ref and revision, preserving privacy and leaving verification unclaimed',
   () =>
     Effect.gen(function* savePhone() {
-      rstest.mocked(updateContactPoint).mockReturnValue(Effect.succeed(contact));
+      yield* pinTestDocument;
       yield* saveCustomerFact(
         partyRef,
         {
@@ -181,7 +243,7 @@ it.effect(
         'Wrong phone',
         'document:42',
       );
-      expect(rstest.mocked(updateContactPoint).mock.calls[0]?.[0]).toMatchObject({
+      expect(contactUpdates[0]).toMatchObject({
         contactPointRef: contact.contactPointRef,
         expectedRevision: 7,
         change: {
@@ -194,7 +256,7 @@ it.effect(
           },
         },
       });
-    }),
+    }).pipe(Effect.provide(network)),
 );
 
 it('clears only confirmed sections after a partial save and leaves other drafts available for correction', () => {

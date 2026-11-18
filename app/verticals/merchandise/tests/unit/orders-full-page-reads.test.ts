@@ -1,16 +1,28 @@
 // @rstest-environment happy-dom
-// The records reads of the full order page: the one-row permissions list, and the open order's own refreshes. The
-// hooks are the real `useOrders` and `useOrderDetail` over the real strict stores, wired as `OrderDetailPage` wires
-// them, with only the generated records client replaced and the clock faked.
-import { listCustomers } from '@app/party-registry/api/client';
+// Full-page order hooks run against the real stores, gateway issuer and owner HTTP contracts, on fake timers: the
+// 20 s freshness window and the idle warm-up run on a controlled clock.
+import {
+  passFakeTime,
+  settleOnFakeTimers,
+  text,
+  unmountAll,
+  waitUntilOnFakeTimers,
+} from '@app/admin-ui/testing/module-ui';
+import { partyRegistryApi } from '@app/party-registry/api';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApi, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { createElement } from 'react';
+import { OrderSchema, ProductRecordSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { customerDirectoryData } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
 import {
   firstOrdersPage,
@@ -22,13 +34,7 @@ import {
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-import { LIST_WARM_ROWS } from '@app/admin-ui';
-
-rstest.mock('@app/party-registry/api/client');
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
+import { mountInRoute } from '../support/module-ui.ts';
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -103,24 +109,42 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
 
 /** Every records read, named by what it asked for: `list-<rows>`, `count`, `order` (by id), `detail`. */
 const reads: string[] = [];
-const serve = () => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.productIds !== undefined || view?.productId !== undefined) {
-      reads.push('detail');
-      return Effect.succeed(responseOf({ products: [product] }));
-    }
-    if (view?.orderId !== undefined) {
-      reads.push('order');
-      return Effect.succeed(responseOf({ orders: orders.filter((order) => order.id === view.orderId) }));
-    }
-    if (view?.ordersLimit === 0) {
-      reads.push('count');
-      return Effect.succeed(responseOf({}));
-    }
-    reads.push(`list-${view?.ordersLimit ?? 0}`);
-    return Effect.succeed(responseOf({ orders }));
-  });
-};
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const CustomersApi = HttpApi.make('CustomerListApi')
+  .add(partyRegistryApi.groups.customerList)
+  .prefix('/party-registry-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api', 'party-registry': '/party-registry-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload: { view } }) =>
+        Effect.sync(() => {
+          if (view?.productIds !== undefined || view?.productId !== undefined) {
+            reads.push('detail');
+            return responseOf({ products: [product] });
+          }
+          if (view?.orderId !== undefined) {
+            reads.push('order');
+            return responseOf({ orders: orders.filter((order) => order.id === view.orderId) });
+          }
+          if (view?.ordersLimit === 0) {
+            reads.push('count');
+            return responseOf({});
+          }
+          reads.push(`list-${view?.ordersLimit ?? 0}`);
+          return responseOf({ orders });
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    CustomersApi,
+    HttpApiBuilder.group(CustomersApi, 'customerList', (group) =>
+      group.handle('execute', () => Effect.succeed({ items: [] })),
+    ),
+  ),
+);
 const count = (kind: string) => reads.filter((read) => read === kind).length;
 
 /** The orders list page as `page.tsx` mounts it: 50 rows, counts and the warm-up of its first rows. */
@@ -137,74 +161,50 @@ const FullOrderPage = () => {
   return createElement('output', null, `${list.state.kind}:${String(permissions)}:${detail.status}`);
 };
 
-let unmount: (() => void) | null = null;
-
 const mount = (component: () => ReturnType<typeof createElement>) =>
-  Effect.promise(async () => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    unmount = () => {
-      act(() => {
-        root.unmount();
-        container.remove();
-      });
-    };
-    await act(async () => {
-      root.render(createElement(component));
-      await browserRuntime.runPromise(Effect.yieldNow);
-    });
+  mountInRoute(createElement(component), {
+    path: '/prodej/objednavky',
+    settle: settleOnFakeTimers,
+    url: '/cs/prodej/objednavky',
   });
 
-const closePage = () =>
-  Effect.sync(() => {
-    unmount?.();
-    unmount = null;
-  });
+const closePage = () => Effect.sync(unmountAll);
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each timer starts are answered before the next step. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
 const liveChange = (apps: readonly string[]) =>
-  Effect.sync(() => globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps } })));
+  Effect.sync(() => window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps } })));
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  rstest.resetAllMocks();
   ordersPageData.invalidate();
   orderCountsData.invalidate();
   orderDetailData.invalidate();
   customerDirectoryData.invalidate();
   register.revision = 7;
   reads.length = 0;
-  serve();
 });
 
 afterEach(() => {
-  unmount?.();
-  unmount = null;
+  unmountAll();
   rstest.useRealTimers();
-  rstest.unstubAllGlobals();
 });
 
-it.effect(
+it.live(
   'opening a warmed order on the full page warms no other order and reads only its own refreshes for a minute',
   () =>
     Effect.gen(function* warmedOpen() {
+      yield* pinTestDocument;
       yield* mount(OrdersList);
       yield* idle(1);
+      expect(count('detail')).toBe(10);
       yield* closePage();
       reads.length = 0;
 
       yield* mount(FullOrderPage);
+      yield* networkIdle;
+      yield* waitUntilOnFakeTimers(() => text().includes('ready:true:ready'));
       // The opening reads the permissions row only: the opened order answers from its warm copy at once.
       expect(reads).toEqual(['list-1']);
       reads.length = 0;
@@ -217,26 +217,12 @@ it.effect(
       expect(count('order')).toBe(3);
       expect(count('detail')).toBe(6);
       expect(reads.length).toBe(12);
-    }),
+    }).pipe(Effect.provide(network)),
 );
 
-it.effect('a background refresh of the open order on the full page does not read the 50-row list', () =>
-  Effect.gen(function* refresh() {
-    yield* mount(OrdersList);
-    yield* idle(1);
-    yield* closePage();
-    yield* mount(FullOrderPage);
-    reads.length = 0;
-
-    yield* idle(25);
-    expect(count('list-50')).toBe(0);
-    expect(count('order')).toBeGreaterThanOrEqual(1);
-  }),
-);
-
-it.effect('a list mounted after the preload of its first page reads neither the page nor the counts again', () =>
+it.live('a list mounted after the preload of its first page reads neither the page nor the counts again', () =>
   Effect.gen(function* preloaded() {
-    rstest.mocked(listCustomers).mockImplementation(() => Effect.succeed([]));
+    yield* pinTestDocument;
     yield* Effect.promise(() =>
       browserRuntime.runPromise(preloadOrdersPage(company.legalEntityId, PAGE_SIZE, company)),
     );
@@ -248,31 +234,24 @@ it.effect('a list mounted after the preload of its first page reads neither the 
     yield* idle(1);
     expect(count('list-50')).toBe(0);
     expect(count('count')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('the orders list still warms its first rows', () =>
-  Effect.gen(function* listWarms() {
-    yield* mount(OrdersList);
-    yield* idle(5);
-    expect(count('list-50')).toBe(1);
-    expect(count('detail')).toBe(Math.min(ROWS, LIST_WARM_ROWS) * 2);
-  }),
-);
-
-it.effect('a direct URL open loads the order once and shows the permissions', () =>
+it.live('a direct URL open loads the order once and shows the permissions', () =>
   Effect.gen(function* directOpen() {
+    yield* pinTestDocument;
     yield* mount(FullOrderPage);
     yield* idle(1);
     expect(count('list-1')).toBe(1);
     expect(count('order')).toBe(1);
     expect(count('detail')).toBe(2);
     expect(count('list-50')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a live change of merchandise reloads the open order on the full page', () =>
+it.live('a live change of merchandise reloads the open order on the full page', () =>
   Effect.gen(function* liveRefresh() {
+    yield* pinTestDocument;
     yield* mount(FullOrderPage);
     yield* idle(1);
     reads.length = 0;
@@ -280,5 +259,5 @@ it.effect('a live change of merchandise reloads the open order on the full page'
     yield* idle(2);
     expect(count('order')).toBeGreaterThanOrEqual(1);
     expect(count('list-50')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );

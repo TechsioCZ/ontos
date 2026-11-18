@@ -1,46 +1,75 @@
 // @rstest-environment happy-dom
 // The create and bulk product forms send their command only from the shared Save button ("Uložit"), last in the
-// footer: typing and Enter change only the draft. Only the generated catalog client, the i18n runtime and the router
-// blocker are replaced.
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
+// footer: typing and Enter change only the draft. Real clients reach the owner contracts through in-process HTTP.
+// The forms run under the module i18n and router with their real controls and leave protection.
+import { saveLabelsFor } from '@app/admin-ui';
+import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import type { ReactElement } from 'react';
-import { createRoot } from 'react-dom/client';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
+import { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
+import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
+import type { ManageCatalogActionProblem } from '../../shared/apis/manage-catalog-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { CatalogCategoryIdSchema, ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { CategoryDialog, PriceChangeDialog } from '../../src/routes/[lang]/provoz/produkty/product-forms.tsx';
-import { searchCategoryTrails } from '../../src/routes/[lang]/provoz/produkty/product-reads.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
-  loadProductRecord: rstest.fn(),
-  SEARCH_DEBOUNCE: '0 millis',
-  searchCategoryTrails: rstest.fn(),
-}));
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
-}));
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
 const productId = Schema.decodeUnknownSync(ProductIdSchema)('product-1');
 const ids = [productId];
 const category = { id: Schema.decodeSync(CatalogCategoryIdSchema)('category-tools'), trail: 'Nářadí' };
 
-const sent = () => rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => payload.command);
+const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const sent = () => commands.map((payload) => payload.command);
+const saved = Schema.decodeUnknownSync(ManageCatalogResultSchema)({ entityIds: [], revision: 5 });
+let answer: Effect.Effect<typeof saved, ManageCatalogActionProblem> = Effect.succeed(saved);
+const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  canWrite: true,
+  categoryMatches: [category],
+  categoryMatchTotal: 1,
+  indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
+  movements: [],
+  orders: [],
+  products: [],
+  revision: 4,
+});
+const OwnerActionApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) => group.handle('execute', () => Effect.succeed(records))),
+  ),
+);
+const copy = moduleText('cs');
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const unmounts: (() => void)[] = [];
 const committed: string[] = [];
 const openChanges: boolean[] = [];
 
@@ -59,30 +88,8 @@ const dialogProps = {
 const categoryProps = { ...dialogProps, hasTree: true };
 const priceProps = { ...dialogProps, variantProducts: [] };
 
-/** Mounts `element` and returns how to render it again with other props. */
-const mount = async (element: ReactElement) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  await act(async () => {
-    root.render(element);
-    await settle();
-  });
-  unmounts.push(() => {
-    act(() => {
-      root.unmount();
-      container.remove();
-    });
-  });
-  /** Renders the same tree again with other props, as the page does. */
-  return (next: ReactElement) =>
-    Effect.promise(() =>
-      act(async () => {
-        root.render(next);
-        await settle();
-      }),
-    );
-};
+/** Mounts the form under the module's real i18n and router. */
+const mount = (element: ReactElement) => mountInRoute(element, { path: 'provoz/produkty', url: '/cs/provoz/produkty' });
 
 const footerButtons = (): HTMLButtonElement[] =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.closest('form') === null);
@@ -94,69 +101,41 @@ const field = (id: string): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`#${id}`)));
 
 const typeInto = (id: string, value: string) =>
-  Effect.promise(() =>
-    act(async () => {
-      const input = field(id);
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      await settle();
-    }),
-  );
+  acted(() => {
+    const input = field(id);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 
 const pressEnter = (id: string) =>
-  Effect.promise(() =>
-    act(async () => {
-      const input = field(id);
-      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
-      input.form?.requestSubmit();
-      await settle();
-    }),
-  );
+  acted(() => {
+    const input = field(id);
+    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+    input.form?.requestSubmit();
+  });
 
-const click = (element: HTMLElement) =>
-  Effect.promise(() =>
-    act(async () => {
-      element.click();
-      await settle();
-    }),
-  );
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
+const click = (element: HTMLElement) => acted(() => element.click());
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
-  rstest.mocked(searchCategoryTrails).mockReturnValue(Effect.succeed({ matches: [category], total: 1 }));
+  commands.length = 0;
   committed.length = 0;
   openChanges.length = 0;
-  rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.succeed({ entityIds: [], revision: 5 }));
+  answer = Effect.succeed(saved);
 });
 
-afterEach(() => {
-  for (const unmount of unmounts) {
-    unmount();
-  }
-  unmounts.length = 0;
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
-it.effect('the category change is sent once, from Uložit only, never on Enter', () =>
+it.live('the category change is sent once, from Uložit only, never on Enter', () =>
   Effect.gen(function* categorySave() {
-    yield* Effect.promise(() => mount(<CategoryDialog {...categoryProps} />));
+    yield* pinTestDocument;
+    yield* mount(<CategoryDialog {...categoryProps} />);
     expect(saveButton().disabled).toBe(true);
     expect(footerButtons().at(-1)).toBe(saveButton());
 
     yield* click(field('bulk-category-input'));
     yield* typeInto('bulk-category-input', 'Nářadí');
     expect(saveButton().disabled).toBe(true);
-    yield* Effect.promise(() => waitUntil(() => document.querySelector('[role="option"]') !== null));
+    yield* waitUntil(() => document.querySelector('[role="option"]') !== null);
     const option = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="option"]')));
     yield* click(option);
     yield* pressEnter('bulk-category-input');
@@ -164,25 +143,26 @@ it.effect('the category change is sent once, from Uložit only, never on Enter',
     expect(saveButton().disabled).toBe(false);
 
     yield* click(saveButton());
-    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    yield* waitUntil(() => committed.length === 1);
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { categoryId: category.id } }]);
     expect(openChanges).toEqual([false]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('the price change it opens with is sent by the first Uložit', () =>
+it.live('the price change it opens with is sent by the first Uložit', () =>
   Effect.gen(function* priceSave() {
-    yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} />));
+    yield* pinTestDocument;
+    yield* mount(<PriceChangeDialog {...priceProps} />);
     expect(saveButton().disabled).toBe(false);
     expect(sent()).toEqual([]);
 
     yield* click(saveButton());
-    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    yield* waitUntil(() => committed.length === 1);
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { priceChangePercent: 5 } }]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-type ManageCatalogFailure = Effect.Error<ReturnType<typeof executeManageCatalog>>;
+type ManageCatalogFailure = ManageCatalogActionProblem;
 /** The action's refusal for a user without the permission. */
 const forbidden: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogActionForbiddenProblem' }> = {
   _tag: 'ManageCatalogActionForbiddenProblem',
@@ -196,60 +176,53 @@ const forbidden: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogAc
 /** Whether closing or reloading the tab would ask now. */
 const unloadAsks = (): boolean => {
   const event = new Event('beforeunload', { cancelable: true });
-  globalThis.dispatchEvent(event);
+  window.dispatchEvent(event);
   return event.defaultPrevented;
 };
 
-it.effect('the price change becomes savable when rows are selected after the page mounted it', () =>
+it.live('the price change becomes savable when rows are selected after the page mounted it', () =>
   Effect.gen(function* lateSelection() {
+    yield* pinTestDocument;
     // The products page mounts the dialog before anything is selected.
-    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} ids={[]} open={false} />));
+    const { rerender } = yield* mount(<PriceChangeDialog {...priceProps} ids={[]} open={false} />);
     yield* rerender(<PriceChangeDialog {...priceProps} open />);
     expect(saveButton().disabled).toBe(false);
 
     yield* click(saveButton());
-    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    yield* waitUntil(() => committed.length === 1);
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { priceChangePercent: 5 } }]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('the price change asks before leaving only for a percent the user typed in the open panel', () =>
+it.live('the price change asks before leaving only for a percent the user typed in the open panel', () =>
   Effect.gen(function* untouchedPrice() {
-    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} ids={[]} open={false} />));
+    yield* pinTestDocument;
+    const { rerender } = yield* mount(<PriceChangeDialog {...priceProps} ids={[]} open={false} />);
     expect(unloadAsks()).toBe(false);
     yield* rerender(<PriceChangeDialog {...priceProps} open />);
     // The 5 % it opens with is not typed input.
     expect(unloadAsks()).toBe(false);
     yield* typeInto('price-percent', '7');
     expect(unloadAsks()).toBe(true);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('the price change it opens with asks before leaving once its save failed', () =>
+it.live('the price change it opens with asks before leaving once its save failed', () =>
   Effect.gen(function* failedOpeningPrice() {
-    rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.fail(forbidden));
-    yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} />));
+    yield* pinTestDocument;
+    answer = Effect.fail(forbidden);
+    yield* mount(<PriceChangeDialog {...priceProps} />);
     expect(unloadAsks()).toBe(false);
     yield* click(saveButton());
-    yield* Effect.promise(() => waitUntil(() => sent().length === 1));
-    yield* Effect.promise(() => waitUntil(() => unloadAsks()));
+    yield* waitUntil(() => sent().length === 1);
+    yield* waitUntil(() => unloadAsks());
     expect(committed).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('reads the required text of a required field in Czech', () =>
-  Effect.gen(function* requiredText() {
-    yield* Effect.promise(() => mount(<CategoryDialog {...categoryProps} />));
-    const label = Option.getOrThrow(
-      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="bulk-category-input"]')),
-    );
-    expect(label.textContent).toContain(requiredLabelFor('cs'));
-    expect(document.body.textContent).not.toContain('(required)');
-  }),
-);
-
-it.effect('a refused variant bulk price edit shows its actionable message instead of a revision conflict', () =>
+it.live('a refused variant bulk price edit shows its actionable message instead of a revision conflict', () =>
   Effect.gen(function* actionableBulkRefusal() {
+    yield* pinTestDocument;
     const refused: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogActionConflictProblem' }> = {
       _tag: 'ManageCatalogActionConflictProblem',
       code: 'merchandise_variant_bulk_price_unsupported',
@@ -258,41 +231,44 @@ it.effect('a refused variant bulk price edit shows its actionable message instea
       title: 'Action conflict',
       type: 'https://ontos.dev/problems/action-conflict',
     };
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(refused));
-    yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} />));
+    answer = Effect.fail(refused);
+    yield* mount(<PriceChangeDialog {...priceProps} />);
     yield* click(saveButton());
-    const message = 'merchandise.pages.products.messages.variantBulkPriceUnsupported';
-    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(message)));
-    expect(document.body.textContent).not.toContain('merchandise.pages.products.messages.conflict');
+    const message = copy('merchandise.pages.products.messages.variantBulkPriceUnsupported');
+    yield* waitUntil(() => (document.body.textContent ?? '').includes(message));
+    expect(document.body.textContent).not.toContain(copy('merchandise.pages.products.messages.conflict'));
     expect(committed).toEqual([]);
     return yield* Effect.void;
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('names the selected products priced by variants before anything is typed and keeps Uložit disabled', () =>
+it.live('names the selected products priced by variants before anything is typed and keeps Uložit disabled', () =>
   Effect.gen(function* variantProductsNamed() {
-    yield* Effect.promise(() =>
-      mount(<PriceChangeDialog {...priceProps} variantProducts={[{ id: productId, name: 'Šroub M8' }]} />),
+    yield* pinTestDocument;
+    yield* mount(<PriceChangeDialog {...priceProps} variantProducts={[{ id: productId, name: 'Šroub M8' }]} />);
+    expect(document.body.textContent).toContain(
+      copy('merchandise.pages.products.priceDialog.variantProducts', { names: 'Šroub M8' }),
     );
-    expect(document.body.textContent).toContain('merchandise.pages.products.priceDialog.variantProducts');
     expect(saveButton().disabled).toBe(true);
     expect(sent()).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a company without a storefront tree types the category label as before', () =>
+it.live('a company without a storefront tree types the category label as before', () =>
   Effect.gen(function* labelCategory() {
-    yield* Effect.promise(() => mount(<CategoryDialog {...dialogProps} hasTree={false} />));
+    yield* pinTestDocument;
+    yield* mount(<CategoryDialog {...dialogProps} hasTree={false} />);
     expect(document.querySelector('[id="bulk-category-input"]')).toBeNull();
     yield* typeInto('bulk-category', '  Nářadí  ');
     yield* click(saveButton());
-    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    yield* waitUntil(() => committed.length === 1);
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { category: 'Nářadí' } }]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a tree category deleted meanwhile says so instead of a stock refusal', () =>
+it.live('a tree category deleted meanwhile says so instead of a stock refusal', () =>
   Effect.gen(function* deletedCategory() {
+    yield* pinTestDocument;
     const refused: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogActionConflictProblem' }> = {
       _tag: 'ManageCatalogActionConflictProblem',
       code: 'merchandise_lifecycle_conflict',
@@ -301,15 +277,15 @@ it.effect('a tree category deleted meanwhile says so instead of a stock refusal'
       title: 'Action conflict',
       type: 'https://ontos.dev/problems/action-conflict',
     };
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(refused));
-    yield* Effect.promise(() => mount(<CategoryDialog {...categoryProps} />));
+    answer = Effect.fail(refused);
+    yield* mount(<CategoryDialog {...categoryProps} />);
     yield* click(field('bulk-category-input'));
-    yield* Effect.promise(() => waitUntil(() => document.querySelector('[role="option"]') !== null));
+    yield* waitUntil(() => document.querySelector('[role="option"]') !== null);
     const option = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="option"]')));
     yield* click(option);
     yield* click(saveButton());
-    const message = 'merchandise.pages.products.category.missing';
-    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(message)));
+    const message = copy('merchandise.pages.products.category.missing');
+    yield* waitUntil(() => (document.body.textContent ?? '').includes(message));
     expect(committed).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );

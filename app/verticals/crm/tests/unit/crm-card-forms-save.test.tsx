@@ -1,11 +1,12 @@
 // @rstest-environment happy-dom
 // The client card's inline forms send their one command only from the shared Save button ("Uložit"): typing and
 // Enter change only the draft, an untouched form closes without asking, and a refused save keeps the input. The i18n
-// runtime, the router blocker and the select template (by a native select) are replaced.
+// runtime, router blocker and select template all run through the real module UI harness.
 import { Effect, Option, Predicate } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
-import { createElement } from 'react';
+import { afterEach, describe, expect, it } from 'effect-rstest';
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import { mountInRoute as mount } from '../support/module-ui.ts';
 import type { CrmCommandInput } from '../../shared/actions/apply-command.ts';
 import { ContactForm } from '../../src/routes/[lang]/crm/klienti/contact-form.tsx';
 import { ClientPlanForm, ClientVisitForm } from '../../src/routes/[lang]/crm/navstevy/client-visit-forms.tsx';
@@ -16,44 +17,12 @@ import {
   copy,
   field,
   leaveQuestion,
-  mount,
   pressEnter,
   records,
   recording,
   saveButton,
   typeInto,
-  unmountAll,
 } from './crm-form-fixture.tsx';
-
-/** The props the native stand-in of the select template reads. */
-interface NativeSelectProps {
-  readonly items: readonly { readonly label: string; readonly value: string }[];
-  readonly name?: string;
-  readonly onValueChange: (details: { readonly value: string[] }) => void;
-  readonly value?: readonly string[];
-}
-
-rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@app/admin-ui/select-template', () => ({
-  SelectTemplate: ({ items, name, onValueChange, value }: NativeSelectProps) =>
-    createElement(
-      'select',
-      {
-        name,
-        onChange: (event: { readonly target: { readonly value: string } }) =>
-          onValueChange({ value: event.target.value === '' ? [] : [event.target.value] }),
-        value: value?.[0] ?? '',
-      },
-      createElement('option', { value: '' }),
-      ...items.map((item) => createElement('option', { key: item.value, value: item.value }, item.label)),
-    ),
-}));
 
 afterEach(unmountAll);
 

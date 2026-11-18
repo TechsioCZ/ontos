@@ -1,10 +1,14 @@
+// @rstest-environment happy-dom
 import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
 import { Effect, Schema } from 'effect';
-import { expect, it, rstest, test } from 'effect-rstest';
+import { expect, it, test } from 'effect-rstest';
 
 import {
+  AvailableLegalEntitiesResponseSchema,
+  LegalEntityIdSchema,
   ModuleIdSchema,
   ResourceIdSchema,
+  ShellDocumentContextSchema,
   ShellTargetForbiddenProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/browser-api.ts';
@@ -14,43 +18,24 @@ import type {
   ShellSearchResponse,
   ShellSearchResult,
 } from '../../../../shared/browser-api.ts';
+import { resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
 import {
   loader,
   searchFailureModel,
   searchFamiliesFromValue,
   searchReadyModel,
 } from '../../../../src/routes/[lang]/search/search-page-model.ts';
-import type { ShellAuthenticationClientOptions, ShellSearchClientError } from '../../../../src/api/auth-client.ts';
 import { planShellSearchFilters } from '../../../../src/routes/shell-search-match.ts';
 import { shellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
 import type { ShellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
+import {
+  adaSignedIn,
+  makeShellBff,
+  shellCompositionRevision,
+  signedInShellReads,
+} from '../../../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
-import { shellAuthenticationClientOptionsFromRequest } from '../../../../src/routes/shell-authentication-client-options.ts' with {
-  rstest: 'importActual',
-};
-
-const { searchResourcesMock } = rstest.hoisted(() => ({
-  searchResourcesMock:
-    rstest.fn<
-      (
-        payload: ShellSearchPayload,
-        options?: ShellAuthenticationClientOptions,
-      ) => Effect.Effect<ShellSearchResponse, ShellSearchClientError>
-    >(),
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({ searchResources: searchResourcesMock }));
-
-const { loadShellMock, serverRenderState } = rstest.hoisted(() => ({
-  loadShellMock: rstest.fn(),
-  serverRenderState: { current: false },
-}));
-
-rstest.mock('../../../../src/routes/[lang]/home-page-model.ts', () => ({ loadHomePageModel: loadShellMock }));
-rstest.mock('../../../../src/routes/shell-authentication-client-options.ts', () => ({
-  isServerRender: () => serverRenderState.current,
-  shellAuthenticationClientOptionsFromRequest,
-}));
 
 const compositionRevision = 'a'.repeat(64);
 const metadata = (key: string, order: number) => ({
@@ -157,8 +142,8 @@ test('the URL carries bounded family keys only; a malformed key stays an unresol
 });
 
 /**
- * Request-sequence evidence for the full-results model. The mock records every `searchResources` payload, so a test
- * proves exactly which owner reads a flow issues and in which order. No test guesses an owner type: the narrowed
+ * Request-sequence evidence for the full-results model. The Shell BFF double records every search payload the real
+ * client sends, so a test proves exactly which owner reads a flow issues and in which order. No test guesses an owner type: the narrowed
  * payload is always the inventory's own declared type list, and a filtered flow never issues an unfiltered request.
  */
 const searchResponse = (
@@ -174,12 +159,27 @@ const resourceHit = (title: string): ShellSearchResult => ({
     resourceType: 'demo.crm.client',
     tenantId: Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101'),
   },
+  // A company-scoped hit names the company it was found in, as the declared `company` scope requires.
+  selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)('20000000-0000-4000-8000-000000000001'),
   title,
 });
 
-const recordedPayloads = (): readonly ShellSearchPayload[] =>
-  searchResourcesMock.mock.calls.map(([payload]) => payload);
-
+/** A BFF whose search answers each payload with `answer` and records the payloads it received, in order. */
+const searchBff = (answer: (payload: ShellSearchPayload) => ShellSearchResponse, script: ShellBffScript = {}) => {
+  const payloads: ShellSearchPayload[] = [];
+  const bff = makeShellBff({
+    ...script,
+    search: (payload) =>
+      Effect.sync(() => {
+        payloads.push(payload);
+        return answer(payload);
+      }),
+  });
+  return { ...bff, payloads };
+};
+type Bff = ReturnType<typeof searchBff>;
+/** The search payloads the BFF received, in order. */
+const recordedPayloads = (bff: Bff): readonly ShellSearchPayload[] => bff.payloads;
 const unfilteredHit = () => searchResponse([resourceHit('Unfiltered hit')]);
 const inventoryAnswer = () => searchResponse([]);
 const selectedOnlyInventory = () =>
@@ -197,7 +197,7 @@ const answerFor = (payload: ShellSearchPayload): ShellSearchResponse => {
   return searchResponse([resourceHit('Filtered hit')], selectedOnlyInventory());
 };
 
-const runReadySearch = (requestedFamilies: readonly string[]) =>
+const runReadySearch = (bff: Bff, requestedFamilies: readonly string[]) =>
   searchReadyModel({
     compositionRevision,
     options: {},
@@ -210,14 +210,14 @@ const runReadySearch = (requestedFamilies: readonly string[]) =>
         ? Effect.succeed(model)
         : Effect.die(new Error(`expected a ready search model, received ${model.state}`)),
     ),
+    Effect.provide(bff.layer),
   );
 
 it.effect('an unfiltered full-results search issues exactly one real owner request', () =>
   Effect.gen(function* unfilteredSearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation(() => Effect.succeed(unfilteredHit()));
-    const model = yield* runReadySearch([]);
-    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák' }]);
+    const bff = searchBff(unfilteredHit);
+    const model = yield* runReadySearch(bff, []);
+    expect(recordedPayloads(bff)).toEqual([{ compositionRevision, query: 'novák' }]);
     expect(model.filters.resourceTypes).toBeUndefined();
     expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
     expect(model.response.results.map(({ title }) => title)).toEqual(['Unfiltered hit']);
@@ -227,15 +227,14 @@ it.effect('an unfiltered full-results search issues exactly one real owner reque
 
 it.effect('a filtered full-results search asks the inventory alone first and then only the selected types', () =>
   Effect.gen(function* filteredSearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) => Effect.succeed(answerFor(payload)));
-    const model = yield* runReadySearch(['companies']);
+    const bff = searchBff(answerFor);
+    const model = yield* runReadySearch(bff, ['companies']);
     // The inventory-only request first, the exact selected types second, and never an unfiltered request.
-    expect(recordedPayloads()).toEqual([
+    expect(recordedPayloads(bff)).toEqual([
       { compositionRevision, query: 'novák', resourceTypes: [] },
       { compositionRevision, query: 'novák', resourceTypes: ['demo.crm.client', 'party.registry.counterparty'] },
     ]);
-    expect(recordedPayloads().some(({ resourceTypes }) => resourceTypes === undefined)).toBe(false);
+    expect(recordedPayloads(bff).some(({ resourceTypes }) => resourceTypes === undefined)).toBe(false);
     expect(model.filters.selectedFamilies).toEqual(['companies']);
     expect(model.filters.resourceTypes).toEqual(['demo.crm.client', 'party.registry.counterparty']);
     expect(model.response.results.map(({ title }) => title)).toEqual(['Filtered hit']);
@@ -247,12 +246,9 @@ it.effect('a filtered full-results search asks the inventory alone first and the
 
 it.effect('an unknown-only family asks the inventory alone and never exposes unfiltered results', () =>
   Effect.gen(function* unknownFamilySearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
-      Effect.succeed(payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()),
-    );
-    const model = yield* runReadySearch(['missing']);
-    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    const bff = searchBff((payload) => (payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()));
+    const model = yield* runReadySearch(bff, ['missing']);
+    expect(recordedPayloads(bff)).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
     expect(model.filters).toMatchObject({ resourceTypes: [], selectedFamilies: [] });
     expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
     expect(model.response.results).toEqual([]);
@@ -263,12 +259,9 @@ it.effect('an unknown-only family asks the inventory alone and never exposes unf
 
 it.effect('a known family mixed with an unknown one asks the inventory alone and shows nothing', () =>
   Effect.gen(function* mixedFamilySearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
-      Effect.succeed(payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()),
-    );
-    const model = yield* runReadySearch(['work', 'missing']);
-    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    const bff = searchBff((payload) => (payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()));
+    const model = yield* runReadySearch(bff, ['work', 'missing']);
+    expect(recordedPayloads(bff)).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
     expect(model.filters).toMatchObject({ resourceTypes: [], selectedFamilies: ['work'] });
     expect(model.response.results).toEqual([]);
     expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
@@ -277,12 +270,9 @@ it.effect('a known family mixed with an unknown one asks the inventory alone and
 
 it.effect('a malformed family filter asks the inventory alone and never widens to the unfiltered answer', () =>
   Effect.gen(function* malformedFamilySearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
-      Effect.succeed(payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()),
-    );
-    const model = yield* runReadySearch(searchFamiliesFromValue('Invalid Key'));
-    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    const bff = searchBff((payload) => (payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()));
+    const model = yield* runReadySearch(bff, searchFamiliesFromValue('Invalid Key'));
+    expect(recordedPayloads(bff)).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
     expect(model.response.results).toEqual([]);
     expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
   }),
@@ -290,12 +280,9 @@ it.effect('a malformed family filter asks the inventory alone and never widens t
 
 it.effect('a partial inventory answer issues one request and offers no filter', () =>
   Effect.gen(function* partialSearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation(() =>
-      Effect.succeed({ partial: true, presentation: presentationInventory(), results: [] }),
-    );
-    const model = yield* runReadySearch(['companies']);
-    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    const bff = searchBff(() => ({ partial: true, presentation: presentationInventory(), results: [] }));
+    const model = yield* runReadySearch(bff, ['companies']);
+    expect(recordedPayloads(bff)).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
     expect(model.filters).toEqual({ availableFamilies: [], selectedFamilies: [] });
     expect(model.response.partial).toBe(true);
   }),
@@ -303,35 +290,68 @@ it.effect('a partial inventory answer issues one request and offers no filter', 
 
 const searchUrl = 'https://ontos.test/en/search?q=Morava';
 
-it.effect('a server render returns the shell with the query pending and never runs the search', () =>
-  Effect.gen(function* serverRenderSearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation(() => Effect.succeed(unfilteredHit()));
-    loadShellMock.mockReturnValue(Effect.succeed(authenticatedShellFixture()));
-    serverRenderState.current = true;
-    const model = yield* Effect.promise(() => loader({ request: new Request(searchUrl) })).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          serverRenderState.current = false;
-        }),
-      ),
-    );
-    expect(searchResourcesMock).not.toHaveBeenCalled();
+/** Server rendering: no browser document, as the SSR loader on Node and Workers runs. */
+const asServerRender = <Value, Failure, Requirements>(operation: Effect.Effect<Value, Failure, Requirements>) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  return Effect.acquireUseRelease(
+    Effect.sync(() => Reflect.deleteProperty(globalThis, 'document')),
+    () => operation,
+    () =>
+      Effect.sync(() => {
+        if (descriptor !== undefined) {
+          Object.defineProperty(globalThis, 'document', descriptor);
+        }
+      }),
+  );
+};
+// happy-dom's Request drops the cookie header (a browser-forbidden name); the server's request carries it.
+const serverRequest = () =>
+  Object.defineProperty(new Request(searchUrl), 'headers', {
+    value: new Headers({ cookie: 'better-auth.session_token=test-session' }),
+  });
+
+/** The document context the BFF answers server rendering with: Ada, signed in, one available composition. */
+const signedInDocument = Schema.decodeUnknownSync(ShellDocumentContextSchema)({
+  canManagePeople: false,
+  composition: {
+    compositionRevision: shellCompositionRevision,
+    deniedAppIds: [],
+    gatewayAudiences: [],
+    homeComponents: [],
+    navigation: [],
+    state: 'available',
+    unavailableDeployments: [],
+  },
+  home: { contribution: { state: 'forbidden' } },
+  legalEntities: Schema.encodeSync(AvailableLegalEntitiesResponseSchema)(
+    Schema.decodeUnknownSync(AvailableLegalEntitiesResponseSchema)({
+      legalEntities: [{ legalEntityId: '20000000-0000-4000-8000-000000000001', legalName: 'Alpha company' }],
+      selectedLegalEntityId: '20000000-0000-4000-8000-000000000001',
+      state: 'authenticated',
+      tenantContextAvailable: false,
+    }),
+  ),
+  session: { identity: adaSignedIn.identity, state: 'authenticated' },
+  tenants: { state: 'available', tenants: [] },
+});
+
+it.live('a server render returns the shell with the query pending and never runs the search', () => {
+  const bff = searchBff(unfilteredHit, { documentContext: () => Effect.succeed(signedInDocument) });
+  return Effect.gen(function* serverRenderSearch() {
+    const model = yield* asServerRender(Effect.promise(() => loader({ request: serverRequest() })));
+    expect(recordedPayloads(bff)).toEqual([]);
     expect(model).toMatchObject({ query: 'Morava', state: 'pending' });
     expect(model.shell.state).toBe('authenticated');
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.effect('the browser loader still returns the answered search', () =>
-  Effect.gen(function* browserSearch() {
-    searchResourcesMock.mockReset();
-    searchResourcesMock.mockImplementation(() => Effect.succeed(unfilteredHit()));
-    const shell = authenticatedShellFixture();
-    loadShellMock.mockReturnValue(Effect.succeed(shell));
-    serverRenderState.current = false;
+it.live('the browser loader still returns the answered search', () => {
+  const bff = searchBff(unfilteredHit, signedInShellReads(adaSignedIn));
+  return Effect.gen(function* browserSearch() {
+    yield* resetBrowserSessionCache;
     const model = yield* Effect.promise(() => loader({ request: new Request(searchUrl) }));
-    expect(recordedPayloads()).toEqual([{ compositionRevision: shell.compositionRevision, query: 'Morava' }]);
+    expect(recordedPayloads(bff)).toEqual([{ compositionRevision: shellCompositionRevision, query: 'Morava' }]);
     expect(model).toMatchObject({ query: 'Morava', state: 'ready' });
     expect(model.state === 'ready' ? model.response.results.map(({ title }) => title) : []).toEqual(['Unfiltered hit']);
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});

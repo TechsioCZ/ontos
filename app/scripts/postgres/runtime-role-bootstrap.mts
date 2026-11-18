@@ -928,8 +928,17 @@ export const revokePublicStatementStatistics = (
 export const RuntimeRoleBootstrapModeSchema = Schema.Literals(['reconcile', 'initialize-local']);
 export type RuntimeRoleBootstrapMode = typeof RuntimeRoleBootstrapModeSchema.Type;
 
+/** Opens one protected login over the network, to see whom it authenticates as and in which database. */
+const connectProtectedLogin = (url: Redacted.Redacted) => PgClient.makeClient({ connectTimeout: '10 seconds', url });
+/** How the reconcile preflight opens a protected login. */
+export type ProtectedLoginConnect = typeof connectProtectedLogin;
+
 /** Check the complete manifest, not just whichever credentials the caller supplied. No writes or transaction here. */
-const preflightProtectedLogins = (client: PgClient.PgClient, connections: DatabaseIdentityConnections) =>
+const preflightProtectedLogins = (
+  client: PgClient.PgClient,
+  connections: DatabaseIdentityConnections,
+  connect: ProtectedLoginConnect,
+) =>
   Effect.gen(function* preflightProtectedLoginsEffect() {
     for (const { identity } of explicitEntries) {
       if (
@@ -948,10 +957,7 @@ const preflightProtectedLogins = (client: PgClient.PgClient, connections: Databa
         return yield* bootstrapFailure(`The protected ${identity.urlKey} connection is unavailable`);
       }
       yield* Effect.gen(function* authenticateProtectedLogin() {
-        const login = yield* PgClient.makeClient({
-          connectTimeout: '10 seconds',
-          url: Redacted.make(connection.connectionString),
-        });
+        const login = yield* connect(Redacted.make(connection.connectionString));
         const [session] = yield* login.unsafe<{ database: string; role: string }>(
           'select current_database() as database, session_user as role',
         );
@@ -1019,6 +1025,7 @@ export const bootstrapRuntimeRoles = (
   connections: DatabaseIdentityConnections,
   passwords: ReadonlyMap<string, Redacted.Redacted>,
   mode: RuntimeRoleBootstrapMode,
+  connect: ProtectedLoginConnect = connectProtectedLogin,
 ): Effect.Effect<void, RuntimeRoleBootstrapError, Reactivity.Reactivity> =>
   Effect.gen(function* bootstrapRuntimeRolesEffect() {
     if (mode === 'initialize-local') {
@@ -1026,7 +1033,7 @@ export const bootstrapRuntimeRoles = (
         return yield* bootstrapFailure('PostgreSQL role initialization requires a local database');
       }
     } else {
-      yield* preflightProtectedLogins(client, connections);
+      yield* preflightProtectedLogins(client, connections, connect);
     }
     const credentials = new Map<string, DatabaseLoginCredentials>();
     for (const entry of DATABASE_ROLE_GRANT_MANIFEST) {

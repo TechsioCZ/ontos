@@ -44,6 +44,81 @@ export const serveApi = <Id extends string, Groups extends HttpApiGroup.Constrai
 ): InProcessApplication =>
   HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(HttpServer.layerServices));
 
+/**
+ * The requests the in-process servers of this test file are answering, and a count that moves whenever one arrives
+ * or is answered. `networkIdle` reads them.
+ */
+const traffic = { inFlight: 0, moves: 0 };
+
+const arrived = () => {
+  traffic.inFlight += 1;
+  traffic.moves += 1;
+};
+
+const answered = () => {
+  traffic.inFlight -= 1;
+  traffic.moves += 1;
+};
+
+/** Runs `answer` as one request in flight. */
+const inFlight = <A, E, R>(answer: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(arrived),
+    () => answer,
+    () => Effect.sync(answered),
+  );
+
+// The host's own macrotask queue, read once: a test that later installs fake timers still gets real turns here.
+const { clearImmediate: cancelTurn, setImmediate: nextTurn } = globalThis;
+
+/** One turn of the host's macrotask queue: every fiber and promise continuation scheduled before it has run. */
+const macrotask = Effect.callback<boolean>((resume) => {
+  const turn = nextTurn(() => {
+    resume(Effect.succeed(true));
+  });
+  return Effect.sync(() => {
+    cancelTurn(turn);
+  });
+});
+
+const quietSince = (moves: number): Effect.Effect<void> =>
+  macrotask.pipe(
+    Effect.andThen(macrotask),
+    Effect.andThen(
+      Effect.suspend(() =>
+        traffic.inFlight === 0 && traffic.moves === moves ? Effect.void : quietSince(traffic.moves),
+      ),
+    ),
+  );
+
+/**
+ * Waits until the network is idle: no request is in flight at the in-process servers, and none arrived or was
+ * answered during two full macrotask turns, so the client that sent the last one has taken its answer and anything
+ * it sends next has reached the server. A "nothing was sent" or "nothing more was read" check placed after this can
+ * fail: a request the action under test started is either recorded by its handler by then or never sent. A request a
+ * handler holds open (an `Effect.never`, an unreleased Deferred) keeps the network busy, so release it first. Runs
+ * on the host's real macrotask queue, under the live clock, a TestClock and fake timers alike.
+ */
+export const networkIdle: Effect.Effect<void> = Effect.suspend(() => quietSince(traffic.moves));
+
+const heldSince = (held: number, moves: number): Effect.Effect<void> =>
+  macrotask.pipe(
+    Effect.andThen(macrotask),
+    Effect.andThen(
+      Effect.suspend(() =>
+        traffic.inFlight === held && traffic.moves === moves ? Effect.void : heldSince(held, traffic.moves),
+      ),
+    ),
+  );
+
+/**
+ * `networkIdle` while a test holds `held` requests open on purpose (a handler awaiting the test's Deferred): waits
+ * until exactly those are in flight and no request arrived or was answered during two full macrotask turns. A check
+ * of what started while the held requests stay open ("nothing else was sent yet") placed after this can fail.
+ */
+export const networkQuietExcept = (held: number): Effect.Effect<void> =>
+  Effect.suspend(() => heldSince(held, traffic.moves));
+
 /** The web handler `HttpRouter.toWebHandler` builds over the applications, disposed with the scope. */
 const served = (applications: readonly [InProcessApplication, ...InProcessApplication[]]) =>
   Effect.acquireRelease(
@@ -54,6 +129,19 @@ const served = (applications: readonly [InProcessApplication, ...InProcessApplic
 type InProcessServer = Effect.Success<ReturnType<typeof served>>;
 
 /**
+ * The server's answer to one request, counted in flight for `networkIdle`. A plain promise, so the transport keeps
+ * answering when a test takes it out of the scope that built it.
+ */
+const countedAnswer = (server: InProcessServer) => async (request: Request) => {
+  arrived();
+  try {
+    return await server.handler(request);
+  } finally {
+    answered();
+  }
+};
+
+/**
  * Installs in-process servers as the fetch transport of a production client for an Effect the test runs itself.
  * The client keeps its own codecs, URL policy and error mapping; only the network hop is replaced, for the scope
  * that provides this layer.
@@ -62,7 +150,7 @@ export const inProcessFetch = (...applications: readonly [InProcessApplication, 
   Layer.effect(FetchHttpClient.Fetch)(
     served(applications).pipe(
       Effect.map((server): typeof fetch =>
-        flow((input: RequestInfo | URL, init?: RequestInit) => new Request(input, init), server.handler),
+        flow((input: RequestInfo | URL, init?: RequestInit) => new Request(input, init), countedAnswer(server)),
       ),
     ),
   );
@@ -93,9 +181,11 @@ const windowResponse = (response: Response, window: { readonly Response: typeof 
 const windowAnswer =
   (server: InProcessServer) =>
   ({ request, window }: Parameters<FetchInterceptor['beforeAsyncRequest']>[0]) =>
-    serverRequest(request).pipe(
-      Effect.flatMap((forwarded) => Effect.promise(async () => await server.handler(forwarded))),
-      Effect.flatMap((response) => windowResponse(response, window)),
+    inFlight(
+      serverRequest(request).pipe(
+        Effect.flatMap((forwarded) => Effect.promise(async () => await server.handler(forwarded))),
+        Effect.flatMap((response) => windowResponse(response, window)),
+      ),
     );
 
 /**
@@ -114,6 +204,64 @@ export const browserNetwork = (...applications: readonly [InProcessApplication, 
       yield* Effect.acquireRelease(
         Effect.sync(() => {
           network.interceptor = { beforeAsyncRequest: flow(windowAnswer(server), run) };
+        }),
+        () =>
+          Effect.sync(() => {
+            network.interceptor = previous;
+          }),
+      );
+    }),
+  );
+
+/** The window's request as the server receives it, with the window request's credentials mode and abort signal. */
+const liveServerRequest = (request: Request) => {
+  const head = {
+    credentials: request.credentials,
+    headers: [...request.headers],
+    method: request.method,
+    signal: request.signal,
+  };
+  return request.method === 'GET' || request.method === 'HEAD'
+    ? Effect.succeed(new Request(request.url, head))
+    : Effect.promise(async () => await request.arrayBuffer()).pipe(
+        Effect.map((body) => new Request(request.url, { ...head, body })),
+      );
+};
+
+/** The server's response as the window's own `Response`, its body streamed to the window as the server writes it. */
+const streamedWindowResponse = (response: Response, window: { readonly Response: typeof Response }) =>
+  new window.Response(response.body, {
+    headers: [...response.headers],
+    status: response.status,
+    statusText: response.statusText,
+  });
+
+const liveWindowAnswer =
+  (server: InProcessServer) =>
+  ({ request, window }: Parameters<FetchInterceptor['beforeAsyncRequest']>[0]) =>
+    inFlight(
+      liveServerRequest(request).pipe(
+        Effect.flatMap((forwarded) => Effect.promise(async () => await server.handler(forwarded))),
+        Effect.map((response) => streamedWindowResponse(response, window)),
+      ),
+    );
+
+/**
+ * `browserNetwork` with the request's whole lifetime kept, for tests about cancellation and body consumption: an
+ * aborted window request interrupts its server handler, as a dropped connection does, and the answer reaches the
+ * window as soon as its head is written, its body streaming after it. A handler answering with a body it is still
+ * writing (`HttpServerResponse.stream`) holds the client between the response head and its body.
+ */
+export const streamingBrowserNetwork = (...applications: readonly [InProcessApplication, ...InProcessApplication[]]) =>
+  Layer.effectDiscard(
+    Effect.gen(function* interceptStreamingBrowserNetwork() {
+      const server = yield* served(applications);
+      const run = yield* FiberSet.makeRuntimePromise();
+      const { fetch: network } = window.happyDOM.settings;
+      const previous = network.interceptor;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          network.interceptor = { beforeAsyncRequest: flow(liveWindowAnswer(server), run) };
         }),
         () =>
           Effect.sync(() => {

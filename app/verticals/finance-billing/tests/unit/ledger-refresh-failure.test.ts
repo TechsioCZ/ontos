@@ -1,13 +1,28 @@
+// @rstest-environment happy-dom
+import { acted, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import { HttpServerResponse } from 'effect/http';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
-import type { ReactNode } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { InvoiceSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
+import {
+  InvoiceSchema,
+  RecordsApi,
+  RecordsForbiddenProblemSchema,
+  RecordsResponseSchema,
+  RecordsUnavailableProblemSchema,
+} from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { FinanceInvoiceTable } from '../../src/routes/[lang]/finance/invoices-table.tsx';
 import { financePageScope } from '../../src/routes/[lang]/finance/finance-page-scope.ts';
 import { preloadFinanceRecords, useFinanceRecords } from '../../src/routes/[lang]/finance/use-finance-records.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 /**
  * A ledger that loaded empty successfully, then failed its refresh, used to tell the user the empty list is the
@@ -16,35 +31,6 @@ import { preloadFinanceRecords, useFinanceRecords } from '../../src/routes/[lang
  * tests render the real hook result into the real invoices table. A failed refresh must surface its failure and
  * must not present the last-good rows (or write access) as the current answer; a denied read must clear them too.
  */
-
-interface FinanceTestSearch {
-  readonly partyId?: string;
-  readonly resourceId?: string;
-}
-
-const mocks = rstest.hoisted(() => {
-  const search: FinanceTestSearch = {};
-  return { location: { search, searchStr: '' }, records: rstest.fn() };
-});
-
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useRouterState: (options?: {
-    readonly select?: (state: { readonly location: typeof mocks.location }) => string | FinanceTestSearch | null;
-  }) => (options?.select === undefined ? '' : options.select({ location: mocks.location })),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, _options?: Readonly<Record<string, string | number>>) => key,
-  }),
-}));
-// The store is deliberately browser-gated; in the node test the render reads the current entry directly.
-rstest.mock('react', () => ({
-  ...rstest.requireActual('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
 
 const emptyLedger = Schema.decodeSync(RecordsResponseSchema)({
   businessDate: '2026-10-05',
@@ -70,8 +56,20 @@ const emptyLedger = Schema.decodeSync(RecordsResponseSchema)({
   state: { financialPlanEntries: [], invoices: [] },
 }) satisfies RecordsResponse;
 
-const unavailable = { _tag: 'RecordsUnavailableProblem', status: 503 };
-const forbidden = { _tag: 'RecordsForbiddenProblem', status: 403 };
+const unavailable = RecordsUnavailableProblemSchema.make({
+  detail: 'Ledger unavailable',
+  retryable: true,
+  status: 503,
+  title: 'Unavailable',
+  type: 'urn:ontos:test:records-unavailable',
+});
+const forbidden = RecordsForbiddenProblemSchema.make({
+  detail: 'Ledger access denied',
+  status: 403,
+  title: 'Forbidden',
+  type: 'urn:ontos:test:records-forbidden',
+});
+const czech = moduleText('cs');
 const successfulEmptyKey = 'finance-billing.faktury.emptyFirstTitle';
 const failureKey = 'finance-billing.faktury.loadError';
 
@@ -134,8 +132,8 @@ const ledgerWithInvoices = Schema.decodeUnknownSync(RecordsResponseSchema)({
 /** One shape for the user-visible outcome, so a failure shows the whole answer the screen gives. */
 const messageOf = (feedback: string, html: string) => ({
   feedback,
-  showsFailure: html.includes(failureKey),
-  showsSuccessfulEmpty: html.includes(successfulEmptyKey),
+  showsFailure: html.includes(czech(failureKey)),
+  showsSuccessfulEmpty: html.includes(czech(successfulEmptyKey)),
 });
 
 /** The real table, fed by the real ledger hook; the render captures the hook result for assertions. */
@@ -153,75 +151,85 @@ const LedgerHarness = () => {
   return createElement(FinanceInvoiceTable, { vm });
 };
 
-const renderLedger = () => {
-  rendered.length = 0;
-  const html = renderToStaticMarkup(createElement(LedgerHarness));
+const currentLedger = () => {
   const vm = rendered.at(-1);
+  expect(vm).toBeDefined();
   if (vm === undefined) {
     throw new Error('the finance ledger hook did not render');
   }
-  return { html, vm };
+  return { html: text(), vm };
 };
 
-/** The ledger the Shell preloads before the first paint of the page. */
+let query = '';
+let answer: Effect.Effect<
+  RecordsResponse,
+  typeof RecordsUnavailableProblemSchema.Type | typeof RecordsForbiddenProblemSchema.Type
+> = Effect.succeed(emptyLedger);
+const reads: RecordsRequest[] = [];
+const OwnerRecordsApi = RecordsApi.prefix('/finance-billing-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'finance-billing': '/finance-billing-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          reads.push(payload);
+          return answer;
+        }),
+      ),
+    ),
+  ),
+  HttpRouter.add(
+    'GET',
+    '/shell-super-app-api/auth/session',
+    Effect.succeed(HttpServerResponse.jsonUnsafe({ identity: { displayName: 'Accountant' } })),
+  ),
+);
+
+const renderLedger = () =>
+  Effect.gen(function* mountLedger() {
+    unmountAll();
+    rendered.length = 0;
+    yield* mountInRoute(createElement(LedgerHarness), { path: 'finance', url: `/cs/finance${query}` });
+    return currentLedger();
+  });
+
+/** Preload and mount use the same real router query and owner records endpoint. */
 const preload = (
   partyId: string,
-  search: Pick<FinanceTestSearch, 'resourceId'> = {},
+  search: Pick<RecordsRequest, 'resourceId'> = {},
   ledger: RecordsResponse = emptyLedger,
 ) =>
   Effect.gen(function* preloadLedger() {
-    mocks.location.search = { partyId, ...search };
-    mocks.records.mockReturnValue(Effect.succeed(ledger));
-    yield* preloadFinanceRecords(`?partyId=${partyId}`, shellContext);
+    query = `?${new URLSearchParams({ partyId, ...search })}`;
+    answer = Effect.succeed(ledger);
+    yield* preloadFinanceRecords(query, shellContext);
   });
 
-/** Lets the store's runtime run a fiber turn. */
-const yieldToLedger = (turns: number): Effect.Effect<void> =>
-  Effect.suspend(() => (turns === 0 ? Effect.void : Effect.yieldNow.pipe(Effect.andThen(yieldToLedger(turns - 1)))));
-
-/** Polls the mocked read count without a clock read; the turn bound keeps a broken startup from hanging the test. */
-const waitForLedgerReads = (reads: number, attempts: number): Effect.Effect<void> =>
-  Effect.suspend(() =>
-    mocks.records.mock.calls.length >= reads || attempts === 0
-      ? Effect.void
-      : Effect.yieldNow.pipe(Effect.andThen(waitForLedgerReads(reads, attempts - 1))),
-  );
-
-/** Waits for the ledger read the real hook started from `reload()` to settle in the real store. */
-const settleLedgerReads = (label: string, reads: number) =>
+/** Wait for recorded owner reads and the mounted view's settled feedback, never for spy calls. */
+const settleLedgerReads = (label: string, count: number) =>
   Effect.gen(function* settled() {
-    yield* waitForLedgerReads(reads, 400);
-    if (mocks.records.mock.calls.length < reads) {
-      throw new Error(`${label}: the refresh never read the ledger`);
-    }
-    // The store settles its entry in the same fiber turn as the read; let that turn finish before rendering.
-    yield* yieldToLedger(100);
-    return renderLedger();
+    yield* waitUntil(() => reads.length >= count && currentLedger().vm.feedback !== 'loading');
+    expect(reads.length, label).toBeGreaterThanOrEqual(count);
+    return currentLedger();
   });
-
 const settleRefresh = (label: string) => settleLedgerReads(label, 2);
 
 describe('finance ledger after a successful empty load', () => {
   beforeEach(() => {
-    // The store draws its browser boundary from these globals; the test supplies only that shape, no DOM. The store only
-    // asks whether `document` exists; reading it as undefined keeps ui-kit overlays inline, as in server rendering.
-    Object.defineProperty(globalThis, 'document', { configurable: true, get: () => globalThis.undefined });
-    rstest.stubGlobal('addEventListener', () => {});
-    rstest.stubGlobal('removeEventListener', () => {});
-    rstest.stubGlobal('dispatchEvent', () => true);
-    // The test transpiler emits the classic JSX factory for imported `.tsx` modules; give it the real React.
-    rstest.stubGlobal('React', rstest.requireActual('react'));
+    reads.length = 0;
+    rendered.length = 0;
+    answer = Effect.succeed(emptyLedger);
+    query = '';
   });
-
-  afterEach(() => {
-    Reflect.deleteProperty(globalThis, 'document');
-    mocks.records.mockReset();
-  });
+  afterEach(unmountAll);
 
   it.live('shows the successful empty state when the ledger really is empty', () =>
     Effect.gen(function* initialSuccess() {
+      yield* pinTestDocument;
       yield* preload('ledger-refresh-initial');
-      const { html, vm } = renderLedger();
+      const { html, vm } = yield* renderLedger();
       expect(vm.feedback).toBe('ready');
       expect(vm.snapshot?.revision).toBe(emptyLedger.revision);
       expect(vm.invoices).toEqual([]);
@@ -230,15 +238,16 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: false,
         showsSuccessfulEmpty: true,
       });
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 
   it.live('promises the create button only to a user who can write', () =>
     Effect.gen(function* emptyByPermission() {
-      const createHint = 'finance-billing.faktury.emptyFirstDescription';
-      const readOnlyHint = 'finance-billing.faktury.emptyFirstReadOnlyDescription';
+      yield* pinTestDocument;
+      const createHint = czech('finance-billing.faktury.emptyFirstDescription');
+      const readOnlyHint = czech('finance-billing.faktury.emptyFirstReadOnlyDescription');
       yield* preload('ledger-empty-writer');
-      const writer = renderLedger();
+      const writer = yield* renderLedger();
       expect(writer.vm.canWrite).toBe(true);
       expect({ create: writer.html.includes(createHint), readOnly: writer.html.includes(readOnlyHint) }).toEqual({
         create: true,
@@ -246,19 +255,21 @@ describe('finance ledger after a successful empty load', () => {
       });
 
       yield* preload('ledger-empty-reader', {}, { ...emptyLedger, canWrite: false });
-      const reader = renderLedger();
+      const reader = yield* renderLedger();
       expect(reader.vm.canWrite).toBe(false);
       expect({ create: reader.html.includes(createHint), readOnly: reader.html.includes(readOnlyHint) }).toEqual({
         create: false,
         readOnly: true,
       });
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 
   it.live('shows loading, not an empty ledger, before the first read settles', () =>
-    Effect.sync(() => {
-      mocks.location.search = { partyId: 'ledger-refresh-pending' };
-      const { html, vm } = renderLedger();
+    Effect.gen(function* pendingLoad() {
+      yield* pinTestDocument;
+      query = '?partyId=ledger-refresh-pending';
+      answer = Effect.never;
+      const { html, vm } = yield* renderLedger();
 
       expect(vm.feedback).toBe('loading');
       expect(vm.snapshot).toBeUndefined();
@@ -268,17 +279,18 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: false,
         showsSuccessfulEmpty: false,
       });
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 
   it.live('never reports successful emptiness when the refresh is unavailable', () =>
     Effect.gen(function* transientFailure() {
+      yield* pinTestDocument;
       yield* preload('ledger-refresh-unavailable');
-      const healthy = renderLedger();
+      const healthy = yield* renderLedger();
       expect(messageOf(healthy.vm.feedback, healthy.html).showsSuccessfulEmpty).toBe(true);
 
-      mocks.records.mockReturnValue(Effect.fail(unavailable));
-      healthy.vm.reload();
+      answer = Effect.fail(unavailable);
+      yield* acted(() => healthy.vm.reload());
       const { html, vm } = yield* settleRefresh('unavailable refresh');
 
       // The failed read is not a ledger: a last-good row and its write access are not presented as current.
@@ -293,8 +305,8 @@ describe('finance ledger after a successful empty load', () => {
       });
 
       // A later successful read restores the ledger instead of pinning the failure.
-      mocks.records.mockReturnValue(Effect.succeed(emptyLedger));
-      vm.reload();
+      answer = Effect.succeed(emptyLedger);
+      yield* acted(() => vm.reload());
       const recovered = yield* settleLedgerReads('recovered ledger read', 3);
       expect(recovered.vm.feedback).toBe('ready');
       expect(recovered.vm.snapshot?.revision).toBe(emptyLedger.revision);
@@ -303,15 +315,16 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: false,
         showsSuccessfulEmpty: true,
       });
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 
   it.live('distinguishes a denied refresh from an unavailable one', () =>
     Effect.gen(function* deniedFailure() {
+      yield* pinTestDocument;
       yield* preload('ledger-refresh-forbidden');
-      const healthy = renderLedger();
-      mocks.records.mockReturnValue(Effect.fail(forbidden));
-      healthy.vm.reload();
+      const healthy = yield* renderLedger();
+      answer = Effect.fail(forbidden);
+      yield* acted(() => healthy.vm.reload());
       const { html, vm } = yield* settleRefresh('forbidden refresh');
 
       expect(vm.snapshot).toBeUndefined();
@@ -322,17 +335,18 @@ describe('finance ledger after a successful empty load', () => {
         showsFailure: true,
         showsSuccessfulEmpty: false,
       });
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 
   it.live('keeps an explicit invoice target unavailable, never a stale row, when the refresh is unavailable', () =>
     Effect.gen(function* detailUnavailable() {
+      yield* pinTestDocument;
       yield* preload('ledger-refresh-detail-unavailable', { resourceId: invoiceId }, ledgerWithInvoices);
-      const healthy = renderLedger();
+      const healthy = yield* renderLedger();
       expect(healthy.vm.invoiceDetail).toEqual({ invoice, state: 'ready' });
 
-      mocks.records.mockReturnValue(Effect.fail(unavailable));
-      healthy.vm.reload();
+      answer = Effect.fail(unavailable);
+      yield* acted(() => healthy.vm.reload());
       const { vm } = yield* settleRefresh('unavailable detail refresh');
 
       expect(vm.feedback).toBe('unavailable');
@@ -340,17 +354,18 @@ describe('finance ledger after a successful empty load', () => {
       expect(vm.selected).toBeUndefined();
       expect(vm.invoices).toEqual([]);
       expect(vm.canWrite).toBe(false);
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 
   it.live('reports a denied refresh of an explicit invoice target as forbidden, not unavailable', () =>
     Effect.gen(function* detailForbidden() {
+      yield* pinTestDocument;
       yield* preload('ledger-refresh-detail-forbidden', { resourceId: invoiceId }, ledgerWithInvoices);
-      const healthy = renderLedger();
+      const healthy = yield* renderLedger();
       expect(healthy.vm.invoiceDetail).toEqual({ invoice, state: 'ready' });
 
-      mocks.records.mockReturnValue(Effect.fail(forbidden));
-      healthy.vm.reload();
+      answer = Effect.fail(forbidden);
+      yield* acted(() => healthy.vm.reload());
       const { vm } = yield* settleRefresh('forbidden detail refresh');
 
       expect(vm.feedback).toBe('forbidden');
@@ -358,6 +373,6 @@ describe('finance ledger after a successful empty load', () => {
       expect(vm.selected).toBeUndefined();
       expect(vm.invoices).toEqual([]);
       expect(vm.canWrite).toBe(false);
-    }),
+    }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
   );
 });

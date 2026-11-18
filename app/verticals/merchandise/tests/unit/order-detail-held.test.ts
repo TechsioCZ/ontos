@@ -1,26 +1,28 @@
 // @rstest-environment happy-dom
-// The open order across a reload: the real `useOrderDetail` over the real strict stores, with only the generated
-// records client replaced. A write invalidates the list and the detail, and the detail entry moves with the list
-// revision, so without a held read the detail drops to its loading state and the edit form remounts.
+// The open order across a reload: the real `useOrderDetail`, strict stores and generated records client.
+// The Shell gateway issuer and merchandise records endpoint answer in process through their real contracts.
+// The held read keeps the edit form mounted while a write reloads the list and detail.
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { OrderSchema, ProductRecordSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsResponse } from '../../shared/apis/records.ts';
 import {
   firstOrdersPage,
   orderDetailData,
   ordersPageData,
   useOrderDetail,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
 
 const context = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const scope = pageDataScopeKey(context, 'demo.merchandise') ?? '';
@@ -72,17 +74,31 @@ const recordsOf = (note: string, revision: number) =>
   });
 const source = { legalEntityId: context.legalEntityId, query: firstOrdersPage(2), scope };
 
-/** The register behind the mocked client: the list page and the order's products at one revision. */
+/** The register answers the list page and the order's products at one revision. */
+let answer: Effect.Effect<RecordsResponse> = Effect.succeed(recordsOf('', 0));
 const serve = (note: string, revision: number, gate?: Deferred.Deferred<boolean>) => {
   const records = recordsOf(note, revision);
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    const answer =
-      view?.productId !== undefined || view?.productIds !== undefined
-        ? { ...records, orders: [], products: [product] }
-        : records;
-    return gate === undefined ? Effect.succeed(answer) : Deferred.await(gate).pipe(Effect.as(answer));
-  });
+  answer = gate === undefined ? Effect.succeed(records) : Deferred.await(gate).pipe(Effect.as(records));
 };
+
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => answer).pipe(
+          Effect.map((records) =>
+            payload.view?.productId !== undefined || payload.view?.productIds !== undefined
+              ? { ...records, orders: [], products: [product] }
+              : records,
+          ),
+        ),
+      ),
+    ),
+  ),
+);
 
 /** What the detail showed on every render, and how often the view under it mounted. */
 const shown: string[] = [];
@@ -111,24 +127,9 @@ const OpenOrder = ({ orderId = 'order-1' }: { readonly orderId?: string | null }
   return detail.status === 'ready' ? createElement(Body, { note: detail.order.note ?? '' }) : null;
 };
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
 let unmount: (() => void) | null = null;
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
   orderDetailData.invalidate();
   ordersPageData.invalidate();
   shown.length = 0;
@@ -138,11 +139,11 @@ beforeEach(() => {
 afterEach(() => {
   unmount?.();
   unmount = null;
-  rstest.unstubAllGlobals();
 });
 
-it.effect('the open order stays on screen and mounted while a write reloads the list and the order', () =>
+it.live('the open order stays on screen and mounted while a write reloads the list and the order', () =>
   Effect.gen(function* held() {
+    yield* pinTestDocument;
     serve('před změnou', 7);
     const container = document.createElement('div');
     document.body.append(container);
@@ -153,39 +154,32 @@ it.effect('the open order stays on screen and mounted while a write reloads the 
         container.remove();
       });
     };
-    yield* Effect.promise(() =>
-      act(async () => {
-        root.render(createElement(OpenOrder));
-        await settle();
-      }),
-    );
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:před změnou'));
+    yield* acted(() => root.render(createElement(OpenOrder)));
+    yield* waitUntil(() => shown.at(-1) === 'ready:před změnou');
     expect(mounts).toBe(1);
 
     // An order command settles: both stores are invalidated, and the reload is still on its way.
     const gate = yield* Deferred.make<boolean>();
     serve('po změně', 8, gate);
     shown.length = 0;
-    yield* Effect.promise(() =>
-      act(async () => {
-        ordersPageData.invalidate();
-        orderDetailData.invalidate();
-        await settle();
-      }),
-    );
-    yield* Effect.promise(() => act(settle));
+    yield* acted(() => {
+      ordersPageData.invalidate();
+      orderDetailData.invalidate();
+    });
+    yield* settle;
     expect(shown.length).toBeGreaterThan(0);
     expect(new Set(shown)).toEqual(new Set(['ready:před změnou']));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:po změně'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:po změně');
     expect(shown.filter((state) => !state.startsWith('ready:'))).toEqual([]);
     expect(mounts).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an order opened again after its panel closed never shows the read held before it closed', () =>
+it.live('an order opened again after its panel closed never shows the read held before it closed', () =>
   Effect.gen(function* reopened() {
+    yield* pinTestDocument;
     serve('před změnou', 7);
     const container = document.createElement('div');
     document.body.append(container);
@@ -196,36 +190,27 @@ it.effect('an order opened again after its panel closed never shows the read hel
         container.remove();
       });
     };
-    const show = (orderId: string | null) =>
-      Effect.promise(() =>
-        act(async () => {
-          root.render(createElement(OpenOrder, { orderId }));
-          await settle();
-        }),
-      );
+    const show = (orderId: string | null) => acted(() => root.render(createElement(OpenOrder, { orderId })));
     yield* show('order-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:před změnou'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:před změnou');
 
     // The panel closes; the order changes while it is closed, and its fresh read is still on its way.
     yield* show(null);
     expect(shown.at(-1)).toBe('idle');
     const gate = yield* Deferred.make<boolean>();
     serve('po změně', 8, gate);
-    yield* Effect.promise(() =>
-      act(async () => {
-        ordersPageData.invalidate();
-        orderDetailData.invalidate();
-        await settle();
-      }),
-    );
+    yield* acted(() => {
+      ordersPageData.invalidate();
+      orderDetailData.invalidate();
+    });
     shown.length = 0;
     yield* show('order-1');
-    yield* Effect.promise(() => act(settle));
+    yield* settle;
     expect(shown.length).toBeGreaterThan(0);
     expect(shown).not.toContain('ready:před změnou');
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:po změně'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:po změně');
     expect(shown).not.toContain('ready:před změnou');
-  }),
+  }).pipe(Effect.provide(network)),
 );

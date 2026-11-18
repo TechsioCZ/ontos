@@ -1,4 +1,5 @@
 import { auth, discoverAuthorizationServerMetadata, refreshAuthorization } from '@modelcontextprotocol/client';
+import type { FetchLike } from '@modelcontextprotocol/client';
 import { Effect, FiberSet, Option, Redacted, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { E2eOAuthProvider } from './provider.mts';
@@ -12,6 +13,8 @@ class OAuthFlowInvalid extends Schema.TaggedError<OAuthFlowInvalid>()('OAuthFlow
 
 export const runOAuthFlow = <E, R>(opts: {
   approve: (authorizationUrl: URL) => Effect.Effect<void, E, R>;
+  /** The SDK's transport to the resource and authorization server; the platform fetch when omitted. */
+  fetchFn?: FetchLike;
   loopback: LoopbackCallback;
   providerOptions: E2eOAuthProviderOptions;
   serverUrl: string;
@@ -20,7 +23,7 @@ export const runOAuthFlow = <E, R>(opts: {
     const runtime = yield* FiberSet.makeRuntimePromise<never, string, Cause.NoSuchElementError>();
     const provider = new E2eOAuthProvider(opts.providerOptions, runtime);
     const first = yield* Effect.tryPromise(
-      async () => await auth(provider, { scope: OAUTH_SCOPES, serverUrl: opts.serverUrl }),
+      async () => await auth(provider, { fetchFn: opts.fetchFn, scope: OAUTH_SCOPES, serverUrl: opts.serverUrl }),
     );
     if (first !== 'REDIRECT') {
       return yield* new OAuthFlowInvalid({ message: `Očekáván REDIRECT, přišlo ${first}` });
@@ -44,6 +47,7 @@ export const runOAuthFlow = <E, R>(opts: {
       async () =>
         await auth(provider, {
           authorizationCode: code,
+          fetchFn: opts.fetchFn,
           iss: params.get('iss') ?? undefined,
           serverUrl: opts.serverUrl,
         }),
@@ -75,9 +79,16 @@ const clientInformationFor = (provider: E2eOAuthProvider) =>
     return info;
   });
 
-export const rotateRefreshToken = (opts: { issuer: string; provider: E2eOAuthProvider; resource: string }) =>
+export const rotateRefreshToken = (opts: {
+  fetchFn?: FetchLike;
+  issuer: string;
+  provider: E2eOAuthProvider;
+  resource: string;
+}) =>
   Effect.gen(function* rotateToken() {
-    const metadata = yield* Effect.tryPromise(async () => await discoverAuthorizationServerMetadata(opts.issuer));
+    const metadata = yield* Effect.tryPromise(
+      async () => await discoverAuthorizationServerMetadata(opts.issuer, { fetchFn: opts.fetchFn }),
+    );
     const clientInformation = yield* clientInformationFor(opts.provider);
     const stored = yield* opts.provider.currentTokens();
     if (stored.refresh_token === undefined) {
@@ -88,6 +99,7 @@ export const rotateRefreshToken = (opts: { issuer: string; provider: E2eOAuthPro
       async () =>
         await refreshAuthorization(opts.issuer, {
           clientInformation,
+          fetchFn: opts.fetchFn,
           metadata,
           refreshToken: Redacted.value(oldRefreshToken),
           resource: new URL(opts.resource),
@@ -108,18 +120,22 @@ const InvalidGrantSchema = Schema.Struct({
 
 /** Only invalid_grant proves rejection. Transport/provider failures remain typed failures. Does NOT save tokens. */
 export const refreshIsRejected = (opts: {
+  fetchFn?: FetchLike;
   issuer: string;
   provider: E2eOAuthProvider;
   refreshToken: Redacted.Redacted;
   resource: string;
 }) =>
   Effect.gen(function* replayRefreshToken() {
-    const metadata = yield* Effect.tryPromise(async () => await discoverAuthorizationServerMetadata(opts.issuer));
+    const metadata = yield* Effect.tryPromise(
+      async () => await discoverAuthorizationServerMetadata(opts.issuer, { fetchFn: opts.fetchFn }),
+    );
     const clientInformation = yield* clientInformationFor(opts.provider);
     return yield* Effect.tryPromise(
       async () =>
         await refreshAuthorization(opts.issuer, {
           clientInformation,
+          fetchFn: opts.fetchFn,
           metadata,
           refreshToken: Redacted.value(opts.refreshToken),
           resource: new URL(opts.resource),

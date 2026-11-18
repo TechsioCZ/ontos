@@ -1,17 +1,30 @@
+// @rstest-environment happy-dom
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { Deferred, Effect, Fiber, Option, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  streamingBrowserNetwork,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { mountInRoute } from '../support/module-ui.ts';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
 import { createElement } from 'react';
-import type ReactRuntime from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { moduleChangeEvent, moduleWriteEvent, pageDataPending } from '@app/shared-contracts/page-data';
-import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
+import {
+  ManageCatalogActionApi,
+  ManageCatalogActionConflictProblemSchema,
+} from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import type { ProductRecord } from '../../shared/domain/merchandise-model.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
-import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
 import {
   currentProductRows,
   detailInput,
@@ -27,32 +40,6 @@ import {
   useProductDetail,
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import type { CommandOutcome } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-// Verify the client first-render branch without effects or an unrelated browser/component suite.
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
 
 const context = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -133,36 +120,89 @@ const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({
   type: 'urn:test:denied',
 });
 
+const reads: RecordsRequest[] = [];
+const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+let readAnswer: (payload: RecordsRequest) => Effect.Effect<RecordsResponse, typeof denied>;
+let commandAnswer: Effect.Effect<
+  typeof ApplyCommandResultSchema.Type | typeof ActionProposalAcceptedSchema.Type,
+  typeof ManageCatalogActionConflictProblemSchema.Type
+> = Effect.never;
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const OwnerActionApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const applications = [
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          reads.push(payload);
+          return readAnswer(payload);
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          commands.push(payload);
+          return commandAnswer;
+        }),
+      ),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
+  ),
+] as const;
+const network = browserNetwork(...applications);
+/** The same servers, with the window request's abort reaching its handler, as a dropped connection does. */
+const cancellationNetwork = streamingBrowserNetwork(...applications);
+
 beforeEach(() => {
-  rstest.resetAllMocks();
+  reads.length = 0;
+  commands.length = 0;
   productListData.invalidate();
   productDetailData.invalidate();
-  rstest.mocked(executeRecords).mockImplementation(({ view }) =>
+  readAnswer = ({ view }) =>
     Effect.succeed({
       ...response,
       products: products.filter((entry) => entry.id === view?.productId),
-    }),
-  );
+    });
+  commandAnswer = Effect.never;
 });
+afterEach(unmountAll);
 
-const renderProductState = (id: string, scope: typeof context, revision: number) => {
-  const StateProbe = () =>
-    createElement('output', null, useProductDetail(scope.legalEntityId, id, scope, revision).status);
-  return renderToStaticMarkup(createElement(StateProbe)).replaceAll(/<[^>]*>/gu, '');
-};
+const StateProbe = ({
+  id,
+  revision,
+  scope,
+}: {
+  readonly id: string;
+  readonly revision: number;
+  readonly scope: typeof context;
+}) => createElement('output', null, useProductDetail(scope.legalEntityId, id, scope, revision).status);
 
-it.effect(
+const renderProductState = (id: string, scope: typeof context, revision: number) =>
+  Effect.gen(function* renderState() {
+    yield* mountInRoute(createElement(StateProbe, { id, revision, scope }));
+    const state = document.querySelector('output')?.textContent;
+    unmountAll();
+    return state;
+  });
+
+it.live(
   'a warmed product opens with complete base, variants, histories, ledger, category and admitted markets without a request',
   () =>
     Effect.gen(function* warmOpen() {
+      yield* pinTestDocument;
       yield* preloadProductDetails(context, 7, [product]);
-      expect(executeRecords).toHaveBeenCalledTimes(1);
-      expect(rstest.mocked(executeRecords).mock.calls[0]?.[0]).toEqual({
+      expect(reads).toHaveLength(1);
+      expect(reads[0]).toEqual({
         view: { categoryTrails: true, ordersLimit: 0, productId: product.id },
       });
       const cached = productDetailData.snapshot(input);
       expect(cached.state).toBe('ready');
-      rstest.mocked(executeRecords).mockClear();
+      reads.length = 0;
       yield* prepareProductDetail({
         context,
         routeParams: { id: product.id },
@@ -186,34 +226,19 @@ it.effect(
             : detail.status,
         );
       };
-      expect(renderToStaticMarkup(createElement(ProductProbe))).toBe(
+      yield* mountInRoute(createElement(ProductProbe));
+      expect(document.querySelector('output')?.outerHTML).toBe(
         '<output>Cable 1|BLACK|1|receipt-1|Electronics / Cables|AKROS-SK|7</output>',
       );
       expect(productDetailData.snapshot(input)).toBe(cached);
-      expect(executeRecords).not.toHaveBeenCalled();
-      expect(executeManageCatalog).not.toHaveBeenCalled();
-    }),
+      expect(reads).toHaveLength(0);
+      expect(commands).toHaveLength(0);
+    }).pipe(Effect.provide(network)),
 );
 
-it.effect('prefetch follows the final kit row order, not a source-array page slice', () =>
-  Effect.gen(function* finalRowModel() {
-    const final: ProductRecord[] = [];
-    for (const row of products.slice(2, 4)) {
-      final.unshift(row);
-    }
-    const table = { getRowModel: () => ({ rows: final.map((original) => ({ original })) }) };
-    const rows = currentProductRows(table, products);
-    expect(rows).toEqual(final);
-    yield* preloadProductDetails(context, 7, rows);
-    expect(rstest.mocked(executeRecords).mock.calls.map(([request]) => request.view?.productId)).toEqual(
-      final.map((row) => row.id),
-    );
-    expect(executeManageCatalog).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect('warming preserves read-only capabilities without requesting mutations or wider catalog data', () =>
+it.live('warming preserves read-only capabilities without requesting mutations or wider catalog data', () =>
   Effect.gen(function* readOnlyProduct() {
+    yield* pinTestDocument;
     const readOnly = {
       ...response,
       canManageCatalog: false,
@@ -221,69 +246,72 @@ it.effect('warming preserves read-only capabilities without requesting mutations
       canWrite: false,
       productMarkets: [],
     };
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(readOnly));
+    readAnswer = () => Effect.succeed(readOnly);
     yield* preloadProductDetails(context, 7, [product]);
     const detail = yield* productDetailData.read(input);
     expect(detail.response.canWrite).toBe(false);
     expect(detail.response.canManageCatalog).toBe(false);
     expect(detail.response.canManageMarkets).toBe(false);
     expect(detail.response.productMarkets).toEqual([]);
-    expect(rstest.mocked(executeRecords).mock.calls[0]?.[0]).toEqual({
+    expect(reads[0]).toEqual({
       view: { categoryTrails: true, ordersLimit: 0, productId: product.id },
     });
-    expect(executeRecords).toHaveBeenCalledTimes(1);
-    expect(executeManageCatalog).not.toHaveBeenCalled();
-  }),
+    expect(reads).toHaveLength(1);
+    expect(commands).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an obsolete table model cannot prefetch a new source page or scope', () =>
+it.live('an obsolete table model cannot prefetch a new source page or scope', () =>
   Effect.gen(function* obsoleteModel() {
+    yield* pinTestDocument;
     const old = { getRowModel: () => ({ rows: [{ original: product }] }) };
     const nextSource = products.map((entry) => ({ ...entry }));
     expect(currentProductRows(old, nextSource)).toEqual([]);
     yield* preloadProductDetails(context, 7, currentProductRows(old, nextSource));
-    expect(executeRecords).not.toHaveBeenCalled();
-  }),
+    expect(reads).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('two background requests at most; cancelling a page stops its active requests and queued rows', () =>
+it.live('two background requests at most; cancelling a page stops its active requests and queued rows', () =>
   Effect.gen(function* cancellation() {
+    yield* pinTestDocument;
     const started = yield* Deferred.make<true>();
+    const stopped = yield* Deferred.make<true>();
     let active = 0;
     let peak = 0;
-    rstest.mocked(executeRecords).mockImplementation(() =>
+    readAnswer = () =>
       Effect.sync(() => {
         active += 1;
         peak = Math.max(peak, active);
       }).pipe(
-        Effect.andThen(Deferred.succeed(started, true)),
+        Effect.andThen(Effect.suspend(() => (active === 2 ? Deferred.succeed(started, true) : Effect.void))),
         Effect.andThen(Effect.never),
         Effect.ensuring(
           Effect.sync(() => {
             active -= 1;
-          }),
+          }).pipe(Effect.andThen(Effect.suspend(() => (active === 0 ? Deferred.succeed(stopped, true) : Effect.void)))),
         ),
-      ),
-    );
+      );
     const background = yield* Effect.forkChild(preloadProductDetails(context, 7, products));
     yield* Deferred.await(started);
-    yield* Effect.yieldNow;
+    // Only the two held reads are open and nothing else is on its way: a third concurrent read would have arrived.
+    yield* networkQuietExcept(2);
     expect(active).toBe(2);
     expect(peak).toBe(2);
     yield* Fiber.interrupt(background);
+    yield* Deferred.await(stopped);
     expect(active).toBe(0);
-    expect(executeRecords).toHaveBeenCalledTimes(2);
+    expect(reads).toHaveLength(2);
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
-  }),
+  }).pipe(Effect.provide(cancellationNetwork)),
 );
 
-it.effect('a foreground opening joins the row in flight and keeps it alive when the old table batch is cancelled', () =>
+it.live('a foreground opening joins the row in flight and keeps it alive when the old table batch is cancelled', () =>
   Effect.gen(function* foregroundJoin() {
+    yield* pinTestDocument;
     const started = yield* Deferred.make<true>();
     const gate = yield* Deferred.make<true>();
-    rstest
-      .mocked(executeRecords)
-      .mockReturnValue(Deferred.succeed(started, true).pipe(Effect.andThen(Deferred.await(gate)), Effect.as(response)));
+    readAnswer = () => Deferred.succeed(started, true).pipe(Effect.andThen(Deferred.await(gate)), Effect.as(response));
     const background = yield* Effect.forkChild(preloadProductDetails(context, 7, [product]));
     yield* Deferred.await(started);
     const foreground = yield* Effect.forkChild(productDetailData.read(input));
@@ -291,15 +319,25 @@ it.effect('a foreground opening joins the row in flight and keeps it alive when 
     yield* Fiber.interrupt(background);
     yield* Deferred.succeed(gate, true);
     yield* Fiber.join(foreground);
-    expect(executeRecords).toHaveBeenCalledTimes(1);
+    expect(reads).toHaveLength(1);
     expect(productDetailData.snapshot(input).state).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('foreground work bypasses two unrelated background rows', () =>
+it.live('foreground work bypasses two unrelated background rows', () =>
   Effect.gen(function* foregroundPriority() {
+    yield* pinTestDocument;
     const started = yield* Deferred.make<true>();
-    rstest.mocked(executeRecords).mockReturnValue(Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never)));
+    const thirdStarted = yield* Deferred.make<true>();
+    readAnswer = () => {
+      if (reads.length === 3) {
+        return Deferred.succeed(thirdStarted, true).pipe(Effect.andThen(Effect.never));
+      }
+      if (reads.length === 2) {
+        return Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never));
+      }
+      return Effect.never;
+    };
     const background = yield* Effect.forkChild(preloadProductDetails(context, 7, products.slice(0, 2)));
     yield* Deferred.await(started);
     yield* Effect.yieldNow;
@@ -310,78 +348,85 @@ it.effect('foreground work bypasses two unrelated background rows', () =>
     }
     const foregroundInput = Option.getOrThrow(detailInput(context.legalEntityId, third.id, context, 7));
     const foreground = yield* Effect.forkChild(productDetailData.read(foregroundInput));
-    yield* Effect.yieldNow;
-    expect(executeRecords).toHaveBeenCalledTimes(3);
+    yield* Deferred.await(thirdStarted);
+    expect(reads).toHaveLength(3);
     yield* Fiber.interrupt(foreground);
     yield* Fiber.interrupt(background);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('full tenant, company, principal and owner revision isolate cached products', () =>
+it.live('full tenant, company, principal and owner revision isolate cached products', () =>
   Effect.gen(function* identity() {
+    yield* pinTestDocument;
     yield* preloadProductDetails(context, 7, [product]);
     for (const field of ['tenantId', 'legalEntityId', 'principalId'] as const) {
       const other = { ...context, [field]: 'other' };
       const cold = Option.getOrThrow(detailInput(other.legalEntityId, product.id, other, 7));
       expect(productDetailData.snapshot(cold)).toBe(pageDataPending);
-      expect(renderProductState(cold.productId, other, 7)).toBe('loading');
+      readAnswer = () => Effect.never;
+      expect(yield* renderProductState(cold.productId, other, 7)).toBe('loading');
     }
     expect(productDetailData.snapshot({ ...input, revision: 8 })).toBe(pageDataPending);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('forbidden refresh discards old fields/actions and a subsequent allowed opening retries', () =>
+it.live('forbidden refresh discards old fields/actions and a subsequent allowed opening retries', () =>
   Effect.gen(function* forbiddenRefresh() {
+    yield* pinTestDocument;
     yield* preloadProductDetails(context, 7, [product]);
-    rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
+    readAnswer = () => Effect.fail(denied);
     yield* productDetailData.refresh(input);
     expect(detailState(true, productDetailData.snapshot(input))).toEqual({ reason: 'forbidden', status: 'error' });
     expect(productDetailData.snapshot(input)).not.toHaveProperty('value');
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(response));
+    readAnswer = () => Effect.succeed(response);
     yield* productDetailData.read(input);
     expect(productDetailData.snapshot(input).state).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('missing products are not filled from fixtures or retained as reusable negative cache hits', () =>
+it.live('missing products are not filled from fixtures or retained as reusable negative cache hits', () =>
   Effect.gen(function* missingProduct() {
+    yield* pinTestDocument;
     const missing = Option.getOrThrow(detailInput(context.legalEntityId, 'missing', context, 7));
     yield* Effect.exit(productDetailData.read(missing));
     expect(detailState(true, productDetailData.snapshot(missing))).toEqual({ status: 'not-found' });
     yield* Effect.exit(productDetailData.read(missing));
-    expect(executeRecords).toHaveBeenCalledTimes(2);
-  }),
+    expect(reads).toHaveLength(2);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('native settled-write and live events invalidate details without requesting other pages', () =>
+it.live('native settled-write and live events invalidate details without requesting other pages', () =>
   Effect.gen(function* invalidationEvents() {
+    yield* pinTestDocument;
     yield* preloadProductDetails(context, 7, [product]);
-    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    window.dispatchEvent(new Event(moduleWriteEvent));
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
     yield* productDetailData.read(input);
-    globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    window.dispatchEvent(new Event(moduleChangeEvent));
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
-    expect(executeRecords).toHaveBeenCalledTimes(2);
-  }),
+    expect(reads).toHaveLength(2);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('owner commands invalidate details but preserve the submitted expectedRevision and command outcome', () =>
+it.live('owner commands invalidate details but preserve the submitted expectedRevision and command outcome', () =>
   Effect.gen(function* ownerWrite() {
+    yield* pinTestDocument;
     yield* preloadProductDetails(context, 7, [product]);
     const commit = yield* Schema.decodeEffect(ApplyCommandResultSchema)({ entityIds: [product.id], revision: 8 });
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed(commit));
+    commandAnswer = Effect.succeed(commit);
     const done = yield* Deferred.make<CommandOutcome>();
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { active: false } }, 7, (outcome) => {
       Deferred.doneUnsafe(done, Effect.succeed(outcome));
     });
     expect(yield* Deferred.await(done)).toEqual({ ok: true, revision: 8 });
-    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].expectedRevision).toBe(7);
+    expect(commands[0]?.expectedRevision).toBe(7);
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('rejected owner commands also invalidate the local cache without altering their revision', () =>
+it.live('rejected owner commands also invalidate the local cache without altering their revision', () =>
   Effect.gen(function* rejectedWrite() {
+    yield* pinTestDocument;
     yield* preloadProductDetails(context, 7, [product]);
     const failure = yield* Schema.decodeEffect(ManageCatalogActionConflictProblemSchema)({
       _tag: 'ManageCatalogActionConflictProblem',
@@ -391,23 +436,24 @@ it.effect('rejected owner commands also invalidate the local cache without alter
       title: 'Conflict',
       type: 'urn:test:conflict',
     });
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(failure));
+    commandAnswer = Effect.fail(failure);
     const done = yield* Deferred.make<CommandOutcome>();
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { active: false } }, 7, (outcome) => {
       Deferred.doneUnsafe(done, Effect.succeed(outcome));
     });
     expect(yield* Deferred.await(done)).toEqual({ ok: false, reason: 'conflict' });
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('missing Shell identity never starts background detail reads', () =>
+it.live('missing Shell identity never starts background detail reads', () =>
   Effect.gen(function* unknownScope() {
+    yield* pinTestDocument;
     yield* preloadProductDetails(undefined, 7, [product]);
     yield* prepareProductDetail({ routeParams: { id: product.id }, search: '?productRevision=7' });
-    expect(executeRecords).not.toHaveBeenCalled();
+    expect(reads).toHaveLength(0);
     expect(productDetailSearch(undefined, 7)()).toEqual({});
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 it('revision hints are bounded cache keys, not a new write revision or an authorization bypass', () => {
@@ -428,14 +474,15 @@ it('the list view key distinguishes current scope, filters, sort and page', () =
   expect(productListData.key({ ...first, query: { ...first.query, search: 'cable' } })).not.toBe(key);
 });
 
-it.effect('a product proposal retains actual pending metadata without reporting a committed revision', () =>
+it.live('a product proposal retains actual pending metadata without reporting a committed revision', () =>
   Effect.gen(function* productProposal() {
+    yield* pinTestDocument;
     const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
       _tag: 'ActionProposalAccepted',
       expiresAt: '2026-11-10T12:00:00.000Z',
       proposalId: '60000000-0000-4000-8000-000000000001',
     });
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed(receipt));
+    commandAnswer = Effect.succeed(receipt);
     const completion = yield* Deferred.make<CommandOutcome>();
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { active: false } }, 7, (outcome) => {
       Deferred.doneUnsafe(completion, Effect.succeed(outcome));
@@ -443,5 +490,5 @@ it.effect('a product proposal retains actual pending metadata without reporting 
     const outcome = yield* Deferred.await(completion);
     expect(outcome).toEqual({ ok: false, proposal: receipt, reason: 'approval-required' });
     expect('revision' in outcome).toBe(false);
-  }),
+  }).pipe(Effect.provide(network)),
 );

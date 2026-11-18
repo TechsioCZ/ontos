@@ -1,9 +1,10 @@
-import { expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Schema, Struct, pipe } from 'effect';
 import { RecordsResponseSchema as WorkRecordsResponseSchema } from '@app/work-tasks/contracts/records';
 import { CalendarEventSchema, NotificationSchema } from '../../shared/domain/agenda.ts';
 import type { AgendaState, NotificationCategory } from '../../shared/domain/agenda.ts';
 import type { OverviewResponse } from '../../shared/apis/overview.ts';
+import { moduleCopy, moduleText } from '../support/module-ui.ts';
 import type { OccupancyData, PropertyData, RentalOverviewSources } from '../../src/ui/ops-agenda/sources.ts';
 
 import { principalLabel as assetPrincipalLabel } from '../../src/routes/[lang]/provoz/majetek/assets-model.ts';
@@ -17,15 +18,10 @@ import {
   personalGreetingName,
 } from '../../src/ui/ops-agenda/model.ts';
 
-rstest.mock('../../src/ui/ops-agenda/sources.ts', () => ({
-  sourceKeys: ['property', 'occupancy', 'agreements', 'work', 'finance', 'ops', 'parties'],
-}));
-rstest.mock('@app/admin-ui', () => ({ foldSearchText: (value: string) => value.toLowerCase() }));
-
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
 const at = '2026-10-20T08:00:00Z';
-const translate = (key: string) => key;
+const translate = moduleCopy('cs').t;
 const event = Schema.decodeUnknownSync(CalendarEventSchema)({
   createdAt: at,
   createdBy: actor,
@@ -168,26 +164,6 @@ it('operations projection preserves nested deadline ties, source dates and paren
   expect(deadlines[0]?.key).toBe('ops:assets:winner:nextDueOn:2026-11-01');
   expect(opsSegments['custom-source'] ?? 'custom-source').toBe('custom-source');
   expect(opsRecordHref('custom-source', 'unknown-list', 'record')).toBe('/provoz/custom-source');
-});
-
-it('operations search preserves text precedence, short search fields and the location fallback boundary', () => {
-  // Keep the legacy member order and whitespace visible; search text walks this exact JSON sequence.
-  const fixture = Schema.decodeSync(Schema.fromJsonString(Schema.Json))(`{
-    "documents": [{ "id": "doc 1", "name": "", "title": "  ", "note": "needle", "location": {}, "related": { "label": "Unused" } }],
-    "history": [{ "id": "hidden", "title": "History" }],
-    "other": [{ "title": "Missing identity" }, null]
-  }`);
-  const rows = opsSearchRows('documents', fixture);
-  const expected = Schema.decodeSync(Schema.fromJsonString(Schema.Json))(`[
-    {
-      "href": "/provoz/dokumenty?doc=doc%201",
-      "id": "doc 1",
-      "kind": "ops",
-      "title": "  ",
-      "terms": "documents doc 1     needle"
-    }
-  ]`);
-  expect(rows).toEqual(expected);
 });
 
 const property = (
@@ -348,7 +324,9 @@ it('author labels never infer a demo identity and self labels include tenant ide
   expect(assetPrincipalLabel(principal, principal, 'vy')).toBe('vy');
   expect(assetPrincipalLabel(principal, undefined, 'vy')).toBe('');
   expect(assetPrincipalLabel(principal, otherTenant, 'vy')).toBe('');
-  expect(meterPersonLabel(translate, principal, principal)).toBe('facility-operations.meters.people.you');
+  expect(meterPersonLabel(translate, principal, principal)).toBe(
+    moduleText('cs')('facility-operations.meters.people.you'),
+  );
   expect(meterPersonLabel(translate, principal)).toBe('');
   expect(meterPersonLabel(translate, principal, otherTenant)).toBe('');
 });

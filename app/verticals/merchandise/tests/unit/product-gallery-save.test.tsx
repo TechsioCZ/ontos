@@ -2,62 +2,45 @@
 // The pictures of the "E-shop a obrázky" tab are part of the tab's draft: an upload stores the file at once but the
 // picture joins the public gallery, and order, main picture and removals change, only with the tab's one Uložit. That
 // save sends the whole gallery against the catalog revision the draft was read at, so a save over someone else's
-// change is refused as a conflict. Only the generated clients, the i18n runtime and the router blocker are replaced.
+// change is refused as a conflict. Real clients, translations and router run against in-process HTTP contracts.
 import { saveLabelsFor } from '@app/admin-ui';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
-import { Effect, Option, Schema } from 'effect';
-import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
 import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { changeProductImagesActionSchemaErrorLive } from '../../api/change-product-images-action-problems.ts';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import {
+  ChangeProductImagesActionApi,
   ChangeProductImagesActionConflictProblemSchema,
   ChangeProductImagesActionIneligibleProblemSchema,
 } from '../../shared/apis/change-product-images-action.ts';
+import type {
+  ChangeProductImagesActionProblem,
+  ChangeProductImagesPayloadSchema,
+} from '../../shared/apis/change-product-images-action.ts';
+import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeChangeProductImages } from '../../src/api/change-product-images-action-client.ts';
-import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { EshopPanel } from '../../src/routes/[lang]/provoz/produkty/product-eshop-panel.tsx';
 import type { StageImage } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/media-client.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/change-product-images-action-client.ts');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-
-/** The router's blocked navigation: `blocked` while a route change waits for the question's answer. */
-interface BlockedNavigation {
-  proceeded: number;
-  reset: number;
-  status: 'blocked' | 'idle';
-}
-const navigation: BlockedNavigation = {
-  proceeded: 0,
-  reset: 0,
-  status: 'idle',
-};
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({
-    proceed: () => {
-      navigation.proceeded += 1;
-    },
-    reset: () => {
-      navigation.reset += 1;
-    },
-    status: navigation.status,
-  }),
-}));
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
-/** The locale keys the stubbed i18n runtime shows as names. */
+const t = moduleText('cs');
 const copy = {
-  moveLater: 'merchandise.pages.products.gallery.moveLaterLabel',
-  remove: 'merchandise.pages.products.gallery.removeLabel',
-  saveRejected: 'merchandise.pages.products.gallery.saveRejected',
+  moveLater: t('merchandise.pages.products.gallery.moveLaterLabel', { position: 1 }),
+  remove: t('merchandise.pages.products.gallery.removeLabel', { position: 1 }),
+  saveRejected: t('merchandise.pages.products.gallery.saveRejected'),
 };
 
 const first = 'https://www.akros.cz/data/product/first.jpg';
@@ -93,17 +76,44 @@ const conflict = Schema.decodeSync(ChangeProductImagesActionConflictProblemSchem
   type: 'urn:test:conflict',
 });
 
+const galleryRequests: (typeof ChangeProductImagesPayloadSchema.Encoded)[] = [];
+const settingsRequests: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const saved = Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 });
+let galleryAnswer: Effect.Effect<typeof saved, ChangeProductImagesActionProblem> = Effect.succeed(saved);
+const OwnerGalleryApi = ChangeProductImagesActionApi.prefix('/merchandise-api');
+const OwnerSettingsApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerGalleryApi,
+    HttpApiBuilder.group(OwnerGalleryApi, 'changeProductImagesAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          galleryRequests.push(payload);
+          return galleryAnswer;
+        }),
+      ),
+    ).pipe(Layer.provide(changeProductImagesActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerSettingsApi,
+    HttpApiBuilder.group(OwnerSettingsApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          settingsRequests.push(payload);
+          return saved;
+        }),
+      ),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
+  ),
+);
+
 const gallerySaves = () =>
-  rstest.mocked(executeChangeProductImages).mock.calls.map(([payload]) => ({
+  galleryRequests.map((payload) => ({
     change: payload.command.change,
     expectedRevision: payload.expectedRevision,
   }));
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const unmounts: (() => void)[] = [];
 const committed: string[] = [];
 const staging: MediaImageUpload[] = [];
 
@@ -128,114 +138,69 @@ const ineligible = Schema.decodeSync(ChangeProductImagesActionIneligibleProblemS
 });
 
 const settingsSaves = () =>
-  rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => ({
+  settingsRequests.map((payload) => ({
     command: payload.command,
     expectedRevision: payload.expectedRevision,
   }));
 
-const mountWith = async ({ canWrite }: { readonly canWrite: boolean }) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  const show = async () => {
-    await act(async () => {
-      root.render(
-        <EshopPanel
-          canWrite={canWrite}
-          canWriteImages
-          onCommitted={(message) => {
-            committed.push(message);
-          }}
-          onReload={constVoid}
-          prepare={() => Effect.succeed(upload)}
-          product={product}
-          revision={7}
-          stage={stage}
-        />,
-      );
-      await settle();
-    });
-  };
-  await show();
-  unmounts.push(() => {
-    act(() => {
-      root.unmount();
-      container.remove();
-    });
-  });
-  return { rerender: show };
-};
+const mountWith = ({ canWrite }: { readonly canWrite: boolean }) =>
+  mountInRoute(
+    <EshopPanel
+      canWrite={canWrite}
+      canWriteImages
+      onCommitted={(message) => {
+        committed.push(message);
+      }}
+      onReload={constVoid}
+      prepare={() => Effect.succeed(upload)}
+      product={product}
+      revision={7}
+      stage={stage}
+    />,
+  );
 const mount = () => mountWith({ canWrite: false });
 
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
 const button = (name: string) => Option.getOrThrow(Option.fromNullishOr(buttons(name)[0]));
 const labelled = (name: string) =>
   Option.getOrThrow(Option.fromNullishOr(document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)));
 const tiles = () => document.querySelectorAll('[data-testid="gallery-image"]').length;
 
 const click = (element: HTMLElement) =>
-  Effect.promise(() =>
-    act(async () => {
-      element.click();
-      await settle();
-    }),
-  );
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
+  acted(() => {
+    element.click();
+  });
 
 const typeInto = (id: string, value: string) =>
-  Effect.promise(() =>
-    act(async () => {
-      const input = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`#${id}`)));
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      await settle();
-    }),
-  );
+  acted(() => {
+    const input = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`#${id}`)));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 
 /** Picks a file in the picker's own input (not the form field), as the browser would. */
 const pick = (file: File) =>
-  Effect.promise(() =>
-    act(async () => {
-      const input = Option.getOrThrow(
-        Option.fromNullOr(document.querySelector<HTMLInputElement>('input[type="file"][id$=":input"]')),
-      );
-      Object.defineProperty(input, 'files', { configurable: true, value: [file] });
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      await settle();
-    }),
-  );
+  acted(() => {
+    const input = Option.getOrThrow(
+      Option.fromNullOr(document.querySelector<HTMLInputElement>('input[type="file"][id$=":input"]')),
+    );
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
-  navigation.proceeded = 0;
-  navigation.reset = 0;
-  navigation.status = 'idle';
   committed.length = 0;
   staging.length = 0;
-  rstest.mocked(executeChangeProductImages).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
+  galleryRequests.length = 0;
+  settingsRequests.length = 0;
+  galleryAnswer = Effect.succeed(saved);
 });
 
-afterEach(() => {
-  for (const unmount of unmounts) {
-    unmount();
-  }
-  unmounts.length = 0;
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
-it.effect('reordering and removing change only the draft; Uložit sends the gallery once at its revision', () =>
+it.live('reordering and removing change only the draft; Uložit sends the gallery once at its revision', () =>
   Effect.gen(function* reorderThenSave() {
-    yield* Effect.promise(mount);
+    yield* pinTestDocument;
+    yield* mount();
     expect(buttons(labels.save)).toHaveLength(1);
     expect(button(labels.save).disabled).toBe(true);
 
@@ -245,89 +210,92 @@ it.effect('reordering and removing change only the draft; Uložit sends the gall
     expect(button(labels.save).disabled).toBe(false);
 
     yield* click(button(labels.save));
-    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    yield* waitUntil(() => committed.length === 1);
     expect(gallerySaves()).toEqual([{ change: { _tag: 'Set', images: [second, first] }, expectedRevision: 7 }]);
     // The settings did not change, so only the gallery was sent.
-    expect(executeManageCatalog).not.toHaveBeenCalled();
-  }),
+    expect(settingsRequests).toEqual([]);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an uploaded picture is stored at once but reaches the e-shop only with Uložit', () =>
+it.live('an uploaded picture is stored at once but reaches the e-shop only with Uložit', () =>
   Effect.gen(function* uploadThenSave() {
-    yield* Effect.promise(mount);
+    yield* pinTestDocument;
+    yield* mount();
     yield* pick(new File([new Uint8Array([1])], 'detail.png', { type: 'image/png' }));
-    yield* Effect.promise(() => waitUntil(() => tiles() === 3));
+    yield* waitUntil(() => tiles() === 3);
+    yield* waitUntil(() => !button(labels.save).disabled);
     expect(staging).toHaveLength(1);
     // Nothing reached the public gallery yet.
     expect(gallerySaves()).toEqual([]);
 
     yield* click(button(labels.save));
-    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    yield* waitUntil(() => committed.length === 1);
     expect(gallerySaves()).toEqual([{ change: { _tag: 'Set', images: [first, second, staged] }, expectedRevision: 7 }]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a save over someone else’s newer change is refused as a conflict and keeps the draft', () =>
+it.live('a save over someone else’s newer change is refused as a conflict and keeps the draft', () =>
   Effect.gen(function* staleSave() {
-    rstest.mocked(executeChangeProductImages).mockReturnValue(Effect.fail(conflict));
-    yield* Effect.promise(mount);
+    galleryAnswer = Effect.fail(conflict);
+    yield* pinTestDocument;
+    yield* mount();
     yield* click(labelled(copy.remove));
     expect(tiles()).toBe(1);
     yield* click(button(labels.save));
-    yield* Effect.promise(() => waitUntil(() => buttons(labels.reloadLatest).length === 1));
+    yield* waitUntil(() => buttons(labels.reloadLatest).length === 1);
     expect(gallerySaves()).toHaveLength(1);
     expect(committed).toEqual([]);
     expect(tiles()).toBe(1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('leaving with an unsaved gallery asks; Zahodit změny puts the saved gallery back and leaves', () =>
+it.live('leaving with an unsaved gallery asks; Zahodit změny puts the saved gallery back and leaves', () =>
   Effect.gen(function* leave() {
-    const view = yield* Effect.promise(mount);
+    yield* pinTestDocument;
+    const view = yield* mount();
     yield* click(labelled(copy.remove));
-    navigation.status = 'blocked';
-    yield* Effect.promise(view.rerender);
+    const arrivals: string[] = [];
+    const unsubscribe = view.router.subscribe('onResolved', (event) => {
+      arrivals.push(event.toLocation.pathname);
+    });
+    yield* acted(() => {
+      void view.router.navigate({ to: '/cs/other' });
+    });
+    yield* waitUntil(() => buttons(labels.stay).length === 1);
     expect(buttons(labels.stay)).toHaveLength(1);
     yield* click(button(labels.discard));
-    expect(navigation.proceeded).toBe(1);
+    yield* waitUntil(() => view.router.state.location.pathname === '/cs/other');
+    expect(arrivals).toEqual(['/cs/other']);
+    unsubscribe();
     expect(tiles()).toBe(2);
     expect(gallerySaves()).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an untouched gallery leaves without asking', () =>
-  Effect.gen(function* untouched() {
-    const view = yield* Effect.promise(mount);
-    navigation.status = 'blocked';
-    yield* Effect.promise(view.rerender);
-    // A blocked navigation of an untouched tab is not answered by its question.
-    expect(buttons(labels.stay)).toHaveLength(0);
-  }),
-);
-
-it.effect(
+it.live(
   'settings saved before a refused gallery stay saved; the gallery reason shows and Uložit retries it alone',
   () =>
     Effect.gen(function* partlySaved() {
-      rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
-      rstest.mocked(executeChangeProductImages).mockReturnValueOnce(Effect.fail(ineligible));
-      yield* Effect.promise(() => mountWith({ canWrite: true }));
+      galleryAnswer = Effect.fail(ineligible);
+      yield* pinTestDocument;
+      yield* mountWith({ canWrite: true });
       yield* typeInto('eshop-slug', 'etiopie-250');
       yield* click(labelled(copy.remove));
       yield* click(button(labels.save));
-      yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(copy.saveRejected)));
+      yield* waitUntil(() => text().includes(copy.saveRejected));
       expect(settingsSaves()).toHaveLength(1);
       expect(committed).toEqual([]);
       // The slug went through: it is not reported as taken, and Uložit stays usable for the gallery.
       expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
       expect(button(labels.save).disabled).toBe(false);
 
+      galleryAnswer = Effect.succeed(saved);
       yield* click(button(labels.save));
-      yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+      yield* waitUntil(() => committed.length === 1);
       expect(settingsSaves()).toHaveLength(1);
       expect(gallerySaves()).toEqual([
         { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },
         { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },
       ]);
-    }),
+    }).pipe(Effect.provide(network)),
 );

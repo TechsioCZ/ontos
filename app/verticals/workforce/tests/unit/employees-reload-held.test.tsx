@@ -3,20 +3,21 @@
 // The strict employees store reads `pending` during such a reload; the page's reader must keep the last ready list,
 // so an open employee panel keeps its write access, its account choices and the revision its save goes out against.
 // A refused reload still replaces the list at once.
-import { constVoid } from 'effect/Function';
+import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { RecordsApi, RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { employeesData } from '../../src/routes/[lang]/prodej/zamestnanci/employees-data.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { usePageData } from '../../src/runtime/use-page-data.ts';
-
-const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
+import { mountInRoute } from '../support/module-ui.ts';
 
 const company = '20000000-0000-4000-8000-000000000001';
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -53,86 +54,70 @@ const refused = Schema.decodeUnknownSync(RecordsForbiddenProblemSchema)({
   type: 'urn:test:refused',
 });
 
-/** What the page derives from the list: its state, write access and the revision a save goes out against. */
-const Probe = () => {
-  const snapshot = usePageData(employeesData, company);
-  return createElement(
-    'output',
-    null,
-    snapshot.state === 'ready' ? `ready:${snapshot.value.canWrite}:${snapshot.value.revision}` : snapshot.state,
-  );
-};
-
-const settle: Effect.Effect<void> = Effect.promise(() => browserRuntime.runPromise(Effect.yieldNow)).pipe(
-  Effect.andThen(
-    Effect.sync(() => {
-      act(constVoid);
+let answer: Effect.Effect<RecordsResponse, typeof RecordsForbiddenProblemSchema.Type> = Effect.succeed(recordsAt(7));
+const reads: RecordsRequest[] = [];
+const OwnerRecordsApi = RecordsApi.prefix('/workforce-api');
+const workforceOwner = HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+  group.handle('execute', ({ payload }) =>
+    Effect.suspend(() => {
+      reads.push(payload);
+      return answer;
     }),
   ),
 );
-const shown = () => document.querySelector('output')?.textContent ?? '';
-const waitUntil = (condition: () => boolean, attempt = 0): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    if (condition() || attempt >= 200) {
-      return Effect.sync(() => {
-        expect(condition()).toBe(true);
-      });
-    }
-    return settle.pipe(Effect.andThen(waitUntil(condition, attempt + 1)));
-  });
+const network = browserNetwork(
+  shellGatewayIssuer({ workforce: '/workforce-api' }).application,
+  serveApi(OwnerRecordsApi, workforceOwner),
+);
 
-const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
-const mount = Effect.sync(() => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  roots.push({ container, root });
-  act(() => {
-    root.render(createElement(Probe));
-  });
-}).pipe(Effect.andThen(waitUntil(() => shown() === 'ready:true:7')));
+/** What the page derives from the list: its state, write access and the revision a save goes out against. */
+const Probe = () => {
+  const snapshot = usePageData(employeesData, company);
+  return (
+    <output>
+      {snapshot.state === 'ready' ? `ready:${snapshot.value.canWrite}:${snapshot.value.revision}` : snapshot.state}
+    </output>
+  );
+};
+
+const shown = () => document.querySelector('output')?.textContent ?? '';
+const mount = Effect.gen(function* mountProbe() {
+  yield* pinTestDocument;
+  yield* mountInRoute(<Probe />, { url: '/cs/prodej/zamestnanci' });
+  yield* waitUntil(() => shown() === 'ready:true:7');
+});
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  mocks.records.mockReset();
-  mocks.records.mockImplementation(() => Effect.succeed(recordsAt(7)));
+  reads.length = 0;
+  answer = Effect.succeed(recordsAt(7));
   employeesData.invalidate();
 });
 
-afterEach(() => {
-  for (const { container, root } of roots.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('employees list across a background reload', () => {
   it.live('keeps the last ready list, its write access and revision while the same list reloads', () =>
     Effect.gen(function* held() {
       yield* mount;
+      const arrived = yield* Deferred.make<true>();
       const gate = yield* Deferred.make<RecordsResponse>();
-      mocks.records.mockReturnValue(Deferred.await(gate));
-      act(() => {
-        employeesData.invalidate();
-      });
-      yield* waitUntil(() => mocks.records.mock.calls.length >= 2);
+      answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Deferred.await(gate)));
+      yield* acted(() => employeesData.invalidate());
+      yield* Deferred.await(arrived);
+      expect(reads.length).toBeGreaterThanOrEqual(2);
+      yield* settle;
       expect(shown()).toBe('ready:true:7');
       yield* Deferred.succeed(gate, recordsAt(8));
       yield* waitUntil(() => shown() === 'ready:true:8');
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('a refused reload replaces the list at once', () =>
     Effect.gen(function* refusedReload() {
       yield* mount;
-      mocks.records.mockReturnValue(Effect.fail(refused));
-      act(() => {
-        employeesData.invalidate();
-      });
+      answer = Effect.fail(refused);
+      yield* acted(() => employeesData.invalidate());
       yield* waitUntil(() => shown() === 'failed');
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

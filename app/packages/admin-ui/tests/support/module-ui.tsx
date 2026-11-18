@@ -23,9 +23,9 @@ import {
 } from '@modern-js/plugin-tanstack/runtime';
 import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
 import type { RuntimeComponentResolverContext } from '@modern-js/runtime/context';
-import { Effect, Schema } from 'effect';
+import { Duration, Effect, Schema } from 'effect';
 import { flow } from 'effect/Function';
-import { expect } from 'effect-rstest';
+import { expect, rstest } from 'effect-rstest';
 import { createInstance } from 'i18next';
 import type { i18n } from 'i18next';
 import { act, useSyncExternalStore } from 'react';
@@ -79,11 +79,22 @@ export const settle: Effect.Effect<void> = Effect.sleep('1 millis').pipe(
   ),
 );
 
-/** Runs `step` inside React's `act`, then settles. */
-export const acted = (step: () => void): Effect.Effect<void> =>
+/**
+ * `settle` for a test under `rstest.useFakeTimers` (setTimeout, clearTimeout and Date faked), where `settle`'s own
+ * sleep would wait for fake time: runs the fake timers already due and lets real work take a turn, then flushes
+ * React's updates. No fake time passes.
+ */
+export const settleOnFakeTimers: Effect.Effect<void> = Effect.promise(async () => {
+  await act(async () => {
+    await rstest.advanceTimersByTimeAsync(0);
+  });
+});
+
+/** Runs `step` inside React's `act`, then settles (with `settled`, e.g. `settleOnFakeTimers`; default `settle`). */
+export const acted = (step: () => void, settled: Effect.Effect<void> = settle): Effect.Effect<void> =>
   Effect.sync(() => {
     act(step);
-  }).pipe(Effect.andThen(settle));
+  }).pipe(Effect.andThen(settled));
 
 /** Settles until the DOM or recorded data satisfy `condition`; fails when they never do. */
 export const waitUntil = (condition: () => boolean, attempts = 400): Effect.Effect<void> =>
@@ -94,6 +105,44 @@ export const waitUntil = (condition: () => boolean, attempts = 400): Effect.Effe
         })
       : settle.pipe(Effect.andThen(waitUntil(condition, attempts - 1))),
   );
+
+/** `waitUntil` under fake timers: settles with `settleOnFakeTimers`, so no fake time passes while it waits. */
+export const waitUntilOnFakeTimers = (condition: () => boolean, attempts = 400): Effect.Effect<void> =>
+  Effect.suspend(() =>
+    condition() || attempts === 0
+      ? Effect.sync(() => {
+          expect(condition()).toBe(true);
+        })
+      : settleOnFakeTimers.pipe(Effect.andThen(waitUntilOnFakeTimers(condition, attempts - 1))),
+  );
+
+/**
+ * Lets `duration` of fake time pass under `rstest.useFakeTimers`, in `step`s (default one second) inside React's
+ * `act`. After each step `between` runs (default `settleOnFakeTimers`); pass the network double's `networkIdle` so
+ * the work a timer started finishes at the fake instant the timer fired, before more fake time passes.
+ */
+export const passFakeTime = (
+  duration: Duration.Input,
+  {
+    between = settleOnFakeTimers,
+    step = '1 second',
+  }: { readonly between?: Effect.Effect<void>; readonly step?: Duration.Input } = {},
+): Effect.Effect<void> => {
+  const stepMillis = Duration.toMillis(Duration.fromInputUnsafe(step));
+  const pass = (left: number): Effect.Effect<void> =>
+    left <= 0
+      ? Effect.void
+      : Effect.promise(async () => {
+          await act(async () => {
+            await rstest.advanceTimersByTimeAsync(Math.min(stepMillis, left));
+          });
+        }).pipe(
+          Effect.andThen(between),
+          Effect.andThen(settleOnFakeTimers),
+          Effect.andThen(Effect.suspend(() => pass(left - stepMillis))),
+        );
+  return pass(Duration.toMillis(Duration.fromInputUnsafe(duration)));
+};
 
 const unmounts: (() => void)[] = [];
 
@@ -235,7 +284,7 @@ const InPageBoundary = ({
 };
 
 /** The element a mounted route renders, replaceable as a parent re-render would replace it. */
-const makeElementStore = (initial: ReactElement) => {
+const makeElementStore = (initial: ReactElement, settled: Effect.Effect<void>) => {
   let current = initial;
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
@@ -254,12 +303,12 @@ const makeElementStore = (initial: ReactElement) => {
   const rerender = (next: ReactElement) =>
     acted(() => {
       replace(next);
-    });
+    }, settled);
   return { Current, rerender } as const;
 };
 
 /** Mounts `element` in a fresh container and registers its unmount for `unmountAll`. */
-const mountRoot = (element: ReactElement) => {
+const mountRoot = (element: ReactElement, settled: Effect.Effect<void>) => {
   const container = document.createElement('div');
   document.body.append(container);
   const view = createRoot(container);
@@ -271,7 +320,7 @@ const mountRoot = (element: ReactElement) => {
   });
   return acted(() => {
     view.render(element);
-  });
+  }, settled);
 };
 
 export interface MountOptions {
@@ -280,6 +329,8 @@ export interface MountOptions {
   readonly path?: string;
   /** The page's own `FederatedI18nBoundary resources`, for a test that renders a part of that page. */
   readonly resources?: PageResources;
+  /** How mounting lets the page's work take a turn: `settleOnFakeTimers` under fake timers; default `settle`. */
+  readonly settle?: Effect.Effect<void>;
   /** Where the router stands; default `/<language>/test`. */
   readonly url?: string;
 }
@@ -313,10 +364,13 @@ export const makeModuleUi = (bindings: ModuleRuntimeBindings) => {
    * `useBlocker`, `useNavigate`, `useParams` and `useRouterState` read the live router; `rerender` replaces the
    * element as a parent re-render would.
    */
-  const mountInRoute = (element: ReactElement, { language = 'cs', path = '$', resources, url }: MountOptions = {}) =>
+  const mountInRoute = (
+    element: ReactElement,
+    { language = 'cs', path = '$', resources, settle: settled = settle, url }: MountOptions = {},
+  ) =>
     Effect.gen(function* mountRoute() {
       const translations = moduleCopy(language);
-      const { Current, rerender } = makeElementStore(element);
+      const { Current, rerender } = makeElementStore(element, settled);
       const root = createRootRoute({
         component: () => (
           <ModuleNavigation bindings={bindings}>
@@ -343,6 +397,7 @@ export const makeModuleUi = (bindings: ModuleRuntimeBindings) => {
         <ModuleRuntime translations={translations}>
           <RouterProvider router={router} />
         </ModuleRuntime>,
+        settled,
       );
       return { rerender, router, translations } as const;
     });
