@@ -63,6 +63,41 @@ it.layer(NodeCrypto.layer)('Projects Action lifecycle', (test) => {
     }),
   );
 
+  test.effect('Create is refused before any write when no owner adapter is installed', () =>
+    Effect.gen(function* createWithoutOwnerAdapter() {
+      // The control for the test above: the same allowed Create, without Projects' destination authority,
+      // meets Core's fail-closed fallback (owner decision unavailable), so the success above is the installed
+      // adapter's decision.
+      const project = yield* projectFixture;
+      let writes = 0;
+      const harness = yield* makeActionTestHarness({
+        access: 'allowed',
+        ownerRegistration: projectsRegistration,
+        services: [
+          bindActionTestServices(createProjectAction, {
+            create: (_payload, createdByPrincipalId) => {
+              writes += 1;
+              return Effect.succeed({ ...project, createdByPrincipalId });
+            },
+            ownerEligibility: () => Effect.succeed('allowed'),
+          }),
+        ],
+      });
+      const failure = yield* harness.runtime
+        .runAction({
+          payload: { name: 'Project', ownerPrincipalId: ownerId, prefix: 'ONTO' },
+          principal,
+          registration: createProjectAction,
+          transport,
+        })
+        .pipe(Effect.flip);
+      expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+      expect(writes).toBe(0);
+      expect(harness.snapshot().committed).toHaveLength(0);
+      expect(harness.snapshot().stages).not.toContain('handler_executed');
+    }),
+  );
+
   test.effect('Update permission denial occurs before owner services or writes', () =>
     Effect.gen(function* deniedUpdate() {
       const project = yield* projectFixture;
