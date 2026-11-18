@@ -36,6 +36,7 @@ const storeDefaults: SupportImpersonationStore = {
   loadExpiredRecovery: () => unconfiguredEffect('loadExpiredRecovery'),
   loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
   loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
+  loadSession: () => unconfiguredEffect('loadSession'),
   updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
 };
 

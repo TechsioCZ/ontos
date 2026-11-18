@@ -10,6 +10,7 @@ type TestActionOutcome =
       readonly error: Readonly<{ readonly _tag: string }>;
       readonly kind: 'domain-failure';
     }
+  | { readonly kind: 'replay'; readonly value: JsonValue }
   | { readonly kind: 'success'; readonly value: JsonValue };
 
 export const actionCoreFailure = (error: ActionCoreError): TestActionOutcome => ({
@@ -25,6 +26,12 @@ export const actionDefect = (defect: Error | string): TestActionOutcome => ({
 export const actionDomainFailure = (error: Readonly<{ readonly _tag: string }>): TestActionOutcome => ({
   error,
   kind: 'domain-failure',
+});
+
+/** A same-key retry Core answers with the saved reply of the invocation that committed. */
+export const actionReplay = (value: JsonValue): TestActionOutcome => ({
+  kind: 'replay',
+  value,
 });
 
 export const actionSuccess = (value: JsonValue): TestActionOutcome => ({
@@ -58,7 +65,12 @@ export const makeActionRuntimeDouble = (outcomes: readonly TestActionOutcome[]) 
           ? Effect.fail(outcome.error)
           : Effect.die('Configured action domain failure does not match registration schema');
       }
-      return Effect.sync(() => Schema.decodeUnknownSync(input.registration.descriptor.resultSchema)(outcome.value));
+      const result = Effect.sync(() =>
+        Schema.decodeUnknownSync(input.registration.descriptor.resultSchema)(outcome.value),
+      );
+      return outcome.kind === 'replay' && input.onReplay !== undefined
+        ? Effect.tap(result, () => input.onReplay?.({ invocationId: `replayed-${invocation}` }) ?? Effect.void)
+        : result;
     },
   };
   return { invocationCount: () => invocation, payloads, principals, runtime };

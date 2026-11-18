@@ -26,6 +26,16 @@ export interface SupportImpersonationStore {
   readonly loadRecoveries: (
     originalSessionId: string,
   ) => Effect.Effect<readonly SupportRecoveryRecord[], SupportImpersonationUnavailableError>;
+  /** The provider session with this id: its token, expiry and the support user impersonating through it. */
+  readonly loadSession: (sessionId: string) => Effect.Effect<
+    Option.Option<{
+      readonly expiresAt: Date;
+      readonly id: string;
+      readonly impersonatedBy: null | string;
+      readonly token: Redacted.Redacted;
+    }>,
+    SupportImpersonationUnavailableError
+  >;
   readonly updateImpersonationSession: (
     sessionId: string,
     metadata: {
