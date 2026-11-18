@@ -21,7 +21,7 @@ const catalog = projectCatalog(
 const dictionary = getDictionary("cs");
 
 describe("catalogue image loading policy", () => {
-  it("starts the first mobile listing image immediately while retaining lazy later images", () => {
+  it("assigns eager loading only to the first mobile listing image", () => {
     const html = renderToStaticMarkup(
       <ListingCards catalog={catalog} dictionary={dictionary} locale="cs" />,
     );
@@ -30,7 +30,7 @@ describe("catalogue image loading policy", () => {
     expect(images?.[0]).toContain('loading="eager"');
     expect(images?.[1]).toContain('loading="lazy"');
   });
-  it("starts the first desktop listing image immediately while retaining lazy later images", () => {
+  it("assigns eager loading only to the first desktop listing image", () => {
     const html = renderToStaticMarkup(
       <CatalogView
         catalog={catalog}

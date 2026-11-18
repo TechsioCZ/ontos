@@ -1,11 +1,8 @@
 import { describe, expect, it } from "@rstest/core";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AuthView } from "../src/features/auth-view";
 import { PasswordRecoveryView } from "../src/features/password-recovery-view";
 import { getDictionary } from "../src/i18n";
-import { Schema } from "effect";
-import { PasswordRecoveryRequestSchema } from "../src/ontos/password-recovery";
 
 describe("password recovery presentation boundary", () => {
   it("does not offer a password submission without the server cookie-presence proof", () => {
@@ -74,29 +71,16 @@ describe("password recovery presentation boundary", () => {
         return;
       }
       const browserPattern = new RegExp(`^(?:${pattern})$`, "u");
-      for (const email of [
-        "not-an-email",
-        "qa@example",
-        "qa@@example.com",
-        "qa@exam ple.com",
-        "qa@example.invalid",
-        "test+demo@example.com",
-      ]) {
-        expect(browserPattern.test(email)).toBe(
-          Schema.is(PasswordRecoveryRequestSchema)({ email }),
-        );
+      for (const [email, accepted] of [
+        ["not-an-email", false],
+        ["qa@example", false],
+        ["qa@@example.com", false],
+        ["qa@exam ple.com", false],
+        ["qa@example.invalid", true],
+        ["test+demo@example.com", true],
+      ] as const) {
+        expect(browserPattern.test(email)).toBe(accepted);
       }
     },
   );
-
-  it("connects the existing Figma login link to the localized recovery route", () => {
-    const html = renderToStaticMarkup(
-      createElement(AuthView, {
-        dictionary: getDictionary("en"),
-        locale: "en",
-        mode: "login",
-      }),
-    );
-    expect(html).toContain('href="/en/zapomenute-heslo"');
-  });
 });

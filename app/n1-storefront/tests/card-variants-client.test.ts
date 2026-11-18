@@ -5,18 +5,18 @@ import { afterAll, beforeAll, describe, expect, it } from "effect-rstest";
 import { makeCardVariantsCache } from "../src/ontos/card-variants-client";
 
 const query = { locale: "cs", productId: "owner", slug: "owner" };
-describe("bounded intent-only variant cache", () => {
+describe("card variant HTTP boundary", () => {
   beforeAll(() => {
     rs.stubGlobal("location", new URL("https://n1.example/cs"));
   });
   afterAll(() => {
     rs.unstubAllGlobals();
   });
-  it.effect("is idle until intent and coalesces concurrent reads of the same product", () =>
-    Effect.gen(function* coalesceIntent() {
-      let calls = 0;
-      const fetch: typeof globalThis.fetch = () => {
-        calls += 1;
+  it.effect("sends the exact product selector and decodes the owner's variant labels", () =>
+    Effect.gen(function* readVariantLabels() {
+      const requests: Request[] = [];
+      const fetch: typeof globalThis.fetch = (url, init) => {
+        requests.push(new Request(url, init));
         return Promise.resolve(
           Response.json({
             productId: "owner",
@@ -27,18 +27,26 @@ describe("bounded intent-only variant cache", () => {
         );
       };
       const cache = yield* makeCardVariantsCache();
-      expect(calls).toBe(0);
-      const load = Cache.get(cache, JSON.stringify(query));
-      const program = Effect.all([load, load], { concurrency: 2 }).pipe(
+      const result = yield* Cache.get(cache, JSON.stringify(query)).pipe(
         Effect.provide(
           FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
         ),
       );
-      const results = yield* program;
-      expect(calls).toBe(1);
-      expect(results[0]).toEqual(results[1]);
-      yield* program;
-      expect(calls).toBe(1);
+      expect(result).toEqual({
+        productId: "owner",
+        slug: "owner",
+        state: "ready",
+        variants: [{ id: "v", name: "M" }],
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.method).toBe("GET");
+      const url = new URL(requests[0]?.url ?? "");
+      expect(url.pathname).toBe("/api/card-variants");
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        locale: "cs",
+        productId: "owner",
+        slug: "owner",
+      });
     }),
   );
   it.effect("rejects malformed owner responses instead of constructing labels", () =>

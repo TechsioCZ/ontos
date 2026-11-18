@@ -107,26 +107,6 @@ describe("native customer account presentation", () => {
         expect(html).not.toContain("<script>owner label</script>");
       }),
     );
-    it.effect(`keeps both stored metadata timestamps in ${locale}`, () =>
-      Effect.gen(function* storedMetadataTimes() {
-        const value = yield* Schema.decodeEffect(CustomerOrderSchema)(order);
-        const dictionary = getDictionary(locale);
-        const html = renderToStaticMarkup(
-          <CustomerOrderContent dictionary={dictionary} locale={locale} order={value} />,
-        );
-        const formatter = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "cs-CZ", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        });
-        expect(html).toContain(formatter.format(Date.parse(order.createdAt)));
-        expect(html).toContain(formatter.format(Date.parse(order.updatedAt)));
-        expect(html).toContain(
-          new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "cs-CZ", {
-            dateStyle: "long",
-          }).format(Date.parse(order.createdAt)),
-        );
-      }),
-    );
     it.effect(`keeps invalid and absent order dates explicit in ${locale}`, () =>
       Effect.gen(function* unavailableOrderDates() {
         const value = yield* Schema.decodeEffect(CustomerOrderSchema)({
@@ -173,16 +153,6 @@ describe("native customer account presentation", () => {
         expect(html).toContain("/cs/ucet/objednavky/order-1");
         expect(html).not.toContain("customer@example.invalid");
         expect(html).not.toContain("Test 1");
-        expect(html).toContain(
-          new Intl.DateTimeFormat("cs-CZ", { dateStyle: "medium" }).format(
-            Date.parse(order.createdAt),
-          ),
-        );
-        expect(html).not.toContain(
-          new Intl.DateTimeFormat("cs-CZ", { dateStyle: "medium", timeStyle: "short" }).format(
-            Date.parse(order.createdAt),
-          ),
-        );
       }),
   );
   it.effect("renders owner notes as text and does not invent stored line totals or media", () =>

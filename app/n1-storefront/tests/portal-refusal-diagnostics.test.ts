@@ -5,7 +5,6 @@ import { expect, it } from "effect-rstest";
 import { portalWeb } from "../src/ontos/portal-http";
 import { PortalOutcomeSchema, PortalRefusedProblem } from "../src/ontos/portal";
 
-rs.mock("server-only", () => ({}));
 afterEach(() => {
   rs.restoreAllMocks();
   rs.unstubAllEnvs();

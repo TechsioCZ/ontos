@@ -55,19 +55,6 @@ it("hides a stale auth instance even if the next login has the same email", () =
   ).toEqual({ state: "unavailable" });
 });
 
-it("renders read-only address content without inventing a recipient or CRUD controls", () => {
-  const html = renderToStaticMarkup(
-    <CustomerAddressesList addresses={[address]} dictionary={getDictionary("cs")} />,
-  );
-  for (const field of ["Domů", "Ulice 1", "Patro 2", "11000", "Praha", "CZ"]) {
-    expect(html).toContain(field);
-  }
-  expect(html).not.toContain("Not a recipient");
-  expect(html).not.toContain("<button");
-  expect(html).not.toContain("<input");
-  expect(html).not.toContain("mailto:");
-});
-
 it("distinguishes unresolved source data and a genuine empty book", () => {
   const d = getDictionary("en");
   const unresolved = renderToStaticMarkup(

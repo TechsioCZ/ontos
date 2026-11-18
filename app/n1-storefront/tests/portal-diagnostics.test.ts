@@ -9,7 +9,6 @@ import {
   registerPortalServer,
 } from "../src/ontos/portal-server";
 
-rs.mock("server-only", () => ({}));
 afterEach(() => {
   rs.restoreAllMocks();
   rs.unstubAllEnvs();

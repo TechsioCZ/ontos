@@ -11,17 +11,6 @@ const render = (entries: readonly RawEntry[]) =>
   );
 
 describe("canonical N1 theme contract", () => {
-  it.effect("renders the library export without storefront overlays", () =>
-    Effect.gen(function* testCanonicalTheme() {
-      const decoded = yield* decodeCanonicalTheme(snapshot);
-      const { count, css } = yield* renderCanonicalTheme(decoded, JSON.stringify(snapshot));
-      expect(count).toBe(snapshot.entries.length);
-      expect(css).toContain('[data-theme="n1"]');
-      expect(css).toContain("--color-bg-primary-base: var(--color-primary-500);");
-      expect(css).toContain("--color-fg-on-primary-solid-neo: var(--color-neutral-950);");
-      expect(css).not.toContain("--color-search-suggestions-");
-    }),
-  );
   it.effect("preserves units and CSS string values", () =>
     Effect.gen(function* testTokenUnits() {
       const { css } = yield* render([

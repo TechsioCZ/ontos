@@ -4,7 +4,6 @@ import { FetchHttpClient } from "effect/http";
 import { describe, expect, it } from "effect-rstest";
 import { portalWeb } from "../src/ontos/portal-http";
 
-rs.mock("server-only", () => ({}));
 afterEach(() => {
   rs.restoreAllMocks();
   rs.unstubAllEnvs();

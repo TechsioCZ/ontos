@@ -7,7 +7,6 @@ import { quoteCart } from "../src/ontos/cart-quote-server";
 import { CartQuoteRequestSchema } from "../src/ontos/cart-quote";
 import type { CatalogResponseSchema } from "../src/ontos/catalog-model";
 
-rs.mock("server-only", () => ({}));
 afterEach(() => {
   rs.restoreAllMocks();
   rs.unstubAllEnvs();

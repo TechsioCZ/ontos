@@ -1,6 +1,11 @@
-import { describe, expect, it, rs } from "@rstest/core";
-import { Effect } from "effect";
+import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import type { ReactNode } from "react";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import {
+  PathnameContext,
+  PathParamsContext,
+} from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import LocaleLayout from "../src/app/[locale]/layout";
 import { CheckoutShipping } from "../src/features/checkout-panels";
@@ -8,20 +13,48 @@ import { FormInput, FormInputRaw, FormTextarea } from "../src/features/form-cont
 import { PasswordRecoveryView } from "../src/features/password-recovery-view";
 import { getDictionary } from "../src/i18n";
 
-// The layout's owner reads and chrome are not part of this suite; its providers and the forms are real.
-rs.mock("../src/ontos/catalog", () => ({ getCatalog: async () => ({ state: "unavailable" }) }));
-rs.mock("../src/ontos/cart-quote-server", () => ({ getCartScope: () => Effect.succeed(null) }));
-rs.mock("../src/features/cart-provider", () => ({
-  CartProvider: ({ children }: { children: ReactNode }) => children,
-}));
-rs.mock("../src/features/shell", () => ({
-  StorefrontShell: ({ children }: { children: ReactNode }) => children,
-}));
+const serverNavigation = () => {
+  throw new Error("Navigation must not run during server rendering");
+};
+const router = {
+  back: serverNavigation,
+  bfcacheId: "required-label",
+  forward: serverNavigation,
+  prefetch: serverNavigation,
+  push: serverNavigation,
+  refresh: serverNavigation,
+  replace: serverNavigation,
+} satisfies AppRouterInstance;
 
-const marker = (text: string) =>
-  `<span aria-hidden="true" class="ms-label-required text-label-fg-required">*</span><span class="sr-only"> ${text}</span>`;
-const inLayout = async (locale: string, children: ReactNode) =>
-  renderToStaticMarkup(await LocaleLayout({ children, params: Promise.resolve({ locale }) }));
+beforeEach(() => {
+  // Missing service configuration is a real fail-closed bootstrap, with no owner IO.
+  rs.stubEnv("ONTOS_N1_STOREFRONT_API_KEY", "");
+});
+afterEach(() => {
+  rs.unstubAllEnvs();
+});
+
+const labelText = (html: string) =>
+  [...html.matchAll(/<label\b[^>]*>(?<text>[\s\S]*?)<\/label>/gu)].map((match) =>
+    (match.groups?.text ?? "")
+      .replaceAll(/<[^>]+>/gu, "")
+      .replaceAll(/\s+/gu, " ")
+      .trim(),
+  );
+const localeParams = { cs: { locale: "cs" }, en: { locale: "en" } };
+const inLayout = async (locale: keyof typeof localeParams, children: ReactNode) => {
+  const pathname = `/${locale}/zapomenute-heslo`;
+  const layout = await LocaleLayout({ children, params: Promise.resolve({ locale }) });
+  return renderToStaticMarkup(
+    <AppRouterContext.Provider value={router}>
+      <PathnameContext.Provider value={pathname}>
+        <PathParamsContext.Provider value={localeParams[locale]}>
+          {layout}
+        </PathParamsContext.Provider>
+      </PathnameContext.Provider>
+    </AppRouterContext.Provider>,
+  );
+};
 const controls = (
   <>
     <FormInput id="input" label="Input" required />
@@ -42,7 +75,7 @@ describe.each([
       <PasswordRecoveryView dictionary={d} locale={locale} mode="request" />,
     );
 
-    expect(html).toContain(`${d.auth.fields.email}${marker(text)}</label>`);
+    expect(labelText(html)).toContain(`${d.auth.fields.email}* ${text}`);
     expect(html.includes("(required)")).toBe(locale === "en");
   });
 
@@ -70,18 +103,18 @@ describe.each([
       />,
     );
 
-    expect(html).toContain(`${d.checkout.shipping}${marker(text)}</label>`);
+    expect(labelText(html)).toContain(`${d.checkout.shipping}* ${text}`);
     expect(html.includes("(required)")).toBe(locale === "en");
   });
 
   it("gives every shared control the same text", async () => {
     const html = await inLayout(locale, controls);
 
-    expect(html.split(marker(text))).toHaveLength(4);
+    expect(labelText(html).filter((label) => label.endsWith(`* ${text}`))).toEqual([
+      `Input* ${text}`,
+      `Raw* ${text}`,
+      `Textarea* ${text}`,
+    ]);
     expect(html.includes("(required)")).toBe(locale === "en");
   });
-});
-
-it("keeps the UI-kit text outside the locale layout", () => {
-  expect(renderToStaticMarkup(controls).split(marker("(required)"))).toHaveLength(4);
 });

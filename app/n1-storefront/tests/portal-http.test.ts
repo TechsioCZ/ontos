@@ -1,10 +1,7 @@
-import { rs } from "@rstest/core";
 import { Effect } from "effect";
 import { describe, expect, it } from "effect-rstest";
 
 import { portalHandler } from "../src/ontos/portal-http";
-
-rs.mock("server-only", () => ({}));
 
 const origin = "https://n1.example";
 const secret = "a".repeat(6);

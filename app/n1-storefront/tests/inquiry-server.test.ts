@@ -1,13 +1,10 @@
-import { beforeEach, expect, rs } from "@rstest/core";
+import { afterEach, beforeEach, expect, rs } from "@rstest/core";
 import { it } from "effect-rstest";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
-import { readConfiguration } from "../src/ontos/config";
 import type { StorefrontConfiguration } from "../src/ontos/config";
 import { decodeInquiry } from "../src/ontos/inquiry";
 import { persistInquiry } from "../src/ontos/inquiry-server";
-
-rs.mock("../src/ontos/config", () => ({ readConfiguration: rs.fn() }));
 
 const config = {
   apiKey: "inquiry-test-only-key",
@@ -112,8 +109,13 @@ const wireBody = (call: Request | undefined) =>
   Effect.promise(async () => (call === undefined ? "" : await call.text()));
 
 beforeEach(() => {
-  rs.clearAllMocks();
-  rs.mocked(readConfiguration).mockReturnValue(Effect.succeed(config));
+  rs.stubEnv("ONTOS_N1_STOREFRONT_API_KEY", config.apiKey);
+  rs.stubEnv("ONTOS_STOREFRONT_TENANT_ID", config.tenantId);
+  rs.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", config.legalEntityId);
+  rs.stubEnv("ONTOS_SHELL_URL", config.shellUrl);
+});
+afterEach(() => {
+  rs.unstubAllEnvs();
 });
 
 it.effect("files the inquiry through the one admitted action with exactly its payload", () =>

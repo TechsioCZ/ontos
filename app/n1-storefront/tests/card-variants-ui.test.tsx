@@ -22,7 +22,7 @@ const product: ProductCardModel = {
     { id: "third", name: "7 - S" },
   ],
 };
-describe("Figma card preview", () => {
+describe("owner variant preview links", () => {
   it("keeps three real labels plus N and links each size to its actual owner variant", () => {
     const html = renderToStaticMarkup(createElement(CardVariants, { locale: "cs", product }));
     expect(html).toContain("8,5 - ML");

@@ -1,23 +1,38 @@
-import { beforeEach, describe, expect, it, rs } from "@rstest/core";
-import { createElement } from "react";
+import { beforeEach, describe, expect, it } from "@rstest/core";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { PathParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
+import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CatalogState } from "../src/features/catalog-state";
 import { getDictionary } from "../src/i18n";
 
-const navigation = rs.hoisted(() => ({ locale: "cs", refresh: rs.fn() }));
-rs.mock("next/navigation", () => ({
-  useParams: () => ({ locale: navigation.locale }),
-  useRouter: () => ({ refresh: navigation.refresh }),
-}));
-
+const serverNavigation = () => {
+  throw new Error("Navigation must not run during server rendering");
+};
+const router = {
+  back: serverNavigation,
+  bfcacheId: "catalog-state",
+  forward: serverNavigation,
+  prefetch: serverNavigation,
+  push: serverNavigation,
+  refresh: serverNavigation,
+  replace: serverNavigation,
+} satisfies AppRouterInstance;
+const localeParams = { cs: { locale: "cs" }, en: { locale: "en" } };
+let locale: keyof typeof localeParams = "cs";
 const renderState = (kind: "category" | "product", pending: boolean) =>
-  renderToStaticMarkup(createElement(CatalogState, { kind, pending }));
-
-beforeEach(() => {
-  navigation.locale = "cs";
-});
+  renderToStaticMarkup(
+    <AppRouterContext.Provider value={router}>
+      <PathParamsContext.Provider value={localeParams[locale]}>
+        <CatalogState kind={kind} pending={pending} />
+      </PathParamsContext.Provider>
+    </AppRouterContext.Provider>,
+  );
 
 describe("truthful product read loading", () => {
+  beforeEach(() => {
+    locale = "cs";
+  });
   it("announces pending price and availability with a disabled neutral loading control", () => {
     const html = renderState("product", true);
     expect(html).toContain("Načítání ceny");
@@ -30,37 +45,31 @@ describe("truthful product read loading", () => {
     expect(html).not.toContain("Kč");
   });
   it("localizes the outstanding reads without claiming an add-to-cart action", () => {
-    navigation.locale = "en";
+    locale = "en";
     const html = renderState("product", true);
     expect(html).toContain("Loading price");
     expect(html).toContain("Loading availability");
     expect(html).toContain(getDictionary("en").notifications.loading);
     expect(html).not.toContain(getDictionary("en").addToCartDetail);
   });
-  it("retains real unavailable/retry semantics instead of showing pending data", () => {
-    const html = renderState("product", false);
-    expect(html).toContain(getDictionary("cs").productUnavailable);
-    expect(html).toContain(getDictionary("cs").retry);
-    expect(html).not.toContain("Načítání ceny");
-    expect(html).not.toContain('disabled=""');
-  });
-  it("uses the product error from Figma instead of the catalogue failure", () => {
-    const html = renderState("product", false);
-    expect(html).toContain("Produkt se nepodařilo načíst.");
-    expect(html).not.toContain(getDictionary("cs").unavailableDescription);
-    expect(renderState("category", false)).toContain(
-      "Produkty se nepodařilo načíst. Zkuste to prosím znovu.",
-    );
-  });
-  it("localizes the product failure separately from the catalogue failure", () => {
-    navigation.locale = "en";
-    const html = renderState("product", false);
-    expect(html).toContain("The product could not be loaded.");
-    expect(html).not.toContain(getDictionary("en").unavailableDescription);
-    expect(renderState("category", false)).toContain(
-      "The products could not be loaded. Please try again.",
-    );
-  });
+  it.each(["cs", "en"] as const)(
+    "distinguishes failed product and category reads in %s",
+    (language) => {
+      locale = language;
+      const d = getDictionary(language);
+      const product = renderState("product", false);
+      const category = renderState("category", false);
+      expect(product).toContain(d.productLoadFailed);
+      expect(product).not.toContain(d.categoryLoadFailed);
+      expect(category).toContain(d.categoryLoadFailed);
+      expect(category).not.toContain(d.productLoadFailed);
+      for (const html of [product, category]) {
+        expect(html).toContain(d.retry);
+        expect(html).not.toContain(d.loadingPrice);
+        expect(html).not.toContain('disabled=""');
+      }
+    },
+  );
   it("does not replace the distinct category-loading state with product purchase placeholders", () => {
     const html = renderState("category", true);
     expect(html).toContain(getDictionary("cs").loadingCatalog);
