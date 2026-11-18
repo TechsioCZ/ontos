@@ -5,9 +5,10 @@ import { TrustedPrincipalContextSchema } from '../../src/actions/principal-conte
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { CallRequirements } from '../../src/execution/call-requirements.ts';
 import type { CallerSource } from '../../src/execution/contract.ts';
-import { CallRequirementsLive, selectCaller, validateDeclaredCalls } from '../../src/execution/requirements.ts';
+import { CallRequirementsLive, selectCaller } from '../../src/execution/requirements.ts';
 import { defineOntosModuleManifest, OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import {
+  declaredCallsIssues,
   moduleDependencyDeclarationsIssue,
   OntosModuleRequirementsSchema,
 } from '../../src/modules/module-dependency-contracts.ts';
@@ -123,7 +124,7 @@ const validate = (
   requirements: OntosModuleRequirements | undefined,
   registeredWorkloadCalls: readonly OntosRegisteredWorkloadCall[] = [],
 ) =>
-  validateDeclaredCalls({
+  declaredCallsIssues({
     calls,
     consumerEntrypointKey: consumerEntrypoint,
     consumerKind: 'read',
@@ -153,27 +154,57 @@ it('takes a registered caller declaration key as a plain string, checked as an a
   ).toThrow();
 });
 
-it.effect('selects exactly the caller kind the identity implies (person -> person, others -> registered)', () =>
-  Effect.gen(function* selection() {
-    expect(yield* selectCaller(request('person'), [...person, ...registered(false)], facts)).toEqual({
-      kind: 'person',
-      legalEntityScope: 'subject',
-    });
-    for (const via of ['workload', 'system'] as const) {
-      expect(yield* selectCaller(request(via), [...person, ...registered(false)], facts)).toEqual({
-        declarationKey,
+/*
+ * The callers the two converted reads declare in their manifests, and what main's hand-built delegation
+ * sent for each request kind (`person` is the relayed `Assertion`, `registered` the `RegisteredAssertion`):
+ * Market eligibility always relayed the requester (`acquireMarketOwnerDelegation`); price-group
+ * resolution relayed it unless the scope carried a verified workload, a recovery included
+ * (`price-group-catalog.ts` `authorizedExecutor` with `commerceSourceDelegationSubject`).
+ */
+const recoveryHash = 'f'.repeat(64);
+const compatibilityDeclaration = 'pricing.price-group-catalog.price-group.read.compatibility';
+const convertedReads = [
+  {
+    callers: callersOf([{ kind: 'person', legalEntityScope: 'subject' }]),
+    expected: {
+      person: { kind: 'person', legalEntityScope: 'subject' },
+      recovery: { kind: 'person', legalEntityScope: 'subject' },
+      system: { kind: 'person', legalEntityScope: 'subject' },
+      workload: { kind: 'person', legalEntityScope: 'subject' },
+    },
+    read: 'commerce.market-catalog.api.verify-market-eligibility-v1',
+  },
+  {
+    callers: callersOf([
+      { kind: 'person', legalEntityScope: 'tenant' },
+      { declarationKey: compatibilityDeclaration, kind: 'registered', legalEntityScope: 'tenant', pinPrincipal: false },
+    ]),
+    expected: {
+      person: { kind: 'person', legalEntityScope: 'tenant' },
+      recovery: {
+        declarationKey: compatibilityDeclaration,
         kind: 'registered',
         legalEntityScope: 'tenant',
-      });
+        recoveryRequestHash: recoveryHash,
+      },
+      system: { kind: 'person', legalEntityScope: 'tenant' },
+      workload: { declarationKey: compatibilityDeclaration, kind: 'registered', legalEntityScope: 'tenant' },
+    },
+    read: 'commerce.customer-context.api.customer-price-group-resolution',
+  },
+] as const;
+
+it.effect('selects for every request kind of both converted reads what main delegated', () =>
+  Effect.gen(function* convertedReadSelection() {
+    for (const { callers, expected, read } of convertedReads) {
+      for (const via of ['person', 'recovery', 'system', 'workload'] as const) {
+        const selected = yield* selectCaller(request(via), callers, {
+          principalId,
+          recoveryRequestHash: via === 'recovery' ? recoveryHash : undefined,
+        });
+        expect({ read, selected, via }).toEqual({ read, selected: expected[via], via });
+      }
     }
-    expect(
-      yield* selectCaller(request('recovery'), registered(false), { principalId, recoveryRequestHash: 'f'.repeat(64) }),
-    ).toEqual({
-      declarationKey,
-      kind: 'registered',
-      legalEntityScope: 'tenant',
-      recoveryRequestHash: 'f'.repeat(64),
-    });
   }),
 );
 
@@ -188,10 +219,10 @@ it.effect('pins the principal exactly when the caller declares pinPrincipal', ()
   }),
 );
 
-it.effect('never substitutes another caller kind and refuses an Action invocation', () =>
+it.effect('refuses a kind the requirement does not permit, a recovery without its hash and an Action invocation', () =>
   Effect.gen(function* refusals() {
     expect((yield* Effect.flip(selectCaller(request('person'), registered(true), facts))).wanted).toBe('person');
-    expect((yield* Effect.flip(selectCaller(request('workload'), person, facts))).wanted).toBe('registered');
+    expect((yield* Effect.flip(selectCaller(request('system'), registered(true), facts))).wanted).toBe('person');
     expect((yield* Effect.flip(selectCaller(request('recovery'), registered(false), facts))).wanted).toBe('registered');
     expect((yield* Effect.flip(selectCaller(invocation, [...person, ...registered(true)], facts))).wanted).toBe('none');
   }),
@@ -254,7 +285,7 @@ it('refuses write calls in a read and a write recovery that names no read call',
   expect(validate({ change: write, check: declaredCall(providerRead, requirementKey) }, requirements)).toEqual([
     expect.stringContaining('a read declares only read calls'),
   ]);
-  const asAction = validateDeclaredCalls({
+  const asAction = declaredCallsIssues({
     calls: { change: write },
     consumerEntrypointKey: consumerEntrypoint,
     consumerKind: 'action',
@@ -262,7 +293,7 @@ it('refuses write calls in a read and a write recovery that names no read call',
     requirements,
   });
   expect(asAction).toEqual([expect.stringContaining('names a read call of the same calls as its recovery')]);
-  const recoveredByWrite = validateDeclaredCalls({
+  const recoveredByWrite = declaredCallsIssues({
     calls: { change: write, check: declaredWriteCall(providerWrite, requirementKey, 'change') },
     consumerEntrypointKey: consumerEntrypoint,
     consumerKind: 'action',
@@ -340,7 +371,7 @@ const manifestOf = (
   return registeredWorkloadCalls === undefined ? manifest : { ...manifest, registeredWorkloadCalls };
 };
 
-it('builds a runtime registration only when every declared call is covered (validateDeclaredCalls)', () => {
+it('builds a runtime registration only when every declared call is covered (declaredCallsIssues)', () => {
   const read = runRead({ subject: declaredCall(providerRead, requirementKey) });
   expect(() =>
     defineVerticalRuntimeRegistration({

@@ -62,7 +62,7 @@ const customerPriceGroupResolutionCalls = {
   ),
 } as const;
 
-export type CustomerPriceGroupResolutionRunContext = ReadRunContext<
+type CustomerPriceGroupResolutionRunContext = ReadRunContext<
   CustomerPriceGroupResolutionServices,
   typeof customerPriceGroupResolutionCalls,
   NoAccessQuestions
@@ -131,7 +131,7 @@ const verificationReference = (input: {
  * The owner's own facts, read in one transaction: the profile still exists for this subject, and its
  * complete current assignment set at `effectiveAt` (the request's instant, or the owner's now).
  */
-export const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.loadSnapshot')(
+const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.loadSnapshot')(
   function* loadSnapshot(
     input: CustomerPriceGroupResolutionRequest,
     tenantId: string,
@@ -155,10 +155,10 @@ export const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResol
     };
   },
 );
-export type CustomerPriceGroupSnapshot = Effect.Success<ReturnType<typeof loadCustomerPriceGroupSnapshot>>;
+type CustomerPriceGroupSnapshot = Effect.Success<ReturnType<typeof loadCustomerPriceGroupSnapshot>>;
 
 /** The public answer about one snapshot: its resolution and the evidence that binds both to the owner's set. */
-export const customerPriceGroupResolutionResponse = (
+const customerPriceGroupResolutionResponse = (
   profile: CustomerPriceGroupResolutionRequest['profile'],
   snapshot: CustomerPriceGroupSnapshot,
   resolution: CustomerPriceGroupResolution,
@@ -200,7 +200,7 @@ export const customerPriceGroupResolutionResponse = (
 };
 
 /** The same assignment set is still the owner's current one at the snapshot's instant: when it is, observe. */
-export const recheckCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.recheckSnapshot')(
+const recheckCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.recheckSnapshot')(
   function* recheckSnapshot(
     input: CustomerPriceGroupResolutionRequest,
     tenantId: string,

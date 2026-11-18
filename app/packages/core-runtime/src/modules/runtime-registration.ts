@@ -154,10 +154,7 @@ const registeredWorkloadCallsOf = (manifest: OntosRuntimeManifestInput): readonl
     : failRuntimeRegistration('manifest registeredWorkloadCalls must be valid registered-workload calls');
 };
 
-/**
- * Every call a `{ run }` read declares must be covered by this module's manifest: the kernel's
- * `validateDeclaredCalls` (`execution/requirements.ts`), whose rules live in `module-dependency-contracts.ts`.
- */
+/** Every call a `{ run }` read declares must be covered by this module's manifest (`declaredCallsIssues`). */
 const validateRuntimeReadCalls = (input: VerticalRuntimeRegistrationInput, reads: readonly AnyReadRegistration[]) => {
   const registeredWorkloadCalls = registeredWorkloadCallsOf(input.manifest);
   for (const read of reads) {

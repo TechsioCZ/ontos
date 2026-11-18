@@ -132,8 +132,8 @@ export const sameOperationProvider = (
   left.entrypointKey === right.entrypointKey &&
   left.schemaVersion === right.schemaVersion;
 
-/** What the definition-time check of an operation's declared calls reads (`ValidateDeclaredCalls`). */
-export interface DeclaredCallsCheck {
+/** What the definition-time check of an operation's declared calls reads. */
+interface DeclaredCallsCheck {
   readonly calls: DeclaredCalls;
   readonly consumerEntrypointKey: string;
   readonly consumerKind: 'action' | 'read' | 'worker';
@@ -159,8 +159,7 @@ const requirementCallersIssues = (
     caller.kind === 'person' ||
     registeredWorkloadCalls.some(
       (call) =>
-        call.declarationKey === String(caller.declarationKey) &&
-        call.entrypointKey === requirement.provider.entrypointKey,
+        call.declarationKey === caller.declarationKey && call.entrypointKey === requirement.provider.entrypointKey,
     )
       ? []
       : [
