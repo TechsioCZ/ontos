@@ -17,6 +17,7 @@ import {
 import { observeRelevantStockPositionSet } from '../persistence/current-relevant-stock-position-set-repository.ts';
 import type { RelevantStockPositionSetObservation } from '../persistence/current-relevant-stock-position-set-repository.ts';
 import {
+  RelevantStockPositionSetPreparedSchema,
   finishRelevantStockPositionSet,
   prepareRelevantStockPositionSet,
 } from '../services/current-relevant-stock-position-set.service.ts';
@@ -99,6 +100,7 @@ export const currentRelevantStockPositionSetRead = defineRead(
   {
     prepare: (input: RelevantStockPositionSetRequest, context) =>
       prepareRelevantStockPositionSet(input, context.scope).pipe(Effect.mapError(mapPositionSetReadFailure)),
+    prepared: RelevantStockPositionSetPreparedSchema,
     load: (input, context: ReadLoadContext<PositionSetServices, RelevantStockPositionSetPrepared>) =>
       context.services.observe(input.scope, context.prepared).pipe(Effect.mapError(mapPositionSetReadFailure)),
     finish: Effect.fn('CurrentRelevantStockPositionSetRead.finish')(

@@ -209,19 +209,19 @@ export const evaluateRelevantStockPositionSet = Effect.fn('PositionSet.evaluate'
   }),
 );
 
-type RelevantStockPositionSetResult = Effect.Success<ReturnType<typeof evaluateRelevantStockPositionSet>>;
-
 /**
  * What the read established before its transaction: an early unproven result, or the owner observation to
  * take, bounded by the Commerce verification window when the exact Commerce scope was verified.
  */
-export type RelevantStockPositionSetPrepared =
-  | { readonly kind: 'RESULT'; readonly result: RelevantStockPositionSetResult }
-  | {
-      readonly kind: 'OBSERVE';
-      readonly validFrom?: number;
-      readonly validTo?: number | null;
-    };
+export const RelevantStockPositionSetPreparedSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('RESULT'), result: RelevantStockPositionSetResponseSchema }),
+  Schema.Struct({
+    kind: Schema.Literal('OBSERVE'),
+    validFrom: Schema.optionalKey(Schema.Number),
+    validTo: Schema.optionalKey(Schema.Number),
+  }),
+]);
+export type RelevantStockPositionSetPrepared = typeof RelevantStockPositionSetPreparedSchema.Type;
 
 /**
  * Before the transaction: the remote Commerce verification of an exact Commerce scope. The owner
@@ -269,11 +269,14 @@ export const prepareRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPo
     } satisfies RelevantStockPositionSetPrepared;
   }
   const { validFrom, validTo } = response.evidence.currentness;
-  return {
-    kind: 'OBSERVE',
-    validFrom: DateTime.toEpochMillis(DateTime.makeUnsafe(validFrom)),
-    validTo: validTo === null ? null : DateTime.toEpochMillis(DateTime.makeUnsafe(validTo)),
-  } satisfies RelevantStockPositionSetPrepared;
+  const window = { kind: 'OBSERVE', validFrom: DateTime.toEpochMillis(DateTime.makeUnsafe(validFrom)) } as const;
+  // An open-ended window has no `validTo`.
+  return validTo === null
+    ? window
+    : ({
+        ...window,
+        validTo: DateTime.toEpochMillis(DateTime.makeUnsafe(validTo)),
+      } satisfies RelevantStockPositionSetPrepared);
 });
 
 /**
@@ -298,7 +301,7 @@ export const finishRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPos
     prepared.validFrom !== undefined &&
     (observationTime === undefined ||
       observationTime < prepared.validFrom ||
-      (prepared.validTo !== null && prepared.validTo !== undefined && observationTime >= prepared.validTo))
+      (prepared.validTo !== undefined && observationTime >= prepared.validTo))
   ) {
     return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
   }

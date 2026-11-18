@@ -7,7 +7,7 @@ import type {
   ReadPrepareContext,
 } from '@app/core-runtime';
 import { ReadPermissionDenied, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   VerifyMarketEligibilityV1RequestSchema,
   VerifyMarketEligibilityV1ResponseSchema,
@@ -20,6 +20,7 @@ import type {
   MarketSubjectRestrictionsReader,
 } from '../integrations/market-subject-restrictions.ts';
 import {
+  MarketSubjectRestrictionSnapshotSchema,
   currentSubjectRestrictions,
   requiredSubjectRestrictionsReader,
   subjectRestrictionsUnchanged,
@@ -188,6 +189,7 @@ export const verifyMarketEligibilityV1Read = defineRead(
   },
   {
     prepare: (input, context) => prepareVerifyMarketEligibilityV1(input, context),
+    prepared: Schema.Option(MarketSubjectRestrictionSnapshotSchema),
     load: handleVerifyMarketEligibilityV1,
     finish: (input, context) => finishVerifyMarketEligibilityV1(input, context),
   },

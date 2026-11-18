@@ -9,10 +9,6 @@ import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.t
 import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
 
 type PurchasingSubject = typeof PurchasingSubjectRefSchema.Type;
-type OwnerCurrentRestrictions = Extract<
-  MarketSubjectRestrictionsCurrentResponse,
-  { readonly outcome: 'SUBJECT_RESTRICTIONS_CURRENT' }
->;
 
 export class MarketSubjectRestrictionsUnavailable extends Schema.TaggedError<MarketSubjectRestrictionsUnavailable>()(
   'MarketSubjectRestrictionsUnavailable',
@@ -22,18 +18,30 @@ export class MarketSubjectRestrictionsUnavailable extends Schema.TaggedError<Mar
   },
 ) {}
 
-export interface MarketSubjectRestrictionSnapshot {
-  readonly allowedChannels: readonly ('B2B' | 'B2C')[];
-  readonly allowedMarketIds?: readonly string[];
-  readonly allowedSellerIds: readonly string[];
-  readonly decision: 'ALLOWED' | 'DENIED';
-  readonly evidenceRefs: readonly string[];
-  readonly observedAt: OwnerCurrentRestrictions['observedAt'];
-  readonly ownerRevision: string;
-  readonly profileState: 'ACTIVE' | 'ARCHIVED' | 'SUSPENDED';
-  readonly subjectIdentityRef: string;
-  readonly subjectKind: 'COUNTERPARTY' | 'RETAIL_PROFILE';
-}
+// Customer Context's owner references, kept as the contract's own strings (as its restriction resource ids are).
+const AllowedMarketIdSchema = Schema.String.pipe(
+  Schema.brand('MarketSubjectAllowedMarketId'),
+  Schema.decodeTo(Schema.String),
+);
+const AllowedSellerIdSchema = Schema.String.pipe(
+  Schema.brand('MarketSubjectAllowedSellerId'),
+  Schema.decodeTo(Schema.String),
+);
+
+/** The subject's restrictions as data: what a Read's `prepare` hands to its `load` and `finish`. */
+export const MarketSubjectRestrictionSnapshotSchema = Schema.Struct({
+  allowedChannels: Schema.Array(Schema.Literals(['B2B', 'B2C'])),
+  allowedMarketIds: Schema.optionalKey(Schema.Array(AllowedMarketIdSchema)),
+  allowedSellerIds: Schema.Array(AllowedSellerIdSchema),
+  decision: Schema.Literals(['ALLOWED', 'DENIED']),
+  evidenceRefs: Schema.Array(Schema.String),
+  observedAt: Schema.DateTimeUtc,
+  ownerRevision: Schema.String,
+  profileState: Schema.Literals(['ACTIVE', 'ARCHIVED', 'SUSPENDED']),
+  subjectIdentityRef: Schema.String,
+  subjectKind: Schema.Literals(['COUNTERPARTY', 'RETAIL_PROFILE']),
+});
+export type MarketSubjectRestrictionSnapshot = typeof MarketSubjectRestrictionSnapshotSchema.Type;
 
 export interface MarketSubjectRestrictionsReader {
   readonly current: (

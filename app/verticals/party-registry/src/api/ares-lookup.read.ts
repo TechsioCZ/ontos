@@ -151,6 +151,7 @@ export const aresLookupRead = defineRead(
         // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
         Effect.catch(mapAresFailure),
       ),
+    prepared: AresLookupResponseSchema,
     load: (_input, context: ReadLoadContext<Readonly<Record<string, never>>, AresSubjectResult>) =>
       Effect.succeed({ evidence: { resultCount: 1 }, result: context.prepared }),
   },

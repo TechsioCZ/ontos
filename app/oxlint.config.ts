@@ -1366,10 +1366,11 @@ export default defineConfig({
     'perfectionist/sort-objects': [
       'error',
       {
-        // Core's staged reads infer `prepared` from the prepare/load/finish order.
+        // Core's staged reads infer what `load` returned from the prepare/load/finish order; `prepared` declares
+        // the schema of what `prepare` returned and stays beside it.
         type: 'unsorted',
         useConfigurationIf: {
-          allNamesMatchPattern: '^(?:prepare|load|finish)$',
+          allNamesMatchPattern: '^(?:prepare|prepared|load|finish)$',
           matchesAstSelector: coreReadPipelineSelector,
         },
       },

@@ -7,7 +7,7 @@ import type {
   ReadPrepareContext,
 } from '@app/core-runtime';
 import { ReadPermissionDenied, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import {
   ResolveCommerceMarketRequestSchema,
   ResolveCommerceMarketResponseSchema,
@@ -27,6 +27,7 @@ import type {
   MarketSubjectRestrictionsReader,
 } from '../integrations/market-subject-restrictions.ts';
 import {
+  MarketSubjectRestrictionSnapshotSchema,
   currentSubjectRestrictions,
   requiredSubjectRestrictionsReader,
   subjectRestrictionsUnchanged,
@@ -198,6 +199,7 @@ export const resolveCommerceMarketRead = defineRead(
   },
   {
     prepare: (input, context) => prepareResolveCommerceMarket(input, context),
+    prepared: Schema.Option(MarketSubjectRestrictionSnapshotSchema),
     load: handleResolveCommerceMarket,
     finish: (input, context) => finishResolveCommerceMarket(input, context),
   },

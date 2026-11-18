@@ -12,7 +12,7 @@ import {
   defineTenantModuleEntrypoint,
   readVerifiedGatewayActor,
 } from '@app/core-runtime';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import {
   EligibleMarketTuplesRequestSchema,
   EligibleMarketTuplesResponseSchema,
@@ -29,6 +29,7 @@ import type {
   MarketSubjectRestrictionsReader,
 } from '../integrations/market-subject-restrictions.ts';
 import {
+  MarketSubjectRestrictionSnapshotSchema,
   currentSubjectRestrictions,
   requiredSubjectRestrictionsReader,
   subjectRestrictionsUnchanged,
@@ -177,6 +178,7 @@ export const eligibleMarketTuplesRead = defineRead(
   },
   {
     prepare: (input, context) => prepareEligibleMarketTuples(input, context),
+    prepared: Schema.Option(MarketSubjectRestrictionSnapshotSchema),
     load: handleEligibleMarketTuples,
     finish: (input, context) => finishEligibleMarketTuples(input, context),
   },
