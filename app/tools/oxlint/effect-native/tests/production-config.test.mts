@@ -81,7 +81,10 @@ const staged: readonly (readonly [string, string])[] = [
   [e2eTest, nodeTestImport],
   [handlers, domainVocabulary],
   [discardedAssignment, 'export const read = () => { let value = 1; value = 2; return value; };\n'],
-  [observedValues, 'export const read = () => 2;\n'],
+  [
+    observedValues,
+    'export const read = () => { let value = 1; const first = value; value = 2; return [first, value]; };\n',
+  ],
   ...routes.map((file) => [file, 'export const value = 1;\n'] as const),
 ];
 

@@ -37,7 +37,6 @@ register('no-unknown-type-aliases', {
       'function read() { type Hidden = Later; type Later = unknown; return 1; }',
       [unknownAlias('Hidden'), unknownAlias('Later')],
     ],
-    ['type Hidden = string | unknown;', [unknownAlias('Hidden')]],
     ['type Box<T> = T; type Hidden = Box<unknown>;', [unknownAlias('Hidden')]],
     ['type Box<T> = T; type Hidden = Box<Box<unknown>>;', [unknownAlias('Hidden')]],
     ['type Box<T = unknown> = T; type Hidden = Box;', [unknownAlias('Hidden')]],
@@ -45,6 +44,8 @@ register('no-unknown-type-aliases', {
     ['type Value = unknown; type Generic<Value> = Value;', [unknownAlias('Value')]],
   ],
   valid: [
+    'type Result = unknown | ReturnType<typeof JSON.parse>;',
+    'type Result = string | unknown;',
     'type Envelope = { readonly payload: unknown };',
     'type Guard = (value: unknown) => value is string;',
     'type Box<T> = T;',
@@ -80,6 +81,18 @@ register('no-unknown-returns', {
 
 register('no-object-parameters', {
   invalid: [
+    [
+      'type Input = object; switch ((value: Input) => value) { default: type Input = { id: string }; }',
+      [objectParameter('value')],
+    ],
+    [
+      "import { parse as Input } from 'node:path'; type Input = object; function take(value: Input) { return [Input('a'), value]; }",
+      [objectParameter('value')],
+    ],
+    [
+      "type Input = object; import { parse as Input } from 'node:path'; function take(value: Input) { return [Input('a'), value]; }",
+      [objectParameter('value')],
+    ],
     ['type Input<T> = T; declare function take(value: Input<object>): void;', [objectParameter('value')]],
     ['function outer() { return (value: Input) => value; type Input = object; }', [objectParameter('value')]],
     ['type Input = object; function take({ id }: Input) { return id; }', [objectParameter('{ id }')]],
@@ -93,6 +106,8 @@ register('no-object-parameters', {
     ],
   ],
   valid: [
+    'type Input = object; switch (1) { default: type Input = { id: string }; const take = (value: Input) => value; }',
+    "import { parse as Input } from 'node:path'; function take(value: Input) { return value; }",
     'type Input = object; declare function take<Input>(value: Input): void;',
     'type Input = object; function outer() { interface Input { readonly id: string } return (value: Input) => value; }',
     'type Input = object; const Holder = class Input { take(value: Input) { return value; } };',

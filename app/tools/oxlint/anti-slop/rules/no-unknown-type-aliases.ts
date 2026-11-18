@@ -10,7 +10,9 @@ function resolvesToUnknown(type: ESTree.TSType, visitorKeys: VisitorKeys): boole
   return resolvedTypeMatches(type, visitorKeys, (resolved, matches) => {
     if (resolved.type === "TSUnknownKeyword") return true;
     if (resolved.type === "TSParenthesizedType") return matches(resolved.typeAnnotation);
-    return resolved.type === "TSUnionType" && resolved.types.some(matches);
+    // Keep the existing union boundary: a member may resolve to `any` through an
+    // imported or computed type, so seeing `unknown` alone does not classify the union.
+    return false;
   });
 }
 

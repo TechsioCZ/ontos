@@ -48,6 +48,16 @@ function bind(
   name: string,
   declaration: TypeDeclaration,
 ): void {
+  const existing = bindings.get(name);
+  // A value-only import may legally share a name with a local type alias. The local
+  // type declaration owns type lookups; an otherwise unresolved import stays opaque.
+  if (existing?.kind === "declaration") {
+    if (existing.declaration.type === "TSTypeAliasDeclaration" && declaration.type === "ImportSpecifier") return;
+    if (existing.declaration.type === "ImportSpecifier" && declaration.type === "TSTypeAliasDeclaration") {
+      bindings.set(name, { kind: "declaration", declaration });
+      return;
+    }
+  }
   // Merged declarations (interface + interface, class + interface) are not one alias.
   bindings.set(name, bindings.has(name) ? mergedBinding : { kind: "declaration", declaration });
 }
@@ -103,7 +113,11 @@ export function typeBinding(name: string, use: ESTree.Node, visitorKeys: Visitor
     if (node.type === "ClassExpression" && node.id?.name === name) {
       return { kind: "declaration", declaration: node };
     }
-    const binding = scopeBindings(node)?.get(name);
+    // Case-block declarations do not bind names in the discriminant.
+    const binding =
+      node.type === "SwitchStatement" && child === node.discriminant
+        ? undefined
+        : scopeBindings(node)?.get(name);
     if (binding !== undefined) return binding;
     child = node;
   }
