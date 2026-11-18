@@ -21,7 +21,8 @@ import type {
   AccessWorkloadInput,
 } from '../authorization/access-declaration.ts';
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
-import type { AccessDecisionService } from '../access/enforcement/contract.ts';
+import { withOptional } from '../access/decision/optional.ts';
+import type { AccessDecisionService, GateCarrier } from '../access/enforcement/contract.ts';
 import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
@@ -34,7 +35,21 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ResourceAccessTarget } from '../permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
+import { OperationEffectKindSchema, OperationRouteSchema } from '../sdk/index.ts';
+import type {
+  AccessQuestions,
+  NoAccessQuestions,
+  NoReadCalls,
+  ReadCalls,
+  ReadLoadStepWithAnswers,
+  ReadRun,
+  ReadRunStep,
+  ReadSdkDescriptorFields,
+} from '../sdk/read.ts';
+import { materializeAccessQuestions } from './access-questions.ts';
+import { ReadDefinitionInvariantError } from './read-definition-invariant-error.ts';
 import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
+import type { MaterializedAccessQuestion } from './sdk-contract.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
 const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
@@ -160,10 +175,6 @@ export type ReadOwnerPermissionDeclaration<Input> = ReadPrivateStorage<
   readonly kind: 'owner_permission';
   readonly [ownerPermissionDeclarationMarker]: true;
 };
-
-const ReadDefinitionInvariantError = Schema.TaggedError<Error>()('ReadDefinitionInvariantError', {
-  message: Schema.String,
-});
 
 const failReadDefinition = (message: string): never => {
   throw new ReadDefinitionInvariantError({ message });
@@ -750,6 +761,39 @@ export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidation
   }
 };
 
+/**
+ * The SDK parts of one registration, read by Core without the registration's type parameters: the
+ * calls a `{ run }` read declares and the access questions a `{ load }` or `{ run }` read asks,
+ * materialized once at definition.
+ */
+interface ReadSdkParts {
+  readonly accessQuestions: readonly MaterializedAccessQuestion[];
+  readonly calls: ReadCalls;
+}
+
+const NO_READ_CALLS: NoReadCalls = Object.freeze({});
+const NO_MATERIALIZED_QUESTIONS: readonly MaterializedAccessQuestion[] = Object.freeze([]);
+
+/**
+ * What a read runs: the one-transaction handler (written bare or as `{ load }`), or the `{ run }`
+ * function, which receives the two kernel capabilities instead of a transaction.
+ */
+type ReadRegistrationStep<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Services,
+  Error,
+  Requirements,
+> =
+  | Readonly<{
+      readonly form: 'handler';
+      readonly handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+    }>
+  | Readonly<{
+      readonly form: 'run';
+      readonly run: ReadRun<InputSchema, ResultSchema, Services, ReadCalls, AccessQuestions, Error, Requirements>;
+    }>;
+
 type ReadRegistrationPrivateValue<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -758,12 +802,13 @@ type ReadRegistrationPrivateValue<
   Error,
   Requirements = never,
 > = Readonly<{
-  readonly handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
   /** Absent for a v2 `protected` read, which resolves its record through `accessTarget` (O62). */
   readonly permissionTargetResolver: ReadPermissionTargetDeclaration<InputSchema['Type']> | undefined;
   readonly policies: readonly ActionPolicy<InputSchema['Type'], Owner>[];
   readonly resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>;
+  readonly sdk: ReadSdkParts;
   readonly serviceFactory: ReadServiceFactory<Services, Requirements>;
+  readonly step: ReadRegistrationStep<InputSchema, ResultSchema, Services, Error, Requirements>;
 }>;
 
 export type ReadRegistration<
@@ -925,25 +970,69 @@ const validateReadVocabulary = <
 };
 
 /**
- * The handler a read is defined with. A bare handler function passes through untouched. Anything else
- * must be the `{ load }` form: a plain object whose only own key is an enumerable data property `load`
- * holding a function. Every other value, a `prepare`, `prepared` or `finish` step above all, has no
- * meaning here and is refused.
+ * The three spellings of a read. `{ load }` is typed with the descriptor's questions: without any, its
+ * `context.access` holds no answer, exactly the plain `ReadLoadStep` handler.
  */
-const readHandlerOf = <
+type AuthoredReadDefinition<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Services,
+  Calls extends ReadCalls,
+  Questions extends AccessQuestions,
+  Error,
+  Requirements,
+> =
+  | ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>
+  | ReadLoadStepWithAnswers<InputSchema, ResultSchema, Services, Questions, Error, Requirements>
+  | ReadRunStep<InputSchema, ResultSchema, Services, Calls, Questions, Error, Requirements>;
+
+/** How the read was written; the access questions rule depends on it. */
+const ReadSpellingSchema = Schema.Literals(['bare', 'load', 'run']);
+type ReadSpelling = typeof ReadSpellingSchema.Type;
+
+/**
+ * The property a `{ load }` or `{ run }` object holds its function in: an own, enumerable data property
+ * holding a function. A getter, a hidden or inherited property, or anything else is refused.
+ */
+const isStepProperty = (property: PropertyDescriptor | undefined): boolean =>
+  property !== undefined && property.enumerable === true && 'value' in property && Predicate.isFunction(property.value);
+
+/** What `readStepOf` read from the authored definition: how it was written and what it runs. */
+interface ReadAuthoredStep<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Services,
   Error,
   Requirements,
+> {
+  readonly spelling: ReadSpelling;
+  readonly step: ReadRegistrationStep<InputSchema, ResultSchema, Services, Error, Requirements>;
+}
+
+const LOAD_FORM_REFUSAL = '{ load } must hold the read handler as its only own enumerable data property';
+const RUN_FORM_REFUSAL = '{ run } must hold the run function as its only own enumerable data property';
+
+/**
+ * What a read is defined with. A bare handler function passes through untouched. Anything else must be
+ * a plain object whose only own key is an enumerable data property holding a function: `load` (the
+ * same handler, one transaction) or `run` (the kernel form). Every other value, a `prepare`, `prepared`
+ * or `finish` step above all, `{ run, load }` together, or `{ run }` with any other key, has no meaning
+ * here and is refused.
+ */
+const readStepOf = <
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Services,
+  Calls extends ReadCalls,
+  Questions extends AccessQuestions,
+  Error,
+  Requirements,
 >(
   readKey: string,
-  definition:
-    | ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>
-    | ReadLoadStep<InputSchema, ResultSchema, Services, Error, Requirements>,
-): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> => {
+  definition: AuthoredReadDefinition<InputSchema, ResultSchema, Services, Calls, Questions, Error, Requirements>,
+): ReadAuthoredStep<InputSchema, ResultSchema, Services, Error, Requirements> => {
   if (Predicate.isFunction(definition)) {
-    return definition;
+    return { spelling: 'bare', step: { form: 'handler', handler: definition } };
   }
   const plain =
     Predicate.isObject(definition) &&
@@ -952,25 +1041,161 @@ const readHandlerOf = <
   const steps = keys.filter((key) => key === 'prepare' || key === 'prepared' || key === 'finish');
   if (steps.length > 0) {
     return failReadDefinition(
-      `Read ${readKey}: a read has no ${steps.map(String).join(', ')} step; it is defined with its handler or { load: handler }`,
+      `Read ${readKey}: a read has no ${steps.map(String).join(', ')} step; it is defined with its handler, { load: handler } or { run }`,
     );
   }
-  const load = keys.length === 1 ? Object.getOwnPropertyDescriptor(definition, 'load') : undefined;
-  if (load === undefined || load.enumerable !== true || !('value' in load) || !Predicate.isFunction(load.value)) {
-    return failReadDefinition(
-      `Read ${readKey}: { load } must hold the read handler as its only own enumerable data property`,
-    );
+  if (keys.includes('run')) {
+    if (keys.includes('load')) {
+      return failReadDefinition(
+        `Read ${readKey}: { run } and { load } are two forms of a read; it is defined with exactly one`,
+      );
+    }
+    if (keys.length !== 1) {
+      return failReadDefinition(`Read ${readKey}: ${RUN_FORM_REFUSAL}`);
+    }
+    const property = Object.getOwnPropertyDescriptor(definition, 'run');
+    // One read of the property, and it has to give the function the descriptor showed.
+    if (!isStepProperty(property) || !Predicate.hasProperty(definition, 'run') || definition.run !== property?.value) {
+      return failReadDefinition(`Read ${readKey}: ${RUN_FORM_REFUSAL}`);
+    }
+    // SAFETY: proved the object's only own enumerable data property and a function; the authored union
+    // has exactly one member with a `run` key, and Core builds its context from the same descriptor.
+    const run = definition.run as unknown as ReadRun<
+      InputSchema,
+      ResultSchema,
+      Services,
+      ReadCalls,
+      AccessQuestions,
+      Error,
+      Requirements
+    >;
+    return { spelling: 'run', step: { form: 'run', run } };
   }
-  // One read of the property, and it has to give the function the descriptor showed.
-  const handler = definition.load;
-  if (handler !== load.value) {
-    return failReadDefinition(
-      `Read ${readKey}: { load } must hold the read handler as its only own enumerable data property`,
-    );
+  const property = keys.length === 1 ? Object.getOwnPropertyDescriptor(definition, 'load') : undefined;
+  if (!isStepProperty(property) || !Predicate.hasProperty(definition, 'load') || definition.load !== property?.value) {
+    return failReadDefinition(`Read ${readKey}: ${LOAD_FORM_REFUSAL}`);
   }
-  return handler;
+  // SAFETY: proved the object's only own enumerable data property and a function. A handler written for
+  // access answers receives `context.access` exactly when its descriptor asks questions, which
+  // `defineRead` requires of it, so it runs as the one-transaction handler with that optional field set.
+  const handler = definition.load as ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+  return { spelling: 'load', step: { form: 'handler', handler } };
 };
 
+/** The declared calls of a read as data: each names its operation, with its kind, route and schemas. */
+const DeclaredCallsSchema = Schema.Record(
+  Schema.NonEmptyString,
+  Schema.Struct({
+    operation: Schema.Struct({
+      kind: OperationEffectKindSchema,
+      request: Schema.Unknown,
+      response: Schema.Unknown,
+      route: OperationRouteSchema,
+    }),
+  }),
+);
+const isDeclaredCalls = Schema.is(DeclaredCallsSchema);
+
+/**
+ * The calls a `{ run }` read declares, checked and frozen once: named declared calls, each covered by a
+ * requirement key and naming an operation that carries its request and response schemas. A write call
+ * is refused in any read: reads never change owner state, and write calls are reserved for Actions and
+ * workers. Each requirement is checked against the module's manifest when its runtime registration is
+ * built.
+ */
+const readCallsOf = (readKey: string, calls: ReadCalls): ReadCalls => {
+  if (!isDeclaredCalls(calls)) {
+    return failReadDefinition(
+      `Read ${readKey}: every entry of calls must be a declared call (declaredCall(operation, requirementKey))`,
+    );
+  }
+  const entries = Object.entries(calls).map(([name, declared]) => {
+    const { operation, requirementKey } = declared;
+    if (
+      !Predicate.isString(requirementKey) ||
+      requirementKey.length === 0 ||
+      !Schema.isSchema(operation.request) ||
+      !Schema.isSchema(operation.response)
+    ) {
+      return failReadDefinition(
+        `Read ${readKey}: every entry of calls must be a declared call (declaredCall(operation, requirementKey))`,
+      );
+    }
+    if (operation.kind !== 'read' || Predicate.hasProperty(declared, 'recovery')) {
+      return failReadDefinition(
+        `Read ${readKey}: call ${name} is a write call; a read declares only read calls (declaredCall)`,
+      );
+    }
+    return [name, Object.freeze({ ...declared })] as const;
+  });
+  return Object.freeze(Object.fromEntries(entries));
+};
+
+/**
+ * The SDK fields of a descriptor (`calls`, `accessQuestions`), checked against how the read is written:
+ * only `{ run }` may declare calls (a handler or `{ load }` read runs in one transaction and calls
+ * nothing), and only `{ load }` or `{ run }` may ask access questions (a bare handler has no place to
+ * receive the answers). The questions are answered by the access gate, so they need a `protected`
+ * read, and are materialized once here.
+ */
+const readSdkPartsOf = (
+  descriptor: Readonly<{
+    readonly accessKind: ReadAccessKind;
+    readonly entrypoint: ModuleEntrypointDescriptor;
+    readonly readKey: string;
+  }> &
+    ReadSdkDescriptorFields<ReadCalls, AccessQuestions>,
+  spelling: ReadSpelling,
+  carrier: GateCarrier,
+): ReadSdkParts => {
+  const { accessQuestions, calls, readKey } = descriptor;
+  if (calls !== undefined && spelling !== 'run') {
+    return failReadDefinition(
+      `Read ${readKey}: only the { run } form declares calls; a handler or { load } read runs in one transaction and calls nothing`,
+    );
+  }
+  if (accessQuestions !== undefined && spelling === 'bare') {
+    return failReadDefinition(
+      `Read ${readKey}: accessQuestions need the { load } or { run } form; a bare handler receives no answers`,
+    );
+  }
+  if (accessQuestions !== undefined && descriptor.entrypoint.authorization.kind !== 'protected') {
+    return failReadDefinition(
+      `Read ${readKey}: accessQuestions are answered by the access gate, so the read must be protected`,
+    );
+  }
+  return Object.freeze({
+    accessQuestions:
+      accessQuestions === undefined
+        ? NO_MATERIALIZED_QUESTIONS
+        : Object.freeze([
+            ...materializeAccessQuestions({ accessKind: descriptor.accessKind, carrier }, accessQuestions),
+          ]),
+    calls: calls === undefined ? NO_READ_CALLS : readCallsOf(readKey, calls),
+  });
+};
+
+/** The legacy positional permission-target resolver a read may still declare (removed in C03b). */
+type AuthoredReadPermissionTargetResolver<Input> =
+  | ReadConditionalPermissionDeclaration<Input>
+  | ReadOwnerPermissionDeclaration<Input>
+  | ReadPermissionTargetResolver<Input>
+  | undefined;
+
+/**
+ * Defines a read. Three spellings of its second argument:
+ *
+ * - a bare handler, or `{ load: handler }`: one transaction, exactly as before. A `{ load }` read may
+ *   declare `accessQuestions`; its handler then also receives `context.access`.
+ * - `{ run }`: the kernel form for a read that calls another operation or needs more than one
+ *   transaction. Its descriptor declares every call it can make in `calls`.
+ *
+ * One signature whose second argument is the union of the three spellings, so an inline handler or
+ * `run` is contextually typed by the member its key selects. The descriptor rules the types cannot
+ * state (calls only with `{ run }`, questions not on a bare handler, no write call) are refused here at
+ * definition. `defineRead` satisfies `DefineReadSdkForms` (asserted by
+ * `tests/unit/read-definition-sdk-forms.test.ts`).
+ */
 export const defineRead = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -981,39 +1206,46 @@ export const defineRead = <
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
+  // After the existing seven, so a call site that names them explicitly keeps its meaning.
+  const Calls extends ReadCalls = NoReadCalls,
+  const Questions extends AccessQuestions = NoAccessQuestions,
 >(
-  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema> &
+    ReadSdkDescriptorFields<Calls, Questions>,
   ...definition: readonly [
-    handler:
-      | ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>
-      | ReadLoadStep<InputSchema, ResultSchema, Services, Error, Requirements>,
+    handler: AuthoredReadDefinition<InputSchema, ResultSchema, Services, Calls, Questions, Error, Requirements>,
     serviceFactory: ReadServiceFactory<Services, Requirements>,
     /**
      * The legacy positional permission-target resolver. A v2 `protected` read omits it and declares
      * `accessTarget` instead (O62). The parameter disappears with the legacy kinds (C03b).
      */
-    permissionTargetResolver?:
-      | ReadConditionalPermissionDeclaration<InputSchema['Type']>
-      | ReadOwnerPermissionDeclaration<InputSchema['Type']>
-      | ReadPermissionTargetResolver<InputSchema['Type']>
-      | undefined,
+    permissionTargetResolver?: AuthoredReadPermissionTargetResolver<InputSchema['Type']>,
     resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
     executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
   ]
 ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema> => {
   const [
-    authoredHandler,
+    authored,
     serviceFactory,
     declaredPermissionResolver,
     resultPermissionTargetResolver,
     executablePolicies = [],
   ] = definition;
-  const handler = readHandlerOf(descriptor.readKey, authoredHandler);
+  const { spelling, step } = readStepOf(descriptor.readKey, authored);
+  if (step.form === 'run' && resultPermissionTargetResolver !== undefined) {
+    // The legacy result filter runs against the legacy permission target inside today's transaction;
+    // a `{ run }` read is decided by its own declaration and filters its rows in its own queries.
+    return failReadDefinition(
+      `Read ${descriptor.readKey}: a { run } read declares no legacy result permission resolver`,
+    );
+  }
   const {
     accessActor: _authoredActor,
     accessDeclaration: _authoredDeclaration,
     accessFieldGroups: _authoredFieldGroups,
+    accessQuestions: _authoredQuestions,
     accessWorkload: _authoredWorkload,
+    calls: _authoredCalls,
     ...descriptorRest
   } = descriptor;
   const permissionTargetResolver = normalizeOwnerPermissionResolver(
@@ -1043,8 +1275,24 @@ export const defineRead = <
   if (fieldGroupIssue !== undefined) {
     return failReadDefinition(`Read ${descriptor.readKey}: ${fieldGroupIssue}`);
   }
+  // The read's own gate carrier, exactly as the runtime asks the gate with it.
+  const carrier: GateCarrier = withOptional(
+    withOptional(
+      withOptional(
+        { entrypoint: descriptor.entrypoint, schemaVersion: descriptor.schemaVersion },
+        'accessDeclaration',
+        carriers.accessDeclaration,
+      ),
+      'accessWorkload',
+      carriers.accessWorkload,
+    ),
+    'accessActor',
+    carriers.accessActor,
+  );
+  const sdk = readSdkPartsOf(descriptor, spelling, carrier);
   const frozenDescriptor: DeclaredReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema> = Object.freeze({
     // The authored carriers are replaced by their decoded form below; they are never registered as written.
+    // `calls` and `accessQuestions` live in the private value, checked and materialized.
     ...descriptorRest,
     ...carriers,
     entrypoint: descriptor.entrypoint,
@@ -1052,10 +1300,11 @@ export const defineRead = <
     policies: Object.freeze(descriptor.policies.map((reference) => Object.freeze({ ...reference }))),
   });
   const privateValue = {
-    handler,
     permissionTargetResolver,
     policies: Object.freeze([...executablePolicies]),
+    sdk,
     serviceFactory,
+    step: Object.freeze(step),
   };
   const publicFields = {
     descriptor: frozenDescriptor,
@@ -1172,8 +1421,67 @@ export const getReadHandler = <
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
-): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> =>
-  ReadPrivateStorage.getValue(registration).handler;
+): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> => {
+  const { step } = ReadPrivateStorage.getValue(registration);
+  return step.form === 'handler'
+    ? step.handler
+    : failReadDefinition(
+        `Read ${registration.descriptor.readKey} is defined with { run }: it has no one-transaction handler`,
+      );
+};
+
+/** The `{ run }` function of a read defined in the kernel form; undefined for a handler or `{ load }` read. */
+export const getReadRun = <
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  Error,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+>(
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+): ReadRun<InputSchema, ResultSchema, Services, ReadCalls, AccessQuestions, Error, Requirements> | undefined => {
+  const { step } = ReadPrivateStorage.getValue(registration);
+  return step.form === 'run' ? step.run : undefined;
+};
+
+/** The SDK parts of any registration `defineRead` created, read without its type parameters. */
+const readSdkPartsOfRegistration = (registration: AnyReadRegistration): ReadSdkParts => {
+  if (!Schema.is(AnyReadRegistrationSchema)(registration)) {
+    return failReadDefinition('Expected a Read registration created by defineRead');
+  }
+  // SAFETY: every registration `defineRead` creates holds its frozen SDK parts in its private value.
+  return ReadPrivateStorage.getValue(registration as unknown as ReadPrivateStorage<Readonly<{ sdk: ReadSdkParts }>>)
+    .sdk;
+};
+
+/**
+ * A descriptor-only registration, typed for the read runtime's own `runRead`: Core's in-process call
+ * route holds its operations as `AnyReadRegistration`. `runRead` checks the registration first and
+ * answers unavailable for anything `defineRead` did not create; Core's own operations are Core reads
+ * whose service factories need no service.
+ */
+export const governedReadRegistration = (
+  registration: AnyReadRegistration,
+): ReadRegistration<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, string, unknown, unknown> =>
+  // SAFETY: the one private representation behind every `AnyReadRegistration` is this
+  // `ReadRegistration`; `runRead` re-checks it with `isReadRegistration` before using it.
+  registration as unknown as ReadRegistration<
+    Schema.ConstraintDecoder<unknown>,
+    Schema.ConstraintDecoder<unknown>,
+    string,
+    unknown,
+    unknown
+  >;
+
+/** The calls a `{ run }` read declares, checked and frozen at definition; empty for every other read. */
+export const getReadCalls = (registration: AnyReadRegistration): ReadCalls =>
+  readSdkPartsOfRegistration(registration).calls;
+
+/** The access questions a `{ load }` or `{ run }` read asks, materialized at definition; empty otherwise. */
+export const getReadAccessQuestions = (registration: AnyReadRegistration): readonly MaterializedAccessQuestion[] =>
+  readSdkPartsOfRegistration(registration).accessQuestions;
 
 export const getReadServiceFactory = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
