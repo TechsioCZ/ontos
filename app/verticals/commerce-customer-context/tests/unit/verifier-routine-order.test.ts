@@ -67,7 +67,7 @@ const shippedRuntimeRoutines = () => {
         }),
       )(match.groups);
       const signature = `${name}(${parameters.toLowerCase().replaceAll(/\s+/gu, '')})`;
-      if (operation.startsWith('DROP')) {
+      if (operation.toUpperCase().startsWith('DROP')) {
         signatures.delete(signature);
       } else if (Option.getOrUndefined(role) === 'ontos_runtime') {
         signatures.set(signature, name);
