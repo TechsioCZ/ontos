@@ -1,0 +1,236 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { Array as EffectArray, Order, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { parse } from 'yaml';
+
+const ACTION_URL = new URL('../../../.github/actions/install-app/action.yml', import.meta.url);
+const UTF8 = 'utf-8';
+const MANIFEST = 'package.json';
+const WORKSPACE_FILE = 'pnpm-workspace.yaml';
+/** The only programs the listing step runs (sha256sum is in /sbin on macOS); a fixed PATH keeps the run hermetic. */
+const STEP_PATH = '/usr/bin:/bin:/sbin';
+const APP = new URL('../..', import.meta.url).pathname;
+const expression = (body: string) => `\${{ ${body} }}`;
+const DERIVED_PATHS = expression('steps.packages.outputs.paths');
+const DERIVED_MANIFESTS = expression('steps.packages.outputs.manifests');
+
+const StepSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  if: Schema.optional(Schema.String),
+  name: Schema.String,
+  run: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+const ActionSchema = Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(StepSchema) }) });
+const WorkspaceSchema = Schema.Struct({ packages: Schema.Array(Schema.String) });
+
+const {
+  runs: { steps },
+} = Schema.decodeUnknownSync(ActionSchema)(parse(readFileSync(ACTION_URL, UTF8)));
+const step = (name: string) => {
+  const found = steps.find((candidate) => candidate.name === name);
+  if (found === undefined) {
+    throw new Error(`install-app has no step ${name}`);
+  }
+  return found;
+};
+const LISTING_STEP = step('List the workspace packages');
+
+const blocks = /^(?<name>\w+)<<EOF\n(?<body>[\s\S]*?)\nEOF$/gmu;
+
+/** Runs the action's package listing in `workspace`, as the composite step does in app/. */
+const derive = (workspace: string) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-output-'));
+  const output = path.join(scratch, 'github-output');
+  writeFileSync(output, '');
+  let text = '';
+  try {
+    execFileSync('/bin/bash', ['-c', LISTING_STEP.run ?? ''], {
+      cwd: workspace,
+      env: { GITHUB_OUTPUT: output, PATH: STEP_PATH },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    text = readFileSync(output, UTF8);
+  } catch {
+    return 'failed' as const;
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+  const outputs = new Map<string, readonly string[]>();
+  for (const { groups } of text.matchAll(blocks)) {
+    outputs.set(groups?.name ?? '', (groups?.body ?? '').split('\n'));
+  }
+  return {
+    directories: outputs.get('directories') ?? [],
+    manifests: /^manifests=(?<hash>\w+)$/mu.exec(text)?.groups?.hash ?? '',
+    paths: outputs.get('paths') ?? [],
+  };
+};
+const deriveOrThrow = (workspace: string) => {
+  const derived = derive(workspace);
+  if (derived === 'failed') {
+    throw new Error(`the package listing failed in ${workspace}`);
+  }
+  return derived;
+};
+
+/** The directories under `workspace` one glob segment at a time matches, with `*` and `?` inside a segment. */
+const expand = (workspace: string, segments: readonly string[], parent = ''): readonly string[] => {
+  const [segment, ...rest] = segments;
+  if (segment === undefined) {
+    return [parent];
+  }
+  const source = segment
+    .replaceAll(/[.+^${}()|[\]\\]/gu, String.raw`\$&`)
+    .replaceAll('*', '.*')
+    .replaceAll('?', '.');
+  const matcher = new RegExp(`^${source}$`, 'u');
+  return readdirSync(path.join(workspace, parent), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && matcher.test(entry.name))
+    .flatMap((entry) => expand(workspace, rest, path.posix.join(parent, entry.name)));
+};
+
+/** The package directories pnpm takes from `packages:`: every positive glob's manifests, minus every negation's. */
+const workspacePackages = (workspace: string) => {
+  const { packages } = Schema.decodeUnknownSync(WorkspaceSchema)(
+    parse(readFileSync(path.join(workspace, WORKSPACE_FILE), UTF8)),
+  );
+  const matches = (patterns: readonly string[]) =>
+    patterns.flatMap((pattern) =>
+      expand(workspace, pattern.split('/')).filter((directory) =>
+        existsSync(path.join(workspace, directory, MANIFEST)),
+      ),
+    );
+  const negated = packages.filter((pattern) => pattern.startsWith('!')).map((pattern) => pattern.slice(1));
+  const excluded = new Set(matches(negated));
+  const included = matches(packages.filter((pattern) => !pattern.startsWith('!')));
+  return EffectArray.sort(
+    [...new Set(included)].filter(
+      (directory) => !excluded.has(directory) && !directory.split('/').includes('node_modules'),
+    ),
+    Order.String,
+  );
+};
+
+/** The workspace packages whose node_modules the cached paths leave out. */
+const uncovered = (workspace: string, paths: readonly string[]) =>
+  workspacePackages(workspace).filter((directory) => !paths.includes(`app/${directory}/node_modules`));
+
+const withWorkspace = (listing: string, directories: readonly string[], body: (workspace: string) => void) => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'install-app-cache-paths-'));
+  try {
+    writeFileSync(path.join(workspace, WORKSPACE_FILE), listing);
+    for (const directory of directories) {
+      mkdirSync(path.join(workspace, directory), { recursive: true });
+      writeFileSync(path.join(workspace, directory, MANIFEST), `{"name":"${directory}"}`);
+    }
+    body(workspace);
+  } finally {
+    rmSync(workspace, { force: true, recursive: true });
+  }
+};
+const addPackage = (workspace: string, directory: string) => {
+  mkdirSync(path.join(workspace, directory), { recursive: true });
+  writeFileSync(path.join(workspace, directory, MANIFEST), '{}');
+};
+
+const LISTING = [
+  'catalogs: {}',
+  '',
+  'packages:',
+  '  - apps/*',
+  '  # A package at the workspace root.',
+  '  - "verticals/*" # quoted, with a comment',
+  "  - 'packages/*'",
+  '  - root-package',
+  "  - '!packages/fixture-*'",
+  'enableGlobalVirtualStore: false',
+  '',
+].join('\n');
+const FIXTURE = ['apps/shell', 'verticals/catalog', 'packages/core', 'packages/fixture-a', 'root-package', 'other/x'];
+
+it('caches and keys the node_modules of every package this workspace declares', () => {
+  const { directories, manifests, paths } = deriveOrThrow(APP);
+  expect(directories).toEqual(workspacePackages(APP));
+  expect(uncovered(APP, paths)).toEqual([]);
+  expect(paths.slice(0, 2)).toEqual(['app/node_modules', '!app/node_modules/.cache']);
+  expect(manifests).toMatch(/^[0-9a-f]{64}$/u);
+});
+
+it('follows the packages: globs, negations, quotes and comments of a workspace file', () => {
+  withWorkspace(LISTING, FIXTURE, (workspace) => {
+    const { directories, paths } = deriveOrThrow(workspace);
+    expect(directories).toEqual(['apps/shell', 'packages/core', 'root-package', 'verticals/catalog']);
+    expect(directories).toEqual(workspacePackages(workspace));
+    expect(uncovered(workspace, paths)).toEqual([]);
+  });
+});
+
+it('covers a package directory added to the workspace in the cached paths and the key', () => {
+  withWorkspace(LISTING, FIXTURE, (workspace) => {
+    const before = deriveOrThrow(workspace);
+    addPackage(workspace, 'apps/added');
+    expect(uncovered(workspace, before.paths)).toEqual(['apps/added']);
+    const after = deriveOrThrow(workspace);
+    expect(uncovered(workspace, after.paths)).toEqual([]);
+    expect(after.manifests).not.toBe(before.manifests);
+
+    writeFileSync(
+      path.join(workspace, WORKSPACE_FILE),
+      LISTING.replace('  - root-package\n', '  - root-package\n  - extra\n'),
+    );
+    addPackage(workspace, 'extra');
+    const declared = deriveOrThrow(workspace);
+    expect(declared.directories).toContain('extra');
+    expect(uncovered(workspace, declared.paths)).toEqual([]);
+    expect(declared.manifests).not.toBe(after.manifests);
+  });
+});
+
+it('refuses a workspace file it cannot expand exactly', () => {
+  for (const entry of ['apps/**', '../outside', './apps/*', '{a,b}/*', '[unclosed']) {
+    withWorkspace(`packages:\n  - apps/*\n  - '${entry}'\n`, FIXTURE, (workspace) => {
+      expect(derive(workspace), entry).toBe('failed');
+    });
+  }
+  withWorkspace('packages: [apps/*]\n', FIXTURE, (workspace) => {
+    expect(derive(workspace)).toBe('failed');
+  });
+  withWorkspace('packages:\n  - apps/*\n  -\n    - nested\n', FIXTURE, (workspace) => {
+    expect(derive(workspace)).toBe('failed');
+  });
+});
+
+it('restores and saves exactly the derived paths under a key that names every package manifest', () => {
+  const restore = step('Restore the installed workspace');
+  const save = step('Save the installed workspace');
+  expect(restore.with?.path).toBe(DERIVED_PATHS);
+  expect(save.with?.path).toBe(DERIVED_PATHS);
+  expect(restore.with?.key).toContain(DERIVED_MANIFESTS);
+  expect(restore.with?.key).toContain("'app/pnpm-workspace.yaml'");
+  expect(save.with?.key).toBe(expression('steps.workspace.outputs.cache-primary-key'));
+  for (const { name, run, with: inputs } of steps) {
+    expect(`${run ?? ''}${JSON.stringify(inputs ?? {})}`, name).not.toMatch(
+      /(?:apps|packages|verticals)\/\*\/node_modules/u,
+    );
+  }
+});
+
+it('never saves an exact hit again and lets a caller opt out of the gates tree', () => {
+  const optedIn = "inputs.restore-node-modules == 'true'";
+  for (const name of [
+    'List the workspace packages',
+    'Restore the installed workspace',
+    'Verify the restored workspace resolves',
+  ]) {
+    expect(step(name).if, name).toBe(optedIn);
+  }
+  for (const name of ['Check that the installed workspace may be published', 'Save the installed workspace']) {
+    expect(step(name).if, name).toContain(optedIn);
+    expect(step(name).if, name).toContain("steps.workspace.outputs.cache-hit != 'true'");
+  }
+});
