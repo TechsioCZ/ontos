@@ -35,7 +35,8 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
     if [[ "$workflow_id" =~ ^[0-9]+$ ]] &&
       runs="$(gh api --method GET "repos/${GITHUB_REPOSITORY:-}/actions/workflows/$workflow_id/runs" \
         -f "branch=${GITHUB_REF_NAME:-}" -f event=push -f per_page=100)"; then
-      proven="$(jq -r --arg branch "${GITHUB_REF_NAME:-}" --argjson workflow "$workflow_id" '.workflow_runs[]
+      proven="$(jq -r --arg branch "${GITHUB_REF_NAME:-}" --argjson workflow "$workflow_id" '.workflow_runs
+        | sort_by(.created_at) | reverse | .[]
         | select(.workflow_id == $workflow and .event == "push" and .head_branch == $branch
           and .status == "completed" and .conclusion == "success")
         | .head_sha' <<<"$runs")" || proven=''
