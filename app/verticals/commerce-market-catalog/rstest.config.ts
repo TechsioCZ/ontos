@@ -27,9 +27,10 @@ export default defineConfig({
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,
       testEnvironment: 'node',
-      // Slowest unit test measured 568 ms in gates runs 43616061381 and 43844802542; budget is the
-      // 2400 ms floor these configs share, not the silent 5000 ms Rstest default.
-      testTimeout: 2400,
+      // Main's unit tests measured 568 ms at most (gates runs 43616061381 and 43844802542), which gave the
+      // shared 2400 ms floor. Demo's component tests (.tsx) were not in that measurement: the first one of a file
+      // pays the DOM and module load and took 2.57 s on a loaded runner (gates run 44260866014), over the floor.
+      testTimeout: 6000,
       tools: { swc: unitSwc },
     },
   ],
