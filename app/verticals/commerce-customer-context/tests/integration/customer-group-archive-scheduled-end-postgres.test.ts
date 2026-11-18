@@ -2108,6 +2108,12 @@ it.live('commits source effects once and gates historical receipts through gover
       test.setSourceRecoveryDenied(false);
       test.setSourcePrivacyDenied(true);
       expect(yield* Effect.flip(test.applySource(assign))).toMatchObject({ code: 'SOURCE_AUTHORITY_DENIED' });
+      // Source authority is an owner check on whether the write may happen, and the write already
+      // happened: Core does not run it for a replay. With source authority withdrawn, the original-key
+      // retry still answers the saved reply, because Core's access gate still allows this caller.
+      const sourceChecksBeforeReplay = test.sourcePrivacyChecks.length;
+      expect(yield* test.applySource(assign, idempotencyKey)).toEqual(first);
+      expect(test.sourcePrivacyChecks).toHaveLength(sourceChecksBeforeReplay);
       expect(yield* Effect.flip(test.recoverSource(recoveryInput))).toBeInstanceOf(ReadHandlerNotFound);
       test.setSourcePrivacyDenied(false);
       expect(yield* test.recoverSource(recoveryInput)).toEqual(first);
@@ -2157,6 +2163,9 @@ it.live('commits source effects once and gates historical receipts through gover
           ),
         );
       expect(yield* Effect.flip(test.applySource(assign))).toMatchObject({ code: 'SOURCE_AUTHORITY_DENIED' });
+      // The route that authorized the write is rotated away; the original-key retry is still a replay of
+      // the committed write, decided by Core's access gate alone, so it answers the saved reply.
+      expect(yield* test.applySource(assign, idempotencyKey)).toEqual(first);
       const rotated = yield* Schema.decodeUnknownEffect(ApplyCustomerGroupMembershipSourcePayloadSchema)({
         ...assign,
         route: { ...assign.route, revision: '2' },
