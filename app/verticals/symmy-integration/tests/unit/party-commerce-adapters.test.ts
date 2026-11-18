@@ -736,6 +736,23 @@ const endContactEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
   },
 });
 
+const alreadyCommittedWithoutReply = () =>
+  peer.create.fail(
+    PartyCommandAlreadyCommittedProblemSchema,
+    PartyCommandAlreadyCommittedProblemSchema.make({
+      code: 'action_already_committed',
+      detail: 'Internal commit without a saved reply',
+      invocationId: Schema.decodeUnknownSync(PartyCommandAlreadyCommittedProblemSchema.fields.invocationId)(
+        invocationId,
+      ),
+      resolution: 'REFRESH_GOVERNED_READS',
+      retryCommand: false,
+      status: 409,
+      title: 'Already committed',
+      type: 'https://ontos.dev/problems/internal-already-committed',
+    }),
+  );
+
 describe('governed internal Party adapter', () => {
   it.effect('preserves the original Contact end no-change receipt instead of guessing from current state', () =>
     Effect.gen(function* contactNoChange() {
@@ -972,33 +989,64 @@ describe('governed internal Party adapter', () => {
     }).pipe(asSymmyWorker),
   );
 
-  it.effect.each(['no saved reply', 'forbidden resend'] as const)(
+  it.effect('settles a committed create-party without a saved reply from its Party receipt', () =>
+    Effect.gen(function* replayWithoutSavedReply() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      // A commit made before Core saved replies, past the recovery window, with an unstorable reply, or whose
+      // replay Core refuses answers ActionAlreadyCommitted; the receipt of the pinned invocation settles it.
+      alreadyCommittedWithoutReply();
+      peer.receipt.succeed(
+        Schema.decodeUnknownSync(PartySourceEffectReceiptResponseSchema)({
+          actionInvocationId: invocationId,
+          operation: 'CREATE',
+          outcome: 'COMMITTED',
+          result: created,
+        }),
+      );
+      const receipts: unknown[] = [];
+      const adapter = yield* createAdapter;
+      const result = yield* adapter.recover({
+        ...(yield* withOriginalRequest(input())),
+        recordOwnerReceipt: (receipt) =>
+          Effect.sync(() => {
+            receipts.push(receipt);
+          }),
+      });
+      expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
+      expect(receipts).toEqual([
+        Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
+          _tag: 'PartyCreated',
+          actionInvocationId: invocationId,
+          partyRef: canonicalPartyRef,
+        }),
+      ]);
+      expect(peer.create.sent).toHaveLength(1);
+      expect(peer.receipt.bodies).toEqual([expect.objectContaining({ operation: 'CREATE' })]);
+    }).pipe(asSymmyWorker),
+  );
+
+  it.effect.each(['forbidden resend', 'no saved reply and a denied receipt Read'] as const)(
     'keeps a committed create-party uncertain, never denied or conflicting, on %s',
     (refusal) =>
       Effect.gen(function* replayRefused() {
         reset();
         peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-        if (refusal === 'no saved reply') {
-          // A commit made before Core saved replies still answers ActionAlreadyCommitted.
-          peer.create.fail(
-            PartyCommandAlreadyCommittedProblemSchema,
-            PartyCommandAlreadyCommittedProblemSchema.make({
-              code: 'action_already_committed',
-              detail: 'Internal commit without a saved reply',
-              invocationId: Schema.decodeUnknownSync(PartyCommandAlreadyCommittedProblemSchema.fields.invocationId)(
-                invocationId,
-              ),
-              resolution: 'REFRESH_GOVERNED_READS',
-              retryCommand: false,
-              status: 409,
-              title: 'Already committed',
-              type: 'https://ontos.dev/problems/internal-already-committed',
-            }),
-          );
-        } else {
+        if (refusal === 'forbidden resend') {
           peer.create.fail(
             PartyCommandForbiddenProblemSchema,
             PartyCommandForbiddenProblemSchema.make({
+              detail: 'Internal current authority revoked',
+              status: 403,
+              title: 'Forbidden',
+              type: 'about:blank',
+            }),
+          );
+        } else {
+          alreadyCommittedWithoutReply();
+          peer.receipt.fail(
+            PartySourceEffectReceiptForbiddenProblemSchema,
+            PartySourceEffectReceiptForbiddenProblemSchema.make({
               detail: 'Internal current authority revoked',
               status: 403,
               title: 'Forbidden',
@@ -1020,7 +1068,7 @@ describe('governed internal Party adapter', () => {
         expect(Result.isFailure(recovered)).toBe(true);
         expect(receipts).toEqual([]);
         expect(peer.create.sent).toHaveLength(1);
-        expect(peer.receipt.sent).toHaveLength(0);
+        expect(peer.receipt.sent).toHaveLength(refusal === 'forbidden resend' ? 0 : 1);
       }).pipe(asSymmyWorker),
   );
 
