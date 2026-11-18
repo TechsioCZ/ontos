@@ -206,12 +206,14 @@ it('refuses a workspace file it cannot expand exactly', () => {
 });
 
 it('restores and saves exactly the derived paths under a key that names every package manifest', () => {
+  const key = step('Name the installed workspace');
   const restore = step('Restore the installed workspace');
   const save = step('Save the installed workspace');
   expect(restore.with?.path).toBe(DERIVED_PATHS);
   expect(save.with?.path).toBe(DERIVED_PATHS);
-  expect(restore.with?.key).toContain(DERIVED_MANIFESTS);
-  expect(restore.with?.key).toContain("'app/pnpm-workspace.yaml'");
+  expect(key.run).toContain(DERIVED_MANIFESTS);
+  expect(key.run).toContain("'app/pnpm-workspace.yaml'");
+  expect(restore.with?.key).toBe(expression('steps.workspace-key.outputs.key'));
   expect(save.with?.key).toBe(expression('steps.workspace.outputs.cache-primary-key'));
   for (const { name, run, with: inputs } of steps) {
     expect(`${run ?? ''}${JSON.stringify(inputs ?? {})}`, name).not.toMatch(
@@ -220,10 +222,39 @@ it('restores and saves exactly the derived paths under a key that names every pa
   }
 });
 
+it('keys the installed workspace on its install code and both hosted runner image variables', () => {
+  const key = step('Name the installed workspace');
+  expect(key.id).toBe('workspace-key');
+  expect(key.run).toContain("hashFiles('.github/actions/install-app/action.yml',");
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-key-'));
+  const output = path.join(scratch, 'github-output');
+  try {
+    // GitHub evaluates these expressions before bash runs; leave the image reads to the actual step.
+    const run = (key.run ?? '').replaceAll(/\$\{\{.*?\}\}/gu, 'hash');
+    for (const [ImageOS, ImageVersion] of [
+      ['ubuntu24', '20261109.1.0'],
+      ['ubuntu24', '20261116.1.0'],
+      ['ubuntu26', '20261116.1.0'],
+    ]) {
+      writeFileSync(output, '');
+      execFileSync('/bin/bash', ['-c', run], {
+        env: { GITHUB_OUTPUT: output, ImageOS, ImageVersion, PATH: STEP_PATH },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      expect(readFileSync(output, UTF8)).toBe(
+        `key=pnpm-workspace-hash-hash-${ImageOS}-${ImageVersion}-hash-hash\n`,
+      );
+    }
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+});
+
 it('never saves an exact hit again and lets a caller opt out of the gates tree', () => {
   const optedIn = "inputs.restore-node-modules == 'true'";
   for (const name of [
     'List the workspace packages',
+    'Name the installed workspace',
     'Restore the installed workspace',
     'Verify the restored workspace resolves',
   ]) {

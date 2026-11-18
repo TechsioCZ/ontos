@@ -987,6 +987,8 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
   });
   const warm = Schema.decodeUnknownSync(schema)(readGateWorkflow()).jobs['warm-caches'];
   expect(warm.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  expect(warm.steps.find(({ name }) => name === INSTALL_APP_STEP)?.uses).toBe(INSTALL_APP_ACTION);
+  expect(readFileSync(GATES_WORKFLOW_URL, 'utf-8')).not.toContain('pnpm-workspace-');
   expect(warm.steps.find(({ name }) => name === INSTALL_APP_STEP)?.with).toMatchObject({
     'save-node-modules': 'true',
   });
