@@ -11,7 +11,7 @@ it.effect('keeps the temporal receiver on Party’s source-owned migration prepa
       path.resolve(import.meta.dirname, '../support/price-group-current-receiver.fixture.ts'),
     );
     const partyBranchStart = source.indexOf("if (owner === 'party')");
-    const partyBranch = source.slice(partyBranchStart, source.indexOf('const history =', partyBranchStart));
+    const partyBranch = source.slice(partyBranchStart, source.indexOf('const pool =', partyBranchStart));
     expect(partyBranch).toContain("ChildProcess.make('pnpm', ['run', 'db:migrate']");
     expect(partyBranch).toContain('DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl)');
     expect(partyBranch).toContain('DATABASE_URL: Redacted.value(bootstrap.database.runtimeUrl)');

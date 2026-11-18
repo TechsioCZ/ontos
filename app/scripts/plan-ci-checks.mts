@@ -411,15 +411,9 @@ export const planCiChecks = (input: PlanInput) => {
     if (selected.length === matchingPackages(filters, packages).length) {
       return [entry];
     }
+    // Only the package list narrows: the row's own commands, scripts and worker flags run as authored.
     const selectedFilters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
-    return [
-      {
-        ...entry,
-        commands: ['test:unit', 'test:component']
-          .map((script) => `pnpm -r --no-sort --if-present ${selectedFilters} run ${script}`)
-          .join('\n'),
-      },
-    ];
+    return [{ ...entry, commands: entry.commands.replaceAll(/(?:--filter\s+\S+\s*)+/gu, `${selectedFilters} `) }];
   });
   const selectedUnit = rootOnly ? templates.unit : narrowedUnit;
   const scopes = selectedScopes(input, narrowedUnit);

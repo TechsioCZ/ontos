@@ -318,7 +318,7 @@ it('classifies documentation before installation and schedules full regression w
   expect(steps[provenBase]?.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'");
   expect(steps[classify]?.env?.BASE_SHA).toBe(
     expression(
-      "steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '')",
+      "steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '')",
     ),
   );
   expect(steps[classify]?.env?.CANDIDATE_DISPATCH).toBe(expression("steps.candidate.outputs.base != ''"));
@@ -590,6 +590,8 @@ it('only builds on the shards and proves every unit together in its own job that
   expect(build.steps.some(({ run }) => run?.includes('node:proof') === true)).toBe(false);
   expect(build.steps.at(-1)?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
   expect(build.steps.at(-1)?.with?.name).toBe(`node-units-${expression(MATRIX_SHARD)}`);
+  // A re-run replaces the shard's own earlier upload instead of failing on the existing name.
+  expect(build.steps.at(-1)?.with?.overwrite).toBe(true);
   const proof = jobs[NODE_ARTIFACT_PROOF_JOB];
   expect(proof.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
   const download = proof.steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
@@ -1669,6 +1671,9 @@ it('refuses root native integration when the same-run build archives are missing
 it('keeps deployment out of the workspace gates and guards Action transaction I/O', () => {
   const { env, jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   expect(env.ONTOS_ACTION_TRANSACTION_IO_GUARD).toBe('true');
+  // Workflow-level env has no runner context: `runner.temp` there names no directory, so the cache path is literal.
+  expect(path.isAbsolute(env.NODE_COMPILE_CACHE ?? '')).toBe(true);
+  expect(env.NODE_COMPILE_CACHE).not.toContain('${{');
   // The retired deploy chain stays out of the gates: the workflow only plans and runs checks.
   expect(sorted(Object.keys(jobs))).toEqual(sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, ...GATE_JOBS, WORKSPACE_GATES_JOB]));
 });
@@ -1728,8 +1733,10 @@ it('saves the pnpm store from the one planner install, on the trunks only', () =
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true);
+  // A re-run of ci-plan, whose planning can fail after this upload, replaces it instead of failing on the name.
   expect(upload?.with).toMatchObject({
     name: CHANGED_PATHS_ARTIFACT,
+    overwrite: true,
     path: `${RUNNER_TEMP_EXPRESSION}/ci-changed-paths`,
   });
   expect(plan?.outputs?.['lint-shards']).toBe(expression("steps.lint-shards.outputs.shards || '[1,2,3]'"));

@@ -75,7 +75,6 @@ import {
   INVENTORY_CONTRACT_IMPORT,
   INVENTORY_DEPLOYMENT_ID,
   INVENTORY_MODULE_ID,
-  INVENTORY_OWNER_PATH,
   INVENTORY_PACKAGE_SPECIFIER,
   INVENTORY_REGISTRATION_PATH,
   INVENTORY_RUNTIME_ID,
@@ -1267,6 +1266,8 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
       invalidClients,
       /module APIs require an approved Codesmith generator/u,
     );
+    // Each contract case below must fail on the contract alone, never on a client left invalid above.
+    yield* write(root, clientPath, validClient);
     const contractPath = 'verticals/inventory-stock/shared/apis/stock-list.ts';
     const validContract = yield* Effect.promise(() => readFile(path.join(root, contractPath), 'utf-8'));
     yield* assertRejectedSources(
@@ -1283,20 +1284,17 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
       ],
       /module APIs require an approved Codesmith generator/u,
     );
-    yield* write(root, contractPath, validContract);
-    yield* write(
-      root,
-      contractPath,
-      validContract.replace(
-        "HttpApi.make('StockListApi').add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))",
-        `HttpApi.make('StockListApi')
+    const pipedDecoy = validContract.replace(
+      "HttpApi.make('StockListApi').add(",
+      `HttpApi.make('StockListApi')
   .pipe((api) => {
     DecoyApi.add(HttpApiGroup.make('decoy'));
     return api;
   })
-  .add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))`,
-      ),
+  .add(`,
     );
+    expect(pipedDecoy).not.toBe(validContract);
+    yield* write(root, contractPath, pipedDecoy);
     yield* write(root, clientPath, validClient.replace('client.stockList.execute', 'client.decoy.execute'));
     yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
       onFailure: (cause) =>
@@ -1305,12 +1303,9 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
-    yield* write(
-      root,
-      contractPath,
-      `${validContract.replace(".add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))", '')}
-DecoyApi.add(HttpApiGroup.make('decoy'));`,
-    );
+    const detachedContract = validContract.replace(/\.add\(HttpApiGroup\.make\('stockList'\)[\s\S]*?\}\)\)\)/u, '');
+    expect(detachedContract).not.toBe(validContract);
+    yield* write(root, contractPath, `${detachedContract}\nDecoyApi.add(HttpApiGroup.make('decoy'));`);
     yield* write(root, clientPath, validClient.replace('client.stockList.execute', 'client.decoy.execute'));
     yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
       onFailure: (cause) =>
@@ -1319,6 +1314,7 @@ DecoyApi.add(HttpApiGroup.make('decoy'));`,
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
+    yield* write(root, clientPath, validClient);
     yield* write(
       root,
       contractPath,
@@ -2883,7 +2879,7 @@ it('proves only closed schema and request-discriminator dispatch through the unc
 });
 
 it('proves inferred native scoped factories and nested callback type parameters without accepting forged ownership', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/src/api/stock-list.read.ts`;
   const service = `${owner}/src/services/stock-list.ts`;
   const sources = new Map([
@@ -2913,7 +2909,7 @@ export const factory = (transaction: ScopedTransactionExecutor, scope: Operation
 });
 
 it('recognizes native Effect.fn scoped generators only with the actual Core factory ABI', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/src/api/stock-list.read.ts`;
   const service = `${owner}/src/services/stock-list.ts`;
   const source = `import type { ScopedTransactionExecutor, OperationalScope } from '@app/core-runtime';
@@ -2977,7 +2973,7 @@ it('binds native handler audiences to the actual owner and preserves thin server
 });
 
 it('resolves the published owner client once and requires exact relative Action exports', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/shared/inventory-stock-client.ts`;
   const publication =
     "// <generated-action-http-client-exports>\nexport * from '../src/api/reserve-action-client.ts';\n// </generated-action-http-client-exports>";
@@ -3032,7 +3028,7 @@ it.live(
     Effect.gen(function* publishedContractWithOwnerClient() {
       const root = yield* makeFixture();
       yield* writeGovernedModuleApi(root);
-      const contractFile = `${INVENTORY_OWNER_PATH}/shared/apis/stock-list.ts`;
+      const contractFile = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
       const published = STOCK_LIST_PUBLISHED_SOURCE;
       const packageFile = 'packages/inventory-public-contracts/package.json';
       const contract = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));
@@ -3079,7 +3075,7 @@ it.live(
 );
 
 it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
   const actionFile = `${owner}/shared/apis/reserve-action.ts`;

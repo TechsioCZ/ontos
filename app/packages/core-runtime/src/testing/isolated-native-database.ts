@@ -119,11 +119,15 @@ const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authoriza
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 /** The core-system Outbox claim and publication-drain suite (`scripts/integration/core-system-outbox-drain`). */
 const coreSystemDrainPurpose = 'publication-drain-core-system';
+const preproposalSourcePurpose = 'implementation-1290-preproposal-native-source';
 type IsolatedNativeDatabaseInput = (
   | {
       readonly compositionSnapshot?: never;
       readonly mode: typeof schemaOnly;
-      readonly purpose: typeof browserCompositionPurpose;
+      readonly purpose:
+        | typeof browserCompositionPurpose
+        | typeof retainedPrivacyPurpose
+        | typeof preproposalSourcePurpose;
     }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
@@ -235,6 +239,8 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
   input.mode === schemaOnly
     ? [
         browserCompositionPurpose,
+        retainedPrivacyPurpose,
+        preproposalSourcePurpose,
         'stabilization-1196-product-create',
         'implementation-1126-group-definition',
         'implementation-1134-inventory-source-import-receipt',
@@ -312,6 +318,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
 
 const supportsOwnedReplacement = (input: IsolatedNativeDatabaseInput): boolean =>
   (input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || input.purpose === retainedPrivacyPurpose)) ||
+  (input.mode === schemaOnly && input.purpose === retainedPrivacyPurpose) ||
   (input.mode === schemaOnly && input.purpose === shellAuthPurpose);
 
 const databaseCreation = Effect.fn('IsolatedNativeDatabase.databaseCreation')(function* databaseCreation(input: {
@@ -356,7 +363,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     }
     const ownedPurpose = input.purpose;
     const snapshot =
-      input.mode === schemaOnly && input.purpose !== browserCompositionPurpose
+      input.mode === schemaOnly && input.compositionSnapshot !== undefined
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
             Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
           )
@@ -581,7 +588,8 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       template: creation.useTemplate,
       trustSeconds: Number((yield* Clock.monotonicTimeNanos) - emptyVerified) / 1e9,
     });
-    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
+    const retainedOriginalEnabled =
+      (input.mode === 'empty' || input.mode === schemaOnly) && input.purpose === retainedPrivacyPurpose;
     const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
     const replacementEnabled = supportsOwnedReplacement(input);
     const retainedReplacementRevision = yield* Ref.make<string | null>(null);
@@ -1192,6 +1200,37 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       renewObservation,
       seal: () => runCompositionOperation(sealApplicationCompositionAuthority),
     });
+    const restoreCoreMigrationJournal = Effect.fn('IsolatedNativeDatabase.restoreCoreMigrationJournal')(
+      function* restoreCoreMigrationJournal() {
+        if (input.mode !== schemaOnly) {
+          return yield* unavailable('Migration receipt restoration requires a schema-only clone');
+        }
+        // Immutable migration metadata only, in the source ledger's order, which the convergence planner
+        // reads by id. Business rows, authority and trust material remain local to the clone; the source is
+        // never mutated.
+        const migrations = yield* admin.executor.execute<{
+          readonly hash: string;
+          readonly name: string;
+          readonly version: string;
+        }>(
+          sql`select hash,name,created_at::text as version
+            from drizzle.__drizzle_migrations_core order by id`,
+          'objects',
+        );
+        if (migrations.length === 0) {
+          return yield* unavailable('The source has no committed Core migration receipts');
+        }
+        return yield* clone.executor
+          .execute(
+            sql`insert into drizzle.__drizzle_migrations_core (hash,name,created_at) values ${sql.join(
+              migrations.map((migration) => sql`(${migration.hash},${migration.name},${migration.version}::bigint)`),
+              sql`,`,
+            )}`,
+            'objects',
+          )
+          .pipe(Effect.asVoid);
+      },
+    );
     // Only this scope's new database is reachable; no administrative executor escapes.
     const fixture = {
       composition,
@@ -1199,6 +1238,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       migrateCoreSchema,
       prepareAssortmentAuthorizationRuntime,
       publishInitialComposition,
+      restoreCoreMigrationJournal,
     };
     const verifyOwnership = Effect.fn('IsolatedNativeDatabase.verifyOwnedFixture')(function* verifyOwnedFixture(
       expected: OwnedNativeDatabaseExpectation,

@@ -36,7 +36,6 @@ export const CATALOG_SELECTION_CONTRACT_SUBPATH = 'catalog-selection-evidence';
 export const PRICING_SHARED_API_PATH = 'verticals/pricing/shared/api.ts';
 export const PRICING_HANDLER_PATH = 'verticals/pricing/api/index.ts';
 
-export const INVENTORY_OWNER_PATH = 'verticals/inventory-stock';
 export const BOUNDARY_FIXTURE_TOPOLOGY = 'topology/reference-topology.json';
 export const BOUNDARY_FIXTURE_SHELL_ID = 'shell-super-app';
 export const BOUNDARY_FIXTURE_SHELL_PATH = 'apps/shell-super-app';
@@ -172,7 +171,7 @@ export const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created'
 
 export const PARTY_PACKAGE_NAME = '@app/party-registry';
 
-export const INVENTORY_VERTICAL_PATH = INVENTORY_OWNER_PATH;
+export const INVENTORY_VERTICAL_PATH = 'verticals/inventory-stock';
 
 export const INVENTORY_REGISTRATION_PATH = `${INVENTORY_VERTICAL_PATH}/vertical.registration.ts`;
 
@@ -487,7 +486,7 @@ export const EngagementInventorySchema = Schema.fromJsonString(
 );
 
 export const writeGovernedModuleApi = Effect.fn(function* mergedScenario1(root: string) {
-  const vertical = INVENTORY_OWNER_PATH;
+  const vertical = INVENTORY_VERTICAL_PATH;
   const header = MODULE_API_HEADER;
   yield* write(
     root,

@@ -533,6 +533,51 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
       }),
     ),
   );
+  suite.effect('prepares Privacy transition fixtures without copying authority or replaying migrations', () =>
+    Effect.gen(function* privacySchemaClone() {
+      const fixture = yield* makeIsolatedNativeDatabaseFixture({
+        mode: 'schema-only',
+        purpose: 'stabilization-1258-privacy-drain',
+      });
+      const clone = yield* makeTestPgClient(fixture.connections.admin.connectionString);
+      const [state] = yield* clone<{
+        readonly authority: number;
+        readonly core: string | null;
+        readonly keys: number;
+        readonly party: string | null;
+        readonly tenants: number;
+      }>`select
+        (select count(*)::int from core.application_composition_authority) as authority,
+        (select count(*)::int from core.tenants) as tenants,
+        (select count(*)::int from trust.scope_sealing_keys) as keys,
+        to_regnamespace('core')::text as core, to_regnamespace('party')::text as party`;
+      expect(state).toEqual({ authority: 0, core: 'core', keys: 1, party: 'party', tenants: 0 });
+      expect(yield* clone`select * from drizzle.__drizzle_migrations_core`).toEqual([]);
+      yield* fixture.restoreCoreMigrationJournal();
+      const [receipts] = yield* clone<{ readonly count: number }>`
+        select count(*)::int as count from drizzle.__drizzle_migrations_core`;
+      expect(receipts?.count).toBeGreaterThan(0);
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture(['party-registry'], 'privacy-schema-clone');
+      yield* fixture.publishInitialComposition(snapshot);
+      expect((yield* fixture.composition.observe()).phase).toBe('active');
+    }),
+  );
+  suite.effect('allocates an empty migrated preproposal source without sharing composition authority', () =>
+    Effect.gen(function* preproposalSchemaClone() {
+      const fixture = yield* makeIsolatedNativeDatabaseFixture({
+        mode: 'schema-only',
+        purpose: 'implementation-1290-preproposal-native-source',
+      });
+      const clone = yield* makeTestPgClient(fixture.connections.admin.connectionString);
+      const [state] = yield* clone<{
+        readonly authority: number;
+        readonly tenants: number;
+      }>`select
+        (select count(*)::int from core.application_composition_authority) as authority,
+        (select count(*)::int from core.tenants) as tenants`;
+      expect(state).toEqual({ authority: 0, tenants: 0 });
+    }),
+  );
   suite.effect('initializes clone-local trust without copying source secrets, grants or business data', () =>
     Effect.gen(function* cloneLocalTrust() {
       const configuredSource = yield* loadDatabaseConnectionPair();

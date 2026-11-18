@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +86,31 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
   );
+});
+
+it('narrows only the package list of a unit row and keeps its authored commands and flags', () => {
+  const row = {
+    commands: [
+      'pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./verticals/privacy run test:unit --pool.maxWorkers 2',
+      "pnpm -r --no-sort --if-present --filter './verticals/catalog' --filter './verticals/privacy' run test:component",
+      '',
+    ].join('\n'),
+    name: 'Unit and Component Tests (Catalog and Privacy)',
+  };
+  const plan = planCiChecks({
+    applyAffected: true,
+    changedPaths: ['app/verticals/privacy/src/internal.ts'],
+    packages,
+    templates: { ...templates, unit: [row] },
+  });
+  expect(plan.mode).toBe('affected');
+  expect(plan.unit.map(({ commands }) => commands)).toEqual([
+    [
+      'pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/privacy run test:unit --pool.maxWorkers 2',
+      'pnpm -r --no-sort --if-present --filter ./verticals/privacy run test:component',
+      '',
+    ].join('\n'),
+  ]);
 });
 
 const FINANCE_BILLING = '@app/finance-billing';
@@ -491,10 +516,10 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         });
         return readFileSync(output, 'utf-8');
       };
-      const documentationPlan = run('pull_request');
+      const documentationPlan = run('merge_group');
       expect(documentationPlan).toContain('mode=docs\n');
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
-      expect(run('merge_group')).toContain('mode=docs\n');
+      expect(run('push')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
       // A candidate dispatch with a resolved comparison point is classified like a pull request, unless forced full.
       expect(run('workflow_dispatch', base, 'false', 'true')).toContain('mode=docs\n');
@@ -502,9 +527,23 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       expect(run('workflow_dispatch', '0'.repeat(40), 'false', 'true')).toContain('mode=full\n');
       expect(run('pull_request', '0'.repeat(40))).toContain('mode=full\n');
       expect(run('pull_request', base, 'true')).toContain('mode=full\n');
+      // A pull request run that is not on GitHub's merge commit has no merge parent to compare with.
+      expect(run('pull_request')).toContain('mode=full\n');
       git('mv', 'README.md', 'runtime.ts');
       git('commit', '--quiet', '-m', 'rename into application input');
-      expect(run('pull_request')).toContain('mode=affected\n');
+      expect(run('merge_group')).toContain('mode=affected\n');
+      // The base moved on after the fork point. The pull request's merge commit compares with its first
+      // parent, so only the pull request's own documentation counts, never the base's newer changes.
+      const trunk = git('rev-parse', '--abbrev-ref', 'HEAD');
+      git('checkout', '--quiet', '-b', 'documentation', base);
+      mkdirSync(path.join(directory, 'docs'), { recursive: true });
+      writeFileSync(path.join(directory, 'docs/guide.md'), 'guide\n');
+      git('add', 'docs/guide.md');
+      git('commit', '--quiet', '-m', 'guide');
+      git('checkout', '--quiet', trunk);
+      git('merge', '--quiet', '--no-ff', '-m', 'Merge documentation', 'documentation');
+      expect(run('pull_request', base)).toContain('mode=docs\n');
+      expect(readFileSync(path.join(directory, 'paths'), 'utf-8')).toBe('docs/guide.md\0');
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

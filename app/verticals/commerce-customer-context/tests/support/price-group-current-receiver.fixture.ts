@@ -1,3 +1,6 @@
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
 import {
   DatabaseIdentityEnrollmentContext,
   ContextAccessLive,
@@ -507,10 +510,8 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   owner: 'ccc' | 'party',
   before: boolean,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
-  const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
   if (owner === 'party') {
     // Party owns Contacts preparation, structured-name preservation and migration-history convergence.
     const child = yield* ChildProcess.make('pnpm', ['run', 'db:migrate'], {
@@ -529,35 +530,21 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
     yield* requireCondition(code === 0, 'owned-party-migration');
     return;
   }
-  const history = path.join(directory, 'drizzle');
-  const temporary = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-1248-migration-' });
-  const configuration = path.join(temporary, 'drizzle.config.mjs');
-  yield* fs.writeFileString(
-    configuration,
-    "export default { dialect:'postgresql', out:process.env.ONTOS_1248_HISTORY, dbCredentials:{url:process.env.DATABASE_ADMIN_URL}, migrations:{schema:'drizzle',table:process.env.ONTOS_1248_JOURNAL} };\n",
+  // Commerce Customer Context's own db:migrate is plain Drizzle over this one history; run its pg driver in-process
+  // instead of reloading the drizzle-kit CLI per owned fixture.
+  const pool = yield* Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString: Redacted.value(bootstrap.database.adminUrl), max: 1 })),
+    (ownedPool) => Effect.promise(async () => await ownedPool.end()),
   );
-  const child = yield* ChildProcess.make(
-    process.execPath,
-    [path.join(directory, migrationCommand), 'migrate', '--config', configuration],
-    {
-      cwd: directory,
-      env: {
-        APP_ENV_PATH: '/dev/null',
-        DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-        ONTOS_1248_HISTORY: history,
-        ONTOS_1248_JOURNAL:
-          owner === 'ccc' ? '__drizzle_migrations_commerce_customer_context' : '__drizzle_migrations_party',
-      },
-      extendEnv: true,
-      stderr: 'pipe',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    },
-  );
-  const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-    concurrency: 3,
+  yield* Effect.tryPromise({
+    catch: () => failure('owned-migration'),
+    try: async () =>
+      await migrate(drizzle({ client: pool }), {
+        migrationsFolder: path.join(directory, 'drizzle'),
+        migrationsSchema: 'drizzle',
+        migrationsTable: '__drizzle_migrations_commerce_customer_context',
+      }),
   });
-  yield* requireCondition(code === 0, 'owned-migration');
   if (before) {
     yield* installResolverFixture(bootstrap, 'historical');
   }

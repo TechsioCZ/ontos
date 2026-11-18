@@ -90,7 +90,7 @@ const readStages = (extra: Readonly<Record<string, string>> = {}) =>
     const done = path.join(directory, 'app-boot-stages/done');
     yield* fs.exists(done).pipe(
       Effect.flatMap((exists) => (exists ? Effect.void : Effect.fail('reading'))),
-      Effect.retry(Schedule.spaced('100 millis').pipe(Schedule.upTo('20 seconds'))),
+      Effect.retry(Schedule.spaced('100 millis').pipe(Schedule.upTo({ duration: '20 seconds' }))),
     );
     const report = yield* run('report');
     const summaryText = (yield* fs.exists(summary)) ? yield* fs.readFileString(summary) : '';
