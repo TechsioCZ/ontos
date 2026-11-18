@@ -79,15 +79,17 @@ export type ReadOwnerTransaction<Services> = <Value, Failure, Requirements>(
 >;
 
 /**
- * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
- * `prepare` has nothing prepared, so its load step may be called without it.
+ * The owner transaction step: scoped database services and Core's copy of what `prepare` established, decoded
+ * through the pipeline's `prepared` data schema before the transaction opened, so `Prepared` is that schema's
+ * type. A pipeline without `prepare` has nothing prepared, so its load step may be called without it.
  */
 export type ReadLoadContext<Services, Prepared = undefined> = ReadPrepareContext & {
   readonly services: Services;
 } & (undefined extends Prepared ? { readonly prepared?: Prepared } : { readonly prepared: Prepared });
 
 /**
- * The step after commit: what `prepare` established and what `load` read. `Services` is what the owner's read
+ * The step after commit: Core's decoded copy of what `prepare` established (the same one `load` saw) and what
+ * `load` read. `Services` is what the owner's read
  * service factory builds; a `finish` that never opens an owner transaction may leave it unnamed.
  */
 export interface ReadFinishContext<Prepared, Loaded, Services = unknown> extends ReadPrepareContext {

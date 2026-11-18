@@ -2,7 +2,7 @@ import { fixtureOwnerContract, fixtureOwnerModule, ownerPermissionTarget } from 
 import { fileURLToPath } from 'node:url';
 
 import { NodeFileSystem } from '@effect/platform-node';
-import { Effect, FileSystem, Option, Schema } from 'effect';
+import { Effect, FileSystem, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -930,5 +930,94 @@ it('refuses a pipeline step it would otherwise drop: inherited or non-enumerable
   // Negative control: the same steps as own data properties define a staged Read.
   expect(isStagedRead(defineRead(declaredReadDescriptor(), stagedSteps(), readServices, modulePermissionTarget))).toBe(
     true,
+  );
+});
+
+/** A staged pipeline that declares what it prepares; definition alone is under test, so prepare never runs. */
+const preparedPipeline = <PreparedSchema extends Schema.Top>(prepared: PreparedSchema) => ({
+  load: emptyReadResult,
+  prepare: () => Effect.die('Definition never runs prepare'),
+  prepared,
+});
+
+it('refuses a prepared schema that admits a value carrying behaviour', () => {
+  const RecordSchema = Schema.Struct({ id: Schema.String });
+  interface Tree {
+    readonly children: readonly Tree[];
+    readonly payload?: unknown;
+  }
+  const UnknownTree: Schema.Codec<Tree> = Schema.Struct({
+    children: Schema.Array(Schema.suspend(() => UnknownTree)),
+    payload: Schema.optionalKey(Schema.Unknown),
+  });
+  const refused: readonly Schema.Top[] = [
+    Schema.Unknown,
+    Schema.Any,
+    Schema.ObjectKeyword,
+    Schema.instanceOf(URL),
+    Schema.declare(Predicate.isFunction),
+    Schema.Date,
+    Schema.Struct({ port: Schema.Unknown }),
+    Schema.Array(Schema.Any),
+    Schema.Record(Schema.String, Schema.ObjectKeyword),
+    Schema.Option(Schema.instanceOf(URL)),
+    Schema.Union([RecordSchema, Schema.instanceOf(URL)]),
+    Schema.Tuple([Schema.String, Schema.Unknown]),
+    UnknownTree,
+  ];
+  for (const prepared of refused) {
+    expect(() =>
+      defineRead(declaredReadDescriptor(), preparedPipeline(prepared), readServices, modulePermissionTarget),
+    ).toThrow(/the prepared schema must describe data/u);
+  }
+});
+
+it('defines a staged Read whose prepared schema describes data', () => {
+  interface Node {
+    readonly children: readonly Node[];
+    readonly id: string;
+  }
+  const NodeSchema: Schema.Codec<Node> = Schema.Struct({
+    children: Schema.Array(Schema.suspend(() => NodeSchema)),
+    id: Schema.String,
+  });
+  const data = Schema.Struct({
+    amount: Schema.BigInt,
+    at: Schema.DateTimeUtc,
+    id: Schema.String.pipe(Schema.brand('PreparedId')),
+    kind: Schema.Literals(['RESULT', 'OBSERVE']),
+    limits: Schema.Record(Schema.String, Schema.Number),
+    local: Schema.optionalKey(Schema.DateTimeZoned),
+    restriction: Schema.Option(Schema.Struct({ markets: Schema.Array(Schema.String) })),
+    tree: NodeSchema,
+    validTo: Schema.optionalKey(Schema.Number),
+    window: Schema.Union([Schema.Struct({ from: Schema.Number }), Schema.Literal('OPEN')]),
+  });
+  expect(
+    isStagedRead(defineRead(declaredReadDescriptor(), preparedPipeline(data), readServices, modulePermissionTarget)),
+  ).toBe(true);
+});
+
+it('refuses prepare without a prepared schema, and a prepared schema without prepare', () => {
+  // Each pipeline is typed as an accepted one and then changed at run time, the authoring mistake the types forbid.
+  const withoutSchema = Object.defineProperty(preparedPipeline(Schema.String), 'prepared', {
+    enumerable: true,
+    value: undefined,
+  });
+  const withoutPrepare = Object.defineProperty({ load: emptyReadResult }, 'prepared', {
+    enumerable: true,
+    value: Schema.String,
+  });
+  for (const pipeline of [withoutSchema, withoutPrepare]) {
+    expect(() => defineRead(declaredReadDescriptor(), pipeline, readServices, modulePermissionTarget)).toThrow(
+      /declares `prepared` exactly when it has `prepare`/u,
+    );
+  }
+  const notASchema = Object.defineProperty(preparedPipeline(Schema.String), 'prepared', {
+    enumerable: true,
+    value: { Type: 'string' },
+  });
+  expect(() => defineRead(declaredReadDescriptor(), notASchema, readServices, modulePermissionTarget)).toThrow(
+    /must be an Effect Schema/u,
   );
 });

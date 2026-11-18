@@ -20,7 +20,7 @@ import { withOptional } from '../access/decision/optional.ts';
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
 import type { AccessDecisionService } from '../access/enforcement/contract.ts';
 import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema, SchemaAST } from 'effect';
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
@@ -32,7 +32,7 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ResourceAccessTarget } from '../permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
-import { ReadPermissionUnavailable } from './errors.ts';
+import { ReadHandlerUnavailable, ReadPermissionUnavailable } from './errors.ts';
 import type {
   ReadFinishContext,
   ReadHandlerContext,
@@ -594,33 +594,42 @@ export type ReadFinish<Input, Prepared, Loaded, Result, Failure = never, Require
   context: ReadFinishContext<Prepared, Loaded, Services>,
 ) => Effect.Effect<ReadHandlerResult<Result>, Failure, Requirements>;
 
+/**
+ * The schema of what `prepare` establishes. It describes data only: Core decodes `prepare`'s value through its
+ * type side before the read transaction opens, then copies the decoded value as plain data, and `load` and
+ * `finish` receive only that copy (see {@link preparedDataSchemaIssue} and {@link copyPreparedData}).
+ */
+export type ReadPreparedSchema = Schema.Top;
+
 /** A Read whose transaction step already produces the result. */
 interface PreparedReadLoadPipeline<
   Input,
   Result,
   Services,
-  Prepared,
+  PreparedSchema extends ReadPreparedSchema,
   Failure,
   Requirements,
   PrepareError = never,
   PrepareRequirements = never,
 > {
   readonly finish?: undefined;
-  readonly load: ReadLoad<Input, Services, Prepared, ReadHandlerResult<Result>, Failure, Requirements>;
-  readonly prepare: ReadPrepare<Input, Prepared, PrepareError, PrepareRequirements>;
+  readonly load: ReadLoad<Input, Services, PreparedSchema['Type'], ReadHandlerResult<Result>, Failure, Requirements>;
+  readonly prepare: ReadPrepare<Input, PreparedSchema['Type'], PrepareError, PrepareRequirements>;
+  readonly prepared: PreparedSchema;
 }
 
 interface UnpreparedReadLoadPipeline<Input, Result, Services, Failure, Requirements> {
   readonly finish?: undefined;
   readonly load: ReadLoad<Input, Services, undefined, ReadHandlerResult<Result>, Failure, Requirements>;
   readonly prepare?: undefined;
+  readonly prepared?: undefined;
 }
 
 export type ReadLoadPipeline<
   Input,
   Result,
   Services,
-  Prepared,
+  PreparedSchema extends ReadPreparedSchema,
   Failure,
   Requirements,
   PrepareError = never,
@@ -630,7 +639,7 @@ export type ReadLoadPipeline<
       Input,
       Result,
       Services,
-      Prepared,
+      PreparedSchema,
       Failure,
       Requirements,
       PrepareError,
@@ -643,7 +652,7 @@ interface PreparedReadFinishPipeline<
   Input,
   Result,
   Services,
-  Prepared,
+  PreparedSchema extends ReadPreparedSchema,
   Loaded,
   Failure,
   Requirements,
@@ -652,9 +661,10 @@ interface PreparedReadFinishPipeline<
   FinishError = never,
   FinishRequirements = never,
 > {
-  readonly finish: ReadFinish<Input, Prepared, Loaded, Result, FinishError, FinishRequirements, Services>;
-  readonly load: ReadLoad<Input, Services, Prepared, Loaded, Failure, Requirements>;
-  readonly prepare: ReadPrepare<Input, Prepared, PrepareError, PrepareRequirements>;
+  readonly finish: ReadFinish<Input, PreparedSchema['Type'], Loaded, Result, FinishError, FinishRequirements, Services>;
+  readonly load: ReadLoad<Input, Services, PreparedSchema['Type'], Loaded, Failure, Requirements>;
+  readonly prepare: ReadPrepare<Input, PreparedSchema['Type'], PrepareError, PrepareRequirements>;
+  readonly prepared: PreparedSchema;
 }
 
 interface UnpreparedReadFinishPipeline<
@@ -670,13 +680,14 @@ interface UnpreparedReadFinishPipeline<
   readonly finish: ReadFinish<Input, undefined, Loaded, Result, FinishError, FinishRequirements, Services>;
   readonly load: ReadLoad<Input, Services, undefined, Loaded, Failure, Requirements>;
   readonly prepare?: undefined;
+  readonly prepared?: undefined;
 }
 
 export type ReadFinishPipeline<
   Input,
   Result,
   Services,
-  Prepared,
+  PreparedSchema extends ReadPreparedSchema,
   Loaded,
   Failure,
   Requirements,
@@ -689,7 +700,7 @@ export type ReadFinishPipeline<
       Input,
       Result,
       Services,
-      Prepared,
+      PreparedSchema,
       Loaded,
       Failure,
       Requirements,
@@ -1110,6 +1121,169 @@ type ReadDefinitionTail<
   executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
 ];
 
+/**
+ * The only declarations a prepared schema may contain: Effect's own Option and DateTime, whose values are data and
+ * have a canonical JSON form. Any other declaration (`Schema.declare`, `Schema.instanceOf`, a `Schema.Class`, Date,
+ * Uint8Array, Redacted, Effect values) admits whatever its guard accepts, a callable or a getter included.
+ */
+const PREPARED_DATA_DECLARATIONS: ReadonlySet<string | undefined> = new Set([
+  'effect/schema/DateTimeUtc',
+  'effect/schema/DateTimeZoned',
+  'effect/schema/Option',
+]);
+
+/** The representation id Effect gives its own declarations; absent on an owner's `declare` or `instanceOf`. */
+const declarationRepresentation = (ast: SchemaAST.Declaration): string | undefined => {
+  const representation = ast.annotations?.['representation'];
+  return Predicate.hasProperty(representation, 'id') && Predicate.isString(representation.id)
+    ? representation.id
+    : undefined;
+};
+
+/** The nodes a prepared schema node is built from: what a value of it may contain. */
+const preparedSchemaChildren = (ast: SchemaAST.AST): readonly SchemaAST.AST[] => {
+  if (SchemaAST.isDeclaration(ast)) {
+    return ast.typeParameters;
+  }
+  if (SchemaAST.isArrays(ast)) {
+    return [...ast.elements, ...ast.rest];
+  }
+  if (SchemaAST.isObjects(ast)) {
+    return [
+      ...ast.propertySignatures.map((property) => property.type),
+      ...ast.indexSignatures.flatMap((index) => [index.parameter, index.type]),
+    ];
+  }
+  if (SchemaAST.isUnion(ast)) {
+    return ast.types;
+  }
+  return SchemaAST.isSuspend(ast) ? [ast.thunk()] : [];
+};
+
+/** Why one node of a prepared schema admits a value that is not data, or undefined when it does not. */
+const preparedSchemaNodeIssue = (ast: SchemaAST.AST): string | undefined => {
+  if (SchemaAST.isAny(ast) || SchemaAST.isUnknown(ast) || SchemaAST.isObjectKeyword(ast)) {
+    return 'Any, Unknown and ObjectKeyword admit any value, a callable included';
+  }
+  if (SchemaAST.isDeclaration(ast) && !PREPARED_DATA_DECLARATIONS.has(declarationRepresentation(ast))) {
+    return 'a declaration other than Option or DateTime admits whatever its guard accepts';
+  }
+  return undefined;
+};
+
+/**
+ * Why a prepared schema does not describe data only, or undefined when it does. The type side of the schema is
+ * walked through every struct, record, tuple, array, union, Option and recursion: an `Any`, `Unknown` or
+ * `ObjectKeyword` node, or a `Declaration` other than Effect's Option, DateTimeUtc and DateTimeZoned, is refused,
+ * because each admits a value that carries behaviour (a function, an Effect, a class instance, an object with a
+ * getter). Primitives (bigint included), literals, enums, template literals, brands and their checks are data.
+ */
+export const preparedDataSchemaIssue = (schema: ReadPreparedSchema): string | undefined => {
+  const visited = new Set<SchemaAST.AST>();
+  const pending: SchemaAST.AST[] = [Schema.toType(schema).ast];
+  for (let ast = pending.pop(); ast !== undefined; ast = pending.pop()) {
+    if (!visited.has(ast)) {
+      visited.add(ast);
+      const issue = preparedSchemaNodeIssue(ast);
+      if (issue !== undefined) {
+        return issue;
+      }
+      pending.push(...preparedSchemaChildren(ast));
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Whether a value is plain data: primitives, Effect's Option and DateTime, and arrays and plain objects whose own
+ * properties are all data properties holding data. It reads property descriptors, never property values through a
+ * getter, so it runs none of the value's behaviour; a function, an Effect, a class instance and a getter are not data.
+ */
+const isPreparedData = (value: unknown): boolean => {
+  if (
+    Predicate.isNullish(value) ||
+    Predicate.isString(value) ||
+    Predicate.isNumber(value) ||
+    Predicate.isBoolean(value) ||
+    Predicate.isBigInt(value) ||
+    DateTime.isDateTime(value)
+  ) {
+    return true;
+  }
+  if (Option.isOption(value)) {
+    return Option.isNone(value) || isPreparedData(value.value);
+  }
+  if (!Predicate.isObject(value) || Predicate.isFunction(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return (
+    (Array.isArray(value) ? prototype === Array.prototype : prototype === Object.prototype || prototype === null) &&
+    Object.values(Object.getOwnPropertyDescriptors(value)).every(
+      (property) => 'value' in property && isPreparedData(property.value),
+    )
+  );
+};
+
+const preparedUnavailable = (cause?: unknown): ReadHandlerUnavailable => {
+  const failure = new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason: 'The prepared value does not match its declared data schema',
+  });
+  return cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
+};
+
+/**
+ * Turns what `prepare` returned into the only value `load` and `finish` see. It runs before the read transaction
+ * opens: a value that is not plain data (a function, an Effect, a getter) is refused without running any of it;
+ * the rest is decoded through the type side of the declared schema (an excess property is an error), then copied
+ * through the schema's canonical JSON form and checked once more, so nothing of the owner's object and no shared
+ * reference reaches the transaction. Every refusal is `ReadHandlerUnavailable`.
+ */
+const copyPreparedData = <PreparedSchema extends ReadPreparedSchema>(schema: PreparedSchema) => {
+  const type = Schema.toType(schema);
+  const json = Schema.toCodecJson(type);
+  return (value: unknown): Effect.Effect<PreparedSchema['Type'], ReadHandlerUnavailable> =>
+    Effect.succeed(value).pipe(
+      Effect.filterOrFail(isPreparedData, () => preparedUnavailable()),
+      Effect.flatMap((data) => Schema.decodeUnknownEffect(type, { onExcessProperty: 'error' })(data)),
+      Effect.flatMap((decoded) => Schema.encodeUnknownEffect(json)(decoded)),
+      Effect.flatMap((encoded) => Schema.decodeUnknownEffect(json, { onExcessProperty: 'error' })(encoded)),
+      Effect.mapError(preparedUnavailable),
+      Effect.filterOrFail(isPreparedData, () => preparedUnavailable()),
+    );
+};
+
+/**
+ * What `prepare` hands `load` and `finish` crosses into the read transaction, so it is declared, and declared as
+ * data: Core decodes and copies it through this schema before the transaction opens.
+ */
+const validatePreparedDeclaration = (
+  readKey: string,
+  pipeline: { readonly prepare?: unknown; readonly prepared?: unknown },
+): void => {
+  if ((pipeline.prepare === undefined) !== (pipeline.prepared === undefined)) {
+    return failReadDefinition('Read pipeline declares `prepared` exactly when it has `prepare`');
+  }
+  if (pipeline.prepared === undefined) {
+    return;
+  }
+  if (!Schema.isSchema(pipeline.prepared)) {
+    return failReadDefinition('Read pipeline `prepared` must be an Effect Schema');
+  }
+  const issue = preparedDataSchemaIssue(pipeline.prepared);
+  if (issue !== undefined) {
+    return failReadDefinition(`Read ${readKey}: the prepared schema must describe data: ${issue}`);
+  }
+};
+
 /** The transaction step of a prepared pipeline: owner `load`, then whatever runs after commit. */
 const transactionStep =
   <Input, Services, Prepared, Loaded, Failure, Requirements, Next>(step: {
@@ -1147,108 +1321,137 @@ const prepareContextOf = <Services>({
   ...context
 }: ReadOwnerStepsContext<Services>): ReadPrepareContext => context;
 
-const loadPipelineStages =
-  <Input, Result, Services, Prepared, Failure, Requirements, PrepareError, PrepareRequirements>(
-    pipeline: ReadLoadPipeline<
-      Input,
-      Result,
-      Services,
-      Prepared,
-      Failure,
-      Requirements,
-      PrepareError,
-      PrepareRequirements
-    >,
-  ): ReadOwnerStages<Input, Result, Services, Failure | PrepareError, Requirements | PrepareRequirements> =>
-  (input, stepsContext) => {
-    const context = prepareContextOf(stepsContext);
-    if (pipeline.prepare === undefined) {
-      const prepared = pipeline.prepare;
-      return Effect.succeed(transactionStep({ context, input, load: pipeline.load, next: Effect.succeed, prepared }));
-    }
-    const { prepare } = pipeline;
-    return Effect.suspend(() => prepare(input, context)).pipe(
-      Effect.map((prepared) =>
-        transactionStep({ context, input, load: pipeline.load, next: Effect.succeed, prepared }),
-      ),
-    );
-  };
+/**
+ * Owner `prepare`, then Core's copy of what it prepared as declared data, both before the read transaction opens;
+ * `load` and `finish` receive only that copy. The copy is derived once, when the Read is defined.
+ */
+const preparedStep = <Input, PreparedSchema extends ReadPreparedSchema, PrepareError, PrepareRequirements>(
+  prepare: ReadPrepare<Input, PreparedSchema['Type'], PrepareError, PrepareRequirements>,
+  schema: PreparedSchema,
+) => {
+  const copy = copyPreparedData(schema);
+  return (
+    input: Input,
+    context: ReadPrepareContext,
+  ): Effect.Effect<PreparedSchema['Type'], PrepareError | ReadHandlerUnavailable, PrepareRequirements> =>
+    Effect.suspend(() => prepare(input, context)).pipe(Effect.flatMap(copy));
+};
 
-const finishPipelineStages =
-  <
+const loadPipelineStages = <
+  Input,
+  Result,
+  Services,
+  PreparedSchema extends ReadPreparedSchema,
+  Failure,
+  Requirements,
+  PrepareError,
+  PrepareRequirements,
+>(
+  pipeline: ReadLoadPipeline<
     Input,
     Result,
     Services,
-    Prepared,
+    PreparedSchema,
+    Failure,
+    Requirements,
+    PrepareError,
+    PrepareRequirements
+  >,
+): ReadOwnerStages<
+  Input,
+  Result,
+  Services,
+  Failure | PrepareError | ReadHandlerUnavailable,
+  Requirements | PrepareRequirements
+> => {
+  if (pipeline.prepare === undefined) {
+    const { load, prepare: prepared } = pipeline;
+    return (input, stepsContext) =>
+      Effect.succeed(
+        transactionStep({ context: prepareContextOf(stepsContext), input, load, next: Effect.succeed, prepared }),
+      );
+  }
+  const { load } = pipeline;
+  const prepare = preparedStep(pipeline.prepare, pipeline.prepared);
+  return (input, stepsContext) => {
+    const context = prepareContextOf(stepsContext);
+    return prepare(input, context).pipe(
+      Effect.map((prepared) => transactionStep({ context, input, load, next: Effect.succeed, prepared })),
+    );
+  };
+};
+
+const finishPipelineStages = <
+  Input,
+  Result,
+  Services,
+  PreparedSchema extends ReadPreparedSchema,
+  Loaded,
+  Failure,
+  Requirements,
+  PrepareError,
+  PrepareRequirements,
+  FinishError,
+  FinishRequirements,
+>(
+  pipeline: ReadFinishPipeline<
+    Input,
+    Result,
+    Services,
+    PreparedSchema,
     Loaded,
     Failure,
     Requirements,
     PrepareError,
     PrepareRequirements,
     FinishError,
-    FinishRequirements,
-  >(
-    pipeline: ReadFinishPipeline<
-      Input,
-      Result,
-      Services,
-      Prepared,
-      Loaded,
-      Failure,
-      Requirements,
-      PrepareError,
-      PrepareRequirements,
-      FinishError,
-      FinishRequirements
-    >,
-  ): ReadOwnerStages<
-    Input,
-    Result,
-    Services,
-    StepChannels<Failure, PrepareError, FinishError>,
-    StepChannels<Requirements, PrepareRequirements, FinishRequirements>
-  > =>
-  (input, stepsContext) => {
-    const context = prepareContextOf(stepsContext);
-    if (pipeline.prepare === undefined) {
-      const prepared = pipeline.prepare;
+    FinishRequirements
+  >,
+): ReadOwnerStages<
+  Input,
+  Result,
+  Services,
+  StepChannels<Failure, PrepareError | ReadHandlerUnavailable, FinishError>,
+  StepChannels<Requirements, PrepareRequirements, FinishRequirements>
+> => {
+  if (pipeline.prepare === undefined) {
+    const { finish, load, prepare: prepared } = pipeline;
+    return (input, stepsContext) => {
+      const context = prepareContextOf(stepsContext);
       return Effect.succeed(
         transactionStep({
           context,
           input,
-          load: pipeline.load,
-          next: afterCommitStep({
-            context,
-            finish: pipeline.finish,
-            input,
-            prepared,
-            transaction: stepsContext.transaction,
-          }),
+          load,
+          next: afterCommitStep({ context, finish, input, prepared, transaction: stepsContext.transaction }),
           prepared,
         }),
       );
-    }
-    const { prepare } = pipeline;
-    return Effect.suspend(() => prepare(input, context)).pipe(
+    };
+  }
+  const { finish, load } = pipeline;
+  const prepare = preparedStep(pipeline.prepare, pipeline.prepared);
+  return (input, stepsContext) => {
+    const context = prepareContextOf(stepsContext);
+    return prepare(input, context).pipe(
       Effect.map((prepared) =>
         transactionStep({
           context,
           input,
-          load: pipeline.load,
-          next: afterCommitStep({
-            context,
-            finish: pipeline.finish,
-            input,
-            prepared,
-            transaction: stepsContext.transaction,
-          }),
+          load,
+          next: afterCommitStep({ context, finish, input, prepared, transaction: stepsContext.transaction }),
           prepared,
         }),
       ),
     );
   };
+};
 
-type ReadPipelineFailure<Failure, PrepareError, FinishError> = Failure | PrepareError | FinishError;
+type ReadPipelineFailure<Failure, PrepareError, FinishError> =
+  | Failure
+  | PrepareError
+  | FinishError
+  | ReadHandlerUnavailable;
 type ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements> =
   | Requirements
   | PrepareRequirements
@@ -1257,14 +1460,14 @@ type ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequireme
 const noOwnerTransaction: ReadOwnerTransaction<never> = () =>
   Effect.die('These owner steps run without Core; pass `transaction` to give finish its owner transaction');
 
-/** The steps an owner read pipeline may declare. */
-const readPipelineStepNames = ['prepare', 'load', 'finish'] as const;
+/** The steps an owner read pipeline may declare, and the schema of what its `prepare` establishes. */
+const readPipelineStepNames = ['prepare', 'prepared', 'load', 'finish'] as const;
 
 type AnyReadPipeline<
   Input,
   Result,
   Services,
-  Prepared,
+  PreparedSchema extends ReadPreparedSchema,
   Loaded,
   Failure,
   Requirements,
@@ -1277,7 +1480,7 @@ type AnyReadPipeline<
       Input,
       Result,
       Services,
-      Prepared,
+      PreparedSchema,
       Loaded,
       Failure,
       Requirements,
@@ -1286,12 +1489,14 @@ type AnyReadPipeline<
       FinishError,
       FinishRequirements
     >
-  | ReadLoadPipeline<Input, Result, Services, Prepared, Failure, Requirements, PrepareError, PrepareRequirements>;
+  | ReadLoadPipeline<Input, Result, Services, PreparedSchema, Failure, Requirements, PrepareError, PrepareRequirements>;
 
 /**
  * Defines a governed Read. Its owner pipeline runs in three steps around one short transaction:
  * `prepare` (SpiceDB and other remote calls, no database), `load` (scoped database reads only), and
  * `finish` (decoding and SpiceDB row filtering after commit). Without `finish`, `load` yields the result.
+ * A pipeline with `prepare` declares `prepared`, the data schema of what it prepares: Core decodes and copies
+ * `prepare`'s value through it before the transaction opens, and `load` and `finish` see only that copy.
  * Write the steps in that order: TypeScript infers each step's context from the step before it.
  */
 export function defineRead<
@@ -1304,7 +1509,7 @@ export function defineRead<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
-  Prepared = undefined,
+  PreparedSchema extends ReadPreparedSchema = ReadPreparedSchema,
   PrepareError = never,
   PrepareRequirements = never,
 >(
@@ -1314,7 +1519,7 @@ export function defineRead<
       InputSchema['Type'],
       ResultSchema['Type'],
       Services,
-      Prepared,
+      PreparedSchema,
       Failure,
       Requirements,
       PrepareError,
@@ -1327,7 +1532,7 @@ export function defineRead<
   ResultSchema,
   Owner,
   Services,
-  Failure | PrepareError,
+  Failure | PrepareError | ReadHandlerUnavailable,
   Requirements | PrepareRequirements,
   DomainErrorSchema
 >;
@@ -1358,7 +1563,7 @@ export function defineRead<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
-  Prepared = undefined,
+  PreparedSchema extends ReadPreparedSchema = ReadPreparedSchema,
   Loaded = unknown,
   PrepareError = never,
   PrepareRequirements = never,
@@ -1371,7 +1576,7 @@ export function defineRead<
       InputSchema['Type'],
       ResultSchema['Type'],
       Services,
-      Prepared,
+      PreparedSchema,
       Loaded,
       Failure,
       Requirements,
@@ -1456,7 +1661,7 @@ export function defineRead<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }>,
-  Prepared,
+  PreparedSchema extends ReadPreparedSchema,
   Loaded,
   PrepareError,
   PrepareRequirements,
@@ -1470,7 +1675,7 @@ export function defineRead<
           InputSchema['Type'],
           ResultSchema['Type'],
           Services,
-          Prepared,
+          PreparedSchema,
           Loaded,
           Failure,
           Requirements,
@@ -1548,7 +1753,7 @@ export function defineRead<
     InputSchema['Type'],
     ResultSchema['Type'],
     Services,
-    Prepared,
+    PreparedSchema,
     Loaded,
     Failure,
     Requirements,
@@ -1564,6 +1769,7 @@ export function defineRead<
   ) {
     return failReadDefinition('Read pipeline steps must be functions');
   }
+  validatePreparedDeclaration(descriptor.readKey, pipeline);
   const stages = pipeline.finish === undefined ? loadPipelineStages(pipeline) : finishPipelineStages(pipeline);
   // The composed owner steps of a staged Read, and the single-step handler of a Read whose owner work is
   // one scoped database step. A staged Read keeps `prepare`/`finish` around the transaction (D14).

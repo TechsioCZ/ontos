@@ -4382,6 +4382,10 @@ const stagedReadServices: StagedReadServices = Object.freeze({});
 const StagedReadInputSchema = Schema.Struct({});
 type StagedReadInput = typeof StagedReadInputSchema.Type;
 
+/** What the staged Read's `prepare` declares it establishes. */
+const StagedPreparedSchema = Schema.Struct({ value: Schema.String });
+type StagedPrepared = typeof StagedPreparedSchema.Type;
+
 /** Lets a test replace the active composition while a staged Read runs. */
 interface StagedReadAuthority {
   replace?: () => void;
@@ -4406,6 +4410,8 @@ const makeStagedRead = (
     readonly ownerStep?: (transaction: ReadOwnerTransaction<StagedReadServices>) => Effect.Effect<void>;
     readonly policy?: ReturnType<typeof defineGlobalPolicy<Readonly<Record<string, never>>>>;
     readonly prepareFailure?: ReadHandlerNotFound;
+    /** What `prepare` returns instead of `{ value }`: a value the type allows, which Core refuses or copies. */
+    readonly prepareValue?: (() => StagedPrepared) | undefined;
   } = {},
 ) => {
   const descriptor = {
@@ -4430,7 +4436,10 @@ const makeStagedRead = (
   return defineRead(
     options.ownerFacts === true ? { ...descriptor, accessOwnerFacts: stagedOwnerFacts } : descriptor,
     {
-      finish: (_input: StagedReadInput, context: ReadFinishContext<string, readonly string[], StagedReadServices>) =>
+      finish: (
+        _input: StagedReadInput,
+        context: ReadFinishContext<StagedPrepared, readonly string[], StagedReadServices>,
+      ) =>
         Effect.gen(function* finishAfterCommit() {
           events.push('finish');
           options.duringFinish?.();
@@ -4450,18 +4459,20 @@ const makeStagedRead = (
           }
           return { evidence: { resultCount: context.loaded.length }, result: [...context.loaded] };
         }),
-      load: (_input: StagedReadInput, context: ReadLoadContext<StagedReadServices, string>) =>
+      load: (_input: StagedReadInput, context: ReadLoadContext<StagedReadServices, StagedPrepared>) =>
         Effect.sync(() => {
           events.push('load');
-          return [context.prepared];
+          return [context.prepared.value];
         }),
       prepare: () =>
         Effect.suspend(() => {
           events.push('prepare');
-          return options.prepareFailure === undefined
-            ? Effect.succeed('prepared-owner-value')
-            : Effect.fail(options.prepareFailure);
+          if (options.prepareFailure !== undefined) {
+            return Effect.fail(options.prepareFailure);
+          }
+          return Effect.succeed(options.prepareValue?.() ?? { value: 'prepared-owner-value' });
         }),
+      prepared: StagedPreparedSchema,
     },
     (): Effect.Effect<StagedReadServices> => Effect.succeed(stagedReadServices),
     undefined,
@@ -4870,6 +4881,109 @@ it.effect('releases a typed prepare failure only after the owner rule allowed th
   }),
 );
 
+/** The owner-step and owner-behaviour events a staged Read recorded, in order. */
+const ownerEvents = (events: readonly string[]): string[] =>
+  events.filter((event) => ['prepare', 'load', 'finish'].includes(event) || event.startsWith('prepared-'));
+
+/**
+ * What `prepare` may hand back by mistake, each of a type the declared `{ value: string }` allows: behaviour that
+ * would run wherever it is read or run, or a field the schema does not declare. Core refuses each before the read
+ * transaction opens, so none of that behaviour ever runs.
+ */
+const behaviourCarryingPreparedValues = (events: string[]): readonly (readonly [string, () => StagedPrepared])[] => {
+  const excess = { remote: 'not declared', value: 'prepared-owner-value' };
+  return [
+    [
+      'a function',
+      () =>
+        Object.assign(
+          () => {
+            events.push('prepared-function-ran');
+          },
+          { value: 'remote' },
+        ),
+    ],
+    [
+      'an Effect',
+      () =>
+        Object.assign(
+          Effect.sync(() => {
+            events.push('prepared-effect-ran');
+          }),
+          { value: 'remote' },
+        ),
+    ],
+    [
+      'an object with a getter',
+      () =>
+        Object.defineProperty({ value: 'remote' }, 'value', {
+          enumerable: true,
+          get: () => {
+            events.push('prepared-getter-ran');
+            return 'remote';
+          },
+        }),
+    ],
+    ['an object with an excess property', () => excess],
+  ];
+};
+
+for (const [name] of behaviourCarryingPreparedValues([])) {
+  it.effect(`refuses ${name} as prepared data before the read transaction opens, and runs none of it`, () =>
+    Effect.gen(function* preparedBehaviourRefused() {
+      const events: string[] = [];
+      const prepareValue = behaviourCarryingPreparedValues(events).find(([candidate]) => candidate === name)?.[1];
+      const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events, { prepareValue }));
+      expect(stagedFailureTag(exit)).toBe('ReadHandlerUnavailable');
+      // Nothing of the value ran, before the transaction or in it, and `load` never received it.
+      expect(ownerEvents(events)).toEqual(['prepare']);
+      // The refusal was decided before the transaction: the only transaction fences, installs the scope and decides
+      // the owner rule (the held-outcome rule), runs no owner code and rolls back.
+      expect(events.slice(events.indexOf('prepare'))).toEqual([
+        'prepare',
+        'BEGIN',
+        'authority_locked',
+        'scope_installed',
+        'ROLLBACK',
+      ]);
+      expect(harness.evidence()).toBe(0);
+    }),
+  );
+}
+
+it.effect('holds a refused prepared value until the owner rule decided, like any prepare outcome', () =>
+  Effect.gen(function* preparedRefusalHeld() {
+    const events: string[] = [];
+    const excess = { remote: 'not declared', value: 'x' };
+    const read = makeStagedRead(events, { prepareValue: () => excess });
+    const { exit } = yield* runStagedRead(events, read, {
+      ownerAuthorizationOverlay: { authorize: () => Effect.succeed('denied' as const) },
+    });
+    // A denied caller learns the denial, never that this prepare's value was refused.
+    expect(stagedFailureTag(exit)).toBe('ReadPermissionDenied');
+  }),
+);
+
+it.effect('gives load and finish a decoded copy of the prepared data, not the owner object', () =>
+  Effect.gen(function* preparedDataCopied() {
+    const events: string[] = [];
+    const original = { value: 'prepared-owner-value' };
+    const read = makeStagedRead(events, { prepareValue: () => original });
+    const { exit } = yield* runStagedRead(events, read, {
+      // The owner rule runs inside the read transaction after prepare and before load: the owner's object changes.
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.sync(() => {
+            original.value = 'changed-after-prepare';
+            return 'allowed' as const;
+          }),
+      },
+    });
+    expect(exit).toEqual(Exit.succeed(['prepared-owner-value']));
+    expect(original.value).toBe('changed-after-prepare');
+  }),
+);
+
 it.effect('gives finish only the owner read services, in a read-only transaction', () =>
   Effect.gen(function* finishReadOnlyServices() {
     const events: string[] = [];
@@ -4946,6 +5060,7 @@ it('defines a Read from a bare handler or an owner pipeline whose steps are func
         finish: (_input, context) => Effect.succeed({ evidence: { resultCount: 0 }, result: context.loaded }),
         load: () => Effect.succeed([]),
         prepare: () => Effect.succeed('prepared'),
+        prepared: Schema.String,
       },
       pipelineServices,
       pipelineTarget,

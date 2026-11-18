@@ -4587,6 +4587,8 @@ const isOwnerEffectFnLoadCall = (candidate: string | undefined, ownerSource: str
 };
 
 const READ_PIPELINE_STEPS: ReadonlySet<string> = new Set(['finish', 'load', 'prepare']);
+/** The schema of what a pipeline's `prepare` establishes; Core decodes `prepare`'s value through it. */
+const READ_PREPARED_SCHEMA = 'prepared';
 
 const hasReadCallbacks = (
   source: string,
@@ -4651,34 +4653,47 @@ const hasReadCallbacks = (
       source,
       step,
     );
+  // The bar of this proof: it is a guardrail that catches mistakes in load work (remote or cross-owner work,
+  // a write, ambient services slipped into the read transaction) early. It is not a soundness proof against
+  // code that rewrites the realm: integrity of globals, prototypes and library objects against writes through
+  // aliases (a local, a parameter, a stored table or schema, a function returning an intrinsic) is outside a
+  // per-read syntactic check and is not claimed. Authority and isolation are Core's runtime: fences, the owner
+  // rule decided again, read-only finish transactions, held outcomes and the prepared-data copy.
+  //
   // The load step runs inside the read transaction. A staged read, which declares `prepare` or `finish` for
   // its remote work, has every load step proven local; a same-module helper call is proven in every read.
   // What a staged load reaches through its parameters is proven by construction: `context.services` is
   // what the read's service factory built, inside the same transaction, and a staged read's factory is
   // proven by these same rules, so it builds only from the transaction and scope it is given and from
   // proven code, never from an imported client, port or integration. `input` is decoded by the read's
-  // schema and `context.scope` is Core's.
+  // schema and `context.scope` is Core's. `context.prepared` is data: a pipeline with `prepare` declares its
+  // `prepared` schema, Core refuses one that admits behaviour when the Read is defined, and Core hands load
+  // only its own decoded JSON copy of what `prepare` returned, made before the transaction opens.
   const isReadLoadStep = (candidate: string | undefined, staged: boolean): boolean =>
     ((isReadHandlerCallback(candidate, source) || isOwnerLocalImportedFactoryResult(candidate)) &&
       (!staged || provesLoadWork(candidate))) ||
     (isOwnerEffectFnLoadCall(candidate, source) && provesLoadWork(candidate));
   // The owner work: a bare read handler, or a pipeline object of unique `prepare`, `load` and `finish`
-  // steps that always has `load`. Every step is an executable owner callback, and a staged pipeline's
-  // service factory is proven like its load step.
+  // steps that always has `load`, and declares its `prepared` schema exactly when it has `prepare`. Every
+  // step is an executable owner callback, and a staged pipeline's service factory is proven like its load step.
   const isReadOwnerPipeline = (candidate: string | undefined): boolean => {
     const entries = candidate === undefined ? undefined : topLevelObjectEntries(candidate);
     if (candidate === undefined || entries === undefined) {
       return false;
     }
-    const steps = entries.map((entry) => /^(?<step>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|$)/u.exec(entry)?.groups?.step);
-    const declared = steps.filter((step): step is string => step !== undefined && READ_PIPELINE_STEPS.has(step));
+    const keys = entries.map((entry) => /^(?<step>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|$)/u.exec(entry)?.groups?.step);
+    const declared = keys.filter(
+      (key): key is string => key !== undefined && (READ_PIPELINE_STEPS.has(key) || key === READ_PREPARED_SCHEMA),
+    );
+    const steps = declared.filter((key) => key !== READ_PREPARED_SCHEMA);
     return (
       declared.length === entries.length &&
       new Set(declared).size === declared.length &&
-      declared.includes('load') &&
-      isReadLoadStep(objectPropertyValue(candidate, 'load'), declared.length > 1) &&
-      (declared.length === 1 || provesLoadWork(callArgument(readExpression, /^defineRead\(/u, 2))) &&
-      declared
+      steps.includes('load') &&
+      steps.includes('prepare') === declared.includes(READ_PREPARED_SCHEMA) &&
+      isReadLoadStep(objectPropertyValue(candidate, 'load'), steps.length > 1) &&
+      (steps.length === 1 || provesLoadWork(callArgument(readExpression, /^defineRead\(/u, 2))) &&
+      steps
         .filter((step) => step !== 'load')
         .every((step) => {
           const callback = objectPropertyValue(candidate, step);

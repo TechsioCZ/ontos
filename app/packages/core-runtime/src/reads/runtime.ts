@@ -2091,9 +2091,11 @@ const readRuntimeFromDependencies = <
             ),
           );
           // Owner `prepare` runs only after the access gate and the read Policies allowed this read, and
-          // before the read transaction opens. Its outcome, a typed failure included, stays private until
-          // the owner rule inside the transaction allowed the Read, so a denied caller learns nothing from
-          // it, and its output reaches nothing but this read's own `load` and `finish`.
+          // before the read transaction opens. Its value is decoded and copied through the Read's declared
+          // `prepared` data schema here too, so no getter, function or Effect of it runs inside the transaction,
+          // and a value that does not decode is `ReadHandlerUnavailable`. Its outcome, a typed failure or that
+          // refusal included, stays private until the owner rule inside the transaction allowed the Read, so a
+          // denied caller learns nothing from it, and only the copy reaches this read's `load` and `finish`.
           const preparedExit = yield* Effect.exit(
             Effect.suspend(() => getReadStages(input.registration)(decodedInput, ownerStepsContext)).pipe(
               sanitizeOwnerFailure,

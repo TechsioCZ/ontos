@@ -1462,9 +1462,9 @@ const LAYER_ARGUMENT = ', () => Layer.empty);';
 const PROVEN_FACTORY_ARGUMENT = ', () => Effect.succeed({}));';
 const HELPER_LOAD =
   '{ load: (input: unknown, context: ReadLoadContext<object>) => loadStock(input, context.scope.tenantId) }';
-/** A staged owner pipeline around `load`: its load step is proven local. */
+/** A staged owner pipeline around `load`: its load step is proven local, and what it prepares is declared data. */
 const stagedPipeline = (load: string): string =>
-  `{ prepare: () => Effect.succeed('ready'), load: ${load}, finish: (_input: unknown, context: ReadFinishContext<string, object>) => Effect.succeed(context.loaded) }`;
+  `{ prepare: () => Effect.succeed('ready'), prepared: Schema.String, load: ${load}, finish: (_input: unknown, context: ReadFinishContext<string, object>) => Effect.succeed(context.loaded) }`;
 
 it.live(
   'accepts a bare read handler or a { prepare, load, finish } owner pipeline and rejects any other owner work',
@@ -1478,13 +1478,13 @@ it.live(
     // A staged load step is proven local, so its `Effect` is the real import, as in every Read module.
     const withOwnerWork = (ownerWork: string): string =>
       bareRead
-        .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n`)
+        .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Schema } from 'effect';\n`)
         .replace(bareHandler, ownerWork + PROVEN_FACTORY_ARGUMENT);
     for (const accepted of [
       bareRead,
       withOwnerWork('{ load: () => Effect.succeed({}) }'),
       withOwnerWork(
-        "{ prepare: () => Effect.succeed('ready'), load: () => Effect.succeed({}), finish: () => Effect.succeed({}) }",
+        "{ prepare: () => Effect.succeed('ready'), prepared: Schema.String, load: () => Effect.succeed({}), finish: () => Effect.succeed({}) }",
       ),
     ]) {
       yield* write(root, STOCK_LIST_READ_FILE, accepted);
@@ -1496,6 +1496,14 @@ it.live(
       [
         withOwnerWork('{ load: () => Effect.succeed({}), extra: () => Effect.succeed({}) }'),
         withOwnerWork("{ prepare: () => Effect.succeed('ready') }"),
+        // `prepare` without the `prepared` schema Core decodes its value through, and the schema without `prepare`.
+        withOwnerWork(
+          "{ prepare: () => Effect.succeed('ready'), load: () => Effect.succeed({}), finish: () => Effect.succeed({}) }",
+        ),
+        withOwnerWork('{ prepared: Schema.String, load: () => Effect.succeed({}) }'),
+        withOwnerWork(
+          "{ prepare: () => Effect.succeed('ready'), prepared: Schema.String, prepared: Schema.Number, load: () => Effect.succeed({}) }",
+        ),
         withOwnerWork('{ load: 42 }'),
         withOwnerWork('{ load: () => Effect.succeed({}), load: () => Effect.succeed({}) }'),
         withOwnerWork('{ load: () => Effect.succeed({}), finish: 42 }'),
@@ -1703,7 +1711,7 @@ it.live(
     const withOwnerWork = (ownerWork: string, declarations = '', imports = ''): string =>
       [
         bareRead
-          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Struct } from 'effect';\n${imports}`)
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Schema, Struct } from 'effect';\n${imports}`)
           .replace(bareHandler, ownerWork + PROVEN_FACTORY_ARGUMENT),
         declarations,
       ].join('\n');
@@ -1971,7 +1979,7 @@ it.live(
     const withFactory = (factory: string, declarations = '', imports = '', load = servicesLoad): string =>
       [
         bareRead
-          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect } from 'effect';\n${imports}`)
+          .replace(READ_CORE_IMPORT, `${READ_CORE_IMPORT}import { Effect, Schema } from 'effect';\n${imports}`)
           .replace(bareHandler, `${stagedPipeline(load)}, ${factory});`),
         declarations,
       ].join('\n');
