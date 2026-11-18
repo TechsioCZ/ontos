@@ -122,6 +122,7 @@ describe('Inventory public owner contracts', () => {
 
     expect(new Set(inventoryPublicOperations.map(({ key }) => key)).size).toBe(inventoryPublicOperations.length);
     const publicKeys = inventoryPublicOperations.map(({ key }) => key);
+    expect(new Set(publicKeys)).toEqual(new Set([...expectedActionKeys, ...Object.keys(expectedReadSchemas)]));
     expect(publicKeys.some((key) => key.includes('update-inventory'))).toBe(false);
     expect(publicKeys.some((key) => key.includes('provider'))).toBe(false);
     expect(
