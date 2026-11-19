@@ -281,11 +281,13 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
         );
         // The budget bounds the whole of `run`, not only the start of each call and transaction: a run
         // still working when it is spent is interrupted (its open call or transaction with it) and the
-        // read answers unavailable.
+        // read answers unavailable. The budget counts from the session's opening, so the owner check
+        // already spent part of it.
+        const remainingMillis = yield* session.remainingMillis;
         const exit = yield* Effect.exit(
           Effect.suspend(() => run(decodedInput, Object.freeze(context))).pipe(
             Effect.timeoutOrElse({
-              duration: execution.budget.maxDurationMillis,
+              duration: remainingMillis,
               orElse: () => Effect.fail(new TransactionAborted({ reason: 'budget_exhausted' })),
             }),
           ),

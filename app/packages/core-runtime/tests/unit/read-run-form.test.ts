@@ -177,6 +177,8 @@ const makeRunFormHarness = (
     readonly execute?: KernelCallsService['execute'];
     /** The ordinal (1-based) of the ROLLBACK the database fails. */
     readonly failRollback?: number;
+    /** How long the owner rule takes to answer, on the test clock. */
+    readonly ownerCheckMillis?: number;
     readonly settleFails?: boolean;
   } = {},
 ) =>
@@ -230,10 +232,14 @@ const makeRunFormHarness = (
         Layer.merge(
           Layer.succeed(OwnerAuthorizationOverlay, {
             authorize: (_transaction, input) =>
-              Effect.sync(() => {
-                ownerInputs.push(input);
-                return decisions.shift() ?? 'allowed';
-              }),
+              Effect.sleep(Duration.millis(options.ownerCheckMillis ?? 0)).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    ownerInputs.push(input);
+                    return decisions.shift() ?? 'allowed';
+                  }),
+                ),
+              ),
           }),
         ),
       ),
@@ -648,6 +654,24 @@ it.effect('bounds a run that makes no call and opens no transaction by the budge
       expect(rowsOf(harness.settled)).toEqual([
         [{ outcome: 'failed', outcomeCode: 'read_handler_unavailable', outcomeStage: 'execution' }],
       ]);
+    }),
+  ),
+);
+
+it.effect('counts the owner check against the budget: run gets only what the session open left of it', () =>
+  Effect.scoped(
+    Effect.gen(function* budgetFromSessionOpen() {
+      const ownerCheckMillis = 10_000;
+      const harness = yield* makeRunFormHarness({ ownerCheckMillis });
+      const fiber = yield* Effect.forkChild(harness.execute(runRead(() => Effect.never)));
+      yield* TestClock.adjust(Duration.millis(ownerCheckMillis));
+      expect(harness.ownerInputs).toHaveLength(1);
+      // The budget is spent this long after the session opened, not this long after `run` started.
+      yield* TestClock.adjust(Duration.millis(READ_EXECUTION_BUDGET.maxDurationMillis - ownerCheckMillis));
+      const finished = yield* Fiber.await(fiber).pipe(Effect.timeoutOption(0));
+      expect(Option.isSome(finished)).toBe(true);
+      const failure = Option.isSome(finished) ? failureOf(finished.value) : undefined;
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
     }),
   ),
 );

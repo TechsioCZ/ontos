@@ -193,6 +193,8 @@ export interface KernelSession<
    * whenever it is true, whatever the module's code returned.
    */
   readonly ownerDenied: Effect.Effect<boolean>;
+  /** What is left of `budget.maxDurationMillis`, measured from the moment the session opened (never below 0). */
+  readonly remainingMillis: Effect.Effect<number>;
   /**
    * Ends the session's work: admits no further call or transaction, interrupts and awaits every call
    * and transaction still running (a transaction rolls back; a call is recorded `Interrupted`). The
