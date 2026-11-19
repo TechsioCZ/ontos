@@ -14,6 +14,7 @@ import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
   SourceProcessingContextSchema,
+  CommunicationsSourceProcessingConsumerModule,
   SymmyCustomerSourceIntakeConsumerModule,
 } from '../../shared/apis/source-processing-eligibility.ts';
 import type {
@@ -261,7 +262,22 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       .pipe(Effect.mapError(unavailable));
     const outcome = evaluatePrivacyEligibility(resolved.input);
     if (outcome.outcome !== 'ALLOWED') {
-      return denied('PROCESSING_NOT_ALLOWED');
+      // Both non-allowed outcomes stop the processing and stay DENIED/PROCESSING_NOT_ALLOWED. Only the Communications
+      // consumer additionally receives which one it was, with the owner's own evidence, so a proven prohibition is never
+      // confused with an input the owner could not evidence. Every other consumer keeps its existing response.
+      return request.consumerModuleId === CommunicationsSourceProcessingConsumerModule
+        ? {
+            ...denied('PROCESSING_NOT_ALLOWED'),
+            eligibility: {
+              evidence: createPrivacyEligibilityEvidence({
+                authoritativeReferences: resolved.authoritativeReferences,
+                outcome,
+                policyRevisions: resolved.policyRevisions,
+              }),
+              outcome: outcome.outcome,
+            },
+          }
+        : denied('PROCESSING_NOT_ALLOWED');
     }
     return {
       authorityIncarnation: context.authorityIncarnation,
@@ -622,7 +638,7 @@ const sourceProcessingEligibilityEntrypoint = defineTenantModuleEntrypoint({
 export const sourceProcessingEligibilityRead = defineRead(
   {
     accessActor: {
-      callers: ['party-registry', 'commerce-customer-context', 'symmy-integration'],
+      callers: ['party-registry', 'commerce-customer-context', 'symmy-integration', 'communications'],
       reason: 'Declared owners check the current exact source processing context for the identity they relay',
       subject: 'identity',
       subjectWorkloads: ['privacy.core.source-processing-check'],

@@ -19796,6 +19796,7 @@
           "actor": {
             "callers": [
               "commerce-customer-context",
+              "communications",
               "party-registry",
               "symmy-integration"
             ],

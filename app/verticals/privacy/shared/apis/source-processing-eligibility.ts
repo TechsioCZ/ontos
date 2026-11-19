@@ -17,17 +17,65 @@ import {
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 export const SymmyCustomerSourceIntakeOperation = 'CUSTOMER_SOURCE_INTAKE';
 export const SymmyCustomerSourceIntakeConsumerModule = 'integration.symmy';
+/** Communications consumes the exact current Privacy decision before its last stoppable handoff (#1396). */
+export const CommunicationsSourceProcessingConsumerModule = 'communications.core';
 
 /** These identifiers locate source authority; they never carry authority themselves. */
 export const SourceProcessingIdentitySchema = Schema.Struct({
   ...PrivacySourceRecordIdentitySchema.fields,
   occurrenceId: Ref.pipe(Schema.brand('PrivacySourceOccurrenceId'), Schema.decodeTo(Schema.String)),
 });
+interface SourceRequestUse {
+  readonly consumerModuleId: string;
+  readonly operation: string;
+  readonly organizationBusinessUse?: string | undefined;
+  readonly source: unknown;
+  readonly target: { readonly kind: string } | null;
+}
+
+const symmyIntakeRequestIssue = ({ operation, organizationBusinessUse, source, target }: SourceRequestUse) =>
+  operation === SymmyCustomerSourceIntakeOperation &&
+  source !== null &&
+  (organizationBusinessUse === undefined ||
+    target?.kind === (organizationBusinessUse === 'COMPANY_NAME' ? 'PARTY' : 'COUNTERPARTY_PURCHASING_PROFILE'))
+    ? undefined
+    : 'Symmy intake requires a qualified source and its dedicated processing operation';
+
+/**
+ * A message is about a person who must be located exactly: a qualified source record or the Party target. A native
+ * owner operation (no source, no target) names nobody and is not a Communications use.
+ */
+const communicationsRequestIssue = ({ operation, organizationBusinessUse, source, target }: SourceRequestUse) =>
+  operation !== SymmyCustomerSourceIntakeOperation &&
+  organizationBusinessUse === undefined &&
+  (source !== null || target?.kind === 'PARTY') &&
+  (target === null || target.kind === 'PARTY')
+    ? undefined
+    : 'Communications requires a qualified source record or a Party target and no organization or Symmy use';
+
+const generalRequestIssue = ({ operation, organizationBusinessUse, target }: SourceRequestUse) =>
+  operation !== SymmyCustomerSourceIntakeOperation &&
+  organizationBusinessUse === undefined &&
+  target?.kind !== 'PARTY_CONTACT_POINT' &&
+  target?.kind !== 'COUNTERPARTY'
+    ? undefined
+    : 'Symmy intake operations and locators are reserved for the integration boundary';
+
+const sourceRequestIssue = (request: SourceRequestUse) => {
+  if (request.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule) {
+    return symmyIntakeRequestIssue(request);
+  }
+  return request.consumerModuleId === CommunicationsSourceProcessingConsumerModule
+    ? communicationsRequestIssue(request)
+    : generalRequestIssue(request);
+};
+
 export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
   consumerModuleId: Schema.Literals([
     'party.registry',
     'commerce.customer-context',
     SymmyCustomerSourceIntakeConsumerModule,
+    CommunicationsSourceProcessingConsumerModule,
   ]),
   operation: Ref,
   organizationBusinessUse: Schema.optionalKey(
@@ -51,24 +99,7 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
       }),
     ),
   ),
-}).check(
-  Schema.makeFilter(({ consumerModuleId, operation, organizationBusinessUse, source, target }) => {
-    if (consumerModuleId === SymmyCustomerSourceIntakeConsumerModule) {
-      return operation === SymmyCustomerSourceIntakeOperation &&
-        source !== null &&
-        (organizationBusinessUse === undefined ||
-          target?.kind === (organizationBusinessUse === 'COMPANY_NAME' ? 'PARTY' : 'COUNTERPARTY_PURCHASING_PROFILE'))
-        ? undefined
-        : 'Symmy intake requires a qualified source and its dedicated processing operation';
-    }
-    return operation !== SymmyCustomerSourceIntakeOperation &&
-      organizationBusinessUse === undefined &&
-      target?.kind !== 'PARTY_CONTACT_POINT' &&
-      target?.kind !== 'COUNTERPARTY'
-      ? undefined
-      : 'Symmy intake operations and locators are reserved for the integration boundary';
-  }),
-);
+}).check(Schema.makeFilter(sourceRequestIssue));
 export type SourceProcessingEligibilityRequest = typeof SourceProcessingEligibilityRequestSchema.Type;
 /** Deployment-governed business-fact context, never legal basis or consent. Every entry
  * refers to an existing durable Privacy applicability decision. Reloaded on each attempt. */
@@ -111,8 +142,20 @@ export const SourceProcessingContextSchema = Schema.Struct({
 );
 export type SourceProcessingContext = typeof SourceProcessingContextSchema.Type;
 
+/**
+ * The evaluated, non-allowed Privacy decision, present ONLY for the Communications consumer. Every other consumer
+ * keeps its existing response shape. `NOT_ALLOWED` is a proven prohibition of the exact scope and `INDETERMINATE` is
+ * the inability to evidence a mandatory input; both are `DENIED/PROCESSING_NOT_ALLOWED` for the original consumers.
+ */
+export const SourceProcessingEligibilityDenialSchema = Schema.Struct({
+  evidence: PrivacyEligibilityEvidenceSchema,
+  outcome: Schema.Literals(['NOT_ALLOWED', 'INDETERMINATE']),
+});
+export type SourceProcessingEligibilityDenial = typeof SourceProcessingEligibilityDenialSchema.Type;
+
 export const SourceProcessingEligibilityResponseSchema = Schema.Union([
   Schema.Struct({
+    eligibility: Schema.optionalKey(SourceProcessingEligibilityDenialSchema),
     evaluatedAt: PrivacyIsoTimestampSchema,
     outcome: Schema.Literal('DENIED'),
     reason: Schema.Literals(['AUTHORITY_NOT_CURRENT', 'PROCESSING_NOT_ALLOWED', 'PROTECTED_MATERIAL']),
