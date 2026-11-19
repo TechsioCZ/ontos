@@ -212,28 +212,26 @@ export type McpHandlerFactory = (
   describeTools: Effect.Effect<readonly ToolSpec[]>,
 ) => Effect.Effect<Pick<ReturnType<typeof createMcpHandler>, 'fetch'>>;
 
-const createMcpSdkHandler: McpHandlerFactory = Effect.fn('Mcp.createSdkHandler')(
-  function* createSdkHandler(describeTools) {
-    const [sdk, { buildMcpServer }] = yield* loadMcpRuntime;
-    // The SDK calls back with Promises; tools and logs run with the services of this request.
-    const services = yield* Effect.context();
-    const run = Effect.runPromiseWith(services);
-    const describedServer = describeTools.pipe(Effect.map((tools) => buildMcpServer(tools, { run, sdk })));
-    return sdk.createMcpHandler(
-      ({ requestInfo }): ReturnType<typeof buildMcpServer> | Promise<ReturnType<typeof buildMcpServer>> =>
-        MCP_TOOL_METHODS.has(requestInfo?.headers.get('mcp-method') ?? '')
-          ? run(describedServer)
-          : buildMcpServer([], { run, sdk }),
-      {
-        // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
-        legacy: 'reject',
-        onerror: (error) => {
-          Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
-        },
+const createMcpSdkHandler: McpHandlerFactory = Effect.fnUntraced(function* createSdkHandler(describeTools) {
+  const [sdk, { buildMcpServer }] = yield* loadMcpRuntime;
+  // Keep this factory untraced: SDK callbacks inherit this request's services and live Mcp.serve span.
+  const services = yield* Effect.context();
+  const run = Effect.runPromiseWith(services);
+  const describedServer = describeTools.pipe(Effect.map((tools) => buildMcpServer(tools, { run, sdk })));
+  return sdk.createMcpHandler(
+    ({ requestInfo }): ReturnType<typeof buildMcpServer> | Promise<ReturnType<typeof buildMcpServer>> =>
+      MCP_TOOL_METHODS.has(requestInfo?.headers.get('mcp-method') ?? '')
+        ? run(describedServer)
+        : buildMcpServer([], { run, sdk }),
+    {
+      // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
+      legacy: 'reject',
+      onerror: (error) => {
+        Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
       },
-    );
-  },
-);
+    },
+  );
+});
 
 /** Serves the MCP endpoint itself. */
 export const serveMcp = <Failure, Requirements>(
