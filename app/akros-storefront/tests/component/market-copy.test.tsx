@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CategoryFilters } from "@/components/category-filters";
 import { AddressStep } from "@/features/checkout/address-step";
@@ -17,16 +17,10 @@ import { parseCategoryFilters } from "@/ontos/category-filters";
 import { MarketProvider, type ClientMarket } from "@/ontos/market-context";
 import type { CatalogProduct, CatalogProductVariant } from "@/ontos/catalog-types";
 
-// The product actions navigate with the app router; isolated renders have none.
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/",
-  useRouter: () => ({
-    push: vi.fn<(href: string) => void>(),
-    replace: vi.fn<(href: string) => void>(),
-    back: vi.fn<() => void>(),
-  }),
-  useSearchParams: () => new URLSearchParams(),
-}));
+import { browserAt, serveHttp } from "../support/http";
+// Initialize Next's own browser runtime before mounting its real router.
+import "next/dist/client/app-bootstrap";
+import { NextRouter } from "../support/router";
 
 const live: ClientMarket["live"] = [
   { locale: "cs", marketCode: "AKROS-CZ", label: "CZ", currency: "CZK" },
@@ -118,7 +112,25 @@ const cartLine = {
   quantity: 2,
 };
 
-beforeEach(() => {
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let cartUnavailable = false;
+
+beforeEach(async () => {
+  cartUnavailable = false;
+  network = await serveHttp(async (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === "/api/ontos/checkout" && request.method === "GET")
+      return Response.json({ shippingMethods: [] });
+    if (path === "/api/ontos/account" && request.method === "GET")
+      return Response.json({ account: null });
+    if (path === "/api/ontos/cart" && request.method === "POST") {
+      if (cartUnavailable) return Response.json({ error: "down" }, { status: 503 });
+      const { cart } = await request.json();
+      return Response.json({ cart, priceChanged: false, issues: [], canCheckout: true });
+    }
+    return new Response("Unknown endpoint", { status: 404 });
+  });
+  browserAt(network.origin);
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.localStorage.setItem(
@@ -127,10 +139,11 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   toaster.remove();
-  vi.unstubAllGlobals();
+  await network.idle();
+  await network.close();
 });
 
 describe("market copy outside the product cards", () => {
@@ -173,21 +186,24 @@ describe("market copy outside the product cards", () => {
   });
 
   it("shows the English product actions", () => {
+    browserAt(`${network.origin}/en/produkt/hex-bolt`);
     render(
-      <MarketProvider market={enMarket}>
-        <ProductDetailActions
-          productId="product-hex-bolt"
-          productName="DIN 933/A2"
-          productSlug="hex-bolt"
-          showVariantFavorites
-        />
-        <FavoriteButton
-          productId="product-hex-bolt"
-          productName="DIN 933/A2"
-          productSlug="hex-bolt"
-          variantId={null}
-        />
-      </MarketProvider>,
+      <NextRouter>
+        <MarketProvider market={enMarket}>
+          <ProductDetailActions
+            productId="product-hex-bolt"
+            productName="DIN 933/A2"
+            productSlug="hex-bolt"
+            showVariantFavorites
+          />
+          <FavoriteButton
+            productId="product-hex-bolt"
+            productName="DIN 933/A2"
+            productSlug="hex-bolt"
+            variantId={null}
+          />
+        </MarketProvider>
+      </NextRouter>,
     );
 
     expect(screen.getByRole("button", { name: "Ask about the product" })).not.toBeNull();
@@ -209,18 +225,17 @@ describe("market copy outside the product cards", () => {
   });
 
   it("shows the Slovak delivery details step and its validation", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json({ shippingMethods: [], account: null })),
-    );
+    browserAt(`${network.origin}/sk/kosik/dodaci-udaje`);
     render(
-      <MarketProvider market={skMarket}>
-        <CartProvider storage={window.localStorage}>
-          <CheckoutProvider storage={window.sessionStorage}>
-            <AddressStep />
-          </CheckoutProvider>
-        </CartProvider>
-      </MarketProvider>,
+      <NextRouter>
+        <MarketProvider market={skMarket}>
+          <CartProvider storage={window.localStorage}>
+            <CheckoutProvider storage={window.sessionStorage}>
+              <AddressStep />
+            </CheckoutProvider>
+          </CartProvider>
+        </MarketProvider>
+      </NextRouter>,
     );
 
     expect(screen.getByRole("heading", { name: "Dodacie údaje" })).not.toBeNull();
@@ -232,7 +247,12 @@ describe("market copy outside the product cards", () => {
     expect(screen.getAllByText("Vyplňte toto pole.").length).toBeGreaterThan(0);
     expect(screen.queryByText("Zadejte platný e-mail.")).toBeNull();
     expect(screen.queryByText("Fakturační adresa")).toBeNull();
-    vi.unstubAllGlobals();
+    await waitFor(() => {
+      expect(network.requests.map((request) => new URL(request.url).pathname)).toEqual(
+        expect.arrayContaining(["/api/ontos/checkout", "/api/ontos/account"]),
+      );
+    });
+    await act(async () => network.idle());
   });
 
   it("words the price-unavailable reason code in Slovak and English, Czech unchanged", () => {
@@ -282,13 +302,6 @@ describe("market copy outside the product cards", () => {
           </CartProvider>
         </MarketProvider>,
       );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init: RequestInit) => {
-        const { cart } = JSON.parse(typeof init.body === "string" ? init.body : "");
-        return Response.json({ cart, priceChanged: false, issues: [], canCheckout: true });
-      }),
-    );
     renderAdd(enMarket);
     fireEvent.click(await screen.findByRole("button", { name: /Washer/ }));
     expect(await screen.findByText("Added to cart")).not.toBeNull();
@@ -298,10 +311,7 @@ describe("market copy outside the product cards", () => {
     cleanup();
     toaster.remove();
 
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json({ error: "down" }, { status: 503 })),
-    );
+    cartUnavailable = true;
     renderAdd(skMarket);
     fireEvent.click(await screen.findByRole("button", { name: /Washer/ }));
     expect((await screen.findByRole("alert")).textContent).toBe(

@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { brandLocale, getBrand, toClientBrand } from "@/brand";
 
-vi.mock("server-only", () => ({}));
-
 afterEach(() => vi.unstubAllEnvs());
 
 describe("storefront brand resolution", () => {

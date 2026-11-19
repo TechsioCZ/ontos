@@ -1,15 +1,9 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CartProvider } from "@/features/cart/cart-provider";
 import { MiniCart } from "@/features/cart/mini-cart";
-
-class ResizeObserverMock {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
 
 const cartLine = {
   productId: "product-chain",
@@ -29,12 +23,11 @@ const cartLine = {
 
 beforeEach(() => {
   window.localStorage.clear();
-  vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 });
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
+  window.localStorage.clear();
 });
 
 describe("MiniCart", () => {

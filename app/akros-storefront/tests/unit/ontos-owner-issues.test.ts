@@ -1,8 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { projectProducts as project } from "@/ontos/catalog-projection";
-import { readCartProducts, readProducts } from "@/ontos/catalog-server";
-import { callAction, readRecords } from "@/ontos/gateway";
-import { readAccount } from "@/ontos/account";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { quoteCart } from "@/ontos/quote";
 import { ownerIssueText } from "@/ontos/owner-issues";
 import { POST as orderRoute } from "@/app/api/ontos/orders/route";
@@ -11,20 +7,10 @@ import { cs } from "@/i18n/cs";
 import { sk } from "@/i18n/sk";
 import { en } from "@/i18n/en";
 import type { MoneyFormat } from "@/lib/format";
-import { getActiveMarket } from "@/ontos/active-market";
+import { getConfig } from "@/ontos/config";
+import { browserAt, serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
 import { testMarket } from "../support/market-fixture";
-
-type AnyAsync = (...args: unknown[]) => Promise<unknown>;
-vi.mock("@/ontos/catalog-server", () => ({
-  readCartProducts: vi.fn<AnyAsync>(),
-  readProducts: vi.fn<AnyAsync>(),
-}));
-vi.mock("@/ontos/gateway", () => ({
-  callAction: vi.fn<AnyAsync>(),
-  readRecords: vi.fn<AnyAsync>(),
-  OntosError: class extends Error {},
-}));
-vi.mock("@/ontos/account", () => ({ readAccount: vi.fn<AnyAsync>() }));
 
 const eur: MoneyFormat = { currency: "EUR", locale: "en-GB" };
 const czechOnly = /[ěřůĚŘŮ]/u;
@@ -172,21 +158,134 @@ const rejected = {
 };
 
 describe("cart quote and order speak the market language for owner rejections", () => {
-  beforeEach(() => {
-    vi.mocked(callAction).mockReset();
-    vi.mocked(readCartProducts).mockResolvedValue(project({ revision: 3, products: [product] }));
-  });
-
-  it("rewords the owner's dry-run issues in English", async () => {
-    vi.mocked(callAction).mockResolvedValue(rejected);
-    vi.mocked(getActiveMarket).mockResolvedValueOnce({
+  const markets = [
+    testMarket,
+    {
       ...testMarket,
+      marketId: "0b3d6c1e-2f4a-4c5b-8d6e-7f8091a2b3c5",
       marketCode: "AKROS-EU",
       locale: "en",
       formatLocale: "en-GB",
       currency: "EUR",
+    },
+    {
+      ...testMarket,
+      marketId: "0b3d6c1e-2f4a-4c5b-8d6e-7f8091a2b3c6",
+      marketCode: "AKROS-SK",
+      locale: "sk",
+      formatLocale: "sk-SK",
+    },
+  ];
+  const originalBrowserUrl = window.location.href;
+  let network: Awaited<ReturnType<typeof serveHttp>>;
+
+  beforeAll(async () => {
+    network = await serveHttp(async (request) => {
+      const path = new URL(request.url).pathname;
+      const context = {
+        apiBaseUrl: "/shell-super-app-api/owner",
+        compositionRevision: "a".repeat(64),
+        token: "owner-issues-test-assertion",
+        expiresAt: Date.now() + 60_000,
+      };
+      if (path === "/shell-super-app-api/auth/api-key/gateway-context")
+        return Response.json(context);
+      if (path === "/shell-super-app-api/owner/api/portal-auth/customer-account")
+        return Response.json({ state: "anonymous" });
+      if (path === "/shell-super-app-api/owner/merchandise/actions/place-storefront-order")
+        return Response.json(rejected);
+      if (path !== "/shell-super-app-api/auth/api-key/gateway-read")
+        throw new Error(`Unexpected owner request: ${request.method} ${path}`);
+
+      const body: unknown = await request.json();
+      if (typeof body !== "object" || body === null || !("readName" in body))
+        throw new Error("Missing governed read name");
+      const headers = { "x-ontos-gateway-context": JSON.stringify(context) };
+      if (body.readName === "current-market-catalog") {
+        const { appId, legalEntityId } = getConfig();
+        const effectivePeriod = { startsAt: "2020-01-01T00:00:00.000Z" };
+        return Response.json(
+          {
+            markets: markets.map((market) => ({
+              marketRef: { resourceId: market.marketId },
+              sellingLegalEntityRef: { resourceId: legalEntityId },
+              marketCode: market.marketCode,
+              supportedLocales: [market.formatLocale],
+              lifecycle: "ACTIVE",
+              effectivePeriod,
+            })),
+            associations: markets.map((market) => ({
+              marketRef: { resourceId: market.marketId },
+              storefrontRef: { appId },
+              sellingLegalEntityRef: { resourceId: legalEntityId },
+              channel: "B2C",
+              effectivePeriod,
+            })),
+          },
+          { headers },
+        );
+      }
+      if (
+        body.readName !== "records" ||
+        !("query" in body) ||
+        typeof body.query !== "object" ||
+        body.query === null ||
+        !("view" in body.query) ||
+        typeof body.query.view !== "object" ||
+        body.query.view === null ||
+        !("storefrontCatalog" in body.query.view)
+      )
+        throw new Error("Unexpected catalog read");
+      const view = body.query.view;
+      const catalog = view.storefrontCatalog;
+      if (typeof catalog !== "object" || catalog === null || !("marketId" in catalog))
+        throw new Error("Missing owner market selector");
+      const market = markets.find((entry) => entry.marketId === catalog.marketId);
+      if (!market) throw new Error("Unknown owner market");
+      if ("storefrontCheckout" in view && view.storefrontCheckout === true)
+        return Response.json(
+          {
+            market,
+            checkout: {
+              shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+              paymentAvailable: false,
+              carrierTrackingAvailable: false,
+            },
+          },
+          { headers },
+        );
+      const full = "fields" in catalog && catalog.fields === "full";
+      return Response.json(
+        {
+          market,
+          revision: full ? 3 : 7,
+          products: full ? [product] : [],
+        },
+        { headers },
+      );
     });
-    const quote = await quoteCart({ version: 3, lines: [cartLine] }, undefined, en);
+    browserAt(network.origin);
+    vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+    vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "owner-issues-test-key");
+  });
+
+  afterAll(async () => {
+    try {
+      await network.close();
+    } finally {
+      vi.unstubAllEnvs();
+      browserAt(originalBrowserUrl);
+    }
+  });
+
+  it("rewords the owner's dry-run issues in English", async () => {
+    const request = nextRequest(`${network.origin}/api/ontos/cart`, {
+      headers: { "x-akros-market-locale": "en" },
+    });
+    const quote = await request
+      .run(() => quoteCart({ version: 3, lines: [cartLine] }, undefined, en))
+      .finally(() => request.close());
+    await network.idle();
     expect(quote.canCheckout).toBe(false);
     expect(quote.priceChanged).toBe(true);
     expect(quote.issues).toEqual([
@@ -200,56 +299,47 @@ describe("cart quote and order speak the market language for owner rejections", 
   });
 
   it("keeps the Czech wording for the Czech market", async () => {
-    vi.mocked(callAction).mockResolvedValue(rejected);
-    const quote = await quoteCart({ version: 3, lines: [cartLine] });
+    const request = nextRequest(`${network.origin}/api/ontos/cart`, {
+      headers: { "x-akros-market-locale": "cs" },
+    });
+    const quote = await request
+      .run(() => quoteCart({ version: 3, lines: [cartLine] }))
+      .finally(() => request.close());
+    await network.idle();
     expect(quote.issues[0]).toBe("Vruty (3,5 × 16): k dispozici je jen 4 ks.");
   });
 
   it("rewords a rejected order in Slovak (409)", async () => {
-    vi.mocked(readAccount).mockResolvedValue(null);
-    vi.mocked(readProducts).mockResolvedValue(project({ revision: 7, products: [] }));
-    vi.mocked(readRecords).mockResolvedValue({
-      market: {
-        marketId: testMarket.marketId,
-        marketCode: "AKROS-CZ",
-        currency: "CZK",
-        configured: true,
+    const request = nextRequest(`${network.origin}/api/ontos/orders`, {
+      method: "POST",
+      headers: {
+        origin: network.origin,
+        "content-type": "application/json",
+        "x-akros-market-locale": "sk",
       },
-      checkout: {
-        shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-        paymentAvailable: false,
-        carrierTrackingAvailable: false,
-      },
-    });
-    vi.mocked(callAction).mockResolvedValue(rejected);
-    const response = await orderRoute(
-      new Request("http://localhost:3070/api/ontos/orders", {
-        method: "POST",
-        headers: {
-          origin: "http://localhost:3070",
-          "content-type": "application/json",
-          "x-akros-market-locale": "sk",
-        },
-        body: JSON.stringify({
-          clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
-          cart: { version: 3, lines: [cartLine] },
-          draft: {
-            ...createCheckoutDraft(),
-            deliveryId: "PPL",
-            email: "guest@example.test",
-            billing: {
-              firstName: "Guest",
-              lastName: "Test",
-              street: "Test 1",
-              city: "Brno",
-              postalCode: "60200",
-              country: "CZ",
-              phone: "+420777123456",
-            },
+      body: JSON.stringify({
+        clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
+        cart: { version: 3, lines: [cartLine] },
+        draft: {
+          ...createCheckoutDraft(),
+          deliveryId: "PPL",
+          email: "guest@example.test",
+          billing: {
+            firstName: "Guest",
+            lastName: "Test",
+            street: "Test 1",
+            city: "Brno",
+            postalCode: "60200",
+            country: "CZ",
+            phone: "+420777123456",
           },
-        }),
+        },
       }),
-    );
+    });
+    const response = await request
+      .run(() => orderRoute(request.request))
+      .finally(() => request.close());
+    await network.idle();
     expect(response.status).toBe(409);
     const body = (await response.json()) as {
       message: string;

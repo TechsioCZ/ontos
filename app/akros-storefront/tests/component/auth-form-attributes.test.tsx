@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
@@ -6,6 +6,8 @@ import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.share
 import { LoginForm, RegistrationForm } from "@/components/auth-form";
 import { AccountProfilePage } from "@/features/account/account-profile-page";
 import { CartProvider } from "@/features/cart/cart-provider";
+import { browserAt, serveHttp } from "../support/http";
+import { renderStorefront } from "../support/storefront";
 
 // These markup tests never navigate. Fail if a form unexpectedly invokes the router.
 function unexpectedNavigation(): never {
@@ -30,7 +32,8 @@ function expectInput(id: string, attributes: Record<string, string>) {
   for (const [name, value] of Object.entries(attributes)) {
     expect(input?.getAttribute(name), `${id}: ${name}`).toBe(value);
   }
-  return input as HTMLInputElement;
+  if (!(input instanceof HTMLInputElement)) throw new Error(`Missing input: ${id}`);
+  return input;
 }
 
 function expectForm(input: HTMLInputElement, action: string) {
@@ -58,7 +61,7 @@ function expectNewPasswords(firstId: string, confirmationId: string) {
 
 describe("password-manager form semantics with the published UI-kit", () => {
   it("names registration fields and keeps both generated-password targets in one POST form", () => {
-    render(<RegistrationForm />);
+    renderStorefront(<RegistrationForm />);
 
     expectInput("register-first-name", {
       name: "firstName",
@@ -77,7 +80,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
     expectForm(password, "/api/ontos/account");
     expect(password.required).toBe(true);
     expect(
-      (document.getElementById("register-password-confirm") as HTMLInputElement).required,
+      expectInput("register-password-confirm", { name: "passwordConfirmation" }).required,
     ).toBe(true);
     expect(screen.getByRole("checkbox", { name: /Souhlasím/ }).getAttribute("name")).toBe(
       "privacyConsent",
@@ -89,7 +92,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
   });
 
   it("identifies the login email as username and password as current-password", () => {
-    render(
+    renderStorefront(
       <AppRouterContext.Provider value={router}>
         <LoginForm />
       </AppRouterContext.Provider>,
@@ -112,42 +115,69 @@ describe("password-manager form semantics with the published UI-kit", () => {
     );
   });
 
-  it("shows the authenticated account and keeps the demo password change outside the profile form", () => {
-    render(
-      <AppRouterContext.Provider value={router}>
-        <PathnameContext.Provider value="/muj-ucet">
-          <CartProvider storage={null}>
-            <AccountProfilePage
-              account={{
-                id: "customer-1",
-                partyId: "party-1",
-                tenantId: "tenant-1",
-                email: "customer@example.test",
-                name: "Customer One",
-              }}
-              profile={{
-                displayName: "Customer One",
-                phone: "",
-                contactEmail: "customer@example.test",
-                version: "a".repeat(64),
-              }}
-            />
-          </CartProvider>
-        </PathnameContext.Provider>
-      </AppRouterContext.Provider>,
-    );
-
-    // The password change is its own block: its inputs are never part of the profile save.
-    const passwordChange = document.getElementById("zmena-hesla");
-    expect(passwordChange?.closest("form")).toBeNull();
-    expect(document.querySelector('form input[type="password"]')).toBeNull();
-    expect(passwordChange?.textContent).toContain("Změna hesla se ukládá samostatně.");
-    const email = expectInput("account-email", {
-      name: "email",
-      type: "email",
-      autocomplete: "username",
+  it("shows the authenticated account and keeps the demo password change outside the profile form", async () => {
+    const network = await serveHttp((request) => {
+      if (
+        request.method === "GET" &&
+        new URL(request.url).pathname === "/api/ontos/account/consent"
+      ) {
+        return Response.json({
+          consent: {
+            decision: "ABSENT",
+            revision: 0,
+            notice: {
+              language: "cs",
+              noticeVersionId: "newsletter-v1",
+              wording: "Souhlasím se zasíláním novinek.",
+            },
+          },
+        });
+      }
+      return Response.json({ message: "Neočekávaný požadavek." }, { status: 404 });
     });
-    expect(email.value).toBe("customer@example.test");
-    expect(email.readOnly).toBe(true);
+    browserAt(`${network.origin}/muj-ucet`);
+    try {
+      renderStorefront(
+        <AppRouterContext.Provider value={router}>
+          <PathnameContext.Provider value="/muj-ucet">
+            <CartProvider storage={null}>
+              <AccountProfilePage
+                account={{
+                  id: "customer-1",
+                  partyId: "party-1",
+                  tenantId: "tenant-1",
+                  email: "customer@example.test",
+                  name: "Customer One",
+                }}
+                profile={{
+                  displayName: "Customer One",
+                  phone: "",
+                  contactEmail: "customer@example.test",
+                  version: "a".repeat(64),
+                }}
+              />
+            </CartProvider>
+          </PathnameContext.Provider>
+        </AppRouterContext.Provider>,
+      );
+      await screen.findByText("Souhlasím se zasíláním novinek.");
+      await network.idle();
+
+      // The password change is its own block: its inputs are never part of the profile save.
+      const passwordChange = document.getElementById("zmena-hesla");
+      expect(passwordChange?.closest("form")).toBeNull();
+      expect(document.querySelector('form input[type="password"]')).toBeNull();
+      expect(passwordChange?.textContent).toContain("Změna hesla se ukládá samostatně.");
+      const email = expectInput("account-email", {
+        name: "email",
+        type: "email",
+        autocomplete: "username",
+      });
+      expect(email.value).toBe("customer@example.test");
+      expect(email.readOnly).toBe(true);
+    } finally {
+      cleanup();
+      await network.close();
+    }
   });
 });

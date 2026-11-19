@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Schema } from "effect";
 import type * as MarketModule from "@/ontos/market";
+import { browserAt, serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
 
 // Regression: a denied commerce.market-catalog read must not be mistaken for proof of a pre-market
 // installation. The unrestricted /cs catalogue (no marketId, so no assortment filter in
@@ -9,24 +12,24 @@ import type * as MarketModule from "@/ontos/market";
 // apps/shell-super-app/api/auth/gateway-issuer.ts). A 403/404 from the composed owner means markets
 // may exist and be restricted: the storefront must surface the denial, never widen the catalogue.
 
-// Shared across `vi.resetModules()`: every fresh market module reads through this mock.
-const { AKROS, identity, readRecords } = vi.hoisted(() => ({
-  AKROS: "71000000-0000-4000-8000-000000000024",
-  identity: { appId: "akros-storefront", legalEntityId: "71000000-0000-4000-8000-000000000024" },
-  readRecords: vi.fn<(audience: string, readName: string, query: unknown) => Promise<unknown>>(),
-}));
-vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/config", () => ({
-  getConfig: () => ({ ...identity, apiKey: "test", shellUrl: "http://shell.test" }),
-}));
-vi.mock("@/ontos/gateway", async (original) => ({
-  ...(await original<typeof import("@/ontos/gateway")>()),
-  readRecords,
-}));
-
+const AKROS = "71000000-0000-4000-8000-000000000024";
+const identity = { appId: "akros-storefront", legalEntityId: AKROS };
 const TENANT = "70000000-0000-4000-8000-000000000020";
 const MARKET = "m-cz";
 const NOW = Date.parse("2026-11-04T10:00:00Z");
+const gatewayRead = Schema.Struct({
+  audience: Schema.String,
+  legalEntityId: Schema.Literal(AKROS),
+  readName: Schema.String,
+  query: Schema.Unknown,
+});
+const decodeRead = Schema.decodeUnknownSync(gatewayRead);
+const emptyCatalog = {
+  markets: [],
+  associations: [],
+  completenessEvidence: {},
+  observedAt: "2026-11-04T10:00:00Z",
+};
 
 const ref = (resourceType: string, resourceId: string) => ({
   moduleId: "commerce.market-catalog",
@@ -86,41 +89,76 @@ const unmarketed = {
 };
 
 let market$: typeof MarketModule;
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let request: ReturnType<typeof nextRequest>;
+let ownerResponse: { body: unknown; status: number };
 beforeEach(async () => {
   vi.resetModules();
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
-  readRecords.mockReset();
+  ownerResponse = { body: emptyCatalog, status: 200 };
+  network = await serveHttp(async (incoming) => {
+    if (
+      incoming.method !== "POST" ||
+      new URL(incoming.url).pathname !== "/shell-super-app-api/auth/api-key/gateway-read" ||
+      incoming.headers.get("x-api-key") !== "test"
+    )
+      return Response.json({ error: "unexpected gateway request" }, { status: 404 });
+    const read = decodeRead(await incoming.json());
+    const headers = {
+      "x-ontos-gateway-context": JSON.stringify({
+        apiBaseUrl: `/shell-super-app-api/${read.audience}`,
+        compositionRevision: "a".repeat(64),
+        token: "served-read-assertion",
+        expiresAt: NOW + 300_000,
+      }),
+    };
+    if (read.audience === "commerce-market-catalog" && read.readName === "current-market-catalog")
+      return Response.json(ownerResponse.body, { status: ownerResponse.status, headers });
+    if (read.audience === "merchandise" && read.readName === "records")
+      return Response.json(offer, { headers });
+    return Response.json({ error: "unexpected owner read" }, { status: 404 });
+  });
+  browserAt(network.origin);
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "test");
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", identity.appId);
+  vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", identity.legalEntityId);
+  request = nextRequest(`${network.origin}/cs`);
   market$ = await import("@/ontos/market");
 });
-afterEach(() => vi.useRealTimers());
+afterEach(async () => {
+  try {
+    await request.close();
+  } finally {
+    await network.close();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  }
+});
 
-const ownerReads = () =>
-  readRecords.mock.calls.map(([audience, readName]) => `${audience}/${readName}`);
+const ownerReads = async () => {
+  await network.idle();
+  return Promise.all(
+    network.requests.map(async (incoming) => {
+      const { audience, readName } = decodeRead(await incoming.json());
+      return `${audience}/${readName}`;
+    }),
+  );
+};
 
 describe("legitimate pre-market installation", () => {
   it("serves /cs without a marketId only when the owner proves the catalogue is empty", async () => {
-    readRecords.mockResolvedValue({
-      markets: [],
-      associations: [],
-      completenessEvidence: {},
-      observedAt: "2026-11-04T10:00:00Z",
-    });
-    expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
-    expect(await market$.storefrontMarketKind("cs")).toBe("live");
-    expect(await market$.storefrontMarketKind("sk")).toBe("unknown");
+    expect(await request.run(() => market$.resolveStorefrontMarket("cs"))).toEqual(unmarketed);
+    expect(await request.run(() => market$.storefrontMarketKind("cs"))).toBe("live");
+    expect(await request.run(() => market$.storefrontMarketKind("sk"))).toBe("unknown");
     // Nothing to scope: no catalogue read is attempted, let alone one without a marketId.
-    expect(ownerReads()).toEqual(["commerce-market-catalog/current-market-catalog"]);
+    expect(await ownerReads()).toEqual(["commerce-market-catalog/current-market-catalog"]);
   });
 
   it("keeps /cs when the market module is not part of the approved composition", async () => {
-    const { OntosError } = await import("@/ontos/gateway");
-    readRecords.mockImplementation(async () => {
-      throw new OntosError("audience rejected", 400, undefined, undefined, {
-        _tag: "GatewayAudienceInvalidProblem",
-      });
-    });
-    expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
-    expect(await market$.storefrontMarketKind("sk")).toBe("unknown");
+    ownerResponse = { body: { _tag: "GatewayAudienceInvalidProblem" }, status: 400 };
+    expect(await request.run(() => market$.resolveStorefrontMarket("cs"))).toEqual(unmarketed);
+    expect(await request.run(() => market$.storefrontMarketKind("sk"))).toBe("unknown");
   });
 });
 
@@ -132,35 +170,50 @@ describe("denied access to the market catalog", () => {
   ])(
     "refuses /cs instead of serving the unrestricted catalogue when %s",
     async (_case, status, tag) => {
-      const { OntosError } = await import("@/ontos/gateway");
-      readRecords.mockImplementation(async () => {
-        throw new OntosError("denied", status, undefined, undefined, { _tag: tag });
+      ownerResponse = { body: { _tag: tag }, status };
+      await expect(request.run(() => market$.resolveStorefrontMarket("cs"))).rejects.toMatchObject({
+        status,
       });
-      await expect(market$.resolveStorefrontMarket("cs")).rejects.toMatchObject({ status });
-      await expect(market$.storefrontMarketKind("cs")).rejects.toMatchObject({ status });
+      await expect(request.run(() => market$.storefrontMarketKind("cs"))).rejects.toMatchObject({
+        status,
+      });
     },
   );
 
   it("refuses /cs when a denied read hides the markets the storefront already had", async () => {
     // The owner confirmed one active CZ market: every catalogue read is scoped by its marketId.
-    readRecords.mockImplementation(async (audience, readName) => {
-      if (audience === "commerce-market-catalog" && readName === "current-market-catalog")
-        return catalog;
-      if (audience === "merchandise" && readName === "records") return offer;
-      throw new Error(`unexpected read ${audience}/${readName}`);
-    });
-    const first = await market$.resolveStorefrontMarket("cs");
+    ownerResponse = { body: catalog, status: 200 };
+    const first = await request.run(() => market$.resolveStorefrontMarket("cs"));
     expect(first.kind === "live" && first.market.marketId).toBe(MARKET);
+    await network.idle();
+    const merchandiseReads = await Promise.all(
+      network.requests.map(async (incoming) => decodeRead(await incoming.json())),
+    );
+    expect(merchandiseReads.filter((read) => read.audience === "merchandise")).toEqual([
+      {
+        audience: "merchandise",
+        legalEntityId: AKROS,
+        readName: "records",
+        query: {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              marketId: MARKET,
+              pageSize: 1,
+              fields: "card",
+              includeCategories: false,
+            },
+          },
+        },
+      },
+    ]);
 
     // Access is revoked. After the 60 s directory cache expires, /cs must not silently answer with
     // the whole published catalogue because the denial cannot prove the market is gone.
-    const { OntosError } = await import("@/ontos/gateway");
-    readRecords.mockImplementation(async () => {
-      throw new OntosError("denied", 403, undefined, undefined, {
-        _tag: "CurrentMarketCatalogForbiddenProblem",
-      });
-    });
+    ownerResponse = { body: { _tag: "CurrentMarketCatalogForbiddenProblem" }, status: 403 };
     vi.setSystemTime(NOW + 61_000);
-    await expect(market$.resolveStorefrontMarket("cs")).rejects.toMatchObject({ status: 403 });
+    await expect(request.run(() => market$.resolveStorefrontMarket("cs"))).rejects.toMatchObject({
+      status: 403,
+    });
   });
 });

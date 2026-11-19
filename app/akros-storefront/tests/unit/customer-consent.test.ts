@@ -1,13 +1,62 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { customerConsentInput, isCustomerNewsletterConsent } from "@/ontos/consent-model";
 import { GET, POST } from "@/app/api/ontos/account/consent/route";
-import { ownerRequest } from "@/ontos/gateway";
+import { serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
 
-vi.mock("@/ontos/gateway", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/ontos/gateway")>()),
-  ownerRequest: vi.fn<typeof ownerRequest>(),
-}));
-beforeEach(() => vi.resetAllMocks());
+const routePath = "/api/ontos/account/consent";
+const contextPath = "/shell-super-app-api/auth/api-key/gateway-context";
+const ownerBase = "/shell-super-app-api/commerce-customer-context";
+const consentPath = "/api/portal-auth/customer-consent";
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let ownerResponse: () => Response;
+
+beforeEach(async () => {
+  ownerResponse = () => Response.json({}, { status: 503 });
+  network = await serveHttp(async (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === routePath) {
+      const context = nextRequest(request.url, {
+        method: request.method,
+        headers: request.headers,
+        ...(request.method === "POST" ? { body: await request.text() } : {}),
+      });
+      try {
+        return await context.run(() =>
+          request.method === "POST" ? POST(context.request) : GET(context.request),
+        );
+      } finally {
+        await context.close();
+      }
+    }
+    if (path === contextPath && request.method === "POST") {
+      return Response.json({
+        apiBaseUrl: ownerBase,
+        compositionRevision: "a".repeat(64),
+        token: "consent-owner-assertion",
+        expiresAt: Date.now() + 60_000,
+      });
+    }
+    if (path === `${ownerBase}${consentPath}`) return ownerResponse();
+    return new Response("Not found", { status: 404 });
+  });
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "customer-consent-test-key");
+  vi.stubEnv("STOREFRONT_BRAND", "akros");
+});
+afterEach(async () => {
+  try {
+    await network.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+const ownerRequests = () =>
+  network.requests.filter(
+    (request) => new URL(request.url).pathname === `${ownerBase}${consentPath}`,
+  );
 
 const input = {
   decision: "GRANTED",
@@ -90,52 +139,57 @@ describe("customer newsletter consent boundary", () => {
     }
   });
   it("rejects cross-origin or malformed input before requesting the owner", async () => {
-    for (const origin of [undefined, "https://other.example", "http://localhost:3070"]) {
+    for (const origin of [undefined, "https://other.example", network.origin]) {
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (origin) headers.origin = origin;
-      const response = await POST(
-        new Request("http://localhost:3070/api/ontos/account/consent", {
-          method: "POST",
-          headers,
-          body: JSON.stringify(origin === "http://localhost:3070" ? { partyId: "forged" } : input),
-        }),
-      );
-      expect(response.status).toBe(origin === "http://localhost:3070" ? 400 : 403);
+      const response = await fetch(`${network.origin}${routePath}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(origin === network.origin ? { partyId: "forged" } : input),
+      });
+      expect(response.status).toBe(origin === network.origin ? 400 : 403);
       expect(response.headers.get("cache-control")).toBe("no-store");
     }
-    expect(ownerRequest).not.toHaveBeenCalled();
+    await network.idle();
+    expect(ownerRequests()).toEqual([]);
+    expect(
+      network.requests.filter((request) => new URL(request.url).pathname === contextPath),
+    ).toEqual([]);
   });
 
   it("reads the current choice again after a transient owner outage", async () => {
-    vi.mocked(ownerRequest)
-      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
-      .mockResolvedValueOnce(Response.json(projection));
-    const response = await GET(
-      new Request("http://localhost:3070/api/ontos/account/consent", {
-        headers: { cookie: "commerce-portal.session_token=customer" },
-      }),
-    );
+    let reads = 0;
+    ownerResponse = () => {
+      reads += 1;
+      return reads === 1 ? Response.json({}, { status: 503 }) : Response.json(projection);
+    };
+    const response = await fetch(`${network.origin}${routePath}`, {
+      headers: { cookie: "commerce-portal.session_token=customer" },
+    });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ consent: projection });
-    expect(vi.mocked(ownerRequest).mock.calls.map(([, path, init]) => [path, init.method])).toEqual(
-      [
-        ["/api/portal-auth/customer-consent", "GET"],
-        ["/api/portal-auth/customer-consent", "GET"],
-      ],
-    );
+    await network.idle();
+    expect(
+      ownerRequests().map((request) => [
+        new URL(request.url).pathname.slice(ownerBase.length),
+        request.method,
+      ]),
+    ).toEqual([
+      ["/api/portal-auth/customer-consent", "GET"],
+      ["/api/portal-auth/customer-consent", "GET"],
+    ]);
   });
 
   it("never repeats a choice after an owner outage", async () => {
-    vi.mocked(ownerRequest).mockResolvedValue(Response.json({}, { status: 503 }));
-    const origin = "http://localhost:3070";
-    const response = await POST(
-      new Request(`${origin}/api/ontos/account/consent`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin },
-        body: JSON.stringify(input),
-      }),
-    );
+    const origin = network.origin;
+    const response = await fetch(`${origin}${routePath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(input),
+    });
     expect(response.status).toBe(503);
-    expect(ownerRequest).toHaveBeenCalledOnce();
+    await network.idle();
+    expect(ownerRequests()).toHaveLength(1);
+    expect(await ownerRequests()[0]?.json()).toEqual(input);
   });
 });

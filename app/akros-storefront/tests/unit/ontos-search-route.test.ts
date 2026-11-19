@@ -1,50 +1,13 @@
+// @vitest-environment node
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { build } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCatalog } from "@/ontos/catalog-model";
-import { projectProducts } from "@/ontos/catalog-projection";
-import { getCatalogPage, readProducts, type CatalogPage } from "@/ontos/catalog-server";
-import { dynamic, fetchCache, POST } from "@/app/api/ontos/search/route";
 import { toSearchGridItem, type RemoteSearchResponse } from "@/ontos/search-suggestions";
 import { readSearchVariantMatches } from "@/ontos/search-variants";
 import { cs } from "@/i18n/cs";
-
-const { renderCache } = await vi.hoisted(async () => {
-  const { AsyncLocalStorage } = await import("node:async_hooks");
-  return { renderCache: new AsyncLocalStorage<Map<unknown, Map<string, unknown>>>() };
-});
-
-// Model React's per-render memoization too: search must bypass it, not just the process-local cache.
-vi.mock("react", () => ({
-  cache:
-    <Args extends unknown[], Value>(load: (...args: Args) => Value) =>
-    (...args: Args): Value => {
-      const values = renderCache.getStore();
-      if (values === undefined) return load(...args);
-      let entries = values.get(load);
-      if (entries === undefined) {
-        entries = new Map();
-        values.set(load, entries);
-      }
-      const key = JSON.stringify(args);
-      if (!entries.has(key)) entries.set(key, load(...args));
-      return entries.get(key) as Value;
-    },
-}));
-vi.mock("@/ontos/active-market", () => ({
-  getActiveMarket: async () => ({ marketId: "search-test-market" }),
-}));
-vi.mock("@/ontos/config", () => ({
-  getConfig: () => ({
-    shellUrl: "http://owner-transport.test",
-    apiKey: "test-only-storefront-key",
-    legalEntityId: "search-test-legal-entity",
-  }),
-}));
-
-vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/catalog-server", () => ({
-  getCatalogPage: vi.fn<typeof getCatalogPage>(),
-  readProducts: vi.fn<typeof readProducts>(),
-}));
+import { serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
 
 // The full record of p1 (search variant routing): two variants, one with an exact SKU.
 const fullP1Body = {
@@ -86,7 +49,6 @@ const fullP1Body = {
     },
   ],
 };
-const fullP1 = projectProducts(fullP1Body);
 const exactOffer = (revision = 1) => ({
   ...fullP1Body.products[0].variantRecords[1],
   currency: "CZK",
@@ -121,45 +83,341 @@ const listingBody = {
     },
   ],
 };
-const listing = projectProducts(listingBody);
-const page: CatalogPage = {
-  model: createCatalog(listing, {
-    categories: [
-      { id: "c1", parentId: null, hasChildren: true, slug: "srouby", name: "Šrouby", position: 1 },
-      {
-        id: "c2",
-        parentId: "c1",
-        hasChildren: false,
-        slug: "din-933",
-        name: "Šrouby DIN 933",
-        position: 1,
-      },
-    ],
-  }),
-  products: listing.products,
-  total: 37,
-  page: 1,
-  pageSize: 6,
+const categories = [
+  { id: "c1", parentId: null, hasChildren: true, slug: "srouby", name: "Šrouby", position: 1 },
+  {
+    id: "c2",
+    parentId: "c1",
+    hasChildren: false,
+    slug: "din-933",
+    name: "Šrouby DIN 933",
+    position: 1,
+  },
+];
+const legalEntityId = "71000000-0000-4000-8000-000000000024";
+type OwnerRequest = {
+  audience: string;
+  legalEntityId: string;
+  readName: string;
+  query: { view: { storefront: boolean; storefrontCatalog: Record<string, unknown> } };
+};
+let server: typeof import("@/ontos/catalog-server");
+let route: typeof import("@/app/api/ontos/search/route");
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let context: ReturnType<typeof nextRequest>;
+let revision: number;
+let unavailable: boolean;
+let requests: OwnerRequest[];
+let returnedGroups: number;
+let matchOverride: unknown;
+let omitEvidence: boolean;
+let hideProduct: boolean;
+let returnedVariantCount: number;
+
+// Market-directory and market-offer discovery are genuine prerequisite HTTP reads, not search reads.
+const productRequests = () =>
+  requests
+    .map(({ query }) => query.view.storefrontCatalog)
+    .filter(
+      (query) =>
+        query.mode !== "categories" &&
+        !(
+          Object.keys(query).length === 4 &&
+          query.marketId === "search-test-market" &&
+          query.pageSize === 1 &&
+          query.fields === "card" &&
+          query.includeCategories === false
+        ),
+    );
+const noFullReads = async () => {
+  await network.idle();
+  expect(
+    requests.filter(({ query }) => query.view.storefrontCatalog.fields === "full"),
+  ).toHaveLength(0);
 };
 const ask = (q: unknown, origin = "http://localhost:3070") =>
-  POST(
-    new Request("http://localhost:3070/api/ontos/search", {
-      method: "POST",
-      headers: { origin, "content-type": "application/json" },
-      body: JSON.stringify({ q }),
-    }),
+  context.run(() =>
+    route.POST(
+      new Request("http://localhost:3070/api/ontos/search", {
+        method: "POST",
+        headers: { origin, "content-type": "application/json", "x-akros-market-locale": "cs" },
+        body: JSON.stringify({ q }),
+      }),
+    ),
   );
 
-beforeEach(() => {
-  vi.mocked(getCatalogPage).mockReset();
-  vi.mocked(getCatalogPage).mockResolvedValue(page);
-  vi.mocked(readProducts).mockReset();
-  vi.mocked(readProducts).mockResolvedValue(fullP1);
+// A separate Node realm selects React's published server condition, as Next does. Bundle only our
+// TypeScript; React, Next and Effect stay their real installed packages. No export is replaced.
+async function renderSearches(query: string, concurrent = false) {
+  const require = createRequire(import.meta.url);
+  const entry = `
+    import { cache, createElement } from "react";
+    import { renderToReadableStream } from "next/dist/compiled/react-server-dom-webpack/server.node";
+    import { POST } from "./src/app/api/ontos/search/route";
+    import { nextRequest } from "./tests/support/next-request";
+    import { once } from "node:events";
+    import { Session } from "node:inspector";
+    import { promisify } from "node:util";
+    const inspector = new Session();
+    inspector.connect();
+    const post = promisify(inspector.post.bind(inspector));
+    const transports = [];
+    inspector.on("Debugger.paused", ({ params }) => {
+      inspector.post("Debugger.evaluateOnCallFrame", {
+        callFrameId: params.callFrames[0].callFrameId, returnByValue: true,
+        expression: '({ url: arguments[0], init: { method: arguments[1]?.method, cache: arguments[1]?.cache, ...("next" in (arguments[1] ?? {}) ? { next: true } : {}) } })',
+      }, (error, result) => {
+        if (error || result.exceptionDetails) throw error ?? new Error("Cannot observe fetch arguments");
+        transports.push(result.result.value);
+      });
+      inspector.post("Debugger.resume");
+    });
+    const query = ${JSON.stringify(query)};
+    const concurrent = ${JSON.stringify(concurrent)};
+    const context = nextRequest("http://localhost:3070/api/ontos/search", {
+      headers: { "x-akros-market-locale": "cs" },
+    });
+    let loads = 0;
+    const memo = cache(() => ++loads);
+    const probe = [];
+    const responses = [];
+    const ask = () => POST(new Request("http://localhost:3070/api/ontos/search", {
+      method: "POST", headers: { "content-type": "application/json", "origin": "http://localhost:3070" },
+      body: JSON.stringify({ q: query }),
+    }));
+    async function SearchRender() {
+      probe.push(memo());
+      if (concurrent) responses.push(...await Promise.all([ask(), ask()]));
+      else {
+        responses.push(await ask());
+        const continued = once(process, "message");
+        process.send({ phase: "first-response" });
+        await continued;
+        responses.push(await ask());
+      }
+      probe.push(memo());
+      return null;
+    }
+    (async () => {
+      try {
+        await post("Debugger.enable");
+        const { result: fetchFunction } = await post("Runtime.evaluate", { expression: "globalThis.fetch" });
+        await post("Debugger.setBreakpointOnFunctionCall", { objectId: fetchFunction.objectId });
+        await context.run(async () => {
+          const stream = await renderToReadableStream(createElement(SearchRender), {});
+          await new Response(stream).text();
+        });
+        const result = await Promise.all(responses.map(async response => ({
+          status: response.status, headers: [...response.headers], body: await response.text(),
+        })));
+        process.send({ phase: "complete", responses: result, probe, transports });
+      } finally { inspector.disconnect(); await context.close(); process.disconnect(); }
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+  `;
+  const bundle = await build({
+    stdin: {
+      contents: entry,
+      resolveDir: process.cwd(),
+      sourcefile: "ontos-search-route-render.ts",
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "cjs",
+    packages: "external",
+    tsconfig: "tsconfig.json",
+    alias: { "server-only": require.resolve("next/dist/compiled/server-only/empty.js") },
+  });
+  type RenderResult = {
+    phase: "complete";
+    responses: { status: number; headers: [string, string][]; body: string }[];
+    probe: number[];
+    transports: { url: string; init: { method?: string; cache?: RequestCache; next?: true } }[];
+  };
+  const result = await new Promise<RenderResult>((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "--conditions=react-server",
+        "--require",
+        require.resolve("next/dist/server/node-environment-baseline"),
+        "--input-type=commonjs",
+      ],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe", "ipc"],
+      },
+    );
+    let stderr = "";
+    let completed: RenderResult | undefined;
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.stdout.resume();
+    child.on("error", reject);
+    child.on("message", (message: { phase: string } | RenderResult) => {
+      if (message.phase === "first-response") {
+        revision = 2;
+        child.send("continue");
+      } else if ("responses" in message && "probe" in message) completed = message;
+    });
+    child.on("close", (code) => {
+      if (code !== 0 || !completed)
+        reject(new Error(`React server render exited ${code}: ${stderr}`));
+      else resolve(completed);
+    });
+    child.stdin.end(bundle.outputFiles[0].text);
+  });
+  // This control proves the real renderer's cache dispatcher actually memoized across awaits.
+  expect(result.probe).toEqual([1, 1]);
+  return {
+    responses: result.responses.map(
+      ({ body, status, headers }) => new Response(body, { status, headers }),
+    ),
+    transports: result.transports,
+  };
+}
+
+beforeEach(async () => {
+  // Fresh real module instances isolate the process caches without replacing any export.
+  vi.resetModules();
+  revision = 1;
+  unavailable = false;
+  requests = [];
+  returnedGroups = 1;
+  matchOverride = undefined;
+  omitEvidence = false;
+  hideProduct = false;
+  returnedVariantCount = 2;
+  network = await serveHttp(async (request) => {
+    if (new URL(request.url).pathname !== "/shell-super-app-api/auth/api-key/gateway-read")
+      return new Response("Unknown gateway path", { status: 404 });
+    const payload: OwnerRequest = await request.json();
+    const headers = {
+      "x-ontos-gateway-context": JSON.stringify({
+        apiBaseUrl: "/shell-super-app-api/merchandise",
+        compositionRevision: "a".repeat(64),
+        token: "test-only-redeemed-assertion",
+        expiresAt: 1_800_000_000_000,
+      }),
+    };
+    if (payload.audience === "commerce-market-catalog") {
+      const marketRef = { resourceId: "search-test-market" };
+      const sellingLegalEntityRef = { resourceId: legalEntityId };
+      const effectivePeriod = { startsAt: "2020-01-01T00:00:00Z" };
+      return Response.json(
+        {
+          markets: [
+            {
+              marketRef,
+              sellingLegalEntityRef,
+              effectivePeriod,
+              marketCode: "CZ",
+              supportedLocales: ["cs-CZ"],
+              lifecycle: "ACTIVE",
+            },
+          ],
+          associations: [
+            {
+              marketRef,
+              sellingLegalEntityRef,
+              effectivePeriod,
+              storefrontRef: { appId: "akros-storefront", tenantId: "search-test-tenant" },
+              channel: "B2C",
+            },
+          ],
+        },
+        { headers },
+      );
+    }
+    if (payload.audience !== "merchandise" || payload.readName !== "records")
+      return new Response("Unknown owner read", { status: 404 });
+    requests.push(payload);
+    const query = payload.query.view.storefrontCatalog;
+    const navigation = query.mode === "categories";
+    const source = query.fields === "full" ? fullP1Body : listingBody;
+    const publicControl = query.q === "10799700" || query.q === "10799700035016";
+    const body = navigation
+      ? { products: [], categories }
+      : {
+          ...source,
+          revision,
+          total: hideProduct
+            ? 0
+            : publicControl
+              ? 1
+              : returnedGroups > 1
+                ? returnedGroups
+                : revision === 1
+                  ? source.total
+                  : source.total + 1,
+          market: {
+            marketId: "search-test-market",
+            marketCode: "CZ",
+            currency: "CZK",
+            configured: true,
+          },
+          products: hideProduct
+            ? []
+            : Array.from({ length: returnedGroups }, (_, index) => {
+                const product = source.products[0];
+                const selected = publicControl
+                  ? { ...exactOffer(revision), id: "item-6692", sku: "10799700035016" }
+                  : {
+                      ...exactOffer(revision),
+                      id: returnedGroups > 1 ? `fixture-leaf-${index}` : "v2",
+                    };
+                const evidence =
+                  query.q === "933a2m8" || query.q === "10799700035016" || returnedGroups > 1
+                    ? { kind: "single", variant: selected }
+                    : returnedVariantCount === 1
+                      ? { kind: "product", onlyVariant: selected }
+                      : { kind: "product" };
+                return {
+                  ...product,
+                  id: returnedGroups > 1 ? `fixture-product-${index}` : product.id,
+                  ...(publicControl ? { sku: "10799700" } : {}),
+                  searchMatch:
+                    omitEvidence || !query.q
+                      ? undefined
+                      : matchOverride === undefined
+                        ? evidence
+                        : matchOverride,
+                  variantSummary: {
+                    ...product.variantSummary,
+                    count: publicControl ? 47 : returnedVariantCount,
+                    minGrossPriceMinor: revision === 1 ? 121 : 242,
+                  },
+                };
+              }),
+        };
+    return Response.json(unavailable && !navigation ? { code: "forbidden" } : body, {
+      status: unavailable && !navigation ? 403 : 200,
+      headers,
+    });
+  });
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "test-only-storefront-key");
+  vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", legalEntityId);
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "akros-storefront");
+  server = await import("@/ontos/catalog-server");
+  route = await import("@/app/api/ontos/search/route");
+  const { nextRequest: requestContext } = await import("../support/next-request");
+  context = requestContext("http://localhost:3070/api/ontos/search", {
+    headers: { "x-akros-market-locale": "cs" },
+  });
 });
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
+afterEach(async () => {
+  try {
+    await context.close();
+    await network.idle();
+  } finally {
+    await network.close();
+    vi.unstubAllEnvs();
+  }
 });
 
 describe("header search BFF", () => {
@@ -167,9 +425,19 @@ describe("header search BFF", () => {
     const response = await ask("  šroub ");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(dynamic).toBe("force-dynamic");
-    expect(fetchCache).toBe("force-no-store");
-    expect(getCatalogPage).toHaveBeenCalledWith({ q: "šroub", page: 1, pageSize: 6 });
+    expect(route.dynamic).toBe("force-dynamic");
+    expect(route.fetchCache).toBe("force-no-store");
+    await network.idle();
+    expect(productRequests()).toEqual([
+      {
+        q: "šroub",
+        page: 1,
+        pageSize: 6,
+        fields: "card",
+        includeCategories: false,
+        marketId: "search-test-market",
+      },
+    ]);
     expect(await response.json()).toEqual({
       total: 37,
       categories: [
@@ -192,20 +460,8 @@ describe("header search BFF", () => {
     });
   });
   it("routes an exact variant SKU to that variant with its own price without a full read", async () => {
-    const products = projectProducts({
-      products: [
-        {
-          ...listingBody.products[0],
-          searchMatch: {
-            kind: "single",
-            variant: exactOffer(),
-          },
-        },
-      ],
-    }).products;
-    vi.mocked(getCatalogPage).mockResolvedValue({ ...page, products });
     const body = (await (await ask("933a2m8")).json()) as { items: unknown[] };
-    expect(readProducts).not.toHaveBeenCalled();
+    await noFullReads();
     expect(body.items).toEqual([
       expect.objectContaining({
         priceMinor: 254,
@@ -217,19 +473,16 @@ describe("header search BFF", () => {
     ]);
   });
   it("fails honestly for missing compact evidence instead of hydrating or inventing a filter link", async () => {
-    vi.mocked(getCatalogPage).mockResolvedValue({
-      ...page,
-      products: page.products.map((product) => ({ ...product, searchMatch: undefined })),
-    });
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    omitEvidence = true;
     const response = await ask("M8");
     expect(response.status).toBe(503);
     expect(await response.json()).not.toHaveProperty("items");
-    expect(readProducts).not.toHaveBeenCalled();
+    await noFullReads();
   });
   it("does not read OntOS for fewer than two characters", async () => {
     expect(await (await ask("š")).json()).toEqual({ items: [], total: 0, categories: [] });
-    expect(getCatalogPage).not.toHaveBeenCalled();
+    await network.idle();
+    expect(network.requests).toHaveLength(0);
   });
   it("refuses cross-origin calls", async () => {
     expect((await ask("šroub", "https://evil.example")).status).toBe(403);
@@ -238,16 +491,18 @@ describe("header search BFF", () => {
 
 describe("search messages follow the market language", () => {
   const askIn = (locale: string | undefined, origin?: string) =>
-    POST(
-      new Request("http://localhost:3070/api/ontos/search", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(origin === undefined ? {} : { origin }),
-          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
-        },
-        body: JSON.stringify({ q: "šroub" }),
-      }),
+    context.run(() =>
+      route.POST(
+        new Request("http://localhost:3070/api/ontos/search", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(origin === undefined ? {} : { origin }),
+            ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
+          },
+          body: JSON.stringify({ q: "šroub" }),
+        }),
+      ),
     );
   it.each([
     [undefined, "Požadavek musí pocházet z tohoto obchodu."],
@@ -264,8 +519,7 @@ describe("search messages follow the market language", () => {
     ["sk", "Vyhľadávanie v OntOS je teraz nedostupné. Skúste to prosím o chvíľu."],
     ["en", "Search in OntOS is unavailable right now. Please try again shortly."],
   ])("answers an outage for locale %s", async (locale, message) => {
-    vi.mocked(getCatalogPage).mockRejectedValue(new Error("down"));
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    unavailable = true;
     const response = await askIn(locale);
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ message });
@@ -273,140 +527,20 @@ describe("search messages follow the market language", () => {
 });
 
 describe("fresh searches through the real catalog/gateway transport", () => {
-  type Server = typeof import("@/ontos/catalog-server");
-  type OwnerRequest = {
-    audience: string;
-    legalEntityId: string;
-    readName: string;
-    query: { view: { storefront: boolean; storefrontCatalog: Record<string, unknown> } };
-  };
-  let server: Server;
-  let revision: number;
-  let unavailable: boolean;
-  let requests: OwnerRequest[];
-  let transports: { url: string; init: RequestInit }[];
-  let returnedGroups: number;
-  let matchOverride: unknown;
-  let omitEvidence: boolean;
-  let hideProduct: boolean;
-  let returnedVariantCount: number;
-
-  beforeEach(async () => {
-    // Only configuration, request market and the HTTP boundary are mocked. Catalog projection, caches,
-    // query construction, gateway assertion parsing and shellFetch all execute their real code.
-    vi.resetModules();
-    server = await vi.importActual<Server>("@/ontos/catalog-server");
-    vi.mocked(getCatalogPage).mockImplementation(server.getCatalogPage);
-    vi.mocked(readProducts).mockImplementation(server.readProducts);
-    revision = 1;
-    unavailable = false;
-    requests = [];
-    transports = [];
-    returnedGroups = 1;
-    matchOverride = undefined;
-    omitEvidence = false;
-    hideProduct = false;
-    returnedVariantCount = 2;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init: RequestInit) => {
-        transports.push({ url, init });
-        const payload = JSON.parse(String(init.body)) as OwnerRequest;
-        requests.push(payload);
-        const query = payload.query.view.storefrontCatalog;
-        const navigation = query.mode === "categories";
-        const source = query.fields === "full" ? fullP1Body : listingBody;
-        const publicControl = query.q === "10799700" || query.q === "10799700035016";
-        const body = navigation
-          ? { products: [], categories: page.model.getCategories() }
-          : {
-              ...source,
-              revision,
-              total: hideProduct
-                ? 0
-                : publicControl
-                  ? 1
-                  : returnedGroups > 1
-                    ? returnedGroups
-                    : revision === 1
-                      ? source.total
-                      : source.total + 1,
-              market: {
-                marketId: "search-test-market",
-                marketCode: "CZ",
-                currency: "CZK",
-                configured: true,
-              },
-              products: hideProduct
-                ? []
-                : Array.from({ length: returnedGroups }, (_, index) => {
-                    const product = source.products[0];
-                    const selected = publicControl
-                      ? { ...exactOffer(revision), id: "item-6692", sku: "10799700035016" }
-                      : {
-                          ...exactOffer(revision),
-                          id: returnedGroups > 1 ? `fixture-leaf-${index}` : "v2",
-                        };
-                    const evidence =
-                      query.q === "933a2m8" || query.q === "10799700035016" || returnedGroups > 1
-                        ? { kind: "single", variant: selected }
-                        : returnedVariantCount === 1
-                          ? { kind: "product", onlyVariant: selected }
-                          : { kind: "product" };
-                    return {
-                      ...product,
-                      id: returnedGroups > 1 ? `fixture-product-${index}` : product.id,
-                      ...(publicControl ? { sku: "10799700" } : {}),
-                      searchMatch:
-                        omitEvidence || !query.q
-                          ? undefined
-                          : matchOverride === undefined
-                            ? evidence
-                            : matchOverride,
-                      variantSummary: {
-                        ...product.variantSummary,
-                        count: publicControl ? 47 : returnedVariantCount,
-                        minGrossPriceMinor: revision === 1 ? 121 : 242,
-                      },
-                    };
-                  }),
-            };
-        return new Response(
-          JSON.stringify(unavailable && !navigation ? { code: "forbidden" } : body),
-          {
-            status: unavailable && !navigation ? 403 : 200,
-            headers: {
-              "content-type": "application/json",
-              "x-ontos-gateway-context": JSON.stringify({
-                apiBaseUrl: "/shell-super-app-api/merchandise",
-                compositionRevision: "a".repeat(64),
-                token: "test-only-redeemed-assertion",
-                expiresAt: 1_800_000_000_000,
-              }),
-            },
-          },
-        );
-      }),
-    );
-  });
-
-  const productRequests = () =>
-    requests
-      .map(({ query }) => query.view.storefrontCatalog)
-      .filter(({ mode }) => mode !== "categories");
-
   it("sends two identical searches to the owner immediately and observes a changed answer", async () => {
-    await renderCache.run(new Map(), async () => {
-      const first = await ask("šroub");
+    await context.run(async () => {
+      // Both calls run inside one genuine React server render and one Next request context.
+      const {
+        responses: [first, second],
+        transports,
+      } = await renderSearches("šroub");
       const before = (await first.json()) as RemoteSearchResponse;
-      revision = 2;
-      // No timer advancement, cache invalidation or alternate query: even the render scope is the same.
-      const second = await ask("šroub");
       const after = (await second.json()) as RemoteSearchResponse;
       expect(before).toMatchObject({ total: 37, items: [{ priceMinor: 121 }] });
       expect(after).toMatchObject({ total: 38, items: [{ priceMinor: 242 }] });
       expect(first.headers.get("cache-control")).toBe("no-store");
       expect(second.headers.get("cache-control")).toBe("no-store");
+      await network.idle();
       expect(productRequests().filter(({ q }) => q === "šroub")).toEqual([
         {
           q: "šroub",
@@ -425,18 +559,25 @@ describe("fresh searches through the real catalog/gateway transport", () => {
           marketId: "search-test-market",
         },
       ]);
+      await network.idle();
+      // V8 observes the real native fetch entry without replacing it; HTTP proves delivery too.
+      expect(transports).toHaveLength(network.requests.length);
       for (const { url, init } of transports) {
-        expect(url).toBe(
-          "http://owner-transport.test/shell-super-app-api/auth/api-key/gateway-read",
-        );
+        expect(url).toBe(`${network.origin}/shell-super-app-api/auth/api-key/gateway-read`);
         expect(init.method).toBe("POST");
         expect(init.cache).not.toBe("force-cache");
         expect(init).not.toHaveProperty("next");
       }
+      for (const request of network.requests) {
+        expect(request.url).toBe(`${network.origin}/shell-super-app-api/auth/api-key/gateway-read`);
+        expect(request.method).toBe("POST");
+        expect(request.headers.get("x-api-key")).toBe("test-only-storefront-key");
+      }
+      expect(route.fetchCache).toBe("force-no-store");
       for (const payload of requests)
         expect(payload).toMatchObject({
           audience: "merchandise",
-          legalEntityId: "search-test-legal-entity",
+          legalEntityId,
           readName: "records",
           query: {
             view: { storefront: true, storefrontCatalog: { marketId: "search-test-market" } },
@@ -450,10 +591,12 @@ describe("fresh searches through the real catalog/gateway transport", () => {
   });
 
   it("refreshes inline exact variant evidence without any ten-second full-product reuse", async () => {
-    await renderCache.run(new Map(), async () => {
-      const before = (await (await ask("933a2m8")).json()) as RemoteSearchResponse;
-      revision = 2;
-      const after = (await (await ask("933a2m8")).json()) as RemoteSearchResponse;
+    await context.run(async () => {
+      const {
+        responses: [first, second],
+      } = await renderSearches("933a2m8");
+      const before = (await first.json()) as RemoteSearchResponse;
+      const after = (await second.json()) as RemoteSearchResponse;
       expect(before.items[0]).toMatchObject({
         priceMinor: 254,
         variantLabel: "M8 x 20",
@@ -466,24 +609,26 @@ describe("fresh searches through the real catalog/gateway transport", () => {
         variantSku: "933A2M8",
         path: "/produkt/sroub-din-933-a2?variantIds=v2#product-variants",
       });
+      await network.idle();
       expect(productRequests().filter(({ fields }) => fields === "full")).toHaveLength(0);
       expect(productRequests().filter(({ q }) => q === "933a2m8")).toHaveLength(2);
     });
   });
 
   it("does not coalesce concurrent identical searches", async () => {
-    await renderCache.run(new Map(), () => Promise.all([ask("šroub"), ask("šroub")]));
+    await renderSearches("šroub", true);
+    await network.idle();
     expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(2);
   });
 
   it("does not serve a previous successful search when the owner refuses the next one", async () => {
     expect((await ask("šroub")).status).toBe(200);
     unavailable = true;
-    vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await ask("šroub");
     expect(response.status).toBe(503);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).not.toHaveProperty("items");
+    await network.idle();
     expect(productRequests().filter(({ q }) => q === "šroub")).toHaveLength(2);
   });
 
@@ -502,15 +647,20 @@ describe("fresh searches through the real catalog/gateway transport", () => {
       priceMinor: 254,
       path: "/produkt/sroub-din-933-a2?variantIds=item-6692#product-variants",
     });
-    const listing = await server.getCatalogPage({ q: "10799700", page: 1, pageSize: 6 });
+    const listing = await context.run(() =>
+      server.getCatalogPage({ q: "10799700", page: 1, pageSize: 6 }),
+    );
     expect(listing.products[0].variantSummary.count).toBe(47);
+    await network.idle();
     expect(productRequests().every(({ fields }) => fields === "card")).toBe(true);
-    expect(readProducts).not.toHaveBeenCalled();
+    await noFullReads();
   });
 
   it("uses complete compact evidence for more than eight result groups, with no full reads", async () => {
     returnedGroups = 12;
-    const listing = await server.getCatalogPage({ q: "variants", page: 1, pageSize: 24 });
+    const listing = await context.run(() =>
+      server.getCatalogPage({ q: "variants", page: 1, pageSize: 24 }),
+    );
     const matches = await readSearchVariantMatches(listing.products, "variants");
     expect(matches.size).toBe(12);
     const grids = listing.products.map((product) =>
@@ -542,6 +692,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
         },
       });
     }
+    await network.idle();
     expect(productRequests()).toEqual([
       {
         q: "variants",
@@ -552,7 +703,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
         marketId: "search-test-market",
       },
     ]);
-    expect(readProducts).not.toHaveBeenCalled();
+    await noFullReads();
   });
 
   it("keeps duplicate exact matches multiple and known-zero unattributed hits on base detail", async () => {
@@ -567,7 +718,9 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     const unattributed = (await (await ask("933a2m8")).json()) as RemoteSearchResponse;
     expect(unattributed.items[0].path).toBe("/produkt/sroub-din-933-a2");
     expect(unattributed.items[0].variantSku).toBeUndefined();
+    await network.idle();
     expect(productRequests().filter(({ q }) => q === "933a2m8")).toHaveLength(2);
+    await network.idle();
     expect(productRequests().every(({ fields }) => fields === "card")).toBe(true);
   });
 
@@ -582,7 +735,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
       priceIsFrom: false,
       path: "/produkt/sroub-din-933-a2",
     });
-    const listing = await server.getCatalogPage({ q: "šroub", pageSize: 24 });
+    const listing = await context.run(() => server.getCatalogPage({ q: "šroub", pageSize: 24 }));
     const matches = await readSearchVariantMatches(listing.products, "šroub");
     const grid = toSearchGridItem(
       listing.model.toProductSummary(listing.products[0]),
@@ -593,6 +746,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     expect(grid.variantId).toBeUndefined();
     expect(grid.detailHref).toBe("/produkt/sroub-din-933-a2");
     expect(grid.priceMinor).toBe(121);
+    await network.idle();
     expect(productRequests().every(({ fields }) => fields === "card")).toBe(true);
   });
 
@@ -620,32 +774,40 @@ describe("fresh searches through the real catalog/gateway transport", () => {
     { kind: "product", variantIds: ["invented"] },
   ])("returns an honest uncached outage for malformed compact metadata %#", async (evidence) => {
     matchOverride = evidence;
-    vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await ask("933a2m8");
     expect(response.status).toBe(503);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).not.toHaveProperty("items");
+    await network.idle();
     expect(productRequests()).toHaveLength(1);
+    await network.idle();
     expect(productRequests()[0].fields).toBe("card");
-    expect(readProducts).not.toHaveBeenCalled();
+    await noFullReads();
   });
 
   it("does not use an unverified title or full-group fallback when evidence is absent", async () => {
     omitEvidence = true;
-    vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await ask("šroub")).status).toBe(503);
+    await network.idle();
     expect(productRequests()).toHaveLength(1);
+    await network.idle();
     expect(productRequests()[0].fields).toBe("card");
-    expect(readProducts).not.toHaveBeenCalled();
+    await noFullReads();
   });
 
   it("leaves non-search product caching intact and explicit fresh cart/detail reads uncached", async () => {
-    await server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full");
+    await context.run(() => server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full"));
     revision = 2;
-    await server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full");
-    await server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1, q: "" }, "full");
+    await context.run(() => server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full"));
+    await context.run(() =>
+      server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1, q: "" }, "full"),
+    );
+    await network.idle();
     expect(productRequests()).toHaveLength(1);
-    await server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full", true);
+    await context.run(() =>
+      server.readProducts({ slug: "sroub-din-933-a2", pageSize: 1 }, "full", true),
+    );
+    await network.idle();
     expect(productRequests()).toHaveLength(2);
   });
 });

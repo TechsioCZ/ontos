@@ -1,9 +1,12 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ProductGrid } from "@/components/product-grid";
+import { favoritesStorageKey } from "@/features/favorites/favorite-references";
 import { formatPrice } from "@/lib/format";
 import { fixtureCatalog } from "../support/catalog-fixture";
+import { renderStorefront as render } from "../support/storefront";
 
 const { getProductBySlug, getProducts, toProductSummary } = fixtureCatalog;
 const getRecommendedProducts = () => getProducts().filter((product) => product.isRecommended);
@@ -11,7 +14,11 @@ const getSaleProducts = () => getProducts().filter((product) => product.isSale);
 const getActionProducts = () => getProducts().filter((product) => product.isAction);
 
 describe("ProductGrid", () => {
-  afterEach(cleanup);
+  beforeEach(() => localStorage.removeItem(favoritesStorageKey));
+  afterEach(() => {
+    cleanup();
+    localStorage.removeItem(favoritesStorageKey);
+  });
 
   it("presents a mixed-unit variant group without inventing aggregate stock", () => {
     const product = getProductBySlug("profilovana-stresni-krytina-product-35919");
@@ -25,7 +32,7 @@ describe("ProductGrid", () => {
     expect(screen.getByText("Skladem")).toBeDefined();
     expect(screen.getByText("Více variant")).toBeDefined();
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
-      `/produkt/${product!.slug}`,
+      `/cs/produkt/${product!.slug}`,
     );
     expect(screen.getByRole("button", { name: /^Vybrat oblíbené varianty: / })).toBeDefined();
     expect(screen.queryByText(/2[\s\u00a0]?929,4\s+ks/)).toBeNull();
@@ -50,7 +57,7 @@ describe("ProductGrid", () => {
 
     const badge = screen.getByText("Doprodej");
     expect(badge.getAttribute("title")).toContain("vybraných variant");
-    expect(badge.closest("a")?.getAttribute("href")).toBe(`/produkt/${product.slug}`);
+    expect(badge.closest("a")?.getAttribute("href")).toBe(`/cs/produkt/${product.slug}`);
     expect(screen.queryByText("Akce")).toBeNull();
   });
 
@@ -89,7 +96,7 @@ describe("ProductGrid", () => {
     expect(screen.queryByText("Akce")).toBeNull();
     expect(container.querySelector("[data-sf-product-tags]")?.children).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
-      `/produkt/${product.slug}`,
+      `/cs/produkt/${product.slug}`,
     );
   });
 
@@ -169,7 +176,8 @@ describe("ProductGrid", () => {
     );
   });
 
-  it("shows which variant a search hit stands for and toggles that variant as a favourite", () => {
+  it("shows which variant a search hit stands for and toggles that variant as a favourite", async () => {
+    const user = userEvent.setup();
     const product = getProducts().find((item) => item.detail.variants.length > 2)!;
     const [variant] = product.detail.variants;
     render(
@@ -191,7 +199,23 @@ describe("ProductGrid", () => {
       screen.getByRole("button", { name: `Uložit ${product.name} do oblíbených` }),
     ).toBeDefined();
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
-      `/produkt/${product.slug}?variantIds=${variant.id}#product-variants`,
+      `/cs/produkt/${product.slug}?variantIds=${variant.id}#product-variants`,
     );
+    await user.click(screen.getByRole("button", { name: `Uložit ${product.name} do oblíbených` }));
+    const selected = screen.getByRole("button", {
+      name: `Odebrat ${product.name} z oblíbených`,
+    });
+    expect(selected.getAttribute("aria-pressed")).toBe("true");
+    expect(JSON.parse(localStorage.getItem(favoritesStorageKey) ?? "null")).toEqual([
+      { productId: product.id, productSlug: product.slug, variantId: variant.id },
+    ]);
+
+    await user.click(selected);
+    expect(
+      screen
+        .getByRole("button", { name: `Uložit ${product.name} do oblíbených` })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+    expect(JSON.parse(localStorage.getItem(favoritesStorageKey) ?? "null")).toEqual([]);
   });
 });

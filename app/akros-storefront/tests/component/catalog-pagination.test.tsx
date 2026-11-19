@@ -17,7 +17,7 @@ describe("CatalogPagination", () => {
     );
 
     expect(container.querySelector('a[href="/kategorie/matice?page=2"]')).toBeTruthy();
-    expect(screen.getByRole("navigation").getAttribute("aria-label")).toBeTruthy();
+    expect(screen.getByRole("navigation").getAttribute("aria-label")).toBe("Stránkování produktů");
   });
 
   it("preserves the search query when navigating result pages", () => {

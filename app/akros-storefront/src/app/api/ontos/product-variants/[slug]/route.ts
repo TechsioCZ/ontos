@@ -11,12 +11,21 @@ const noStore = { "cache-control": "no-store" };
  * One product's live OntOS card and variants in the request market (the variant chooser of favorites, watches,
  * questions and sharing, and the favorites list). Read-only public catalog data; no account data, no mutations.
  */
-export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+export async function GET(
+  request: Request,
+  {
+    params,
+    read = readProducts,
+  }: {
+    params: Promise<{ slug: string }>;
+    read?: typeof readProducts;
+  },
+) {
   const t = requestDictionary(request);
   try {
     const { slug } = await params;
     if (!slug || slug.length > 200) throw new RequestError(400, t.server.productVariants.invalid);
-    const catalog = createCatalog(await readProducts({ slug, pageSize: 1 }, "full"), {
+    const catalog = createCatalog(await read({ slug, pageSize: 1 }, "full"), {
       categories: [],
     });
     const product = catalog.getProductBySlug(slug);

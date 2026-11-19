@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { isCustomerProfile, profileInput } from "@/ontos/profile-model";
 import { POST } from "@/app/api/ontos/account/profile/route";

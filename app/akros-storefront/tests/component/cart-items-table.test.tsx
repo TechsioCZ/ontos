@@ -1,8 +1,9 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
+import { renderStorefront as render } from "../support/storefront";
 
 afterEach(cleanup);
 beforeEach(() => {

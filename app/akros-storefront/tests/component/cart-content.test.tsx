@@ -1,10 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CartContent } from "@/features/cart/cart-content";
 import { CartProvider } from "@/features/cart/cart-provider";
-import { CheckoutProvider } from "@/features/checkout/checkout-provider";
+import { renderStorefront } from "../support/storefront";
 
 describe("CartContent", () => {
   afterEach(cleanup);
@@ -39,20 +39,36 @@ describe("CartContent", () => {
 
     const user = userEvent.setup();
 
-    render(
+    const view = renderStorefront(
       <CartProvider storage={window.localStorage}>
-        <CheckoutProvider storage={window.sessionStorage}>
-          <CartContent />
-        </CheckoutProvider>
+        <CartContent />
       </CartProvider>,
     );
 
     expect(await screen.findByText("Test product")).not.toBeNull();
+    expect(screen.getByRole("spinbutton", { name: "Množství: Test product" })).toHaveProperty(
+      "value",
+      "2",
+    );
 
     await user.click(screen.getByRole("button", { name: "Odebrat Test product" }));
 
     await waitFor(() => {
       expect(screen.getByText("Košík je zatím prázdný.")).not.toBeNull();
     });
+    expect(JSON.parse(window.localStorage.getItem("akros-demo-cart-v3") ?? "null")).toEqual({
+      version: 3,
+      lines: [],
+    });
+
+    view.unmount();
+    renderStorefront(
+      <CartProvider storage={window.localStorage}>
+        <CartContent />
+      </CartProvider>,
+    );
+
+    expect(await screen.findByText("Košík je zatím prázdný.")).not.toBeNull();
+    expect(screen.queryByText("Test product")).toBeNull();
   });
 });

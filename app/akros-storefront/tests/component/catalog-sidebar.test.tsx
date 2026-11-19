@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -9,6 +9,7 @@ import {
 } from "@/components/catalog-sidebar";
 import { cs } from "@/i18n/cs";
 import { fixtureCatalog } from "../support/catalog-fixture";
+import { renderStorefront } from "../support/storefront";
 
 const { getSidebarCategories } = fixtureCatalog;
 
@@ -17,7 +18,7 @@ afterEach(cleanup);
 describe("CatalogSidebar", () => {
   it("opens the special section and both catalog roots without expanding deeper branches", () => {
     const categories = getSidebarCategories("a-2-141");
-    render(<CatalogSidebar categories={categories} />);
+    renderStorefront(<CatalogSidebar categories={categories} />);
 
     const [navigation] = screen.getAllByRole("navigation", { name: cs.catalog.title });
     const rootCategories = categories.filter((category) => category.parentId === null);
@@ -47,7 +48,7 @@ describe("CatalogSidebar", () => {
   it("supports compact collapsed roots in the shared mobile navigation", async () => {
     const user = userEvent.setup();
     const categories = getSidebarCategories();
-    render(
+    renderStorefront(
       <>
         <CatalogNavigation
           categories={categories}
@@ -62,7 +63,7 @@ describe("CatalogSidebar", () => {
       within(screen.getByRole("navigation", { name: cs.catalog.recommendations }))
         .getByRole("link", { name: cs.catalog.firstSteps })
         .getAttribute("href"),
-    ).toBe("/faq");
+    ).toBe("/cs/faq");
     expect(
       within(mobileNavigation)
         .getByRole("button", { name: cs.catalog.specialCategories })
@@ -83,7 +84,9 @@ describe("CatalogSidebar", () => {
   });
 
   it("opens the active category trail and marks only its leaf as current", () => {
-    render(<CatalogSidebar activeSlug="a-2-141" categories={getSidebarCategories("a-2-141")} />);
+    renderStorefront(
+      <CatalogSidebar activeSlug="a-2-141" categories={getSidebarCategories("a-2-141")} />,
+    );
 
     const [desktopNavigation] = screen.getAllByRole("navigation", {
       name: cs.catalog.title,
@@ -100,16 +103,17 @@ describe("CatalogSidebar", () => {
 
   it("allows a root branch to collapse and reopen", async () => {
     const user = userEvent.setup();
-    const { container } = render(<CatalogSidebar categories={getSidebarCategories()} />);
+    const { container } = renderStorefront(<CatalogSidebar categories={getSidebarCategories()} />);
 
     const [desktopNavigation] = within(container).getAllByRole("navigation", {
       name: cs.catalog.title,
     });
     const rootLink = desktopNavigation.querySelector<HTMLAnchorElement>(
-      'a[href="/kategorie/nerezovy-spojovaci-material"]',
+      'a[href="/cs/kategorie/nerezovy-spojovaci-material"]',
     );
     const rootRow = rootLink?.closest('[data-part="row"]');
-    const trigger = within(rootRow as HTMLElement).getByRole("button");
+    if (!(rootRow instanceof HTMLElement)) throw new Error("Catalog root row is missing");
+    const trigger = within(rootRow).getByRole("button");
 
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     await user.click(trigger);
@@ -120,17 +124,18 @@ describe("CatalogSidebar", () => {
   });
 
   it("shows that a collapsed category has children before its branch is loaded", () => {
-    render(<CatalogSidebar categories={getSidebarCategories()} />);
+    renderStorefront(<CatalogSidebar categories={getSidebarCategories()} />);
 
     const [desktopNavigation] = screen.getAllByRole("navigation", {
       name: cs.catalog.title,
     });
     const categoryLink = desktopNavigation.querySelector<HTMLAnchorElement>(
-      'a[href="/kategorie/koliky"]',
+      'a[href="/cs/kategorie/koliky"]',
     );
     const categoryRow = categoryLink?.closest('[data-part="row"]');
 
     expect(categoryRow).not.toBeNull();
-    expect(categoryRow?.querySelector("[data-sf-branch-indicator]")).not.toBeNull();
+    if (!(categoryRow instanceof HTMLElement)) throw new Error("Category row is missing");
+    expect(categoryRow.querySelector("[data-sf-branch-indicator]")).not.toBeNull();
   });
 });

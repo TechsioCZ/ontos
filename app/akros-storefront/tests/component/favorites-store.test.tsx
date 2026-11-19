@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { saveProductFavorites, useFavorites } from "@/features/favorites/use-favorites";
 import { favoritesStorageKey } from "@/features/favorites/favorite-references";
 import {
@@ -22,7 +24,6 @@ function WatchProbe() {
 afterEach(() => {
   cleanup();
   localStorage.clear();
-  vi.restoreAllMocks();
 });
 describe("favorites browser store", () => {
   it("keeps watch and favorite subscriptions and records independent", () => {
@@ -46,25 +47,41 @@ describe("favorites browser store", () => {
   it("updates all subscribers and reloads persisted state without losing other products", () => {
     const other = { productId: "q", productSlug: "other", variantId: null };
     localStorage.setItem(favoritesStorageKey, JSON.stringify([other]));
-    render(<Probe />);
-    expect(screen.getByRole("status").textContent).toBe("q:null");
+    render(
+      <>
+        <Probe />
+        <Probe />
+      </>,
+    );
+    expect(screen.getAllByRole("status").map((output) => output.textContent)).toEqual([
+      "q:null",
+      "q:null",
+    ]);
     act(() =>
       saveProductFavorites("p", [{ productId: "p", productSlug: "product", variantId: "v" }]),
     );
-    expect(screen.getByRole("status").textContent).toBe("q:null,p:v");
+    expect(screen.getAllByRole("status").map((output) => output.textContent)).toEqual([
+      "q:null,p:v",
+      "q:null,p:v",
+    ]);
     cleanup();
     render(<Probe />);
     expect(screen.getByRole("status").textContent).toBe("q:null,p:v");
   });
   it("does not announce a successful change when browser storage rejects the write", () => {
+    localStorage.setItem(favoritesStorageKey, "[]");
+    const fillerKey = "quota-filler";
+    // Fill jsdom's real 5,000,000-code-unit storage quota without replacing Storage.
+    localStorage.setItem(
+      fillerKey,
+      "x".repeat(5_000_000 - fillerKey.length - favoritesStorageKey.length - 2),
+    );
     render(<Probe />);
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("quota");
-    });
     expect(() =>
       saveProductFavorites("p", [{ productId: "p", productSlug: "product", variantId: "v" }]),
     ).toThrow("quota");
     expect(screen.getByRole("status").textContent).toBe("");
+    expect(localStorage.getItem(favoritesStorageKey)).toBe("[]");
   });
   it("responds to storage clear from another tab", () => {
     localStorage.setItem(

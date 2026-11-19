@@ -1,12 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import type { CatalogProduct, CatalogProductVariant } from "@/ontos/catalog-types";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+import { browserAt, serveHttp } from "../support/http";
+import { renderStorefront as render } from "../support/storefront";
 
 const variants: CatalogProductVariant[] = [
   {
@@ -140,9 +141,19 @@ describe("ProductPurchaseForm", () => {
       (screen.getByRole("spinbutton", { name: "Množství M 2 × 5" }) as HTMLInputElement).value,
     ).toBe(String(live.minimumQuantity));
     await user.click(screen.getByRole("button", { name: "Koupit M 2 × 5" }));
+    await waitFor(() =>
+      expect(
+        JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
+      ).toBe(live.minimumQuantity),
+    );
     let lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
     expect(lines[0].quantity).toBe(live.minimumQuantity);
     await user.click(screen.getByRole("button", { name: "Koupit celé balení M 2 × 5" }));
+    await waitFor(() =>
+      expect(
+        JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0]?.quantity,
+      ).toBe(live.minimumQuantity * 2),
+    );
     lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
     expect(lines[0].quantity).toBe(live.minimumQuantity * 2);
     expect(lines[0].quantity % live.packageQuantity).toBe(0);
@@ -186,7 +197,7 @@ describe("ProductPurchaseForm", () => {
     );
     const minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
     await user.click(minimum);
-    // Dispatch the resulting input text without relying on jsdom's caret emulation.
+    // Dispatch the input text while retaining the real input and its focus.
     fireEvent.input(minimum, { target: { value: "" } });
     expect((minimum as HTMLInputElement).value).toBe("");
     fireEvent.input(minimum, { target: { value: "3," } });
@@ -275,9 +286,11 @@ describe("ProductPurchaseForm", () => {
     await user.clear(quantity);
     await user.type(quantity, "30");
     await user.click(screen.getByRole("button", { name: "Koupit M 9 × 5" }));
-    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
-      expect.objectContaining({ variantId: "item-8", sku: allVariants[7].sku, quantity: 30 }),
-    ]);
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+        expect.objectContaining({ variantId: "item-8", sku: allVariants[7].sku, quantity: 30 }),
+      ]),
+    );
   });
 
   it("adds the selected source variant with its minimum order quantity", async () => {
@@ -292,15 +305,17 @@ describe("ProductPurchaseForm", () => {
 
     await user.click(screen.getByRole("button", { name: "Koupit M 4 × 16" }));
 
-    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
-      expect.objectContaining({
-        productId: "product-hex-bolt",
-        variantId: "item-2",
-        sku: "10093300040016",
-        priceMinor: 194,
-        quantity: 10,
-      }),
-    ]);
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+        expect.objectContaining({
+          productId: "product-hex-bolt",
+          variantId: "item-2",
+          sku: "10093300040016",
+          priceMinor: 194,
+          quantity: 10,
+        }),
+      ]),
+    );
   });
 
   it("carries the source-feed weight of the variant and of a product without variants", async () => {
@@ -317,8 +332,17 @@ describe("ProductPurchaseForm", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Koupit M 2 × 5" }));
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toHaveLength(1),
+    );
     await user.click(screen.getByRole("button", { name: "Koupit M 4 × 16" }));
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toHaveLength(2),
+    );
     await user.click(screen.getByRole("button", { name: "Koupit" }));
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toHaveLength(3),
+    );
     const lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
     expect(lines).toEqual([
       expect.objectContaining({ variantId: "item-1", unitWeightKg: 0.0034 }),
@@ -351,12 +375,14 @@ describe("ProductPurchaseForm", () => {
 
     await user.click(screen.getByRole("button", { name: "Koupit celé balení M 2 × 5" }));
 
-    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
-      expect.objectContaining({
-        variantId: "item-1",
-        quantity: 100,
-      }),
-    ]);
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+        expect.objectContaining({
+          variantId: "item-1",
+          quantity: 100,
+        }),
+      ]),
+    );
   });
 
   it("opens a deep-linked source variant already filtered in the table", () => {
@@ -426,14 +452,16 @@ describe("ProductPurchaseForm", () => {
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("0.5");
     await user.click(screen.getByRole("button", { name: "Koupit" }));
 
-    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
-      expect.objectContaining({
-        minimumQuantity: 0.5,
-        quantity: 0.5,
-        stockCount: 3.5,
-        unit: "m",
-      }),
-    ]);
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+        expect.objectContaining({
+          minimumQuantity: 0.5,
+          quantity: 0.5,
+          stockCount: 3.5,
+          unit: "m",
+        }),
+      ]),
+    );
   });
 
   it.each([false, true])(
@@ -445,22 +473,19 @@ describe("ProductPurchaseForm", () => {
         { minimumQuantity: 2, priceMinor: 70, priceExcludingVatMinor: 58 },
       ];
       const requests: { quantity: number; priceMinor: number }[] = [];
-      vi.stubGlobal(
-        "fetch",
-        vi.fn<(url: string, init: { body: string }) => Promise<Response>>(async (_url, init) => {
-          const { cart } = JSON.parse(init.body);
-          const line = cart.lines[0];
-          requests.push({ quantity: line.quantity, priceMinor: line.priceMinor });
-          const priceMinor = line.quantity >= 4 ? 60 : 70;
-          const priceChanged = line.priceMinor !== priceMinor;
-          return Response.json({
-            cart: { ...cart, lines: [{ ...line, priceMinor }] },
-            priceChanged,
-            issues: [],
-            canCheckout: !priceChanged,
-          });
-        }),
-      );
+      answer = async (request) => {
+        const { cart } = await request.json();
+        const line = cart.lines[0];
+        requests.push({ quantity: line.quantity, priceMinor: line.priceMinor });
+        const priceMinor = line.quantity >= 4 ? 60 : 70;
+        const priceChanged = line.priceMinor !== priceMinor;
+        return Response.json({
+          cart: { ...cart, lines: [{ ...line, priceMinor }] },
+          priceChanged,
+          issues: [],
+          canCheckout: !priceChanged,
+        });
+      };
       const tieredProduct = { ...product, detail: { ...product.detail, priceTiers } };
       const tieredVariant = { ...variants[0], minimumQuantity: 1, packageQuantity: 1, priceTiers };
       render(
@@ -497,6 +522,7 @@ describe("ProductPurchaseForm", () => {
           priceMinor: 60,
         }),
       );
+      await network.idle();
       expect(requests).toEqual([
         { quantity: 2, priceMinor: 70 },
         { quantity: 4, priceMinor: 60 },
@@ -506,12 +532,8 @@ describe("ProductPurchaseForm", () => {
 
   it("still rejects an owner price change instead of silently accepting it", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<() => Promise<Response>>(async () =>
-        Response.json({ cart: { version: 3, lines: [] }, priceChanged: true, canCheckout: false }),
-      ),
-    );
+    answer = async () =>
+      Response.json({ cart: { version: 3, lines: [] }, priceChanged: true, canCheckout: false });
     render(
       <CartProvider storage={null}>
         <ProductPurchaseForm product={product} />
@@ -522,6 +544,7 @@ describe("ProductPurchaseForm", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("Chyba nákupu").textContent).toContain("Cena se změnila"),
     );
+    await network.idle();
     expect(screen.getByLabelText("Řádky košíku").textContent).toBe("[]");
   });
 
@@ -548,34 +571,44 @@ describe("ProductPurchaseForm", () => {
     expect(screen.queryByRole("searchbox")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Koupit" }));
 
-    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
-      expect.objectContaining({
-        productId: "product-hex-bolt",
-        variantId: "item-single",
-        sku: "10835300330020",
-        priceMinor: 6031,
-        quantity: 1,
-      }),
-    ]);
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+        expect.objectContaining({
+          productId: "product-hex-bolt",
+          variantId: "item-single",
+          sku: "10835300330020",
+          priceMinor: 6031,
+          quantity: 1,
+        }),
+      ]),
+    );
   });
 });
 
-// Transport boundary: the component must await an owner verdict before changing cart state.
-beforeEach(() => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (_url: string, init: { body: string }) => {
-      const { cart } = JSON.parse(init.body);
-      const blocked = cart.lines.some(
-        (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
-      );
-      return Response.json({
-        cart,
-        priceChanged: false,
-        issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
-        canCheckout: !blocked,
-      });
-    }),
-  );
+// Every purchase awaits a verdict served over real loopback HTTP.
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let answer: Parameters<typeof serveHttp>[0];
+beforeEach(async () => {
+  answer = async (request) => {
+    const { cart } = await request.json();
+    const blocked = cart.lines.some(
+      (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
+    );
+    return Response.json({
+      cart,
+      priceChanged: false,
+      issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
+      canCheckout: !blocked,
+    });
+  };
+  network = await serveHttp((request) => {
+    if (new URL(request.url).pathname !== "/api/ontos/cart" || request.method !== "POST")
+      return new Response("Unknown endpoint", { status: 404 });
+    return answer(request);
+  });
+  browserAt(network.origin);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  await network.idle();
+  await network.close();
+});

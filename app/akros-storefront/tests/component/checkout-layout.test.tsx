@@ -1,41 +1,91 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import "next/dist/client/app-bootstrap";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getCurrentAppRouterState } from "next/dist/client/components/app-router-instance";
+import { NextRouter } from "../support/router";
+import { browserAt, serveHttp } from "../support/http";
+import { fixtureSnapshot } from "../support/storefront";
+import { BrandProvider } from "@/brand/brand-context";
+import { akros } from "@/brand/akros";
+import { toClientBrand } from "@/brand";
+import { CatalogProvider } from "@/ontos/catalog-provider";
 import { CartContent } from "@/features/cart/cart-content";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CheckoutLayout } from "@/features/checkout/checkout-layout";
 import { CheckoutProvider } from "@/features/checkout/checkout-provider";
 
-const router = vi.hoisted(() => ({
-  push: vi.fn<(href: string) => void>(),
-  replace: vi.fn<(href: string) => void>(),
-}));
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/kosik",
-  useRouter: () => router,
-}));
-vi.mock("next/font/local", () => ({ default: () => ({ variable: "checkout-font" }) }));
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let accountEmail: string | null;
+let allowNavigation: () => void;
+let accountArrived: Promise<void>;
+let shippingArrived: Promise<void>;
+let navigationArrived: Promise<void>;
 
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-beforeEach(() => {
-  vi.clearAllMocks();
+beforeEach(async () => {
+  accountEmail = null;
+  const account = Promise.withResolvers<void>();
+  const shipping = Promise.withResolvers<void>();
+  const destination = Promise.withResolvers<void>();
+  accountArrived = account.promise;
+  shippingArrived = shipping.promise;
+  navigationArrived = destination.promise;
+  const navigation = new Promise<void>((resolve) => {
+    allowNavigation = resolve;
+  });
+  network = await serveHttp(async (request) => {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/api/ontos/account") {
+      account.resolve();
+      return Response.json({ account: accountEmail ? { email: accountEmail } : null });
+    }
+    if (pathname === "/api/ontos/checkout") {
+      shipping.resolve();
+      return Response.json({ shippingMethods: [] });
+    }
+    if (pathname === "/kosik/doprava-platba") {
+      destination.resolve();
+      await navigation;
+      return new Response("<!doctype html><title>Doprava a platba</title>", {
+        headers: { "content-type": "text/html" },
+      });
+    }
+    return new Response("Unknown endpoint", { status: 404 });
+  });
+  browserAt(`${network.origin}/kosik`);
   window.localStorage.clear();
   window.sessionStorage.clear();
 });
 
-function renderCart() {
-  return render(
-    <CartProvider>
-      <CheckoutProvider>
-        <CheckoutLayout recommendations={[]}>
-          <CartContent />
-        </CheckoutLayout>
-      </CheckoutProvider>
-    </CartProvider>,
-  );
+afterEach(async () => {
+  allowNavigation();
+  cleanup();
+  await network.idle();
+  await network.close();
+});
+
+async function renderCart() {
+  await act(async () => {
+    render(
+      <BrandProvider brand={toClientBrand(akros, "cs")}>
+        <CatalogProvider snapshot={fixtureSnapshot}>
+          <NextRouter>
+            <CartProvider>
+              <CheckoutProvider>
+                <CheckoutLayout recommendations={[]}>
+                  <CartContent />
+                </CheckoutLayout>
+              </CheckoutProvider>
+            </CartProvider>
+          </NextRouter>
+        </CatalogProvider>
+      </BrandProvider>,
+    );
+  });
+  await act(async () => {
+    await Promise.all([accountArrived, shippingArrived]);
+    await network.idle();
+  });
 }
 
 function seedCart() {
@@ -65,7 +115,7 @@ function seedCart() {
 describe("checkout cart composition", () => {
   it("renders one summary and lets a signed-out customer choose guest ordering, sign-in or registration", async () => {
     seedCart();
-    renderCart();
+    await renderCart();
     const items = await screen.findByRole("region", { name: "Obsah košíku" });
     const summary = screen.getByRole("complementary", { name: "Shrnutí" });
     const next = await screen.findByRole("link", { name: "Přihlásit se" });
@@ -84,31 +134,10 @@ describe("checkout cart composition", () => {
     expect(next.getAttribute("href")).toBe("/prihlaseni?returnTo=%2Fkosik");
   });
 
-  it("continues as a guest and remembers the choice for the rest of the checkout", async () => {
-    seedCart();
-    const user = userEvent.setup();
-    renderCart();
-    await user.click(await screen.findByRole("button", { name: "Objednat bez registrace" }));
-    expect(router.push).toHaveBeenCalledWith("/kosik/doprava-platba");
-    expect(window.sessionStorage.getItem("sf-checkout-guest")).toBe("true");
-    expect(screen.getByRole("button", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
-      false,
-    );
-    expect(await screen.findByRole("link", { name: "Vybrat dopravu a platbu" })).not.toBeNull();
-  });
-
   it("lets a verified customer continue without discarding the cart", async () => {
     seedCart();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/account"))
-          return Response.json({ account: { email: "customer@example.test" } });
-        if (url.endsWith("/checkout")) return Response.json({ shippingMethods: [] });
-        return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
-      }),
-    );
-    renderCart();
+    accountEmail = "customer@example.test";
+    await renderCart();
     const next = await screen.findByRole("link", { name: "Vybrat dopravu a platbu" });
     expect(next.getAttribute("href")).toBe("/kosik/doprava-platba");
     expect(screen.queryByRole("link", { name: "Přihlásit se" })).toBeNull();
@@ -116,10 +145,33 @@ describe("checkout cart composition", () => {
   });
 
   it("hides the summary and checkout action when the cart is empty", async () => {
-    renderCart();
+    await renderCart();
     expect(await screen.findByText("Košík je zatím prázdný.")).not.toBeNull();
     expect(screen.queryByRole("complementary", { name: "Shrnutí" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Vybrat dopravu a platbu" })).toBeNull();
     expect(screen.getByRole("link", { name: "Zpět do katalogu" })).not.toBeNull();
+  });
+  it("continues as a guest and remembers the choice for the rest of the checkout", async () => {
+    seedCart();
+    const user = userEvent.setup();
+    await renderCart();
+    const guest = await screen.findByRole("button", { name: "Objednat bez registrace" });
+    await act(async () => {
+      await user.click(guest);
+    });
+    expect(window.sessionStorage.getItem("sf-checkout-guest")).toBe("true");
+    expect(screen.getByRole("button", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+    expect(await screen.findByRole("link", { name: "Vybrat dopravu a platbu" })).not.toBeNull();
+    await navigationArrived;
+    allowNavigation();
+    await waitFor(() =>
+      expect(getCurrentAppRouterState()?.canonicalUrl).toBe("/kosik/doprava-platba"),
+    );
+    await network.idle();
+    expect(
+      network.requests.some((request) => new URL(request.url).pathname === "/kosik/doprava-platba"),
+    ).toBe(true);
   });
 });

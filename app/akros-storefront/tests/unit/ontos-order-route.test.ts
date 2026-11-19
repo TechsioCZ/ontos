@@ -1,19 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutDraft } from "@/features/checkout/checkout-state";
 import { createCheckoutDraft } from "@/features/checkout/checkout-state";
-import { callAction, readRecords } from "@/ontos/gateway";
-import { readAccount } from "@/ontos/account";
-import { GET, POST } from "@/app/api/ontos/orders/route";
-import { getActiveMarket } from "@/ontos/active-market";
-import { testMarket, unmarketedMarket } from "../support/market-fixture";
+import { testMarket } from "../support/market-fixture";
+import { serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
 
-vi.mock("@/ontos/account", () => ({ readAccount: vi.fn() }));
-vi.mock("@/ontos/catalog-server", () => ({ readProducts: async () => ({ revision: 7 }) }));
-vi.mock("@/ontos/gateway", () => ({
-  callAction: vi.fn(),
-  readRecords: vi.fn(),
-  OntosError: class extends Error {},
-}));
 const account = {
   id: "portal-customer-1",
   tenantId: "admitted-tenant",
@@ -21,6 +13,160 @@ const account = {
   email: "verified@example.test",
   name: "Customer",
 };
+
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let authenticated = true;
+let unmarketed = false;
+let customerOrders: object;
+const compositionRevision = "a".repeat(64);
+const gatewayBase = "/shell-super-app-api/order-route-test";
+const actionPath = `${gatewayBase}/merchandise/actions/place-storefront-order`;
+const actions = () =>
+  network.requests.filter((request) => new URL(request.url).pathname === actionPath);
+const actionPayload = async () => actions()[0].clone().json();
+const ownerReads = async () =>
+  Promise.all(
+    network.requests
+      .filter((request) => new URL(request.url).pathname.endsWith("/gateway-read"))
+      .map((request) => request.clone().json()),
+  );
+const hasOwnerRead = async (query: object) => {
+  expect(await ownerReads()).toContainEqual({
+    audience: "merchandise",
+    legalEntityId: "71000000-0000-4000-8000-000000000024",
+    readName: "records",
+    query,
+  });
+};
+
+const routeRequest = async (path: string, init?: RequestInit) => {
+  const headers = new Headers(init?.headers);
+  if (authenticated) headers.set("cookie", "commerce-portal.session_token=admitted");
+  const response = await fetch(`${network.origin}${path}`, { ...init, headers });
+  // A completed real route response and a drained server precede every absence/count assertion.
+  await network.idle();
+  return response;
+};
+
+beforeEach(async () => {
+  // Reset real isolate-local market/catalog caches; no module is replaced.
+  vi.resetModules();
+  authenticated = true;
+  unmarketed = false;
+  customerOrders = { orders: [], totalOrders: 0 };
+  const { GET, POST } = await import("@/app/api/ontos/orders/route");
+  network = await serveHttp(async (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === "/api/ontos/orders") {
+      const context = nextRequest(request.url, {
+        method: request.method,
+        headers: request.headers,
+        ...(request.method === "POST" ? { body: await request.text() } : {}),
+      });
+      try {
+        return await context.run(() =>
+          request.method === "POST" ? POST(context.request) : GET(context.request),
+        );
+      } finally {
+        await context.close();
+      }
+    }
+    const context = {
+      apiBaseUrl: gatewayBase,
+      compositionRevision,
+      token: "order-route-test-assertion",
+      expiresAt: Date.now() + 60_000,
+    };
+    if (path === "/shell-super-app-api/auth/api-key/gateway-context") {
+      return Response.json(context);
+    }
+    if (path === `${gatewayBase}/api/portal-auth/customer-account`) {
+      return Response.json(
+        request.headers.get("cookie") === "commerce-portal.session_token=admitted"
+          ? { state: "authenticated", account }
+          : { state: "anonymous" },
+      );
+    }
+    if (path === "/shell-super-app-api/auth/api-key/gateway-read") {
+      const input = await request.json();
+      const headers = { "x-ontos-gateway-context": JSON.stringify(context) };
+      if (input.audience === "commerce-market-catalog") {
+        const effectivePeriod = { startsAt: "2020-01-01T00:00:00.000Z" };
+        const sellingLegalEntityRef = { resourceId: "71000000-0000-4000-8000-000000000024" };
+        const entries = ["cs", "sk", "en"].map((locale) => ({
+          marketRef: { resourceId: locale === "cs" ? testMarket.marketId : `market-${locale}` },
+          marketCode: `AKROS-${locale.toUpperCase()}`,
+          supportedLocales: [locale],
+          lifecycle: "ACTIVE",
+          effectivePeriod,
+          sellingLegalEntityRef,
+        }));
+        return Response.json(
+          {
+            markets: unmarketed ? [] : entries,
+            associations: unmarketed
+              ? []
+              : entries.map((entry) => ({
+                  marketRef: entry.marketRef,
+                  storefrontRef: { appId: "akros-storefront", tenantId: account.tenantId },
+                  sellingLegalEntityRef,
+                  channel: "B2C",
+                  effectivePeriod,
+                })),
+          },
+          { headers },
+        );
+      }
+      if (input.audience === "merchandise" && input.readName === "records") {
+        if (input.query.view.storefrontCustomerOrders)
+          return Response.json(customerOrders, { headers });
+        const marketId = input.query.view.storefrontCatalog?.marketId;
+        return Response.json(
+          {
+            ...(marketId === undefined
+              ? {}
+              : {
+                  market: { marketId, marketCode: "AKROS-CZ", currency: "CZK", configured: true },
+                }),
+            revision: 7,
+            products: [],
+            totalProducts: 0,
+            checkout: {
+              shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+              paymentAvailable: false,
+              carrierTrackingAvailable: false,
+            },
+          },
+          { headers },
+        );
+      }
+    }
+    if (path === actionPath) {
+      return Response.json({
+        storefrontOrder: {
+          outcome: "PLACED",
+          orderId: "order-1",
+          orderNumber: "OBJ-2026-0022",
+          totalMinor: 13425,
+          totalVatMinor: 2330,
+        },
+      });
+    }
+    throw new Error(`Unexpected order-route HTTP request: ${request.method} ${path}`);
+  });
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "order-route-test-key");
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "akros-storefront");
+  vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", "71000000-0000-4000-8000-000000000024");
+});
+afterEach(async () => {
+  try {
+    await network.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 const clientRequestId = "sf-12345678-1234-4234-8234-123456789abc";
 const submit = async (
   company = "Company",
@@ -43,62 +189,33 @@ const submit = async (
     },
     ...overrides,
   };
-  return POST(
-    new Request("http://localhost:3070/api/ontos/orders", {
-      method: "POST",
-      headers: {
-        origin: "http://localhost:3070",
-        "content-type": "application/json",
-        cookie: "commerce-portal.session_token=admitted",
-      },
-      body: JSON.stringify({
-        customerAccountId: "attacker",
-        clientRequestId,
-        draft,
-        cart: { version: 3, lines: [{ productId: "product-1", quantity: 5, priceMinor: 105 }] },
-      }),
+  return routeRequest("/api/ontos/orders", {
+    method: "POST",
+    headers: {
+      origin: network.origin,
+      "x-akros-market-locale": "cs",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      customerAccountId: "attacker",
+      clientRequestId,
+      draft,
+      cart: { version: 3, lines: [{ productId: "product-1", quantity: 5, priceMinor: 105 }] },
     }),
-  );
+  });
 };
-beforeEach(() => {
-  vi.clearAllMocks();
-  vi.mocked(readAccount).mockResolvedValue(account);
-  vi.mocked(readRecords).mockResolvedValue({
-    market: {
-      marketId: testMarket.marketId,
-      marketCode: "AKROS-CZ",
-      currency: "CZK",
-      configured: true,
-    },
-    checkout: {
-      shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-      paymentAvailable: false,
-      carrierTrackingAvailable: false,
-    },
-  });
-  vi.mocked(callAction).mockResolvedValue({
-    storefrontOrder: {
-      outcome: "PLACED",
-      orderId: "order-1",
-      orderNumber: "OBJ-2026-0022",
-      totalMinor: 13425,
-      totalVatMinor: 2330,
-    },
-  });
-});
 describe("real order boundary", () => {
   it("places against fresh revision using admitted identity and owner shipping prices, not browser identity", async () => {
     expect((await submit()).status).toBe(200);
-    expect(readAccount).toHaveBeenCalledWith(
-      "http://localhost:3070",
-      "commerce-portal.session_token=admitted",
+    const admission = network.requests.find((request) =>
+      new URL(request.url).pathname.endsWith("/customer-account"),
     );
+    expect(admission?.headers.get("origin")).toBe(network.origin);
+    expect(admission?.headers.get("cookie")).toBe("commerce-portal.session_token=admitted");
     // The storefront key is admitted only on the narrow storefront-order Action, never on apply-command.
-    expect(vi.mocked(callAction).mock.calls[0].slice(0, 2)).toEqual([
-      "merchandise",
-      "place-storefront-order",
-    ]);
-    const payload = vi.mocked(callAction).mock.calls[0][2];
+    expect(new URL(actions()[0].url).pathname).toBe(actionPath);
+    expect(actions()).toHaveLength(1);
+    const payload = await actionPayload();
     expect(payload).toMatchObject({
       expectedRevision: 7,
       command: {
@@ -114,7 +231,7 @@ describe("real order boundary", () => {
       },
     });
     // Shipping prices are read for the same market (converted into its currency by merchandise).
-    expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
+    await hasOwnerRead({
       view: {
         storefront: true,
         storefrontCheckout: true,
@@ -128,26 +245,13 @@ describe("real order boundary", () => {
     expect(JSON.stringify(payload)).not.toMatch(/DEMO|simulace|forged|attacker/);
   });
   it("places a plain CZK order without a market before any market exists", async () => {
-    vi.mocked(getActiveMarket).mockResolvedValue(unmarketedMarket);
-    vi.mocked(readRecords).mockResolvedValue({
-      checkout: {
-        shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-        paymentAvailable: false,
-        carrierTrackingAvailable: false,
-      },
+    unmarketed = true;
+    expect((await submit()).status).toBe(200);
+    expect(await actionPayload()).toMatchObject({
+      command: { _tag: "PlaceStorefrontOrder", expectedShippingPriceMinor: 12900 },
     });
-    try {
-      expect((await submit()).status).toBe(200);
-      expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
-        command: { _tag: "PlaceStorefrontOrder", expectedShippingPriceMinor: 12900 },
-      });
-      expect(vi.mocked(callAction).mock.calls[0][2]).not.toHaveProperty("command.marketId");
-      expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
-        view: { storefront: true, storefrontCheckout: true },
-      });
-    } finally {
-      vi.mocked(getActiveMarket).mockResolvedValue(testMarket);
-    }
+    expect(await actionPayload()).not.toHaveProperty("command.marketId");
+    await hasOwnerRead({ view: { storefront: true, storefrontCheckout: true } });
   });
   it.each([false, true])(
     "sends the selected delivery recipient separately from billing contact (different address: %s)",
@@ -163,7 +267,7 @@ describe("real order boundary", () => {
       };
       const response = await submit("Company", "PPL", { delivery, differentDeliveryAddress });
       expect(response.status).toBe(200);
-      expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
+      expect(await actionPayload()).toMatchObject({
         command: {
           contact: { email: account.email, name: "Customer Test", phone: "+420777123456" },
           billingAddress: { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
@@ -199,13 +303,13 @@ describe("real order boundary", () => {
         differentDeliveryAddress: true,
       });
       expect(response.status).toBe(400);
-      expect(callAction).not.toHaveBeenCalled();
+      expect(actions()).toHaveLength(0);
     },
   );
   it("places a guest order without a session: no customer account or Party, contact e-mail from the draft", async () => {
-    vi.mocked(readAccount).mockResolvedValue(null);
+    authenticated = false;
     expect((await submit("", "PPL", { email: " guest@example.test " })).status).toBe(200);
-    const payload = vi.mocked(callAction).mock.calls[0][2] as { command: Record<string, unknown> };
+    const payload = await actionPayload();
     expect(payload).toMatchObject({
       expectedRevision: 7,
       command: {
@@ -222,29 +326,25 @@ describe("real order boundary", () => {
     expect(JSON.stringify(payload)).not.toMatch(/attacker/);
   });
   it("rejects a guest order without a valid contact e-mail", async () => {
-    vi.mocked(readAccount).mockResolvedValue(null);
+    authenticated = false;
     expect((await submit("Company", "PPL", { email: "" })).status).toBe(400);
-    expect(callAction).not.toHaveBeenCalled();
+    expect(actions()).toHaveLength(0);
   });
   it("rejects a delivery method absent from the current owner configuration", async () => {
     expect((await submit("Company", "zasilkovna")).status).toBe(400);
-    expect(callAction).not.toHaveBeenCalled();
+    expect(actions()).toHaveLength(0);
   });
   it("retains customer note length limit without inserting a simulation disclaimer", async () => {
     expect((await submit("Ž".repeat(1200))).status).toBe(200);
-    expect(
-      (vi.mocked(callAction).mock.calls[0][2] as { command: { note: string } }).command.note,
-    ).toHaveLength(1000);
+    expect((await actionPayload()).command.note).toHaveLength(1000);
   });
   it("queries customer orders using only session subject, ignoring a forged query subject", async () => {
-    vi.mocked(readRecords).mockResolvedValue({ orders: [], totalOrders: 0 });
-    const response = await GET(
-      new Request(
-        "http://localhost:3070/api/ontos/orders?customerAccountId=attacker&order=other-order",
-      ),
+    customerOrders = { orders: [], totalOrders: 0 };
+    const response = await routeRequest(
+      "/api/ontos/orders?customerAccountId=attacker&order=other-order",
     );
     expect(response.status).toBe(200);
-    expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
+    await hasOwnerRead({
       view: {
         storefront: true,
         storefrontCustomerOrders: {
@@ -257,27 +357,25 @@ describe("real order boundary", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
   it("fails closed if the owner returns another customer's receipt", async () => {
-    vi.mocked(readRecords).mockResolvedValue({
+    customerOrders = {
       orders: [{ customerAccountId: "attacker" }],
       totalOrders: 1,
-    });
-    expect((await GET(new Request("http://localhost:3070/api/ontos/orders"))).status).toBe(503);
+    };
+    expect((await routeRequest("/api/ontos/orders")).status).toBe(503);
   });
 });
 
 describe("order messages follow the market language", () => {
   const postIn = (locale: string | undefined, body: object) =>
-    POST(
-      new Request("http://localhost:3070/api/ontos/orders", {
-        method: "POST",
-        headers: {
-          origin: "http://localhost:3070",
-          "content-type": "application/json",
-          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
-        },
-        body: JSON.stringify(body),
-      }),
-    );
+    routeRequest("/api/ontos/orders", {
+      method: "POST",
+      headers: {
+        origin: network.origin,
+        "content-type": "application/json",
+        "x-akros-market-locale": locale ?? "cs",
+      },
+      body: JSON.stringify(body),
+    });
   const cart = { version: 3, lines: [{ productId: "product-1", quantity: 5, priceMinor: 105 }] };
   it.each([
     [undefined, "Neplatné dodací údaje."],
@@ -287,7 +385,7 @@ describe("order messages follow the market language", () => {
     const response = await postIn(locale, { cart, draft: {}, clientRequestId });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ message });
-    expect(callAction).not.toHaveBeenCalled();
+    expect(actions()).toHaveLength(0);
   });
   it.each([
     [undefined, "Neplatná položka košíku."],
@@ -306,12 +404,10 @@ describe("order messages follow the market language", () => {
     [undefined, "Přihlaste se ke svému účtu."],
     ["en", "Sign in to your account."],
   ])("asks an anonymous visitor to sign in for locale %s", async (locale, message) => {
-    vi.mocked(readAccount).mockResolvedValue(null);
-    const response = await GET(
-      new Request("http://localhost:3070/api/ontos/orders", {
-        headers: locale === undefined ? {} : { "x-akros-market-locale": locale },
-      }),
-    );
+    authenticated = false;
+    const response = await routeRequest("/api/ontos/orders", {
+      headers: locale === undefined ? {} : { "x-akros-market-locale": locale },
+    });
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ message });
   });

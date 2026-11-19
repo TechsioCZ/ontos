@@ -1,9 +1,13 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { setTimeout } from "node:timers/promises";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, it } from "vitest";
 import { CartProvider } from "@/features/cart/cart-provider";
+import type { CartState } from "@/features/cart/cart-state";
 import { CartQuoteProvider, useCartQuote } from "@/ontos/cart-revalidation";
+import { browserAt, serveHttp } from "../support/http";
+import { renderStorefront as render } from "../support/storefront";
 
-const cart = {
+const cart: CartState = {
   version: 3,
   lines: [
     {
@@ -33,29 +37,35 @@ function Probe() {
     </>
   );
 }
-afterEach(() => {
+let network: Awaited<ReturnType<typeof serveHttp>> | undefined;
+afterEach(async () => {
   cleanup();
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
+  await network?.idle();
+  await network?.close();
+  network = undefined;
   localStorage.clear();
 });
 it("refreshes before ten seconds without blinking, expires on failure, then revalidates on focus", async () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-10-23T12:00:00Z"));
-  localStorage.setItem("akros-demo-cart-v3", JSON.stringify(cart));
   let fail = false;
-  const request = vi.fn(async (_url: string, init: RequestInit) => {
-    const { cart } = JSON.parse(String(init.body));
-    if (fail) throw new Error("owner unavailable");
+  const failedRefresh = Promise.withResolvers<void>();
+  network = await serveHttp(async (request) => {
+    if (new URL(request.url).pathname !== "/api/ontos/cart" || request.method !== "POST")
+      return new Response("Unknown endpoint", { status: 404 });
+    const { cart: posted }: { cart: CartState } = await request.json();
+    if (fail) {
+      failedRefresh.resolve();
+      return new Response("owner unavailable", { status: 503 });
+    }
     return Response.json({
-      cart,
+      cart: posted,
       priceChanged: false,
       issues: [],
       canCheckout: true,
       totals: { totalMinor: 121, totalVatMinor: 21, netMinor: 100, shippingMinor: null },
     });
   });
-  vi.stubGlobal("fetch", request);
+  browserAt(network.origin);
+  localStorage.setItem("akros-demo-cart-v3", JSON.stringify(cart));
   render(
     <CartProvider>
       <CartQuoteProvider>
@@ -63,57 +73,78 @@ it("refreshes before ten seconds without blinking, expires on failure, then reva
       </CartQuoteProvider>
     </CartProvider>,
   );
-  await act(() => vi.advanceTimersByTimeAsync(150));
+  await waitFor(() => expect(screen.getByLabelText("Verified amount").textContent).toBe("121"));
   expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
   fail = true;
-  await act(() => vi.advanceTimersByTimeAsync(7000));
-  expect(request).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    await failedRefresh.promise;
+    await network?.idle();
+  });
+  expect(network.requests).toHaveLength(2);
   expect(screen.getByLabelText("Status").textContent).toBe("ready");
   expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
-  await act(() => vi.advanceTimersByTimeAsync(3100));
+  await waitFor(
+    () => expect(screen.getByLabelText("Verified amount").textContent).toBe("unverified"),
+    { timeout: 4_000 },
+  );
   expect(screen.getByLabelText("Verified amount").textContent).toBe("unverified");
   expect(screen.getByLabelText("Continue").textContent).toBe("false");
   fail = false;
-  await act(async () => {
+  act(() => {
     window.dispatchEvent(new Event("focus"));
-    await Promise.resolve();
   });
+  await waitFor(() => expect(screen.getByLabelText("Verified amount").textContent).toBe("121"));
   expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
   expect(screen.getByLabelText("Continue").textContent).toBe("true");
-});
+}, 20_000);
 it("keeps a freshly verified amount visible when the owner refresh updates stock metadata", async () => {
-  vi.useFakeTimers();
+  const refreshArrived = Promise.withResolvers<void>();
+  const releaseRefresh = Promise.withResolvers<void>();
+  network = await serveHttp(async (request) => {
+    if (new URL(request.url).pathname !== "/api/ontos/cart" || request.method !== "POST")
+      return new Response("Unknown endpoint", { status: 404 });
+    const { cart: posted }: { cart: CartState } = await request.json();
+    if (posted.lines[0]?.stockCount === 9) {
+      refreshArrived.resolve();
+      await releaseRefresh.promise;
+    }
+    return Response.json({
+      cart: {
+        ...posted,
+        lines: posted.lines.map((line) => ({ ...line, stockCount: 9 })),
+      },
+      priceChanged: false,
+      issues: [],
+      canCheckout: true,
+      totals: { totalMinor: 121, totalVatMinor: 21, netMinor: 100, shippingMinor: null },
+    });
+  });
+  browserAt(network.origin);
   localStorage.setItem("akros-demo-cart-v3", JSON.stringify(cart));
-  let reads = 0;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (_url: string, init: RequestInit) => {
-      reads++;
-      if (reads > 1) return new Promise<Response>(() => {});
-      const { cart: posted } = JSON.parse(String(init.body));
-      return Response.json({
-        cart: {
-          ...posted,
-          lines: posted.lines.map((line: object) => ({ ...line, stockCount: 9 })),
-        },
-        priceChanged: false,
-        issues: [],
-        canCheckout: true,
-        totals: { totalMinor: 121, totalVatMinor: 21, netMinor: 100, shippingMinor: null },
-      });
-    }),
-  );
-  render(
-    <CartProvider>
-      <CartQuoteProvider>
-        <Probe />
-      </CartQuoteProvider>
-    </CartProvider>,
-  );
-  await act(() => vi.advanceTimersByTimeAsync(150));
-  expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
-  await act(() => vi.advanceTimersByTimeAsync(200));
-  expect(reads).toBe(2);
-  expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
-  expect(screen.getByLabelText("Continue").textContent).toBe("true");
+  try {
+    render(
+      <CartProvider>
+        <CartQuoteProvider>
+          <Probe />
+        </CartQuoteProvider>
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Verified amount").textContent).toBe("121"));
+    expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
+    await act(async () => {
+      await refreshArrived.promise;
+      await setTimeout(200);
+    });
+    expect(network.requests).toHaveLength(2);
+    expect(await network.requests[1]?.json()).toMatchObject({
+      cart: { lines: [{ stockCount: 9 }] },
+    });
+    expect(screen.getByLabelText("Verified amount").textContent).toBe("121");
+    expect(screen.getByLabelText("Continue").textContent).toBe("true");
+  } finally {
+    await act(async () => {
+      releaseRefresh.resolve();
+      await network?.idle();
+    });
+  }
 });

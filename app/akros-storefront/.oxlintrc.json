@@ -1,1 +1,12 @@
-{}
+{
+  "jsPlugins": [
+    { "name": "anti-slop", "specifier": "../tools/oxlint/anti-slop/index.ts" },
+    { "name": "effect-native", "specifier": "../tools/oxlint/effect-native/index.ts" }
+  ],
+  "rules": {
+    "anti-slop/no-module-mocking": "error",
+    "effect-native/no-global-test-replacements": "error",
+    "effect-native/no-unsignaled-spy-poll": "error",
+    "effect-native/no-focused-tests": "error"
+  }
+}

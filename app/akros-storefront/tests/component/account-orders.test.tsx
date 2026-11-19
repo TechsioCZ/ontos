@@ -1,10 +1,11 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { AccountOrderDetail } from "@/features/account/account-order-detail";
 import { AccountOrders } from "@/features/account/account-orders";
 import { CartProvider } from "@/features/cart/cart-provider";
 import type { CustomerOrder } from "@/ontos/order-model";
+import { renderStorefront as render } from "../support/storefront";
 
 const order = (id: string, createdAt: string, status: CustomerOrder["status"]): CustomerOrder => ({
   id,
@@ -49,11 +50,11 @@ describe("account orders from OntOS", () => {
     expect(within(cards[0]).getByRole("button", { name: "Objednat znovu 2026-002" })).toBeTruthy();
     expect(
       within(cards[0]).getByRole("link", { name: "Detail objednávky" }).getAttribute("href"),
-    ).toBe("/detail-objednavky?order=002");
+    ).toBe("/cs/detail-objednavky?order=002");
     expect(within(cards[0]).getByText("Předáno dopravci")).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Sledovat poslední zásilku" }).getAttribute("href"),
-    ).toBe("/sledovani-zasilky?order=002");
+    ).toBe("/cs/sledovani-zasilky?order=002");
 
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Číslo objednávky"), "001");
@@ -71,8 +72,14 @@ describe("account orders from OntOS", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Objednávka 2026-002" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Objednat znovu 2026-002" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sledovat zásilku" }).getAttribute("href")).toBe(
-      "/sledovani-zasilky?order=002",
+      "/cs/sledovani-zasilky?order=002",
     );
     expect(screen.getAllByText("Šrouby – M 6 × 20").length).toBeGreaterThan(0);
+    expect(screen.getByText("DPH").parentElement?.textContent).toBe("DPH42,00\u00a0Kč");
+    expect(screen.getByText("Celkem s DPH").parentElement?.textContent).toBe(
+      "Celkem s DPH242,00\u00a0Kč",
+    );
+    expect(screen.getAllByText("12,10 Kč").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("242,00 Kč").length).toBeGreaterThan(0);
   });
 });

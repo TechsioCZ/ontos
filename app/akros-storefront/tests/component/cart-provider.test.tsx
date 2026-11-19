@@ -1,7 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { renderStorefront as render } from "../support/storefront";
+import { browserAt, serveHttp } from "../support/http";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
@@ -47,9 +50,14 @@ describe("CartProvider", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Screw" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Počet položek v košíku").textContent).toBe("1"),
+    );
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Screw" }));
 
-    expect(screen.getByLabelText("Počet položek v košíku").textContent).toBe("1");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Počet položek v košíku").textContent).toBe("1"),
+    );
   });
 
   it("adds the requested minimum order quantity", async () => {
@@ -64,7 +72,9 @@ describe("CartProvider", () => {
 
     await user.click(screen.getByRole("button", { name: `${cs.actions.addToCart}: Screw` }));
 
-    expect(screen.getByLabelText("Množství první položky").textContent).toBe("10");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Množství první položky").textContent).toBe("10"),
+    );
   });
 
   it("restores a persisted quantity only once in Strict Mode", async () => {
@@ -122,22 +132,26 @@ describe("CartProvider", () => {
   });
 });
 
-// Transport boundary: the component must await an owner verdict before changing cart state.
-beforeEach(() => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (_url: string, init: RequestInit) => {
-      const { cart } = JSON.parse(String(init.body));
-      const blocked = cart.lines.some(
-        (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
-      );
-      return Response.json({
-        cart,
-        priceChanged: false,
-        issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
-        canCheckout: !blocked,
-      });
-    }),
-  );
+// Every add crosses a real loopback HTTP exchange before the provider changes its state.
+let network: Awaited<ReturnType<typeof serveHttp>>;
+beforeEach(async () => {
+  network = await serveHttp(async (request) => {
+    if (new URL(request.url).pathname !== "/api/ontos/cart" || request.method !== "POST")
+      return new Response("Unknown endpoint", { status: 404 });
+    const { cart } = await request.json();
+    const blocked = cart.lines.some(
+      (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
+    );
+    return Response.json({
+      cart,
+      priceChanged: false,
+      issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
+      canCheckout: !blocked,
+    });
+  });
+  browserAt(network.origin);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  await network.idle();
+  await network.close();
+});

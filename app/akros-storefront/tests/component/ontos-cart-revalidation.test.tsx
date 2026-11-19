@@ -1,11 +1,13 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, it, expect, vi } from "vitest";
+import { afterEach, it, expect } from "vitest";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { CartQuoteProvider, CartRevalidation } from "@/ontos/cart-revalidation";
 import { CartNavigation } from "@/features/cart/cart-content";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import type { CartState } from "@/features/cart/cart-state";
+import { browserAt, serveHttp } from "../support/http";
+import { renderStorefront as render } from "../support/storefront";
 const cart: CartState = {
   version: 3,
   lines: [
@@ -37,19 +39,23 @@ function Harness() {
     </>
   );
 }
-afterEach(() => {
+let network: Awaited<ReturnType<typeof serveHttp>> | undefined;
+afterEach(async () => {
   cleanup();
-  vi.unstubAllGlobals();
+  if (network) {
+    await network.idle();
+    await network.close();
+    network = undefined;
+  }
 });
 it("discloses old/new unit, line and cart totals BEFORE acceptance and changes nothing until clicked", async () => {
   const quoted = { ...cart, lines: [{ ...cart.lines[0], priceMinor: 122 }] };
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ cart: quoted, priceChanged: true, issues: [], canCheckout: false }),
-    }),
-  );
+  network = await serveHttp((request) => {
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ontos/cart")
+      return new Response("Unknown endpoint", { status: 404 });
+    return Response.json({ cart: quoted, priceChanged: true, issues: [], canCheckout: false });
+  });
+  browserAt(network.origin);
   const user = userEvent.setup();
   render(
     <CartProvider storage={null}>
@@ -60,6 +66,7 @@ it("discloses old/new unit, line and cart totals BEFORE acceptance and changes n
   );
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByRole("button", { name: "Přijmout nové ceny" });
+  await network.idle();
   expect(screen.getByText(/Za ks:/).textContent).toMatch(/1,21.*→.*1,22/);
   expect(screen.getByText(/Za 200 ks:/).textContent).toMatch(/242.*→.*244/);
   expect(screen.getByText(/Celkem za zboží:/).textContent).toMatch(/242.*→.*244/);
@@ -71,24 +78,23 @@ it("discloses old/new unit, line and cart totals BEFORE acceptance and changes n
 });
 
 it("shows an explicit error with 'Zkusit znovu' and keeps the continue action disabled until a quote succeeds", async () => {
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValueOnce({
-      ok: false,
-      json: async () => ({ message: "Spojení s OntOS se nepodařilo." }),
-    })
-    .mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        cart,
-        priceChanged: false,
-        issues: [],
-        lineIssues: [],
-        canCheckout: true,
-        totals: { totalMinor: 24200, totalVatMinor: 4200, netMinor: 20000, shippingMinor: null },
-      }),
+  let attempts = 0;
+  network = await serveHttp((request) => {
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ontos/cart")
+      return new Response("Unknown endpoint", { status: 404 });
+    attempts += 1;
+    if (attempts === 1)
+      return Response.json({ message: "Spojení s OntOS se nepodařilo." }, { status: 503 });
+    return Response.json({
+      cart,
+      priceChanged: false,
+      issues: [],
+      lineIssues: [],
+      canCheckout: true,
+      totals: { totalMinor: 24200, totalVatMinor: 4200, netMinor: 20000, shippingMinor: null },
     });
-  vi.stubGlobal("fetch", fetchMock);
+  });
+  browserAt(network.origin);
   const user = userEvent.setup();
   render(
     <CartProvider storage={null}>
@@ -112,20 +118,19 @@ it("shows an explicit error with 'Zkusit znovu' and keeps the continue action di
 it("marks a blocked line with its unavailable state and names the variant", async () => {
   const message =
     "Vruty (3,5 × 16): dostupnost nyní nelze ověřit, objednávku proto nelze dokončit.";
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        cart,
-        priceChanged: false,
-        issues: [message],
-        lineIssues: [{ productId: "p", variantId: "v", code: "AVAILABILITY_UNKNOWN", message }],
-        canCheckout: false,
-        totals: null,
-      }),
-    }),
-  );
+  network = await serveHttp((request) => {
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ontos/cart")
+      return new Response("Unknown endpoint", { status: 404 });
+    return Response.json({
+      cart,
+      priceChanged: false,
+      issues: [message],
+      lineIssues: [{ productId: "p", variantId: "v", code: "AVAILABILITY_UNKNOWN", message }],
+      canCheckout: false,
+      totals: null,
+    });
+  });
+  browserAt(network.origin);
   const user = userEvent.setup();
   render(
     <CartProvider storage={null}>
@@ -138,6 +143,7 @@ it("marks a blocked line with its unavailable state and names the variant", asyn
   );
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByText("Objednávku teď nelze dokončit");
+  await network.idle();
   expect(screen.getByText("Nelze ověřit")).toBeTruthy();
   expect(screen.queryByText("Skladem")).toBeNull();
   expect(screen.getAllByText(message).length).toBeGreaterThan(0);

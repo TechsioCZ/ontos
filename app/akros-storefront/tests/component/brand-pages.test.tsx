@@ -1,8 +1,14 @@
+import "next/dist/client/app-bootstrap";
 import type { ReactElement } from "react";
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRouter } from "../support/router";
+import { generateMetadata as storefrontMetadata } from "@/app/storefront-metadata";
 
-import { generateMetadata } from "@/app/layout";
+import { CatalogProvider } from "@/ontos/catalog-provider";
+import { browserAt, serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
+import { fixtureSnapshot } from "../support/storefront";
 import { getBrand, toClientBrand } from "@/brand";
 import { BrandProvider } from "@/brand/brand-context";
 import { CartProvider } from "@/features/cart/cart-provider";
@@ -32,68 +38,101 @@ import NotFoundPage from "@/app/not-found";
 import GlobalError from "@/app/global-error";
 import { fixtureCatalog, fixtureCategories, fixtureProducts } from "../support/catalog-fixture";
 
-// The market locale of the simulated request (the proxy sets it from the path).
-const request = vi.hoisted(() => ({ locale: "cs" }));
+// The proxy's locale header is real Next request input, not a replacement of next/headers.
+const request = { locale: "cs" };
+const locales = ["cs", "sk", "en", "pl"];
+const seller = { resourceId: "71000000-0000-4000-8000-000000000024" };
+const marketId = (locale: string) =>
+  `71000000-0000-4000-8000-0000000000${locales.indexOf(locale) + 30}`;
+const period = { startsAt: "2020-01-01T00:00:00.000Z" };
+const gatewayContext = JSON.stringify({
+  apiBaseUrl: "/shell-super-app-api/brand-pages",
+  compositionRevision: "a".repeat(64),
+  token: "brand-pages-contract",
+  expiresAt: 4_000_000_000_000,
+});
+let network: Awaited<ReturnType<typeof serveHttp>>;
 
-vi.mock("next/navigation", () => ({
-  notFound: () => {
-    throw new Error("NEXT_NOT_FOUND");
-  },
-  usePathname: () => "/",
-  useRouter: () => ({ push: vi.fn<(href: string) => void>() }),
-  useSearchParams: () => new URLSearchParams(),
-}));
-vi.mock("next/font/local", () => ({ default: () => ({ variable: "font-sf" }) }));
-vi.mock("next/headers", () => ({
-  headers: async () =>
-    new Headers({
+beforeAll(async () => {
+  network = await serveHttp(async (incoming) => {
+    if (new URL(incoming.url).pathname !== "/shell-super-app-api/auth/api-key/gateway-read")
+      return Response.json({ error: "Unexpected endpoint" }, { status: 404 });
+    const body = await incoming.json();
+    if (body.audience === "commerce-market-catalog") {
+      return Response.json(
+        {
+          markets: locales.map((locale) => ({
+            marketRef: { resourceId: marketId(locale) },
+            marketCode: `SHOP-${locale}`,
+            sellingLegalEntityRef: seller,
+            lifecycle: "ACTIVE",
+            supportedLocales: [locale],
+            effectivePeriod: period,
+          })),
+          associations: locales.map((locale) => ({
+            marketRef: { resourceId: marketId(locale) },
+            storefrontRef: { appId: "akros-storefront", tenantId: "brand-pages" },
+            sellingLegalEntityRef: seller,
+            channel: "B2C",
+            effectivePeriod: period,
+          })),
+        },
+        { headers: { "x-ontos-gateway-context": gatewayContext } },
+      );
+    }
+    if (body.audience !== "merchandise")
+      return Response.json({ error: "Unexpected audience" }, { status: 400 });
+    const locale =
+      locales.find((value) => marketId(value) === body.query.view.storefrontCatalog?.marketId) ??
+      "cs";
+    return Response.json(
+      {
+        market: {
+          marketId: marketId(locale),
+          marketCode: `SHOP-${locale}`,
+          currency: locale === "cs" ? "CZK" : "EUR",
+          configured: true,
+        },
+        categories: fixtureCategories,
+        products: body.query.view.storefrontCatalog?.featured
+          ? fixtureCatalog.getHomepageFeaturedProducts().map((product) => ({
+              ...product,
+              grossPriceMinor: product.priceMinor,
+              currentPriceMinor: product.priceMinor,
+              currency: locale === "cs" ? "CZK" : "EUR",
+              stockOnHand: product.stockCount,
+              availability: "IN_STOCK",
+            }))
+          : [],
+        checkout: {
+          shippingMethods: [{ id: "ppl", title: "PPL", priceMinor: 12_900 }],
+          paymentAvailable: false,
+          carrierTrackingAvailable: false,
+        },
+      },
+      { headers: { "x-ontos-gateway-context": gatewayContext } },
+    );
+  });
+});
+afterAll(async () => {
+  await network.close();
+});
+
+async function inRequest<T>(operation: () => T): Promise<Awaited<T>> {
+  const context = nextRequest(`https://shop.test/${request.locale}`, {
+    headers: {
       host: "shop.test",
       "x-forwarded-proto": "https",
       "x-akros-market-locale": request.locale,
-    }),
-}));
-// The request market follows `request.locale`; everything else of the module is the real one.
-vi.mock("@/ontos/active-market", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/ontos/active-market")>();
-  const market = () => ({
-    locale: request.locale,
-    marketCode: "SHOP",
-    currency: request.locale === "cs" ? ("CZK" as const) : ("EUR" as const),
-    formatLocale: request.locale,
-    configured: true,
+    },
   });
-  return {
-    ...actual,
-    getMarketResolution: async () => ({ kind: "live", market: market(), live: [] }),
-    getActiveMarket: async () => market(),
-    getMoney: async () => ({ currency: market().currency, locale: request.locale }),
-    getDictionary: async () => dictionaryFor(request.locale),
-  };
-});
-vi.mock("@/ontos/catalog-server", async () => {
-  const { fixtureCatalog } = await import("../support/catalog-fixture");
-  return {
-    getCatalog: async () => fixtureCatalog,
-    getCatalogPage: async () => ({
-      model: fixtureCatalog,
-      products: [],
-      total: 0,
-      page: 1,
-      pageSize: 0,
-    }),
-    readProducts: async () => ({ products: [] }),
-  };
-});
-vi.mock("@/ontos/checkout-options", () => ({
-  readCheckoutOptions: async () => ({
-    shippingMethods: [{ id: "ppl", title: "PPL", priceMinor: 12_900 }],
-    paymentAvailable: false,
-    carrierTrackingAvailable: false,
-  }),
-}));
-vi.mock("@/ontos/category-branch", () => ({
-  CategoryBranch: ({ children }: { children: ReactElement }) => children,
-}));
+  try {
+    return await context.run(operation);
+  } finally {
+    await context.close();
+  }
+}
+const generateMetadata = () => inRequest(() => storefrontMetadata());
 
 const market = (locale: string): ClientMarket => ({
   locale,
@@ -110,11 +149,15 @@ const market = (locale: string): ClientMarket => ({
  */
 const html = (page: ReactElement, locale = "cs", { withoutOntosProducts = false } = {}) => {
   const { container } = render(
-    <BrandProvider brand={toClientBrand(getBrand(), locale)}>
-      <MarketProvider market={market(locale)}>
-        <CartProvider storage={null}>{page}</CartProvider>
-      </MarketProvider>
-    </BrandProvider>,
+    <NextRouter>
+      <BrandProvider brand={toClientBrand(getBrand(), locale)}>
+        <MarketProvider market={market(locale)}>
+          <CatalogProvider snapshot={fixtureSnapshot}>
+            <CartProvider storage={null}>{page}</CartProvider>
+          </CatalogProvider>
+        </MarketProvider>
+      </BrandProvider>
+    </NextRouter>,
   );
   if (withoutOntosProducts)
     for (const card of container.querySelectorAll('[class*="product-card"]')) card.remove();
@@ -167,23 +210,18 @@ const withoutOntosData = (markup: string) =>
 const czechSnippets = (markup: string) =>
   withoutOntosData(markup).match(new RegExp(`.{0,30}${czechOnlyLetters.source}.{0,20}`, "g")) ?? [];
 
-class NoopObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-  takeRecords() {
-    return [];
-  }
-}
 beforeEach(() => {
   request.locale = "cs";
-  vi.stubGlobal("ResizeObserver", NoopObserver);
-  vi.stubGlobal("IntersectionObserver", NoopObserver);
+  browserAt(network.origin);
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "brand-pages-test-key");
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "akros-storefront");
+  vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", seller.resourceId);
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await network.idle();
   vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
 });
 
 describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
@@ -208,7 +246,7 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
 
   it.each(pages)("renders the %s page in the shop chrome without AKROS", async (_name, page) => {
     // Product photos are OntOS data (the test catalog still links the original photos); lane P moves them.
-    const markup = html(await page()).replaceAll(ontosProductPhoto, "ontos-product-photo");
+    const markup = html(await inRequest(page)).replaceAll(ontosProductPhoto, "ontos-product-photo");
     expect(markup).toContain("ŠroubShop");
     expect(markup).not.toMatch(/akros/i);
   });
@@ -218,10 +256,9 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
     async (locale) => {
       request.locale = locale;
       for (const [name, page] of pages) {
-        const markup = html(await page(), locale, { withoutOntosProducts: true }).replaceAll(
-          ontosProductPhoto,
-          "ontos-product-photo",
-        );
+        const markup = html(await inRequest(page), locale, {
+          withoutOntosProducts: true,
+        }).replaceAll(ontosProductPhoto, "ontos-product-photo");
         expect({ name, akros: /akros/i.test(markup) }).toEqual({ name, akros: false });
         expect({ name, czech: czechSnippets(markup) }).toEqual({ name, czech: [] });
       }
@@ -229,8 +266,10 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
   );
 
   it("answers 404 for the AKROS manufacturing page", async () => {
-    await expect(ManufacturingPage()).rejects.toThrow("NEXT_NOT_FOUND");
-    expect(await manufacturingMetadata()).toEqual({});
+    await expect(inRequest(() => ManufacturingPage())).rejects.toThrow(
+      "NEXT_HTTP_ERROR_FALLBACK;404",
+    );
+    expect(await inRequest(() => manufacturingMetadata())).toEqual({});
   });
 
   it("writes the document metadata for the shop", async () => {
@@ -284,27 +323,36 @@ describe("AKROS brand (default)", () => {
   });
 
   it("keeps the AKROS content pages", async () => {
-    expect(html(await AboutPage())).toContain("Společnost AKROS, s.r.o. se specializuje");
-    expect(html(await ContactsPage({ searchParams: Promise.resolve({}) }))).toContain(
-      "Chřibská 207/41",
+    expect(html(await inRequest(() => AboutPage()))).toContain(
+      "Společnost AKROS, s.r.o. se specializuje",
     );
-    expect(html(await ManufacturingPage())).toContain("AKROS CZ nabízí zakázkovou výrobu");
-    expect(html(await TermsPage())).toContain("Zkrácené informace pro prezentační e-shop AKROS.");
-    expect(html(await HomePage())).toContain("Vítejte v internetovém obchodě společnosti AKROS");
+    expect(
+      html(await inRequest(() => ContactsPage({ searchParams: Promise.resolve({}) }))),
+    ).toContain("Chřibská 207/41");
+    expect(html(await inRequest(() => ManufacturingPage()))).toContain(
+      "AKROS CZ nabízí zakázkovou výrobu",
+    );
+    expect(html(await inRequest(() => TermsPage()))).toContain(
+      "Zkrácené informace pro prezentační e-shop AKROS.",
+    );
+    expect(html(await inRequest(() => HomePage()))).toContain(
+      "Vítejte v internetovém obchodě společnosti AKROS",
+    );
   });
 
   it.each(["sk", "en"])(
     "serves the AKROS content in %s, without Czech-only letters",
     async (locale) => {
       request.locale = locale;
-      expect(html(await AboutPage(), locale)).toContain("AKROS, s.r.o.");
-      expect(html(await TermsPage(), locale)).toContain("AKROS");
-      expect(html(await ManufacturingPage(), locale)).toMatch(/AKROS CZ (výroba|manufacturing)/);
+      expect(html(await inRequest(() => AboutPage()), locale)).toContain("AKROS, s.r.o.");
+      expect(html(await inRequest(() => TermsPage()), locale)).toContain("AKROS");
+      expect(html(await inRequest(() => ManufacturingPage()), locale)).toMatch(
+        /AKROS CZ (výroba|manufacturing)/,
+      );
       for (const [name, page] of contentPages) {
-        const markup = html(await page(), locale, { withoutOntosProducts: true }).replaceAll(
-          ontosProductPhoto,
-          "ontos-product-photo",
-        );
+        const markup = html(await inRequest(page), locale, {
+          withoutOntosProducts: true,
+        }).replaceAll(ontosProductPhoto, "ontos-product-photo");
         expect({ name, czech: czechSnippets(markup) }).toEqual({ name, czech: [] });
       }
     },

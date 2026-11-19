@@ -10,6 +10,7 @@ import {
   type ReorderResult,
   type RepeatOrder,
 } from "@/features/account/reorder-action";
+import { browserAt, serveHttp } from "../support/http";
 
 function CurrentCart() {
   const { cart } = useCart();
@@ -43,24 +44,34 @@ const line = (variantId: string, quantity: number): CartLine => ({
   priceMinor: 121,
   quantity,
 });
-const fetchMock = vi.fn<typeof fetch>();
-const respond = (body: unknown, status = 200) =>
-  fetchMock.mockResolvedValueOnce(Response.json(body, { status }));
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let response: Response;
+function respond(body: unknown, status = 200) {
+  response = Response.json(body, { status });
+}
 
 describe("repeat order", () => {
-  beforeEach(() => {
-    fetchMock.mockReset();
-    vi.stubGlobal("fetch", fetchMock);
+  beforeEach(async () => {
+    response = new Response("No reorder response configured", { status: 500 });
+    network = await serveHttp((request) => {
+      if (
+        request.method !== "POST" ||
+        new URL(request.url).pathname !== "/api/ontos/account/reorder"
+      )
+        return new Response("Unknown endpoint", { status: 404 });
+      return response.clone();
+    });
+    browserAt(network.origin);
   });
-  afterEach(() => {
+  afterEach(async () => {
     act(() => toaster.remove("sf-reorder-feedback"));
     cleanup();
-    vi.unstubAllGlobals();
+    await network.idle();
+    await network.close();
   });
 
   it("puts the resolved OntOS order lines into the active cart and merges a repeat", async () => {
     const resolution = { items: [line("a", 20), line("b", 40)], skipped: [] };
-    respond(resolution);
     respond(resolution);
     render(
       <DemoCart>
@@ -73,10 +84,11 @@ describe("repeat order", () => {
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
     await user.dblClick(button);
     expect(await screen.findByText("Přidáno položek: 2.")).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/ontos/account/reorder");
-    expect(JSON.parse(String(init?.body))).toEqual({ orderId: "o1" });
+    await network.idle();
+    expect(network.requests).toHaveLength(1);
+    const [request] = network.requests;
+    expect(new URL(request.url).pathname).toBe("/api/ontos/account/reorder");
+    expect(await request.json()).toEqual({ orderId: "o1" });
     expect(screen.getByLabelText("Cart contents").textContent).toBe("a:20:121,b:40:121");
     expect(screen.getByRole("link", { name: "Přejít do košíku" }).getAttribute("href")).toBe(
       "/kosik",
@@ -134,13 +146,12 @@ describe("repeat order", () => {
   });
 
   it("passes the exact order and cart once to an injected service and shows its restrictions", async () => {
-    let finish!: (result: ReorderResult) => void;
-    const repeatOrder = vi.fn<RepeatOrder>(
-      () =>
-        new Promise<ReorderResult>((resolve) => {
-          finish = resolve;
-        }),
-    );
+    const entered = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<ReorderResult>();
+    const repeatOrder = vi.fn<RepeatOrder>(() => {
+      entered.resolve();
+      return result.promise;
+    });
     render(
       <DemoCart>
         <ReorderAction orderId="o5" orderNumber="#XYZ" repeatOrder={repeatOrder} />
@@ -150,11 +161,14 @@ describe("repeat order", () => {
     const button = screen.getByRole("button", { name: "Objednat znovu #XYZ" });
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
     await user.dblClick(button);
+    await entered.promise;
+    await network.idle();
     expect(repeatOrder).toHaveBeenCalledExactlyOnceWith("o5", "default");
-    finish({ addedLines: 2, notices: ["Varianta ABC není skladem."] });
+    result.resolve({ addedLines: 2, notices: ["Varianta ABC není skladem."] });
     expect(await screen.findByText("Přidáno položek: 2.")).toBeTruthy();
     expect(screen.getByText("Varianta ABC není skladem.")).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    await network.idle();
+    expect(network.requests).toHaveLength(0);
   });
 
   it("offers retry after service failure without claiming success", async () => {

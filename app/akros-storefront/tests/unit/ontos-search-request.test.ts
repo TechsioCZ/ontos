@@ -1,44 +1,89 @@
+import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/ontos/search/route";
-import { createCatalog } from "@/ontos/catalog-model";
-import { projectProducts } from "@/ontos/catalog-projection";
-import { getCatalogPage, type CatalogPage } from "@/ontos/catalog-server";
-import { readSearchVariantMatches } from "@/ontos/search-variants";
+import { browserAt, serveHttp } from "../support/http";
+import { nextRequest } from "../support/next-request";
 
-vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/catalog-server", () => ({
-  getCatalogPage: vi.fn<typeof getCatalogPage>(),
-}));
-vi.mock("@/ontos/search-variants", () => ({
-  readSearchVariantMatches: vi.fn<typeof readSearchVariantMatches>(),
-}));
+const searchPath = "/api/ontos/search";
+const gatewayPath = "/shell-super-app-api/auth/api-key/gateway-read";
+const gatewayRead = Schema.Struct({ audience: Schema.String, query: Schema.Unknown });
+const catalogQuery = Schema.Struct({
+  view: Schema.Struct({
+    storefront: Schema.Boolean,
+    storefrontCatalog: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+});
+let network: Awaited<ReturnType<typeof serveHttp>>;
 
-const catalog = projectProducts({ products: [] });
-const page: CatalogPage = {
-  model: createCatalog(catalog, { categories: [] }),
-  products: [],
-  total: 0,
-  page: 1,
-  pageSize: 6,
-};
 const ask = (body: unknown, locale = "cs") =>
-  POST(
-    new Request("http://localhost:3070/api/ontos/search", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-akros-market-locale": locale },
-      body: JSON.stringify(body),
-    }),
-  );
+  fetch(`${network.origin}${searchPath}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-akros-market-locale": locale },
+    body: JSON.stringify(body),
+  });
 
-beforeEach(() => {
-  vi.mocked(getCatalogPage).mockReset();
-  vi.mocked(getCatalogPage).mockResolvedValue(page);
-  vi.mocked(readSearchVariantMatches).mockReset();
-  vi.mocked(readSearchVariantMatches).mockResolvedValue(new Map());
+const ownerRequests = () =>
+  network.requests.filter((request) => new URL(request.url).pathname === gatewayPath);
+
+async function productQueries() {
+  const reads = await Promise.all(
+    ownerRequests().map(async (request) =>
+      Schema.decodeUnknownSync(gatewayRead)(await request.json()),
+    ),
+  );
+  return reads
+    .filter((read) => read.audience === "merchandise")
+    .map((read) => Schema.decodeUnknownSync(catalogQuery)(read.query).view.storefrontCatalog)
+    .filter((query) => query.mode !== "categories");
+}
+
+beforeEach(async () => {
+  network = await serveHttp(async (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === searchPath) {
+      const context = nextRequest(request.url, {
+        method: request.method,
+        headers: request.headers,
+      });
+      try {
+        return await context.run(() => POST(request));
+      } finally {
+        await context.close();
+      }
+    }
+    if (path === gatewayPath) {
+      const read = Schema.decodeUnknownSync(gatewayRead)(await request.json());
+      if (read.audience !== "commerce-market-catalog" && read.audience !== "merchandise")
+        return new Response("Unknown owner", { status: 404 });
+      return Response.json(
+        read.audience === "commerce-market-catalog"
+          ? { markets: [], associations: [] }
+          : { categories: [], products: [], total: 0, page: 1, pageSize: 6 },
+        {
+          headers: {
+            "x-ontos-gateway-context": JSON.stringify({
+              apiBaseUrl: `/shell-super-app-api/${read.audience}`,
+              compositionRevision: "a".repeat(64),
+              token: "search-request-test-assertion",
+              expiresAt: Date.now() + 60_000,
+            }),
+          },
+        },
+      );
+    }
+    return new Response("Not found", { status: 404 });
+  });
+  browserAt(network.origin);
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "search-request-test-key");
 });
 
-afterEach(() => {
-  vi.restoreAllMocks();
+afterEach(async () => {
+  try {
+    await network.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 const empty = { items: [], total: 0, categories: [] };
@@ -51,19 +96,22 @@ describe("public storefront search query ingress", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.json()).toEqual(empty);
-      expect(getCatalogPage).toHaveBeenCalledExactlyOnceWith({ q: query, page: 1, pageSize: 6 });
-      expect(readSearchVariantMatches).toHaveBeenCalledExactlyOnceWith([], query);
+      await network.idle();
+      // One real card read, with no full-variant hydration for the empty result.
+      expect(await productQueries()).toEqual([
+        { q: query, page: 1, pageSize: 6, fields: "card", includeCategories: false },
+      ]);
     },
   );
 
   it("cuts text longer than 200 characters to 200 instead of rejecting it", async () => {
     const response = await ask({ q: `  ${"x".repeat(200)}yyy  ` });
     expect(response.status).toBe(200);
-    expect(getCatalogPage).toHaveBeenCalledExactlyOnceWith({
-      q: "x".repeat(200),
-      page: 1,
-      pageSize: 6,
-    });
+    await response.json();
+    await network.idle();
+    expect(await productQueries()).toEqual([
+      { q: "x".repeat(200), page: 1, pageSize: 6, fields: "card", includeCategories: false },
+    ]);
   });
 
   it.each([
@@ -84,7 +132,10 @@ describe("public storefront search query ingress", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual(empty);
-    expect(getCatalogPage).not.toHaveBeenCalled();
-    expect(readSearchVariantMatches).not.toHaveBeenCalled();
+    await network.idle();
+    expect(
+      network.requests.filter((request) => new URL(request.url).pathname === searchPath),
+    ).toHaveLength(1);
+    expect(ownerRequests()).toEqual([]);
   });
 });

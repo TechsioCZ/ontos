@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getConfig } from "@/ontos/config";
 
-vi.mock("server-only", () => ({}));
-
 afterEach(() => vi.unstubAllEnvs());
 
 describe("storefront identity configuration", () => {

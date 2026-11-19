@@ -1,5 +1,8 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { browserAt, serveHttp } from "../support/http";
+import { renderStorefront as render } from "../support/storefront";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { OrderConfirmation } from "@/features/checkout/order-confirmation";
 import { GuestOrderConfirmation } from "@/features/checkout/guest-order-confirmation";
 import type { CustomerOrder } from "@/ontos/order-model";
@@ -17,77 +20,88 @@ const savedOrder = {
   lines: [],
 } satisfies CustomerOrder;
 
-afterEach(() => {
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let emailStatus: number;
+
+beforeEach(async () => {
+  emailStatus = 200;
+  network = await serveHttp((request) => {
+    const path = new URL(request.url).pathname;
+    if (path === "/api/ontos/order-emails" && request.method === "GET") {
+      return emailStatus === 200
+        ? Response.json({
+            deliveries: [
+              { event: "ORDER_CREATED", status: "SENT", sentAt: "2026-10-27T10:01:00.000Z" },
+            ],
+          })
+        : Response.json({ message: "unavailable" }, { status: emailStatus });
+    }
+    if (path === "/api/ontos/order-status" && request.method === "POST") {
+      return Response.json({
+        statusLabel: "Nová",
+        updatedAt: "2026-10-27T10:00:00.000Z",
+        final: false,
+      });
+    }
+    return new Response("Unknown endpoint", { status: 404 });
+  });
+  browserAt(network.origin);
+});
+
+afterEach(async () => {
   cleanup();
   window.sessionStorage.clear();
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-  window.history.replaceState(null, "", "/");
+  await network.idle();
+  await network.close();
 });
 
 it("mounts one real receipt panel and polls with only the saved recipient and order number", async () => {
-  vi.useFakeTimers();
-  window.history.replaceState(
-    null,
-    "",
-    "/potvrzeni-objednavky?email=query-recipient@example.test&orderNumber=OBJ-QUERY-999",
+  browserAt(
+    `${network.origin}/potvrzeni-objednavky?email=query-recipient@example.test&orderNumber=OBJ-QUERY-999`,
   );
-  const fetchMock = vi.fn<typeof fetch>(async () =>
-    Response.json({
-      deliveries: [{ event: "ORDER_CREATED", status: "SENT", sentAt: "2026-10-27T10:01:00.000Z" }],
-    }),
-  );
-  vi.stubGlobal("fetch", fetchMock);
 
   await act(async () => {
     render(<OrderConfirmation order={savedOrder} />);
   });
 
+  expect(await screen.findByText(/Odesláno e-mailem/)).toBeDefined();
+  await network.idle();
   expect(screen.getAllByRole("region", { name: "E-maily k objednávce" })).toHaveLength(1);
   expect(screen.getByText("Potvrzení přijetí objednávky")).toBeDefined();
   expect(screen.getByText(/Odesláno e-mailem/)).toBeDefined();
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(fetchMock).toHaveBeenLastCalledWith(
-    "/api/ontos/order-emails?email=saved.recipient%40example.test&orderNumber=OBJ-2026-0042",
-    { cache: "no-store" },
+  expect(network.requests).toHaveLength(1);
+  expect(network.requests[0]?.method).toBe("GET");
+  expect(network.requests[0]?.url).toBe(
+    `${network.origin}/api/ontos/order-emails?email=saved.recipient%40example.test&orderNumber=OBJ-2026-0042`,
   );
 
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(4_000);
-  });
+  await waitFor(() => expect(network.requests).toHaveLength(2), { timeout: 6_000 });
+  await network.idle();
 
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(fetchMock).toHaveBeenLastCalledWith(
-    "/api/ontos/order-emails?email=saved.recipient%40example.test&orderNumber=OBJ-2026-0042",
-    { cache: "no-store" },
+  expect(network.requests).toHaveLength(2);
+  expect(network.requests[1]?.method).toBe("GET");
+  expect(network.requests[1]?.url).toBe(
+    `${network.origin}/api/ontos/order-emails?email=saved.recipient%40example.test&orderNumber=OBJ-2026-0042`,
   );
-});
+}, 15_000);
 
 it("tells the customer calmly that the e-mail status will be retried when it cannot be loaded", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn<typeof fetch>(async () => Response.json({ message: "unavailable" }, { status: 503 })),
-  );
+  emailStatus = 503;
 
   await act(async () => {
     render(<OrderConfirmation order={savedOrder} />);
   });
 
-  expect(screen.getByText(/zkusíme to znovu za chvíli/)).toBeDefined();
+  expect(await screen.findByText(/zkusíme to znovu za chvíli/)).toBeDefined();
   expect(screen.queryByText(/nepodařilo ověřit/)).toBeNull();
 });
 
 it.each([undefined, ""])(
   "does not use a fallback or poll when the saved recipient is %s",
   async (email) => {
-    vi.useFakeTimers();
-    window.history.replaceState(
-      null,
-      "",
-      "/potvrzeni-objednavky?email=query-recipient@example.test&orderNumber=OBJ-QUERY-999",
+    browserAt(
+      `${network.origin}/potvrzeni-objednavky?email=query-recipient@example.test&orderNumber=OBJ-QUERY-999`,
     );
-    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ deliveries: [] }));
-    vi.stubGlobal("fetch", fetchMock);
     const order: CustomerOrder = {
       ...savedOrder,
       contact: email === undefined ? undefined : { ...savedOrder.contact, email },
@@ -97,12 +111,14 @@ it.each([undefined, ""])(
       render(<OrderConfirmation order={order} />);
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(8_000);
+      await delay(8_100);
+      await network.idle();
     });
 
     expect(screen.queryByRole("region", { name: "E-maily k objednávce" })).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(network.requests).toHaveLength(0);
   },
+  15_000,
 );
 
 it("confirms a guest order from this tab's receipt with live status and e-mail receipts", async () => {
@@ -115,13 +131,6 @@ it("confirms a guest order from this tab's receipt with live status and e-mail r
       email: "guest@example.test",
     }),
   );
-  const fetchMock = vi.fn<typeof fetch>(async (input) =>
-    String(input) === "/api/ontos/order-status"
-      ? Response.json({ statusLabel: "Nová", updatedAt: "2026-10-27T10:00:00.000Z", final: false })
-      : Response.json({ deliveries: [] }),
-  );
-  vi.stubGlobal("fetch", fetchMock);
-
   await act(async () => {
     render(<GuestOrderConfirmation orderId="guest-order-1" />);
   });
@@ -130,24 +139,29 @@ it("confirms a guest order from this tab's receipt with live status and e-mail r
     screen.getByRole("heading", { name: "Objednávka č. OBJ-2026-0100 byla uložena do OntOS" }),
   ).toBeDefined();
   expect(screen.getByRole("region", { name: "E-maily k objednávce" })).toBeDefined();
-  expect(fetchMock).toHaveBeenCalledWith("/api/ontos/order-status", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      orderId: "guest-order-1",
-      clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
-    }),
-    cache: "no-store",
+  expect(await screen.findByText("Nová")).toBeDefined();
+  expect(await screen.findByText("Potvrzení přijetí objednávky")).toBeDefined();
+  await network.idle();
+  expect(network.requests).toHaveLength(2);
+  const statusRequest = network.requests.find(
+    (request) => new URL(request.url).pathname === "/api/ontos/order-status",
+  );
+  expect(statusRequest?.method).toBe("POST");
+  expect(statusRequest?.headers.get("content-type")).toBe("application/json");
+  expect(await statusRequest?.json()).toEqual({
+    orderId: "guest-order-1",
+    clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
   });
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/ontos/order-emails?email=guest%40example.test&orderNumber=OBJ-2026-0100",
-    { cache: "no-store" },
+  const emailRequest = network.requests.find(
+    (request) => new URL(request.url).pathname === "/api/ontos/order-emails",
+  );
+  expect(emailRequest?.method).toBe("GET");
+  expect(emailRequest?.url).toBe(
+    `${network.origin}/api/ontos/order-emails?email=guest%40example.test&orderNumber=OBJ-2026-0100`,
   );
 });
 
 it("does not confirm a guest order that this tab did not place", async () => {
-  const fetchMock = vi.fn<typeof fetch>();
-  vi.stubGlobal("fetch", fetchMock);
   window.sessionStorage.setItem(
     "sf-guest-order",
     JSON.stringify({
@@ -163,5 +177,6 @@ it("does not confirm a guest order that this tab did not place", async () => {
   expect(
     screen.getByRole("heading", { name: "Potvrzení objednávky zde není k dispozici" }),
   ).toBeDefined();
-  expect(fetchMock).not.toHaveBeenCalled();
+  await network.idle();
+  expect(network.requests).toHaveLength(0);
 });

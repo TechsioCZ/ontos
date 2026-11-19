@@ -1,56 +1,39 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type FormEvent } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AddressFields } from "@/features/checkout/address-fields";
 import type { CheckoutAddress } from "@/features/checkout/checkout-state";
 import { AddressAutocomplete } from "@/features/checkout/address-autocomplete";
+import { browserAt, serveHttp } from "../support/http";
+import { renderStorefront as render } from "../support/storefront";
 
-/** happy-dom's own fetch seam (`IFetchInterceptor`): it may answer a request with a Response of the sending window. */
-interface FetchInterceptor {
-  readonly beforeAsyncRequest: (context: {
-    readonly request: Request;
-    readonly window: { readonly Response: typeof Response };
-  }) => Promise<Response>;
-}
-declare global {
-  interface Window {
-    readonly happyDOM: {
-      readonly settings: { readonly fetch: { interceptor: FetchInterceptor | null } };
-    };
-  }
-}
-
-// The same-origin suggestion route is answered in process through the browser's own request interceptor; the
-// component, the UI kit and the browser's fetch are real.
-const queries: string[] = [];
+let network: Awaited<ReturnType<typeof serveHttp>>;
 let answer: (query: string) => Promise<Response> = async () => Response.json({ suggestions: [] });
-let previousInterceptor: typeof window.happyDOM.settings.fetch.interceptor;
-beforeEach(() => {
-  queries.length = 0;
+beforeEach(async () => {
   answer = async () => Response.json({ suggestions: [] });
-  previousInterceptor = window.happyDOM.settings.fetch.interceptor;
-  window.happyDOM.settings.fetch.interceptor = {
-    beforeAsyncRequest: async ({ request, window }) => {
-      const url = new URL(request.url);
-      if (url.pathname !== "/api/address-suggestions") {
-        throw new Error(`Unexpected request: ${request.url}`);
-      }
-      const query = url.searchParams.get("q") ?? "";
-      queries.push(query);
-      const response = await answer(query);
-      return new window.Response(await response.arrayBuffer(), {
-        headers: [...response.headers],
-        status: response.status,
-      });
-    },
-  };
+  network = await serveHttp(async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/ready") return new Response("ready");
+    if (url.pathname !== "/api/address-suggestions")
+      return new Response("Unknown endpoint", { status: 404 });
+    return answer(url.searchParams.get("q") ?? "");
+  });
+  browserAt(network.origin);
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
-  window.happyDOM.settings.fetch.interceptor = previousInterceptor;
+  await network.idle();
+  await network.close();
 });
+
+function queries() {
+  return network.requests
+    .map((request) => new URL(request.url))
+    .filter((url) => url.pathname === "/api/address-suggestions")
+    .map((url) => url.searchParams.get("q"));
+}
 
 function AddressField({ country = "CZ" }: { country?: string }) {
   const [street, setStreet] = useState("");
@@ -85,7 +68,7 @@ describe("checkout address suggestions", () => {
     await user.type(screen.getByRole("combobox"), "Bakalovo");
     await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
     await user.click(screen.getByRole("option", { name: "Bakalovo nábřeží 2, Brno" }));
-    expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("Bakalovo nábřeží 2");
+    expect(screen.getByRole("combobox")).toHaveProperty("value", "Bakalovo nábřeží 2");
   });
 
   it("keeps manual entry without contacting the provider for an uncovered address country", async () => {
@@ -94,10 +77,10 @@ describe("checkout address suggestions", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
     await user.type(screen.getByRole("textbox", { name: /Ulice/ }), "Obchodná 10");
     await new Promise((resolve) => setTimeout(resolve, 400));
-    expect((screen.getByRole("textbox", { name: /Ulice/ }) as HTMLInputElement).value).toBe(
-      "Obchodná 10",
-    );
-    expect(queries).toEqual([]);
+    expect(await (await fetch(`${network.origin}/ready`)).text()).toBe("ready");
+    await network.idle();
+    expect(screen.getByRole("textbox", { name: /Ulice/ })).toHaveProperty("value", "Obchodná 10");
+    expect(queries()).toEqual([]);
   });
 });
 
@@ -169,6 +152,7 @@ describe("address completion behavior", () => {
     expect(input).toHaveProperty("value", "Manual street 1");
     await user.click(retry);
     expect(await screen.findByRole("option", { name: "Brno" })).toBeTruthy();
+    await network.idle();
     expect(submit).not.toHaveBeenCalled();
   });
   it("does not replace newer empty results with a late response to an old query", async () => {
@@ -178,19 +162,32 @@ describe("address completion behavior", () => {
     const old = new Promise<Response>((resolve) => {
       resolveOld = resolve;
     });
-    answer = async (query) => (query === "Old street" ? old : Response.json({ suggestions: [] }));
+    let signalOldArrival = () => {};
+    const oldArrived = new Promise<void>((resolve) => {
+      signalOldArrival = resolve;
+    });
+    answer = async (query) => {
+      if (query !== "Old street") return Response.json({ suggestions: [] });
+      signalOldArrival();
+      return old;
+    };
     render(<AddressField />);
     const user = userEvent.setup();
     const input = screen.getByRole("combobox");
-    await user.type(input, "Old street");
-    await waitFor(() => expect(queries).toEqual(["Old street"]));
-    await user.clear(input);
-    await user.type(input, "New street");
-    await screen.findByText("Služba nenašla návrhy. Adresu můžete zadat ručně.");
-    await act(async () => {
-      resolveOld(Response.json({ suggestions: [suggestion] }));
-      await old;
-    });
+    try {
+      await user.type(input, "Old street");
+      await oldArrived;
+      expect(queries()).toEqual(["Old street"]);
+      await user.clear(input);
+      await user.type(input, "New street");
+      await screen.findByText("Služba nenašla návrhy. Adresu můžete zadat ručně.");
+    } finally {
+      await act(async () => {
+        resolveOld(Response.json({ suggestions: [suggestion] }));
+        await old;
+        await network.idle();
+      });
+    }
     expect(input).toHaveProperty("value", "New street");
     expect(screen.queryByRole("option")).toBeNull();
   });

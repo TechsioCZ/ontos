@@ -1,32 +1,83 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render as renderComponent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getCurrentAppRouterState } from "next/dist/client/components/app-router-instance";
+import { browserAt, serveHttp } from "../support/http";
+import { NextRouter, flightResponse } from "../support/router";
 import { LoginForm, RegistrationForm } from "@/components/auth-form";
 import { VerificationResendForm } from "@/components/verification-resend-form";
 import { renderToString } from "react-dom/server";
 
-const router = vi.hoisted(() => ({
-  push: vi.fn<(path: string) => void>(),
-  refresh: vi.fn<() => void>(),
-}));
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
-const fetchAccount = vi.fn<typeof fetch>();
-beforeEach(() => {
-  vi.clearAllMocks();
-  vi.stubGlobal("fetch", fetchAccount);
+const admissionReply = await flightResponse("signed in");
+
+function render(children: ReactNode) {
+  return renderComponent(<NextRouter>{children}</NextRouter>);
+}
+function isRefresh(request: Request) {
+  return decodeURIComponent(request.headers.get("next-router-state-tree") ?? "").includes(
+    "refetch",
+  );
+}
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let responses: (Response | Promise<Response>)[];
+let arrived: ReturnType<typeof Promise.withResolvers<void>>;
+let refreshArrived: ReturnType<typeof Promise.withResolvers<void>>;
+beforeEach(async () => {
+  responses = [];
+  arrived = Promise.withResolvers<void>();
+  refreshArrived = Promise.withResolvers<void>();
+  network = await serveHttp((request) => {
+    if (request.method === "GET" && new URL(request.url).pathname === "/dokonceni-registrace") {
+      if (isRefresh(request)) refreshArrived.resolve();
+      return admissionReply.clone();
+    }
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ontos/account")
+      return new Response("Unknown endpoint", { status: 404 });
+    const response = responses.shift();
+    if (!response) throw new Error("Unexpected account request");
+    arrived.resolve();
+    return response;
+  });
+  browserAt(`${network.origin}/prihlaseni`);
   localStorage.clear();
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
-  vi.unstubAllGlobals();
+  try {
+    await network.idle();
+  } finally {
+    await network.close();
+  }
 });
+function requestAt(index: number) {
+  const request = network.requests[index];
+  if (!request) throw new Error(`Missing account request ${index}`);
+  return request;
+}
 function fill(id: string, value: string) {
-  fireEvent.change(document.getElementById(id)!, { target: { value } });
+  fireEvent.change(input(id), { target: { value } });
+}
+function input(id: string) {
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLInputElement)) throw new Error(`Missing input ${id}`);
+  return element;
+}
+function submit(id: string) {
+  const form = input(id).form;
+  if (!form) throw new Error(`Missing form for ${id}`);
+  fireEvent.submit(form);
 }
 function login() {
   fill("login-email", "real@example.test");
   fill("login-password", "real-long-password");
-  fireEvent.submit(document.getElementById("login-password")!.closest("form")!);
+  submit("login-password");
 }
 // The UI-kit checkbox toggles on a real pointer or keyboard activation, not on a bare synthetic click.
 async function register(confirmation = "real-long-password") {
@@ -40,23 +91,28 @@ async function register(confirmation = "real-long-password") {
   }))
     fill(id, value);
   await userEvent.click(screen.getByRole("checkbox", { name: /Souhlasím/ }));
-  fireEvent.submit(document.getElementById("register-password")!.closest("form")!);
+  submit("register-password");
 }
 
 describe("real customer forms", () => {
   it.each([LoginForm, RegistrationForm, VerificationResendForm])(
     "keeps the SSR credential and verification forms POST-only with a fixed same-origin action",
     (Component) => {
-      const document = new DOMParser().parseFromString(renderToString(<Component />), "text/html");
+      const document = new DOMParser().parseFromString(
+        renderToString(
+          <NextRouter>
+            <Component />
+          </NextRouter>,
+        ),
+        "text/html",
+      );
       const form = document.querySelector("form");
       expect(form?.getAttribute("method")).toBe("post");
       expect(form?.getAttribute("action")).toBe("/api/ontos/account");
     },
   );
   it("does not navigate or store a profile when real authentication rejects the password", async () => {
-    fetchAccount.mockResolvedValue(
-      Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }),
-    );
+    responses.push(Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }));
     render(<LoginForm />);
     expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
     login();
@@ -64,32 +120,48 @@ describe("real customer forms", () => {
       "Nesprávný e-mail nebo heslo.",
     );
     expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
-    expect(router.push).not.toHaveBeenCalled();
-    expect(router.refresh).not.toHaveBeenCalled();
+    await network.idle();
+    expect(window.location.href).toBe(`${network.origin}/prihlaseni`);
+    expect(network.requests.filter((request) => request.method === "GET")).toHaveLength(0);
     expect(localStorage.length).toBe(0);
   });
   it("checks admission after a created session instead of assuming enrollment completed", async () => {
-    fetchAccount.mockResolvedValue(Response.json({ outcome: "SESSION_CREATED" }));
+    responses.push(Response.json({ outcome: "SESSION_CREATED" }));
     render(<LoginForm />);
     login();
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/dokonceni-registrace"));
-    expect(router.refresh).toHaveBeenCalledOnce();
+    await refreshArrived.promise;
+    await network.idle();
+    await waitFor(() =>
+      expect(getCurrentAppRouterState()?.canonicalUrl).toBe("/dokonceni-registrace"),
+    );
+    const destinationRequests = network.requests.filter(
+      (request) =>
+        request.method === "GET" && new URL(request.url).pathname === "/dokonceni-registrace",
+    );
+    expect(destinationRequests).toHaveLength(2);
+    expect(destinationRequests.filter(isRefresh)).toHaveLength(1);
+    expect(destinationRequests.filter((request) => !isRefresh(request))).toHaveLength(1);
+    for (const request of destinationRequests) expect(request.headers.get("rsc")).toBe("1");
     expect(localStorage.length).toBe(0);
   });
   it("rejects mismatched passwords without submitting credentials", async () => {
     render(<RegistrationForm />);
     await register("different-password");
     expect((await screen.findByRole("alert")).textContent).toContain("Hesla se neshodují.");
-    expect(fetchAccount).not.toHaveBeenCalled();
+    await network.idle();
+    expect(network.requests).toHaveLength(0);
   });
   it("sends phone and consent and truthfully acknowledges started enrollment, not a completed fake profile", async () => {
-    fetchAccount.mockResolvedValue(Response.json({ outcome: "ENROLLMENT_STARTED" }));
+    responses.push(Response.json({ outcome: "ENROLLMENT_STARTED" }));
     render(<RegistrationForm />);
     await register();
     expect(await screen.findByText(/Registrace byla přijata/)).toBeTruthy();
-    const [path, init] = fetchAccount.mock.calls[0]!;
-    expect(path).toBe("/api/ontos/account");
-    expect(JSON.parse(String(init!.body))).toMatchObject({
+    await network.idle();
+    expect(network.requests).toHaveLength(1);
+    const request = requestAt(0);
+    expect(new URL(request.url).pathname).toBe("/api/ontos/account");
+    expect(request.method).toBe("POST");
+    expect(await request.json()).toMatchObject({
       operation: "register",
       phone: "+420777123456",
       termsAccepted: true,
@@ -105,14 +177,13 @@ describe("real customer forms", () => {
 });
 
 it("offers email-only resend only after the owner rejects an unverified login", async () => {
-  fetchAccount
-    .mockResolvedValueOnce(
-      Response.json(
-        { code: "verification_required", message: "Nejprve potvrďte e-mail." },
-        { status: 403 },
-      ),
-    )
-    .mockResolvedValueOnce(Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }));
+  responses.push(
+    Response.json(
+      { code: "verification_required", message: "Nejprve potvrďte e-mail." },
+      { status: 403 },
+    ),
+    Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }),
+  );
   render(<LoginForm />);
   expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
   login();
@@ -120,62 +191,65 @@ it("offers email-only resend only after the owner rejects an unverified login", 
   fill("verification-resend-email", "waiting@example.test");
   fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
   expect(await screen.findByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeTruthy();
-  const [path, init] = fetchAccount.mock.calls[1]!;
-  expect(path).toBe("/api/ontos/account");
-  expect(JSON.parse(String(init!.body))).toEqual({
+  await network.idle();
+  expect(network.requests).toHaveLength(2);
+  const request = requestAt(1);
+  expect(new URL(request.url).pathname).toBe("/api/ontos/account");
+  expect(request.method).toBe("POST");
+  expect(await request.json()).toEqual({
     operation: "resend-verification",
     email: "waiting@example.test",
   });
-  expect(router.push).not.toHaveBeenCalled();
-  expect(router.refresh).not.toHaveBeenCalled();
+  expect(window.location.href).toBe(`${network.origin}/prihlaseni`);
+  expect(network.requests.filter((request) => request.method === "GET")).toHaveLength(0);
   expect(localStorage.length).toBe(0);
 });
 
 it("disables resend while awaiting the owner and shows a real rate-limit refusal", async () => {
-  let complete: (value: Response) => void = () => {
-    throw new Error("Request not pending");
-  };
-  fetchAccount
-    .mockResolvedValueOnce(
-      Response.json(
-        { code: "verification_required", message: "Nejprve potvrďte e-mail." },
-        { status: 403 },
-      ),
-    )
-    .mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
-          complete = resolve;
-        }),
-    );
-  render(<LoginForm />);
-  login();
-  await screen.findByRole("button", { name: "Poslat ověřovací e-mail znovu" });
-  fill("verification-resend-email", "waiting@example.test");
-  fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
-  expect(screen.getByRole("button", { name: "Odesílám…" }).hasAttribute("disabled")).toBe(true);
-  expect(fetchAccount).toHaveBeenCalledTimes(2);
-  complete(
-    Response.json({ message: "Příliš mnoho pokusů. Zkuste to prosím později." }, { status: 429 }),
+  const complete = Promise.withResolvers<Response>();
+  const refusal = Response.json(
+    { message: "Příliš mnoho pokusů. Zkuste to prosím později." },
+    { status: 429 },
   );
-  expect(await screen.findByText("Příliš mnoho pokusů. Zkuste to prosím později.")).toBeTruthy();
-  expect(screen.queryByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }).hasAttribute("disabled"),
-  ).toBe(false);
+  responses.push(
+    Response.json(
+      { code: "verification_required", message: "Nejprve potvrďte e-mail." },
+      { status: 403 },
+    ),
+    complete.promise,
+  );
+  try {
+    render(<LoginForm />);
+    login();
+    await screen.findByRole("button", { name: "Poslat ověřovací e-mail znovu" });
+    fill("verification-resend-email", "waiting@example.test");
+    arrived = Promise.withResolvers<void>();
+    fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
+    expect(screen.getByRole("button", { name: "Odesílám…" }).hasAttribute("disabled")).toBe(true);
+    await arrived.promise;
+    expect(network.requests).toHaveLength(2);
+    complete.resolve(refusal);
+    expect(await screen.findByText("Příliš mnoho pokusů. Zkuste to prosím později.")).toBeTruthy();
+    await network.idle();
+    expect(screen.queryByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Poslat ověřovací e-mail znovu" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+  } finally {
+    complete.resolve(refusal);
+  }
 });
 
 it("clears the verification offer when another login is rejected for a different reason", async () => {
-  fetchAccount
-    .mockResolvedValueOnce(
-      Response.json(
-        { code: "verification_required", message: "Nejprve potvrďte e-mail." },
-        { status: 403 },
-      ),
-    )
-    .mockResolvedValueOnce(
-      Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }),
-    );
+  responses.push(
+    Response.json(
+      { code: "verification_required", message: "Nejprve potvrďte e-mail." },
+      { status: 403 },
+    ),
+    Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }),
+  );
   render(<LoginForm />);
   login();
   await screen.findByRole("button", { name: "Poslat ověřovací e-mail znovu" });
@@ -185,9 +259,7 @@ it("clears the verification offer when another login is rejected for a different
 });
 
 it("does not infer verification state from a translated error message", async () => {
-  fetchAccount.mockResolvedValue(
-    Response.json({ message: "Nejprve potvrďte e-mail." }, { status: 403 }),
-  );
+  responses.push(Response.json({ message: "Nejprve potvrďte e-mail." }, { status: 403 }));
   render(<LoginForm />);
   login();
   await screen.findByRole("alert");

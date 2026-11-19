@@ -1,6 +1,6 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CheckoutProvider, useCheckout } from "@/features/checkout/checkout-provider";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { type CheckoutDraft, createCheckoutDraft } from "@/features/checkout/checkout-state";
@@ -11,15 +11,26 @@ import { CheckoutLayout } from "@/features/checkout/checkout-layout";
 import { ReviewStep } from "@/features/checkout/review-step";
 import { CartQuoteProvider } from "@/ontos/cart-revalidation";
 
-const router = vi.hoisted(() => ({
-  push: vi.fn<(href: string) => void>(),
-  replace: vi.fn<(href: string) => void>(),
-}));
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/kosik/shrnuti",
-  useRouter: () => router,
-}));
-vi.mock("next/font/local", () => ({ default: () => ({ variable: "checkout-font" }) }));
+import { createServer } from "node:http";
+import { renderStorefront as render } from "../support/storefront";
+import { browserAt, serveHttp } from "../support/http";
+
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let disconnect: ReturnType<typeof createServer>;
+let disconnectUrl: string;
+
+// The server accepts the request, then loses the connection before sending a response.
+// Checkout sees a native fetch rejection, not a substituted fetch implementation.
+async function startNetwork(answer: Parameters<typeof serveHttp>[0]) {
+  network = await serveHttp(answer);
+  browserAt(`${network.origin}/kosik/shrnuti`);
+  disconnect = createServer((request) => request.socket.destroy());
+  await new Promise<void>((resolve) => disconnect.listen(0, "127.0.0.1", resolve));
+  const address = disconnect.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Missing disconnect address");
+  disconnectUrl = `http://127.0.0.1:${address.port}/lost-response`;
+}
 
 function Probe({
   lineChange,
@@ -67,9 +78,18 @@ function Probe({
     </>
   );
 }
-afterEach(() => {
+afterEach(async () => {
   cleanup();
-  vi.unstubAllGlobals();
+  if (network) {
+    await network.idle();
+    await network.close();
+  }
+  if (disconnect) {
+    disconnect.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      disconnect.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });
 beforeEach(() => {
   localStorage.clear();
@@ -128,74 +148,91 @@ describe("OntOS submission recovery", () => {
   ])(
     "recovers through the real layout after $failure refresh, remount=$remount",
     async ({ failure, remount }) => {
+      const { NextRouter } = await import("../support/router");
       const user = userEvent.setup();
+      const orderId = `persisted-order-${failure}-${remount ? "remount" : "focus"}`;
       const requests: string[] = [];
       let rejectedRefreshes = 0;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string, options?: { body: string }) => {
-          if (url.endsWith("/account"))
-            return Response.json({ account: { email: "verified@example.test" } });
-          if (url.endsWith("/checkout"))
-            return Response.json({
-              shippingMethods:
-                requests.length && remount ? [] : [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-            });
-          if (url.endsWith("/cart")) {
-            if (requests.length) rejectedRefreshes++;
-            if (requests.length && failure === "unavailable")
-              return new Response(null, { status: 503 });
-            return Response.json({
-              cart: JSON.parse(options!.body).cart,
-              canCheckout: requests.length === 0,
-              priceChanged: requests.length > 0 && failure === "price",
-              issues: requests.length ? ["Stock or price changed after placement"] : [],
-            });
-          }
-          requests.push(options!.body);
-          if (requests.length === 1) throw new TypeError("Lost committed response");
-          return Response.json({
-            outcome: "REPLAYED",
-            orderId: "persisted-order",
-            orderNumber: "OBJ-1",
-            totalMinor: 121,
-            totalVatMinor: 21,
+      await startNetwork(async (request) => {
+        const url = new URL(request.url).pathname;
+        if (request.method === "GET" && url === "/cs/potvrzeni-objednavky")
+          return new Response("<!doctype html><title>Objednávka potvrzena</title>", {
+            headers: { "content-type": "text/html" },
           });
-        }),
-      );
+        if (url.endsWith("/account"))
+          return Response.json({ account: { email: "verified@example.test" } });
+        if (url.endsWith("/checkout"))
+          return Response.json({
+            shippingMethods:
+              requests.length && remount ? [] : [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+          });
+        if (url.endsWith("/cart")) {
+          if (requests.length) rejectedRefreshes++;
+          if (requests.length && failure === "unavailable")
+            return new Response(null, { status: 503 });
+          return Response.json({
+            cart: (await request.json()).cart,
+            canCheckout: requests.length === 0,
+            priceChanged: requests.length > 0 && failure === "price",
+            issues: requests.length ? ["Stock or price changed after placement"] : [],
+          });
+        }
+        if (url !== "/api/ontos/orders") return new Response("Unknown endpoint", { status: 404 });
+        requests.push(await request.text());
+        if (requests.length === 1) return Response.redirect(disconnectUrl, 307);
+        return Response.json({
+          outcome: "REPLAYED",
+          orderId,
+          orderNumber: "OBJ-1",
+          totalMinor: 121,
+          totalVatMinor: 21,
+        });
+      });
       const checkout = () =>
-        render(
-          <CartProvider>
-            <CheckoutProvider>
-              <CartQuoteProvider>
-                <CheckoutLayout recommendations={[]}>
-                  <ReviewStep />
-                </CheckoutLayout>
-              </CartQuoteProvider>
-            </CheckoutProvider>
-          </CartProvider>,
+        act(async () =>
+          render(
+            <NextRouter>
+              <CartProvider>
+                <CheckoutProvider>
+                  <CartQuoteProvider>
+                    <CheckoutLayout recommendations={[]}>
+                      <ReviewStep />
+                    </CheckoutLayout>
+                  </CartQuoteProvider>
+                </CheckoutProvider>
+              </CartProvider>
+            </NextRouter>,
+          ),
         );
-      let view = checkout();
+      let view = await checkout();
       const submit = await screen.findByRole("button", { name: "Odeslat objednávku" });
       await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
       await user.click(submit);
       await screen.findByText(checkoutSaveError);
       if (remount) {
         view.unmount();
-        view = checkout();
+        view = await checkout();
       } else {
-        act(() => window.dispatchEvent(new Event("focus")));
+        await act(async () => window.dispatchEvent(new Event("focus")));
       }
       await waitFor(() => expect(rejectedRefreshes).toBeGreaterThan(0));
       const retry = await screen.findByRole("button", { name: "Ověřit předchozí objednávku" });
       expect(retry.hasAttribute("disabled")).toBe(false);
       await user.click(retry);
-      await waitFor(() => expect(requests).toHaveLength(2));
+      await waitFor(() =>
+        expect(sessionStorage.getItem("akros-ontos-pending:default")).toBe("null"),
+      );
+      await network.idle();
+      expect(requests).toHaveLength(2);
       expect(requests[1]).toBe(requests[0]);
       await waitFor(() =>
         expect(sessionStorage.getItem("akros-ontos-pending:default")).toBe("null"),
       );
-      expect(router.push).toHaveBeenCalledWith("/potvrzeni-objednavky?order=persisted-order");
+      await waitFor(() =>
+        expect(window.location.pathname + window.location.search).toBe(
+          `/cs/potvrzeni-objednavky?order=${orderId}`,
+        ),
+      );
       view.unmount();
     },
   );
@@ -248,33 +285,32 @@ describe("OntOS submission recovery", () => {
       const originalDraft = JSON.parse(sessionStorage.getItem("sf-checkout-v2") ?? "null").draft;
       const requests: string[] = [];
       let quoteChecks = 0;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string, options: { body: string }) => {
-          if (url.endsWith("/checkout"))
-            return Response.json({
-              shippingMethods: [
-                { id: "PPL", title: "PPL", priceMinor: 12900 },
-                { id: "DPD", title: "DPD", priceMinor: 12900 },
-              ],
-            });
-          if (url.endsWith("/account"))
-            return Response.json({ account: { email: "verified@example.test" } });
-          if (url.endsWith("/cart")) {
-            quoteChecks++;
-            return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
-          }
-          requests.push(options.body);
-          if (requests.length === 1) throw new TypeError("Lost response");
+      await startNetwork(async (request) => {
+        const url = new URL(request.url).pathname;
+        if (url.endsWith("/checkout"))
           return Response.json({
-            outcome: "REPLAYED",
-            orderId: "order-1",
-            orderNumber: "OBJ-1",
-            totalMinor: 121,
-            totalVatMinor: 21,
+            shippingMethods: [
+              { id: "PPL", title: "PPL", priceMinor: 12900 },
+              { id: "DPD", title: "DPD", priceMinor: 12900 },
+            ],
           });
-        }),
-      );
+        if (url.endsWith("/account"))
+          return Response.json({ account: { email: "verified@example.test" } });
+        if (url.endsWith("/cart")) {
+          quoteChecks++;
+          return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
+        }
+        if (url !== "/api/ontos/orders") return new Response("Unknown endpoint", { status: 404 });
+        requests.push(await request.text());
+        if (requests.length === 1) return Response.redirect(disconnectUrl, 307);
+        return Response.json({
+          outcome: "REPLAYED",
+          orderId: "order-1",
+          orderNumber: "OBJ-1",
+          totalMinor: 121,
+          totalVatMinor: 21,
+        });
+      });
       const view = render(
         <CartProvider>
           <CheckoutProvider>
@@ -295,6 +331,7 @@ describe("OntOS submission recovery", () => {
       );
       expect(screen.getByLabelText("Submitted").textContent).toBe("false");
       expect(screen.getByLabelText("Cart").textContent).toBe("1");
+      await network.idle();
       expect(requests).toHaveLength(1);
       expect(quoteChecks).toBe(1);
       expect(sessionStorage.getItem("akros-ontos-pending:default")).toBe(pending);
@@ -311,6 +348,7 @@ describe("OntOS submission recovery", () => {
       await user.click(screen.getByText("Edit order"));
       await user.click(screen.getByText("Submit"));
       await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
+      await network.idle();
       expect(requests).toEqual([requests[0], requests[0]]);
       expect(quoteChecks).toBe(1);
     },
@@ -333,46 +371,45 @@ describe("OntOS submission recovery", () => {
     const user = userEvent.setup();
     const requests: string[] = [];
     let quoteChecks = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, options: { body: string }) => {
-        if (url.endsWith("/checkout"))
-          return Response.json({
-            shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-          });
-        if (url.endsWith("/account"))
-          return Response.json({ account: { email: "verified@example.test" } });
-        if (url.endsWith("/cart")) {
-          quoteChecks++;
-          const blocked = rejection === "quote" && quoteChecks === 1;
-          return Response.json({
-            canCheckout: !blocked,
-            priceChanged: false,
-            issues: blocked ? ["Unavailable"] : [],
-          });
-        }
-        requests.push(options.body);
-        if (rejection !== "quote" && requests.length === 1)
-          return Response.json(
-            {
-              issues: [
-                {
-                  code: rejection,
-                  message: "Rejected",
-                },
-              ],
-            },
-            { status: 409 },
-          );
+    await startNetwork(async (request) => {
+      const url = new URL(request.url).pathname;
+      if (url.endsWith("/checkout"))
         return Response.json({
-          outcome: "PLACED",
-          orderId: "order-2",
-          orderNumber: "OBJ-2",
-          totalMinor: 242,
-          totalVatMinor: 42,
+          shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
         });
-      }),
-    );
+      if (url.endsWith("/account"))
+        return Response.json({ account: { email: "verified@example.test" } });
+      if (url.endsWith("/cart")) {
+        quoteChecks++;
+        const blocked = rejection === "quote" && quoteChecks === 1;
+        return Response.json({
+          canCheckout: !blocked,
+          priceChanged: false,
+          issues: blocked ? ["Unavailable"] : [],
+        });
+      }
+      if (url !== "/api/ontos/orders") return new Response("Unknown endpoint", { status: 404 });
+      requests.push(await request.text());
+      if (rejection !== "quote" && requests.length === 1)
+        return Response.json(
+          {
+            issues: [
+              {
+                code: rejection,
+                message: "Rejected",
+              },
+            ],
+          },
+          { status: 409 },
+        );
+      return Response.json({
+        outcome: "PLACED",
+        orderId: "order-2",
+        orderNumber: "OBJ-2",
+        totalMinor: 242,
+        totalVatMinor: 42,
+      });
+    });
     render(
       <CartProvider>
         <CheckoutProvider>
@@ -391,34 +428,31 @@ describe("OntOS submission recovery", () => {
     const placed = JSON.parse(requests[requests.length - 1]);
     expect(placed.clientRequestId).not.toBe(pending.clientRequestId);
     expect(placed.cart.lines[0].quantity).toBe(2);
+    await network.idle();
     expect(quoteChecks).toBe(2);
     expect(requests).toHaveLength(rejection === "quote" ? 1 : 2);
   });
 
   it("places a guest order without an account and keeps the receipt for the guest confirmation", async () => {
     const user = userEvent.setup();
-    const fetchOrder = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
-      Response.json({
+    await startNetwork(async (request) => {
+      const url = new URL(request.url).pathname;
+      if (url.endsWith("/checkout"))
+        return Response.json({
+          shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+        });
+      if (url.endsWith("/account")) return Response.json({ account: null });
+      if (url.endsWith("/cart"))
+        return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
+      if (url !== "/api/ontos/orders") return new Response("Unknown endpoint", { status: 404 });
+      return Response.json({
         outcome: "PLACED",
         orderId: "guest-order-1",
         orderNumber: "OBJ-2026-0100",
         totalMinor: 121,
         totalVatMinor: 21,
-      }),
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        if (url.endsWith("/checkout"))
-          return Response.json({
-            shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-          });
-        if (url.endsWith("/account")) return Response.json({ account: null });
-        if (url.endsWith("/cart"))
-          return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
-        return fetchOrder(url, init);
-      }),
-    );
+      });
+    });
     render(
       <CartProvider>
         <CheckoutProvider>
@@ -430,10 +464,14 @@ describe("OntOS submission recovery", () => {
     await user.click(screen.getByText("Submit"));
     await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
     expect(screen.getByLabelText("Error").textContent).toBe("");
-    expect(fetchOrder).toHaveBeenCalledOnce();
-    const [url, init] = fetchOrder.mock.calls[0];
-    expect(url).toBe("/api/ontos/orders");
-    const body = JSON.parse(String(init?.body));
+    await network.idle();
+    const orderRequests = network.requests.filter(
+      (request) => new URL(request.url).pathname === "/api/ontos/orders",
+    );
+    expect(orderRequests).toHaveLength(1);
+    const request = orderRequests[0];
+    expect(new URL(request.url).pathname).toBe("/api/ontos/orders");
+    const body = await request.json();
     expect(body.draft.email).toBe("verified@example.test");
     expect(JSON.parse(sessionStorage.getItem("sf-guest-order") ?? "null")).toEqual({
       orderId: "guest-order-1",
@@ -450,21 +488,21 @@ describe("OntOS submission recovery", () => {
     collection.carts[1].cart = { ...cart, lines: [{ ...cart.lines[0], quantity: 3 }] };
     localStorage.setItem(cartCollectionStorageKey, JSON.stringify({ version: 1, ...collection }));
     const pendingOrder = Promise.withResolvers<Response>();
-    const fetchOrder = vi.fn<() => Promise<Response>>(() => pendingOrder.promise);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/checkout"))
-          return Response.json({
-            shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-          });
-        if (url.endsWith("/account"))
-          return Response.json({ account: { email: "verified@example.test", name: "Customer" } });
-        if (url.endsWith("/cart"))
-          return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
-        return fetchOrder();
-      }),
-    );
+    const orderArrived = Promise.withResolvers<void>();
+    await startNetwork(async (request) => {
+      const url = new URL(request.url).pathname;
+      if (url.endsWith("/checkout"))
+        return Response.json({
+          shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+        });
+      if (url.endsWith("/account"))
+        return Response.json({ account: { email: "verified@example.test", name: "Customer" } });
+      if (url.endsWith("/cart"))
+        return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
+      if (url !== "/api/ontos/orders") return new Response("Unknown endpoint", { status: 404 });
+      orderArrived.resolve();
+      return pendingOrder.promise;
+    });
     render(
       <CartProvider>
         <CheckoutProvider>
@@ -474,7 +512,10 @@ describe("OntOS submission recovery", () => {
     );
     await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
     await user.click(screen.getByText("Submit"));
-    await waitFor(() => expect(fetchOrder).toHaveBeenCalledOnce());
+    await orderArrived.promise;
+    expect(
+      network.requests.filter((request) => new URL(request.url).pathname === "/api/ontos/orders"),
+    ).toHaveLength(1);
     await user.click(screen.getByText("Commission cart"));
     expect(screen.getByLabelText("Active cart").textContent).toBe("commission");
     await act(async () => {
@@ -515,45 +556,44 @@ describe("OntOS submission recovery", () => {
       const requests: string[] = [];
       let quoteChecks = 0;
       let attempted = false;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string, options: { body: string }) => {
-          if (url.endsWith("/checkout"))
-            return Response.json({
-              shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-            });
-          if (url.endsWith("/account"))
-            return Response.json({ account: { email: "verified@example.test", name: "Customer" } });
-          if (url.endsWith("/cart")) {
-            quoteChecks++;
-            return Response.json({
-              canCheckout: !attempted,
-              priceChanged: false,
-              issues: attempted ? ["Stock already debited"] : [],
-            });
-          }
-          requests.push(options.body);
-          if (!attempted) {
-            attempted = true;
-            if (failure === "unknown-rejection")
-              return Response.json(
-                { issues: [{ code: "OUT_OF_STOCK" }, { code: "UNKNOWN_REJECTION" }] },
-                { status: 409 },
-              );
-            if (failure.startsWith("network")) throw new TypeError("Failed to fetch");
-            if (failure === "http") return Response.json({ error: "unavailable" }, { status: 503 });
-            if (failure === "json-shape") return Response.json({});
-            return new Response("broken JSON");
-          }
+      await startNetwork(async (request) => {
+        const url = new URL(request.url).pathname;
+        if (url.endsWith("/checkout"))
           return Response.json({
-            outcome: "REPLAYED",
-            orderId: "order-persisted-1",
-            orderNumber: "OBJ-2026-0099",
-            totalMinor: 121,
-            totalVatMinor: 21,
+            shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
           });
-        }),
-      );
+        if (url.endsWith("/account"))
+          return Response.json({ account: { email: "verified@example.test", name: "Customer" } });
+        if (url.endsWith("/cart")) {
+          quoteChecks++;
+          return Response.json({
+            canCheckout: !attempted,
+            priceChanged: false,
+            issues: attempted ? ["Stock already debited"] : [],
+          });
+        }
+        if (url !== "/api/ontos/orders") return new Response("Unknown endpoint", { status: 404 });
+        requests.push(await request.text());
+        if (!attempted) {
+          attempted = true;
+          if (failure === "unknown-rejection")
+            return Response.json(
+              { issues: [{ code: "OUT_OF_STOCK" }, { code: "UNKNOWN_REJECTION" }] },
+              { status: 409 },
+            );
+          if (failure.startsWith("network")) return Response.redirect(disconnectUrl, 307);
+          if (failure === "http") return Response.json({ error: "unavailable" }, { status: 503 });
+          if (failure === "json-shape") return Response.json({});
+          return new Response("broken JSON");
+        }
+        return Response.json({
+          outcome: "REPLAYED",
+          orderId: "order-persisted-1",
+          orderNumber: "OBJ-2026-0099",
+          totalMinor: 121,
+          totalVatMinor: 21,
+        });
+      });
       const view = render(
         <CartProvider>
           <CheckoutProvider>
@@ -589,6 +629,7 @@ describe("OntOS submission recovery", () => {
       await user.click(screen.getByText("Submit"));
       await waitFor(() => expect(screen.getByLabelText("Cart").textContent).toBe("0"));
       expect(screen.getByLabelText("Submitted").textContent).toBe("true");
+      await network.idle();
       expect(quoteChecks).toBe(1);
       expect(requests).toHaveLength(2);
       expect(JSON.parse(requests[1]).clientRequestId).toBe(JSON.parse(requests[0]).clientRequestId);

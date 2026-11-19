@@ -15,6 +15,10 @@ it("does not index an unavailable catalog and lets the customer retry the real r
     </PathnameContext.Provider>,
     { container: document },
   );
+  expect(container.querySelector("html")?.getAttribute("lang")).toBe("cs");
+  expect(container.querySelector("title")?.textContent).toBe(
+    "Katalog je dočasně nedostupný | DEMO",
+  );
   expect(container.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe(
     "noindex, nofollow, noarchive",
   );

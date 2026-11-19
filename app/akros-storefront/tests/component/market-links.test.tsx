@@ -54,7 +54,10 @@ function CartPrice() {
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
 
 describe("market links", () => {
   it("prefixes internal store links with the market locale", () => {
@@ -125,6 +128,12 @@ describe("market carts", () => {
       JSON.parse(storage.getItem("akros-demo-carts-v1:AKROS-CZ") ?? "{}").carts[0].cart.lines[0]
         .priceMinor,
     ).toBe(12_100);
+    expect(storage.getItem("akros-demo-carts-v1:AKROS-CZ")).toBe(storedCart(12_100));
+    expect(
+      JSON.parse(storage.getItem("akros-demo-carts-v1:AKROS-SK") ?? "{}").carts[0].cart.lines[0]
+        .priceMinor,
+    ).toBe(480);
     expect(storage.getItem("akros-demo-cart-v3")).toBeNull();
+    expect(storage.getItem("akros-demo-carts-v1")).toBeNull();
   });
 });

@@ -1,7 +1,9 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FormEvent } from "react";
+import { renderStorefront as render } from "../support/storefront";
+import { browserAt, serveHttp } from "../support/http";
 import {
   PasswordChange,
   PasswordChangeRefused,
@@ -13,9 +15,36 @@ const current = "current-password-1";
 const fresh = "example-password-12";
 
 describe("password change frontend", () => {
-  afterEach(() => {
+  let network: Awaited<ReturnType<typeof serveHttp>>;
+
+  beforeEach(async () => {
+    network = await serveHttp(async (request) => {
+      if (
+        new URL(request.url).pathname !== "/api/ontos/account/password" ||
+        request.method !== "POST"
+      )
+        return new Response("Unknown endpoint", { status: 404 });
+      const payload: unknown = await request.json();
+      if (
+        typeof payload === "object" &&
+        payload !== null &&
+        "currentPassword" in payload &&
+        payload.currentPassword === "wrong"
+      )
+        return Response.json({ message: "Současné heslo nesouhlasí." }, { status: 400 });
+      return Response.json({ outcome: "PASSWORD_CHANGED" });
+    });
+    browserAt(network.origin);
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  afterEach(async () => {
     cleanup();
-    vi.unstubAllGlobals();
+    localStorage.clear();
+    sessionStorage.clear();
+    await network.idle();
+    await network.close();
   });
   it("validates the current password, the new password and its confirmation without submitting the parent", async () => {
     const onSubmit = vi.fn<(e: FormEvent) => void>((e) => e.preventDefault());
@@ -33,6 +62,7 @@ describe("password change frontend", () => {
     await user.type(screen.getByLabelText("Nové heslo"), fresh);
     await user.type(screen.getByLabelText("Potvrdit heslo"), "different{Enter}");
     expect(screen.getByText("Hesla se neshodují.")).toBeTruthy();
+    await network.idle();
     expect(onSubmit).not.toHaveBeenCalled();
     expect(changePassword).not.toHaveBeenCalled();
   });
@@ -43,8 +73,8 @@ describe("password change frontend", () => {
       .mockResolvedValue(undefined);
     render(<PasswordChange changePassword={changePassword} />);
     const user = userEvent.setup();
-    const currentInput = screen.getByLabelText("Současné heslo") as HTMLInputElement;
-    const input = screen.getByLabelText("Nové heslo") as HTMLInputElement;
+    const currentInput = screen.getByLabelText<HTMLInputElement>("Současné heslo");
+    const input = screen.getByLabelText<HTMLInputElement>("Nové heslo");
     await user.type(currentInput, current);
     await user.type(input, fresh);
     await user.type(screen.getByLabelText("Potvrdit heslo"), fresh);
@@ -56,6 +86,7 @@ describe("password change frontend", () => {
     await waitFor(() => expect(input.value).toBe(""));
     expect(currentInput.value).toBe("");
     expect(screen.getByText("Heslo bylo změněno.")).toBeTruthy();
+    await network.idle();
     expect(changePassword).toHaveBeenNthCalledWith(1, {
       currentPassword: current,
       newPassword: fresh,
@@ -66,7 +97,8 @@ describe("password change frontend", () => {
     });
   });
   it("shows the owner's own explanation for a refused current password and never stores credentials", async () => {
-    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    localStorage.setItem("unrelated-setting", "keep-local");
+    sessionStorage.setItem("unrelated-setting", "keep-session");
     const changePassword = vi
       .fn<ChangePassword>()
       .mockRejectedValue(new PasswordChangeRefused("Současné heslo nesouhlasí."));
@@ -77,29 +109,31 @@ describe("password change frontend", () => {
     await user.type(screen.getByLabelText("Potvrdit heslo"), fresh);
     await user.click(screen.getByRole("button", { name: "Změnit heslo" }));
     expect(await screen.findByText("Současné heslo nesouhlasí.")).toBeTruthy();
-    expect(setItem).not.toHaveBeenCalled();
-    setItem.mockRestore();
+    await network.idle();
+    expect(localStorage.length).toBe(1);
+    expect(localStorage.getItem("unrelated-setting")).toBe("keep-local");
+    expect(sessionStorage.length).toBe(1);
+    expect(sessionStorage.getItem("unrelated-setting")).toBe("keep-session");
   });
   it("posts only the two passwords and turns a refusal into a typed error", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ outcome: "PASSWORD_CHANGED" }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ message: "Současné heslo nesouhlasí." }), { status: 400 }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
     await requestPasswordChange({ currentPassword: current, newPassword: fresh });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/ontos/account/password",
-      expect.objectContaining({
-        body: JSON.stringify({ currentPassword: current, newPassword: fresh }),
-        method: "POST",
-      }),
+    await network.idle();
+    expect(network.requests).toHaveLength(1);
+    const [request] = network.requests;
+    expect(new URL(request.url).pathname).toBe("/api/ontos/account/password");
+    expect(request.method).toBe("POST");
+    expect(request.headers.get("content-type")).toBe("application/json");
+    expect(await request.text()).toBe(
+      JSON.stringify({ currentPassword: current, newPassword: fresh }),
     );
     await expect(
       requestPasswordChange({ currentPassword: "wrong", newPassword: fresh }),
     ).rejects.toBeInstanceOf(PasswordChangeRefused);
+    await network.idle();
+    expect(network.requests).toHaveLength(2);
+    expect(await network.requests[1].json()).toEqual({
+      currentPassword: "wrong",
+      newPassword: fresh,
+    });
   });
 });

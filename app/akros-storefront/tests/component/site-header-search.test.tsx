@@ -1,6 +1,14 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+// Run Next's own browser initialization before hydrating its router.
+import "next/dist/client/app-bootstrap";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import type { ReactNode } from "react";
+import { NextRouter } from "../support/router";
+import { restore } from "next/dist/client/components/navigator";
+import { renderStorefront } from "../support/storefront";
+import { browserAt, serveHttp } from "../support/http";
 
 import { SiteHeader } from "@/components/site-header";
 import { akros } from "@/brand/akros";
@@ -13,11 +21,42 @@ import type {
   RemoteSearchSuggestion,
 } from "@/ontos/search-suggestions";
 
-const { push, route } = vi.hoisted(() => ({
-  push: vi.fn<(href: string) => void>(),
-  route: { pathname: "/" },
-}));
-const originalScrollIntoView = Element.prototype.scrollIntoView;
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let response: RemoteSearchResponse;
+let hydrated = false;
+
+function render(ui: ReactNode) {
+  const result = renderStorefront(<NextRouter>{ui}</NextRouter>);
+  hydrated = true;
+  return result;
+}
+
+async function expectNavigation(href: string | null, exactlyOnce = true) {
+  if (href === null) throw new Error("Navigation target is missing");
+  const expected = new URL(href, network.origin);
+  // Native Next may canonicalize a query space as + rather than %20. Keep the exact
+  // path, decoded ordered query pairs and fragment, not the incidental URL spelling.
+  await waitFor(() => {
+    const actual = new URL(window.location.href);
+    expect([actual.pathname, [...actual.searchParams], actual.hash]).toEqual([
+      expected.pathname,
+      [...expected.searchParams],
+      expected.hash,
+    ]);
+  });
+  await network.idle();
+  const navigations = network.requests.filter((request) => request.method === "GET");
+  if (exactlyOnce) expect(navigations).toHaveLength(1);
+  expect(
+    navigations.map((request) => {
+      const url = new URL(request.url);
+      url.searchParams.delete("_rsc");
+      // HTTP omits fragments; the browser URL assertion above keeps that coverage.
+      return [url.pathname, [...url.searchParams]];
+    }),
+  ).toContainEqual([expected.pathname, [...expected.searchParams]]);
+}
+
 const product: RemoteSearchSuggestion = {
   productId: "p1",
   slug: "retez-din-766",
@@ -41,42 +80,31 @@ const vruty: RemoteCategorySuggestion = {
   trail: "Nerezový spojovací materiál",
 };
 function respondWith(body: RemoteSearchResponse) {
-  const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
-    Response.json(body),
-  );
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
+  response = body;
 }
 
-vi.mock("next/navigation", () => ({
-  usePathname: () => route.pathname,
-  useRouter: () => ({ push }),
-}));
-
 describe("SiteHeader search", () => {
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
-    vi.unstubAllGlobals();
-    Element.prototype.scrollIntoView = originalScrollIntoView;
+    await network.close();
   });
 
-  beforeEach(() => {
-    route.pathname = "/";
-    push.mockReset();
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    Element.prototype.scrollIntoView = vi.fn<Element["scrollIntoView"]>();
+  beforeEach(async () => {
     respondWith({ total: 0, items: [], categories: [] });
+    // An HTML destination exercises Next's native document-navigation path.
+    network = await serveHttp((request) =>
+      new URL(request.url).pathname === "/api/ontos/search"
+        ? Response.json(response)
+        : new Response("<!doctype html><title>Storefront destination</title>", {
+            headers: { "content-type": "text/html" },
+          }),
+    );
+    browserAt(`${network.origin}/cs`);
+    if (hydrated) act(() => restore(new URL(`${network.origin}/cs`), null));
   });
 
   it("shows BFF suggestions after two characters and closes them with Escape", async () => {
-    const fetchMock = respondWith({
+    respondWith({
       total: 9,
       items: [product],
       categories: [retezy],
@@ -97,16 +125,21 @@ describe("SiteHeader search", () => {
         within(screen.getByRole("group", { name: "Kategorie" }))
           .getByRole("option", { name: /Řetězy/ })
           .getAttribute("href"),
-      ).toBe("/kategorie/retezy"),
+      ).toBe("/cs/kategorie/retezy"),
     );
     expect(
       within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
     ).toHaveLength(1);
     const allResults = screen.getByRole("link", { name: /Zobrazit všechny produkty/ });
-    expect(allResults.getAttribute("href")).toBe("/vyhledavani?q=retez");
-    expect(
-      fetchMock.mock.calls.every(([, init]) => JSON.parse(String(init.body)).q.length >= 2),
-    ).toBe(true);
+    expect(allResults.getAttribute("href")).toBe("/cs/vyhledavani?q=retez");
+    await network.idle();
+    const queries = await Promise.all(
+      network.requests
+        .filter((request) => new URL(request.url).pathname === "/api/ontos/search")
+        .map(async (request) => (await request.json()).q),
+    );
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries.every((query) => query.length >= 2)).toBe(true);
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
@@ -125,8 +158,7 @@ describe("SiteHeader search", () => {
     await screen.findByRole("option", { name: /Řetěz DIN 766/ });
 
     await user.keyboard("{ArrowDown}{Enter}");
-    expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith("/produkt/retez-din-766");
+    await expectNavigation("/cs/produkt/retez-din-766");
   });
 
   it("lists BFF categories before products and navigates to a category with Enter", async () => {
@@ -142,11 +174,10 @@ describe("SiteHeader search", () => {
       within(screen.getByRole("group", { name: "Kategorie" })).getAllByRole("option"),
     );
     expect(categories).toHaveLength(2);
-    expect(categories[0].getAttribute("href")).toBe("/kategorie/vruty");
+    expect(categories[0].getAttribute("href")).toBe("/cs/kategorie/vruty");
     expect(categories[0].textContent).toContain("Nerezový spojovací materiál");
     await user.keyboard("{ArrowDown}{Enter}");
-    expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith("/kategorie/vruty");
+    await expectNavigation("/cs/kategorie/vruty");
   });
 
   it("submits an unmatched query with Enter and displays the empty state", async () => {
@@ -163,8 +194,7 @@ describe("SiteHeader search", () => {
     );
 
     await user.keyboard("{Enter}");
-    expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith("/vyhledavani?q=nenalezenyproduktxyz");
+    await expectNavigation("/cs/vyhledavani?q=nenalezenyproduktxyz");
   });
 
   it("opens a variant group with its variant table filtered by the query", async () => {
@@ -179,11 +209,10 @@ describe("SiteHeader search", () => {
     await user.paste("766-A4-8");
     const option = await screen.findByRole("option", { name: /Řetěz DIN 766/ });
     expect(option.getAttribute("href")).toBe(
-      `/produkt/retez-din-766?${new URLSearchParams({ variant: "766-A4-8" })}#product-variants`,
+      `/cs/produkt/retez-din-766?${new URLSearchParams({ variant: "766-A4-8" })}#product-variants`,
     );
     await user.click(option);
-    expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
+    await expectNavigation(option.getAttribute("href"));
   });
 
   it("routes an exact SKU hit to the exact variant with its own price", async () => {
@@ -212,12 +241,12 @@ describe("SiteHeader search", () => {
     await user.paste("766A48");
     const option = await screen.findByRole("option", { name: /Řetěz DIN 766 – 8 x 1000 mm/ });
     expect(option.getAttribute("href")).toBe(
-      "/produkt/retez-din-766?variantIds=item-9025#product-variants",
+      "/cs/produkt/retez-din-766?variantIds=item-9025#product-variants",
     );
     expect(within(option).getByText(formatPrice(2_54).replace(/\s/g, " "))).toBeTruthy();
     expect(within(option).queryByText("Cena dle varianty")).toBeNull();
     await user.click(option);
-    expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
+    await expectNavigation(option.getAttribute("href"), false);
   });
 
   it("shows a variant-price prompt instead of a lower-bound price in group suggestions", async () => {
@@ -260,13 +289,12 @@ describe("SiteHeader search", () => {
     );
     await user.click(submit);
 
-    expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith("/vyhledavani?q=M8%20A4");
+    await expectNavigation("/cs/vyhledavani?q=M8%20A4");
   });
 
   it("marks only the active information page and keeps home on the logo", async () => {
     const user = userEvent.setup();
-    const { rerender } = render(
+    const rendered = render(
       <CartProvider storage={null}>
         <SiteHeader />
       </CartProvider>,
@@ -274,7 +302,7 @@ describe("SiteHeader search", () => {
 
     expect(
       screen.getByRole("link", { name: cs.footer.homeLinkLabel(akros.name) }).getAttribute("href"),
-    ).toBe("/");
+    ).toBe("/cs");
 
     for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
       if (name === "Mobilní navigace")
@@ -292,11 +320,13 @@ describe("SiteHeader search", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    route.pathname = "/blog";
-    rerender(
-      <CartProvider storage={null}>
-        <SiteHeader />
-      </CartProvider>,
+    act(() => restore(new URL("/cs/blog", network.origin), null));
+    rendered.rerender(
+      <NextRouter>
+        <CartProvider storage={null}>
+          <SiteHeader />
+        </CartProvider>
+      </NextRouter>,
     );
 
     for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
@@ -320,7 +350,7 @@ describe("SiteHeader search", () => {
     );
 
     const login = screen.getByRole("link", { name: "Přihlášení" });
-    expect(login.getAttribute("href")).toBe("/prihlaseni");
+    expect(login.getAttribute("href")).toBe("/cs/prihlaseni");
     expect(login.hasAttribute("data-sf-header-login")).toBe(true);
     const lock = login.querySelector(".icon-\\[mdi--lock\\]");
     expect(lock?.getAttribute("aria-hidden")).toBe("true");
@@ -333,7 +363,11 @@ describe("SiteHeader search", () => {
       </CartProvider>,
     );
 
-    expect(screen.getByRole("link", { name: "Můj účet" }).getAttribute("href")).toBe("/muj-ucet");
-    expect(screen.getByRole("link", { name: "Oblíbené" }).getAttribute("href")).toBe("/oblibene");
+    expect(screen.getByRole("link", { name: "Můj účet" }).getAttribute("href")).toBe(
+      "/cs/muj-ucet",
+    );
+    expect(screen.getByRole("link", { name: "Oblíbené" }).getAttribute("href")).toBe(
+      "/cs/oblibene",
+    );
   });
 });

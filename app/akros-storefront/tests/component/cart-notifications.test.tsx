@@ -1,13 +1,14 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { toaster } from "@techsio/ui-kit/molecules/toast";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
-import type { CartItemSnapshot } from "@/features/cart/cart-state";
+import { browserAt, serveHttp } from "../support/http";
+import type { CartItemSnapshot, CartState } from "@/features/cart/cart-state";
 
 const isHTMLElement = (value: unknown): value is HTMLElement =>
   value !== null && value !== undefined && HTMLElement.prototype.isPrototypeOf(value);
@@ -52,17 +53,34 @@ function renderCart(quantity = 0.5, product = item) {
   );
 }
 
-function lines() {
+function lines(): CartState["lines"] {
   return JSON.parse(screen.getByLabelText("Stav košíku").textContent ?? "[]");
 }
 
-beforeEach(() => {
+let network: Awaited<ReturnType<typeof serveHttp>>;
+
+beforeEach(async () => {
+  network = await serveHttp(async (request) => {
+    if (new URL(request.url).pathname !== "/api/ontos/cart" || request.method !== "POST")
+      return new Response("Unknown endpoint", { status: 404 });
+    const { cart }: { cart: CartState } = await request.json();
+    const blocked = cart.lines.some((line) => line.quantity > line.stockCount);
+    return Response.json({
+      cart,
+      priceChanged: false,
+      issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
+      canCheckout: !blocked,
+    });
+  });
+  browserAt(network.origin);
   window.localStorage.clear();
   toaster.remove();
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   toaster.remove();
+  await network.idle();
+  await network.close();
 });
 
 describe("cart action notifications", () => {
@@ -71,6 +89,14 @@ describe("cart action notifications", () => {
     renderCart();
     const add = screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" });
     await user.click(add);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     expect(await screen.findByText("Přidáno do košíku")).not.toBeNull();
     const notification = screen.getByText("Přidáno do košíku").closest('[role="status"]');
     if (!isHTMLElement(notification)) throw new Error("Missing notification");
@@ -81,6 +107,14 @@ describe("cart action notifications", () => {
     ).toBe("/kosik");
     expect(document.activeElement).toBe(add);
     await user.click(add);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     expect(lines()[0].quantity).toBe(1);
     expect(screen.getAllByText("Přidáno do košíku")).toHaveLength(1);
   });
@@ -89,6 +123,14 @@ describe("cart action notifications", () => {
     const user = userEvent.setup();
     renderCart();
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     await screen.findByText("Přidáno do košíku");
     expect(document.querySelector('[aria-label="Oznámení"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Notifications"]')).toBeNull();
@@ -104,6 +146,14 @@ describe("cart action notifications", () => {
     renderCart(1);
     await screen.findByDisplayValue("3");
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       "OntOS: požadované množství není skladem.",
@@ -119,6 +169,7 @@ describe("cart action notifications", () => {
     );
     renderCart();
     await screen.findByDisplayValue("2");
+    await network.idle();
     expect(screen.queryByText("Přidáno do košíku")).toBeNull();
   });
 
@@ -135,6 +186,14 @@ describe("cart action notifications", () => {
     renderCart(0.2, fractional);
     await screen.findByDisplayValue("0,1");
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     expect(await screen.findByText("Přidáno 0,2 m.")).not.toBeNull();
     expect(screen.queryByText(/část požadovaného množství/)).toBeNull();
   });
@@ -178,8 +237,24 @@ describe("cart action notifications", () => {
     renderCart();
     const add = screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" });
     await user.click(add);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     await user.click(add);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     await user.click(screen.getByRole("button", { name: "Obnovit" }));
     await waitFor(() => expect(lines()[0].quantity).toBe(1));
     expect(lines()).toHaveLength(1);
@@ -189,6 +264,14 @@ describe("cart action notifications", () => {
     const user = userEvent.setup();
     renderCart();
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     expect(await screen.findByRole("button", { name: "Obnovit" })).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Vyprázdnit košík" }));
@@ -200,11 +283,27 @@ describe("cart action notifications", () => {
     const user = userEvent.setup();
     renderCart();
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     await screen.findByRole("button", { name: "Obnovit" });
     await user.click(screen.getByRole("button", { name: "Zavřít oznámení" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Obnovit" })).toBeNull());
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     expect(lines()[0].quantity).toBe(0.5);
     expect(screen.queryByRole("button", { name: "Obnovit" })).toBeNull();
   });
@@ -244,29 +343,17 @@ describe("cart action notifications", () => {
     await screen.findByDisplayValue("3");
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" })
+          .getAttribute("aria-disabled"),
+      ).not.toBe("true"),
+    );
+    await network.idle();
     await user.click(screen.getByRole("button", { name: "Obnovit" }));
     await waitFor(() => expect(lines()[0].quantity).toBe(3.5));
     expect(await screen.findByText("Obnoveno 2,5 m.")).not.toBeNull();
     expect(screen.getByText(/část požadovaného množství/)).not.toBeNull();
   });
 });
-
-// Transport boundary: the component must await an owner verdict before changing cart state.
-beforeEach(() => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (_url: string, init: RequestInit) => {
-      const { cart } = JSON.parse(String(init.body));
-      const blocked = cart.lines.some(
-        (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
-      );
-      return Response.json({
-        cart,
-        priceChanged: false,
-        issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
-        canCheckout: !blocked,
-      });
-    }),
-  );
-});
-afterEach(() => vi.unstubAllGlobals());

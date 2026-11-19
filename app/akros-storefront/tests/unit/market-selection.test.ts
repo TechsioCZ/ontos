@@ -1,22 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as MarketModule from "@/ontos/market";
 
-// Shared across `vi.resetModules()`: every fresh market module reads through this mock.
-const { AKROS, identity, readRecords } = vi.hoisted(() => ({
-  AKROS: "71000000-0000-4000-8000-000000000024",
-  identity: { appId: "akros-storefront", legalEntityId: "71000000-0000-4000-8000-000000000024" },
-  readRecords: vi.fn<(audience: string, readName: string, query: unknown) => Promise<unknown>>(),
-}));
-vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/config", () => ({
-  getConfig: () => ({ ...identity, apiKey: "test", shellUrl: "http://shell.test" }),
-}));
-const AKROS_STOREFRONT = { appId: "akros-storefront", legalEntityId: AKROS };
-vi.mock("@/ontos/gateway", async (original) => ({
-  ...(await original<typeof import("@/ontos/gateway")>()),
-  readRecords,
-}));
+import { setTimeout } from "node:timers/promises";
+import { Schema } from "effect";
+import { browserAt, serveHttp } from "../support/http";
 
+const AKROS = "71000000-0000-4000-8000-000000000024";
+const AKROS_STOREFRONT = { appId: "akros-storefront", legalEntityId: AKROS };
 const KAVARNA = "71000000-0000-4000-8000-000000000023";
 const TENANT = "70000000-0000-4000-8000-000000000020";
 const NOW = Date.parse("2026-11-02T10:00:00Z");
@@ -100,7 +90,7 @@ const catalog = {
     // The B2B market is associated for the B2B channel only.
     association("m-b2b", { channel: "B2B" }),
     association("m-kav", { appId: "kavarna-doma-eshop", legalEntity: KAVARNA }),
-    // An association that ended yesterday.
+    // An association that ended before the explicit NOW and the real request time.
     association("m-hu", {
       effectivePeriod: { startsAt: "2026-01-01T00:00:00Z", endsAt: "2026-11-01T00:00:00Z" },
     }),
@@ -116,19 +106,46 @@ const currencies: Record<string, string> = {
   "m-kav": "CZK",
 };
 
+const GatewayRead = Schema.Struct({
+  audience: Schema.String,
+  legalEntityId: Schema.String,
+  readName: Schema.String,
+  query: Schema.Unknown,
+});
+const OfferQuery = Schema.Struct({
+  view: Schema.Struct({ storefrontCatalog: Schema.Struct({ marketId: Schema.String }) }),
+});
+const CatalogQuery = Schema.Struct({ at: Schema.String });
+
 let market$: typeof MarketModule;
+let network: Awaited<ReturnType<typeof serveHttp>>;
+let reads: Array<Schema.Schema.Type<typeof GatewayRead>>;
+let catalogBody: unknown;
+let failure: { status: number; code: string; _tag?: string } | undefined;
 beforeEach(async () => {
   vi.resetModules();
-  Object.assign(identity, AKROS_STOREFRONT);
-  vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
-  readRecords.mockReset();
-  readRecords.mockImplementation(async (audience, readName, query) => {
-    const body = query as { view: { storefrontCatalog: { marketId: string } } };
-    if (audience === "commerce-market-catalog" && readName === "current-market-catalog")
-      return catalog;
-    if (audience === "merchandise") {
-      const marketId = body.view.storefrontCatalog.marketId;
-      return {
+  reads = [];
+  catalogBody = catalog;
+  failure = undefined;
+  network = await serveHttp(async (request) => {
+    expect(new URL(request.url).pathname).toBe("/shell-super-app-api/auth/api-key/gateway-read");
+    expect(request.method).toBe("POST");
+    expect(request.headers.get("x-api-key")).toBe("market-selection-key");
+    const body = Schema.decodeUnknownSync(GatewayRead)(await request.json());
+    expect(body.legalEntityId).toBe(process.env.ONTOS_STOREFRONT_LEGAL_ENTITY_ID);
+    reads.push(body);
+    if (failure !== undefined) return Response.json(failure, { status: failure.status });
+    let response: unknown;
+    if (body.audience === "commerce-market-catalog" && body.readName === "current-market-catalog") {
+      Schema.decodeUnknownSync(CatalogQuery)(body.query);
+      response = catalogBody;
+    } else if (body.audience === "merchandise" && body.readName === "records") {
+      const {
+        view: {
+          storefrontCatalog: { marketId },
+        },
+      } = Schema.decodeUnknownSync(OfferQuery)(body.query);
+      response = {
         products: [],
         market: {
           marketId,
@@ -137,12 +154,36 @@ beforeEach(async () => {
           configured: marketId !== "m-eu",
         },
       };
+    } else {
+      throw new Error(`unexpected read ${body.audience}/${body.readName}`);
     }
-    throw new Error(`unexpected read ${audience}/${readName}`);
+    return Response.json(response, {
+      headers: {
+        "x-ontos-gateway-context": JSON.stringify({
+          apiBaseUrl: `/shell-super-app-api/module-api/${body.audience}`,
+          compositionRevision: "a".repeat(64),
+          expiresAt: Math.floor(Date.now() / 1000) + 300,
+          token: `market-selection-${reads.length}`,
+        }),
+      },
+    });
   });
+  browserAt(network.origin);
+  vi.stubEnv("ONTOS_SHELL_URL", network.origin);
+  vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "market-selection-key");
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", AKROS_STOREFRONT.appId);
+  vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", AKROS_STOREFRONT.legalEntityId);
   market$ = await import("@/ontos/market");
 });
-afterEach(() => vi.useRealTimers());
+afterEach(async () => {
+  try {
+    await network.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+const catalogReads = () =>
+  reads.filter(({ readName }) => readName === "current-market-catalog").length;
 
 describe("storefront market directory", () => {
   it("keeps only this storefront's B2C associations of the AKROS seller that are effective now", () => {
@@ -177,7 +218,8 @@ describe("storefront market directory", () => {
 
 describe("configured storefront identity", () => {
   it("selects the markets of the configured app id and selling legal entity", async () => {
-    Object.assign(identity, { appId: "kavarna-doma-eshop", legalEntityId: KAVARNA });
+    vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "kavarna-doma-eshop");
+    vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", KAVARNA);
     const resolution = await market$.resolveStorefrontMarket("cs");
     expect(resolution.kind === "live" && resolution.market.marketCode).toBe("KAVARNA-CZ");
     expect(resolution.live.map((entry) => entry.marketCode)).toEqual(["KAVARNA-CZ"]);
@@ -199,7 +241,9 @@ describe("configured storefront identity", () => {
 
 describe("market resolution", () => {
   it("resolves a live market with its merchandise currency and offer state", async () => {
+    const startedAt = Date.now();
     const resolution = await market$.resolveStorefrontMarket("sk");
+    const completedAt = Date.now();
     expect(resolution).toEqual({
       kind: "live",
       market: {
@@ -216,12 +260,19 @@ describe("market resolution", () => {
         { locale: "sk", marketCode: "AKROS-SK", label: "SK", currency: "EUR" },
       ],
     });
-    expect(readRecords).toHaveBeenCalledWith("commerce-market-catalog", "current-market-catalog", {
-      at: "2026-11-02T10:00:00.000Z",
+    await network.idle();
+    const directoryRead = reads.find(({ readName }) => readName === "current-market-catalog");
+    expect(directoryRead).toMatchObject({
+      audience: "commerce-market-catalog",
+      readName: "current-market-catalog",
     });
-    expect(
-      readRecords.mock.calls.map(([audience, readName]) => `${audience}/${readName}`),
-    ).not.toContain("commerce-market-catalog/resolve-commerce-market");
+    const { at } = Schema.decodeUnknownSync(CatalogQuery)(directoryRead?.query);
+    expect(new Date(at).toISOString()).toBe(at);
+    expect(Date.parse(at)).toBeGreaterThanOrEqual(startedAt);
+    expect(Date.parse(at)).toBeLessThanOrEqual(completedAt);
+    expect(reads.map(({ audience, readName }) => `${audience}/${readName}`)).not.toContain(
+      "commerce-market-catalog/resolve-commerce-market",
+    );
   });
 
   it("reports a market without a configured offer", async () => {
@@ -253,13 +304,13 @@ describe("market resolution", () => {
   it("caches the market catalog for 60 seconds", async () => {
     await market$.resolveStorefrontMarket("cs");
     await market$.resolveStorefrontMarket("sk");
-    const catalogReads = () =>
-      readRecords.mock.calls.filter(([, readName]) => readName === "current-market-catalog").length;
+    await network.idle();
     expect(catalogReads()).toBe(1);
-    vi.setSystemTime(NOW + 61_000);
+    await setTimeout(61_000);
     await market$.resolveStorefrontMarket("cs");
+    await network.idle();
     expect(catalogReads()).toBe(2);
-  });
+  }, 80_000);
 
   it("requires merchandise to answer for the requested market in a supported currency", () => {
     expect(
@@ -287,15 +338,8 @@ describe("before any market exists", () => {
     },
     live: [{ locale: "cs", marketCode: "", label: "CZ", currency: "CZK" }],
   };
-  const catalogReads = () =>
-    readRecords.mock.calls.filter(([, readName]) => readName === "current-market-catalog").length;
-
   it("serves /cs as the Czech CZK catalogue without a market when the catalog is empty", async () => {
-    readRecords.mockImplementation(async (_audience, readName) => {
-      if (readName === "current-market-catalog")
-        return { ...catalog, markets: [], associations: [] };
-      throw new Error(`unexpected read ${readName}`);
-    });
+    catalogBody = { ...catalog, markets: [], associations: [] };
     expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
     expect(await market$.storefrontMarketKind("cs")).toBe("live");
     expect(await market$.storefrontMarketKind("sk")).toBe("unknown");
@@ -304,26 +348,23 @@ describe("before any market exists", () => {
       live: unmarketed.live,
     });
     // No resolution and no merchandise read: nothing to resolve yet.
-    expect(readRecords).toHaveBeenCalledTimes(1);
+    await network.idle();
+    expect(reads).toHaveLength(1);
   });
 
   it("ignores other sellers' markets and other storefronts' associations", async () => {
-    readRecords.mockImplementation(async () => ({
+    catalogBody = {
       markets: [market("m-kav", "KAVARNA-CZ", ["cs"], { country: "CZ", legalEntity: KAVARNA })],
       associations: [association("m-kav", { appId: "kavarna-doma-eshop", legalEntity: KAVARNA })],
-    }));
+    };
     expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
   });
 
   it("keeps serving the owners' markets once one exists, even if none is live", async () => {
-    readRecords.mockImplementation(async (_audience, readName) => {
-      if (readName === "current-market-catalog")
-        return {
-          markets: [market("m-at", "AKROS-AT", ["de"], { lifecycle: "RETIRED" })],
-          associations: [],
-        };
-      throw new Error(`unexpected read ${readName}`);
-    });
+    catalogBody = {
+      markets: [market("m-at", "AKROS-AT", ["de"], { lifecycle: "RETIRED" })],
+      associations: [],
+    };
     expect(await market$.resolveStorefrontMarket("cs")).toEqual({
       kind: "unknown",
       locale: "cs",
@@ -338,24 +379,20 @@ describe("before any market exists", () => {
       "GatewayAudienceInvalidProblem",
     ],
   ])("serves /cs without a market when %s, cached for 60 seconds", async (_case, status, tag) => {
-    const { OntosError } = await import("@/ontos/gateway");
-    readRecords.mockImplementation(async () => {
-      throw new OntosError("rejected", status, undefined, undefined, { _tag: tag });
-    });
+    failure = { status, code: "rejected", _tag: tag };
     expect(await market$.resolveStorefrontMarket("cs")).toEqual(unmarketed);
+    await network.idle();
+    // One directory load exhausts the real gateway's three attempts on HTTP 400.
+    expect(catalogReads()).toBe(3);
     expect(await market$.storefrontMarketKind("en")).toBe("unknown");
-    expect(catalogReads()).toBe(1);
+    await network.idle();
+    expect(catalogReads()).toBe(3);
   });
 
   it("reports a market owner outage instead of falling back", async () => {
-    const { OntosError } = await import("@/ontos/gateway");
-    readRecords.mockImplementation(async () => {
-      throw new OntosError("down", 503, "backend_unreachable");
-    });
+    failure = { status: 503, code: "down" };
     await expect(market$.resolveStorefrontMarket("cs")).rejects.toThrow(/down/);
-    readRecords.mockImplementation(async () => {
-      throw new OntosError("bad request", 400, undefined, undefined, { _tag: "OtherProblem" });
-    });
+    failure = { status: 400, code: "bad request", _tag: "OtherProblem" };
     await expect(market$.resolveStorefrontMarket("cs")).rejects.toThrow(/bad request/);
-  });
+  }, 45_000);
 });
