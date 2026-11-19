@@ -76,6 +76,16 @@ export const attentionOf = (
   return needsReconciliation && attention !== 'FAILURE' ? 'NEEDS_RECONCILIATION' : attention;
 };
 
+/**
+ * The ONE derivation of what the owner says about one message: its attention and its concrete reason. The source outcome feed and
+ * the safe history Read (#1409) both call it, so the two can never disagree about what the source must do. The reason is the
+ * closed code of the decision, else why recovery did not continue the message.
+ */
+export const messageHeadlineOf = (summary: IntentHistorySummary, decisionReason: string | undefined) => ({
+  attention: attentionOf(summary.status, summary.needsReconciliation, summary.recovery),
+  reason: decisionReason ?? summary.recovery?.code,
+});
+
 const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly MessageOutcome[]) => {
   const { decision } = facts;
   if (decision.requiredness === undefined) {
@@ -105,10 +115,8 @@ const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly Messag
 /** The typed outcome feed of one request, from the decision and the headline of each of its intents. */
 export const sourceOutcomeFeedOf = (facts: RequestOutcomeFacts): CommunicationOutcomeFeed => {
   const messages = facts.intents.map(({ intentId, reason, recipientRef, slotKey, summary }): MessageOutcome => ({
-    attention: attentionOf(summary.status, summary.needsReconciliation, summary.recovery),
+    ...messageHeadlineOf(summary, reason),
     intentId,
-    // the closed code of the decision, else why recovery did not continue the message: the source learns a concrete reason
-    reason: reason ?? summary.recovery?.code,
     recipientRef,
     slotKey,
     status: summary.status,

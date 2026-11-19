@@ -599,9 +599,10 @@ describe('A page of the history is loaded with a bounded number of statements (#
       expect((yield* one.list({ limit: 1 }).pipe(Effect.provide(visibility.layer))).items).toHaveLength(1);
       const many = yield* readsOf(client, world);
       expect((yield* many.list().pipe(Effect.provide(visibility.layer))).items).toHaveLength(5);
-      // the page query plus the fixed set of history statements: the same for one message and for five
+      // the page query, the three statements of requests, decisions and intents and one per append-only child table (eight,
+      // with the recovery evaluations and the conflict resolutions of #1403): the same for one message and for five
       expect(many.ownerStatements()).toBe(one.ownerStatements());
-      expect(many.ownerStatements()).toBeLessThanOrEqual(10);
+      expect(many.ownerStatements()).toBeLessThanOrEqual(12);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

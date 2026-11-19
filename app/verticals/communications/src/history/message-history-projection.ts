@@ -10,7 +10,7 @@ import {
   TEMPLATE_PREVIEW_MARKER,
 } from '../../shared/message-history-read.ts';
 import type { MessageHistoryItem, MessageHistoryTimelineEntry } from '../../shared/message-history-read.ts';
-import { attentionOf } from '../domain/history/source-outcome.ts';
+import { messageHeadlineOf } from '../domain/history/source-outcome.ts';
 import type { HistoryEntry } from '../domain/history/timeline.ts';
 import type { IntentHistoryRecord, RequestHistoryRecord } from '../services/message-history.service.ts';
 
@@ -32,12 +32,14 @@ const isClosedCode = (code: string) => CLOSED_CODE.test(code);
 
 const uniqueInOrder = (codes: readonly string[]) => EffectArray.dedupe(codes.filter(isClosedCode));
 
+/** The closed reasons in the order they were recorded; the concrete reason recovery left (#1403) is the last one. */
 const reasonCodesOf = (intent: IntentHistoryRecord): readonly string[] => {
   const decided = intent.decisionReason === undefined ? [] : [intent.decisionReason];
   const stopped = intent.history.entries.flatMap((entry) =>
     entry.kind === 'INTENT_SUPPRESSED' || entry.kind === 'HANDOFF_STOPPED' ? entry.reasonCodes : [],
   );
-  return uniqueInOrder([...decided, ...stopped]);
+  const recovery = intent.history.summary.recovery === undefined ? [] : [intent.history.summary.recovery.code];
+  return uniqueInOrder([...decided, ...stopped, ...recovery]);
 };
 
 const byRecordedAt = Order.mapInput(Order.Number, (entry: HistoryEntry) => entry.recordedAt.epochMilliseconds);
@@ -188,7 +190,8 @@ export const projectMessageHistoryItem = Effect.fn('Communications.projectMessag
   const item: ItemDraft = {
     decidedAt: intent.decidedAt,
     headline: {
-      attention: attentionOf(summary.status, summary.needsReconciliation),
+      // the same derivation as the source outcome feed: a Read never says anything else than the feed does
+      attention: messageHeadlineOf(summary, intent.decisionReason).attention,
       contradictory: summary.contradictory,
       deliveryProven: summary.deliveryProven,
       needsReconciliation: summary.needsReconciliation,
