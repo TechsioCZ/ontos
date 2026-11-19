@@ -66,7 +66,9 @@ import {
   CounterpartyCustomerOnboardResultSchema,
   EndContactPointPayloadSchema,
   EndContactPointResultSchema,
+  PartyCommandAlreadyCommittedProblemSchema,
   PartyCommandCommitIndeterminateProblemSchema,
+  PartyCommandForbiddenProblemSchema,
 } from '@app/party-registry/api';
 import {
   PartySourceEffectReceiptRequestSchema,
@@ -462,12 +464,6 @@ const created = Schema.decodeUnknownSync(CreatePartyResultSchema)({
     tenantId,
   },
 });
-const originalReceipt = Schema.decodeUnknownSync(PartySourceEffectReceiptResponseSchema)({
-  actionInvocationId: invocationId,
-  operation: 'CREATE',
-  outcome: 'COMMITTED',
-  result: created,
-});
 const input = (): SymmyEffectAdapterInput => ({
   canExecuteNewEffects: true,
   context,
@@ -743,6 +739,23 @@ const endContactEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
   },
 });
 
+const alreadyCommittedWithoutReply = () =>
+  peer.create.fail(
+    PartyCommandAlreadyCommittedProblemSchema,
+    PartyCommandAlreadyCommittedProblemSchema.make({
+      code: 'action_already_committed',
+      detail: 'Internal commit without a saved reply',
+      invocationId: Schema.decodeUnknownSync(PartyCommandAlreadyCommittedProblemSchema.fields.invocationId)(
+        invocationId,
+      ),
+      resolution: 'REFRESH_GOVERNED_READS',
+      retryCommand: false,
+      status: 409,
+      title: 'Already committed',
+      type: 'https://ontos.dev/problems/internal-already-committed',
+    }),
+  );
+
 describe('governed internal Party adapter', () => {
   it.effect('preserves the original Contact end no-change receipt instead of guessing from current state', () =>
     Effect.gen(function* contactNoChange() {
@@ -828,11 +841,11 @@ describe('governed internal Party adapter', () => {
     }).pipe(asSymmyWorker),
   );
 
-  it.effect('rejects a receipt identifying a different previously recorded invocation', () =>
+  it.effect('never resends when Core identifies a different invocation than the recorded one', () =>
     Effect.gen(function* wrongInvocation() {
       reset();
       peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      peer.receipt.succeed(originalReceipt);
+      peer.create.succeed(created);
       const adapter = yield* createAdapter;
       const result = yield* adapter.recover(
         yield* withOriginalRequest({
@@ -913,20 +926,172 @@ describe('governed internal Party adapter', () => {
     }).pipe(asSymmyWorker),
   );
 
-  it.effect('recovers the original owner receipt without invoking the write again', () =>
-    Effect.gen(function* recover() {
+  it.effect('settles a committed create-party with the reply Core saved for the pinned request', () =>
+    Effect.gen(function* replaySavedReply() {
       reset();
       peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      peer.receipt.succeed(originalReceipt);
+      // Core answers the same key, principal and request hash with the reply it saved at commit.
+      peer.create.succeed(created);
+      const receipts: unknown[] = [];
+      const invocations: string[] = [];
       const adapter = yield* createAdapter;
-      const result = yield* adapter.recover(yield* withOriginalRequest(input()));
-      expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
-      expect(peer.create.sent).toHaveLength(0);
-      expect(peer.receipt.bodies[0]).toMatchObject({ operation: 'CREATE' });
-      expect(peer.gateway[0]?.subject).toMatchObject({
-        declarationKey: 'party.registry.party-source-effect-receipt.read',
-        operationRequirementKey: 'integration.symmy.requirement.worker.party.registry.api.party-source-effect-receipt',
+      const original = yield* withOriginalRequest(input());
+      const result = yield* adapter.recover({
+        ...original,
+        recordInvocationId: (id) =>
+          Effect.sync(() => {
+            invocations.push(id);
+          }),
+        recordOwnerReceipt: (receipt) =>
+          Effect.sync(() => {
+            receipts.push(receipt);
+          }),
       });
+      expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
+      expect(invocations).toEqual([invocationId]);
+      expect(receipts).toEqual([
+        Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
+          _tag: 'PartyCreated',
+          actionInvocationId: invocationId,
+          partyRef: canonicalPartyRef,
+        }),
+      ]);
+      // The resend is the persisted request: same key, pinned executor, same request hash, write credential.
+      expect(peer.create.sent).toHaveLength(1);
+      expect(peer.create.sent[0]?.headers.get('idempotency-key')).toBe(effectId);
+      expect(peer.create.bodies).toEqual([
+        Schema.decodeUnknownSync(CreatePartyPayloadSchema)(
+          Schema.decodeUnknownSync(SymmyPartyCommerceIntentSchema)(effect.intent).payload,
+        ),
+      ]);
+      expect(peer.hashes).toEqual([{ authContextRef: fixtureAuthContextRef, hash: original.originalRequestHash }]);
+      expect(peer.gateway).toHaveLength(1);
+      expect(peer.gateway[0]?.subject).toMatchObject({
+        declarationKey: 'party.registry.party.create',
+        expectedPrincipalId: executorPrincipalId,
+        operationRequirementKey: 'integration.symmy.requirement.worker.party.registry.create-party',
+      });
+      // No receipt Read: the recovery needs no Privacy source processing context.
+      expect(peer.receipt.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+
+  it.effect('settles a committed create-party even after new-effect authority was revoked', () =>
+    Effect.gen(function* replayWithoutNewAuthority() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.create.succeed(created);
+      const adapter = yield* createAdapter;
+      const original = yield* withOriginalRequest({ ...input(), canExecuteNewEffects: false });
+      expect(yield* adapter.recover(original)).toMatchObject({
+        outcome: { status: 'accepted_change' },
+        status: 'settled',
+      });
+      expect(peer.create.sent).toHaveLength(1);
+      expect(peer.receipt.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+
+  it.effect('settles a committed create-party without a saved reply from its Party receipt', () =>
+    Effect.gen(function* replayWithoutSavedReply() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      // A commit made before Core saved replies, past the recovery window, with an unstorable reply, or whose
+      // replay Core refuses answers ActionAlreadyCommitted; the receipt of the pinned invocation settles it.
+      alreadyCommittedWithoutReply();
+      peer.receipt.succeed(
+        Schema.decodeUnknownSync(PartySourceEffectReceiptResponseSchema)({
+          actionInvocationId: invocationId,
+          operation: 'CREATE',
+          outcome: 'COMMITTED',
+          result: created,
+        }),
+      );
+      const receipts: unknown[] = [];
+      const adapter = yield* createAdapter;
+      const result = yield* adapter.recover({
+        ...(yield* withOriginalRequest(input())),
+        recordOwnerReceipt: (receipt) =>
+          Effect.sync(() => {
+            receipts.push(receipt);
+          }),
+      });
+      expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
+      expect(receipts).toEqual([
+        Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
+          _tag: 'PartyCreated',
+          actionInvocationId: invocationId,
+          partyRef: canonicalPartyRef,
+        }),
+      ]);
+      expect(peer.create.sent).toHaveLength(1);
+      expect(peer.receipt.bodies).toEqual([expect.objectContaining({ operation: 'CREATE' })]);
+    }).pipe(asSymmyWorker),
+  );
+
+  it.effect.each(['forbidden resend', 'no saved reply and a denied receipt Read'] as const)(
+    'keeps a committed create-party uncertain, never denied or conflicting, on %s',
+    (refusal) =>
+      Effect.gen(function* replayRefused() {
+        reset();
+        peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+        if (refusal === 'forbidden resend') {
+          peer.create.fail(
+            PartyCommandForbiddenProblemSchema,
+            PartyCommandForbiddenProblemSchema.make({
+              detail: 'Internal current authority revoked',
+              status: 403,
+              title: 'Forbidden',
+              type: 'about:blank',
+            }),
+          );
+        } else {
+          alreadyCommittedWithoutReply();
+          peer.receipt.fail(
+            PartySourceEffectReceiptForbiddenProblemSchema,
+            PartySourceEffectReceiptForbiddenProblemSchema.make({
+              detail: 'Internal current authority revoked',
+              status: 403,
+              title: 'Forbidden',
+              type: 'about:blank',
+            }),
+          );
+        }
+        const receipts: unknown[] = [];
+        const adapter = yield* createAdapter;
+        const recovered = yield* adapter
+          .recover({
+            ...(yield* withOriginalRequest(input())),
+            recordOwnerReceipt: (receipt) =>
+              Effect.sync(() => {
+                receipts.push(receipt);
+              }),
+          })
+          .pipe(Effect.result);
+        expect(Result.isFailure(recovered)).toBe(true);
+        expect(receipts).toEqual([]);
+        expect(peer.create.sent).toHaveLength(1);
+        expect(peer.receipt.sent).toHaveLength(refusal === 'forbidden resend' ? 0 : 1);
+      }).pipe(asSymmyWorker),
+  );
+
+  it.effect('never resends a committed create-party whose pinned request no longer matches', () =>
+    Effect.gen(function* replayHashMismatch() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.create.succeed(created);
+      const adapter = yield* createAdapter;
+      const recovered = yield* adapter
+        .recover({
+          ...input(),
+          originalAuthContextRef: fixtureAuthContextRef,
+          originalExecutorPrincipalId: executorPrincipalId,
+          originalRequestHash: 'f'.repeat(64),
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(recovered)).toBe(true);
+      expect(peer.create.sent).toHaveLength(0);
+      expect(peer.hashes).toHaveLength(0);
     }).pipe(asSymmyWorker),
   );
 
@@ -988,31 +1153,6 @@ describe('governed internal Party adapter', () => {
   );
 });
 describe('original native invocation recovery authority', () => {
-  it.effect('does not retry a known committed action when its authorized receipt Read is denied', () =>
-    Effect.gen(function* committedDenied() {
-      reset();
-      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      peer.receipt.fail(
-        PartySourceEffectReceiptForbiddenProblemSchema,
-        PartySourceEffectReceiptForbiddenProblemSchema.make({
-          detail: 'Internal current authority revoked',
-          status: 403,
-          title: 'Forbidden',
-          type: 'about:blank',
-        }),
-      );
-      const adapter = yield* createAdapter;
-      const recovered = yield* adapter.recover(yield* withOriginalRequest(input())).pipe(Effect.result);
-      expect(Result.isFailure(recovered)).toBe(true);
-      expect(peer.receipt.sent).toHaveLength(1);
-      expect(peer.create.sent).toHaveLength(0);
-      expect(peer.gateway[0]?.subject).toMatchObject({
-        originalActionKey: 'party.registry.create-party',
-        originalIdempotencyKey: effectId,
-        originalPrincipalId: executorPrincipalId,
-      });
-    }).pipe(asSymmyWorker),
-  );
   it.effect.each(['rejected', 'failed'])(
     'never invokes a write or receipt Read for a kernel invocation in %s',
     (status) =>
@@ -1044,14 +1184,15 @@ describe('original native invocation recovery authority', () => {
           peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
           return created;
         });
-        peer.receipt.succeed(originalReceipt);
         expect(yield* adapter.execute(original)).toMatchObject({ status: 'accepted_change' });
+        // Once committed, the same request under the same key is answered with Core's saved reply.
         expect(yield* adapter.recover({ ...original, canExecuteNewEffects: false })).toMatchObject({
           outcome: { status: 'accepted_change' },
           status: 'settled',
         });
-        expect(peer.create.sent).toHaveLength(1);
-        expect(peer.create.sent[0]?.headers.get('idempotency-key')).toBe(effectId);
+        expect(peer.create.sent.map((request) => request.headers.get('idempotency-key'))).toEqual([effectId, effectId]);
+        expect(new Set(peer.hashes.map(({ hash }) => hash))).toEqual(new Set([original.originalRequestHash]));
+        expect(peer.receipt.sent).toHaveLength(0);
       }).pipe(asSymmyWorker),
   );
   it.effect('fails before the owner call when an original command no longer matches its persisted request hash', () =>

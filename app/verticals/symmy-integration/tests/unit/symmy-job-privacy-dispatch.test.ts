@@ -98,10 +98,31 @@ const declaredReportProblem = Schema.Union([
   RecordOwnerExecutionOutcomeActionConflictProblemSchema,
   RecordOwnerExecutionOutcomeActionCommitIndeterminateProblemSchema,
 ]);
+interface DeclaredReportReply {
+  readonly body: string;
+  readonly contentType: string;
+  readonly status: number;
+}
+const problemReply = (problem: typeof declaredReportProblem.Type) =>
+  Schema.encodeEffect(Schema.fromJsonString(declaredReportProblem))(problem).pipe(
+    Effect.map((body): DeclaredReportReply => ({
+      body,
+      contentType: 'application/problem+json',
+      status: problem.status,
+    })),
+  );
+// Core answers a same-key, same-payload replay of a committed report with the saved outcome.
+const savedReportReply = (recorded: OwnerExecutionOutcome) =>
+  Schema.encodeEffect(Schema.fromJsonString(OwnerExecutionOutcomeSchema))(recorded).pipe(
+    Effect.map((body): DeclaredReportReply => ({ body, contentType: 'application/json', status: 200 })),
+  );
 // INTERNAL transport-codec proof: the credential has no authority and the HTTP seam never contacts a live issuer.
-const reportThroughDeclaredHttp = (problem: typeof declaredReportProblem.Type, recorded: OwnerExecutionOutcome) =>
+const reportThroughDeclaredHttp = (
+  reply: Effect.Effect<DeclaredReportReply, Schema.SchemaError>,
+  recorded: OwnerExecutionOutcome,
+) =>
   Effect.gen(function* generatedReportClient() {
-    const body = yield* Schema.encodeEffect(Schema.fromJsonString(declaredReportProblem))(problem);
+    const { body, contentType, status } = yield* reply;
     return yield* executeRecordOwnerExecutionOutcomeWithAuthorization(
       {
         request: {
@@ -118,6 +139,7 @@ const reportThroughDeclaredHttp = (problem: typeof declaredReportProblem.Type, r
         idempotencyKey: 'internal-codec-report',
       },
     ).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(OwnerExecutionOutcomeSchema))),
       Effect.asVoid,
       Effect.catchIf(symmyJobPrivacyOutcomeAlreadyRecorded, () => Effect.void),
       Effect.provide(
@@ -125,8 +147,7 @@ const reportThroughDeclaredHttp = (problem: typeof declaredReportProblem.Type, r
           Layer.provide(
             Layer.succeed(
               FetchHttpClient.Fetch,
-              async () =>
-                new Response(body, { headers: { 'content-type': 'application/problem+json' }, status: problem.status }),
+              async () => new Response(body, { headers: { 'content-type': contentType }, status }),
             ),
           ),
         ),
@@ -175,7 +196,7 @@ const harness = Effect.gen(function* fixture() {
           });
         }
         if (replayReport && recorded.status === 'BLOCKED') {
-          yield* reportThroughDeclaredHttp(replayedReport, recorded).pipe(Effect.orDie);
+          yield* reportThroughDeclaredHttp(savedReportReply(recorded), recorded).pipe(Effect.orDie);
         }
         return yield* Effect.void;
       }),
@@ -296,29 +317,37 @@ it.effect('keeps one native claim key stable and gives a redrive a fresh opaque 
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
-it.effect('acknowledges only the exact generated already-committed report and preserves conflict uncertainty', () =>
-  Effect.gen(function* exactCommittedReport() {
-    yield* reportThroughDeclaredHttp(replayedReport, outcome('BLOCKED'));
-    const hashConflict = RecordOwnerExecutionOutcomeActionConflictProblemSchema.make({
-      code: 'action_request_hash_conflict',
-      detail: 'The request hash differs.',
-      status: 409,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    });
-    const conflict = yield* reportThroughDeclaredHttp(hashConflict, outcome('BLOCKED')).pipe(Effect.flip);
-    expect(Schema.is(RecordOwnerExecutionOutcomeActionConflictProblemSchema)(conflict)).toBe(true);
-    const indeterminate = RecordOwnerExecutionOutcomeActionCommitIndeterminateProblemSchema.make({
-      detail: 'Resolve the original commit.',
-      invocationId: replayedReport.invocationId,
-      resolution: 'RESOLVE_COMMIT',
-      retryCommand: false,
-      status: 503,
-      title: 'Commit unresolved',
-      type: 'https://ontos.dev/problems/action-commit-indeterminate',
-    });
-    const uncertain = yield* reportThroughDeclaredHttp(indeterminate, outcome('BLOCKED')).pipe(Effect.flip);
-    expect(Schema.is(RecordOwnerExecutionOutcomeActionCommitIndeterminateProblemSchema)(uncertain)).toBe(true);
-    expect(symmyJobPrivacyOutcomeAlreadyRecorded({ code: 'action_already_committed', status: 409 })).toBe(false);
-  }),
+it.effect(
+  'acknowledges a saved report replay or an exact already-committed report and preserves conflict uncertainty',
+  () =>
+    Effect.gen(function* exactCommittedReport() {
+      yield* reportThroughDeclaredHttp(savedReportReply(outcome('BLOCKED')), outcome('BLOCKED'));
+      // Only a report committed before Core saved replies still answers a replay with 409 AlreadyCommitted.
+      yield* reportThroughDeclaredHttp(problemReply(replayedReport), outcome('BLOCKED'));
+      const hashConflict = RecordOwnerExecutionOutcomeActionConflictProblemSchema.make({
+        code: 'action_request_hash_conflict',
+        detail: 'The request hash differs.',
+        status: 409,
+        title: 'Action conflict',
+        type: 'https://ontos.dev/problems/action-conflict',
+      });
+      const conflict = yield* reportThroughDeclaredHttp(problemReply(hashConflict), outcome('BLOCKED')).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(RecordOwnerExecutionOutcomeActionConflictProblemSchema)(conflict)).toBe(true);
+      const indeterminate = RecordOwnerExecutionOutcomeActionCommitIndeterminateProblemSchema.make({
+        detail: 'Resolve the original commit.',
+        invocationId: replayedReport.invocationId,
+        resolution: 'RESOLVE_COMMIT',
+        retryCommand: false,
+        status: 503,
+        title: 'Commit unresolved',
+        type: 'https://ontos.dev/problems/action-commit-indeterminate',
+      });
+      const uncertain = yield* reportThroughDeclaredHttp(problemReply(indeterminate), outcome('BLOCKED')).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(RecordOwnerExecutionOutcomeActionCommitIndeterminateProblemSchema)(uncertain)).toBe(true);
+      expect(symmyJobPrivacyOutcomeAlreadyRecorded({ code: 'action_already_committed', status: 409 })).toBe(false);
+    }),
 );

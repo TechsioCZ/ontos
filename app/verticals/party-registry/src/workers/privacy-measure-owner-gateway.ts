@@ -64,6 +64,8 @@ const OwnerGatewayFailureSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   resolution: Schema.optionalKey(Schema.String),
 });
+// A same-key replay of a committed report gets Core's saved outcome. Only a report committed before Core
+// saved replies (or whose saved reply no longer decodes) still answers 409 AlreadyCommitted.
 const AlreadyRecordedFailureSchema = OwnerGatewayFailureSchema.check(
   Schema.makeFilter(({ code }) =>
     code === 'action_already_committed' ? undefined : 'Outcome was not already recorded',

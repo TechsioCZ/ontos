@@ -1,7 +1,7 @@
 // @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
 import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Crypto, DateTime, Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -9,6 +9,7 @@ import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } 
 import { getActionServiceFactory, getActionServicePreflight } from '../actions/definition.ts';
 import { originalActionPreparationFactory } from '../actions/preparation-observation.ts';
 import {
+  ActionAlreadyCommitted,
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
@@ -38,6 +39,7 @@ import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
+import { ModuleStateCheckUnavailableError } from '../modules/module-state-gate-errors.ts';
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import type { BoundAccessGate } from '../operations/access-gate.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
@@ -214,7 +216,11 @@ export interface ActionTestHarnessOptions extends Pick<
   /** Test-only fence lock; defaults to an in-memory no-op because this database has no fence SQL. */
   readonly lockAccessExecutionFence?: NonNullable<ActionRuntimeOptions['lockAccessExecutionFence']>;
   readonly mandateDispatch?: ActionMandateDispatch;
-  readonly moduleState?: TenantModuleState;
+  /**
+   * The tenant's state of every owning module, or a function the harness asks at each module-state read
+   * (`'unavailable'` fails that read as an unreadable state would).
+   */
+  readonly moduleState?: TenantModuleState | (() => TenantModuleState | 'unavailable');
   /**
    * Observes the owner overlay input the runner builds inside the transaction and answers it (O70).
    * Omitting it keeps the fail-closed owner-neutral overlay.
@@ -228,6 +234,8 @@ export interface ActionTestHarnessOptions extends Pick<
   readonly scope?: 'active' | 'denied' | 'unavailable';
   readonly services?: readonly ActionTestServiceBinding[];
   readonly tenantPermission?: ContextAccessDecision;
+  /** PostgreSQL's `transaction_timestamp()`, a clock apart from the Effect clock. Defaults to the epoch. */
+  readonly transactionTime?: () => Date;
 }
 
 export interface ActionTestInvocation extends ActionInvocationRecord {
@@ -284,9 +292,11 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
     const crypto = yield* Crypto.Crypto;
     const { applicationComposition, expectedDeployment } = yield* actionTestComposition(options);
     const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
+    const transactionTime = options.transactionTime ?? completionTime;
     const invocations = new Map<string, ActionTestInvocation>();
     const idempotency = new Map<string, string>();
     const committed: FlushActionSuccessInput[] = [];
+    const committedReplies = new Map<string, FlushActionSuccessInput['committedReply']>();
     const permissionDenials: RejectPermissionDeniedInput[] = [];
     const ownerPermissionTargets: OwnerPermissionAccessTarget[] = [];
     const policyDenials: FinalizeActionPolicyDenialInput[] = [];
@@ -349,33 +359,52 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       input: FlushActionSuccessInput,
     ) {
       const invocation = yield* find(input.actionInvocationId);
+      // Like the repository: the completion is stamped with the Effect clock.
+      const completedAt = yield* DateTime.nowAsDate;
       committed.push(input);
+      committedReplies.set(input.actionInvocationId, input.committedReply);
       invocations.set(input.actionInvocationId, {
         ...invocation,
-        completedAt: completionTime(),
+        completedAt,
         status: 'succeeded',
       });
     });
-    const recordRejection = <Input extends { readonly actionInvocationId: string }>(input: Input, denials: Input[]) =>
-      find(input.actionInvocationId).pipe(
-        Effect.flatMap((invocation) =>
-          Effect.sync(() => {
-            denials.push(input);
-            invocations.set(input.actionInvocationId, {
-              ...invocation,
-              completedAt: completionTime(),
-              status: 'rejected',
-            });
-            return Option.none<ActionRecordedRejection>();
-          }),
-        ),
-      );
+    // Like the repository: a Policy or permission denial meeting an invocation a same-key attempt already
+    // committed is not recorded; the request fails with ActionAlreadyCommitted.
+    const recordRejection = Effect.fn('ActionTestHarness.recordRejection')(function* recordTestRejection<
+      Input extends { readonly actionInvocationId: string },
+    >(input: Input, denials: Input[]) {
+      const invocation = yield* find(input.actionInvocationId);
+      if (invocation.status === 'succeeded') {
+        return yield* new ActionAlreadyCommitted({
+          code: 'action_already_committed',
+          invocationId: input.actionInvocationId,
+          reason: 'This idempotency key already committed successfully',
+        });
+      }
+      const completedAt = yield* DateTime.nowAsDate;
+      denials.push(input);
+      invocations.set(input.actionInvocationId, { ...invocation, completedAt, status: 'rejected' });
+      return Option.none<ActionRecordedRejection>();
+    });
     const repository: ActionRepositoryService = {
       createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
       finalizePolicyDenial: (_executor, input) => recordRejection(input, policyDenials),
       flushSuccess: (_transaction, input) =>
         Effect.sync(() => {
           pendingCommit.push(commitSuccess(input));
+        }),
+      loadCommittedReply: (_executor, input) =>
+        Effect.sync(() => {
+          const invocation = invocations.get(input.actionInvocationId);
+          return invocation?.status === 'succeeded' &&
+            invocation.completedAt !== null &&
+            invocation.completedAt.getTime() >= input.committedSince.getTime() &&
+            invocation.tenantId === input.principal.tenantId &&
+            invocation.principalId === input.principal.principalId &&
+            invocation.requestHash === input.requestHash
+            ? Option.fromNullishOr(committedReplies.get(input.actionInvocationId))
+            : Option.none();
         }),
       loadRecordedRejection: (_executor, id) =>
         Effect.sync(() => {
@@ -484,7 +513,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         return yield* scopeStatementRows(scope, statement, values);
       } else if (statement === 'select transaction_timestamp() as operation_at') {
         return {
-          rows: [{ operation_at: completionTime() }],
+          rows: [{ operation_at: transactionTime() }],
         };
       } else {
         const params = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Unknown))(values ?? []);
@@ -604,23 +633,31 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
     );
     const moduleStateGate: ModuleStateGateService = {
       check: checkModuleEntrypoint,
-      prepareSnapshot: (tenantId, entrypoints) =>
-        Effect.succeed(
-          makeModuleStateSnapshot(
-            tenantId,
-            entrypoints,
-            [
-              ...new Set(
-                entrypoints
-                  .filter((entrypoint) => entrypoint.scope === 'tenant')
-                  .map((entrypoint) => entrypoint.moduleKey),
+      prepareSnapshot: (tenantId, entrypoints) => {
+        const state = Predicate.isFunction(options.moduleState)
+          ? options.moduleState()
+          : (options.moduleState ?? 'active');
+        return state === 'unavailable'
+          ? Effect.fail(
+              new ModuleStateCheckUnavailableError({
+                code: 'module_state_check_unavailable',
+                reason: 'Module state could not be checked safely',
+              }),
+            )
+          : Effect.succeed(
+              makeModuleStateSnapshot(
+                tenantId,
+                entrypoints,
+                [
+                  ...new Set(
+                    entrypoints
+                      .filter((entrypoint) => entrypoint.scope === 'tenant')
+                      .map((entrypoint) => entrypoint.moduleKey),
+                  ),
+                ].map((moduleKey) => ({ moduleKey, state })),
               ),
-            ].map((moduleKey) => ({
-              moduleKey,
-              state: options.moduleState ?? 'active',
-            })),
-          ),
-        ),
+            );
+      },
       recheckWrite: () => Effect.void,
     };
     const bindings = new Map<object, unknown>();

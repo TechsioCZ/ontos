@@ -12,6 +12,7 @@ import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { ActionRuntime } from '../actions/runtime.ts';
+import type { ActionReplay } from '../actions/runtime.ts';
 import { withOwnerServerTiming } from './owner-server-timing.ts';
 
 export { ActionProposalAcceptedSchema } from '../actions/proposal-accepted.ts';
@@ -97,6 +98,8 @@ interface GovernedActionHttpRunnerBaseInput<
   readonly endpointHeaders: ActionHttpEndpointHeaders;
   readonly internalProblem: () => InternalProblem;
   readonly invalidCorrelationProblem: () => InvalidProblem;
+  /** The runtime's `onReplay`: the endpoint learns that its answer is a saved reply; the client does not. */
+  readonly onReplay?: ((replay: ActionReplay) => Effect.Effect<void>) | undefined;
   readonly payload: NoInfer<PayloadSchema['Type']>;
   readonly principal: ActionHttpPrincipalAuthentication<PrincipalProblem, PrincipalRequirements>;
   readonly registration: ActionRegistration<
@@ -109,6 +112,13 @@ interface GovernedActionHttpRunnerBaseInput<
     HandlerRequirements
   >;
   readonly requestHeaders: ActionHttpRequestHeaders;
+  /**
+   * `'withhold'`: a same-key retry of a committed Action fails with ActionAlreadyCommitted instead of
+   * answering the saved reply. Only for an endpoint whose handler performs, after the Action, an effect
+   * that must not repeat and that recovers from ActionAlreadyCommitted itself; every other endpoint
+   * answers the saved reply its client lost on the network.
+   */
+  readonly savedReply?: 'withhold' | undefined;
   /**
    * O85: the endpoint's own declared success contract, mirrored from its `success` schema. An endpoint
    * that declares `result-or-proposal` answers the parked-proposal 202; every other endpoint keeps the
@@ -124,7 +134,11 @@ type ActionHttpCommittedRecovery<RecoveryResult, DomainError, MappedProblem> =
     }
   | {
       readonly mapError: (error: ActionHttpErrorAfterCommittedRecovery<DomainError>) => MappedProblem;
-      /** Endpoint-owned translation of a committed retry into its declared success contract. */
+      /**
+       * Endpoint-owned translation of a committed retry into its declared success contract. A retry of an
+       * invocation with a saved reply succeeds with that reply, so this only serves invocations committed
+       * without one, or an endpoint that withholds saved replies.
+       */
       readonly recoverAlreadyCommitted: (failure: ActionAlreadyCommitted) => RecoveryResult;
     };
 
@@ -303,9 +317,13 @@ export const runGovernedActionHttp = <
     }
     const action = runtime.runAction({
       ...receivingAudience,
+      onReplay: input.onReplay,
       payload: encodedPayload,
       principal,
       registration: input.registration,
+      // The client of an HTTP endpoint can lose a committed reply on the network; its same-key retry
+      // is answered with the reply Core saved for it.
+      savedReply: input.savedReply === 'withhold' ? undefined : 'answer',
       successContract: input.successContract,
       transport,
     });

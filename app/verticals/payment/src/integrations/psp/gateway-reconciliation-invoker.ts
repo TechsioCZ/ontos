@@ -90,7 +90,9 @@ const unavailable = Effect.succeed(GATEWAY_RECONCILIATION_UNAVAILABLE);
 const outcomeOfConflict = (code: string) =>
   Match.value(code).pipe(
     Match.when('payment_recovery_operation_already_resolved', () => skipped('already_resolved')),
-    // Another driver committed this round (same key) or committed it with a newer trigger (same key, other hash).
+    // Another driver committed this round with a newer trigger (same key, other hash). The same key and request
+    // get Core's saved reply and so count as REQUESTED; `action_already_committed` remains only for a round
+    // committed before Core saved replies.
     Match.whenOr('action_request_hash_conflict', 'action_already_committed', () => skipped('hash_conflict')),
     Match.orElse(() => skipped('held')),
   );

@@ -163,7 +163,7 @@ const clientOptions = (idempotencyKey: string, traceId?: string) =>
     : { baseUrl: 'https://pricing.example/price-group-catalog-api', idempotencyKey, traceId };
 
 describe('Price Group management Action HTTP boundary', () => {
-  it('recovers Core already-committed evidence into the declared successful receipt', () => {
+  it('recovers Core already-committed evidence without a saved reply into the declared successful receipt', () => {
     expect(
       recoverPriceGroupActionCommittedRetry(
         new ActionAlreadyCommitted({

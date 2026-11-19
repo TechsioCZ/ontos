@@ -34,7 +34,6 @@ import { catalogSourceResolutionReadApiLive } from '../../api/catalog-source-res
 import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
 import type { CreateProductPayloadSchema } from '../../shared/actions/create-product.ts';
 import {
-  ActivateLocalOverrideActionAlreadyCommittedProblemSchema,
   ActivateLocalOverrideActionForbiddenProblemSchema,
   ActivateLocalOverrideActionIneligibleProblemSchema,
   ActivateLocalOverrideActionUnavailableProblemSchema,
@@ -409,7 +408,8 @@ it.live(
         value: 'No phantom',
       });
       const missingKey = yield* nextId;
-      expect((yield* activate(absentPayload, missingKey)).status).toBe('INVALID');
+      const absentResult = yield* activate(absentPayload, missingKey);
+      expect(absentResult.status).toBe('INVALID');
       const absentRows = yield* observe();
       expect(absentRows.products).toEqual([]);
       expect(absentRows.heads).toEqual([]);
@@ -417,11 +417,8 @@ it.live(
       expect(
         Schema.is(CatalogSourceResolutionNotFoundProblemSchema)(yield* current(absentPayload.scope).pipe(Effect.flip)),
       ).toBe(true);
-      expect(
-        Schema.is(ActivateLocalOverrideActionAlreadyCommittedProblemSchema)(
-          yield* activate(absentPayload, missingKey).pipe(Effect.flip),
-        ),
-      ).toBe(true);
+      expect(yield* activate(absentPayload, missingKey)).toEqual(absentResult);
+      expect(yield* observe()).toEqual(absentRows);
       const missingSnapshot = absentRows.snapshots.find(
         (row) => row.actionKey === activateLocalOverrideAction.descriptor.actionKey,
       );

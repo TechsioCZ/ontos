@@ -870,6 +870,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       payload: actionPayload,
       registration,
       requestHeaders: actionRequestHeaders(request),
+      // The start signs up a provider account after its claim Action, which only the request that
+      // committed the claim may do: a same-key retry keeps ActionAlreadyCommitted, never the saved CLAIMED.
+      savedReply: 'withhold',
     });
 
   const continuation = yield* CommerceEnrollmentContinuation;

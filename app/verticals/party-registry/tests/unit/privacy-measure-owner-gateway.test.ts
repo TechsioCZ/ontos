@@ -167,9 +167,13 @@ it.layer(gatewayLive)('privacy measure owner gateway', (suite) => {
     }),
   );
 
-  suite.effect('acknowledges a genuinely recorded owner outcome', () => report(recorded));
+  // Core answers a same-key replay of a committed report with the saved outcome, the same reply as the first.
+  suite.effect('acknowledges a recorded owner outcome, first reply or saved replay', () => report(recorded));
 
-  suite.effect('preserves acknowledgement of an already committed report replay', () => report(alreadyCommitted));
+  // Only a report committed before Core saved replies still answers a replay with 409 AlreadyCommitted.
+  suite.effect('acknowledges an already committed report replay that has no saved reply', () =>
+    report(alreadyCommitted),
+  );
 
   suite.effect('keeps an indeterminate report commit retryable and distinct from a completed report', () =>
     Effect.gen(function* preserveIndeterminateCommit() {

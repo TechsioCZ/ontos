@@ -172,6 +172,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
       }),
     finalizePolicyDenial: () => Effect.succeedNone,
     flushSuccess: () => Effect.void,
+    loadCommittedReply: () => Effect.succeedNone,
     loadRecordedRejection: () =>
       Effect.succeed(permissionDenials.length > 0 ? Option.some({ stage: 'authz' as const }) : Option.none()),
     lockInvocation: () => Effect.sync(() => invocation),

@@ -38,6 +38,9 @@ import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { ActionRepository, makeActionRuntime, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { PgClient } from '@effect/sql-pg';
+import { Reactivity } from 'effect/reactivity';
 import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -135,6 +138,12 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
+  const coreEvidenceServices = yield* Layer.build(
+    PgClient.layer({ url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
+      Layer.provideMerge(Reactivity.layer),
+    ),
+  );
+  const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceServices));
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     ...fixture.manager,
     legalEntityId: fixture.legalEntityId,
@@ -346,6 +355,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
     changeModuleState,
     changeReadPermission,
     context,
+    coreEvidenceExecutor,
     deadlineAuthorityCalls,
     deniedAccess,
     fixture,
@@ -619,10 +629,21 @@ it.live(
       expect(invalid).toMatchObject({ status: 401 });
 
       const key = yield* nextId;
-      yield* http.deadline(receipt.obligationRef, key);
+      const recorded = yield* http.deadline(receipt.obligationRef, key);
       const retained = (yield* http.read()).items[0].deadlines;
-      const replay = yield* http.deadline(receipt.obligationRef, key).pipe(Effect.flip);
-      expect(replay).toMatchObject({ status: 409 });
+      // The same request with its committed key answers the original deadline and writes nothing:
+      // the authority is not asked again, and invocations, audits, events and outbox stay as they were.
+      const beforeReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
+      const callsBeforeReplay = yield* Ref.get(native.deadlineAuthorityCalls);
+      const replay = yield* http.deadline(receipt.obligationRef, key);
+      expect(replay).toEqual(recorded);
+      const afterReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
+      expect(afterReplay.invocations).toEqual(beforeReplay.invocations);
+      expect(afterReplay.audits).toEqual(beforeReplay.audits);
+      expect(afterReplay.events).toEqual(beforeReplay.events);
+      expect(afterReplay.outbox).toEqual(beforeReplay.outbox);
+      expect(yield* Ref.get(native.deadlineAuthorityCalls)).toBe(callsBeforeReplay);
+      expect((yield* http.read()).items[0].deadlines).toEqual(retained);
       const changed = yield* http.deadline('TEST.foreign', key).pipe(Effect.flip);
       expect(changed).toMatchObject({ status: 409 });
       for (const selector of [

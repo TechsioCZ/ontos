@@ -151,6 +151,14 @@ it.effect('acknowledges only an executed or already committed customer outcome r
     });
     expect(transport.requests[0]?.headers.get('x-correlation-id')).toBe('customer-report:1');
 
+    // A retry after a lost reply carries the same key and payload, so Privacy answers the saved outcome.
+    yield* report();
+    const reportKeys = transport.requests
+      .filter((request) => new URL(request.url).pathname === reportPath)
+      .map((request) => request.headers.get('idempotency-key'));
+    expect(reportKeys).toEqual(['owner-outcome:customer-measure:1:1', 'owner-outcome:customer-measure:1:1']);
+
+    // An outcome Privacy committed before it saved replies still answers 409 action_already_committed.
     transport.reply(alreadyCommitted);
     yield* report();
 

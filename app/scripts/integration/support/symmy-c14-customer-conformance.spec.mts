@@ -7,6 +7,7 @@ import { executeEnsureRetailCustomerProfileWithAuthorization } from '@app/commer
 import { RetailCustomerProfileRefSchema } from '@app/commerce-customer-context/resources/retail-customer-profile';
 import { enrollCustomerProfileSourceReaderNativeFixture } from '@app/commerce-customer-context/testing/customer-profile-source-reader';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { CreatePartyResultSchema } from '@app/party-registry/api';
 import { SourceProfileExportResponseSchema } from '@app/party-registry/apis/source-profile-export';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { SourceProcessingContextSchema } from '@app/privacy/api';
@@ -24,7 +25,7 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect } from 'effect-rstest';
-import { Config, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -80,6 +81,7 @@ const effectSchema = Schema.Struct({
   owner_receipt: Schema.Unknown,
   state: Schema.String,
 });
+const ledgerEffectSchema = Schema.Struct({ ...effectSchema.fields, version: Schema.Int });
 const partyReceiptSchema = Schema.Struct({ _tag: Schema.Literal('PartyCreated'), partyRef: PartyRefSchema });
 const profileReceiptSchema = Schema.Struct({
   _tag: Schema.Literal('RetailProfileEnsured'),
@@ -141,6 +143,8 @@ interface StartOwnerInput {
   readonly environment: Readonly<Record<string, string>>;
   readonly moduleKeys: ReadonlyMap<string, Redacted.Redacted>;
   readonly ownerDiagnostics: Map<string, Effect.Effect<string>>;
+  /** Transport faults one receiver injects, by application. */
+  readonly ownerFaults: Readonly<Partial<Record<string, Readonly<Record<string, string>>>>>;
   readonly ownerRuntimes: Map<string, OwnerRuntime>;
   readonly ports: ReadonlyMap<string, number>;
   readonly prefixes: Readonly<Record<string, OwnerPrefix>>;
@@ -148,7 +152,8 @@ interface StartOwnerInput {
 
 /** Builds and starts one actual owner receiver with its own independent module credential. */
 const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner(input: StartOwnerInput) {
-  const { appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes } = input;
+  const { appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerFaults, ownerRuntimes, ports, prefixes } =
+    input;
   const contract = contracts.find(({ deployment }) => deployment.appId === appId);
   const port = ports.get(appId);
   const moduleKey = moduleKeys.get(appId);
@@ -163,13 +168,52 @@ const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner
   const receiver = yield* startProductOwner({
     artifacts,
     contract,
-    environment,
+    environment: { ...environment, ...ownerFaults[appId] },
     moduleKey,
     port,
     prefix,
   });
   ownerDiagnostics.set(appId, receiver.diagnostic);
   ownerRuntimes.set(appId, { artifacts, contract, moduleKey, port, receiver });
+  return yield* Effect.void;
+});
+
+/**
+ * The recovered create-party settled to the Party Core saved with its one commit, and Party decided once:
+ * the worker's same-key retry answered the saved reply and ran nothing again.
+ */
+const expectSavedPartyReply = Effect.fn('SymmyC14Customer.expectSavedPartyReply')(function* expectSavedPartyReply(
+  admin: PgClient.PgClient,
+  input: {
+    readonly partyInvocationId: string;
+    readonly partyRef: typeof PartyRefSchema.Type;
+    readonly tenantId: string;
+  },
+) {
+  const { partyInvocationId, tenantId } = input;
+  const [savedReply] = yield* admin<{ reply: unknown }>`select committed_reply_json as reply
+    from core.action_invocations where tenant_id=${tenantId} and action_invocation_id=${partyInvocationId}
+    and action_key='party.registry.create-party' and status='succeeded'`;
+  const savedParty = yield* Schema.decodeUnknownEffect(
+    Schema.Struct({ encoded: CreatePartyResultSchema, kind: Schema.Literal('result') }),
+  )(savedReply?.reply);
+  if (savedParty.encoded.outcome !== 'CREATED') {
+    return yield* unavailable('The lost create-party must have committed a new Party');
+  }
+  expect(input.partyRef).toEqual(savedParty.encoded.partyRef);
+  const decisions = yield* admin<{
+    actionInvocationId: string;
+    matchDecisionId: string;
+    partyId: string | null;
+  }>`select action_invocation_id::text as "actionInvocationId",match_decision_id::text as "matchDecisionId",
+    party_id::text as "partyId" from party.party_match_decisions where tenant_id=${tenantId}`;
+  expect(decisions).toEqual([
+    {
+      actionInvocationId: partyInvocationId,
+      matchDecisionId: savedParty.encoded.decisionRef.resourceId,
+      partyId: savedParty.encoded.partyRef.resourceId,
+    },
+  ]);
   return yield* Effect.void;
 });
 
@@ -691,6 +735,16 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     if (moduleKey === undefined) {
       return yield* unavailable('The actual independent module credential is missing');
     }
+    // The Party owner commits the first job's create-party and loses its response. The marker stays for the whole
+    // proof, so the Party receipt read stays down: the worker can settle only by sending the persisted request
+    // again under the persisted key and taking the reply Core saved with the commit.
+    const fs = yield* FileSystem.FileSystem;
+    const faultMarker = `${yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_CUSTOMER_' })}/drop-party-response`;
+    yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after native Party commit');
+    const partyFault = {
+      ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
+      ONTOS_C14_RESPONSE_LOSS_OPERATION: 'party-create',
+    };
     // Each receiver owns a distinct map key, port and artifact; readiness makes no peer requests.
     const [, workerArtifact] = yield* Effect.all(
       [
@@ -703,6 +757,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
               environment,
               moduleKeys,
               ownerDiagnostics,
+              ownerFaults: { 'party-registry': partyFault },
               ownerRuntimes,
               ports,
               prefixes,
@@ -750,18 +805,46 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       moduleKey,
     );
     const ledger =
-      admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
+      admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state,version from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ledgerEffectSchema))),
       );
-    const completed = yield* observeUntil(
-      ledger.pipe(
-        Effect.flatMap((rows) =>
-          rows.some(({ state }) => state === 'indeterminate')
-            ? Effect.fail(unavailable('An actual customer owner response was uncertain during the positive proof'))
-            : Effect.succeed(rows),
-        ),
+    const diagnoseWorker = Effect.all([
+      worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+      shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+      ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+        diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
       ),
+    ]);
+    // Only the faulted create-party may become uncertain, and only from its lost first response: the first
+    // recovery claim must settle it. Any other uncertain effect, or a recovery that ends uncertain, fails at once.
+    const lostResponseVersion = yield* Ref.make(Option.none<number>());
+    const onlyLostPartyCreateUncertain = ledger.pipe(
+      Effect.flatMap((rows) =>
+        Effect.gen(function* checkUncertainty() {
+          const lostVersion = yield* Ref.get(lostResponseVersion);
+          const uncertain = rows.filter(({ state }) => state === 'indeterminate');
+          for (const row of uncertain) {
+            if (row.effect_key !== partyCreateEffectKey) {
+              return yield* unavailable('An unfaulted customer owner response was uncertain during the proof');
+            }
+            if (Option.isNone(lostVersion)) {
+              yield* Ref.set(lostResponseVersion, Option.some(row.version));
+            } else if (row.version !== lostVersion.value) {
+              return yield* unavailable('The worker left the committed create-party uncertain after recovery');
+            }
+          }
+          return rows;
+        }),
+      ),
+    );
+    yield* observeUntil(onlyLostPartyCreateUncertain, (rows) =>
+      rows.some(({ effect_key, state }) => effect_key === partyCreateEffectKey && state === 'indeterminate'),
+    ).pipe(Effect.tapError(() => diagnoseWorker));
+    // The worker retries the uncertain effect after its delivery backoff, at most 30 seconds.
+    const completed = yield* observeUntil(
+      onlyLostPartyCreateUncertain,
       (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
+      1800,
     ).pipe(
       Effect.tapError(() =>
         Effect.all(
@@ -793,6 +876,11 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     const profileEffect = completed.find(({ effect_key }) => effect_key === 'retail-profile');
     assert.isOk(partyEffect);
     assert.isOk(profileEffect);
+    // The lost response left the create-party indeterminate at the observed version. Its first recovery
+    // claim (+1, attempting) must settle it (+1, settled); any further uncertainty or claim adds more.
+    const lostVersion = yield* Ref.get(lostResponseVersion);
+    assert.isTrue(Option.isSome(lostVersion));
+    expect(partyEffect.version).toBe(Option.getOrThrow(lostVersion) + 2);
     const partyReceipt = yield* Schema.decodeUnknownEffect(partyReceiptSchema)(partyEffect.owner_receipt);
     const profileReceipt = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(profileEffect.owner_receipt);
     expect(profileReceipt.partyRef).toEqual(partyReceipt.partyRef);
@@ -814,6 +902,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles,
           (select count(*)::integer from commerce_customer_context.retail_customer_profiles p join party.parties a on a.party_id::text=p.party_resource_id and a.tenant_id=p.tenant_id where p.tenant_id=${tenantId} and a.current_type='PERSON' and a.first_name='Internal' and a.last_name='Customer') as linked`;
     expect(counts).toEqual({ linked: 1, parties: 1, profiles: 1 });
+    yield* expectSavedPartyReply(admin, { partyInvocationId, partyRef: partyReceipt.partyRef, tenantId });
     expect(yield* submit).toEqual(accepted);
     const [writes] = yield* admin<{ party: number; profile: number }>`select
           count(*) filter(where action_key='party.registry.create-party' and status='succeeded')::integer as party,

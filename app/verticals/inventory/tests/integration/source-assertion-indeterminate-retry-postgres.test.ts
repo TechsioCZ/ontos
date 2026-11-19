@@ -28,7 +28,6 @@ import { executeInventorySourceImportReceiptWithAuthorization } from '../../src/
 import { importSourceAssertionActionApiLive } from '../../api/import-source-assertion-action-server.ts';
 import { inventoryApi } from '../../shared/api.ts';
 import {
-  ImportSourceAssertionActionAlreadyCommittedProblemSchema,
   ImportSourceAssertionActionInvalidProblemSchema,
   ImportSourceAssertionActionPreconditionProblemSchema,
   ImportSourceAssertionActionUnavailableProblemSchema,
@@ -578,11 +577,14 @@ it.live(
       expect(committed.assertions).toHaveLength(1);
       expect(committed.ledger).toHaveLength(1);
       expect(committed.effects).toMatchObject([{ state: 'APPLIED' }]);
-      // Internal C14 fixture: the public governed read recovers the exact committed original
+      // A lost reply is recovered by resending the same key and request: Core answers with the reply
+      // it saved with the commit, and nothing runs again.
+      expect(yield* importItems([original], firstKey)).toEqual(first);
+      // Internal C14 fixture: the public governed read also recovers the exact committed original
       // without a new Action, and a changed proposal never retargets that receipt.
-      const originalCommit = yield* importItems([original], firstKey).pipe(Effect.flip);
-      assert(Schema.is(ImportSourceAssertionActionAlreadyCommittedProblemSchema)(originalCommit));
-      const originalReceipt = yield* readReceipt(original, originalCommit.invocationId);
+      const originalInvocationId = committed.ledger[0]?.actionInvocationId;
+      assert(originalInvocationId !== undefined);
+      const originalReceipt = yield* readReceipt(original, originalInvocationId);
       assert(Schema.is(InventorySourceImportReceiptResponseSchema.members[0])(originalReceipt));
       expect(originalReceipt.receipt.outcome).toEqual(first.items[0]);
       expect(originalReceipt.receipt.proposal).toEqual(original);
@@ -590,8 +592,7 @@ it.live(
       const repeated = yield* importItems([original]);
       expect(repeated.items).toEqual(first.items);
       expect((yield* observe()).assertions).toEqual(committed.assertions);
-      const sameKey = yield* importItems([original], firstKey).pipe(Effect.flip);
-      expect(Schema.is(ImportSourceAssertionActionAlreadyCommittedProblemSchema)(sameKey)).toBe(true);
+      expect(yield* importItems([original], firstKey)).toEqual(first);
       expect((yield* observe()).ledger).toHaveLength(2);
       const changed = yield* Schema.decodeUnknownEffect(InventorySourceAssertionProposalSchema)({
         ...original,
@@ -607,14 +608,19 @@ it.live(
       expect((yield* importItems([next])).items).toMatchObject([
         { duplicateOfAssertionId: next.assertionId, status: 'DUPLICATE' },
       ]);
-      const mixedCommit = yield* importItems([original, next], mixedKey).pipe(Effect.flip);
-      assert(Schema.is(ImportSourceAssertionActionAlreadyCommittedProblemSchema)(mixedCommit));
-      const acceptedReceipt = yield* readReceipt(next, mixedCommit.invocationId, 1);
+      const ledgerBeforeMixedReplay = (yield* observe()).ledger;
+      expect(yield* importItems([original, next], mixedKey)).toEqual(mixed);
+      expect((yield* observe()).ledger).toEqual(ledgerBeforeMixedReplay);
+      const mixedInvocationId = ledgerBeforeMixedReplay.find(
+        (entry) => entry.itemIndex === 1 && entry.assertionId === next.assertionId,
+      )?.actionInvocationId;
+      assert(mixedInvocationId !== undefined);
+      const acceptedReceipt = yield* readReceipt(next, mixedInvocationId, 1);
       assert(Schema.is(InventorySourceImportReceiptResponseSchema.members[0])(acceptedReceipt));
       expect(acceptedReceipt.receipt.outcome.status).toBe('ACCEPTED');
       const mismatchedReceipt = yield* readReceipt(
         { ...next, sourceReference: 'revised-mapping-source' },
-        mixedCommit.invocationId,
+        mixedInvocationId,
         1,
       );
       expect(Schema.is(InventorySourceImportReceiptResponseSchema.members[1])(mismatchedReceipt)).toBe(true);
@@ -622,7 +628,7 @@ it.live(
       expect((yield* importItems([stale])).items).toMatchObject([
         { currentAssertionId: next.assertionId, status: 'STALE' },
       ]);
-      const acceptedAfterStale = yield* readReceipt(next, mixedCommit.invocationId, 1);
+      const acceptedAfterStale = yield* readReceipt(next, mixedInvocationId, 1);
       expect(acceptedAfterStale).toEqual(acceptedReceipt);
       const race = yield* createProposal(3, 'UNKNOWN');
       const raced = yield* Effect.all([importItems([race]), importItems([race])], { concurrency: 2 });
@@ -691,7 +697,7 @@ it.live(
       expect(requestIdentity.schemaVersion).toBe(importSourceAssertionAction.descriptor.schemaVersion);
       expect(requestIdentity.target).toEqual({});
       const originalInvocation = evidence.invocations.find(
-        ({ actionInvocationId }) => actionInvocationId === originalCommit.invocationId,
+        ({ actionInvocationId }) => actionInvocationId === originalInvocationId,
       );
       assert(originalInvocation !== undefined);
       expect(originalInvocation.requestHash).toBe(

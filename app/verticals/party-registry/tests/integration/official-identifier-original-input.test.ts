@@ -250,13 +250,8 @@ it.layer(
         expect(firstHistory.items[0]?.originalInputDigits).toBe('1000004');
         expect(firstHistory.items[0]?.normalizedValue).toBe('01000004');
         const beforeRetry = yield* fixture.evidence(coreEvidenceExecutor);
-        const replay = yield* add(firstParty, '1000004', { ...firstOptions, correlationId: yield* nextId }).pipe(
-          Effect.exit,
-        );
-        assert.isOk(Exit.isFailure(replay));
-        expect(
-          Predicate.isTagged(Option.getOrThrow(Exit.findErrorOption(replay)), 'PartyCommandAlreadyCommittedProblem'),
-        ).toBe(true);
+        const replay = yield* add(firstParty, '1000004', { ...firstOptions, correlationId: yield* nextId });
+        expect(replay).toEqual(first);
         expect(yield* rows()).toEqual(firstRows);
         const afterRetry = yield* fixture.evidence(coreEvidenceExecutor);
         expect(afterRetry.events).toHaveLength(beforeRetry.events.length);

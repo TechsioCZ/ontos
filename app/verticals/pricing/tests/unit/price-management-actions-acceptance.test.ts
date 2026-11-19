@@ -883,7 +883,7 @@ it.layer(NodeCrypto.layer)('Pricing management Actions acceptance', (suite) => {
   );
 
   suite(
-    'directs committed retries to governed reads and uncertain commits to result lookup without retrying the command',
+    'directs committed retries without a saved reply to governed reads and uncertain commits to result lookup without retrying the command',
     () => {
       expect(
         mapDefinePriceActionProblem(

@@ -297,6 +297,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       };
       return Effect.void;
     },
+    loadCommittedReply: () => Effect.succeedNone,
     loadRecordedRejection: () => Effect.succeed(Option.some({ stage: 'authz' as const })),
     lockInvocation: () => Effect.succeed(currentInvocation),
     rejectPermissionDenied: () => {

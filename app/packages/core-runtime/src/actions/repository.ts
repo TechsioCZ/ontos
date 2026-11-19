@@ -1,7 +1,7 @@
 import { readVerifiedGatewayRecovery } from '../auth/system-principal-context-provenance.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Cause, Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -22,6 +22,7 @@ import { notifyLiveChange } from '../live/change-notification.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import type { ActionAuditProfile } from './definition.ts';
 import {
+  ActionAlreadyCommitted,
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
@@ -267,17 +268,37 @@ export interface FinalizeActionPolicyDenialInput {
   readonly transport: ActionTransportMetadata;
 }
 
+/** The reply a succeeded invocation saved: its encoded result or its committed domain rejection. */
+type ActionCommittedReplyJson = NonNullable<(typeof actionInvocations.$inferSelect)['committedReplyJson']>;
+
 export interface FlushActionSuccessInput {
   readonly actionInvocationId: string;
   readonly actionKey: string;
   readonly allowedPolicies: readonly ActionPolicyEvidence[];
   readonly auditProfile: ActionAuditProfile;
+  /**
+   * Saved by the same UPDATE that marks the invocation succeeded, so it commits with it or not at all.
+   * `null` for an invocation without an idempotency key: nothing can ever replay it.
+   */
+  readonly committedReply: ActionCommittedReplyJson | null;
   readonly evidence: ActionEvidenceSnapshot;
   /** The module whose data the Action wrote; live change notifications name it even when the Action has no target. */
   readonly owningModuleKey: string;
   readonly principal: TrustedPrincipalContext;
   readonly resultHash: string;
   readonly transport: ActionTransportMetadata;
+}
+
+/**
+ * Exactly the invocation a same-key retry already resolved and hash-verified. Every field is matched
+ * again in SQL, so a saved reply leaves its tenant, principal and request only for that same request.
+ */
+export interface LoadActionCommittedReplyInput {
+  readonly actionInvocationId: string;
+  /** The earliest completion time whose reply is still answered (the recovery window's start). */
+  readonly committedSince: Date;
+  readonly principal: Pick<TrustedPrincipalContext, 'principalId' | 'tenantId'>;
+  readonly requestHash: string;
 }
 
 export interface RejectPermissionDeniedInput {
@@ -309,14 +330,23 @@ export interface ActionRepositoryService {
     executor: ActionInvocationScopeExecutor,
     input: PrepareActionInvocationInput,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
+  /**
+   * Records a Policy denial on the still-open invocation. One a concurrent same-key attempt committed
+   * while the Policies ran is not rejected: it fails with ActionAlreadyCommitted, so the request takes
+   * the replay path instead.
+   */
   readonly finalizePolicyDenial: (
     executor: ActionInvocationScopeExecutor,
     input: FinalizeActionPolicyDenialInput,
-  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>;
+  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionAlreadyCommitted | ActionInvocationPersistenceError>;
   readonly flushSuccess: (
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
   ) => Effect.Effect<void, ActionTransactionError>;
+  readonly loadCommittedReply: (
+    executor: Pick<CoreDatabaseExecutor, 'select'>,
+    input: LoadActionCommittedReplyInput,
+  ) => Effect.Effect<Option.Option<ActionCommittedReplyJson>, ActionInvocationPersistenceError>;
   readonly loadRecordedRejection: (
     executor: Pick<CoreDatabaseExecutor, 'select'>,
     invocationId: string,
@@ -325,12 +355,16 @@ export interface ActionRepositoryService {
     transaction: CoreTransaction,
     invocationId: string,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
+  /**
+   * Records a permission denial on the still-open invocation. One a concurrent same-key attempt
+   * committed meanwhile is not rejected: it fails with ActionAlreadyCommitted, as a Policy denial does.
+   */
   readonly rejectPermissionDenied: (
     executor: ActionInvocationScopeExecutor,
     input: RejectPermissionDeniedInput,
   ) => Effect.Effect<
     Option.Option<ActionRecordedRejection>,
-    ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
+    ActionAlreadyCommitted | ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
   >;
   readonly resolveInvocation: (
     executor: ActionInvocationScopeExecutor,
@@ -712,6 +746,35 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     return Option.none();
   });
 
+  // The saved reply is read only after the caller resolved this invocation through the idempotency
+  // index and compared its request hash. The SQL binds the same facts again, so it never answers for
+  // another tenant, principal, request, a row that is not committed or one committed before the
+  // recovery window.
+  const loadCommittedReply: ActionRepositoryService['loadCommittedReply'] = Effect.fn(
+    'makeActionRepository.loadCommittedReply',
+  )(function* loadCommittedReplyEffect(
+    executor: Pick<CoreDatabaseExecutor, 'select'>,
+    input: LoadActionCommittedReplyInput,
+  ) {
+    const rows = yield* executor
+      .select({ committedReplyJson: actionInvocations.committedReplyJson })
+      .from(actionInvocations)
+      .where(
+        and(
+          eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+          eq(actionInvocations.tenantId, input.principal.tenantId),
+          eq(actionInvocations.principalId, input.principal.principalId),
+          eq(actionInvocations.requestHash, input.requestHash),
+          eq(actionInvocations.status, 'succeeded'),
+          gte(actionInvocations.completedAt, input.committedSince),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the committed Action reply', cause)));
+    const [row] = rows;
+    return Option.fromNullishOr(row?.committedReplyJson);
+  });
+
   // A denial finalizer that finds the invocation already rejected reports the rejection that won,
   // so a concurrent loser returns the durable outcome rather than its own decision.
   const earlierRejection = (transaction: CoreTransaction, invocationId: string) =>
@@ -791,6 +854,15 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
         if (invocation.status === 'rejected' && invocation.completedAt !== null) {
           return yield* earlierRejection(transaction, input.actionInvocationId);
         }
+        // A same-key attempt that held the invocation lock committed while this request was denied
+        // against the state before that commit: the write happened, so this is a replay.
+        if (invocation.status === 'succeeded') {
+          return yield* new ActionAlreadyCommitted({
+            code: 'action_already_committed',
+            invocationId: input.actionInvocationId,
+            reason: 'This idempotency key already committed successfully',
+          });
+        }
         if (invocation.status !== 'received' || invocation.completedAt !== null) {
           return yield* new ActionInvocationStateError({
             code: 'action_invocation_state_invalid',
@@ -865,6 +937,15 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       }
       if (invocation.status === 'rejected' && invocation.completedAt !== null) {
         return yield* earlierRejection(transaction, input.actionInvocationId);
+      }
+      // A same-key attempt that held the invocation lock committed while this request evaluated its
+      // Policies against the state before that commit: the write happened, so this is a replay.
+      if (invocation.status === 'succeeded') {
+        return yield* new ActionAlreadyCommitted({
+          code: 'action_already_committed',
+          invocationId: input.actionInvocationId,
+          reason: 'This idempotency key already committed successfully',
+        });
       }
       if (invocation.status !== 'received' || invocation.completedAt !== null) {
         return yield* persistenceFailure(
@@ -1112,6 +1193,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       const succeeded = yield* transaction
         .update(actionInvocations)
         .set({
+          committedReplyJson: input.committedReply,
           completedAt,
           status: 'succeeded',
         })
@@ -1150,6 +1232,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     createOrResolveInvocation,
     finalizePolicyDenial,
     flushSuccess,
+    loadCommittedReply,
     loadRecordedRejection,
     lockInvocation,
     rejectPermissionDenied,
