@@ -636,6 +636,8 @@ it('builds every delivery unit of the topology in exactly one build shard', () =
   expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
   const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
   expect(sorted(built)).toEqual(sorted(units));
+  // A shard with no unit would only pay a runner's setup.
+  expect(strategy.matrix.include.filter(({ units: shardUnits }) => shardUnits.trim() === '')).toEqual([]);
   expect(buildStep()).toBeDefined();
 });
 
