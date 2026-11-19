@@ -893,4 +893,46 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
       );
     }).pipe(Effect.scoped),
   );
+  suite.effect('does not fail an asset on a mismatch finding that its own reservation contradicts', () =>
+    Effect.gen(function* contradicted() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reserved = yield* harness
+        .runtimeFor('human')
+        .runAction({
+          payload: reservationPayload(content),
+          principal: principalOf(world, world.human),
+          registration: uploadAssetAction,
+          transport: transportOf('contradicted-reserve'),
+        })
+        .pipe(Effect.provideService(ObjectStorage, harness.storage.service));
+      const storageKey = deriveMediaStorageKey({
+        mediaAssetId: reserved.mediaAssetRef.resourceId,
+        tenantId: world.tenantId,
+      });
+      // A finding made against some other expectation: the "observed" bytes are exactly what this asset declared.
+      const evidence = yield* Schema.decodeUnknownEffect(MediaStoredObjectVerificationSchema)({
+        mismatch: 'sha256',
+        observed: { byteSize: content.byteLength, contentSha256: digestOf(content) },
+        outcome: 'mismatch',
+        providerId: 'in-memory-test-double',
+        storageKey,
+      });
+      const exit = yield* Effect.exit(
+        harness
+          .runtimeFor('human')
+          .runAction({
+            payload: { mediaAssetRef: reserved.mediaAssetRef },
+            principal: principalOf(world, world.human),
+            registration: confirmAssetAction,
+            transport: transportOf('contradicted-confirm'),
+          })
+          .pipe(Effect.provideService(StoredMediaObjectVerification, evidence)),
+      );
+      expect(failureTagOf(exit)).toBe('MediaIngestUncertain');
+      expect((yield* harness.rowOf(world.tenantId, reserved.mediaAssetRef.resourceId))?.processing_status).toBe(
+        'uploaded',
+      );
+    }).pipe(Effect.scoped),
+  );
 });
