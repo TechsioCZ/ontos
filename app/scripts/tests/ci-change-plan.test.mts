@@ -1186,6 +1186,12 @@ it('reads every packages entry of pnpm-workspace.yaml, and nothing it does not u
       .replace('enableGlobalVirtualStore:', 'end: "]\nenableGlobalVirtualStore:'),
     workspace.replace('packages:\n', "note: 'open\npackages:\n"),
     workspace.replace('packages:\n', 'note: [\npackages:\n'),
+    // An escaped quote keeps the string open over a bracket, so counted quotes and brackets balance on every line.
+    workspace
+      .replace('packages:\n', 'hoistPattern: ["\\" ]\npackages:\n')
+      .replace('enableGlobalVirtualStore:', 'end: [\\""]\nenableGlobalVirtualStore:'),
+    // So every flow collection is refused, also a closed one.
+    workspace.replace('packages:\n', 'note: [a, b]\npackages:\n'),
   ]) {
     expect(directories(text), text).toHaveProperty('unreadable');
   }

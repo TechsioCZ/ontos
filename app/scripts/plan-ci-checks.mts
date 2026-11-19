@@ -524,19 +524,19 @@ export interface CiPackageManifest {
 const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version);
 
 /**
- * Whether a line of pnpm-workspace.yaml leaves a quote or a flow collection open, so that the lines after it can be the
- * inside of one value instead of keys and items. Text from a `#` at the line start or after whitespace is a comment;
- * such a `#` inside quotes therefore reads as an open quote, which only makes the document unreadable.
+ * Whether a line of pnpm-workspace.yaml may start or continue a value that spans lines, so that the lines after it can
+ * be the inside of one value instead of keys and items: a flow collection or an escape anywhere outside a whole-line
+ * comment, or a quote left open before a trailing comment. Counting brackets or quotes is not enough, because an
+ * escaped quote hides a bracket inside a string. The real file needs none of these forms, and a false alarm only makes
+ * the document unreadable.
  */
-const opensMultilineValue = (line: string) => {
-  const body = line.replace(/(?:^|\s)#.*$/u, '');
+const maySpanLines = (line: string) => {
+  if (/^\s*#/u.test(line)) {
+    return false;
+  }
+  const body = line.replace(/\s#.*$/u, '');
   const count = (pattern: RegExp) => body.match(pattern)?.length ?? 0;
-  return (
-    count(/"/gu) % 2 !== 0 ||
-    count(/'/gu) % 2 !== 0 ||
-    count(/\[/gu) !== count(/\]/gu) ||
-    count(/\{/gu) !== count(/\}/gu)
-  );
+  return /[[\]{}\\]/u.test(line) || count(/"/gu) % 2 !== 0 || count(/'/gu) % 2 !== 0;
 };
 
 /**
@@ -544,14 +544,14 @@ const opensMultilineValue = (line: string) => {
  * are skipped; the next top-level key ends it. Empty when the file has no such list, or the list holds a line this
  * reader does not know (another indentation, a flow list, an anchor), or the document is not one plain mapping: every
  * line at column zero is a comment, a list item or a top-level key named once, so a document marker, a directive, text
- * after a document end or a repeated key is no document this reader knows, and neither is one with a quote or a flow
- * collection that stays open at a line end, whose next lines may be one value. A form it cannot read never yields a
+ * after a document end or a repeated key is no document this reader knows, and neither is one with a flow collection,
+ * an escape or an open quote (maySpanLines), whose next lines may be one value. A form it cannot read never yields a
  * shorter list.
  */
 const workspaceEntries = (text: string): readonly string[] => {
   // pnpm's reader also breaks a line at a carriage return that stands alone.
   const lines = text.split(/\r\n?|\n/u);
-  if (lines.some(opensMultilineValue)) {
+  if (lines.some(maySpanLines)) {
     return [];
   }
   const keys = new Set<string>();
