@@ -150,7 +150,9 @@ const answerForFailure = <DomainErrorSchema extends Schema.ConstraintDecoder<{ r
         preserveFailureCause(
           new ReadHandlerUnavailable({
             code: 'read_handler_unavailable',
-            reason: 'The Read could not complete its owner transaction',
+            reason: aborts.has('budget_exhausted')
+              ? 'The Read spent its execution budget'
+              : 'The Read could not complete its owner transaction',
           }),
           cause,
         ),
@@ -239,7 +241,11 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
     budget: READ_EXECUTION_BUDGET,
     // The execution's scope object itself, the one its lease was opened with: the lease and the gateway
     // delegation recognise exactly that instance, so a copy (or the pre-scope principal) is refused.
-    callerSource: { _tag: 'RequestPrincipal' as const, principal: input.scope },
+    callerSource: withOptional(
+      { _tag: 'RequestPrincipal' as const, principal: input.scope },
+      'audience',
+      input.audience,
+    ),
     calls: getReadCalls(registration),
     facts: input.facts,
     scope: input.scope,
@@ -273,7 +279,17 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
           'listAccess',
           input.listAccess,
         );
-        const exit = yield* Effect.exit(Effect.suspend(() => run(decodedInput, Object.freeze(context))));
+        // The budget bounds the whole of `run`, not only the start of each call and transaction: a run
+        // still working when it is spent is interrupted (its open call or transaction with it) and the
+        // read answers unavailable.
+        const exit = yield* Effect.exit(
+          Effect.suspend(() => run(decodedInput, Object.freeze(context))).pipe(
+            Effect.timeoutOrElse({
+              duration: execution.budget.maxDurationMillis,
+              orElse: () => Effect.fail(new TransactionAborted({ reason: 'budget_exhausted' })),
+            }),
+          ),
+        );
         // No new work, every admitted call and transaction ended and accounted for, then the snapshot.
         yield* session.settle;
         const ownerDenied = yield* session.ownerDenied;

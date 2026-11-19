@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, DateTime, Deferred, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
+import { Cause, DateTime, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
@@ -14,7 +15,7 @@ import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-prin
 import { CoreDatabase } from '../../src/db/client.ts';
 import { dataAccessEvents } from '../../src/db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
-import { ExecutionRuleViolation } from '../../src/execution/contract.ts';
+import { ExecutionRuleViolation, READ_EXECUTION_BUDGET } from '../../src/execution/contract.ts';
 import type { CallExecutionRequest, CallRoute } from '../../src/execution/contract.ts';
 import { KernelCalls } from '../../src/execution/kernel-calls.ts';
 import type { KernelCallsService } from '../../src/execution/kernel-calls.ts';
@@ -616,6 +617,58 @@ it.effect('a query prepared in a transaction and evaluated after it issues no SQ
   ),
 );
 
+it.effect('bounds a run that makes no call and opens no transaction by the budget, and releases its lease', () =>
+  Effect.scoped(
+    Effect.gen(function* boundedRun() {
+      const harness = yield* makeRunFormHarness();
+      let leaseReleased = false;
+      const fiber = yield* Effect.forkChild(
+        harness.execute(
+          runRead(() => Effect.never),
+          {
+            lease: (effect) =>
+              effect.pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    leaseReleased = true;
+                  }),
+                ),
+              ),
+          },
+        ),
+      );
+      yield* TestClock.adjust(Duration.millis(READ_EXECUTION_BUDGET.maxDurationMillis));
+      const waited = yield* Effect.forkChild(Fiber.await(fiber).pipe(Effect.timeoutOption('1 second')));
+      yield* TestClock.adjust('1 second');
+      const exit = yield* Fiber.join(waited);
+      expect(Option.isSome(exit)).toBe(true);
+      const failure = Option.isSome(exit) ? failureOf(exit.value) : undefined;
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      expect(leaseReleased).toBe(true);
+      expect(rowsOf(harness.settled)).toEqual([
+        [{ outcome: 'failed', outcomeCode: 'read_handler_unavailable', outcomeStage: 'execution' }],
+      ]);
+    }),
+  ),
+);
+
+it.effect('carries the receiving audience of the read on its calls', () =>
+  Effect.scoped(
+    Effect.gen(function* audienceOnCalls() {
+      const harness = yield* makeRunFormHarness();
+      yield* harness.execute(
+        runRead((input, context) =>
+          context.call('restrictions', { subject: input.subject }).pipe(Effect.as(answered({ state: 'CURRENT' }))),
+        ),
+        { audience: 'test-run-form' },
+      );
+      expect(harness.callRequests[0]?.execution.callerSource.audience).toBe('test-run-form');
+      // The caller source still carries the execution's own scope object.
+      expect(harness.callRequests[0]?.execution.callerSource.principal).toBe(scope);
+    }),
+  ),
+);
+
 it.effect('holds no transaction while run calls', () =>
   Effect.scoped(
     Effect.gen(function* noTransactionDuringCalls() {
@@ -788,44 +841,52 @@ it.layer(NodeCrypto.layer)('the read runtime', (suite) => {
     }),
   );
 
-  suite.effect('asks the access questions of a governed { load } read in its owned transaction', () =>
-    Effect.gen(function* governedLoadQuestions() {
-      const target = defineRead(
-        descriptor(`${MODULE}.api.records`),
-        (_input, context: ReadLoadContext<Services>) => context.services.load('records').pipe(Effect.map(answered)),
-        services,
-      );
-      const registration = defineRead(
-        { ...descriptor(), accessQuestions: { write: canRun(target) } },
-        {
-          load: (_input, context) =>
-            Effect.succeed(answered({ state: context.access.write === 'allowed' ? 'CURRENT' : 'STALE' })),
-        },
-        services,
-      );
-      const harness = yield* makeReadTestHarness({
-        access: 'allowed',
-        compositionRevision: revision,
-        executeOwnerQuery: () => Effect.die('The read runs no owner SQL'),
-        operationTime: operationAt,
-        ownerAuthorizationDecision: 'allowed',
-        ownerRegistration: hostOf([registration, target]),
-        scope,
-      });
-      const result = yield* harness.runtime.runRead({
-        input: { subject: 'customer' },
-        principal: trustVerifiedGatewayPrincipalContext(scope, revision),
-        registration,
-        transport: { correlationId: scope.correlationId },
-      });
-      expect(result).toEqual({ state: 'CURRENT' });
-      const { connectionsOpened, gateTransactions } = harness.snapshot();
-      // The own decision and the question both join the governed transaction: one connection.
-      expect(gateTransactions.length).toBeGreaterThanOrEqual(2);
-      expect(gateTransactions.every((transaction) => transaction === 'owned')).toBe(true);
-      expect(connectionsOpened).toBe(1);
-    }),
-  );
+  for (const [targetAccess, state] of [
+    ['allowed', 'CURRENT'],
+    ['denied', 'STALE'],
+  ] as const) {
+    suite.effect(
+      `asks the access questions of a governed { load } read in its owned transaction: ${targetAccess}`,
+      () =>
+        Effect.gen(function* governedLoadQuestions() {
+          const target = defineRead(
+            descriptor(`${MODULE}.api.records`),
+            (_input, context: ReadLoadContext<Services>) => context.services.load('records').pipe(Effect.map(answered)),
+            services,
+          );
+          const registration = defineRead(
+            { ...descriptor(), accessQuestions: { write: canRun(target) } },
+            {
+              load: (_input, context) =>
+                Effect.succeed(answered({ state: context.access.write === 'allowed' ? 'CURRENT' : 'STALE' })),
+            },
+            services,
+          );
+          const harness = yield* makeReadTestHarness({
+            // The read itself is allowed; the question about the target gets its own answer.
+            access: { [`${MODULE}.api.records.read`]: targetAccess, [`${READ_KEY}.read`]: 'allowed' },
+            compositionRevision: revision,
+            executeOwnerQuery: () => Effect.die('The read runs no owner SQL'),
+            operationTime: operationAt,
+            ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: hostOf([registration, target]),
+            scope,
+          });
+          const result = yield* harness.runtime.runRead({
+            input: { subject: 'customer' },
+            principal: trustVerifiedGatewayPrincipalContext(scope, revision),
+            registration,
+            transport: { correlationId: scope.correlationId },
+          });
+          expect(result).toEqual({ state });
+          const { connectionsOpened, gateTransactions } = harness.snapshot();
+          // The own decision and the question both join the governed transaction: one connection.
+          expect(gateTransactions.length).toBeGreaterThanOrEqual(2);
+          expect(gateTransactions.every((transaction) => transaction === 'owned')).toBe(true);
+          expect(connectionsOpened).toBe(1);
+        }),
+    );
+  }
 });
 
 it.effect('refuses to start a vertical host whose reads call another vertical without a ModuleCallRoute', () =>

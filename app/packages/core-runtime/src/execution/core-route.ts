@@ -6,6 +6,7 @@
  */
 import { Effect, Match, Schema } from 'effect';
 
+import { withOptional } from '../access/decision/optional.ts';
 import { coreOperationRegistrations } from '../modules/module-operation-execution.ts';
 import type { CoreOperationRegistration } from '../modules/module-operation-execution.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
@@ -55,7 +56,7 @@ const transportOf = (scope: CallRouteRequest['execution']['scope']) =>
 
 /**
  * The route for one read runtime, over its own `runRead` (which clears the caller's module operation
- * lease, so the Core read never borrows it). An operation that is not one of `coreOperationRegistrations`
+ * lease, so the Core read never borrows it), under the outer request's receiving audience. An operation that is not one of `coreOperationRegistrations`
  * at its exact version answers 404 without running anything.
  */
 export const coreCallRouteFor = (runRead: CoreRunRead): CallRoute => {
@@ -72,12 +73,19 @@ export const coreCallRouteFor = (runRead: CoreRunRead): CallRoute => {
     ) {
       return Effect.succeed(problem(404, 'No such Core operation', 'core_operation_unknown'));
     }
-    return runRead({
-      input: request.encodedInput,
-      principal: request.execution.callerSource.principal,
-      registration: registered.registration,
-      transport: transportOf(request.execution.scope),
-    }).pipe(
+    const { callerSource } = request.execution;
+    return runRead(
+      withOptional(
+        {
+          input: request.encodedInput,
+          principal: callerSource.principal,
+          registration: registered.registration,
+          transport: transportOf(request.execution.scope),
+        },
+        'audience',
+        callerSource.audience,
+      ),
+    ).pipe(
       Effect.matchEffect({
         onFailure: (failure) => Effect.succeed(readErrorProblem(failure)),
         onSuccess: (result) =>

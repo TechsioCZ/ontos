@@ -956,8 +956,8 @@ const validateReadVocabulary = <
 };
 
 /**
- * The three spellings of a read. `{ load }` is typed with the descriptor's questions: without any, its
- * `context.access` holds no answer, so the handler is the bare one under another spelling.
+ * The three spellings of a read. `{ load }` is typed with the descriptor's questions: without any, Core
+ * passes no `context.access`, so the handler is the bare one under another spelling.
  */
 type AuthoredReadDefinition<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1092,7 +1092,17 @@ const readCallsOf = (readKey: string, calls: ReadCalls): ReadCalls => {
         `Read ${readKey}: call ${name} is a write call; a read declares only read calls (declaredCall)`,
       );
     }
-    return [name, Object.freeze({ ...declared })] as const;
+    // The registered declaration is a frozen snapshot, its operation and route with it: what was checked
+    // here and against the manifest is what every call sends. The schemas are kept as they are.
+    const registered = Object.freeze({
+      ...declared,
+      operation: Object.freeze({
+        ...operation,
+        provider: Object.freeze({ ...operation.provider }),
+        route: Object.freeze({ ...operation.route }),
+      }),
+    });
+    return [name, registered] as const;
   });
   return Object.freeze(Object.fromEntries(entries));
 };
@@ -1108,6 +1118,7 @@ const readSdkPartsOf = (
   descriptor: Readonly<{
     readonly accessKind: ReadAccessKind;
     readonly entrypoint: ModuleEntrypointDescriptor;
+    readonly legalEntityScope: LegalEntityScope;
     readonly readKey: string;
   }> &
     ReadSdkDescriptorFields<ReadCalls, AccessQuestions>,
@@ -1136,7 +1147,12 @@ const readSdkPartsOf = (
         ? NO_MATERIALIZED_QUESTIONS
         : Object.freeze([
             ...materializeAccessQuestions(
-              { accessKind: descriptor.accessKind, carrier, moduleKey: descriptor.entrypoint.moduleKey },
+              {
+                accessKind: descriptor.accessKind,
+                carrier,
+                legalEntityScope: descriptor.legalEntityScope,
+                moduleKey: descriptor.entrypoint.moduleKey,
+              },
               accessQuestions,
             ),
           ]),

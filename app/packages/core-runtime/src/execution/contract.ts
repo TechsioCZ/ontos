@@ -55,7 +55,10 @@ import type {
  */
 export interface ExecutionBudget {
   readonly maxCalls: number;
-  /** Measured from the moment the session opens; checked before each call and each transaction. */
+  /**
+   * Measured from the moment the session opens; checked before each call and each transaction, and the
+   * kind adapter bounds the whole module function by it (a read's `run` is interrupted when it is spent).
+   */
   readonly maxDurationMillis: number;
   readonly maxTransactions: number;
 }
@@ -106,6 +109,12 @@ export class ExecutionRuleViolation extends Schema.TaggedError<ExecutionRuleViol
  * copy would fail requirement lookup and delegation for every call.
  */
 export const RequestPrincipalCallerSourceSchema = Schema.TaggedStruct('RequestPrincipal', {
+  /**
+   * The trusted receiving deployment audience the request was admitted under, when it had one. Core's
+   * in-process route runs its nested read under the same audience, so a namespace that requires
+   * per-operation admission admits it as it admitted the outer read.
+   */
+  audience: Schema.optionalKey(Schema.String),
   /** The execution's verified scope: requirement lookup, delegation, and Core's in-process route. */
   principal: TrustedPrincipalContextSchema,
 });
@@ -294,6 +303,8 @@ export interface CallRoute {
 
 /** The governed read runner the Core route delegates to: the read runtime's own `runRead`. */
 export type CoreRunRead = (input: {
+  /** The receiving audience of the outer request (`RequestPrincipal.audience`), when it had one. */
+  readonly audience?: string;
   readonly input: unknown;
   readonly principal: TrustedPrincipalContext;
   readonly registration: AnyReadRegistration;

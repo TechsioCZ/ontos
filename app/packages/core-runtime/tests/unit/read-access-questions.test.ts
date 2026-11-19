@@ -114,7 +114,12 @@ const ownCarrierOf = (questionTarget: AccessQuestionTarget): GateCarrier =>
     'accessDeclaration',
     questionTarget.descriptor.accessDeclaration,
   );
-const ownRead = { accessKind: 'detail', carrier: ownCarrierOf(ownReadTarget), moduleKey: MODULE } as const;
+const ownRead = {
+  accessKind: 'detail',
+  carrier: ownCarrierOf(ownReadTarget),
+  legalEntityScope: 'required',
+  moduleKey: MODULE,
+} as const;
 
 const decisionOf = (outcome: DecisionOutcome): AccessDecision => ({
   evidence: [],
@@ -256,6 +261,14 @@ describe('materializeAccessQuestions', () => {
       { rows: canList(ownReadTarget) },
     );
     expect(listOwnList?.sameAsOwnDecision).toBe(true);
+  });
+
+  it('asks the gate about the same carrier under another legal-entity scope', () => {
+    const otherScope: AccessQuestionTarget = {
+      descriptor: { ...ownReadTarget.descriptor, legalEntityScope: 'optional' },
+    };
+    const [question] = materializeAccessQuestions(ownRead, { self: canRun(otherScope) });
+    expect(question).toMatchObject({ legalEntityScope: 'optional', sameAsOwnDecision: false });
   });
 
   it("refuses a question about another module's operation", () => {

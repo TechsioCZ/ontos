@@ -35,7 +35,11 @@ export interface MaterializedAccessQuestion {
    * capability decided scope-wide (D14, O74).
    */
   readonly parentRead?: ParentReadRequirement;
-  /** Equal to the read's own carrier: answered from the read's own decision, never asked twice. */
+  /**
+   * Equal to the read's own carrier and asked under the read's own legal-entity scope: answered from the
+   * read's own decision, never asked twice. A question about the same carrier under another scope is a
+   * different question, and the gate answers it.
+   */
   readonly sameAsOwnDecision: boolean;
 }
 
@@ -47,7 +51,12 @@ export interface MaterializedAccessQuestion {
  * more than 16 questions. An empty record asks nothing and answers `access: {}`.
  */
 export type MaterializeAccessQuestions = (
-  read: Readonly<{ readonly accessKind: string; readonly carrier: GateCarrier; readonly moduleKey: string }>,
+  read: Readonly<{
+    readonly accessKind: string;
+    readonly carrier: GateCarrier;
+    readonly legalEntityScope: LegalEntityScope;
+    readonly moduleKey: string;
+  }>,
   questions: AccessQuestions,
 ) => readonly MaterializedAccessQuestion[];
 
@@ -82,6 +91,8 @@ type ExecutionLease = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect
 /** What `reads/runtime.ts` has established when it hands a `{ run }` read to the run-form executor. */
 export interface RunFormReadInput {
   readonly access: AccessAnswers<AccessQuestions>;
+  /** The trusted receiving audience the read was admitted under, when it had one; calls carry it on. */
+  readonly audience?: string;
   readonly decodedInput: unknown;
   readonly deniedFieldPaths: readonly (readonly string[])[];
   /** `via` computed as `RequestExecutionSchema` documents. */
@@ -105,7 +116,7 @@ export interface RunFormReadInput {
  * 1. Builds the `OwnerBinding`: `build` = the read's service factory closed over `listAccess`;
  *    `decide` = `OwnerAuthorizationOverlay.authorize(sealed, { ...ownerQuestion, operationAt })`;
  *    `seal` = `bindScopedWorkloadAdmission(tx, { carrier, scope }, decision)`. `callerSource` is
- *    `{ _tag: 'RequestPrincipal', principal: scope }`: the very scope object the lease was opened
+ *    `{ _tag: 'RequestPrincipal', principal: scope, audience }`: the very scope object the lease was opened
  *    with (`input.lease`), which the lease and the gateway delegation recognise by identity; a
  *    schema-made copy or the pre-scope principal is refused. The read runtime provides the
  *    `OwnerAuthorizationOverlay` it uses today (`failClosedOwnerAuthorizationOverlay` where it has none).
