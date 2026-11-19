@@ -93,8 +93,8 @@ interface FixturePermissionEnvironment {
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT?: string;
 }
 
-/** The fixture's SpiceDB deadline per call, the longest any SpiceDB test client allows. */
-const LIVE_FIXTURE_SPICEDB_TIMEOUT_MS = 10_000;
+/** The fixture's SpiceDB deadline per call: the 30 s the fixture always allowed an external call. */
+const LIVE_FIXTURE_SPICEDB_TIMEOUT_MS = 30_000;
 const LOAD_EVIDENCE_FAILURE = 'Unable to load live fixture evidence';
 const LOCAL_DATABASE_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1']);
 const fixturePartyModule = 'party.registry';

@@ -346,8 +346,8 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
   },
 );
 
-/** The longest per-call deadline any SpiceDB test client allows. */
-const NATIVE_SPICEDB_TIMEOUT_MS = 10_000;
+/** The per-call deadline the live fixture gives its own SpiceDB calls. */
+const NATIVE_SPICEDB_TIMEOUT_MS = 30_000;
 
 /** SpiceDB through the production client: every call has a deadline, a refused read is retried, a write is sent once. */
 const openNativeSpiceClient = Effect.fn('ServerOwnerRelayNative.openSpiceClient')(function* openNativeSpiceClient() {
