@@ -65,6 +65,7 @@ import './occupancy-form.css';
 import {
   initialEditorState,
   occupancyDraftOf,
+  guestChoicesOf,
   occupancyEditorActions,
   occupancyEditorReducer,
 } from './editor-state.ts';
@@ -175,7 +176,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     endDate,
     guestId,
     guestQuery,
-    guests,
     peopleCount,
     rentEditorOpen,
     rentMonthly,
@@ -185,6 +185,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     stayNote,
     unitId,
   } = draftEditor;
+  const guests = guestChoicesOf(draftEditor);
   const editor = Option.getOrUndefined(draftEditor.editor);
   const setCustomerId = (value: string) =>
     dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'customerId', value }));
@@ -549,7 +550,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     run(
       findCustomers(guestQuery).pipe(
         Effect.match({
-          onFailure: reportFailure,
+          // A failed guest search says so in the form; it is a lookup, so the open stay and its chosen guest stay.
+          onFailure: (failure) => setActionFeedback(failureFeedback(failure)),
           onSuccess: (values) => {
             dispatchEditor(occupancyEditorActions.GUESTS_LOADED({ guests: values }));
             setActionFeedback(undefined);
