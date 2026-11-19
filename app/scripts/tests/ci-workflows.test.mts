@@ -1063,36 +1063,69 @@ it('provisions the stage proof Chromium pin only for the tooling shard that actu
   }
 });
 
-it('provisions pinned Chromium before running N1 once in its own unit row', () => {
-  const rows = readGateCommandJobs()[WORKSPACE_UNIT_JOB].strategy.matrix.include;
-  expect(rows.filter(({ name }) => name === 'N1 storefront tests').map(({ commands }) => commands)).toEqual([
-    'pnpm --filter ./n1-storefront run test run\n',
-  ]);
-  expect(MATRICES.unit.find(({ name }) => name === 'N1 storefront tests')?.setup).toBe(
-    'mise exec -- pnpm exec playwright-core install --with-deps chromium\n',
-  );
-  const { steps } = readGateCommandJobs()[WORKSPACE_UNIT_JOB];
+it('provisions pinned Chromium before running N1 once after the storefront source checks', () => {
+  const jobs = readGateCommandJobs();
+  const rows = jobs[WORKSPACE_GATE_JOB].strategy.matrix.include;
+  const command = 'pnpm --filter ./n1-storefront run test run';
+  expect(
+    [...MATRICES.source, ...MATRICES.unit]
+      .flatMap(({ commands }) => commands.split('\n'))
+      .filter((line) => line === command),
+  ).toEqual([command]);
+  const row = MATRICES.source.find(({ name }) => name === 'Typecheck and OntOS API Boundary Rules');
+  expect(row?.commands.trim().split('\n').at(-1)).toBe(command);
+  expect(row?.setup).toBeUndefined();
+  const { steps } = jobs[WORKSPACE_GATE_JOB];
   const restore = steps.findIndex(({ id }) => id === 'n1-chromium-cache');
   const seed = steps.findIndex(({ name }) => name === "Seed apt with N1's cached Chromium system-library packages");
-  const setup = steps.findIndex(({ name }) => name === "Run the row's package setup");
+  const setup = steps.findIndex(({ name }) => name === "Install N1's pinned Chromium and system libraries");
+  const collect = steps.findIndex(({ name }) => name === "Collect N1's Chromium system-library packages");
   const save = steps.findIndex(({ name }) => name === "Save N1's pinned Chromium and system-library packages");
   const run = steps.findIndex(({ name }) => name === MATRIX_RUN_STEP);
   expect(restore).toBeGreaterThan(-1);
   expect(seed).toBeGreaterThan(restore);
   expect(setup).toBeGreaterThan(seed);
-  expect(save).toBeGreaterThan(setup);
+  expect(collect).toBeGreaterThan(setup);
+  expect(save).toBeGreaterThan(collect);
   expect(run).toBeGreaterThan(save);
   expect(steps[restore]?.with?.path).toContain('~/.cache/ms-playwright');
   expect(steps[restore]?.with?.path).toContain('~/.cache/playwright-apt-debs');
   expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml')");
-  expect(steps[restore]?.if).toBe("matrix.name == 'N1 storefront tests'");
-  expect(steps[setup]?.run).toBe('bash -eo pipefail -c "$SETUP"');
+  const selected = `contains(matrix.commands, '${command}')`;
+  for (const index of [restore, seed, setup, collect]) {
+    expect(steps[index]?.if).toBe(selected);
+  }
+  expect(steps[setup]?.run).toBe('mise exec -- pnpm exec playwright-core install --with-deps chromium');
+  expect(steps[save]?.if).toContain(selected);
+  expect(steps[save]?.if).toContain("steps.n1-chromium-cache.outputs.cache-hit != 'true'");
   expect(steps[save]?.if).toContain(DEMO_REF);
   expect(
     rows
       .flatMap(({ commands }) => commands.split('\n'))
       .filter((line) => line.includes('./akros-storefront run test run')),
   ).toEqual([]);
+  expect(jobs[WORKSPACE_UNIT_JOB].steps.some(({ name }) => name?.includes("N1's"))).toBe(false);
+});
+
+it('keeps the tight Core Runtime suite in its original isolated package group', () => {
+  const filters =
+    '--filter ./packages/core-runtime --filter ./verticals/merchandise --filter ./verticals/party-registry';
+  expect(
+    MATRICES.unit.find(
+      ({ name }) => name === 'Unit and Component Tests (Core Runtime, Merchandise, and Party Registry)',
+    ),
+  ).toEqual({
+    commands: `pnpm -r --no-sort --if-present ${filters} run test:unit\npnpm -r --no-sort --if-present ${filters} run test:component\n`,
+    name: 'Unit and Component Tests (Core Runtime, Merchandise, and Party Registry)',
+  });
+  const other = MATRICES.unit.find(({ name }) => name === 'Unit and Component Tests (every other package)');
+  const commands = other?.commands.trim().split('\n') ?? [];
+  expect(commands).toHaveLength(2);
+  for (const command of commands) {
+    for (const directory of ['packages/core-runtime', 'verticals/merchandise', 'verticals/party-registry']) {
+      expect(command).toContain(`--filter '!./${directory}'`);
+    }
+  }
 });
 
 it('restores same-run Node metadata only for unit rows that execute public contract fixtures', () => {

@@ -459,10 +459,30 @@ export const planCiChecks = (input: PlanInput) => {
   }
   const integration = { affected: selectedIntegration, full: templates.integration, scoped: [] }[effectiveMode];
   const unit = { affected: selectedUnit, full: templates.unit, scoped: narrowedUnit }[effectiveMode];
-  const source =
+  const selectedSource =
     effectiveMode === 'scoped'
       ? templates.source.filter(({ name }) => scopes.some((scope) => scope.source.includes(name)))
       : templates.source;
+  // Whole-package suites in source rows follow the same affected owners as unit rows. Other source checks
+  // (including shared-contracts' type tests) stay intact; unknown package paths never narrow coverage.
+  const source =
+    effectiveMode === 'full'
+      ? selectedSource
+      : selectedSource.map((entry) => ({
+          ...entry,
+          commands: entry.commands
+            .split('\n')
+            .filter((command) => {
+              const directory = /^pnpm --filter \.\/(?<directory>[a-z0-9/-]+) run test(?:\s|$)/u.exec(command)?.groups
+                ?.directory;
+              return (
+                directory === undefined ||
+                !packages.some((owner) => owner.directory === directory) ||
+                affectedDirectories.has(directory)
+              );
+            })
+            .join('\n'),
+        }));
   const built = effectiveMode === 'scoped' ? 0 : 1;
   // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
   // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.

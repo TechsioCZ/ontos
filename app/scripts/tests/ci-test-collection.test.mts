@@ -502,6 +502,7 @@ it('collects every executable test in a CI job or names its manual environment',
   );
   const collected = new Set<string>();
   let checkoutCollections = 0;
+  const n1Collections = new Map<string, number>();
   const weightedShards = new Map<string, string[]>();
   const collect = (
     directory: string,
@@ -524,6 +525,9 @@ it('collects every executable test in a CI job or names its manual environment',
           continue;
         }
         collected.add(file);
+        if (file.startsWith('n1-storefront/')) {
+          n1Collections.set(file, (n1Collections.get(file) ?? 0) + 1);
+        }
         if (file === 'scripts/tests/stage-n1-checkout.test.mts') {
           checkoutCollections += 1;
         }
@@ -639,6 +643,9 @@ it('collects every executable test in a CI job or names its manual environment',
     );
   }
   collectIntegration();
+  for (const file of tests.filter((entry) => entry.startsWith('n1-storefront/'))) {
+    expect(n1Collections.get(file), `N1 must run in exactly one CI row: ${file}`).toBe(1);
+  }
   expect(checkoutCollections, 'The checkout browser proof must run in exactly one CI job').toBe(1);
   for (const file of browserCollection({
     appRoot: app,

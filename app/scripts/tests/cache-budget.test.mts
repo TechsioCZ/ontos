@@ -151,10 +151,26 @@ const SAVE_CLAUSE = /^steps\.[\w-]+\.outputs\.(?:cache-hit != 'true'|key != '')$
  * lockfile), so the trunk job that installs it saves the store under its exact key.
  */
 const STORE_SAVE = { clause: "steps.restored.outputs.usable != 'true'", label: 'install-app › Save the pnpm store' };
+// The checkout proof provisions a browser in only the tooling shard that collects it. Its cache save must
+// follow exactly the restore's selection, not an extra condition on what that shard happened to build.
+const CHECKOUT_BROWSER_SAVE = {
+  clause: "steps.checkout-browser.outputs.required == 'true'",
+  label:
+    "ultramodern-workspace-gates.yml workspace-gate › Save the checkout proof's pinned Chromium and system-library packages",
+  restore:
+    "ultramodern-workspace-gates.yml workspace-gate › Restore the checkout proof's pinned Chromium and system-library packages",
+};
 
 it.effect('makes every content-keyed save depend only on its exact entry not being restored', () =>
   Effect.gen(function* saveClauses() {
-    const saves = (yield* cacheSteps).filter(({ key, save }) => save && allowedFor(key) === undefined);
+    const steps = yield* cacheSteps;
+    const saves = steps.filter(({ key, save }) => save && allowedFor(key) === undefined);
+    expect(steps.find(({ label }) => label === CHECKOUT_BROWSER_SAVE.restore)?.step.if).toBe(
+      CHECKOUT_BROWSER_SAVE.clause,
+    );
+    expect(saves.find(({ label }) => label === CHECKOUT_BROWSER_SAVE.label)?.step.if).toContain(
+      CHECKOUT_BROWSER_SAVE.clause,
+    );
     const offenders = saves.flatMap(({ label, step }) =>
       (step.if ?? '')
         .split('&&')
@@ -162,6 +178,7 @@ it.effect('makes every content-keyed save depend only on its exact entry not bei
         // Which runs may write (an input, the ref) is policy; what a step produced may only be the exact hit and key.
         .filter((clause) => clause.includes('steps.') && !SAVE_CLAUSE.test(clause))
         .filter((clause) => !(label.endsWith(STORE_SAVE.label) && clause === STORE_SAVE.clause))
+        .filter((clause) => !(label === CHECKOUT_BROWSER_SAVE.label && clause === CHECKOUT_BROWSER_SAVE.clause))
         .map((clause) => `${label}: ${clause}`),
     );
     expect(offenders).toEqual([]);

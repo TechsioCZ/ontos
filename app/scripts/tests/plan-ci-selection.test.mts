@@ -68,7 +68,7 @@ const packages: readonly CiWorkspacePackage[] = [
 const plan = (...changedPaths: readonly string[]) =>
   planCiChecks({ applyAffected: true, changedPaths, packages, templates });
 const names = (entries: readonly { readonly name: string }[]) => entries.map(({ name }) => name);
-const N1_TESTS = 'N1 storefront tests';
+const N1_TEST_COMMAND = 'pnpm --filter ./n1-storefront run test run';
 const EVERY_OTHER_PACKAGE = 'Unit and Component Tests (every other package)';
 /** The typecheck row, which also typechecks the storefronts. */
 const TYPECHECK = 'Typecheck and OntOS API Boundary Rules';
@@ -101,18 +101,17 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
     expect(storefront.affectedPackages, directory).toEqual([directory]);
     // The typecheck and the tooling tests that read storefront files, nothing else from the source rows.
     expect(names(storefront.source), directory).toEqual([TYPECHECK, ...TOOLING_ROWS]);
-    expect(names(storefront.unit), directory).toEqual(
-      directory === N1 ? [N1_TESTS, EVERY_OTHER_PACKAGE] : [EVERY_OTHER_PACKAGE],
-    );
+    expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
     expect(storefront.unit.find(({ name }) => name === EVERY_OTHER_PACKAGE)?.commands, directory).toContain(
       `--filter ./${directory} run test:unit`,
     );
-    expect(storefront.unit.find(({ name }) => name === N1_TESTS)?.commands, directory).toBe(
-      directory === N1 ? 'pnpm --filter ./n1-storefront run test run\n' : undefined,
-    );
-    expect(storefront.unit.find(({ name }) => name === N1_TESTS)?.setup, directory).toBe(
-      directory === N1 ? 'mise exec -- pnpm exec playwright-core install --with-deps chromium\n' : undefined,
-    );
+    expect(
+      [...storefront.source, ...storefront.unit]
+        .flatMap(({ commands }) => commands.split('\n'))
+        .filter((command) => command === N1_TEST_COMMAND),
+      directory,
+    ).toEqual(directory === N1 ? [N1_TEST_COMMAND] : []);
+    expect(storefront.source.find(({ name }) => name === TYPECHECK)?.setup, directory).toBeUndefined();
     for (const storefrontDirectory of [AKROS, N1]) {
       expect(storefront.source.find(({ name }) => name === TYPECHECK)?.commands).toContain(
         `pnpm --filter ./${storefrontDirectory} run lint`,
@@ -125,11 +124,28 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
   const both = plan(`app/${AKROS}/src/lib/cart.ts`, `app/${N1}/src/catalog/view.tsx`, 'README.md');
   expect(both.mode).toBe('scoped');
   expect(both.affectedPackages).toEqual([AKROS, N1]);
+  expect(both.source.find(({ name }) => name === TYPECHECK)?.commands).toContain(N1_TEST_COMMAND);
   expect(both.unit.find(({ name }) => name === EVERY_OTHER_PACKAGE)?.commands).toContain(
     `--filter ./${AKROS} --filter ./${N1} run test:unit`,
   );
   // The generated catalogue a Merchandise script reads is outside the scope.
   expect(plan(`app/${AKROS}/src/catalog-import/generated/catalog.generated.json`).mode).toBe('affected');
+});
+
+it('runs the source-row whole suite only for its affected owner or a full plan, without narrowing type checks', () => {
+  const input = { applyAffected: true, packages, templates };
+  for (const [selected, expected] of [
+    [plan(`app/${FINANCE_DIRECTORY}/src/internal.ts`), false],
+    [plan('app/verticals/commerce-customer-context/vertical.runtime-declaration.ts'), true],
+    [plan(`app/${N1}/package.json`), true],
+    [planCiChecks({ ...input, changedPaths: [`app/${AKROS}/src/app/page.tsx`], forceFull: true }), true],
+    [planCiChecks({ ...input, applyAffected: false, changedPaths: [`app/${AKROS}/src/app/page.tsx`] }), true],
+  ] as const) {
+    const row = selected.source.find(({ name }) => name === TYPECHECK);
+    expect(row?.commands.includes(N1_TEST_COMMAND), selected.affectedPackages.join(', ')).toBe(expected);
+    expect(row?.commands).toContain('pnpm --filter ./packages/shared-contracts test:types');
+    expect(row?.commands).toContain('pnpm typecheck');
+  }
 });
 
 it('runs only the tooling tests for a change confined to the stage delivery or the tooling tests', () => {

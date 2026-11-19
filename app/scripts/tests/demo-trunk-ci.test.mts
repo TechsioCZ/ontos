@@ -230,6 +230,7 @@ const PACKAGES = 'packages/';
 const VERTICALS = 'verticals/';
 const WORKSPACE = ['apps/', PACKAGES, VERTICALS, 'topology/'];
 const skippedCommandInputs = new Map<string, readonly string[]>([
+  ['pnpm --filter ./n1-storefront run test run', ['n1-storefront/']],
   ['pnpm --filter ./akros-storefront run lint', ['akros-storefront/src/', 'akros-storefront/tests/']],
   ['pnpm --filter ./n1-storefront run lint', ['n1-storefront/src/', 'n1-storefront/tests/']],
   ['pnpm --filter ./packages/shared-contracts test:types', ['packages/shared-contracts/']],
@@ -312,9 +313,11 @@ it('lets the plan job read the run list that the newest-green-push lookup needs'
   expect(plan?.permissions).toEqual({ actions: 'read', contents: 'read' });
 });
 
-it('keeps pinned Chromium provisioning with the scoped N1 unit row', () => {
-  expect(templates.unit.find(({ name }) => name === 'N1 storefront tests')).toMatchObject({
-    commands: 'pnpm --filter ./n1-storefront run test run\n',
-    setup: 'mise exec -- pnpm exec playwright-core install --with-deps chromium\n',
-  });
+it('keeps N1 in the source row without unconditional browser setup for the other source checks', () => {
+  const name = 'Typecheck and OntOS API Boundary Rules';
+  expect(STOREFRONTS.source).toContain(name);
+  const row = templates.source.find((entry) => entry.name === name);
+  expect(row?.setup).toBeUndefined();
+  expect(row?.commands.trim().split('\n').at(-1)).toBe('pnpm --filter ./n1-storefront run test run');
+  expect(templates.unit.some(({ commands }) => commands.includes('./n1-storefront run test run'))).toBe(false);
 });

@@ -896,14 +896,20 @@ it('keeps every unit and integration template resolvable so one glob cannot disa
 
 const WEIGHTED_SHARD_LINE =
   /^pnpm --filter \.\/[a-z0-9/-]+ exec bash \S*rstest-weighted-shard\.sh"? (?<index>\d+)\/(?<count>\d+) (?<project>[a-z-]+)(?:\s|$)/u;
-const RECURSIVE_SCRIPT_LINE = / run (?<script>test(?::[a-z]+)?)(?:\s|$)/u;
+const RECURSIVE_SCRIPT_LINE = / run (?<script>test(?::unit|:component)?)(?:\s|$)/u;
 
 // Demo carries many verticals the engineered line does not have: a matrix that names packages one by one would
 // silently skip a new one, so the catch-all rows must keep every suite in exactly one place.
-it('runs every unit and component suite of every workspace package exactly once across the unit rows', () => {
+it('runs every unit, component or whole suite of every workspace package exactly once across test-running rows', () => {
   const recursive: string[] = [];
   const weighted = new Map<string, { readonly count: string; readonly indices: string[] }>();
-  for (const line of templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean))) {
+  const testCommands = [
+    ...templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean)),
+    ...templates.source.flatMap(({ commands }) =>
+      commands.split('\n').filter((line) => RECURSIVE_SCRIPT_LINE.test(line) || WEIGHTED_SHARD_LINE.test(line)),
+    ),
+  ];
+  for (const line of testCommands) {
     const shard = WEIGHTED_SHARD_LINE.exec(line)?.groups;
     const script = RECURSIVE_SCRIPT_LINE.exec(line)?.groups?.script;
     const directories = matchingPackages(line, workspacePackages).map(({ directory }) => directory);

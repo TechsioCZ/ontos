@@ -535,6 +535,47 @@ jobs:
             ~/.cache/playwright-apt-debs
           key: ${{ steps.checkout-chromium-cache.outputs.cache-primary-key }}
 
+      # N1's native-control unit test uses the root playwright-core pin, not Shell's @playwright/test pin.
+      # Cache downloaded browsers and apt archives only; the setup still validates Chromium and its OS libraries.
+      - name: Restore N1's pinned Chromium and system-library packages
+        if: contains(matrix.commands, 'pnpm --filter ./n1-storefront run test run')
+        id: n1-chromium-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-apt-debs
+          key: playwright-core-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+      - name: Seed apt with N1's cached Chromium system-library packages
+        if: contains(matrix.commands, 'pnpm --filter ./n1-storefront run test run')
+        run: |
+          if [[ -d ~/.cache/playwright-apt-debs ]]; then
+            find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec sudo cp {} /var/cache/apt/archives/ \;
+          fi
+
+      - name: Install N1's pinned Chromium and system libraries
+        if: contains(matrix.commands, 'pnpm --filter ./n1-storefront run test run')
+        working-directory: app
+        run: mise exec -- pnpm exec playwright-core install --with-deps chromium
+
+      - name: Collect N1's Chromium system-library packages
+        if: contains(matrix.commands, 'pnpm --filter ./n1-storefront run test run')
+        run: |
+          mkdir -p ~/.cache/playwright-apt-debs
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
+
+      - name: Save N1's pinned Chromium and system-library packages
+        if: >-
+          success() && contains(matrix.commands, 'pnpm --filter ./n1-storefront run test run') && steps.n1-chromium-cache.outputs.cache-hit != 'true' &&
+          github.ref == 'refs/heads/demo/sales-crm'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-apt-debs
+          key: ${{ steps.n1-chromium-cache.outputs.cache-primary-key }}
+
       - name: Run ${{ matrix.name }}
         working-directory: app
         env:
@@ -599,25 +640,6 @@ jobs:
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
-      # N1's native-control unit test uses the root playwright-core pin, not Shell's @playwright/test pin.
-      # Cache downloaded browsers and apt archives only; the setup still validates Chromium and its OS libraries.
-      - name: Restore N1's pinned Chromium and system-library packages
-        if: matrix.name == 'N1 storefront tests'
-        id: n1-chromium-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/playwright-apt-debs
-          key: playwright-core-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml') }}
-
-      - name: Seed apt with N1's cached Chromium system-library packages
-        if: matrix.name == 'N1 storefront tests'
-        run: |
-          if [[ -d ~/.cache/playwright-apt-debs ]]; then
-            find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec sudo cp {} /var/cache/apt/archives/ \;
-          fi
-
       # A row may need system tools or provisioned fixtures before its tests run (the matrices' `setup`).
       - name: Run the row's package setup
         if: matrix.setup
@@ -625,23 +647,6 @@ jobs:
         env:
           SETUP: ${{ matrix.setup }}
         run: bash -eo pipefail -c "$SETUP"
-
-      - name: Collect N1's Chromium system-library packages
-        if: matrix.name == 'N1 storefront tests'
-        run: |
-          mkdir -p ~/.cache/playwright-apt-debs
-          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
-
-      - name: Save N1's pinned Chromium and system-library packages
-        if: >-
-          success() && matrix.name == 'N1 storefront tests' && steps.n1-chromium-cache.outputs.cache-hit != 'true' &&
-          github.ref == 'refs/heads/demo/sales-crm'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/playwright-apt-debs
-          key: ${{ steps.n1-chromium-cache.outputs.cache-primary-key }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
