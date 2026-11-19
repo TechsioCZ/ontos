@@ -1990,7 +1990,10 @@ const workspaceManifest = (name: string, dependencies: Readonly<Record<string, s
 it('uses a restored workspace only when pnpm would run in it without installing', () => {
   const verify = readInstallAction().find(({ id }) => id === 'restored')?.run ?? 'exit 1';
   // The bash and pnpm the tests run with: the step reads its packages with mapfile, which macOS's /bin/bash lacks.
-  const [bash = 'bash', pnpm = 'pnpm'] = execFileSync('/bin/sh', ['-c', 'command -v bash pnpm'], { encoding: 'utf-8' })
+  // One name per `command -v`: dash, the /bin/sh of the CI runners, answers only for the first name it is given.
+  const [bash = 'bash', pnpm = 'pnpm'] = execFileSync('/bin/sh', ['-c', 'command -v bash && command -v pnpm'], {
+    encoding: 'utf-8',
+  })
     .trim()
     .split('\n');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
