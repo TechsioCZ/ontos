@@ -275,6 +275,17 @@ describe('the read SDK form gate', () => {
       ]);
       expect(found.some((violation) => violation.includes(NO_SUBPATH))).toBe(true);
     });
+    it('refuses a module-api contract published under a subpath other than its own name', () => {
+      for (const [subpath, target] of [
+        ['./api/provider-facts', './shared/apis/other-facts.ts'],
+        ['./apis/provider-facts', './shared/apis/provider-facts.ts'],
+      ] as const) {
+        const found = moduleCall(`@app/provider${subpath.slice(1)}`, [
+          [MODULE_PACKAGE_FILE, modulePackage({ [subpath]: target })],
+        ]);
+        expect(found.some((violation) => violation.includes(NO_SUBPATH))).toBe(true);
+      }
+    });
     it('refuses a subpath the module package does not export', () => {
       const found = moduleCall('@app/provider/api/other-facts', [[MODULE_PACKAGE_FILE, modulePackage(published)]]);
       expect(found.some((violation) => violation.includes(NO_SUBPATH))).toBe(true);

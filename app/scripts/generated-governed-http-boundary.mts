@@ -3346,25 +3346,32 @@ const ModulePackageManifestSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, Schema.String),
   name: Schema.String,
 });
-/** Where a module's generated module-api contract lives; its package publishes it under its own subpath. */
-const MODULE_API_CONTRACT_TARGET = /^\.\/shared\/apis\/[a-z0-9-]+\.ts$/u;
+/**
+ * The subpath a module package publishes its generated module-api contract under: `./api/<name>`, mapped
+ * to `./shared/apis/<name>.ts` (the same leaf the module entrypoint boundary admits operation references from).
+ */
+const MODULE_API_CONTRACT_EXPORT = /^\.\/api\/(?<name>[a-z0-9-]+)$/u;
 
 /** Whether exactly one module package under `verticals/` publishes `exportName` as its generated module-api contract. */
 const publishesModuleApiContract = (
   sources: ReadonlyMap<string, string>,
   packageName: string,
   exportName: string,
-): boolean =>
-  [...sources.entries()].filter(([candidate, source]) => {
-    if (!/^verticals\/[^/]+\/package\.json$/u.test(candidate)) {
-      return false;
-    }
-    const decoded = Option.getOrUndefined(
-      Schema.decodeUnknownOption(Schema.fromJsonString(ModulePackageManifestSchema))(source),
-    );
-    const target = decoded?.name === packageName ? decoded.exports[exportName] : undefined;
-    return target !== undefined && MODULE_API_CONTRACT_TARGET.test(target);
-  }).length === 1;
+): boolean => {
+  const contractName = MODULE_API_CONTRACT_EXPORT.exec(exportName)?.groups?.name;
+  return (
+    contractName !== undefined &&
+    [...sources.entries()].filter(([candidate, source]) => {
+      if (!/^verticals\/[^/]+\/package\.json$/u.test(candidate)) {
+        return false;
+      }
+      const decoded = Option.getOrUndefined(
+        Schema.decodeUnknownOption(Schema.fromJsonString(ModulePackageManifestSchema))(source),
+      );
+      return decoded?.name === packageName && decoded.exports[exportName] === `./shared/apis/${contractName}.ts`;
+    }).length === 1
+  );
+};
 
 /* ------------------------------------------------------------------------------------------------ */
 /* The read SDK form: `{ run }`, declared calls and access questions                                */
