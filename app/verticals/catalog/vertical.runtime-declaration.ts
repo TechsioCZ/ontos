@@ -262,6 +262,7 @@ const partyRegistryModuleId = 'party.registry';
 const partyDetailProviderEntrypoint = 'party.registry.api.party-detail';
 const manufacturerPartyCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.party-current';
 const manufacturerExactRevisionEvidence = 'commerce.catalog.evidence.manufacturer-target.exact-revision';
+const manufacturerLegalEntityCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.legal-entity-current';
 export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Catalog business capability.',
@@ -648,11 +649,26 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         provider: { entrypointKey: partyDetailProviderEntrypoint, moduleId: partyRegistryModuleId, schemaVersion: '1' },
       },
       {
+        // The verified requester, relayed as itself under its selected Legal Entity, as the hand-built
+        // delegation did for every caller kind before the read moved to the SDK's call.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.catalog.condition.retained-manufacturer-target-party',
         entrypointKey: manufacturerRelationCurrentRead.descriptor.entrypoint.entrypointKey,
         evidence: [manufacturerPartyCurrentEvidence, manufacturerExactRevisionEvidence],
         key: 'commerce.catalog.requirement.manufacturer-current-party',
         provider: { entrypointKey: partyDetailProviderEntrypoint, moduleId: partyRegistryModuleId, schemaVersion: '1' },
+      },
+      {
+        // Core's own Legal Entity detail, run in-process with the requester's principal (no callers).
+        condition: 'commerce.catalog.condition.retained-manufacturer-target-legal-entity',
+        entrypointKey: manufacturerRelationCurrentRead.descriptor.entrypoint.entrypointKey,
+        evidence: [manufacturerLegalEntityCurrentEvidence, manufacturerExactRevisionEvidence],
+        key: 'commerce.catalog.requirement.manufacturer-current-legal-entity',
+        provider: {
+          entrypointKey: 'core.identity.api.legal-entity-detail',
+          moduleId: 'core.identity',
+          schemaVersion: '1',
+        },
       },
     ],
     schemaVersion: '1',

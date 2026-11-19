@@ -6,25 +6,18 @@ import { ManufacturerSubjectSchema } from '../../shared/domain/manufacturer-rela
 import type { ManufacturerSubject, ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import { manufacturerRelationRevisions, manufacturerRelations, productVariants, products } from '../database/schema.ts';
 import { ManufacturerPersistenceUnavailable } from './manufacturer-persistence.ts';
-import type { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
-import type { ManufacturerTargetForbidden } from './manufacturer-target-forbidden.ts';
-import type { ManufacturerTargetInvalid } from './manufacturer-target-invalid.ts';
-import { manufacturerTargetResolver } from './manufacturer-target-resolver.ts';
-import type { ResolvedManufacturerTarget } from './manufacturer-target-resolver.ts';
-import type { ManufacturerTargetUnavailable } from './manufacturer-target-unavailable.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 type RelationRow = typeof manufacturerRelations.$inferSelect;
 type RevisionRow = typeof manufacturerRelationRevisions.$inferSelect;
-type TargetResolver = typeof manufacturerTargetResolver;
 
+/** The Catalog's own current relation at one instant, before any owner resolution of its target. */
 interface ManufacturerCurrentClaim {
   readonly actingPrincipalId: string;
   readonly actionInvocationId: string;
   readonly effectiveFrom: string | undefined;
   readonly effectiveTo: string | undefined;
   readonly evidenceRefs: readonly string[];
-  readonly owner: ResolvedManufacturerTarget;
   readonly reason: string;
   readonly recordedAt: Date;
   readonly relationId: string;
@@ -39,17 +32,15 @@ type ManufacturerCurrentResult =
   | { readonly claim: ManufacturerCurrentClaim; readonly kind: 'CURRENT' };
 
 export interface ManufacturerCurrentReads {
-  readonly effective: (
+  /**
+   * The one current relation of the subject at `at`, its whole revision chain proven against its head. It
+   * makes no owner call: the read resolves the target's owner status outside this transaction and then
+   * calls this again to prove the same relation revision is still the current one.
+   */
+  readonly current: (
     subject: ManufacturerSubject,
     at: string,
-  ) => Effect.Effect<
-    ManufacturerCurrentResult,
-    | ManufacturerPersistenceUnavailable
-    | ManufacturerTargetAbsent
-    | ManufacturerTargetForbidden
-    | ManufacturerTargetInvalid
-    | ManufacturerTargetUnavailable
-  >;
+  ) => Effect.Effect<ManufacturerCurrentResult, ManufacturerPersistenceUnavailable>;
 }
 
 const unavailable = (cause?: unknown) => {
@@ -104,18 +95,15 @@ const matchingRevision = (head: RelationRow, row: RevisionRow) =>
   head.reason === row.reason &&
   Equal.equals(head.evidenceRefs, row.evidenceRefs);
 
-/** Uses only Catalog's tenant-scoped transaction and an injected authoritative owner resolver. */
+/** Uses only Catalog's tenant-scoped transaction. */
 export const manufacturerCurrentReadsForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Owner-read port is injected by the governed read service factory.
-  configured?: { readonly targetResolver: TargetResolver },
 ): ManufacturerCurrentReads => {
   const { tenantId } = scope;
-  const resolver = configured?.targetResolver ?? manufacturerTargetResolver;
-  const effective: ManufacturerCurrentReads['effective'] = Effect.fn('ManufacturerCurrentReads.effective')(
-    // oxlint-disable-next-line eslint/complexity -- One fail-closed read transaction validates subject, competing heads, revision evidence, and owner status together.
-    function* effective(subject, at) {
+  const current: ManufacturerCurrentReads['current'] = Effect.fn('ManufacturerCurrentReads.current')(
+    // oxlint-disable-next-line eslint/complexity -- One fail-closed read transaction validates subject, competing heads, and revision evidence together.
+    function* currentRelation(subject, at) {
       if (
         !Schema.is(ManufacturerSubjectSchema)(subject) ||
         subject.tenantId !== tenantId ||
@@ -160,15 +148,15 @@ export const manufacturerCurrentReadsForScope = (
       ) {
         return yield* unavailable();
       }
-      const current = heads.filter((row) => active(row, instant));
-      if (current.length === 0) {
+      const activeHeads = heads.filter((row) => active(row, instant));
+      if (activeHeads.length === 0) {
         return { kind: 'ABSENT' };
       }
       // A Product-wide and Variant assertion are not ordered overrides.
-      if (current.length !== 1) {
+      if (activeHeads.length !== 1) {
         return yield* unavailable();
       }
-      const [head] = current;
+      const [head] = activeHeads;
       if (head === undefined || head.currentRevision < 1 || !Number.isSafeInteger(head.currentRevision)) {
         return yield* unavailable();
       }
@@ -196,8 +184,6 @@ export const manufacturerCurrentReadsForScope = (
       ) {
         return yield* unavailable();
       }
-      const target = targetOf(head);
-      const owner = yield* resolver.resolve(target, { requestId: scope.correlationId, tenantId });
       return {
         claim: {
           actingPrincipalId: latest.actingPrincipalId,
@@ -205,7 +191,6 @@ export const manufacturerCurrentReadsForScope = (
           effectiveFrom: latest.effectiveFrom?.toISOString(),
           effectiveTo: latest.effectiveTo?.toISOString(),
           evidenceRefs: latest.evidenceRefs,
-          owner,
           reason: latest.reason,
           recordedAt: latest.recordedAt,
           relationId: head.relationId,
@@ -224,11 +209,11 @@ export const manufacturerCurrentReadsForScope = (
                   resourceType: 'commerce.catalog.product',
                   tenantId,
                 },
-          target,
+          target: targetOf(head),
         },
         kind: 'CURRENT',
       };
     },
   );
-  return { effective };
+  return { current };
 };
