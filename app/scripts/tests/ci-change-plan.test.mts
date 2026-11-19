@@ -1179,6 +1179,13 @@ it('reads every packages entry of pnpm-workspace.yaml, and nothing it does not u
     `%YAML 1.2\n${workspace}`,
     `${workspace}catalogMode: strict\n`,
     `${workspace}"packages": []\n`,
+    // A quote or a flow collection open at a line end: the list below it is the inside of one value, and pnpm reads
+    // no packages list at all.
+    workspace
+      .replace('packages:\n', 'hoistPattern: ["\npackages:\n')
+      .replace('enableGlobalVirtualStore:', 'end: "]\nenableGlobalVirtualStore:'),
+    workspace.replace('packages:\n', "note: 'open\npackages:\n"),
+    workspace.replace('packages:\n', 'note: [\npackages:\n'),
   ]) {
     expect(directories(text), text).toHaveProperty('unreadable');
   }

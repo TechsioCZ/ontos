@@ -524,16 +524,36 @@ export interface CiPackageManifest {
 const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version);
 
 /**
+ * Whether a line of pnpm-workspace.yaml leaves a quote or a flow collection open, so that the lines after it can be the
+ * inside of one value instead of keys and items. Text from a `#` at the line start or after whitespace is a comment;
+ * such a `#` inside quotes therefore reads as an open quote, which only makes the document unreadable.
+ */
+const opensMultilineValue = (line: string) => {
+  const body = line.replace(/(?:^|\s)#.*$/u, '');
+  const count = (pattern: RegExp) => body.match(pattern)?.length ?? 0;
+  return (
+    count(/"/gu) % 2 !== 0 ||
+    count(/'/gu) % 2 !== 0 ||
+    count(/\[/gu) !== count(/\]/gu) ||
+    count(/\{/gu) !== count(/\}/gu)
+  );
+};
+
+/**
  * The entries of the top-level `packages:` block list of pnpm-workspace.yaml. Comment and blank lines inside the list
  * are skipped; the next top-level key ends it. Empty when the file has no such list, or the list holds a line this
  * reader does not know (another indentation, a flow list, an anchor), or the document is not one plain mapping: every
  * line at column zero is a comment, a list item or a top-level key named once, so a document marker, a directive, text
- * after a document end or a repeated key is no document this reader knows. A form it cannot read never yields a shorter
- * list.
+ * after a document end or a repeated key is no document this reader knows, and neither is one with a quote or a flow
+ * collection that stays open at a line end, whose next lines may be one value. A form it cannot read never yields a
+ * shorter list.
  */
 const workspaceEntries = (text: string): readonly string[] => {
   // pnpm's reader also breaks a line at a carriage return that stands alone.
   const lines = text.split(/\r\n?|\n/u);
+  if (lines.some(opensMultilineValue)) {
+    return [];
+  }
   const keys = new Set<string>();
   for (const line of lines) {
     if (/^(?:\s|#|- |$)/u.test(line)) {
