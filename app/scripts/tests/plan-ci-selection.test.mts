@@ -68,6 +68,7 @@ const packages: readonly CiWorkspacePackage[] = [
 const plan = (...changedPaths: readonly string[]) =>
   planCiChecks({ applyAffected: true, changedPaths, packages, templates });
 const names = (entries: readonly { readonly name: string }[]) => entries.map(({ name }) => name);
+const N1_TESTS = 'N1 storefront tests';
 const EVERY_OTHER_PACKAGE = 'Unit and Component Tests (every other package)';
 /** The typecheck row, which also typechecks the storefronts. */
 const TYPECHECK = 'Typecheck and OntOS API Boundary Rules';
@@ -101,13 +102,16 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
     // The typecheck and the tooling tests that read storefront files, nothing else from the source rows.
     expect(names(storefront.source), directory).toEqual([TYPECHECK, ...TOOLING_ROWS]);
     expect(names(storefront.unit), directory).toEqual(
-      directory === N1 ? ['N1 storefront tests', EVERY_OTHER_PACKAGE] : [EVERY_OTHER_PACKAGE],
+      directory === N1 ? [N1_TESTS, EVERY_OTHER_PACKAGE] : [EVERY_OTHER_PACKAGE],
     );
     expect(storefront.unit.find(({ name }) => name === EVERY_OTHER_PACKAGE)?.commands, directory).toContain(
       `--filter ./${directory} run test:unit`,
     );
-    expect(storefront.unit.find(({ name }) => name === 'N1 storefront tests')?.commands, directory).toBe(
+    expect(storefront.unit.find(({ name }) => name === N1_TESTS)?.commands, directory).toBe(
       directory === N1 ? 'pnpm --filter ./n1-storefront run test run\n' : undefined,
+    );
+    expect(storefront.unit.find(({ name }) => name === N1_TESTS)?.setup, directory).toBe(
+      directory === N1 ? 'mise exec -- pnpm exec playwright-core install --with-deps chromium\n' : undefined,
     );
     for (const storefrontDirectory of [AKROS, N1]) {
       expect(storefront.source.find(({ name }) => name === TYPECHECK)?.commands).toContain(

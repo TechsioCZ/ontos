@@ -311,3 +311,10 @@ it('lets the plan job read the run list that the newest-green-push lookup needs'
   ).jobs['ci-plan'];
   expect(plan?.permissions).toEqual({ actions: 'read', contents: 'read' });
 });
+
+it('keeps pinned Chromium provisioning with the scoped N1 unit row', () => {
+  expect(templates.unit.find(({ name }) => name === 'N1 storefront tests')).toMatchObject({
+    commands: 'pnpm --filter ./n1-storefront run test run\n',
+    setup: 'mise exec -- pnpm exec playwright-core install --with-deps chromium\n',
+  });
+});

@@ -110,7 +110,7 @@ beforeAll(async () => {
     throw new Error("Expected the scoped owner server origin");
   }
   origin = configuredOrigin;
-  browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 10_000 });
+  browser = await chromium.launch({ headless: true, timeout: 10_000 });
 }, 30_000);
 
 afterAll(async () => {

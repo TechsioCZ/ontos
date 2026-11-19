@@ -146,6 +146,7 @@
   "unit": [
     {
       "name": "N1 storefront tests",
+      "setup": "mise exec -- pnpm exec playwright-core install --with-deps chromium\n",
       "commands": "pnpm --filter ./n1-storefront run test run\n"
     },
     {

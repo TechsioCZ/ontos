@@ -66,6 +66,7 @@ const WORKER_PROOF_STEP = 'Build and run the Outbox Worker host artifact against
 const MATRIX_SHARD = 'matrix.shard';
 const QUALITY_AUDIT_WORKFLOW = 'quality-audit.yml';
 const LEFTHOOK_CONFIG = 'lefthook.yml';
+const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 const CACHE_SAVE_ACTION = 'actions/cache/save@';
 const INSTALL_APP_ACTION = './.github/actions/install-app';
 const WHOLE_TREE_LINT_SHARDS = 'shards=[1,2,3]';
@@ -988,11 +989,31 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
-it('runs N1 once in its own plain unit row without duplicating AKROS tests', () => {
+it('provisions pinned Chromium before running N1 once in its own unit row', () => {
   const rows = readGateCommandJobs()[WORKSPACE_UNIT_JOB].strategy.matrix.include;
   expect(rows.filter(({ name }) => name === 'N1 storefront tests').map(({ commands }) => commands)).toEqual([
     'pnpm --filter ./n1-storefront run test run\n',
   ]);
+  expect(MATRICES.unit.find(({ name }) => name === 'N1 storefront tests')?.setup).toBe(
+    'mise exec -- pnpm exec playwright-core install --with-deps chromium\n',
+  );
+  const { steps } = readGateCommandJobs()[WORKSPACE_UNIT_JOB];
+  const restore = steps.findIndex(({ id }) => id === 'n1-chromium-cache');
+  const seed = steps.findIndex(({ name }) => name === "Seed apt with N1's cached Chromium system-library packages");
+  const setup = steps.findIndex(({ name }) => name === "Run the row's package setup");
+  const save = steps.findIndex(({ name }) => name === "Save N1's pinned Chromium and system-library packages");
+  const run = steps.findIndex(({ name }) => name === `Run ${expression('matrix.name')}`);
+  expect(restore).toBeGreaterThan(-1);
+  expect(seed).toBeGreaterThan(restore);
+  expect(setup).toBeGreaterThan(seed);
+  expect(save).toBeGreaterThan(setup);
+  expect(run).toBeGreaterThan(save);
+  expect(steps[restore]?.with?.path).toContain('~/.cache/ms-playwright');
+  expect(steps[restore]?.with?.path).toContain('~/.cache/playwright-apt-debs');
+  expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml')");
+  expect(steps[restore]?.if).toBe("matrix.name == 'N1 storefront tests'");
+  expect(steps[setup]?.run).toBe('bash -eo pipefail -c "$SETUP"');
+  expect(steps[save]?.if).toContain(DEMO_REF);
   expect(
     rows
       .flatMap(({ commands }) => commands.split('\n'))
@@ -2000,7 +2021,6 @@ const readInstallAction = () =>
     parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
   ).runs.steps;
 const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
-const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 
 it("plans on the runner image's Node with nothing installed, only where it plans at all", () => {
   const steps = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB]?.steps ?? [];

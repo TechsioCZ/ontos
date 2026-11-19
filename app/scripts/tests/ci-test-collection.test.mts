@@ -1,7 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 
-import { Result, Schema } from 'effect';
+import { Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parseSync, Visitor } from 'oxc-parser';
 import type { Expression, ObjectExpression } from 'oxc-parser';
@@ -11,6 +13,8 @@ import { parseCiMatrices } from '../ci/ci-matrices.mts';
 
 const app = path.resolve(import.meta.dirname, '../..');
 const read = (file: string) => readFileSync(path.join(app, file), 'utf-8');
+const packageManifest = 'package.json';
+const matrixFile = 'scripts/ci-matrices.json';
 const defaultInclude = ['**/*.{test,spec}.?(c|m)[jt]s?(x)'];
 const defaultExclude = ['**/node_modules/**', '**/dist/**', '**/.{idea,git,cache,output,temp}/**'];
 const manual = new Map([
@@ -45,11 +49,11 @@ const ignoredDirectories = new Set([
   'test-results',
   'playwright-report',
 ]);
-const walk = (directory: string): string[] =>
-  readdirSync(path.join(app, directory), { withFileTypes: true }).flatMap((entry) => {
+const walk = (directory: string, root = app): string[] =>
+  readdirSync(path.join(root, directory), { withFileTypes: true }).flatMap((entry) => {
     const file = path.posix.join(directory, entry.name);
     if (entry.isDirectory()) {
-      return ignoredDirectories.has(entry.name) ? [] : walk(file);
+      return ignoredDirectories.has(entry.name) ? [] : walk(file, root);
     }
     return entry.isFile() ? [file] : [];
   });
@@ -215,22 +219,259 @@ const WorkflowSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
     Schema.Struct({
-      steps: Schema.optionalKey(Schema.Array(Schema.Struct({ run: Schema.optionalKey(Schema.String) }))),
+      steps: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            if: Schema.optionalKey(Schema.String),
+            run: Schema.optionalKey(Schema.String),
+            'working-directory': Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
     }),
   ),
 });
 
+// Mirror the pinned Playwright FullProjectInternal precedence and createFileMatcher rules, without importing
+// the config (which reads operator environment). Unsupported discovery expressions fail closed.
+type PlaywrightPattern = string | RegExp;
+const playwrightProjects = (file: string, text: string) => {
+  const source = parseSync(file, text);
+  expect(source.errors, file).toEqual([]);
+  const exported = source.program.body.find((node) => node.type === 'ExportDefaultDeclaration');
+  const declaration = exported?.type === 'ExportDefaultDeclaration' ? exported.declaration : undefined;
+  const config = declaration?.type === 'CallExpression' ? declaration.arguments[0] : declaration;
+  if (config?.type !== 'ObjectExpression') {
+    return expect.fail(`${file}: expected a literal Playwright config`);
+  }
+  expect(
+    config.properties.some((entry) => entry.type === 'SpreadElement'),
+    file,
+  ).toBe(false);
+  const patterns = (node: Expression | undefined): PlaywrightPattern[] => {
+    if (node === undefined) {
+      return [];
+    }
+    if (node.type === 'Literal' && Schema.is(Schema.String)(node.value)) {
+      return [node.value];
+    }
+    if (node.type === 'Literal' && 'regex' in node && node.regex !== undefined) {
+      return [new RegExp(node.regex.pattern, node.regex.flags)];
+    }
+    if (node.type === 'ArrayExpression') {
+      return node.elements.flatMap((entry) => {
+        if (entry === null || entry.type === 'SpreadElement') {
+          return expect.fail(`${file}: unsupported pattern spread`);
+        }
+        return patterns(entry);
+      });
+    }
+    return expect.fail(`${file}: unsupported Playwright discovery expression ${text.slice(node.start, node.end)}`);
+  };
+  const value = (project: ObjectExpression, key: string) => {
+    expect(
+      project.properties.some((entry) => entry.type === 'SpreadElement'),
+      file,
+    ).toBe(false);
+    return initializer(project, key) ?? initializer(config, key);
+  };
+  const string = (node: Expression | undefined, otherwise: string) => {
+    if (node === undefined) {
+      return otherwise;
+    }
+    if (node.type === 'Literal' && Schema.is(Schema.String)(node.value)) {
+      return node.value;
+    }
+    return expect.fail(`${file}: expected a literal discovery string`);
+  };
+  const projectArray = initializer(config, 'projects');
+  const projects: ObjectExpression[] = [];
+  if (projectArray === undefined) {
+    projects.push(config);
+  } else if (projectArray.type === 'ArrayExpression') {
+    for (const entry of projectArray.elements) {
+      if (entry?.type !== 'ObjectExpression') {
+        return expect.fail(`${file}: unsupported Playwright project`);
+      }
+      projects.push(entry);
+    }
+  } else {
+    return expect.fail(`${file}: unsupported Playwright projects`);
+  }
+  return projects.map((project) => ({
+    name: string(value(project, 'name'), ''),
+    testDir: string(value(project, 'testDir'), '.'),
+    testIgnore: patterns(value(project, 'testIgnore')),
+    testMatch:
+      value(project, 'testMatch') === undefined
+        ? ['**/*.@(spec|test).?(c|m)[jt]s?(x)']
+        : patterns(value(project, 'testMatch')),
+  }));
+};
+// Use the invoked package's pinned matcher: Node's matchesGlob differs on dotfiles and minimatch options.
+interface PlaywrightUtilities {
+  createFileMatcher: (patterns: readonly PlaywrightPattern[]) => (file: string) => boolean;
+}
+const PlaywrightUtilitiesSchema = Schema.Struct({
+  createFileMatcher: Schema.declare((value): value is PlaywrightUtilities['createFileMatcher'] =>
+    Predicate.isFunction(value),
+  ),
+});
+const playwrightMatcher = (directory: string, patterns: readonly PlaywrightPattern[]) => {
+  const require = createRequire(path.join(app, directory, packageManifest));
+  const utilities = Schema.decodeUnknownSync(PlaywrightUtilitiesSchema)(require('playwright/lib/util'));
+  const matcher = utilities.createFileMatcher(patterns);
+  // The pinned library owns the callable signature; check its observable result at this boundary too.
+  return (file: string) => Schema.decodeUnknownSync(Schema.Boolean)(matcher(file));
+};
+const playwrightArguments = (args: string) => {
+  // Quoted grep values are one option value, never accidental file filters.
+  const tokens = [...args.matchAll(/'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>\S+)/gu)].map(
+    ({ groups }) => groups?.single ?? groups?.double ?? groups?.bare ?? '',
+  );
+  const names: string[] = [];
+  const filters: RegExp[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? '';
+    if (token === '--project') {
+      index += 1;
+      names.push(tokens[index] ?? '');
+    } else if (['--grep', '--grep-invert', '--workers', '--retries', '--repeat-each', '--shard'].includes(token)) {
+      index += 1;
+    } else if (token.startsWith('-')) {
+      return expect.fail(`Unsupported Playwright collection option: ${token}`);
+    } else {
+      filters.push(new RegExp(token, 'u'));
+    }
+  }
+  return { filters, names };
+};
+interface BrowserInputs {
+  appRoot: string;
+  browserEnabled: boolean;
+  packages: ReadonlyMap<string, typeof PackageSchema.Type>;
+  read: (file: string) => string;
+  tests: readonly string[];
+  workflow: typeof WorkflowSchema.Type;
+}
+const browserInvocation = (command: string, directory: string, packages: BrowserInputs['packages']) => {
+  const invocation = /\bpnpm\s+--filter\s+(?<selector>[^\s]+)\s+(?<command>.+)/u.exec(command)?.groups;
+  if (invocation === undefined) {
+    return null;
+  }
+  const target = [...packages].find(
+    ([root, manifest]) =>
+      manifest.name === invocation.selector ||
+      path.posix.normalize(path.posix.join(directory, invocation.selector ?? '')) === root,
+  );
+  if (target === undefined) {
+    return expect.fail(`Unknown browser package: ${invocation.selector ?? ''}`);
+  }
+  const [root, manifest] = target;
+  const script = /^(?:run\s+)?(?<name>test(?::[\w-]+)*)(?<extra>.*)$/u.exec(invocation.command ?? '')?.groups;
+  const executable =
+    script === undefined
+      ? (invocation.command ?? '')
+      : `${manifest.scripts?.[script.name ?? ''] ?? ''}${script.extra ?? ''}`;
+  const args = /^(?:exec\s+)?playwright\s+test(?<args>.*)$/u.exec(executable)?.groups?.args;
+  return args === undefined ? null : { root, ...playwrightArguments(args) };
+};
+const collectPlaywright = (invocation: NonNullable<ReturnType<typeof browserInvocation>>, inputs: BrowserInputs) => {
+  const { filters, names, root } = invocation;
+  const configFile = path.posix.join(root, 'playwright.config.ts');
+  const projects = playwrightProjects(configFile, inputs.read(configFile));
+  for (const name of names) {
+    expect(
+      projects.some((project) => project.name === name),
+      configFile,
+    ).toBe(true);
+  }
+  return projects
+    .filter((project) => names.length === 0 || names.includes(project.name))
+    .flatMap((project) => {
+      const testDir = path.resolve(inputs.appRoot, root, project.testDir);
+      const includes = playwrightMatcher(root, project.testMatch);
+      const ignores = playwrightMatcher(root, project.testIgnore);
+      return inputs.tests.filter((file) => {
+        const absolute = path.resolve(inputs.appRoot, file);
+        return (
+          absolute.startsWith(`${testDir}/`) &&
+          includes(absolute) &&
+          !ignores(absolute) &&
+          (filters.length === 0 || filters.some((filter) => filter.test(absolute)))
+        );
+      });
+    });
+};
+const browserCollection = (inputs: BrowserInputs) => {
+  const collected = new Set<string>();
+  if (!inputs.browserEnabled) {
+    return collected;
+  }
+  // Only this job receives integrationBrowser. Other jobs share its YAML-aliased steps but not its matrix.
+  for (const step of inputs.workflow.jobs['browser-integration']?.steps ?? []) {
+    if (step.if !== undefined && step.if !== "matrix.suite == 'browser'") {
+      continue;
+    }
+    const directory = path.posix.relative('app', step['working-directory'] ?? '.');
+    for (const command of (step.run ?? '').split(/\n|&&|;/u)) {
+      const invocation = browserInvocation(command, directory, inputs.packages);
+      if (invocation !== null) {
+        for (const file of collectPlaywright(invocation, inputs)) {
+          collected.add(file);
+        }
+      }
+    }
+  }
+  return collected;
+};
+
+const declaresTests = (text: string, file: string) => {
+  const source = parseSync(file, text);
+  expect(source.errors, file).toEqual([]);
+  // Assertion-only helpers do not register tests. Executable test modules may not be laundered through an import.
+  return source.module.staticImports.some((statement) =>
+    statement.entries.some(
+      (entry) =>
+        !entry.isType &&
+        (entry.importName.name === null || ['it', 'test', 'describe'].includes(entry.importName.name ?? '')),
+    ),
+  );
+};
+
+const missingExecutableTests = (
+  tests: readonly string[],
+  collected: ReadonlySet<string>,
+  readInput: (file: string) => string,
+) => {
+  // Supporting assertion modules are imports, not suites. A URL literal never grants an executable file credit.
+  const supporting = new Set<string>();
+  for (const file of collected) {
+    const source = parseSync(file, readInput(file));
+    for (const dependency of source.module.staticImports) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), dependency.moduleRequest.value));
+      if (
+        dependency.moduleRequest.value.startsWith('.') &&
+        tests.includes(target) &&
+        !declaresTests(readInput(target), target)
+      ) {
+        supporting.add(target);
+      }
+    }
+  }
+  return tests.filter((file) => !collected.has(file) && !supporting.has(file));
+};
+
 it('collects every executable test in a CI job or names its manual environment', () => {
   const files = walk('');
   const tests = files.filter(
-    (file) => /\.(?:test|spec)\.[^/]+$/u.test(file) && !file.startsWith('tools/oxlint/effect-native/tests/fixtures/'),
+    (file) =>
+      /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file) && !file.startsWith('tools/oxlint/effect-native/tests/fixtures/'),
   );
   const workflow = Schema.decodeUnknownSync(WorkflowSchema)(
     parse(read('../.github/workflows/ultramodern-workspace-gates.yml')),
   );
-  const matrices = Result.getOrThrow(
-    parseCiMatrices(read('scripts/ci-matrices.json'), read(workflow.env.CI_MATRICES_OVERLAY)),
-  );
+  const matrices = Result.getOrThrow(parseCiMatrices(read(matrixFile), read(workflow.env.CI_MATRICES_OVERLAY)));
   const workspace = Schema.decodeUnknownSync(Schema.Struct({ packages: Schema.Array(Schema.String) }))(
     parse(read('pnpm-workspace.yaml')),
   );
@@ -238,8 +479,8 @@ it('collects every executable test in a CI job or names its manual environment',
     files
       .filter(
         (file) =>
-          path.posix.basename(file) === 'package.json' &&
-          (file === 'package.json' || matches(path.posix.dirname(file), workspace.packages)),
+          path.posix.basename(file) === packageManifest &&
+          (file === packageManifest || matches(path.posix.dirname(file), workspace.packages)),
       )
       .map((file) => [
         path.posix.dirname(file),
@@ -375,26 +616,6 @@ it('collects every executable test in a CI job or names its manual environment',
       ).toEqual(Array.from({ length: counts[0] ?? 0 }, (_, index) => index + 1));
     }
   };
-  const collectBrowser = () => {
-    // Playwright defaults are separate from Rstest. The browser matrix invokes this package's real script.
-    if (matrices.integration.some((row) => row.suite === 'browser')) {
-      for (const [directory, manifest] of packages) {
-        if (manifest.scripts?.['test:e2e']?.includes('playwright') === true) {
-          const config = read(path.posix.join(directory, 'playwright.config.ts'));
-          const testDir = /testDir:\s*['"](?<directory>[^'"]+)/u.exec(config)?.groups?.directory;
-          expect(testDir, `${directory}: browser testDir`).toBeDefined();
-          for (const file of tests) {
-            if (
-              file.startsWith(`${path.posix.join(directory, testDir ?? '')}/`) &&
-              /\.(?:test|spec)\.[jt]sx?$/u.test(file)
-            ) {
-              collected.add(file);
-            }
-          }
-        }
-      }
-    }
-  };
   for (const row of [...matrices.source, ...matrices.unit]) {
     commands.runCommand('.', row.commands);
   }
@@ -411,44 +632,146 @@ it('collects every executable test in a CI job or names its manual environment',
     );
   }
   collectIntegration();
-  collectBrowser();
-  // Shared *.spec.mts assertions and data such as SpiceDB's *.test.yaml are inputs, not extra manual suites.
-  // Follow real imports and URL reads in the parsed code, not strings in comments or embedded fixture programs.
-  for (const file of collected) {
-    if (!/\.[cm]?[jt]sx?$/u.test(file)) {
-      continue;
-    }
-    const source = parseSync(file, read(file));
-    expect(source.errors, file).toEqual([]);
-    const dependencies = source.module.staticImports
-      .filter((statement) => statement.entries.length === 0 || !statement.entries.every((entry) => entry.isType))
-      .map((statement) => statement.moduleRequest.value);
-    new Visitor({
-      NewExpression(node) {
-        const [target] = node.arguments;
-        if (
-          node.callee.type === 'Identifier' &&
-          node.callee.name === 'URL' &&
-          target?.type === 'Literal' &&
-          Schema.is(Schema.String)(target.value)
-        ) {
-          dependencies.push(target.value);
-        }
-      },
-    }).visit(source.program);
-    for (const dependency of dependencies.filter((target) => target.startsWith('.'))) {
-      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), dependency));
-      if (tests.includes(target)) {
-        collected.add(target);
-      }
-    }
+  for (const file of browserCollection({
+    appRoot: app,
+    browserEnabled: matrices.integration.some((row) => row.suite === 'browser'),
+    packages,
+    read,
+    tests,
+    workflow,
+  })) {
+    collected.add(file);
   }
   for (const [file, reason] of manual) {
     expect(reason.length).toBeGreaterThan(0);
     expect(collected.has(file), `manual suite unexpectedly runs in CI: ${file}`).toBe(false);
   }
   expect(
-    tests.filter((file) => !collected.has(file) && !manual.has(file)),
+    missingExecutableTests(tests, collected, read).filter((file) => !manual.has(file)),
     'Uncollected executable tests: add a real CI invocation and matching runner include, not a blanket exception.',
   ).toEqual([]);
+});
+
+it.each([
+  'invocation removed',
+  'uninvoked package',
+  'testIgnore',
+  'testMatch',
+  'project selection',
+  'URL-only reference',
+])('rejects a scratch CI input with %s, then accepts the restored inputs', (mutation) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'ontos-browser-collection-'));
+  const root = path.join(scratch, 'app');
+  const workflowFile = '../.github/workflows/ultramodern-workspace-gates.yml';
+  const shell = 'apps/shell-super-app';
+  const configFile = `${shell}/playwright.config.ts`;
+  const files = walk(shell).filter(
+    (file) => /\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(file) && file.includes('/tests/e2e/'),
+  );
+  const manifests = [`${shell}/package.json`];
+  const write = (file: string, text: string) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  const readInput = (file: string) => readFileSync(path.join(root, file), 'utf-8');
+  const originals = new Map(
+    [workflowFile, configFile, ...manifests, matrixFile, 'scripts/ci-matrices.demo.json', ...files].map((file) => [
+      file,
+      read(file),
+    ]),
+  );
+  const check = () => {
+    const inventory = walk('', root);
+    const tests = inventory.filter((file) => /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file));
+    const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(readInput(workflowFile)));
+    const matrices = Result.getOrThrow(
+      parseCiMatrices(readInput(matrixFile), readInput(workflow.env.CI_MATRICES_OVERLAY)),
+    );
+    const collected = browserCollection({
+      appRoot: root,
+      browserEnabled: matrices.integration.some((row) => row.suite === 'browser'),
+      packages: new Map(
+        inventory
+          .filter((file) => path.posix.basename(file) === packageManifest)
+          .map((file) => [
+            path.posix.dirname(file),
+            Schema.decodeUnknownSync(Schema.fromJsonString(PackageSchema))(readInput(file)),
+          ]),
+      ),
+      read: readInput,
+      tests,
+      workflow,
+    });
+    expect(missingExecutableTests(tests, collected, readInput), 'Uncollected executable browser tests').toEqual([]);
+  };
+  try {
+    for (const [file, text] of originals) {
+      write(file, text);
+    }
+    check();
+    if (mutation === 'invocation removed') {
+      // Leave the browser matrix row and targeted login repeat intact.
+      const original = readInput(workflowFile);
+      const changed = original.replace(
+        'mise exec -- pnpm --filter @app/shell-super-app test:e2e',
+        'echo browser invocation removed',
+      );
+      expect(changed).not.toBe(original);
+      write(workflowFile, changed);
+    } else if (mutation === 'uninvoked package') {
+      const directory = 'apps/uninvoked-browser';
+      manifests.push(`${directory}/package.json`);
+      files.push(`${directory}/tests/e2e/uninvoked.spec.ts`);
+      write(
+        manifests.at(-1) ?? '',
+        JSON.stringify({ name: '@app/uninvoked-browser', scripts: { 'test:e2e': 'playwright test' } }),
+      );
+      write(`${directory}/playwright.config.ts`, "export default defineConfig({ testDir: './tests/e2e' });");
+      write(files.at(-1) ?? '', "import { test } from '@playwright/test'; test('not invoked', () => {});");
+    } else if (mutation === 'testIgnore') {
+      const ignored = files.find((file) => !file.endsWith('/login.spec.ts'));
+      expect(ignored).toBeDefined();
+      write(
+        configFile,
+        readInput(configFile).replace(
+          "name: 'chromium',",
+          `name: 'chromium', testIgnore: ['**/${path.posix.basename(ignored ?? '')}'],`,
+        ),
+      );
+    } else if (mutation === 'testMatch') {
+      write(
+        configFile,
+        readInput(configFile).replace("name: 'chromium',", "name: 'chromium', testMatch: '**/login.spec.ts',"),
+      );
+    } else if (mutation === 'project selection') {
+      write(workflowFile, readInput(workflowFile).replace('test:e2e', 'test:e2e --project chromium'));
+      write(
+        configFile,
+        readInput(configFile).replace('projects: [', "projects: [{ name: 'firefox', testDir: './tests/unselected' },"),
+      );
+      write(
+        `${shell}/tests/unselected/unselected.spec.ts`,
+        "import { test } from '@playwright/test'; test('unselected project', () => {});",
+      );
+    } else {
+      const unexecuted = `${shell}/tests/not-in-testDir.spec.ts`;
+      files.push(unexecuted);
+      const referrer = files[0] ?? '';
+      write(referrer, `${readInput(referrer)}\nnew URL('../not-in-testDir.spec.ts', import.meta.url);\n`);
+      write(unexecuted, "import { test } from '@playwright/test'; test('URL is not execution', () => {});");
+    }
+    expect(() => check()).toThrow('Uncollected executable browser tests');
+    for (const [file, text] of originals) {
+      write(file, text);
+    }
+    // Restore the on-disk inventory too; don't hide scratch-only files from discovery.
+    for (const file of walk('', root)) {
+      if (!originals.has(file)) {
+        rmSync(path.join(root, file));
+      }
+    }
+    check();
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
 });
