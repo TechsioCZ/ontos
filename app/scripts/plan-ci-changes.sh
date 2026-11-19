@@ -91,9 +91,8 @@ if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
     "workspace-gate":"skipped", "workspace-unit":"skipped", "workspace-unit-artifacts":"skipped",
     "static-contracts":"skipped", "format-and-lint":"skipped", "service-integration":"skipped",
-    "integration-seed-proof":"skipped", "browser-integration":"skipped",
-    "node-artifact-build":"skipped", "node-artifact-proof":"skipped"
+    "node-artifact-build":"skipped"
   }' | sed 's/^/expected=/' >>"$GITHUB_OUTPUT"
-  printf 'source=[]\nunit=[]\nunit-artifacts=[]\nintegration=[]\nbrowser=[]\n' >>"$GITHUB_OUTPUT"
+  printf '%s=[]\n' source unit unit-artifacts integration integrationBrowser integrationOwners integrationTopology >>"$GITHUB_OUTPUT"
 fi
 printf '%s\n' "$reason"

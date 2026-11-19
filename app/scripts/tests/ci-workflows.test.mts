@@ -1,5 +1,14 @@
-import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +18,7 @@ import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
-import { parseCiMatrices } from '../ci/ci-matrices.mts';
+import { parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
@@ -32,18 +41,27 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const WORKSPACE_UNIT_ARTIFACTS_JOB = 'workspace-unit-artifacts';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
-const INTEGRATION_SEED_PROOF_JOB = 'integration-seed-proof';
 const BROWSER_INTEGRATION_JOB = 'browser-integration';
+const OWNER_INTEGRATION_JOB = 'owner-integration';
+const NODE_TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
+const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
+const RESTORE_INTEGRATION_WORKERS = 'bash scripts/ci/restore-integration-workers.sh';
+const INTEGRATION_WORKERS_STEP_ID = 'integration-workers';
+const INTEGRATION_DATABASE_ARTIFACT = 'integration-database';
+const CUSTOMER_CONTEXT_SELECTOR = './verticals/commerce-customer-context';
+const INSTALL_APP_STEP = 'Install the app workspace';
+const SOURCE_MIGRATIONS_STEP = 'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry';
+const INTEGRATION_TESTS_STEP =
+  'Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry';
 const WORKSPACE_GATES_JOB = 'workspace-gates';
 const DOWNLOAD_ARTIFACT_ACTION = 'actions/download-artifact@';
 const INITIALIZE_IDENTITIES_STEP = 'Initialize fresh local database login identities';
 const ASSEMBLED_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
 const WORKER_PROVISION_STEP = 'Provision the worker host runtime and Bun that the app artifact ships';
-const WORKER_PROOF_STEP = 'Build and run the Outbox Worker host artifact against the job database';
+const WORKER_PROOF_STEP = 'Build and run the Outbox Worker host artifact against the fresh database';
 const MATRIX_SHARD = 'matrix.shard';
-const SEED_KEY_OUTPUT = 'needs.ci-plan.outputs.seed-key';
 const QUALITY_AUDIT_WORKFLOW = 'quality-audit.yml';
 const LEFTHOOK_CONFIG = 'lefthook.yml';
 const CACHE_SAVE_ACTION = 'actions/cache/save@';
@@ -60,8 +78,6 @@ const MATRICES = Result.getOrThrow(
     readFileSync(new URL(`../../${MATRICES_OVERLAY}`, import.meta.url), 'utf-8'),
   ),
 );
-/** The test files that must migrate their own job database, as the matrices name them for the weighted runner. */
-const FRESH_DATABASE_TESTS = MATRICES['fresh-database-tests'] ?? [];
 
 const MatrixRowsSchema = Schema.Array(Schema.Record(Schema.String, Schema.Unknown));
 const MatricesFileSchema = Schema.Struct({
@@ -81,8 +97,10 @@ const readGateWorkflow = () => {
     [WORKSPACE_GATE_JOB, 'source', matrices.source],
     [WORKSPACE_UNIT_JOB, 'unit', matrices.unit.filter((row) => row['node-artifacts'] !== true)],
     [WORKSPACE_UNIT_ARTIFACTS_JOB, 'unit-artifacts', matrices.unit.filter((row) => row['node-artifacts'] === true)],
-    [SERVICE_INTEGRATION_JOB, 'integration', matrices.integration.filter((row) => row.suite === 'integration')],
-    [BROWSER_INTEGRATION_JOB, 'browser', matrices.integration.filter((row) => row.suite === 'browser')],
+    [SERVICE_INTEGRATION_JOB, 'integration', [{ name: 'Prepare integration database', suite: 'database' }]],
+    [OWNER_INTEGRATION_JOB, 'integrationOwners', matrices.integration.filter((row) => row.suite === 'integration')],
+    [BROWSER_INTEGRATION_JOB, 'integrationBrowser', matrices.integration.filter((row) => row.suite === 'browser')],
+    [NODE_TOPOLOGY_PROOF_JOB, 'integrationTopology', matrices.integration.filter((row) => row.suite === 'bootstrap')],
   ] as const) {
     const entry = record(jobs[job]);
     const strategy = record(entry.strategy);
@@ -108,14 +126,6 @@ const ROOT_DOCUMENTATION_TRIGGERS = [
   readWorkflow(QUALITY_AUDIT_WORKFLOW).on.push,
   readWorkflow(QUALITY_AUDIT_WORKFLOW).on.pull_request,
 ];
-
-it('names only fresh-database tests that exist, so a renamed one is never silently run against the seed', () => {
-  expect(FRESH_DATABASE_TESTS.length).toBeGreaterThan(0);
-  const missing = FRESH_DATABASE_TESTS.filter(
-    (file) => !existsSync(fileURLToPath(new URL(`../../${file}`, import.meta.url))),
-  );
-  expect(missing).toEqual([]);
-});
 
 it('deploys nothing and audits nothing for changes to repository-root documentation only', () => {
   for (const trigger of ROOT_DOCUMENTATION_TRIGGERS) {
@@ -174,27 +184,39 @@ const readTargetWorkflow = () => Schema.decodeUnknownSync(TargetWorkflowSchema)(
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
-const NODE_ARTIFACT_PROOF_JOB = 'node-artifact-proof';
 const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 const RUNNER_TEMP_EXPRESSION = expression('runner.temp');
 const UNPACK_NATIVE_ARTIFACTS_SCRIPT = 'bash scripts/unpack-unit-build-outputs.sh';
 /** Consumers pass the units their row names in `artifact-units`; an empty list requires every unit. */
 const UNPACK_NATIVE_ARTIFACTS_COMMAND = `${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS`;
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
-/** Steps that prepare and prove a fresh database run only on rows without a restored seed. */
-const FRESH_PREPARATION_CONDITION = `${BACKEND_INTEGRATION_CONDITION} && steps.seed-cache.outputs.cache-hit != 'true'`;
-/** The package test step (`Run …`) over the row's package filters, not the seed restore that lists the same files. */
-const isPackageTestStep = ({
-  env,
-  name,
-}: {
-  readonly env?: { readonly PACKAGE_FILTERS?: unknown } | undefined;
-  readonly name?: string | undefined;
-}) => env?.PACKAGE_FILTERS !== undefined && name?.startsWith('Run ') === true;
+/** The integration matrix row that proves the deployment bootstrap and the built topology of every delivery unit. */
+const BOOTSTRAP_SUITE = 'bootstrap';
+const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
+/** The rows that start their own fresh cluster and migrate it with the source command. */
+const NON_BOOTSTRAP_CONDITION = "matrix.suite == 'browser' || matrix.suite == 'database'";
+/** Every row that reads built Node artifacts: the owner suites and the bootstrap row. */
+const BACKEND_ARTIFACT_CONDITION = "matrix.suite == 'bootstrap' || matrix.suite == 'integration'";
+const BACKEND_ARTIFACT_DOWNLOAD_STEP = 'Download and unpack the same-run Node artifacts for native owner fixtures';
+const BACKEND_ARTIFACT_UNPACK_STEP = 'Wait for the same-run Node artifacts for native owner fixtures';
+const NATIVE_ARTIFACTS_STEP_ID = 'native-artifacts';
+const START_INTEGRATION_SERVICES_STEP = 'Start fresh PostgreSQL and SpiceDB services';
+/** A backend row unpacks every unit of the topology: its derived Composition reads every unit. */
+const INTEGRATION_UNPACK_COMMAND = `${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/native-composition-units" .output`;
+const BACKEND_ARTIFACT_DOWNLOAD_COMMAND = [
+  `gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern '${NODE_BUILD_ARTIFACT_PATTERN}' --dir "$RUNNER_TEMP/native-composition-units"`,
+  INTEGRATION_UNPACK_COMMAND,
+  '',
+].join('\n');
+const GITHUB_TOKEN_EXPRESSION = expression('github.token');
+const BACKEND_ARTIFACT_ENV = { GH_TOKEN: GITHUB_TOKEN_EXPRESSION };
+const GATE_REPOSITORY = 'TechsioCZ/ontos';
+const FEDERATED_TYPES_STEP = 'Generate federated types and check performance readiness over every unit';
+const BACKEND_FEDERATION_PROOF_STEP = 'Prove Node backend-federation artifacts';
 const DERIVE_BUILT_COMPOSITION_COMMAND = 'node scripts/derive-built-application-composition.mts --snapshot-output';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
 const STATIC_CONTRACTS_JOB = 'static-contracts';
-/** Gate jobs rooted at the merge queue proof. */
+/** The gates the plan decides, each one job: its expected result is `success` or `skipped`. */
 const ROOT_GATE_JOBS = [
   WORKSPACE_GATE_JOB,
   WORKSPACE_UNIT_JOB,
@@ -202,19 +224,32 @@ const ROOT_GATE_JOBS = [
   STATIC_CONTRACTS_JOB,
   FORMAT_AND_LINT_JOB,
   SERVICE_INTEGRATION_JOB,
-  INTEGRATION_SEED_PROOF_JOB,
-  BROWSER_INTEGRATION_JOB,
   NODE_ARTIFACT_BUILD_JOB,
-  NODE_ARTIFACT_PROOF_JOB,
 ] as const;
-/** Every gate job; the Node proof is a gate job of its own that no test job waits for. */
-const GATE_JOBS = ROOT_GATE_JOBS;
+/** The jobs that run a planned list of integration rows, with the plan output that lists them. */
+const PLANNED_ROW_JOBS = [
+  [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+  [OWNER_INTEGRATION_JOB, 'integrationOwners'],
+  [NODE_TOPOLOGY_PROOF_JOB, 'integrationTopology'],
+] as const;
+/** The ci-plan outputs the gate aggregator reads. */
+interface PlanOutputs {
+  expected: string;
+  integrationBrowser?: string | undefined;
+  integrationOwners?: string | undefined;
+  integrationTopology?: string | undefined;
+  mode: string;
+}
+/** Every job the required check reads, in the order it needs them. */
+const GATE_JOBS = [
+  ...ROOT_GATE_JOBS.slice(0, 6),
+  BROWSER_INTEGRATION_JOB,
+  OWNER_INTEGRATION_JOB,
+  NODE_ARTIFACT_BUILD_JOB,
+  NODE_TOPOLOGY_PROOF_JOB,
+] as const;
 /** Gate jobs that read this run's built outputs: they wait for the build shards and nothing else. */
-const ARTIFACT_CONSUMER_JOBS: ReadonlySet<string> = new Set([
-  WORKSPACE_UNIT_ARTIFACTS_JOB,
-  INTEGRATION_SEED_PROOF_JOB,
-  NODE_ARTIFACT_PROOF_JOB,
-]);
+const ARTIFACT_CONSUMER_JOBS: ReadonlySet<string> = new Set([WORKSPACE_UNIT_ARTIFACTS_JOB]);
 const GatedJobsSchema = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.String),
   jobs: Schema.Record(
@@ -253,21 +288,10 @@ it('selects work before gates and starts source checks without waiting for artif
   expect(candidateProof?.run).toBe('bash app/scripts/ci/commit-proof.sh find');
   expect(candidateProof?.env).toEqual({
     BEFORE_SHA: expression('github.event.before'),
-    GH_TOKEN: expression('github.token'),
+    GH_TOKEN: GITHUB_TOKEN_EXPRESSION,
   });
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
-  // Artifact dependencies belong to the scheduler, not a polling process holding a runner.
-  expect(jobs[SERVICE_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
-  expect(jobs[SERVICE_INTEGRATION_JOB]?.if).toBe(
-    expression(
-      `!cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SERVICE_INTEGRATION_JOB}'] == 'success'`,
-    ),
-  );
-  // Only the required check waits for the seed producer.
-  expect(Object.keys(jobs).filter((job) => jobs[job]?.needs?.includes(INTEGRATION_SEED_PROOF_JOB) === true)).toEqual([
-    WORKSPACE_GATES_JOB,
-  ]);
   // Lint reads no build output.
   expect(jobs[FORMAT_AND_LINT_JOB]?.needs).toEqual([CI_PLAN_JOB]);
   expect(jobs[FORMAT_AND_LINT_JOB]?.if).toBe(
@@ -275,7 +299,7 @@ it('selects work before gates and starts source checks without waiting for artif
       `!cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${FORMAT_AND_LINT_JOB}'] == 'success'`,
     ),
   );
-  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SERVICE_INTEGRATION_JOB && job !== FORMAT_AND_LINT_JOB)) {
+  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== FORMAT_AND_LINT_JOB)) {
     const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.has(gate);
     expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
     expect(jobs[gate]?.if).toBe(
@@ -285,6 +309,35 @@ it('selects work before gates and starts source checks without waiting for artif
         }fromJSON(needs.ci-plan.outputs.expected)['${gate}'] == 'success'`,
       ),
     );
+  }
+});
+
+it('starts each integration row job once its producers finished and only when the plan lists rows for it', () => {
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
+  // Artifact dependencies belong to the scheduler, not a polling process holding a runner. The database producer
+  // reads no build output and starts with the run; the owner rows need it and the build shards, the bootstrap row
+  // the build shards, and the browser checks migrate their own database and need nobody.
+  expect(jobs[OWNER_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB]);
+  expect(jobs[OWNER_INTEGRATION_JOB]?.if).toBe(
+    expression(
+      "!cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.service-integration.result == 'success' && needs.ci-plan.outputs.integrationOwners != '[]'",
+    ),
+  );
+  expect(jobs[NODE_TOPOLOGY_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  expect(jobs[NODE_TOPOLOGY_PROOF_JOB]?.if).toBe(
+    expression(
+      "!cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.ci-plan.outputs.integrationTopology != '[]'",
+    ),
+  );
+  expect(jobs[BROWSER_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB]);
+  expect(jobs[BROWSER_INTEGRATION_JOB]?.if).toBe(
+    expression("!cancelled() && needs.ci-plan.result == 'success' && needs.ci-plan.outputs.integrationBrowser != '[]'"),
+  );
+  // Only the required check waits for the owner rows, the bootstrap row and the browser checks.
+  for (const [job] of PLANNED_ROW_JOBS) {
+    expect(Object.keys(jobs).filter((other) => jobs[other]?.needs?.includes(job) === true)).toEqual([
+      WORKSPACE_GATES_JOB,
+    ]);
   }
 });
 
@@ -333,7 +386,7 @@ it('classifies documentation before installation and schedules full regression w
   expect(steps[classify]?.env?.NEWEST_GREEN_BASE).toBe(expression("github.ref != 'refs/heads/main'"));
   expect(steps[classify]?.env?.QUEUE_PROVEN).toBe(expression('needs.queue-proof.outputs.proven'));
   expect(steps[classify]?.env?.PROOF_RUN).toBe(expression('needs.queue-proof.outputs.run'));
-  expect(steps[classify]?.env?.GH_TOKEN).toBe(expression('github.token'));
+  expect(steps[classify]?.env?.GH_TOKEN).toBe(GITHUB_TOKEN_EXPRESSION);
   expect(steps[classify]?.env?.CANDIDATE_DISPATCH).toBe(expression("steps.candidate.outputs.base != ''"));
 });
 
@@ -405,21 +458,26 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(gates.needs).toEqual([QUEUE_PROOF_JOB, CI_PLAN_JOB, ...GATE_JOBS]);
   expect(gates.steps.at(-1)?.run).toBe('bash app/scripts/check-ci-gates.sh');
   const script = readFileSync(new URL('../check-ci-gates.sh', import.meta.url), 'utf-8');
-  const needs = (mode: string, results: readonly string[], proof = 'skipped', proven?: string) => ({
-    [CI_PLAN_JOB]: {
-      outputs: {
-        expected: JSON.stringify(
-          Object.fromEntries(
-            GATE_JOBS.map((gate) => [gate, ['docs', 'proven'].includes(mode) ? 'skipped' : 'success']),
-          ),
+  /** A plan whose row lists are filled exactly when the plan runs integration, and every job's result. */
+  const needs = (mode: string, results: readonly string[], proof = 'skipped', proven?: string) => {
+    const rows = JSON.stringify(['docs', 'proven'].includes(mode) ? [] : [{ name: 'row' }]);
+    const outputs: PlanOutputs = {
+      expected: JSON.stringify(
+        Object.fromEntries(
+          ROOT_GATE_JOBS.map((gate) => [gate, ['docs', 'proven'].includes(mode) ? 'skipped' : 'success']),
         ),
-        mode,
-      },
-      result: 'success',
-    },
-    [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
-    ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
-  });
+      ),
+      integrationBrowser: rows,
+      integrationOwners: rows,
+      integrationTopology: rows,
+      mode,
+    };
+    return {
+      [CI_PLAN_JOB]: { outputs, result: 'success' },
+      [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
+      ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
+    };
+  };
   const passed = GATE_JOBS.map(() => 'success');
   const skipped = GATE_JOBS.map(() => 'skipped');
   const passes = (
@@ -427,7 +485,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
       Record<
         string,
         {
-          readonly outputs?: Readonly<Record<string, string | undefined>>;
+          // Serialized as Actions serializes job results; a job without outputs has none.
+          readonly outputs?: object;
           readonly result: string;
         }
       >
@@ -443,34 +502,42 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(passes(needs('full', passed, 'failure'))).toBe(false);
   const affected = needs('affected', passed);
   expect(passes(affected)).toBe(true);
-  const noIntegration = needs('affected', passed);
-  const selected = Object.fromEntries(
-    GATE_JOBS.map((gate) => [gate, gate === SERVICE_INTEGRATION_JOB ? 'skipped' : 'success']),
-  );
-  noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
-  expect(passes({ ...noIntegration, [SERVICE_INTEGRATION_JOB]: { result: 'skipped' } })).toBe(true);
-  // An affected plan may leave test matrices without rows, but never every unit row, the builds or the Node proof.
-  const testMatrices: readonly string[] = [
-    WORKSPACE_UNIT_JOB,
-    WORKSPACE_UNIT_ARTIFACTS_JOB,
-    SERVICE_INTEGRATION_JOB,
-    INTEGRATION_SEED_PROOF_JOB,
-    BROWSER_INTEGRATION_JOB,
-  ];
+  // A job that runs a planned row list passes only as planned: run and green with rows, skipped without.
+  for (const [job, output] of PLANNED_ROW_JOBS) {
+    expect(passes({ ...affected, [job]: { result: 'skipped' } }), job).toBe(false);
+    expect(passes({ ...affected, [job]: { result: 'failure' } }), job).toBe(false);
+    const empty = needs('affected', passed);
+    empty[CI_PLAN_JOB].outputs[output] = '[]';
+    expect(passes({ ...empty, [job]: { result: 'skipped' } }), job).toBe(true);
+    expect(passes(empty), job).toBe(false);
+    const missingRows = needs('affected', passed);
+    const plannedOutputs = Object.entries(missingRows[CI_PLAN_JOB].outputs).filter(([key]) => key !== output);
+    expect(
+      passes({ ...missingRows, [CI_PLAN_JOB]: { outputs: Object.fromEntries(plannedOutputs), result: 'success' } }),
+      job,
+    ).toBe(false);
+  }
+  // An affected plan may leave test matrices without rows, but never every unit row or the builds.
+  const testMatrices: readonly string[] = [WORKSPACE_UNIT_JOB, WORKSPACE_UNIT_ARTIFACTS_JOB, SERVICE_INTEGRATION_JOB];
+  const rowJobs: readonly string[] = PLANNED_ROW_JOBS.map(([job]) => job);
   const planned = (skippedGates: readonly string[]) => {
     const value = needs('affected', passed);
     value[CI_PLAN_JOB].outputs.expected = JSON.stringify(
-      Object.fromEntries(GATE_JOBS.map((gate) => [gate, skippedGates.includes(gate) ? 'skipped' : 'success'])),
+      Object.fromEntries(ROOT_GATE_JOBS.map((gate) => [gate, skippedGates.includes(gate) ? 'skipped' : 'success'])),
     );
+    for (const [job, output] of PLANNED_ROW_JOBS) {
+      if (skippedGates.includes(job)) {
+        value[CI_PLAN_JOB].outputs[output] = '[]';
+      }
+    }
     return {
       ...value,
       ...Object.fromEntries(skippedGates.map((gate) => [gate, { result: 'skipped' }])),
     };
   };
+  expect(passes(planned([SERVICE_INTEGRATION_JOB, OWNER_INTEGRATION_JOB]))).toBe(true);
   expect(passes(planned([WORKSPACE_UNIT_JOB, BROWSER_INTEGRATION_JOB]))).toBe(true);
-  expect(passes(planned([SERVICE_INTEGRATION_JOB, INTEGRATION_SEED_PROOF_JOB]))).toBe(true);
-  expect(passes(planned(testMatrices))).toBe(false);
-  expect(passes(planned([NODE_ARTIFACT_PROOF_JOB]))).toBe(false);
+  expect(passes(planned([...testMatrices, ...rowJobs]))).toBe(false);
   expect(passes(planned([NODE_ARTIFACT_BUILD_JOB]))).toBe(false);
   expect(passes(needs('affected', skipped))).toBe(false);
   // A scoped plan builds nothing and starts no service, but its source rows, static contracts and lint always run.
@@ -479,7 +546,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     value[CI_PLAN_JOB].outputs.mode = 'scoped';
     return value;
   };
-  const unbuilt = [...testMatrices, NODE_ARTIFACT_BUILD_JOB, NODE_ARTIFACT_PROOF_JOB];
+  const unbuilt = [...testMatrices, ...rowJobs, NODE_ARTIFACT_BUILD_JOB];
   expect(passes(scoped(unbuilt))).toBe(true);
   expect(passes(scoped(unbuilt.filter((gate) => gate !== WORKSPACE_UNIT_JOB)))).toBe(true);
   for (const required of [WORKSPACE_GATE_JOB, STATIC_CONTRACTS_JOB, FORMAT_AND_LINT_JOB]) {
@@ -538,12 +605,12 @@ const ArtifactBuildJobSchema = Schema.Struct({
 });
 const ArtifactProofJobSchema = Schema.Struct({
   needs: Schema.Array(Schema.String),
-  steps: Schema.Array(ArtifactStepSchema),
+  steps: Schema.Array(Schema.Struct({ ...ArtifactStepSchema.fields, wait: Schema.optional(Schema.String) })),
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     [NODE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
-    [NODE_ARTIFACT_PROOF_JOB]: ArtifactProofJobSchema,
+    [NODE_TOPOLOGY_PROOF_JOB]: ArtifactProofJobSchema,
   }),
 });
 const TopologyUnitsSchema = Schema.Struct({
@@ -630,7 +697,7 @@ it('keeps only verified unit outputs from the unit output cache and saves them o
   expect(steps[build]?.env).toEqual({ BUILD_UNITS: expression('steps.cached-plan.outputs.build') });
 });
 
-it('only builds on the shards and proves every unit together in its own job that no test waits for', () => {
+it('only builds on the shards and proves every unit together on the bootstrap row that no test waits for', () => {
   const jobs = readArtifactBuildJobs();
   const build = jobs[NODE_ARTIFACT_BUILD_JOB];
   expect(build.needs).toEqual([CI_PLAN_JOB]);
@@ -642,18 +709,20 @@ it('only builds on the shards and proves every unit together in its own job that
   expect(build.steps.at(-1)?.with?.name).toBe(`node-units-${expression(MATRIX_SHARD)}`);
   // A re-run replaces the shard's own earlier upload instead of failing on the existing name.
   expect(build.steps.at(-1)?.with?.overwrite).toBe(true);
-  const proof = jobs[NODE_ARTIFACT_PROOF_JOB];
+  const proof = jobs[NODE_TOPOLOGY_PROOF_JOB];
   expect(proof.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
-  const download = proof.steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
-  const unpack = proof.steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  // The row downloads every shard's archive in the background and unpacks every unit its row names (none: all).
+  const download = proof.steps.findIndex(
+    ({ run }) => run?.includes(`--pattern '${NODE_BUILD_ARTIFACT_PATTERN}'`) === true,
+  );
+  const joined = proof.steps.findIndex(({ wait }) => wait === 'native-artifacts');
   const nodeProof = proof.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
-  expect(proof.steps[download]?.with?.pattern).toBe(NODE_BUILD_ARTIFACT_PATTERN);
-  // The proof names no unit, so the unpack helper requires every delivery unit of the topology.
-  expect(proof.steps[unpack]?.run).toBe(`${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/units" .output`);
-  expect(download < unpack && unpack < nodeProof).toBe(true);
+  expect(proof.steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
+  expect(download !== -1 && download < joined && joined < nodeProof).toBe(true);
+  expect(proof.steps[nodeProof]?.if).toBe("matrix.suite == 'bootstrap'");
   // No gate job waits for the proof except the required check.
   const { jobs: all } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
-  const waiting = Object.keys(all).filter((job) => all[job]?.needs?.includes(NODE_ARTIFACT_PROOF_JOB) === true);
+  const waiting = Object.keys(all).filter((job) => all[job]?.needs?.includes(NODE_TOPOLOGY_PROOF_JOB) === true);
   expect(waiting).toEqual([WORKSPACE_GATES_JOB]);
 });
 
@@ -787,6 +856,10 @@ const GateCommandsWorkflowSchema = Schema.Struct({
   }),
 });
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+/** A workspace package manifest, whose scripts a package may omit entirely. */
+const PackageScriptsSchema = Schema.Struct({
+  scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
 const readRootScripts = () =>
   Schema.decodeUnknownSync(RootScriptsSchema)(
     JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
@@ -946,12 +1019,16 @@ it('runs the root unit and component tests of every workspace package in exactly
   }
 });
 
-const IntegrationJobSchema = Schema.Struct({
+const IntegrationRunnerSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
   needs: Schema.Array(Schema.String),
   steps: Schema.Array(
     Schema.Struct({
       ...WorkflowStepSchema.fields,
+      background: Schema.optional(Schema.Boolean),
+      'continue-on-error': Schema.optional(Schema.Boolean),
       uses: Schema.optional(Schema.String),
+      wait: Schema.optional(Schema.String),
       with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     }),
   ),
@@ -959,17 +1036,12 @@ const IntegrationJobSchema = Schema.Struct({
     matrix: Schema.Struct({
       include: Schema.Array(
         Schema.Struct({
-          'fresh-database-tests': Schema.optional(Schema.Literals(['skip', 'only'])),
+          lanes: Schema.optional(Schema.Literals([2, 4])),
           name: Schema.String,
           'native-composition': Schema.optional(Schema.Boolean),
-          'native-preproposal': Schema.optional(Schema.Boolean),
-          'package-filters': Schema.optional(Schema.String),
-          'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-          'root-suite': Schema.optional(Schema.Boolean),
-          'rstest-projects': Schema.optional(Schema.String),
-          'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-          seed: Schema.optional(Schema.Boolean),
-          suite: Schema.Literals(['integration', 'browser']),
+          'proof-packages': Schema.optional(Schema.Array(Schema.String)),
+          suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser', 'database']),
+          tasks: Schema.optional(Schema.Array(Schema.String)),
         }),
       ),
     }),
@@ -977,141 +1049,434 @@ const IntegrationJobSchema = Schema.Struct({
 });
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [SERVICE_INTEGRATION_JOB]: IntegrationJobSchema,
+    [BROWSER_INTEGRATION_JOB]: IntegrationRunnerSchema,
+    [NODE_TOPOLOGY_PROOF_JOB]: IntegrationRunnerSchema,
+    [OWNER_INTEGRATION_JOB]: IntegrationRunnerSchema,
+    [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema,
   }),
 });
+const readIntegrationJobs = () => Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs;
 
-const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
-  [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
+/** The workspace packages whose integration files a row's tasks run. */
+const shardFilters = (shard: { readonly tasks?: readonly string[] | undefined }) => [
+  ...new Set(
+    (shard.tasks ?? []).flatMap((task) => {
+      const directory = taskDirectory(task);
+      return directory === undefined ? [] : [`./${directory}`];
+    }),
+  ),
+];
+/** Whether a row runs root integration files. */
+const rootRow = (shard: { readonly tasks?: readonly string[] | undefined }) =>
+  (shard.tasks ?? []).some((task) => task.startsWith('root:'));
+/** Every owner row of the complete plan. */
+const integrationRows = () =>
+  readIntegrationJobs()[OWNER_INTEGRATION_JOB].strategy.matrix.include.filter(({ suite }) => suite === 'integration');
 
-type IntegrationShardsJob = (typeof IntegrationShardsWorkflowSchema.Type)['jobs'][typeof SERVICE_INTEGRATION_JOB];
+it('overlaps independent integration preparations and joins their failures before the first consumer', () => {
+  const { steps } = readIntegrationJobs()[OWNER_INTEGRATION_JOB];
+  const named = (name: string) => steps.findIndex((step) => step.name === name);
+  const install = named(INSTALL_APP_STEP);
+  expect(steps[install]?.background).toBeUndefined();
+  const tls = named('Create the local SpiceDB TLS certificate');
+  const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
+  const services = named(START_INTEGRATION_SERVICES_STEP);
+  for (const [id, consumer] of [
+    ['integration-images', Math.min(workers, services)],
+    [NATIVE_ARTIFACTS_STEP_ID, named('Derive the fresh built Composition for native owner fixtures')],
+  ] as const) {
+    const launch = steps.findIndex((step) => step.id === id);
+    const joins = steps.filter((step) => step.wait === id);
+    const join = steps.findIndex((step) => step.wait === id);
+    expect(launch).toBeGreaterThan(-1);
+    expect(steps[launch]?.background).toBe(true);
+    expect(steps[launch]?.['continue-on-error']).toBeUndefined();
+    // Native wait propagates the background shell's exit code and keeps its output in the step log.
+    expect(joins).toHaveLength(1);
+    expect(joins[0]?.if).toBeUndefined();
+    expect(joins[0]?.['continue-on-error']).toBeUndefined();
+    expect(launch < join && join < consumer).toBe(true);
+    expect(launch < install && install < join).toBe(true);
+  }
+  expect(install < tls && tls < workers && tls < services).toBe(true);
+  const artifactsReady = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
+  for (const consumer of [FEDERATED_TYPES_STEP, BACKEND_FEDERATION_PROOF_STEP, INTEGRATION_TESTS_STEP]) {
+    expect(artifactsReady).toBeLessThan(named(consumer));
+  }
+  for (const step of steps) {
+    if (step.wait !== undefined) {
+      expect(step.if, step.name).toBeUndefined();
+    }
+  }
+  const unpackOutput = 'bash preparation output';
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-integration-preparation-'));
+  try {
+    for (const command of ['gh', 'docker', 'bash']) {
+      const executable = path.join(directory, command);
+      writeFileSync(executable, `#!/bin/sh\necho "${command} preparation output" >&2\nexit "$PREP_${command}"\n`);
+      chmodSync(executable, 0o755);
+    }
+    // Run the real background shell bodies with failing external commands: neither a failed download,
+    // image pull nor unpack may become a successful step for the native wait to join.
+    for (const [id, gh, docker, unpack, status, output] of [
+      [NATIVE_ARTIFACTS_STEP_ID, '37', '0', '0', 37, 'gh preparation output'],
+      [NATIVE_ARTIFACTS_STEP_ID, '0', '0', '43', 43, unpackOutput],
+      ['integration-images', '0', '29', '0', 29, 'docker preparation output'],
+      [NATIVE_ARTIFACTS_STEP_ID, '0', '0', '0', 0, unpackOutput],
+    ] as const) {
+      const step = steps.find((candidate) => candidate.id === id);
+      const result = spawnSync('/bin/bash', ['-eo', 'pipefail', '-c', step?.run ?? 'exit 0'], {
+        cwd: directory,
+        encoding: 'utf-8',
+        env: {
+          GITHUB_REPOSITORY: GATE_REPOSITORY,
+          GITHUB_RUN_ID: '123',
+          PATH: `${directory}:${STEP_PATH}`,
+          PREP_bash: unpack,
+          PREP_docker: docker,
+          PREP_gh: gh,
+          RUNNER_TEMP: directory,
+        },
+      });
+      expect(result.status).toBe(status);
+      expect(result.stderr).toContain(output);
+      if (gh !== '0') {
+        expect(result.stderr).not.toContain(unpackOutput);
+      }
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
 
-/** Opted-in native proofs supplement (not replace or shard) the ordinary package suites. */
-const expectNativePreproposalRow = (job: IntegrationShardsJob) => {
-  const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
-  expect(nativeShards).toHaveLength(1);
-  expect(nativeShards[0]?.suite).toBe('integration');
-  expect(nativeShards[0]?.['rstest-shard']).toBeUndefined();
-  const nativeSteps = job.steps.filter(({ if: condition }) => condition === 'matrix.native-preproposal == true');
-  expect(nativeSteps).toHaveLength(1);
-  expect(nativeSteps[0]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  expect(nativeSteps[0]?.run).toBe(
-    'mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal',
+it('publishes the verified database from its own producer and restores it only in jobs that need that producer', () => {
+  const jobs = readIntegrationJobs();
+  const producer = jobs[SERVICE_INTEGRATION_JOB];
+  const consumer = jobs[OWNER_INTEGRATION_JOB];
+  // The producer only migrates, verifies, exports and uploads; the browser checks migrate their own database.
+  expect(producer.needs).toEqual([CI_PLAN_JOB]);
+  expect(producer.strategy.matrix.include.map(({ suite }) => suite)).toEqual(['database']);
+  expect(jobs[BROWSER_INTEGRATION_JOB].needs).toEqual([CI_PLAN_JOB]);
+  expect(jobs[BROWSER_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
+  const { steps } = producer;
+  const migrated = steps.findIndex(({ run }) => run?.includes('pnpm db:verify') === true);
+  const exported = steps.findIndex(({ run }) => run === 'bash scripts/ci/export-integration-database.sh');
+  const uploaded = steps.findIndex(({ with: inputs }) => inputs?.name === INTEGRATION_DATABASE_ARTIFACT);
+  expect(migrated).toBeGreaterThan(-1);
+  expect(migrated < exported && exported < uploaded).toBe(true);
+  for (const step of [steps[exported], steps[uploaded]]) {
+    expect(step?.if).toBe("matrix.suite == 'database'");
+  }
+  expect(steps[uploaded]?.with?.overwrite).toBe(true);
+  // The owner rows need the producer, so the archive exists when they start. Empty clusters start first;
+  // only the restore reads the archive, and the tests wait for that restore.
+  expect(consumer.needs).toContain(SERVICE_INTEGRATION_JOB);
+  const workers = consumer.steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
+  const restore = consumer.steps.findIndex(({ id }) => id === INTEGRATION_WORKERS_STEP_ID);
+  const restored = consumer.steps.findIndex(({ wait }) => wait === INTEGRATION_WORKERS_STEP_ID);
+  const tests = consumer.steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(workers).toBeGreaterThan(-1);
+  expect(workers < restore && restore < restored && restored < tests).toBe(true);
+  expect(consumer.steps[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBeUndefined();
+  expect(consumer.steps[restore]?.background).toBe(true);
+  expect(consumer.steps[restore]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  // Nothing tells the restore to wait: the archive exists when the row starts.
+  expect(sorted(Object.keys(consumer.steps[restore]?.env ?? {}))).toEqual([
+    'GH_TOKEN',
+    'INTEGRATION_DATABASE_ARCHIVE',
+    'ONTOS_CI_ISOLATED_WORKERS',
+  ]);
+  expect(consumer.steps[restore]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(
+    `${RUNNER_TEMP_EXPRESSION}/integration-database`,
   );
-  expect(nativeSteps[0]?.['timeout-minutes']).toBe(20);
-  const commerceScripts = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(
-      readFileSync(new URL('../../verticals/commerce-customer-context/package.json', import.meta.url), 'utf-8'),
+  // The download names this run's id, so it reads only this workflow run's archive.
+  expect(consumer.steps[restore]?.run).toBe(
+    [
+      `gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name ${INTEGRATION_DATABASE_ARTIFACT} --dir "$INTEGRATION_DATABASE_ARCHIVE"`,
+      RESTORE_INTEGRATION_WORKERS,
+      '',
+    ].join('\n'),
+  );
+  expect(
+    consumer.steps.some(
+      ({ uses, with: inputs }) =>
+        uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true && inputs?.name === INTEGRATION_DATABASE_ARTIFACT,
     ),
-  ).scripts;
-  expect(commerceScripts['test:integration:native-preproposal']).toBe(
-    'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
+  ).toBe(false);
+});
+
+it('restores the archive only into clusters that already accept connections, after checking it', () => {
+  const start = readFileSync(new URL('../ci/start-integration-workers.sh', import.meta.url), 'utf-8');
+  const restore = readFileSync(new URL('../ci/restore-integration-workers.sh', import.meta.url), 'utf-8');
+  // Starting needs no archive; every read of the archive happens in the restore.
+  expect(start).not.toContain('INTEGRATION_DATABASE_ARCHIVE');
+  expect(start).toContain('pg_isready');
+  const checked = restore.indexOf('sha256sum --check checksums.sha256');
+  const manifest = restore.indexOf('.revision == $revision');
+  const restored = restore.indexOf('pg_restore');
+  expect(checked).toBeGreaterThan(-1);
+  expect(checked < manifest && manifest < restored).toBe(true);
+  // Every restored cluster also gets the schema-only template the native fixtures clone from.
+  expect(restore.indexOf('bash scripts/ci/prepare-schema-template.sh')).toBeGreaterThan(restored);
+});
+
+it('supplies same-run built Composition to selected native owner integration shards before their tests', () => {
+  const jobs = readIntegrationJobs();
+  const integration = jobs[OWNER_INTEGRATION_JOB];
+  // Every owner row starts only once every build shard and the database producer uploaded.
+  expect(integration.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB]);
+  const rows = integration.strategy.matrix.include;
+  const selected = rows.filter((shard) => shard['native-composition'] === true);
+  const rootShards = rows.filter((shard) => rootRow(shard));
+  // Derived instead of a literal count, so a reshard cannot be "fixed" by editing a number here: every root
+  // shard must derive the fresh Composition and only integration rows may carry it.
+  expect(selected.length).toBeGreaterThan(0);
+  expect(selected.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(selected.filter((shard) => rootRow(shard))).toEqual(rootShards);
+  expect(selected.some((shard) => shardFilters(shard).includes('./verticals/pricing'))).toBe(true);
+  expect(selected.some((shard) => shardFilters(shard).includes('./verticals/inventory'))).toBe(true);
+  const { steps } = integration;
+  const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const unpack = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
+  const derive = steps.findIndex(({ run }) => run?.includes(DERIVE_BUILT_COMPOSITION_COMMAND) === true);
+  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
+  expect(workers).toBeGreaterThan(-1);
+  expect(download < workers).toBe(true);
+  // Every integration job runs the same steps, each selecting its own by the row's suite.
+  for (const job of [SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB, NODE_TOPOLOGY_PROOF_JOB] as const) {
+    expect(jobs[job].steps, job).toEqual(integration.steps);
+  }
+  expect(download).toBeGreaterThan(-1);
+  expect(download < unpack && unpack < derive && derive < tests).toBe(true);
+  expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
+  // gh explicitly binds the download to this repository and workflow run.
+  expect(steps[download]?.env).toEqual(BACKEND_ARTIFACT_ENV);
+  expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
+  expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[unpack]?.if).toBeUndefined();
+  expect(steps[derive]?.if).toBe('matrix.native-composition == true');
+  expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(1);
+});
+
+it('proves the built topology of every delivery unit in one row of the integration matrix', () => {
+  const integration = readIntegrationJobs()[NODE_TOPOLOGY_PROOF_JOB];
+  // One row proves all built outputs once every build shard uploaded; check-ci-gates.sh requires its success
+  // whenever the plan lists it.
+  expect(integration.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  const rows = integration.strategy.matrix.include;
+  expect(rows.map(({ suite }) => suite)).toEqual([BOOTSTRAP_SUITE]);
+  expect(rows[0]?.tasks).toBeUndefined();
+  expect(rows[0]?.['native-composition']).toBeUndefined();
+  const { steps } = integration;
+  const named = (name: string) => steps.findIndex((step) => step.name === name);
+  const indexes = [FEDERATED_TYPES_STEP, BACKEND_FEDERATION_PROOF_STEP].map(named);
+  expect(indexes.some((index) => index === -1)).toBe(false);
+  // mf:types precedes the proofs that read its output.
+  expect(indexes).toEqual(EffectArray.sort(indexes, Order.Number));
+  for (const index of indexes) {
+    expect(`${steps[index]?.name ?? ''}: ${steps[index]?.if ?? ''}`).toBe(
+      `${steps[index]?.name ?? ''}: ${BOOTSTRAP_CONDITION}`,
+    );
+  }
+  // Bootstrap migrates through the assembled stage entry point, not the source command.
+  expect(named(BACKEND_ARTIFACT_UNPACK_STEP)).toBeLessThan(indexes[0] ?? -1);
+  const migrations = named(SOURCE_MIGRATIONS_STEP);
+  expect(steps[migrations]?.if).toBe(NON_BOOTSTRAP_CONDITION);
+  const bootstrap = named(ASSEMBLED_MIGRATOR_STEP);
+  expect(steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(bootstrap).toBeLessThan(indexes[0] ?? -1);
+  expect(migrations).toBeLessThan(indexes[0] ?? -1);
+  expect(steps[named(START_INTEGRATION_SERVICES_STEP)]?.if).toBe(
+    "matrix.suite == 'bootstrap' || matrix.suite == 'browser' || matrix.suite == 'database'",
   );
+  // The suites never run on this row, and its steps never run on a suite row.
+  expect(steps.find(({ env }) => env?.INTEGRATION_TASKS !== undefined)?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+});
+
+it('unpacks the bootstrap Node artifacts before it assembles the app artifact that ships them', () => {
+  const { needs, steps } = readIntegrationJobs()[NODE_TOPOLOGY_PROOF_JOB];
+  const named = (name: string) => steps.findIndex((step) => step.name === name);
+  const download = named(BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const unpack = named(BACKEND_ARTIFACT_UNPACK_STEP);
+  // The bootstrap needs the build shards, so the artifacts exist when it starts and it never waits for them.
+  expect(needs).toContain(NODE_ARTIFACT_BUILD_JOB);
+  expect(download).toBeLessThan(named(INSTALL_APP_STEP));
+  // The assembled migrator ships the materialized Outbox Worker host, which is made from the built outputs.
+  expect(unpack).toBeLessThan(named(WORKER_PROVISION_STEP));
+  expect(named(WORKER_PROVISION_STEP)).toBeLessThan(named(ASSEMBLED_MIGRATOR_STEP));
+  for (const proof of [
+    ASSEMBLED_MIGRATOR_STEP,
+    WORKER_PROOF_STEP,
+    FEDERATED_TYPES_STEP,
+    BACKEND_FEDERATION_PROOF_STEP,
+  ]) {
+    expect(named(proof), proof).toBeGreaterThan(unpack);
+  }
+});
+
+const APP_ROOT_URL = new URL('../../', import.meta.url);
+/** Every file below an app directory with this suffix, relative to the app root. */
+const integrationFiles = (directory: string, suffix: string): readonly string[] =>
+  readdirSync(new URL(directory, APP_ROOT_URL), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+    .map((entry) => path.relative(fileURLToPath(APP_ROOT_URL), path.join(entry.parentPath, entry.name)));
+/** Whole-owner files excluded from their family's shards, which run alone as whole tasks. */
+const WHOLE_FILES = {
+  './verticals/party-registry': ['verticals/party-registry/tests/integration/party-identity-runtime.test.ts'],
+  './verticals/pricing': ['verticals/pricing/tests/integration/market-revision-whole-current-pricing-postgres.test.ts'],
+  './verticals/privacy': ['verticals/privacy/tests/integration/privacy-composition-drain.test.ts'],
+  root: [
+    'scripts/integration/organization-source-customer-owner-conformance.test.mts',
+    'scripts/integration/organization-source-customer-identity-conformance.test.mts',
+    'scripts/integration/symmy-c14-customer-owner-conformance.test.mts',
+    'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
+    'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
+  ],
+} satisfies Readonly<Record<string, readonly string[]>>;
+/** Root integration files that run in another rstest project of app/rstest.config.ts: operator and owned-cluster tests. */
+const ROOT_FILES_ELSEWHERE = [
+  'scripts/integration/siampark-demo-http.test.mts',
+  'scripts/integration/migration-equivalence.test.mts',
+];
+/** Integration files a sharded family runs, minus the files its whole-owner tasks run alone. */
+const familyFiles = (family: string) =>
+  (family === 'root'
+    ? integrationFiles('scripts/integration', '.test.mts').filter((file) => !ROOT_FILES_ELSEWHERE.includes(file))
+    : integrationFiles(`${family.slice(2)}/tests/integration`, '.test.ts')
+  ).filter((file) => !Object.entries(WHOLE_FILES).some(([owner, files]) => owner === family && files.includes(file)));
+const NATIVE_TOPOLOGY_PROOFS = [
+  'whole:organization',
+  'whole:organization-identity',
+  'whole:customer-readback',
+  'whole:customer-roundtrip',
+  'whole:pricing-routes',
+  'whole:privacy',
+  'whole:privacy-recovery',
+  'whole:pricing',
+  'whole:preproposal-basis',
+  'whole:preproposal-approval',
+] as const;
+const WHOLE_PROOFS = [...NATIVE_TOPOLOGY_PROOFS, 'whole:party-worker'];
+/** Each sharded family's `k/n` shards, keyed by `root` or the package selector. */
+const shardFamilies = (tasks: readonly string[]) => {
+  const families = new Map<string, string[]>();
+  for (const task of tasks) {
+    const shard = /^(?<family>root|\.\/[a-z0-9/-]+)[:#](?<shard>\d+\/\d+)$/u.exec(task)?.groups;
+    if (shard !== undefined) {
+      families.set(shard.family ?? '', [...(families.get(shard.family ?? '') ?? []), shard.shard ?? '']);
+    }
+  }
+  return families;
 };
 
-it('runs the root integration suite once and every package integration suite in exactly one shard', () => {
+// Rstest sorts a family's files by hash and gives shard k of n its k-th slice. A row list that misses a
+// k, repeats one or names more shards than files would silently skip or fail files, so every family's
+// shards across the owner rows must be exactly 1..n with n no larger than its file count.
+it('covers every integration file exactly once across the owner rows', () => {
   const { scripts } = readRootScripts();
-  // The shards run exactly what the root script runs, split by package.
+  // The rows run exactly what the root script runs, split by file.
   expect(scripts['test:integration']).toBe(
     'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
   );
-  const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_INTEGRATION_JOB
-  ];
-  const run = job.steps.find(isPackageTestStep);
-  expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null', SPICEDB_DATABASE_PASSWORD: 'spicedb' });
-  // The root suite and the large packages run as weighted shards of the very project their scripts run.
-  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?');
-  expect(run?.run).toContain(
-    `mise exec -- bash ${WEIGHTED_SHARD_SCRIPT} "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?`,
-  );
-  expect(run?.run).toContain(
-    `mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 $PACKAGE_FILTERS exec bash "$PWD/${WEIGHTED_SHARD_SCRIPT}" "$RSTEST_SHARD" "$project" --pool.maxWorkers "$RSTEST_WORKERS" || status=$?`,
-  );
-  expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?',
-  );
-  expect(run?.env?.RSTEST_WORKERS).toBe(expression('matrix.rstest-workers || 1'));
-  // No integration row runs two file workers: in round 5 the Shell and Customer Context files run side by side
-  // contended for the job database's one composition authority and timed out, so every row runs one file at a time.
-  const parallelRows = Schema.decodeUnknownSync(MatricesFileSchema)(MATRICES).integration.filter(
-    (row) => row['rstest-workers'] !== undefined && row['rstest-workers'] !== 1,
-  );
-  expect(parallelRows).toEqual([]);
-  // One suite's failure never hides another's: every status is kept and the step fails only at the end.
-  expect(run?.run).toContain('exit "$status"');
-  expectNativePreproposalRow(job);
-  const all = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
-  // The Fresh Database rows run exactly the files every seeded weighted row leaves out, over the same suites.
-  const fresh = all.filter((shard) => shard['fresh-database-tests'] === 'only');
-  const shards = all.filter((shard) => shard['fresh-database-tests'] !== 'only');
-  const skipping = shards.filter((shard) => shard['fresh-database-tests'] === 'skip');
-  expect(fresh.length).toBeGreaterThan(0);
-  for (const shard of fresh) {
-    expect(shard.seed, shard.name).toBeUndefined();
-    expect(shard['root-suite']).toBe(true);
-    expect(shard['root-rstest-shard']).toBe(shard['rstest-shard']);
-    expect(sorted(shardFilters(shard))).toEqual(
-      sorted([...new Set(skipping.filter((row) => row['root-suite'] !== true).flatMap(shardFilters))]),
-    );
+  for (const file of [...Object.values(WHOLE_FILES).flat(), ...ROOT_FILES_ELSEWHERE]) {
+    expect(existsSync(new URL(file, APP_ROOT_URL)), file).toBe(true);
   }
-  expect(sorted(fresh.map((shard) => shard['rstest-shard'] ?? ''))).toEqual(
-    sorted(Array.from({ length: fresh.length }, (_, index) => `${index + 1}/${fresh.length}`)),
-  );
-  expect(shards.filter((shard) => shard['root-suite'] === true).every((shard) => skipping.includes(shard))).toBe(true);
-  // A seeded weighted row that does not leave those files out may own none of them.
-  for (const shard of shards.filter((row) => row.seed === true && row['fresh-database-tests'] !== 'skip')) {
-    const owners = shardFilters(shard).map((filter) => filter.replace(/^\.\//u, ''));
+  const tasks = integrationRows().flatMap((row) => row.tasks ?? []);
+  expect(new Set(tasks).size).toBe(tasks.length);
+  const families = shardFamilies(tasks);
+  expect([...families.keys()]).toContain('root');
+  for (const [family, shards] of families) {
+    const count = Number(shards[0]?.split('/')[1]);
     expect(
-      FRESH_DATABASE_TESTS.some((file) => owners.some((owner) => file.startsWith(`${owner}/`))),
-      shard.name,
-    ).toBe(false);
-  }
-  const roots = shards.filter((shard) => shard['root-suite'] === true);
-  expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
-  expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
-  const packages = shards.filter((shard) => shard['root-suite'] !== true);
-  const named = packages.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
-  const remainder = packages.filter((shard) => shardFilters(shard).some((filter) => filter.startsWith('!')));
-  expect(remainder).toHaveLength(1);
-  expect(named.length + remainder.length).toBe(packages.length);
-  // A package too large for one job is split by Rstest shards that are alone in their jobs and cover 1..n once.
-  const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
-  for (const shard of split) {
-    expect(shardFilters(shard)).toHaveLength(1);
-    // The weighted runner runs `rstest --project <project>` itself for each of the row's projects, one after the
-    // other, so the package's script must be exactly those projects in that order.
-    const { scripts: packageScripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-      JSON.parse(readFileSync(new URL(`../../${shardFilters(shard)[0] ?? ''}/package.json`, import.meta.url), 'utf-8')),
+      shards.every((shard) => shard.endsWith(`/${count}`)),
+      family,
+    ).toBe(true);
+    expect(sorted(shards), family).toEqual(
+      sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)),
     );
-    const projects = (shard['rstest-projects'] ?? 'integration').split(' ');
-    const resolved = (packageScripts['test:integration'] ?? '')
-      .split(' && ')
-      .map((part) => packageScripts[part.replace(/^pnpm run /u, '')] ?? part);
-    expect(resolved, shard.name).toEqual(projects.map((project) => `rstest --project ${project}`));
+    expect(count, family).toBeLessThanOrEqual(familyFiles(family).length);
+    if (family === 'root') {
+      // One file per root task, so a root file never shares a task with another as files are added.
+      expect(count).toBe(familyFiles(family).length);
+    }
   }
-  for (const filter of new Set(split.flatMap(shardFilters))) {
-    const parts = split
-      .filter((shard) => shardFilters(shard)[0] === filter)
-      .map((shard) => shard['rstest-shard'] ?? '');
-    const count = Number(parts[0]?.split('/')[1]);
-    expect(sorted(parts)).toEqual(sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)));
+  // Every whole-owner proof and unsharded package runs once, and no package runs both whole and sharded.
+  for (const whole of WHOLE_PROOFS) {
+    expect(
+      tasks.filter((task) => task === whole),
+      whole,
+    ).toHaveLength(1);
   }
-  const namedPackages = [
-    ...new Set(split.flatMap(shardFilters)),
-    ...named.filter((shard) => shard['rstest-shard'] === undefined).flatMap(shardFilters),
-  ];
-  expect(sorted(remainder.flatMap(shardFilters))).toEqual(
-    sorted(['!.', ...namedPackages.map((filter) => `!${filter}`)]),
+  for (const task of tasks.filter((candidate) => taskDirectory(candidate) !== undefined && !candidate.includes('#'))) {
+    expect(families.has(task), task).toBe(false);
+  }
+});
+
+it('names every package integration suite and keeps native proofs one per runner', () => {
+  const run = readIntegrationJobs()[OWNER_INTEGRATION_JOB].steps.find(
+    ({ env }) => env?.INTEGRATION_TASKS !== undefined,
   );
-  expect(new Set(namedPackages).size).toBe(namedPackages.length);
-  for (const filter of namedPackages) {
-    expect(filter).toMatch(/^\.\/(?:apps|packages|verticals)\/[a-z-]+$/u);
-    const manifest = Schema.decodeUnknownSync(RootScriptsSchema)(
-      JSON.parse(readFileSync(new URL(`../../${filter}/package.json`, import.meta.url), 'utf-8')),
-    );
-    expect(manifest.scripts['test:integration']).toBeDefined();
+  expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(run?.env).toMatchObject({
+    APP_ENV_PATH: '/dev/null',
+    INTEGRATION_LANES: expression('matrix.lanes'),
+    INTEGRATION_TASKS: expression('toJSON(matrix.tasks)'),
+    ONTOS_CI_ISOLATED_WORKERS: '2',
+    SPICEDB_DATABASE_PASSWORD: 'spicedb',
+  });
+  expect(run?.run?.trim()).toBe('bash scripts/ci/run-integration-suites.sh');
+  const rows = integrationRows();
+  expect(rows.every(({ lanes }) => lanes === 2)).toBe(true);
+  // Every package whose own manifest defines an integration suite is named by some row.
+  const namedPackages = [...new Set(rows.flatMap(shardFilters))];
+  const tested = (['apps', 'packages', 'verticals'] as const).flatMap((group) =>
+    readdirSync(new URL(`../../${group}`, import.meta.url), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => {
+        const manifest = new URL(`../../${group}/${entry.name}/package.json`, import.meta.url);
+        if (!existsSync(manifest)) {
+          return [];
+        }
+        const { scripts: own } = Schema.decodeUnknownSync(PackageScriptsSchema)(
+          JSON.parse(readFileSync(manifest, 'utf-8')),
+        );
+        return own?.['test:integration'] === undefined ? [] : [`./${group}/${entry.name}`];
+      }),
+  );
+  expect(sorted(tested)).toEqual(sorted(namedPackages));
+  // Native preproposal proofs supplement the ordinary package suites, one case per runner.
+  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  expect(scheduler).toContain(
+    "exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal -t 'produces an exact preproposal basis'",
+  );
+  const preproposalRows = rows.filter((row) => (row.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')));
+  expect(preproposalRows).toHaveLength(2);
+  for (const row of preproposalRows) {
+    expect(row['proof-packages']?.length ?? 0).toBeGreaterThan(0);
+  }
+  // A row never runs two native topology proofs side by side.
+  for (const row of rows) {
+    const native = (row.tasks ?? []).filter((task) => NATIVE_TOPOLOGY_PROOFS.some((proof) => proof === task));
+    expect(native.length, row.name).toBeLessThanOrEqual(1);
+  }
+});
+
+it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
+  const jobs = readIntegrationJobs();
+  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  const excluded = ['whole:organization', 'whole:pricing', 'whole:privacy'];
+  const proofs = integrationRows()
+    .flatMap((row) => row.tasks ?? [])
+    .filter((task) => excluded.includes(task));
+  expect(sorted(proofs)).toEqual(excluded);
+  for (const file of [
+    'scripts/integration/organization-source-customer-owner-conformance.test.mts',
+    'tests/integration/market-revision-whole-current-pricing-postgres.test.ts',
+    'tests/integration/privacy-composition-drain.test.ts',
+  ]) {
+    expect(scheduler).toContain(`--exclude ${file}`);
+    expect(jobs[OWNER_INTEGRATION_JOB].steps.some(({ run }) => run?.includes(file) === true)).toBe(false);
   }
 });
 
@@ -1197,43 +1562,24 @@ const RUNTIME_IDENTITY_URLS = Object.fromEntries(
 );
 const IDENTITY_STEP_ENV_FILTER = /printenv \| grep -E '(?<pattern>[^']+)'/gu;
 const AUDIT_STEP = 'Audit runtime database identities against the checked-in grant manifest';
-const IdentityGateJobSchema = Schema.Struct({
-  // Unquoted placeholder IDs parse as numbers.
-  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
-  steps: Schema.Array(WorkflowStepSchema),
-});
-const IdentityGateJobsSchema = Schema.Struct({
-  jobs: Schema.Struct({
-    [NODE_ARTIFACT_PROOF_JOB]: Schema.Struct({
-      ...IdentityGateJobSchema.fields,
-      services: Schema.Record(
-        Schema.String,
-        Schema.Struct({
-          env: Schema.Record(Schema.String, Schema.String),
-          image: Schema.String,
-          options: Schema.String,
-          ports: Schema.Array(Schema.String),
-        }),
-      ),
-    }),
-    [SERVICE_INTEGRATION_JOB]: IdentityGateJobSchema,
-  }),
-});
 
 it('gives every CI database tool a separate login per runtime identity and audits their grants', () => {
   const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
-  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
-  const integration = jobs[SERVICE_INTEGRATION_JOB];
-  for (const environment of [integration.env, jobs[NODE_ARTIFACT_PROOF_JOB].env]) {
-    const admin = Schema.decodeUnknownSync(Schema.URLFromString)(environment?.DATABASE_ADMIN_URL);
-    for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
-      expect(environment?.[key]).toBe(`postgresql://${role}:${role}@${admin.host}${admin.pathname}`);
-    }
+  const integration = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema.mapFields(({ env, steps }) => ({ env, steps })),
+      }),
+    }),
+  )(parse(source)).jobs[SERVICE_INTEGRATION_JOB];
+  const admin = Schema.decodeUnknownSync(Schema.URLFromString)(integration.env?.DATABASE_ADMIN_URL);
+  for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
+    expect(integration.env?.[key]).toBe(`postgresql://${role}:${role}@${admin.host}${admin.pathname}`);
   }
   // Identity URLs stay in each job's explicit environment, never a generated dotenv file.
   expect([...source.matchAll(IDENTITY_STEP_ENV_FILTER)]).toHaveLength(0);
   const { steps } = integration;
-  const start = steps.findIndex(({ name }) => name === 'Start fresh PostgreSQL and SpiceDB services');
+  const start = steps.findIndex(({ name }) => name === START_INTEGRATION_SERVICES_STEP);
   const initialize = steps.findIndex(({ name }) => name === INITIALIZE_IDENTITIES_STEP);
   const removeRuntime = steps.findIndex(({ name }) => name.startsWith('Remove the pre-seeded runtime role'));
   const stageMigrator = steps.findIndex(({ name }) => name === ASSEMBLED_MIGRATOR_STEP);
@@ -1241,6 +1587,8 @@ it('gives every CI database tool a separate login per runtime identity and audit
   expect(initialize).toBeGreaterThan(start);
   expect(initialize).toBeLessThan(removeRuntime);
   expect(removeRuntime).toBeLessThan(stageMigrator);
+  // Every row that starts its own fresh cluster initializes its login identities; the owner rows restore them.
+  expect(steps[initialize]?.if).toBe(steps[start]?.if);
   expect(steps[initialize]?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
   expect(steps[initialize]?.env).toEqual({
     DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
@@ -1249,58 +1597,65 @@ it('gives every CI database tool a separate login per runtime identity and audit
   expect(integration.env?.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
   expect(steps[stageMigrator]?.env?.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
   expect(steps[stageMigrator]?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
-  const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
+  // The grant audit runs once per run, on the bootstrap row only, after the migrator that provisions the
+  // identities it audits. It reads no matrix input, so no other row repeats it.
   const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
-  expect(migrations).toBeGreaterThanOrEqual(0);
-  expect(audit).toBe(migrations + 1);
-  // On a seed hit the restore proves the producer's audited roles and grants instead.
-  expect(steps[audit]?.if).toBe(FRESH_PREPARATION_CONDITION);
+  expect(audit).toBeGreaterThan(stageMigrator);
+  expect(steps[audit]?.if).toBe(BOOTSTRAP_CONDITION);
   expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
+  expect(steps.filter(({ run }) => (run ?? '').includes('database-trust:audit'))).toHaveLength(1);
+});
+
+it('proves the deployment bootstrap once, on a row beside the suites', () => {
+  const { steps } = readIntegrationJobs()[NODE_TOPOLOGY_PROOF_JOB];
+  const names = steps.map(({ name }) => name);
+  // Bootstrap ordering is proved end to end: the pre-seeded runtime role goes first, then the real
+  // migrator artifact against the scratch cluster, then the grant audit and the host.
+  const order = [
+    START_INTEGRATION_SERVICES_STEP,
+    'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
+    WORKER_PROVISION_STEP,
+    ASSEMBLED_MIGRATOR_STEP,
+    AUDIT_STEP,
+    WORKER_PROOF_STEP,
+  ];
+  expect(names.filter((name) => order.includes(name))).toEqual(order);
+  // Each of these proofs runs on the bootstrap row alone; the runtime-role drop in particular would leave
+  // an ordinary row with no login for its own suites.
+  for (const name of order.slice(1)) {
+    expect(steps.find((candidate) => candidate.name === name)?.if, name).toBe(BOOTSTRAP_CONDITION);
+  }
+  // The assembled migrator already applies and verifies every owner; the browser and database rows
+  // migrate their own cluster once with the source command.
+  const migrations = steps.find(({ name }) => name === SOURCE_MIGRATIONS_STEP);
+  expect(migrations?.if).toBe(NON_BOOTSTRAP_CONDITION);
+  expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_UNPACK_STEP)?.if).toBeUndefined();
 });
 
 it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
   Effect.gen(function* proveNodeDatabaseIdentities() {
-    const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
-    const node = jobs[NODE_ARTIFACT_PROOF_JOB];
-    const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(node.env);
-    const service = node.services['proof-postgres'];
-    expect(service?.image).toBe(
-      'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5',
-    );
-    expect(service?.ports).toContain('5433:5432');
+    // The bootstrap row migrates the cluster it starts itself, with the same identity URLs as the suites.
+    const integration = readIntegrationJobs()[NODE_TOPOLOGY_PROOF_JOB];
+    const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(integration.env);
     const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
-    expect(admin.username).toBe(service?.env.POSTGRES_USER);
-    expect(admin.password).toBe(service?.env.POSTGRES_PASSWORD);
-    expect(admin.pathname).toBe(`/${service?.env.POSTGRES_DB ?? ''}`);
-    expect(service?.options).toContain(`pg_isready -U ${admin.username} -d ${service?.env.POSTGRES_DB ?? ''}`);
-    const provision = node.steps.findIndex(
-      ({ name }) => name === 'Migrate the Node proof database and provision its runtime identities',
-    );
-    const initialize = node.steps.findIndex(
-      ({ name }) => name === 'Initialize the fresh Node proof database login identities',
-    );
-    const proof = node.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
-    expect(initialize).toBeGreaterThanOrEqual(0);
-    expect(initialize).toBeLessThan(provision);
-    expect(node.steps[initialize]?.if).toBeUndefined();
-    expect(node.steps[initialize]?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
-    expect(node.steps[initialize]?.env).toEqual({
-      DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
-      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
-    });
-    expect(environment.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
-    expect(node.steps[provision]?.env).toBeUndefined();
-    expect(provision).toBeGreaterThanOrEqual(0);
-    expect(provision).toBeLessThan(proof);
-    expect(node.steps[provision]?.if).toBeUndefined();
-    expect(node.steps[provision]?.run).toBe('mise exec -- pnpm db:migrate');
-    expect(node.steps[proof]?.env).toBeUndefined();
+    expect(admin.port).toBe(environment.POSTGRES_PORT);
+    expect(admin.username).toBe(environment.POSTGRES_USER);
+    expect(admin.password).toBe(environment.POSTGRES_PASSWORD);
+    expect(admin.pathname).toBe(`/${environment.POSTGRES_DB ?? ''}`);
+    const bootstrap = integration.steps.findIndex(({ name }) => name === ASSEMBLED_MIGRATOR_STEP);
+    const proof = integration.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
+    expect(integration.steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
+    expect(bootstrap).toBeGreaterThanOrEqual(0);
+    expect(bootstrap).toBeLessThan(proof);
+    expect(integration.steps[proof]?.if).toBe(BOOTSTRAP_CONDITION);
     for (const identity of DATABASE_IDENTITIES) {
       const connection = yield* loadDatabaseConfig({ environment, envPath: '/dev/null', identity });
       expect(connection.expectedRole).toBe(identity.role);
       const runtime = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(connection.connectionString);
       expect(runtime.username).toBe(identity.role);
-      expect(runtime.pathname).toBe(`/${service?.env.POSTGRES_DB ?? ''}`);
+      expect(runtime.pathname).toBe(admin.pathname);
       expect(runtime.hostname).toBe(admin.hostname);
       expect(Number(runtime.port)).toBe(Number(admin.port));
     }
@@ -1308,276 +1663,44 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
 );
 
 it('restores same-run Node artifacts for every backend integration fixture and excludes browser rows', () => {
-  const source: unknown = readGateWorkflow();
-  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
-  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[SERVICE_INTEGRATION_JOB];
-  expect(integration.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
-  // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
-  expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
-  const ordinary = integration.strategy.matrix.include.filter((shard) => shard['fresh-database-tests'] !== 'only');
-  const roots = ordinary.filter((shard) => shard['root-suite'] === true);
-  expect(roots).toHaveLength(4);
-  expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
-  const customerContext = ordinary.filter((shard) =>
-    shardFilters(shard).includes('./verticals/commerce-customer-context'),
-  );
-  expect(customerContext).toHaveLength(7);
-  expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
-  // The browser suite reads no built output: its own job needs only the plan.
-  expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(false);
-  const browser = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Struct({
-        [BROWSER_INTEGRATION_JOB]: Schema.Struct({
-          needs: Schema.Array(Schema.String),
-          steps: Schema.Array(GateCommandStepSchema),
-          strategy: Schema.Struct({
-            matrix: Schema.Struct({ include: Schema.Array(Schema.Struct({ suite: Schema.String })) }),
-          }),
-        }),
-      }),
-    }),
-  )(source).jobs[BROWSER_INTEGRATION_JOB];
-  expect(browser.needs).toEqual([CI_PLAN_JOB]);
-  expect(browser.strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
-  expect(browser.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
-  expect(browser.steps.some(({ run }) => run === 'mise exec -- pnpm --filter @app/shell-super-app test:e2e')).toBe(
-    true,
-  );
+  const jobs = readIntegrationJobs();
+  const integration = jobs[OWNER_INTEGRATION_JOB];
+  expect(integration.needs).toContain(NODE_ARTIFACT_BUILD_JOB);
+  const ownerRows = integrationRows();
+  const roots = ownerRows.filter((shard) => rootRow(shard));
+  // Shard counts are reshard-dependent and their completeness is proved where the shard ids are checked
+  // as a derived 1..n set; here the contract is only that these fixtures exist and are backend rows.
+  expect(roots.length).toBeGreaterThan(0);
+  const customerContext = ownerRows.filter((shard) => shardFilters(shard).includes(CUSTOMER_CONTEXT_SELECTOR));
+  expect(customerContext.length).toBeGreaterThan(0);
+  expect(jobs[SERVICE_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual(['database']);
+  expect(jobs[BROWSER_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
+  expect(ownerRows).toEqual(integration.strategy.matrix.include);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
-  const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
-  const derive = steps.findIndex(({ run }) => run?.includes(DERIVE_BUILT_COMPOSITION_COMMAND) === true);
-  const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
-  const tests = steps.findIndex(isPackageTestStep);
+  const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const unpack = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
+  // The suites read the source worker hosts; no row materializes a worker artifact for them.
+  expect(steps.some(({ run }) => run?.includes('zerops:materialize') === true && !run.includes('if [ ! -f'))).toBe(
+    false,
+  );
+  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
   expect(download).toBeGreaterThan(-1);
-  expect(download < unpack && unpack < derive && derive < worker && worker < tests).toBe(true);
-  expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
-  // No run-id, repository or token override: the artifacts must belong to this workflow run.
-  expect(steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
-  });
-  expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
-  expect(steps[worker]?.run).toBe(
-    'mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker',
+  expect(download < unpack && unpack < tests).toBe(true);
+  expect(steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
+  // Every owner row restores the same artifacts, which exist when it starts.
+  const preproposal = ownerRows.filter((shard) =>
+    (shard.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')),
   );
-  expect(steps[worker]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  for (const index of [download, unpack]) {
-    expect(steps[index]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  }
-  expect(steps[worker]?.if).toBe('matrix.root-suite == true');
-  expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  expect(steps[derive]?.if).toBe('matrix.native-composition == true');
-  expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(1);
-  const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
-  expect(preproposal).toHaveLength(1);
-  expect(preproposal[0]?.suite).toBe('integration');
-});
-
-/** The seed cache digest's inputs: every input of the migrated integration database. */
-const SEED_KEY_INPUTS = [
-  "'app/**/drizzle*/**'",
-  "'app/database/**'",
-  "'app/scripts/postgres/**'",
-  "'app/scripts/run-zerops-migrator.mjs'",
-  // Everything the migrator runs that writes the seeded database, not only the migrations themselves.
-  "'app/scripts/activate-access-catalog-release.mts'",
-  "'app/scripts/application-migration-pending.mts'",
-  "'app/verticals/commerce-customer-context/scripts/**'",
-  "'app/packages/core-runtime/src/access/**'",
-  "'app/packages/core-runtime/src/permissions/**'",
-  "'app/scripts/ci/integration-seed*.mts'",
-  // The fresh-database tests the seed model refuses (scripts/ci/ci-matrices.mts).
-  "'app/scripts/ci-matrices*.json'",
-  "'app/scripts/ci/ci-matrices.mts'",
-  "'app/packages/core-runtime/spicedb/**'",
-  "'app/topology/**'",
-  "'app/docker-compose.yml'",
-  "'app/pnpm-lock.yaml'",
-  "'!app/**/node_modules/**'",
-];
-
-/**
- * A restored seed carries the Commerce portal realm, produced and verified with its database pair
- * (scripts/ci/integration-seed.mts), so every verification of a restored seed names the same pair.
- */
-const SEED_REALM_VERIFY =
-  'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \\\n  mise exec -- pnpm db:verify';
-const expectRestoredSeedVerifiedWithRealm = (label: string, run: string | undefined) => {
-  const verifications = (run ?? '').split('mise exec -- pnpm db:verify').length - 1;
-  expect(verifications, label).toBeGreaterThan(0);
-  expect((run ?? '').split(SEED_REALM_VERIFY).length - 1, label).toBe(verifications);
-};
-
-/** The producer verifies its restored and its cached seed with the pair it verified the dumped seed with. */
-const expectProducerVerifiesSeedRealm = (steps: readonly (typeof GateCommandStepSchema.Type)[]) => {
-  const selfRestore = steps.find(
-    ({ name }) => name === 'Restore the new seed into fresh services as a seeded row does',
-  );
-  expectRestoredSeedVerifiedWithRealm('self-restore', selfRestore?.run);
-  const onHit = steps.find(({ run }) => run?.includes('prove-outbox-worker-host-artifact.sh') === true);
-  expectRestoredSeedVerifiedWithRealm('cached seed', onHit?.run);
-  // The producer verified the seed it dumped with exactly this pair: the job's admin and runtime URLs.
-  const producerSource = readFileSync(new URL('../ci/integration-seed.mts', import.meta.url), 'utf-8');
-  expect(producerSource).toContain('COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: admin,');
-  expect(producerSource).toContain("COMMERCE_PORTAL_AUTH_DATABASE_URL: yield* requiredEnvironment('DATABASE_URL'),");
-  expect(producerSource).toContain("yield* runSeedCommand(PNPM, ['db:verify'], { env: perPackage });");
-};
-
-const restoreOf = (steps: readonly (typeof GateCommandStepSchema.Type)[]) =>
-  steps.find(({ id }) => id === 'seed-cache');
-
-/**
- * The seed is the database of the service-integration rows' fresh preparation: the assembled stage migrator (with the
- * access catalog release activation) and then the migrations. The browser job prepares without that migrator, so a
- * seed is not its database (run 43662684424): it never restores one and always prepares its own.
- */
-const expectBrowserPreparesItsOwnDatabase = (steps: readonly (typeof GateCommandStepSchema.Type)[]) => {
-  expect(restoreOf(steps)).toBeUndefined();
-  expect(steps.some(({ run }) => run?.includes('integration-seed.mts') === true)).toBe(false);
-  expect(steps.some(({ name }) => name === ASSEMBLED_MIGRATOR_STEP)).toBe(false);
-  const { integration } = MATRICES;
-  expect(integration.filter(({ suite }) => suite === 'browser').every(({ seed }) => seed === undefined)).toBe(true);
-  for (const name of [
-    'Initialize fresh local database login identities',
-    'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
-  ]) {
-    const step = steps.find((candidate) => candidate.name === name);
-    expect(step, name).toBeDefined();
-    expect(step?.if, name).toBeUndefined();
-  }
-};
-
-/** A seed consumer restores exactly the planned key, with no prefix fallback, and prepares fresh on a miss. */
-const expectSeedConsumer = (
-  job: string,
-  {
-    needs,
-    steps,
-  }: { readonly needs?: readonly string[]; readonly steps: readonly (typeof GateCommandStepSchema.Type)[] },
-) => {
-  expect(needs).not.toContain(INTEGRATION_SEED_PROOF_JOB);
-  const restore = restoreOf(steps);
-  expect(restore?.if, job).toBe('matrix.seed == true');
-  expect(restore?.uses).toMatch(/^actions\/cache\/restore@[a-f0-9]{40}$/u);
-  expect(restore?.with).toEqual({
-    key: expression(SEED_KEY_OUTPUT),
-    path: `${RUNNER_TEMP_EXPRESSION}/integration-seed`,
-  });
-  const seeded = steps.find(({ run }) => run?.includes('integration-seed.mts restore') === true);
-  expect(seeded?.if).toBe("steps.seed-cache.outputs.cache-hit == 'true'");
-  expect(seeded?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
-  expectRestoredSeedVerifiedWithRealm(job, seeded?.run);
-  for (const name of [
-    INITIALIZE_IDENTITIES_STEP,
-    'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
-  ]) {
-    expect(steps.find((step) => step.name === name)?.if, `${job}: ${name}`).toContain(
-      "steps.seed-cache.outputs.cache-hit != 'true'",
-    );
-  }
-};
-
-it('restores the integration seed from its input-keyed cache and never makes a row wait for its producer', () => {
-  const source = readGateWorkflow();
-  const StepsJobSchema = Schema.Struct({
-    env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
-    needs: Schema.optional(Schema.Array(Schema.String)),
-    steps: Schema.Array(GateCommandStepSchema),
-  });
-  const { jobs } = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Struct({
-        [BROWSER_INTEGRATION_JOB]: StepsJobSchema,
-        [CI_PLAN_JOB]: Schema.Struct({
-          outputs: Schema.Record(Schema.String, Schema.String),
-          steps: Schema.Array(GateCommandStepSchema),
-        }),
-        [INTEGRATION_SEED_PROOF_JOB]: StepsJobSchema,
-        [SERVICE_INTEGRATION_JOB]: StepsJobSchema,
-      }),
-    }),
-  )(source);
-  // ci-plan names the seed by its inputs, before the install creates node_modules.
-  const plan = jobs[CI_PLAN_JOB];
-  const keyStep = plan.steps.findIndex(({ id }) => id === 'seed-key');
-  const install = plan.steps.findIndex(({ name }) => name === 'Install the app workspace for code impact analysis');
-  expect(keyStep !== -1 && keyStep < install).toBe(true);
-  for (const input of SEED_KEY_INPUTS) {
-    expect(plan.steps[keyStep]?.run).toContain(input);
-  }
-  expect(plan.outputs['seed-key']).toBe(expression('steps.seed-key.outputs.key'));
-  // The consumer restores exactly that key, with no prefix fallback, and prepares a fresh database on a miss.
-  expectSeedConsumer(SERVICE_INTEGRATION_JOB, jobs[SERVICE_INTEGRATION_JOB]);
-  expectBrowserPreparesItsOwnDatabase(jobs[BROWSER_INTEGRATION_JOB].steps);
-  const integration = jobs[SERVICE_INTEGRATION_JOB].steps;
-  expect(integration.find(({ run }) => run?.includes('integration-seed.mts restore') === true)?.run).toContain(
-    '--test-files "$CI_TEST_FILES"',
-  );
-  for (const name of [
-    'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
-    ASSEMBLED_MIGRATOR_STEP,
-    AUDIT_STEP,
-  ]) {
-    expect(integration.find((step) => step.name === name)?.if, name).toBe(FRESH_PREPARATION_CONDITION);
-  }
-  // A restored seed carries no Application Composition: every row, seeded or not, publishes its own from this run's
-  // unit builds through the Outbox Worker host proof (run 43678606041 failed 10 rows on another run's composition).
-  for (const name of [WORKER_PROVISION_STEP, WORKER_PROOF_STEP]) {
-    expect(integration.find((step) => step.name === name)?.if, name).toBe(BACKEND_INTEGRATION_CONDITION);
-  }
-  // INVARIANT: every full run runs the complete fresh proof in the producer; a narrow round skips its migration part
-  // only on a hit, which a change to any migration input turns into a miss; a miss saves the new seed.
-  const producer = jobs[INTEGRATION_SEED_PROOF_JOB];
-  expect(restoreOf(producer.steps)?.with).toEqual({
-    key: expression(SEED_KEY_OUTPUT),
-    path: `${RUNNER_TEMP_EXPRESSION}/integration-seed`,
-  });
-  const produce = producer.steps.find(({ run }) => run?.includes('integration-seed.mts produce') === true);
-  expect(produce?.if).toBe("needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'");
-  const onHit = producer.steps.find(({ run }) => run?.includes('prove-outbox-worker-host-artifact.sh') === true);
-  expect(onHit?.if).toBe("needs.ci-plan.outputs.mode != 'full' && steps.seed-cache.outputs.cache-hit == 'true'");
-  // The producer restores the seed it dumped into fresh services, exactly as a row does, before it is cached.
-  const selfRestore = producer.steps.findIndex(
-    ({ name }) => name === 'Restore the new seed into fresh services as a seeded row does',
-  );
-  const producing = producer.steps.findIndex(({ run }) => run?.includes('integration-seed.mts produce') === true);
-  expect(selfRestore).toBeGreaterThan(producing);
-  expect(producer.steps[selfRestore]?.if).toBe(produce?.if);
-  for (const check of [
-    '--purpose ordinary-tests',
-    'pnpm db:verify',
-    'pnpm database-trust:audit',
-    'sh scripts/prove-outbox-worker-host-artifact.sh',
-  ]) {
-    expect(producer.steps[selfRestore]?.run).toContain(check);
-  }
-  expectProducerVerifiesSeedRealm(producer.steps);
-  const save = producer.steps.find(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
-  expect(save).toBeDefined();
-  expect(selfRestore).toBeLessThan(save === undefined ? -1 : producer.steps.indexOf(save));
-  expect(save?.if).toBe("steps.seed-cache.outputs.cache-hit != 'true'");
-  expect(save?.with).toEqual({
-    key: expression(SEED_KEY_OUTPUT),
-    path: `${RUNNER_TEMP_EXPRESSION}/integration-seed`,
-  });
-  expect(producer.env?.INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL).toBe(
-    'postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci',
-  );
+  expect(preproposal).toHaveLength(2);
 });
 
 it('downloads complete same-run artifacts without holding a runner to poll for them', () => {
-  const { needs, steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_INTEGRATION_JOB
-  ];
-  expect(needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  const { needs, steps } = readIntegrationJobs()[OWNER_INTEGRATION_JOB];
+  expect(needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB]);
   expect(steps.some(({ run }) => run?.includes('wait-for-build-shards.sh') === true)).toBe(false);
-  const download = steps.findIndex(
-    ({ name }) => name === 'Download the same-run Node artifacts for native owner fixtures',
-  );
+  const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
   expect(download).toBeGreaterThan(-1);
-  for (const name of ['Run the assembled stage migrator artifact against the fresh database', WORKER_PROOF_STEP]) {
+  for (const name of [ASSEMBLED_MIGRATOR_STEP, WORKER_PROOF_STEP]) {
     expect(
       steps.findIndex((step) => step.name === name),
       name,
@@ -1656,29 +1779,19 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
   expect(runtimePaths).toEqual(
     expect.arrayContaining(['app/.zerops/runtime/outbox-worker-host', 'app/.zerops/bun', 'app/.zerops/state']),
   );
-  const ProofJobsSchema = Schema.Struct({
-    jobs: Schema.Struct({
-      [INTEGRATION_SEED_PROOF_JOB]: Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) }),
-      [SERVICE_INTEGRATION_JOB]: Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) }),
-    }),
-  });
-  const { jobs } = Schema.decodeUnknownSync(ProofJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  for (const [job, proofStep] of [
-    [SERVICE_INTEGRATION_JOB, ASSEMBLED_MIGRATOR_STEP],
-    [INTEGRATION_SEED_PROOF_JOB, 'Prove the fresh-database preparation and dump the seed'],
-  ] as const) {
-    const { steps } = jobs[job];
-    const provision = steps.findIndex(({ name }) => name === WORKER_PROVISION_STEP);
-    expect(provision, job).toBeGreaterThan(-1);
-    expect(provision, job).toBeLessThan(steps.findIndex(({ name }) => name === proofStep));
-    // The runner is glibc: the musl build Zerops runs cannot load its C++ runtime here.
-    expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4 glibc');
-    expect(steps[provision]?.run).not.toContain('musl');
-    expect(steps[provision]?.run).toContain('zerops:materialize --app outbox-worker-host');
-    expect(steps[provision]?.run).toContain(
-      "mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json",
-    );
-  }
+  // The bootstrap row is the one row that assembles the artifact; it provisions those paths before the proof.
+  const { steps } = readIntegrationJobs()[NODE_TOPOLOGY_PROOF_JOB];
+  const provision = steps.findIndex(({ name }) => name === WORKER_PROVISION_STEP);
+  expect(provision).toBeGreaterThan(-1);
+  expect(provision).toBeLessThan(steps.findIndex(({ name }) => name === ASSEMBLED_MIGRATOR_STEP));
+  expect(steps[provision]?.if).toBe(BOOTSTRAP_CONDITION);
+  // The runner is glibc: the musl build Zerops runs cannot load its C++ runtime here.
+  expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4 glibc');
+  expect(steps[provision]?.run).not.toContain('musl');
+  expect(steps[provision]?.run).toContain('zerops:materialize --app outbox-worker-host');
+  expect(steps[provision]?.run).toContain(
+    "mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json",
+  );
   const artifact = mkdtempSync(path.join(os.tmpdir(), 'ontos-existing-migrator-artifact-'));
   const marker = path.join(artifact, 'preserved-owner-data');
   try {
@@ -1693,10 +1806,11 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
 });
 
 it('refuses root native integration when the same-run build archives are missing', () => {
-  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_INTEGRATION_JOB
-  ];
-  const unpack = integration.steps.find(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  const integration = readIntegrationJobs()[OWNER_INTEGRATION_JOB];
+  const download = integration.steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  // The unpack half of the download step, without the download.
+  const unpack = { run: download?.run?.split('\n').slice(1).join('\n') };
+  expect(unpack.run?.trim()).toBe(INTEGRATION_UNPACK_COMMAND);
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-artifact-step-'));
   try {
     const scripts = path.join(directory, 'scripts');
@@ -1729,13 +1843,27 @@ it('keeps deployment out of the workspace gates and guards Action transaction I/
 });
 
 it('runs migration equivalence proofs only against the owned CI maintenance database', () => {
-  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
-  const integration = jobs[SERVICE_INTEGRATION_JOB].steps.find(isPackageTestStep);
-  expect(integration?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(integration?.env).toMatchObject({
+  // The proof creates and drops databases on its cluster, so it runs on the bootstrap row, against the cluster that
+  // row started and migrated, never on a restored worker cluster that other lanes share.
+  const { steps } = readIntegrationJobs()[NODE_TOPOLOGY_PROOF_JOB];
+  const proofs = steps.filter(({ run }) => run?.includes('--project owned-cluster') === true);
+  expect(proofs).toHaveLength(1);
+  expect(proofs[0]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(proofs[0]?.run).toBe('mise exec -- pnpm exec rstest --project owned-cluster --pool.maxWorkers 1');
+  expect(proofs[0]?.env).toEqual({
+    APP_ENV_PATH: '/dev/null',
     MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: 'postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres',
     MIGRATION_EQUIVALENCE_TEST_SANDBOX: 'owned-postgres18',
   });
+  expect(proofs[0] === undefined ? -1 : steps.indexOf(proofs[0])).toBeGreaterThan(
+    steps.findIndex(({ name }) => name === ASSEMBLED_MIGRATOR_STEP),
+  );
+  // No owner row may run it: the root project leaves the file to the owned-cluster project.
+  const config = readFileSync(new URL('../../rstest.config.ts', import.meta.url), 'utf-8');
+  expect(config).toContain("const ownedClusterTests = ['scripts/integration/migration-equivalence.test.mts'];");
+  expect(config).toContain("include: ['scripts/integration/**/*.test.mts', ...elsewhere]");
+  const tests = steps.find(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(tests?.env?.MIGRATION_EQUIVALENCE_TEST_DATABASE_URL).toBeUndefined();
 });
 
 const AnyStepSchema = Schema.Struct({
@@ -1882,22 +2010,19 @@ it('saves the demo trunk its own TS-Go and Chromium caches once, after the step 
   expect(browser[chromium]?.if).toContain("steps.playwright-cache.outputs.cache-hit != 'true'");
 });
 
-it('creates schema-only native fixtures from an immutable template of the prepared job database', () => {
-  const steps = readJobsOf(GATES_WORKFLOW)[SERVICE_INTEGRATION_JOB]?.steps ?? [];
-  const capture = steps.findIndex(
-    ({ name }) => name === "Capture the prepared schema as the native fixtures' template",
+it('creates schema-only native fixtures from an immutable template of the restored job database', () => {
+  // Every worker cluster gets the template from the restored archive before any lane starts (restore script), and
+  // each lane's environment names it (scripts/tests/ci-integration-workers.test.mts proves the values).
+  const restore = readFileSync(new URL('../ci/restore-integration-workers.sh', import.meta.url), 'utf-8');
+  expect(restore).toContain(
+    'bash scripts/ci/prepare-schema-template.sh "$database" "$INTEGRATION_DATABASE_ARCHIVE/database.dump"',
   );
-  const tests = steps.findIndex((step) => isPackageTestStep({ env: step.env, name: step.name }));
-  const preparation = steps.findIndex(({ name }) => name === WORKER_PROOF_STEP);
-  expect(preparation).toBeGreaterThan(-1);
-  expect(capture).toBeGreaterThan(preparation);
-  expect(tests).toBe(capture + 1);
-  expect(steps[capture]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(steps[capture]?.run).toContain('bash scripts/ci/prepare-schema-template.sh ontos-db "$archive"');
-  expect(steps[tests]?.env).toMatchObject({
-    ONTOS_TEST_SCHEMA_TEMPLATE: 'ontos_ci_schema_template',
-    ONTOS_TEST_SCHEMA_TEMPLATE_SOURCE: 'ontos_ci',
-  });
+  const environment = readFileSync(new URL('../ci/integration-worker-environment.mts', import.meta.url), 'utf-8');
+  expect(environment).toContain("ONTOS_TEST_SCHEMA_TEMPLATE: 'ontos_ci_schema_template'");
+  const { steps } = readIntegrationJobs()[OWNER_INTEGRATION_JOB];
+  const restored = steps.findIndex(({ wait }) => wait === INTEGRATION_WORKERS_STEP_ID);
+  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(restored !== -1 && restored < tests).toBe(true);
 });
 
 it('runs Quality Audit without its duplicate self-test on the pinned runner image', () => {

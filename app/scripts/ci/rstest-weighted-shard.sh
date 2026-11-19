@@ -10,10 +10,6 @@
 # family, shared equally by the family's files) or CI_DEFAULT_TEST_SECONDS, and deals the files heaviest first to
 # the lightest shard. Every shard computes the same deal from the same list, so together the shards run every file
 # exactly once. An empty shard passes; a failed listing fails.
-#
-# FRESH_DATABASE_TESTS=skip leaves out, and FRESH_DATABASE_TESTS=only keeps just, the test files that must migrate or
-# recover their job's database from a fresh preparation ("fresh-database-tests" of the gate matrices and the
-# seed model's name rule), so a row that restores the integration seed never runs them.
 set -euo pipefail
 
 shard="${1:?the shard as <index>/<count> is required}"
@@ -32,27 +28,17 @@ app_root="$(cd "$script_directory/../.." && pwd)"
 matrices=("$app_root/scripts/ci-matrices.json")
 [ -z "${CI_MATRICES_OVERLAY:-}" ] || matrices+=("$app_root/$CI_MATRICES_OVERLAY")
 weights="$(jq -cs 'map(."test-weights" // {}) | add' "${matrices[@]}")"
-fresh_tests="$(jq -cs 'map(."fresh-database-tests" // []) | add' "${matrices[@]}")"
-fresh_mode="${FRESH_DATABASE_TESTS:-}"
-case "$fresh_mode" in
-  '' | skip | only) ;;
-  *)
-    echo "FRESH_DATABASE_TESTS must be skip, only or empty, not $fresh_mode." >&2
-    exit 2
-    ;;
-esac
 listing="$(mktemp)"
 trap 'rm -f "$listing"' EXIT
 
-# Rstest's own output goes to stderr, so the list-only mode below prints nothing but file paths.
+# Rstest's own listing output goes to stderr; the shard's file list below is this script's.
 pnpm exec rstest list --project "$project" --filesOnly --json "$listing" >&2
 
 # A failed listing or deal fails here (set -e on the assignment), never as an empty, passing shard.
 total="$(jq -r '(if type == "array" then . else .items end) | length' "$listing")"
 deal="$(
   jq -r --argjson weights "$weights" --argjson count "$count" --argjson index "$index" \
-    --argjson fallback "${CI_DEFAULT_TEST_SECONDS:-20}" --argjson fresh "$fresh_tests" --arg freshMode "$fresh_mode" \
-    --arg appRoot "$app_root/" -f "$script_directory/rstest-weighted-shard.jq" "$listing"
+    --argjson fallback "${CI_DEFAULT_TEST_SECONDS:-20}" -f "$script_directory/rstest-weighted-shard.jq" "$listing"
 )"
 if [ "$total" -eq 0 ]; then
   echo "Rstest lists no files for project $project here." >&2
@@ -63,13 +49,6 @@ while IFS= read -r file; do
   [ -n "$file" ] && files+=("$file")
 done <<<"$deal"
 
-# RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 prints the shard's files, one per line, and runs nothing (the seed check reads it).
-if [ "${RSTEST_WEIGHTED_SHARD_LIST_ONLY:-}" = 1 ]; then
-  if [ "${#files[@]}" -gt 0 ]; then
-    printf '%s\n' "${files[@]}"
-  fi
-  exit 0
-fi
 echo "Rstest project $project, weighted shard $index/$count: ${#files[@]} files"
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0

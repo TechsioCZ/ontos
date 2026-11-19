@@ -25,36 +25,44 @@ const CommandEntrySchema = Schema.Struct({
   setup: Schema.optionalKey(Schema.String),
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
+/** The workspace directory a package task such as `./verticals/privacy#2/8` runs in; undefined for root and whole proofs. */
+export const taskDirectory = (task: string) =>
+  /^\.\/(?<directory>[a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.directory;
+
+/** Every task form scripts/ci/run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
+export const knownTask = (task: string) =>
+  /^root:\d+\/\d+$/u.test(task) ||
+  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-routes|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
+    task,
+  ) ||
+  taskDirectory(task) !== undefined;
+
+/**
+ * One integration row. The database row prepares this run's database once; each owner row restores it into one
+ * PostgreSQL cluster per lane and runs its tasks two at a time (scripts/ci/run-integration-suites.sh); the bootstrap
+ * row proves the deployment bootstrap and the built topology; the browser row migrates its own database.
+ */
 export const IntegrationEntrySchema = Schema.Struct({
-  'artifact-units': Schema.optionalKey(Schema.String),
+  lanes: Schema.optionalKey(Schema.Literals([2, 4])),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
-  'native-preproposal': Schema.optionalKey(Schema.Boolean),
-  'package-filters': Schema.optionalKey(Schema.String),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
-  'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-  'root-suite': Schema.optionalKey(Schema.Boolean),
-  'rstest-shard': Schema.optionalKey(Schema.String),
-  /** Rstest file workers; integration rows share one job database and its composition authority, so they run 1. */
-  'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
-  /** skip: leave out, only: run just the files that must migrate their own database (rstest-weighted-shard.sh). */
-  'fresh-database-tests': Schema.optionalKey(Schema.Literals(['skip', 'only'])),
-  /** Rstest projects a weighted package row runs one after another; `integration` when absent. */
-  'rstest-projects': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-z-]+(?: [a-z-]+)*$/u))),
-  /** The row may restore the cached seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
-  seed: Schema.optionalKey(Schema.Boolean),
-  suite: Schema.Literals(['integration', 'browser']),
+  suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
+  tasks: Schema.optionalKey(Schema.Array(Schema.String)),
 }).check(
   Schema.makeFilter((entry) =>
-    entry.suite === 'integration' &&
-    entry['root-suite'] !== true &&
-    entry['native-preproposal'] !== true &&
-    (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Integration templates must name package filters, run the root suite or run the native preproposal proof'
+    entry.suite === 'integration' && (entry.tasks === undefined || entry.tasks.length === 0)
+      ? 'Integration templates must list the tasks they run'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
-    entry['native-preproposal'] === true && (entry['proof-packages']?.length ?? 0) === 0
+    (entry.tasks ?? []).some((task) => !knownTask(task))
+      ? 'Integration tasks must use a runnable task form'
+      : undefined,
+  ),
+  Schema.makeFilter((entry) =>
+    (entry.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')) &&
+    (entry['proof-packages']?.length ?? 0) === 0
       ? 'Native preproposal templates must name their runtime proof packages'
       : undefined,
   ),
@@ -74,8 +82,6 @@ export type CiScope = typeof CiScopeSchema.Type;
 const matricesFields = {
   /** Public origins a unit build bakes in, as the gates' unit output cache names them (scripts/ci/unit-output-cache.mts). */
   'build-origin-variables': Schema.optionalKey(Schema.Array(Schema.String)),
-  /** Test files that must migrate or recover their job's database; the seed model refuses exactly these. */
-  'fresh-database-tests': Schema.optionalKey(Schema.Array(Schema.String)),
   integration: Schema.Array(IntegrationEntrySchema),
   /**
    * The workspace packages app/pnpm-workspace.yaml names one by one, outside `apps`, `packages` and `verticals`, each
@@ -140,12 +146,6 @@ export const mergeCiMatrices = (base: CiTemplates, overlay: Overlay) => {
       'build-origin-variables',
       base['build-origin-variables'],
       overlay['build-origin-variables'],
-      itself,
-    ),
-    'fresh-database-tests': appended(
-      'fresh-database-tests',
-      base['fresh-database-tests'],
-      overlay['fresh-database-tests'],
       itself,
     ),
     integration: appended('integration', base.integration, overlay.integration, byName),

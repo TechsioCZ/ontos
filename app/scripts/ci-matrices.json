@@ -77,16 +77,6 @@
     "symmy-ingress.test.ts": 5,
     "tenant-binding-isolation.test.ts": 1
   },
-  "fresh-database-tests": [
-    "scripts/integration/migrator-runtime-owner-access.test.mts",
-    "packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts",
-    "packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts",
-    "packages/core-runtime/tests/integration/auth-namespace-migration.test.ts",
-    "packages/core-runtime/tests/integration/contacts-identity-migration.test.ts",
-    "verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts",
-    "verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts",
-    "verticals/party-registry/tests/integration/verification-removal-migration.test.ts"
-  ],
   "source": [
     {
       "name": "Typecheck and OntOS API Boundary Rules",
@@ -146,215 +136,76 @@
   ],
   "integration": [
     {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (1/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "1/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
+      "suite": "bootstrap",
+      "name": "Deployment Bootstrap and Node Federation Proof"
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (2/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "2/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (3/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "3/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (4/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "4/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (5/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "5/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (6/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "6/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (7/7)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "7/7",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (1/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "1/6",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (2/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "2/6",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (3/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "3/6",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (4/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "4/6",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (5/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "5/6",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (6/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "6/6",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Root Integration (1/4)",
+      "name": "Owner Integration (1/13)",
       "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "1/4",
-      "seed": true,
-      "fresh-database-tests": "skip"
+      "lanes": 2,
+      "tasks": [
+        "./apps/shell-super-app#21/24",
+        "whole:organization",
+        "./packages/core-runtime#7/8",
+        "./verticals/commerce-market-catalog#3/4",
+        "./verticals/party-registry#1/4",
+        "./verticals/commerce-customer-context#4/56",
+        "root:9/30",
+        "./verticals/privacy#2/8",
+        "./verticals/privacy#6/8",
+        "./verticals/commerce-customer-context#55/56",
+        "./verticals/symmy-integration#4/4",
+        "./apps/shell-super-app#14/24",
+        "./verticals/payment-term-catalog#2/3",
+        "./verticals/commerce-customer-context#31/56"
+      ]
     },
     {
       "suite": "integration",
-      "name": "Root Integration (2/4)",
+      "name": "Owner Integration (2/13)",
       "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "2/4",
-      "seed": true,
-      "fresh-database-tests": "skip"
+      "lanes": 2,
+      "tasks": [
+        "whole:pricing-routes",
+        "./verticals/catalog#4/4",
+        "./verticals/merchandise",
+        "./verticals/commerce-customer-context#52/56",
+        "./verticals/privacy#1/8",
+        "./verticals/payment#1/4",
+        "./apps/shell-super-app#7/24",
+        "./packages/core-runtime#8/8",
+        "./verticals/commerce-customer-context#21/56",
+        "./verticals/commerce-customer-context#42/56",
+        "./verticals/commerce-customer-context#50/56",
+        "./verticals/commerce-customer-context#47/56",
+        "./verticals/commerce-customer-context#35/56",
+        "./verticals/commerce-customer-context#40/56",
+        "./verticals/legal-agreements"
+      ]
     },
     {
       "suite": "integration",
-      "name": "Root Integration (3/4)",
+      "name": "Owner Integration (3/13)",
       "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "3/4",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Root Integration (4/4)",
-      "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "4/4",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Privacy Integration (1/4)",
-      "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "1/4",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Privacy Integration (2/4)",
-      "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "2/4",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Privacy Integration (3/4)",
-      "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "3/4",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Privacy Integration (4/4)",
-      "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "4/4",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Core Runtime Integration (1/2)",
-      "package-filters": "--filter ./packages/core-runtime",
-      "rstest-shard": "1/2",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Core Runtime Integration (2/2)",
-      "package-filters": "--filter ./packages/core-runtime",
-      "rstest-shard": "2/2",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Party Registry Integration",
-      "package-filters": "--filter ./verticals/party-registry",
-      "rstest-shard": "1/1",
-      "rstest-projects": "integration integration-worker-cycle",
-      "seed": true,
-      "fresh-database-tests": "skip"
-    },
-    {
-      "suite": "integration",
-      "name": "Pricing and Inventory Integration",
-      "native-composition": true,
-      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Catalog Integration",
-      "package-filters": "--filter ./verticals/catalog",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Market, Order, Payment Term, Price Group, and Storefront Integration",
-      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry",
-      "seed": true
-    },
-    {
-      "suite": "integration",
-      "name": "Native Preproposal Basis and Approval Proof",
-      "native-preproposal": true,
+      "lanes": 2,
+      "tasks": [
+        "./apps/shell-super-app#13/24",
+        "./verticals/commerce-customer-context#33/56",
+        "whole:preproposal-basis",
+        "./verticals/commerce-customer-context#56/56",
+        "./apps/shell-super-app#3/24",
+        "./verticals/payment#3/4",
+        "./verticals/party-registry#3/4",
+        "./verticals/privacy#8/8",
+        "./verticals/promotion",
+        "root:21/30",
+        "./verticals/property-leasing",
+        "./verticals/payment-term-catalog#3/3",
+        "./verticals/price-group-catalog#1/4",
+        "./verticals/commerce-customer-context#48/56",
+        "./verticals/commerce-customer-context#53/56"
+      ],
       "proof-packages": [
         "@app/shell-super-app",
         "@app/party-registry",
@@ -368,33 +219,248 @@
     },
     {
       "suite": "integration",
-      "name": "Fresh Database Integration (1/2)",
+      "name": "Owner Integration (4/13)",
       "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "1/2",
-      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
-      "rstest-shard": "1/2",
-      "fresh-database-tests": "only"
+      "lanes": 2,
+      "tasks": [
+        "./verticals/commerce-customer-context#10/56",
+        "./apps/shell-super-app#1/24",
+        "./verticals/commerce-customer-context#24/56",
+        "./apps/shell-super-app#11/24",
+        "whole:customer-roundtrip",
+        "root:19/30",
+        "./verticals/commerce-customer-context#30/56",
+        "./verticals/pricing#1/4",
+        "root:29/30",
+        "./verticals/inventory#4/4",
+        "./verticals/commerce-customer-context#16/56",
+        "./verticals/tax#3/4",
+        "./verticals/commerce-customer-context#13/56",
+        "./verticals/commerce-customer-context#39/56",
+        "./verticals/tagging"
+      ]
     },
     {
       "suite": "integration",
-      "name": "Fresh Database Integration (2/2)",
+      "name": "Owner Integration (5/13)",
       "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "2/2",
-      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
-      "rstest-shard": "2/2",
-      "fresh-database-tests": "only"
+      "lanes": 2,
+      "tasks": [
+        "./packages/core-runtime#6/8",
+        "./packages/core-runtime#5/8",
+        "root:30/30",
+        "root:15/30",
+        "whole:privacy",
+        "./verticals/commerce-customer-context#9/56",
+        "root:27/30",
+        "./verticals/commerce-customer-context#18/56",
+        "./verticals/symmy-integration#2/4",
+        "./verticals/inventory#1/4",
+        "./verticals/tax#2/4",
+        "./verticals/commerce-market-catalog#4/4",
+        "./verticals/commerce-customer-context#25/56",
+        "./verticals/commerce-market-catalog#2/4",
+        "./verticals/crm",
+        "root:4/30"
+      ]
     },
     {
       "suite": "integration",
-      "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
+      "name": "Owner Integration (6/13)",
       "native-composition": true,
-      "package-filters": "--filter !. --filter !./verticals/commerce-customer-context --filter !./apps/shell-super-app --filter !./verticals/privacy --filter !./packages/core-runtime --filter !./verticals/party-registry --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/catalog --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry"
+      "lanes": 2,
+      "tasks": [
+        "./verticals/catalog#1/4",
+        "./packages/core-runtime#3/8",
+        "./verticals/privacy#5/8",
+        "./apps/shell-super-app#8/24",
+        "./verticals/commerce-customer-context#6/56",
+        "./verticals/commerce-customer-context#17/56",
+        "./verticals/commerce-order#1/2",
+        "./verticals/commerce-customer-context#28/56",
+        "root:5/30",
+        "./verticals/commerce-customer-context#46/56",
+        "./verticals/commerce-customer-context#36/56",
+        "./verticals/payment-term-catalog#1/3",
+        "./packages/email-delivery",
+        "./verticals/price-group-catalog#2/4",
+        "root:10/30",
+        "root:22/30"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (7/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "whole:privacy-recovery",
+        "./verticals/commerce-customer-context#19/56",
+        "./verticals/pricing#3/4",
+        "./verticals/inventory#2/4",
+        "root:20/30",
+        "./verticals/catalog#3/4",
+        "./verticals/commerce-customer-context#49/56",
+        "root:7/30",
+        "./verticals/tax#4/4",
+        "./verticals/commerce-customer-context#11/56",
+        "./verticals/commerce-customer-context#43/56",
+        "root:3/30",
+        "./verticals/price-group-catalog#4/4",
+        "./verticals/commerce-customer-context#38/56"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (8/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "whole:organization-identity",
+        "root:12/30",
+        "root:17/30",
+        "./apps/shell-super-app#10/24",
+        "./verticals/commerce-customer-context#5/56",
+        "./verticals/commerce-customer-context#3/56",
+        "./verticals/pricing#2/4",
+        "./verticals/commerce-customer-context#12/56",
+        "./verticals/commerce-customer-context#44/56",
+        "./verticals/privacy#4/8",
+        "./verticals/assortment#4/4",
+        "./verticals/commerce-customer-context#20/56",
+        "./verticals/facility-operations",
+        "root:6/30",
+        "./verticals/assortment#3/4"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (9/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "./packages/core-runtime#2/8",
+        "root:11/30",
+        "./apps/shell-super-app#2/24",
+        "root:13/30",
+        "./apps/shell-super-app#24/24",
+        "root:2/30",
+        "./verticals/commerce-order#2/2",
+        "./verticals/commerce-customer-context#37/56",
+        "root:24/30",
+        "whole:party-worker",
+        "./verticals/crm-activities",
+        "./verticals/symmy-integration#3/4",
+        "./verticals/commerce-customer-context#32/56",
+        "./verticals/sales-pipeline",
+        "root:25/30",
+        "root:28/30"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (10/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "./packages/core-runtime#1/8",
+        "./apps/shell-super-app#16/24",
+        "./verticals/commerce-customer-context#22/56",
+        "./verticals/commerce-customer-context#2/56",
+        "./verticals/party-registry#2/4",
+        "./verticals/catalog#2/4",
+        "./verticals/payment#2/4",
+        "./verticals/commerce-customer-context#45/56",
+        "./apps/shell-super-app#5/24",
+        "./verticals/commerce-customer-context#34/56",
+        "./verticals/commerce-customer-context#14/56",
+        "./verticals/privacy#7/8",
+        "./verticals/assortment#2/4",
+        "./verticals/projects#1/1",
+        "./verticals/commerce-customer-context#23/56",
+        "root:23/30"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (11/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "./verticals/party-registry#4/4",
+        "./apps/shell-super-app#4/24",
+        "./apps/shell-super-app#23/24",
+        "whole:preproposal-approval",
+        "./verticals/commerce-customer-context#26/56",
+        "./verticals/inventory#3/4",
+        "./verticals/commerce-customer-context#1/56",
+        "root:26/30",
+        "./verticals/storefront-registry#1/1",
+        "./verticals/tax#1/4",
+        "./verticals/price-group-catalog#3/4",
+        "root:18/30",
+        "./verticals/commerce-customer-context#29/56",
+        "./verticals/commerce-customer-context#54/56"
+      ],
+      "proof-packages": [
+        "@app/shell-super-app",
+        "@app/party-registry",
+        "@app/commerce-cart",
+        "@app/catalog",
+        "@app/storefront-registry",
+        "@app/commerce-market-catalog",
+        "@app/pricing",
+        "@app/commerce-customer-context"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (12/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "./verticals/commerce-market-catalog#1/4",
+        "./apps/shell-super-app#18/24",
+        "./verticals/pricing#4/4",
+        "./apps/shell-super-app#19/24",
+        "whole:customer-readback",
+        "./verticals/payment#4/4",
+        "./apps/shell-super-app#17/24",
+        "./verticals/commerce-customer-context#8/56",
+        "./apps/shell-super-app#9/24",
+        "./apps/shell-super-app#20/24",
+        "./verticals/commerce-customer-context#27/56",
+        "./verticals/assortment#1/4",
+        "root:16/30",
+        "root:8/30"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (13/13)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "whole:pricing",
+        "./apps/shell-super-app#15/24",
+        "./verticals/commerce-customer-context#51/56",
+        "./apps/shell-super-app#12/24",
+        "./apps/shell-super-app#22/24",
+        "./packages/core-runtime#4/8",
+        "root:1/30",
+        "./verticals/privacy#3/8",
+        "./verticals/finance-billing",
+        "./verticals/symmy-integration#1/4",
+        "./verticals/commerce-customer-context#15/56",
+        "./verticals/commerce-customer-context#7/56",
+        "./verticals/commerce-customer-context#41/56",
+        "root:14/30",
+        "./apps/shell-super-app#6/24"
+      ]
     },
     {
       "suite": "browser",
-      "name": "Authenticated Browser Tests"
+      "name": "Authenticated browser checks"
     }
   ]
 }
