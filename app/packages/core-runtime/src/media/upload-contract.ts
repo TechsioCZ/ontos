@@ -71,14 +71,12 @@ export const UploadAssetPayloadSchema = Schema.Struct({
   mimeType: MediaMimeTypeSchema,
   originalFilename: Schema.optionalKey(MediaOriginalFilenameSchema),
 });
-export type UploadAssetPayload = typeof UploadAssetPayloadSchema.Type;
 
 /** A reservation is not an upload success: the asset exists as `uploaded` and is not usable. */
 export const UploadAssetResultSchema = Schema.Struct({
   mediaAssetRef: MediaAssetRefSchema,
   processingStatus: Schema.Literal('uploaded'),
 });
-export type UploadAssetResult = typeof UploadAssetResultSchema.Type;
 
 export const ConfirmAssetPayloadSchema = Schema.Struct({
   mediaAssetRef: MediaAssetRefSchema,
@@ -92,4 +90,3 @@ export const ConfirmAssetResultSchema = Schema.Struct({
   mediaAssetRef: MediaAssetRefSchema,
   processingStatus: Schema.Literal('ready'),
 });
-export type ConfirmAssetResult = typeof ConfirmAssetResultSchema.Type;
