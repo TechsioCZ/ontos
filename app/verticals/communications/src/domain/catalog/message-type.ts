@@ -1,6 +1,7 @@
 import { OntosModuleIdSchema } from '@app/core-runtime/modules/manifest';
 import { Schema } from 'effect';
 
+import { DocumentPolicySchema } from '../documents/document-policy.ts';
 import { AudiencePolicySchema } from './audience.ts';
 import {
   ApprovedRuleKeySchema,
@@ -78,6 +79,11 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
   /** Individual evaluation by default; an indivisible group only as an explicitly approved per-type exception. */
   audience: AudiencePolicySchema,
   currentness: CurrentnessSchema,
+  /**
+   * Whether and how the type may carry a document (#1409). Absent means NO documents: a link is allowed only for a type that
+   * says so, and an attachment only with its own explicit approval. Adding the policy changes no existing type.
+   */
+  documents: Schema.optionalKey(DocumentPolicySchema),
   eligibleSourceStates: Schema.NonEmptyArray(SourceStateKeySchema),
   /** Stable plain-language statement of what the type means; documentation, not message copy. */
   meaning: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),

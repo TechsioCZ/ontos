@@ -56,6 +56,7 @@ const decodeSource = Schema.decodeSync(SourceOccurrenceFactsSchema);
 interface TypeOverrides {
   readonly audience?: unknown;
   readonly currentness?: { readonly requireLatestSourceRevision: boolean };
+  readonly documents?: unknown;
   readonly eligibleSourceStates?: readonly string[];
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
   readonly privacyPurposeRefs?: readonly string[];

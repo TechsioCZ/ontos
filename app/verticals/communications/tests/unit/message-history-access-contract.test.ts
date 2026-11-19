@@ -87,6 +87,9 @@ const ACCESS_LANE = [
   '../../src/api/message-history-list.read.ts',
   '../../src/api/message-history-support.ts',
   '../../src/domain/access/source-visibility.ts',
+  '../../src/domain/documents/disclosure.ts',
+  '../../src/domain/documents/document-owner.ts',
+  '../../src/domain/documents/document-policy.ts',
   '../../src/history/message-history-projection.ts',
   '../../src/services/message-history-read.service.ts',
 ];

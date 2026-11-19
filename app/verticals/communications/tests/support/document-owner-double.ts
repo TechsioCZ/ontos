@@ -1,0 +1,95 @@
+import { Effect, Layer, Schema } from 'effect';
+
+import { CommunicationResourceRefSchema } from '../../src/domain/catalog/vocabulary.ts';
+import type { CommunicationResourceRef } from '../../src/domain/catalog/vocabulary.ts';
+import { DocumentOwnerUnavailable } from '../../src/domain/documents/document-owner-errors.ts';
+import { DocumentLinkOwner, DocumentOpen, DocumentResolution } from '../../src/domain/documents/document-owner.ts';
+import type {
+  DocumentOpenCase,
+  DocumentOpenQuery,
+  DocumentResolutionCase,
+  DocumentResolveQuery,
+} from '../../src/domain/documents/document-owner.ts';
+
+/**
+ * TEST-ONLY LABELLED DOUBLE of the Core Media V1 / document owner port (#1409). It stands in for an owner that does not
+ * exist yet (Core Media V1 is open work of #1443 and #1446): it proves how Communications ASKS and how it reads an answer,
+ * never that a real Media Asset is stored, available or authorized. Nothing here is a published document, an Order document or
+ * an invoice, and no byte is stored.
+ */
+
+const decodeRef = Schema.decodeUnknownSync(CommunicationResourceRefSchema);
+export const assetRef = (id: string): CommunicationResourceRef =>
+  decodeRef({ moduleId: 'core.media', resourceId: id, resourceType: 'core.media.asset' });
+export const documentRef = (id: string): CommunicationResourceRef =>
+  decodeRef({ moduleId: 'fixture.documents', resourceId: id, resourceType: 'fixture.documents.document' });
+
+interface Assignment {
+  asset: CommunicationResourceRef;
+  /** The revision the owner CLAIMS; only 1 is a Current Media revision. */
+  claimedRevision: number;
+  disclosure: 'APPROVED' | 'FORBIDDEN';
+  media: 'AVAILABLE' | 'UNAVAILABLE';
+}
+
+export const documentOwnerDouble = () => {
+  const assignments = new Map<string, Assignment>();
+  const openers = new Map<string, Set<string>>();
+  const state = { outage: false };
+  const asked: { readonly kind: 'authorizeOpen' | 'resolve'; readonly subject: string }[] = [];
+  const resolve = (query: DocumentResolveQuery) =>
+    Effect.suspend((): Effect.Effect<DocumentResolutionCase, DocumentOwnerUnavailable> => {
+      asked.push({ kind: 'resolve', subject: `${query.form}:${query.document.resourceId}` });
+      const assignment = assignments.get(query.document.resourceId);
+      if (state.outage) {
+        return Effect.fail(new DocumentOwnerUnavailable({ reason: 'OWNER_UNAVAILABLE' }));
+      }
+      if (assignment === undefined || assignment.disclosure === 'FORBIDDEN') {
+        return Effect.succeed(DocumentResolution.DisclosureForbidden());
+      }
+      return Effect.succeed(
+        assignment.media === 'UNAVAILABLE'
+          ? DocumentResolution.MediaUnavailable()
+          : DocumentResolution.Approved({ asset: { ref: assignment.asset, revision: assignment.claimedRevision } }),
+      );
+    });
+  const authorizeOpen = (query: DocumentOpenQuery) =>
+    Effect.suspend((): Effect.Effect<DocumentOpenCase, DocumentOwnerUnavailable> => {
+      asked.push({ kind: 'authorizeOpen', subject: query.link.assetRef.resourceId });
+      if (state.outage) {
+        return Effect.fail(new DocumentOwnerUnavailable({ reason: 'OWNER_UNAVAILABLE' }));
+      }
+      const allowed = openers.get(query.link.assetRef.resourceId)?.has(query.opener.principalId) === true;
+      return Effect.succeed(allowed ? DocumentOpen.Allowed() : DocumentOpen.Denied());
+    });
+  return {
+    asked,
+    clearAsked: () => {
+      asked.length = 0;
+    },
+    /** The owner assigns the business document to an Asset (new bytes are a NEW Asset and an explicit assignment). */
+    assign: (
+      documentId: string,
+      asset: CommunicationResourceRef,
+      overrides: Partial<Omit<Assignment, 'asset'>> = {},
+    ) => {
+      assignments.set(documentId, {
+        asset,
+        claimedRevision: 1,
+        disclosure: 'APPROVED',
+        media: 'AVAILABLE',
+        ...overrides,
+      });
+    },
+    grantOpen: (asset: CommunicationResourceRef, principalId: string) => {
+      openers.set(asset.resourceId, (openers.get(asset.resourceId) ?? new Set()).add(principalId));
+    },
+    layer: Layer.succeed(DocumentLinkOwner, { authorizeOpen, resolve }),
+    revokeOpen: (asset: CommunicationResourceRef, principalId: string) => {
+      openers.get(asset.resourceId)?.delete(principalId);
+    },
+    setOutage: (outage: boolean) => {
+      state.outage = outage;
+    },
+  };
+};

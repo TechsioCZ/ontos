@@ -1,5 +1,6 @@
 import { Layer } from 'effect';
 
+import { unavailableDocumentLinkOwnerLayer } from '../domain/documents/document-owner.ts';
 import { unavailableMessageHandoffLayer } from '../domain/handoff/message-handoff.ts';
 import { productionCatalogLayer } from '../domain/intake/message-type-catalog.ts';
 import { notEstablishedRecipientLanguageLayer } from '../domain/intake/recipient-language.ts';
@@ -22,7 +23,8 @@ const GATE_CHECK_TIMEOUT = '10 seconds';
  * - no source owner publishes its current occurrence facts, so no request is decided on a guess;
  * - no producer declares a Privacy scope, so a recipient has no scope and is stopped as an unresolved Privacy context;
  * - no owner publishes a recipient authority, so every Current recipient check is an unavailable source owner;
- * - Privacy is the real public Read, asked again with fresh delegated authority on every check.
+ * - Privacy is the real public Read, asked again with fresh delegated authority on every check;
+ * - Core Media V1 and the document owners publish no Read yet (#1443, #1446), so every document question is unavailable.
  */
 export const communicationsProductionOwnerPortsLive = Layer.mergeAll(
   productionCatalogLayer,
@@ -31,6 +33,7 @@ export const communicationsProductionOwnerPortsLive = Layer.mergeAll(
   undeclaredProcessingScopeLayer,
   unavailableRecipientCurrentGateLayer({ checkTimeout: GATE_CHECK_TIMEOUT }),
   privacyProcessingEligibilityGateLive({ checkTimeout: GATE_CHECK_TIMEOUT }),
+  unavailableDocumentLinkOwnerLayer,
 );
 
 /**
