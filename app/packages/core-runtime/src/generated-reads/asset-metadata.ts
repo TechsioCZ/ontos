@@ -17,7 +17,6 @@ import { MediaAssetRefSchema } from '../resources/media-asset.ts';
  */
 
 export const AssetMetadataRequestSchema = Schema.Struct({ mediaAssetRef: MediaAssetRefSchema });
-export type AssetMetadataRequest = typeof AssetMetadataRequestSchema.Type;
 
 export const AssetMetadataResponseSchema = MediaAssetMetadataSchema;
 export type AssetMetadataResponse = typeof AssetMetadataResponseSchema.Type;
