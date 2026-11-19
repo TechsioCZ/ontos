@@ -9,13 +9,17 @@ import {
   SourceProcessingContextSchema,
   SourceProcessingEligibilityResponseSchema,
 } from '../../shared/apis/source-processing-eligibility.ts';
-import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
+import type {
+  SourceProcessingContext,
+  SourceProcessingEligibilityRequest,
+} from '../../shared/apis/source-processing-eligibility.ts';
 import {
   PrivacyApplicabilityPolicySchema,
   resolvePrivacyApplicability,
 } from '../../shared/domain/privacy-applicability.ts';
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
-import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
+import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
+import { PrivacySubjectOwnerEvidenceSchema, PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import {
   evaluateSourceProcessingEligibility,
   readSourceProtections,
@@ -23,6 +27,7 @@ import {
 } from '../../src/api/source-processing-eligibility.read.ts';
 import type { SourceProcessingEligibilityServices } from '../../src/api/source-processing-eligibility.read.ts';
 import { privacySubjects } from '../../src/database/schema.ts';
+import { PrivacySubjectPartyOwner } from '../../src/persistence/privacy-subject-party-owner.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { processingPurposeRepositoryForScope } from '../../src/persistence/processing-purpose-postgres-repository.ts';
 import { makeSourceProcessingFixture } from '../support/source-processing-fixture.ts';
@@ -81,7 +86,27 @@ const servicesIn = (
     return services;
   });
 
-const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLedger(scope: PrivacyLedgerScope) {
+/**
+ * TEST DOUBLE of the Party owner admission, used only to store a Party-target Data Subject: the real Party owner is a
+ * different seam (it needs the Party deployment). Eligibility itself never calls it for a plain Party target.
+ */
+const partyOwnerDouble = (observedAt: string) =>
+  PrivacySubjectPartyOwner.of({
+    resolve: (partyRef) =>
+      Effect.succeed(
+        Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema)({
+          observedAt,
+          ownerRevision: 1,
+          partyRef,
+          typeAssertions: [{ assertionId: 'fixture:person-assertion', validFrom: observedAt, validTo: null }],
+        }),
+      ),
+  });
+
+const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLedger(
+  scope: PrivacyLedgerScope,
+  subjectKind: 'PARTY_TARGET' | 'SOURCE_ASSERTED' = 'SOURCE_ASSERTED',
+) {
   const crypto = yield* Crypto.Crypto;
   const { principalId, tenantId } = scope;
   const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
@@ -89,7 +114,10 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
     scope,
     Effect.fn('PrivacyTests.seedLedgerTransaction')(function* seedTransaction(transaction) {
       const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
-      const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+      // The repository takes the Party owner when it is built, so the double is supplied here and only to seed a subject.
+      const repository = yield* privacyOperationRepositoryForScope(transaction, scope).pipe(
+        Effect.provideService(PrivacySubjectPartyOwner, partyOwnerDouble('2026-11-01T00:00:00.000Z')),
+      );
       const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), {
         businessCode: 'COMMUNICATIONS_ELIGIBILITY_FIXTURE',
         effectiveFrom: '2026-11-01T00:00:00.000Z',
@@ -106,15 +134,39 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
         tenantId,
         versionId: firstVersion.versionId,
       });
-      const request: SourceProcessingEligibilityRequest = { ...base.request, consumerModuleId: communications };
-      const context = Schema.decodeUnknownSync(SourceProcessingContextSchema)({ ...base.context, request });
+      const partyId = `party-${yield* crypto.randomUUIDv4()}`;
+      const request: SourceProcessingEligibilityRequest =
+        subjectKind === 'PARTY_TARGET'
+          ? {
+              ...base.request,
+              consumerModuleId: communications,
+              source: null,
+              target: { kind: 'PARTY', resourceId: partyId },
+            }
+          : { ...base.request, consumerModuleId: communications };
+      const context = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+        ...base.context,
+        request,
+        resourceRefs: subjectKind === 'PARTY_TARGET' ? [partyId] : base.context.resourceRefs,
+      });
       yield* repository.createSubject(
         { legalEntityId, tenantId },
         {
           actionInvocationId: yield* crypto.randomUUIDv4(),
           subject: {
             createdAt: base.from,
-            subject: { kind: 'SOURCE_ASSERTED', source: base.request.source },
+            subject:
+              subjectKind === 'PARTY_TARGET'
+                ? {
+                    kind: 'DATA_SUBJECT',
+                    partyRef: Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
+                      moduleId: 'party.registry',
+                      resourceId: partyId,
+                      resourceType: 'party.registry.party',
+                      tenantId,
+                    }),
+                  }
+                : { kind: 'SOURCE_ASSERTED', source: base.request.source },
             subjectRef: context.intendedScope.subjectRef,
             updatedAt: base.from,
           },
@@ -158,7 +210,7 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
         },
       });
       yield* repository.assignLegalBasis(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), assignment);
-      return { ...base, context, purpose, request, source: base.request.source };
+      return { ...base, context, purpose, request, source: base.request.source, version: firstVersion };
     }),
   );
 });
@@ -187,6 +239,7 @@ const interveneOn = Effect.fn('PrivacyTests.interveneOnScope')(function* interve
   status: 'ACTIVE' | 'RESOLVED',
   observedAt: string,
   revision: string,
+  intendedScope: SourceProcessingContext['intendedScope'] = ledger.context.intendedScope,
 ) {
   const crypto = yield* Crypto.Crypto;
   const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
@@ -209,7 +262,7 @@ const interveneOn = Effect.fn('PrivacyTests.interveneOnScope')(function* interve
           },
           interventionRef: `fixture:${kind.toLowerCase()}:${revision}:${scope.tenantId}`,
           kind,
-          scope: ledger.context.intendedScope,
+          scope: intendedScope,
           status,
         },
         legalEntityId,
@@ -271,6 +324,12 @@ const withoutLegalBasis = Effect.fn('PrivacyTests.useWithoutLegalBasis')(functio
 const denialOf = (response: Effect.Success<ReturnType<typeof check>>) =>
   response.outcome === 'DENIED' ? response : undefined;
 
+/** The owner's own reason codes of an evaluated denial; an unevaluated denial has none. */
+const reasonCodesOf = (response: ReturnType<typeof denialOf>): readonly string[] =>
+  response?.eligibility !== undefined && 'evidence' in response.eligibility
+    ? response.eligibility.evidence.reasonCodes
+    : [];
+
 it.live('proves ALLOWED, NOT_ALLOWED and INDETERMINATE as three distinct owner results for Communications', () =>
   Effect.gen(function* threeOutcomes() {
     const scope = yield* freshPrivacyLedgerScope();
@@ -302,8 +361,8 @@ it.live('proves ALLOWED, NOT_ALLOWED and INDETERMINATE as three distinct owner r
       outcome: 'DENIED',
       reason: 'PROCESSING_NOT_ALLOWED',
     });
-    expect(notAllowed?.eligibility?.evidence.reasonCodes.length).toBeGreaterThan(0);
-    expect(notAllowed?.eligibility?.evidence.reasonCodes).not.toEqual(indeterminate?.eligibility?.evidence.reasonCodes);
+    expect(reasonCodesOf(notAllowed).length).toBeGreaterThan(0);
+    expect(reasonCodesOf(notAllowed)).not.toEqual(reasonCodesOf(indeterminate));
     // Every response is a valid public response.
     for (const response of [allowed, indeterminate, notAllowed]) {
       expect(Schema.is(SourceProcessingEligibilityResponseSchema)(response)).toBe(true);
@@ -325,34 +384,178 @@ it.live('respects a Privacy change made after an earlier ALLOWED, and recovers o
   }).pipe(Effect.provide(layer)),
 );
 
-it.live('never reuses an ALLOWED across subject, purpose, controller or an unconfigured context', () =>
-  Effect.gen(function* noReuseAcrossScope() {
+it.live('finds no ALLOWED for another subject, operation or an unconfigured context, and says why', () =>
+  Effect.gen(function* noContextForAnotherUse() {
     const scope = yield* freshPrivacyLedgerScope();
     const ledger = yield* seed(scope);
     expect((yield* check(scope, ledger)).outcome).toBe('ALLOWED');
+    const notEvaluated = (cause: string) => ({
+      eligibility: { outcome: 'NOT_EVALUATED', reasonCode: cause },
+      evaluatedAt: ledger.evaluatedAt,
+      outcome: 'DENIED',
+      reason: 'AUTHORITY_NOT_CURRENT',
+    });
     // A different source record (another subject) has no configured context: no ALLOWED, and no evaluation to read.
     const otherRecord = {
       ...ledger.request,
       source: { ...ledger.source, recordId: 'client:another-person' },
     };
-    expect(yield* check(scope, ledger, otherRecord)).toEqual({
-      evaluatedAt: ledger.evaluatedAt,
-      outcome: 'DENIED',
-      reason: 'AUTHORITY_NOT_CURRENT',
-    });
+    expect(yield* check(scope, ledger, otherRecord)).toEqual(notEvaluated('NO_CONTEXT'));
     // The same record asked for another operation (processing activity) has no configured context either.
     const otherOperation = { ...ledger.request, operation: 'SEND_MARKETING' };
-    expect(yield* check(scope, ledger, otherOperation)).toEqual({
-      evaluatedAt: ledger.evaluatedAt,
-      outcome: 'DENIED',
-      reason: 'AUTHORITY_NOT_CURRENT',
-    });
+    expect(yield* check(scope, ledger, otherOperation)).toEqual(notEvaluated('NO_CONTEXT'));
     // Nothing configured at all (for example the Auth pre-verification occurrence): not a Privacy prohibition either.
-    expect(yield* check(scope, ledger, ledger.request, [])).toEqual({
+    expect(yield* check(scope, ledger, ledger.request, [])).toEqual(notEvaluated('NO_CONTEXT'));
+    // The same use configured twice is ambiguous, which is a different fact from "no context".
+    expect(yield* check(scope, ledger, ledger.request, [ledger.context, ledger.context])).toEqual(
+      notEvaluated('MULTIPLE_CONTEXTS'),
+    );
+    // A context that is no longer within its validity is not current.
+    const expired = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+      ...ledger.context,
+      validUntil: '2026-11-06T00:00:00.000Z',
+    });
+    expect(yield* check(scope, ledger, ledger.request, [expired])).toEqual(notEvaluated('CONTEXT_NOT_CURRENT'));
+    // Every one of them is a valid public response and none carries evidence of an evaluation.
+    for (const response of [
+      yield* check(scope, ledger, otherRecord),
+      yield* check(scope, ledger, ledger.request, []),
+    ]) {
+      expect(Schema.is(SourceProcessingEligibilityResponseSchema)(response)).toBe(true);
+    }
+  }).pipe(Effect.provide(layer)),
+);
+
+it.live('says when the purpose is retired, absent or no longer the one of the context', () =>
+  Effect.gen(function* purposeNotCurrent() {
+    const scope = yield* freshPrivacyLedgerScope();
+    const ledger = yield* seed(scope);
+    const purposeDenied = {
+      eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'PURPOSE_NOT_CURRENT' },
       evaluatedAt: ledger.evaluatedAt,
       outcome: 'DENIED',
-      reason: 'AUTHORITY_NOT_CURRENT',
+      reason: 'PROCESSING_NOT_ALLOWED',
+    };
+    // A context for a purpose that does not exist, and for a version that is not the effective one.
+    const absentPurpose = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+      ...ledger.context,
+      intendedScope: { ...ledger.context.intendedScope, purposeRef: '20000000-0000-4000-8000-000000000099' },
     });
+    expect(yield* check(scope, ledger, ledger.request, [absentPurpose])).toEqual(purposeDenied);
+    const otherVersion = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+      ...ledger.context,
+      intendedScope: { ...ledger.context.intendedScope, purposeVersionId: '20000000-0000-4000-8000-000000000098' },
+    });
+    expect(yield* check(scope, ledger, ledger.request, [otherVersion])).toEqual(purposeDenied);
+    // Every other consumer receives its existing plain denial for the same state, byte for byte.
+    const partyRequest: SourceProcessingEligibilityRequest = { ...ledger.request, consumerModuleId: 'party.registry' };
+    const partyContext = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+      ...otherVersion,
+      request: partyRequest,
+    });
+    const party = yield* check(scope, ledger, partyRequest, [partyContext]);
+    expect(party).toEqual({ evaluatedAt: ledger.evaluatedAt, outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
+    expect(Object.keys(party)).toEqual(['evaluatedAt', 'outcome', 'reason']);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.live('keeps a blocking fact decisive over a missing input, as NOT_ALLOWED with the blocking evidence', () =>
+  Effect.gen(function* blockerBeatsUnknown() {
+    const scope = yield* freshPrivacyLedgerScope();
+    const ledger = yield* seed(scope);
+    // The READ use has no approved legal basis (an unknown input) ...
+    const readUse = yield* withoutLegalBasis(scope, ledger);
+    const unknownOnly = denialOf(yield* check(scope, ledger, readUse.request, [readUse.context]));
+    expect(unknownOnly?.eligibility?.outcome).toBe('INDETERMINATE');
+    // ... and an authoritative Restriction of exactly that use is a blocker. The blocker is decisive.
+    yield* interveneOn(
+      scope,
+      ledger,
+      'RESTRICTION',
+      'ACTIVE',
+      '2026-11-02T00:00:00.000Z',
+      'restriction:read',
+      readUse.context.intendedScope,
+    );
+    const both = denialOf(yield* check(scope, ledger, readUse.request, [readUse.context]));
+    expect(both?.eligibility?.outcome).toBe('NOT_ALLOWED');
+    expect(reasonCodesOf(both).length).toBeGreaterThan(0);
+    expect(reasonCodesOf(both)).not.toEqual(reasonCodesOf(unknownOnly));
+  }).pipe(Effect.provide(layer)),
+);
+
+it.live('proves the three outcomes for a Party target subject as well', () =>
+  Effect.gen(function* partyTargetOutcomes() {
+    const scope = yield* freshPrivacyLedgerScope();
+    const ledger = yield* seed(scope, 'PARTY_TARGET');
+    expect(ledger.request.source).toBeNull();
+    expect(ledger.request.target?.kind).toBe('PARTY');
+
+    const allowed = yield* check(scope, ledger);
+    expect(allowed.outcome).toBe('ALLOWED');
+    expect(allowed.outcome === 'ALLOWED' && allowed.evidence.evaluatedScope).toEqual(ledger.context.intendedScope);
+
+    const readUse = yield* withoutLegalBasis(scope, ledger);
+    expect(denialOf(yield* check(scope, ledger, readUse.request, [readUse.context]))?.eligibility?.outcome).toBe(
+      'INDETERMINATE',
+    );
+    yield* interveneOn(scope, ledger, 'RESTRICTION', 'ACTIVE', '2026-11-02T00:00:00.000Z', 'restriction:party');
+    expect(denialOf(yield* check(scope, ledger))?.eligibility?.outcome).toBe('NOT_ALLOWED');
+    // Another Party is another subject with no configured context, never the first Party's decision.
+    const otherParty = {
+      ...ledger.request,
+      target: { kind: 'PARTY' as const, resourceId: 'party-someone-else' },
+    };
+    expect(denialOf(yield* check(scope, ledger, otherParty))?.eligibility).toEqual({
+      outcome: 'NOT_EVALUATED',
+      reasonCode: 'NO_CONTEXT',
+    });
+  }).pipe(Effect.provide(layer)),
+);
+
+it.live('isolates one Tenant and one Legal Entity from another in the same cluster', () =>
+  Effect.gen(function* isolation() {
+    const crypto = yield* Crypto.Crypto;
+    const first = yield* freshPrivacyLedgerScope();
+    const second = yield* freshPrivacyLedgerScope();
+    const firstLedger = yield* seed(first);
+    const secondLedger = yield* seed(second);
+    expect((yield* check(first, firstLedger)).outcome).toBe('ALLOWED');
+    expect((yield* check(second, secondLedger)).outcome).toBe('ALLOWED');
+
+    // A restriction in one Tenant never reaches the other, although both use the same purpose names and codes.
+    yield* interveneOn(first, firstLedger, 'RESTRICTION', 'ACTIVE', '2026-11-02T00:00:00.000Z', 'restriction:tenant');
+    expect(denialOf(yield* check(first, firstLedger))?.eligibility?.outcome).toBe('NOT_ALLOWED');
+    expect((yield* check(second, secondLedger)).outcome).toBe('ALLOWED');
+
+    // The first Tenant's context asked in the second Tenant's scope is no context there, whatever is stored.
+    expect(yield* check(second, secondLedger, firstLedger.request, [firstLedger.context])).toMatchObject({
+      eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'NO_CONTEXT' },
+    });
+    // And the first Tenant's subject, purpose and decision are not readable in the second Tenant's ledger: a context that
+    // names them under the second Tenant's own scope finds no purpose.
+    const crossTenant = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+      ...secondLedger.context,
+      intendedScope: firstLedger.context.intendedScope,
+    });
+    expect(yield* check(second, secondLedger, secondLedger.request, [crossTenant])).toMatchObject({
+      eligibility: { outcome: 'NOT_EVALUATED' },
+      outcome: 'DENIED',
+    });
+
+    // Another Legal Entity of the SAME Tenant has none of the first one's ledgers either.
+    const otherLegalEntity = { ...second, legalEntityId: yield* crypto.randomUUIDv4() };
+    const withinOtherEntity = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+      ...secondLedger.context,
+      legalEntityId: otherLegalEntity.legalEntityId,
+    });
+    // Nothing of the first Legal Entity is visible there: the check fails closed as unavailable, never as an answer.
+    const otherEntityFailure = yield* Effect.flip(
+      check(otherLegalEntity, secondLedger, secondLedger.request, [withinOtherEntity]),
+    );
+    expect(Schema.is(ReadHandlerUnavailable)(otherEntityFailure)).toBe(true);
+    // The first Legal Entity is untouched.
+    expect((yield* check(second, secondLedger)).outcome).toBe('ALLOWED');
   }).pipe(Effect.provide(layer)),
 );
 

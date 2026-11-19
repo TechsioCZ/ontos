@@ -1,11 +1,20 @@
-import { Result, Schema } from 'effect';
+import { trustVerifiedGatewayPrincipalContext, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
+import { Effect, Option, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  SourceProcessingContextSchema,
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
 } from '../../shared/apis/source-processing-eligibility.ts';
-import { sourceProcessingEligibilityRead } from '../../src/api/source-processing-eligibility.read.ts';
+import {
+  runSourceProcessingEligibility,
+  sourceProcessingCallerAdmitted,
+  sourceProcessingEligibilityRead,
+} from '../../src/api/source-processing-eligibility.read.ts';
+import type { SourceProcessingEligibilityServices } from '../../src/api/source-processing-eligibility.read.ts';
 import { makeSourceProcessingFixture } from '../support/source-processing-fixture.ts';
 
 /**
@@ -17,6 +26,12 @@ const fixture = makeSourceProcessingFixture({
   legalEntityId: '10000000-0000-4000-8000-000000000002',
   principalId: '10000000-0000-4000-8000-000000000003',
   tenantId: '10000000-0000-4000-8000-000000000001',
+});
+const denial = (eligibility: Readonly<Record<string, string>>) => ({
+  eligibility,
+  evaluatedAt: fixture.evaluatedAt,
+  outcome: 'DENIED',
+  reason: 'AUTHORITY_NOT_CURRENT',
 });
 const decodeRequest = Schema.decodeUnknownResult(SourceProcessingEligibilityRequestSchema, {
   onExcessProperty: 'error',
@@ -72,6 +87,23 @@ describe('#1396 the Communications consumer of the source processing contract', 
     ).toBe(false);
   });
 
+  it('adds a safe discriminator for a denial in which nothing was evaluated, with a closed set of causes', () => {
+    const valid = Schema.is(SourceProcessingEligibilityResponseSchema);
+    for (const cause of [
+      'NO_CONTEXT',
+      'MULTIPLE_CONTEXTS',
+      'CONTEXT_NOT_CURRENT',
+      'PURPOSE_NOT_CURRENT',
+      'APPLICABILITY_NOT_CURRENT',
+      'SUBJECT_NOT_FOUND',
+    ]) {
+      expect(valid(denial({ outcome: 'NOT_EVALUATED', reasonCode: cause }))).toBe(true);
+    }
+    // No cause or an invented cause is not representable, so "nothing evaluated" cannot be unexplained.
+    expect(valid(denial({ outcome: 'NOT_EVALUATED' }))).toBe(false);
+    expect(valid(denial({ outcome: 'NOT_EVALUATED', reasonCode: 'ANYTHING' }))).toBe(false);
+  });
+
   it('admits the Communications module as a declared caller beside the three original callers', () => {
     expect(sourceProcessingEligibilityRead.descriptor.accessActor?.callers).toEqual([
       'party-registry',
@@ -87,4 +119,125 @@ describe('#1396 the Communications consumer of the source processing contract', 
       'privacy.core.source-processing-eligibility.read',
     );
   });
+});
+
+/**
+ * #1396 — the caller of the Read is bound to the consumer it claims. The Shell signs the calling module of a delegated
+ * call; the request cannot choose it. These tests drive the real caller check and the real Read body, with only the
+ * Privacy ledgers behind them replaced by an empty purpose ledger.
+ */
+const ids = {
+  legalEntityId: '10000000-0000-4000-8000-000000000002',
+  principalId: '10000000-0000-4000-8000-000000000003',
+  tenantId: '10000000-0000-4000-8000-000000000001',
+};
+const compositionRevision = 'e'.repeat(64);
+const principal = (authMethod: 'api_key' | 'session') =>
+  Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    authBindingId: '10000000-0000-4000-8000-000000000004',
+    authContextRef: `fixture:caller-binding:${authMethod}`,
+    authenticationNamespaceId: 'core.staff',
+    authMethod,
+    legalEntityId: ids.legalEntityId,
+    principalId: ids.principalId,
+    tenantId: ids.tenantId,
+  });
+/** A call as the Shell delivers it: the subject is the Principal, the verified actor is the calling module. */
+const callFrom = (appId: string | undefined, authMethod: 'api_key' | 'session' = 'session'): OperationalScope => {
+  const scope = { ...principal(authMethod), correlationId: 'fixture:caller-binding' };
+  return appId === undefined
+    ? scope
+    : trustVerifiedGatewayPrincipalContext(scope, compositionRevision, undefined, {
+        appId,
+        buildMarker: `${appId}-build`,
+        principalId: '10000000-0000-4000-8000-000000000005',
+      });
+};
+
+describe('#1396 the caller is bound to the consumer it claims, in both directions', () => {
+  const communicationsId = 'communications.core';
+  const symmyId = 'integration.symmy';
+
+  it('admits communications.core only from the verified Communications module', () => {
+    expect(sourceProcessingCallerAdmitted(communicationsId, callFrom('communications'))).toBe(true);
+    // Impersonation: no other module, and no call without a verified module actor, may claim communications.core.
+    for (const appId of ['party-registry', 'commerce-customer-context', 'symmy-integration', 'privacy', undefined]) {
+      expect(sourceProcessingCallerAdmitted(communicationsId, callFrom(appId))).toBe(false);
+    }
+    expect(sourceProcessingCallerAdmitted(communicationsId, callFrom(undefined, 'api_key'))).toBe(false);
+  });
+
+  it('refuses the Communications module claiming the identity of any other consumer', () => {
+    for (const consumer of ['party.registry', 'commerce.customer-context', symmyId]) {
+      expect(sourceProcessingCallerAdmitted(consumer, callFrom('communications'))).toBe(false);
+      expect(sourceProcessingCallerAdmitted(consumer, callFrom('communications', 'api_key'))).toBe(false);
+    }
+  });
+
+  it('leaves the other declared owners and the Symmy API-key binding exactly as they were', () => {
+    expect(sourceProcessingCallerAdmitted('party.registry', callFrom('party-registry'))).toBe(true);
+    expect(sourceProcessingCallerAdmitted('commerce.customer-context', callFrom('commerce-customer-context'))).toBe(
+      true,
+    );
+    expect(sourceProcessingCallerAdmitted(symmyId, callFrom('symmy-integration', 'api_key'))).toBe(true);
+    expect(sourceProcessingCallerAdmitted(symmyId, callFrom('symmy-integration', 'session'))).toBe(false);
+    expect(sourceProcessingCallerAdmitted(symmyId, callFrom('party-registry', 'api_key'))).toBe(false);
+  });
+
+  const decodeSource = Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema);
+  const request = decodeSource(communicationsRequest);
+  const context = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
+    ...makeSourceProcessingFixture(ids).context,
+    request,
+  });
+  const services: SourceProcessingEligibilityServices = {
+    contexts: [context],
+    // An empty purpose ledger: an admitted caller reaches it and learns the purpose is not current; a refused one never does.
+    protections: () => Effect.succeed({ items: [], sourceSubjectRefs: [] }),
+    purposes: { get: () => Effect.succeed(Option.none()) },
+    repository: {
+      listApplicabilityDecisions: () => Effect.succeed([]),
+      listApplicabilityPolicies: () => Effect.succeed([]),
+      resolveEligibilityInputs: () => Effect.die('the Privacy inputs are never resolved in this test'),
+    },
+    subjectExists: () => Effect.succeed(true),
+  };
+  const run = (claimed: typeof request, scope: OperationalScope) =>
+    Effect.gen(function* callTheRead() {
+      yield* TestClock.setTime(Date.parse(fixture.evaluatedAt));
+      return (yield* runSourceProcessingEligibility(claimed, { scope, services })).result;
+    });
+
+  it.effect(
+    'runs the real Read body for the Communications module and refuses an impersonator before any Privacy fact',
+    () =>
+      Effect.gen(function* readBody() {
+        const admitted = yield* run(request, callFrom('communications'));
+        expect(admitted).toEqual({
+          eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'PURPOSE_NOT_CURRENT' },
+          evaluatedAt: fixture.evaluatedAt,
+          outcome: 'DENIED',
+          reason: 'PROCESSING_NOT_ALLOWED',
+        });
+        // The impersonator learns nothing about the exact context: the plain, evidence-free denial, like Symmy's refusal.
+        for (const impersonator of ['party-registry', 'symmy-integration', undefined]) {
+          expect(yield* run(request, callFrom(impersonator))).toEqual({
+            evaluatedAt: fixture.evaluatedAt,
+            outcome: 'DENIED',
+            reason: 'AUTHORITY_NOT_CURRENT',
+          });
+        }
+      }),
+  );
+
+  it.effect('refuses the Communications module for a context that belongs to another consumer', () =>
+    Effect.gen(function* borrowedIdentity() {
+      const party = decodeSource({ ...fixture.request, consumerModuleId: 'party.registry' });
+      expect(yield* run(party, callFrom('communications'))).toEqual({
+        evaluatedAt: fixture.evaluatedAt,
+        outcome: 'DENIED',
+        reason: 'AUTHORITY_NOT_CURRENT',
+      });
+    }),
+  );
 });

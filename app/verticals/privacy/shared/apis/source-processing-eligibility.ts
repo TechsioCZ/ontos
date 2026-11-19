@@ -143,14 +143,38 @@ export const SourceProcessingContextSchema = Schema.Struct({
 export type SourceProcessingContext = typeof SourceProcessingContextSchema.Type;
 
 /**
- * The evaluated, non-allowed Privacy decision, present ONLY for the Communications consumer. Every other consumer
- * keeps its existing response shape. `NOT_ALLOWED` is a proven prohibition of the exact scope and `INDETERMINATE` is
- * the inability to evidence a mandatory input; both are `DENIED/PROCESSING_NOT_ALLOWED` for the original consumers.
+ * Why Privacy evaluated nothing for the Communications consumer although it answered with a denial. Every value is a
+ * fact about the owner's own configuration or current state, never about the person:
+ * - NO_CONTEXT / MULTIPLE_CONTEXTS: no, or more than one, exact configured Privacy context matched the request;
+ * - CONTEXT_NOT_CURRENT: the one matching context is outside its validity, owner scope or bound principal;
+ * - PURPOSE_NOT_CURRENT: the purpose is absent, retired or its version is not the one of the context;
+ * - APPLICABILITY_NOT_CURRENT: the durable applicability decision of the context is no longer current;
+ * - SUBJECT_NOT_FOUND: the located Privacy subject does not exist for this exact use.
  */
-export const SourceProcessingEligibilityDenialSchema = Schema.Struct({
-  evidence: PrivacyEligibilityEvidenceSchema,
-  outcome: Schema.Literals(['NOT_ALLOWED', 'INDETERMINATE']),
-});
+export const SourceProcessingNotEvaluatedCauseSchema = Schema.Literals([
+  'NO_CONTEXT',
+  'MULTIPLE_CONTEXTS',
+  'CONTEXT_NOT_CURRENT',
+  'PURPOSE_NOT_CURRENT',
+  'APPLICABILITY_NOT_CURRENT',
+  'SUBJECT_NOT_FOUND',
+]);
+export type SourceProcessingNotEvaluatedCause = typeof SourceProcessingNotEvaluatedCauseSchema.Type;
+
+/**
+ * The non-allowed Privacy answer, present ONLY for the Communications consumer. Every other consumer keeps its
+ * existing response shape. `NOT_ALLOWED` is a proven prohibition of the exact scope and `INDETERMINATE` is the
+ * inability to evidence a mandatory input; both are `DENIED/PROCESSING_NOT_ALLOWED` for the original consumers and carry
+ * the owner's evidence. `NOT_EVALUATED` says that nothing was evaluated at all and names why, without any evidence,
+ * so "no context", "several contexts" and "retired purpose" are never confused with each other or with a prohibition.
+ */
+export const SourceProcessingEligibilityDenialSchema = Schema.Union([
+  Schema.Struct({
+    evidence: PrivacyEligibilityEvidenceSchema,
+    outcome: Schema.Literals(['NOT_ALLOWED', 'INDETERMINATE']),
+  }),
+  Schema.Struct({ outcome: Schema.Literal('NOT_EVALUATED'), reasonCode: SourceProcessingNotEvaluatedCauseSchema }),
+]);
 export type SourceProcessingEligibilityDenial = typeof SourceProcessingEligibilityDenialSchema.Type;
 
 export const SourceProcessingEligibilityResponseSchema = Schema.Union([
