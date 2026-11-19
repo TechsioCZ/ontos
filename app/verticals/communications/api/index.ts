@@ -42,7 +42,9 @@ import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLiv
 import { activateTemplateRevisionActionApiLive } from './activate-template-revision-action-server.ts';
 import { deactivateTemplateRevisionActionApiLive } from './deactivate-template-revision-action-server.ts';
 import { invalidateTemplateRevisionActionApiLive } from './invalidate-template-revision-action-server.ts';
+import { languagePolicyReadApiLive } from './language-policy-read-server.ts';
 import { prepareTemplateRevisionActionApiLive } from './prepare-template-revision-action-server.ts';
+import { setLanguagePolicyActionApiLive } from './set-language-policy-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
@@ -147,7 +149,9 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   activateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   deactivateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   invalidateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  languagePolicyReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   prepareTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

@@ -26,6 +26,11 @@ export {
   executePrepareTemplateRevisionWithAuthorization,
 } from './prepare-template-revision-action-client.ts';
 export type { PrepareTemplateRevisionActionClientOptions } from './prepare-template-revision-action-client.ts';
+export {
+  executeSetLanguagePolicy,
+  executeSetLanguagePolicyWithAuthorization,
+} from './set-language-policy-action-client.ts';
+export type { SetLanguagePolicyActionClientOptions } from './set-language-policy-action-client.ts';
 // </generated-action-http-client-exports>
 
 export class CommunicationsApiClient extends Context.Service<

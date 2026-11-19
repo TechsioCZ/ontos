@@ -203,6 +203,30 @@ export const templateRevisionInvalidations = communicationsSchema.table.withRLS(
   ],
 );
 
+/**
+ * Append-only history of one Tenant's own language mode choice (#1399, L-13): one row per change, never updated or
+ * removed. The effective mode is the highest `version_number`; a Tenant without a row has made no own choice, and the
+ * platform default (B) applies. A decision pins the version it used, so a later change rewrites no earlier decision.
+ */
+export const tenantLanguageModeVersions = communicationsSchema.table.withRLS(
+  'tenant_language_mode_versions',
+  {
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    mode: text('mode').$type<'A' | 'B'>().notNull(),
+    policyVersionId: uuid('policy_version_id').primaryKey(),
+    setAt: timestamp('set_at', { withTimezone: true }).defaultNow().notNull(),
+    setByPrincipalId: uuid('set_by_principal_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+    versionNumber: integer('version_number').notNull(),
+  },
+  (table) => [
+    unique('communications_language_mode_versions_number_uk').on(table.tenantId, table.versionNumber),
+    check('communications_language_mode_versions_mode_ck', sql`${table.mode} in ('A', 'B')`),
+    check('communications_language_mode_versions_number_ck', sql`${table.versionNumber} > 0`),
+    ...tenantRlsPolicies('communications_language_mode_versions', table.tenantId),
+  ],
+);
+
 /** Every owner table, so the verifier and the schema contract test reach each one through its typed reference. */
 export const COMMUNICATIONS_TABLES = [
   gatewayAssertionRedemptions,
@@ -210,6 +234,7 @@ export const COMMUNICATIONS_TABLES = [
   templateRevisions,
   templateActivations,
   templateRevisionInvalidations,
+  tenantLanguageModeVersions,
 ] as const;
 
 export const COMMUNICATIONS_TABLE_INVENTORY = [
@@ -218,6 +243,7 @@ export const COMMUNICATIONS_TABLE_INVENTORY = [
   'template_revisions',
   'template_activations',
   'template_revision_invalidations',
+  'tenant_language_mode_versions',
 ] as const;
 
 /** Relational Queries v2 entry point for this owner. */
@@ -227,4 +253,5 @@ export const communicationsRelations = defineRelations({
   templateRevisionInvalidations,
   templateRevisions,
   templateTypes,
+  tenantLanguageModeVersions,
 });

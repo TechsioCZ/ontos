@@ -5,6 +5,8 @@ import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Crypto, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
+import type { LanguagePolicyPortContract } from '../../src/services/language-policy-port.service.ts';
+import { postgresLanguagePolicyPort } from '../../src/services/language-policy.service.ts';
 import type { TemplateRevisionPortContract } from '../../src/services/template-revision-port.service.ts';
 import { postgresTemplateRevisionPort } from '../../src/services/template-revision.service.ts';
 import type { TemplateActor } from '../../src/services/template-revision-domain.service.ts';
@@ -52,5 +54,19 @@ export const makeRuntimeDatabase = Effect.fn('CommunicationsTest.runtimeDatabase
     tenantId: string,
     program: (port: TemplateRevisionPortContract) => Effect.Effect<Value, Failure, Requirements>,
   ) => inTenant(tenantId, (transaction) => program(postgresTemplateRevisionPort(transaction, { tenantId })));
-  return { inTenant, withPort };
+  /** The template and the language mode ports of one Tenant, in one Core transaction. */
+  const withPorts = <Value, Failure, Requirements>(
+    tenantId: string,
+    program: (
+      templates: TemplateRevisionPortContract,
+      policies: LanguagePolicyPortContract,
+    ) => Effect.Effect<Value, Failure, Requirements>,
+  ) =>
+    inTenant(tenantId, (transaction) =>
+      program(
+        postgresTemplateRevisionPort(transaction, { tenantId }),
+        postgresLanguagePolicyPort(transaction, { tenantId }),
+      ),
+    );
+  return { inTenant, withPort, withPorts };
 });

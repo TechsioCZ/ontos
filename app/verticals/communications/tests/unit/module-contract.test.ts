@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 
 import { communicationsApiContract } from '../../shared/api.ts';
+import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { communicationsManifest } from '../../vertical.manifest.ts';
 
@@ -16,7 +17,7 @@ describe('Communications module contract', () => {
     expect(communicationsManifest.publicSurface.components).toEqual({});
   });
 
-  it('carries the template revision Actions and no Read API before the later lanes add theirs', () => {
+  it('carries the template revision Actions, the language mode Action and its Read, and no later lane', () => {
     expect(
       communicationsManifest.publicSurface.actions
         .map((action) => action.descriptor.actionKey)
@@ -26,9 +27,25 @@ describe('Communications module contract', () => {
       'communications.core.deactivate-template-revision',
       'communications.core.invalidate-template-revision',
       'communications.core.prepare-template-revision',
+      'communications.core.set-language-policy',
     ]);
-    expect(communicationsManifest.publicSurface.api).toEqual({});
+    expect(Object.keys(communicationsManifest.publicSurface.api)).toEqual(['language-policy']);
+    expect(communicationsManifest.publicSurface.operationContracts?.map((contract) => contract.operationKey)).toEqual([
+      'languagePolicy.execute',
+    ]);
     expect(communicationsRegistration.moduleId).toBe('communications.core');
+  });
+
+  it('publishes the language mode Read as a typed Core SDK operation of exactly this owner', () => {
+    expect(languagePolicyOperation).toMatchObject({
+      kind: 'read',
+      provider: {
+        entrypointKey: 'communications.core.api.language-policy',
+        moduleId: 'communications.core',
+        schemaVersion: '1',
+      },
+      route: { path: '/reads/language-policy' },
+    });
   });
 
   it('serves its API below the deployment prefix', () => {

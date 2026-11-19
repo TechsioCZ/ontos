@@ -11,7 +11,9 @@ import { identity } from 'effect';
 import { ActivateTemplateRevisionActionApi } from './apis/activate-template-revision-action.ts';
 import { DeactivateTemplateRevisionActionApi } from './apis/deactivate-template-revision-action.ts';
 import { InvalidateTemplateRevisionActionApi } from './apis/invalidate-template-revision-action.ts';
+import { LanguagePolicyApi } from './apis/language-policy.ts';
 import { PrepareTemplateRevisionActionApi } from './apis/prepare-template-revision-action.ts';
+import { SetLanguagePolicyActionApi } from './apis/set-language-policy-action.ts';
 // </generated-governed-http-api-imports>
 
 export type OperationContext = MicroVerticalOperationContext;
@@ -40,7 +42,9 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(ActivateTemplateRevisionActionApi)
   .addHttpApi(DeactivateTemplateRevisionActionApi)
   .addHttpApi(InvalidateTemplateRevisionActionApi)
+  .addHttpApi(LanguagePolicyApi)
   .addHttpApi(PrepareTemplateRevisionActionApi)
+  .addHttpApi(SetLanguagePolicyActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

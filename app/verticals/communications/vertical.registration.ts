@@ -7,7 +7,9 @@ import { communicationsManifest } from './vertical.manifest.ts';
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
+import { languagePolicyRead } from './src/api/language-policy.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
+import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 // </generated-module-registration-imports>
 
 export const communicationsRegistration = defineVerticalRuntimeRegistration({
@@ -17,11 +19,13 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     deactivateTemplateRevisionAction,
     invalidateTemplateRevisionAction,
     prepareTemplateRevisionAction,
+    setLanguagePolicyAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'language-policy': () => import('./src/api/language-policy-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -48,6 +52,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    languagePolicyRead,
     // </generated-module-registration-reads>
   ],
 });

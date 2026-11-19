@@ -21,7 +21,12 @@ const failure = (reason: string, cause?: unknown) => {
 const sortedTableInventory = EffectArray.sort(COMMUNICATIONS_TABLE_INVENTORY, Order.String);
 const redemptionTable = 'gateway_assertion_redemptions';
 // Immutable facts: the runtime role may only read and insert them. An activation may only have its closing columns updated.
-const appendOnlyTables = ['template_types', 'template_revisions', 'template_revision_invalidations'];
+const appendOnlyTables = [
+  'template_types',
+  'template_revisions',
+  'template_revision_invalidations',
+  'tenant_language_mode_versions',
+];
 const closableTable = 'template_activations';
 // The only columns the runtime role may update: closing an open activation, once. Every other column is immutable.
 const closingColumns = ['end_invocation_id', 'end_reason', 'ended_at', 'ended_by_principal_id', 'ended_kind'];

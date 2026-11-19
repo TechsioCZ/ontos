@@ -21,13 +21,38 @@ describe('Communications database schema contract', () => {
     expect(configs.every((config) => config.schema === COMMUNICATIONS_SCHEMA_NAME)).toBe(true);
   });
 
-  it('declares the replay ledger and the four template tables, and no table of a later lane', () => {
+  it('declares the replay ledger, the four template tables and the language mode history, and no table of a later lane', () => {
     expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual([
       'gateway_assertion_redemptions',
       'template_types',
       'template_revisions',
       'template_activations',
       'template_revision_invalidations',
+      'tenant_language_mode_versions',
+    ]);
+  });
+
+  it('keeps the Tenant language mode an append-only, Tenant-isolated version history with one number per Tenant', () => {
+    const history = configs.find((config) => config.name === 'tenant_language_mode_versions');
+    expect(history?.enableRLS).toBe(true);
+    expect(history?.policies).toHaveLength(4);
+    expect(history?.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
+    expect(history?.uniqueConstraints.map((constraint) => constraint.getName())).toEqual([
+      'communications_language_mode_versions_number_uk',
+    ]);
+    expect(history?.checks.map((check) => check.name).toSorted()).toEqual([
+      'communications_language_mode_versions_mode_ck',
+      'communications_language_mode_versions_number_ck',
+    ]);
+    // the mode is the whole business fact: no free text, no language, no template or recipient data
+    expect(history?.columns.map((column) => column.name).toSorted()).toEqual([
+      'action_invocation_id',
+      'mode',
+      'policy_version_id',
+      'set_at',
+      'set_by_principal_id',
+      'tenant_id',
+      'version_number',
     ]);
   });
 

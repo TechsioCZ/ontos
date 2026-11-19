@@ -7,7 +7,10 @@ import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
+import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
+import { languagePolicyRead } from './src/api/language-policy.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
+import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 // </generated-module-manifest-imports>
 
 export const communicationsManifest: OntosModuleManifestInput = defineOntosModuleManifest({
@@ -31,10 +34,12 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       deactivateTemplateRevisionAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
+      setLanguagePolicyAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'language-policy': LanguagePolicyApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -44,6 +49,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      { apiKey: 'language-policy', operationKey: 'languagePolicy.execute', registration: languagePolicyRead },
       // </generated-module-manifest-operation-contracts>
     ],
     reports: [
