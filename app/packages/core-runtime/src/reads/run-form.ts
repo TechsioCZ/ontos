@@ -202,7 +202,11 @@ const answerForFailure = <DomainErrorSchema extends Schema.ConstraintDecoder<{ r
   }
   const [failure] = failuresOf(cause);
   if (failure !== undefined) {
-    return Effect.succeed(Cause.fail(sanitizeReadHandlerFailure(domainErrorSchema, failure)));
+    const answer = Effect.succeed(Cause.fail(sanitizeReadHandlerFailure(domainErrorSchema, failure)));
+    // A module's own unavailable answer is logged like Core's, so a 503 always names its reason.
+    return Schema.is(ReadHandlerUnavailable)(failure) || Schema.is(ReadPermissionUnavailable)(failure)
+      ? logUnavailable(readKey, cause).pipe(Effect.andThen(answer))
+      : answer;
   }
   // Only defects or interruptions remain: they pass unchanged.
   return Effect.succeed(
