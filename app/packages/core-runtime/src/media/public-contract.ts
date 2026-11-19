@@ -43,12 +43,17 @@ export const mediaStatusesThatMayEnter = (to: MediaProcessingStatus): readonly M
 
 /**
  * The only shape in which an asset's metadata leaves Core. It has no storage provider, storage key, provider
- * version reference, credential or URL, and no revision. `contentSha256` is present only once the bytes are
- * sealed (confirmed), never as an in-flight claim.
+ * version reference, credential or URL, and no revision.
+ *
+ * `byteSize` and `contentSha256` describe the stored bytes, so they appear only with `contentVerified: true`:
+ * the asset is `ready`, its bytes were read back and sealed. Before that, and after a failure, the row holds only
+ * what the uploader declared, which is a claim and not a fact, so both values are withheld and
+ * `contentVerified` says so explicitly instead of leaving a consumer to infer it from an absent key.
  */
 export const MediaAssetMetadataSchema = Schema.Struct({
-  byteSize: MediaByteSizeSchema,
+  byteSize: Schema.optionalKey(MediaByteSizeSchema),
   contentSha256: Schema.optionalKey(MediaContentSha256Schema),
+  contentVerified: Schema.Boolean,
   displayFilename: Schema.String,
   ingestionSource: MediaIngestionSourceSchema,
   mediaAssetRef: MediaAssetRefSchema,
@@ -72,12 +77,20 @@ export interface MediaAssetMetadataSource {
   readonly tenantId: string;
 }
 
-/** Projects a persisted asset to its public metadata, failing closed on a value outside the public vocabulary. */
+/**
+ * Projects a persisted asset to its public metadata, failing closed on a value outside the public vocabulary.
+ * Verified content is `ready` with a seal and a digest; a `ready` row without them contradicts itself and is
+ * refused rather than shown as usable.
+ */
 export const toMediaAssetMetadata = (
   source: MediaAssetMetadataSource,
 ): Effect.Effect<MediaAssetMetadata, MediaUnavailable> => {
+  const verified = source.processingStatus === 'ready' && source.sealedAt !== null && source.contentSha256 !== null;
+  if (source.processingStatus === 'ready' && !verified) {
+    return Effect.fail(mediaUnavailable('A ready media asset carries no sealed content identity'));
+  }
   const base = {
-    byteSize: Number(source.byteSize),
+    contentVerified: verified,
     displayFilename: source.displayFilename,
     ingestionSource: source.ingestionSource,
     // Built plain on purpose: the schema, not a cast, proves both ids are uuids.
@@ -90,11 +103,9 @@ export const toMediaAssetMetadata = (
     mimeType: source.mimeType,
     processingStatus: source.processingStatus,
   };
-  // The digest is a claim until the bytes are sealed, so it leaves Core only with `sealedAt`.
-  const sealed =
-    source.contentSha256 !== null && source.sealedAt !== null ? { ...base, contentSha256: source.contentSha256 } : base;
+  const content = verified ? { ...base, byteSize: Number(source.byteSize), contentSha256: source.contentSha256 } : base;
   const candidate =
-    source.originalFilename === null ? sealed : { ...sealed, originalFilename: source.originalFilename };
+    source.originalFilename === null ? content : { ...content, originalFilename: source.originalFilename };
   return Schema.decodeUnknownEffect(MediaAssetMetadataSchema)(candidate).pipe(
     Effect.mapError((cause) => mediaUnavailable('Media asset metadata is not publishable', cause)),
   );
