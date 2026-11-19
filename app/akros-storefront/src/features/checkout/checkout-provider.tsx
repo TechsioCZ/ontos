@@ -19,6 +19,7 @@ import {
   type CheckoutDraft,
   type DeliveryMethod,
   createCheckoutDraft,
+  getDelivery,
   getReachableStep,
   getDeliveryAddress,
   parseCheckoutDraft,
@@ -46,7 +47,13 @@ type CheckoutStorage = Pick<Storage, "getItem" | "setItem">;
 
 interface CheckoutContextValue {
   draft: CheckoutDraft;
+  /** Methods verified within the last 9.75 s: the only list a new order may be placed with. */
   methods: DeliveryMethod[];
+  /**
+   * Last successfully loaded list (null before the first one) for step navigation: an expired or
+   * failed refresh keeps the customer's step; only a fresh list without the chosen method moves them.
+   */
+  navigationMethods: DeliveryMethod[] | null;
   methodsError: string;
   accountEmail: string | null;
   accountReady: boolean;
@@ -115,16 +122,16 @@ function CheckoutCartProvider({
       submitted: false,
     }),
   );
-  const [options, setOptions] = useState<{ methods: DeliveryMethod[]; loadedAt: number }>({
-    methods: [],
-    loadedAt: 0,
-  });
+  const [options, setOptions] = useState<{
+    methods: DeliveryMethod[];
+    loadedAt: number;
+  } | null>(null);
   const [methodsError, setMethodsError] = useState("");
   const errors = useDictionary().checkout.errors;
   const [now, setNow] = useState(Date.now);
   const [accountReady, setAccountReady] = useState(false);
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
-  const methods = now - options.loadedAt < 9_750 ? options.methods : [];
+  const methods = options !== null && now - options.loadedAt < 9_750 ? options.methods : [];
   useEffect(() => {
     const controller = new AbortController();
     let busy = false;
@@ -282,6 +289,10 @@ function CheckoutCartProvider({
               sent: false,
             };
       if (!pending.sent) {
+        if (!getDelivery(draft, methods)) {
+          checkoutDispatch({ type: "submit-error", error: errors.methodsUnavailable });
+          return null;
+        }
         if (getReachableStep(3, cart, draft, methods) !== 3) return null;
         storageRef.current.setItem(key, JSON.stringify(pending));
         const checkResponse = await fetch("/api/ontos/cart", {
@@ -351,6 +362,7 @@ function CheckoutCartProvider({
       value={{
         draft,
         methods,
+        navigationMethods: options?.methods ?? null,
         methodsError,
         accountEmail,
         accountReady,

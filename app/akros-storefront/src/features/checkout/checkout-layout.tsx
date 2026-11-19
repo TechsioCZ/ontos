@@ -74,7 +74,8 @@ export function CheckoutLayout({
   const { cart } = useCart();
   const {
     draft,
-    methods,
+    methodsError,
+    navigationMethods,
     ready,
     storageError,
     submitted,
@@ -90,20 +91,34 @@ export function CheckoutLayout({
     0,
     checkoutSteps.findIndex((item) => item.href === pathname),
   );
-  const reachable = canCheckout ? getReachableStep(step, cart, draft, methods) : 0;
+  // Steps follow the last verified list; a deep link past delivery waits (null) for the first one.
+  const navigable = navigationMethods ?? [];
+  const reachable =
+    !canCheckout || cart.lines.length === 0
+      ? 0
+      : navigationMethods === null && step > 1
+        ? null
+        : getReachableStep(step, cart, draft, navigable);
   const steps = useSteps({
     count: 4,
     step,
     onStepChange: ({ step: next }) => {
       router.push(
         storeHref(
-          checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, methods) : 0].href,
+          checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, navigable) : 0].href,
         ),
       );
     },
   });
   useEffect(() => {
-    if (ready && accountReady && !submitted && !hasUnconfirmedOrder && reachable !== step)
+    if (
+      ready &&
+      accountReady &&
+      reachable !== null &&
+      !submitted &&
+      !hasUnconfirmedOrder &&
+      reachable !== step
+    )
       router.replace(storeHref(checkoutSteps[reachable].href));
   }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder, storeHref]);
   return (
@@ -127,7 +142,7 @@ export function CheckoutLayout({
                     disabled={
                       !ready ||
                       (!canCheckout && index > 0) ||
-                      getReachableStep(index, cart, draft, methods) !== index
+                      getReachableStep(index, cart, draft, navigable) !== index
                     }
                     className="relative z-1 w-full flex-col justify-center text-center"
                   >
@@ -149,7 +164,9 @@ export function CheckoutLayout({
             )}
             {ready && hasUnconfirmedOrder && <UnconfirmedOrder />}
             {hasUnconfirmedOrder && step === 3 ? null : !ready || reachable !== step ? (
-              <output className="block py-12 text-center">{cs.cart.loading}</output>
+              <output className="block py-12 text-center">
+                {(reachable === null && methodsError) || cs.cart.loading}
+              </output>
             ) : (
               <Steps.Content index={step} className="order-1 min-w-0">
                 {pricesVisible ? children : <output>{cs.checkout.pricesNotVerified}</output>}
