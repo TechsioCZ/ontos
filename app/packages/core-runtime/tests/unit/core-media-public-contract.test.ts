@@ -57,6 +57,7 @@ it.effect('projects a ready asset without any storage value, as the owner-qualif
     expect(metadata).toEqual({
       byteSize: 1234,
       contentSha256: digest,
+      contentVerified: true,
       displayFilename: 'Brochure.pdf',
       ingestionSource: 'user',
       mediaAssetRef: {
@@ -76,17 +77,43 @@ it.effect('projects a ready asset without any storage value, as the owner-qualif
   }),
 );
 
-it.effect('withholds an unsealed digest and an absent original file name', () =>
-  Effect.gen(function* unsealed() {
-    const metadata = yield* toMediaAssetMetadata({
-      ...source,
-      originalFilename: null,
-      processingStatus: 'uploaded',
-      sealedAt: null,
-    });
-    expect(metadata).not.toHaveProperty('contentSha256');
+it.effect('withholds an absent original file name', () =>
+  Effect.gen(function* absentOriginal() {
+    const metadata = yield* toMediaAssetMetadata({ ...source, originalFilename: null });
     expect(metadata).not.toHaveProperty('originalFilename');
-    expect(metadata.processingStatus).toBe('uploaded');
+  }),
+);
+
+it.effect('reports the size and digest only at the verification level reached: sealed and ready', () =>
+  Effect.gen(function* verificationLevels() {
+    // `uploaded`, `scanning` and `failed` rows hold the caller's declared size and digest as a claim. A claim is
+    // not a stored fact, so neither value leaves Core and the content is explicitly not verified.
+    for (const processingStatus of ['uploaded', 'scanning', 'failed']) {
+      const metadata = yield* toMediaAssetMetadata({ ...source, processingStatus, sealedAt: null });
+      expect(metadata).not.toHaveProperty('byteSize');
+      expect(metadata).not.toHaveProperty('contentSha256');
+      expect(metadata.contentVerified).toBe(false);
+      expect(metadata.processingStatus).toBe(processingStatus);
+    }
+    // A once-sealed asset later proven corrupt keeps its seal on the row but is no longer verified content.
+    const corrupt = yield* toMediaAssetMetadata({ ...source, processingStatus: 'failed' });
+    expect(corrupt).not.toHaveProperty('byteSize');
+    expect(corrupt).not.toHaveProperty('contentSha256');
+    expect(corrupt.contentVerified).toBe(false);
+    const ready = yield* toMediaAssetMetadata(source);
+    expect(ready).toMatchObject({ byteSize: 1234, contentSha256: digest, contentVerified: true });
+  }),
+);
+
+it.effect('fails closed on a ready asset that carries no seal or no digest rather than presenting it as usable', () =>
+  Effect.gen(function* unprovenReady() {
+    for (const broken of [{ sealedAt: null }, { contentSha256: null }]) {
+      const exit = yield* Effect.exit(toMediaAssetMetadata({ ...source, ...broken }));
+      expect(
+        Exit.isFailure(exit) &&
+          exit.cause.reasons.some((reason) => 'error' in reason && Schema.is(MediaUnavailable)(reason.error)),
+      ).toBe(true);
+    }
   }),
 );
 
