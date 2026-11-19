@@ -1987,15 +1987,17 @@ it('saves the installed workspace from the typecheck row alone, and restores it 
 const workspaceManifest = (name: string, dependencies: Readonly<Record<string, string>>) =>
   JSON.stringify({ dependencies, name, private: true, version: '1.0.0' });
 
+const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { encoding: 'utf-8' }).trim();
+
 it('uses a restored workspace only when pnpm would run in it without installing', () => {
   const verify = readInstallAction().find(({ id }) => id === 'restored')?.run ?? 'exit 1';
-  // The bash and pnpm the tests run with: the step reads its packages with mapfile, which macOS's /bin/bash lacks.
-  // One name per `command -v`: dash, the /bin/sh of the CI runners, answers only for the first name it is given.
-  const [bash = 'bash', pnpm = 'pnpm'] = execFileSync('/bin/sh', ['-c', 'command -v bash && command -v pnpm'], {
-    encoding: 'utf-8',
-  })
-    .trim()
-    .split('\n');
+  // The step needs mapfile, which bash has since version 4 and macOS's /bin/bash (3.2) lacks, so take the
+  // first bash on PATH that has it instead of the first bash.
+  const bash = lookup(
+    'IFS=:; for d in $PATH; do if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi; done',
+  );
+  expect(bash).not.toBe('');
+  const pnpm = lookup('command -v pnpm');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
   const bin = path.join(directory, 'bin');
   const workspace = path.join(directory, 'app');
