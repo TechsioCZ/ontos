@@ -112,15 +112,41 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts --exclude scripts/integration/migrator-runtime-owner-access.test.mts --exclude scripts/integration/stage-recovery-lifecycle.test.mts --exclude scripts/integration/vat-deploy-sequence.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
     });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 --shard 2/4',
+      'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 --shard 2/4 --exclude tests/integration/organization-profile-ico-migration-postgres.test.ts --exclude tests/integration/stage-recovery-lane15-lifecycle.test.ts',
     ]);
+    // The migration and recovery proofs run alone as whole tasks, never inside a shard of their package.
+    for (const [task, command] of [
+      [
+        './packages/core-runtime#2/4',
+        'exec -- pnpm --filter ./packages/core-runtime run test:integration --pool.maxWorkers 1 --shard 2/4 --exclude tests/integration/action-authority-v2-migration.test.ts --exclude tests/integration/application-composition-authority-migration.test.ts --exclude tests/integration/application-composition-durable-work-migration.test.ts --exclude tests/integration/auth-namespace-migration.test.ts --exclude tests/integration/contacts-identity-migration.test.ts --exclude tests/integration/search-v2-cutover-migration.test.ts',
+      ],
+      [
+        './verticals/party-registry#2/4',
+        'exec -- pnpm --filter ./verticals/party-registry run test:integration:shared --pool.maxWorkers 1 --shard 2/4 --exclude tests/integration/official-identifier-original-input-migration.test.ts --exclude tests/integration/verification-removal-migration.test.ts',
+      ],
+      [
+        'whole:core-runtime-migrations',
+        'exec -- pnpm --filter ./packages/core-runtime run test:integration tests/integration/action-authority-v2-migration.test.ts tests/integration/application-composition-authority-migration.test.ts tests/integration/application-composition-durable-work-migration.test.ts tests/integration/auth-namespace-migration.test.ts tests/integration/contacts-identity-migration.test.ts tests/integration/search-v2-cutover-migration.test.ts --pool.maxWorkers 1',
+      ],
+      [
+        'whole:customer-context-migrations',
+        'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration tests/integration/organization-profile-ico-migration-postgres.test.ts tests/integration/stage-recovery-lane15-lifecycle.test.ts --pool.maxWorkers 1',
+      ],
+      [
+        'whole:party-migrations',
+        'exec -- pnpm --filter ./verticals/party-registry run test:integration:shared tests/integration/official-identifier-original-input-migration.test.ts tests/integration/verification-removal-migration.test.ts --pool.maxWorkers 1',
+      ],
+    ] as const) {
+      execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });
+      expect(readFileSync(output, 'utf-8').trim().split('\n'), task).toEqual(['2', command]);
+    }
     execFileSync('/bin/bash', [script, '--task', './verticals/privacy#2/4'], {
       env: launchEnvironment,
     });
@@ -134,6 +160,9 @@ it('launches package and root suites with the assigned lane and propagates failu
       ['whole:customer-readback', 'symmy-c14-customer-owner-conformance'],
       ['whole:customer-roundtrip', 'symmy-c14-customer-roundtrip-conformance'],
       ['whole:pricing-routes', 'symmy-c14-pricing-routes-conformance'],
+      ['whole:migrator-owner-access', 'migrator-runtime-owner-access'],
+      ['whole:stage-recovery', 'stage-recovery-lifecycle'],
+      ['whole:vat-deploy-sequence', 'vat-deploy-sequence'],
     ] as const) {
       execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });
       expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([

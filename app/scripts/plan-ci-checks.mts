@@ -115,70 +115,8 @@ const pathOwners = (changedPath: string, packages: readonly CiWorkspacePackage[]
       : changedPath.startsWith(`app/${directory}/`),
   );
 
-/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
-const GLOBSTAR = '<<globstar>>';
-const pathGlobMatcher = (glob: string) =>
-  new RegExp(
-    `^${glob
-      .replaceAll('**', GLOBSTAR)
-      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
-      .replaceAll('*', '[^/]*')
-      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
-      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
-      .replaceAll(GLOBSTAR, '.*')}$`,
-    'u',
-  );
-
-/**
- * What a migration, a database bootstrap or a recovery proves, and those proofs themselves: the migrations and their
- * runner, the database identities and grants, the access catalog, the service images and the lane scripts that prepare
- * every owner row's database, and every migration or recovery test. Each such test runs in its owner's suite, where
- * Rstest deals it to a shard by hash, so no owner narrows a change to these: it runs the complete suite. These are the
- * inputs that selected the demo trunk's former Fresh Database rows (app/scripts/tests/plan-ci-selection.test.mts).
- */
-const migrationProofInputs = [
-  'app/**/drizzle*/**',
-  'app/**/drizzle*.config.ts',
-  'app/database/**',
-  'app/scripts/postgres/**',
-  'app/scripts/run-zerops-migrator.mjs',
-  'app/scripts/migration-convergence*',
-  'app/scripts/access-release-activation*',
-  'app/scripts/activate-access-catalog-release.mts',
-  'app/scripts/application-migration-pending.mts',
-  'app/verticals/commerce-customer-context/scripts/**',
-  'app/scripts/run-optional-commerce-portal-auth-db.mts',
-  'app/scripts/verify-application-db-schema.mts',
-  'app/scripts/audit-database-trust-boundaries.mts',
-  'app/scripts/prove-zerops-migrator-artifact.sh',
-  // The prepared database every owner row restores: its export, restore, per-task reset and lane environment.
-  'app/scripts/ci/*integration*',
-  'app/scripts/ci-matrices*.json',
-  'app/scripts/ci/ci-matrices.mts',
-  'app/packages/core-runtime/spicedb/**',
-  'app/topology/**',
-  'app/docker-compose.yml',
-  'app/zerops.yaml',
-  'app/package.json',
-  'app/pnpm-lock.yaml',
-  'app/.mise.toml',
-  'app/**/tests/integration/*migration*',
-  'app/scripts/integration/*migration*',
-  'app/**/*stage-recovery*',
-  'app/scripts/integration/vat-deploy-sequence.test.mts',
-  'app/scripts/integration/migrator-runtime-owner-access.test.mts',
-];
-const migrationProofExclusions = ['app/**/node_modules/**', 'app/tools/**'];
-const migrationProofInput = (changedPath: string) =>
-  migrationProofInputs.some((glob) => pathGlobMatcher(glob).test(changedPath)) &&
-  !migrationProofExclusions.some((glob) => pathGlobMatcher(glob).test(changedPath));
-
-/**
- * A shared package, a manifest or configuration, an authority or database file, or a migration proof input: no scope
- * or owner narrows it.
- */
+/** A shared package, a manifest or configuration, or an authority or database file: no scope or owner narrows it. */
 const sensitivePath = (changedPath: string) =>
-  migrationProofInput(changedPath) ||
   /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
     changedPath,
   ) ||
@@ -234,6 +172,75 @@ const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
   );
 };
 
+/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
+const GLOBSTAR = '<<globstar>>';
+const pathGlobMatcher = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .replaceAll('**', GLOBSTAR)
+      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
+      .replaceAll('*', '[^/]*')
+      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
+      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
+      .replaceAll(GLOBSTAR, '.*')}$`,
+    'u',
+  );
+
+/**
+ * What a migration, a database bootstrap or a recovery proves, and those proofs themselves: the migrations and their
+ * runner, the database identities and grants, the access catalog, the service images, the lane scripts and matrices
+ * that prepare every owner row's database, and every migration or recovery test. These are the inputs that selected the
+ * demo trunk's former Fresh Database rows (app/scripts/tests/plan-ci-selection.test.mts); a change to one runs the
+ * migration proof tasks below beside its owners.
+ */
+const migrationProofInputs = [
+  'app/**/drizzle*/**',
+  'app/**/drizzle*.config.ts',
+  'app/database/**',
+  'app/scripts/postgres/**',
+  'app/scripts/run-zerops-migrator.mjs',
+  'app/scripts/migration-convergence*',
+  'app/scripts/access-release-activation*',
+  'app/scripts/activate-access-catalog-release.mts',
+  'app/scripts/application-migration-pending.mts',
+  'app/verticals/commerce-customer-context/scripts/**',
+  'app/scripts/run-optional-commerce-portal-auth-db.mts',
+  'app/scripts/verify-application-db-schema.mts',
+  'app/scripts/audit-database-trust-boundaries.mts',
+  'app/scripts/prove-zerops-migrator-artifact.sh',
+  'app/scripts/ci/*integration*',
+  'app/scripts/ci-matrices*.json',
+  'app/scripts/ci/ci-matrices.mts',
+  'app/packages/core-runtime/spicedb/**',
+  'app/topology/**',
+  'app/docker-compose.yml',
+  'app/zerops.yaml',
+  'app/package.json',
+  'app/pnpm-lock.yaml',
+  'app/.mise.toml',
+  'app/**/tests/integration/*migration*',
+  'app/scripts/integration/*migration*',
+  'app/**/*stage-recovery*',
+  'app/scripts/integration/vat-deploy-sequence.test.mts',
+  'app/scripts/integration/migrator-runtime-owner-access.test.mts',
+];
+const migrationProofExclusions = ['app/**/node_modules/**', 'app/tools/**'];
+const migrationProofInput = (changedPath: string) =>
+  migrationProofInputs.some((glob) => pathGlobMatcher(glob).test(changedPath)) &&
+  !migrationProofExclusions.some((glob) => pathGlobMatcher(glob).test(changedPath));
+/**
+ * The tasks of scripts/ci/run-integration-suites.sh that run the migration and recovery proofs, each on a freshly reset
+ * lane database, by their owner's directory. A migration proof input selects all of them; an owner selects its own.
+ */
+const migrationProofTasks = new Map([
+  ['whole:migrator-owner-access', '.'],
+  ['whole:stage-recovery', '.'],
+  ['whole:vat-deploy-sequence', '.'],
+  ['whole:core-runtime-migrations', 'packages/core-runtime'],
+  ['whole:customer-context-migrations', 'verticals/commerce-customer-context'],
+  ['whole:party-migrations', 'verticals/party-registry'],
+]);
+
 /** Whether a path is one of the scope's paths: some glob matches it and no `!` glob does. */
 export const inScope = (scope: CiScope, changedPath: string) =>
   scope.paths.some((glob) => !glob.startsWith('!') && pathGlobMatcher(glob).test(changedPath)) &&
@@ -250,7 +257,11 @@ const diffScopes = (changedPaths: readonly string[], templates: Templates): read
     scope.source.every((name) => templates.source.some((entry) => entry.name === name)),
   );
   const paths = changedPaths.filter((changedPath) => !rootDocumentation(changedPath));
-  if (!valid || paths.length === 0 || paths.some(sensitivePath)) {
+  if (
+    !valid ||
+    paths.length === 0 ||
+    paths.some((changedPath) => sensitivePath(changedPath) || migrationProofInput(changedPath))
+  ) {
     return [];
   }
   const owners = paths.map((changedPath) => scopes.filter((scope) => inScope(scope, changedPath)));
@@ -386,6 +397,7 @@ export const planCiChecks = (input: PlanInput) => {
   const mode = !broad && input.applyAffected ? 'affected' : 'full';
   const affectedDirectories = new Set(affected.map(({ directory }) => directory));
   const rootAffected = affectedDirectories.has('.');
+  const migrationProofChanged = input.changedPaths.some(migrationProofInput);
   // Each task names its owner, so the task list alone decides what an affected plan keeps.
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
     // A row that is neither a package suite nor the browser suite proves the deployment bootstrap or the
@@ -401,6 +413,10 @@ export const planCiChecks = (input: PlanInput) => {
     // A whole-owner task runs one file of its owner's suite on its own; it follows that owner exactly as the file did
     // inside the suite: the root conformance proofs follow the root package, the others their package directory.
     const tasks = (entry.tasks ?? []).filter((task) => {
+      const migrationProofOwner = migrationProofTasks.get(task);
+      if (migrationProofOwner !== undefined) {
+        return migrationProofChanged || affectedDirectories.has(migrationProofOwner);
+      }
       if (task.startsWith('root:') || rootWholeTasks.has(task)) {
         return rootAffected;
       }

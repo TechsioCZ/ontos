@@ -19,6 +19,29 @@ if [[ "${1:-}" == --task ]]; then
   exit "$status"
 fi
 
+# The migration and recovery proofs: each runs as its own whole: task on the lane database the task reset gave it, never
+# inside a hashed shard of its owner, so a migration input can select exactly these files (scripts/plan-ci-checks.mts).
+core_runtime_migrations=(
+  tests/integration/action-authority-v2-migration.test.ts
+  tests/integration/application-composition-authority-migration.test.ts
+  tests/integration/application-composition-durable-work-migration.test.ts
+  tests/integration/auth-namespace-migration.test.ts
+  tests/integration/contacts-identity-migration.test.ts
+  tests/integration/search-v2-cutover-migration.test.ts
+)
+customer_context_migrations=(
+  tests/integration/organization-profile-ico-migration-postgres.test.ts
+  tests/integration/stage-recovery-lane15-lifecycle.test.ts
+)
+party_migrations=(
+  tests/integration/official-identifier-original-input-migration.test.ts
+  tests/integration/verification-removal-migration.test.ts
+)
+excluding() {
+  excluded=()
+  for file in "$@"; do excluded+=(--exclude "$file"); done
+}
+
 if [[ "${1:-}" == --execute ]]; then
   task="${2:?}"
   case "$task" in
@@ -42,6 +65,24 @@ if [[ "${1:-}" == --execute ]]; then
     whole:pricing-routes)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --pool.maxWorkers 1 ;;
+    whole:migrator-owner-access)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/migrator-runtime-owner-access.test.mts --pool.maxWorkers 1 ;;
+    whole:stage-recovery)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/stage-recovery-lifecycle.test.mts --pool.maxWorkers 1 ;;
+    whole:vat-deploy-sequence)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/vat-deploy-sequence.test.mts --pool.maxWorkers 1 ;;
+    whole:core-runtime-migrations)
+      exec mise exec -- pnpm --filter ./packages/core-runtime run test:integration \
+        "${core_runtime_migrations[@]}" --pool.maxWorkers 1 ;;
+    whole:customer-context-migrations)
+      exec mise exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration \
+        "${customer_context_migrations[@]}" --pool.maxWorkers 1 ;;
+    whole:party-migrations)
+      exec mise exec -- pnpm --filter ./verticals/party-registry run test:integration:shared \
+        "${party_migrations[@]}" --pool.maxWorkers 1 ;;
     whole:privacy)
       exec mise exec -- pnpm --filter ./verticals/privacy run test:integration \
         tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1 \
@@ -65,10 +106,25 @@ if [[ "${1:-}" == --execute ]]; then
       --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts \
       --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts \
-      --exclude scripts/integration/scoped-owner-migrations.test.mts
+      --exclude scripts/integration/scoped-owner-migrations.test.mts \
+      --exclude scripts/integration/migrator-runtime-owner-access.test.mts \
+      --exclude scripts/integration/stage-recovery-lifecycle.test.mts \
+      --exclude scripts/integration/vat-deploy-sequence.test.mts
   fi
   if [[ "$task" == ./verticals/party-registry#* ]]; then
-    exec mise exec -- pnpm --filter ./verticals/party-registry run test:integration:shared --pool.maxWorkers 1 --shard "${task##*#}"
+    excluding "${party_migrations[@]}"
+    exec mise exec -- pnpm --filter ./verticals/party-registry run test:integration:shared --pool.maxWorkers 1 \
+      --shard "${task##*#}" "${excluded[@]}"
+  fi
+  if [[ "$task" == ./packages/core-runtime#* ]]; then
+    excluding "${core_runtime_migrations[@]}"
+    exec mise exec -- pnpm --filter ./packages/core-runtime run test:integration --pool.maxWorkers 1 \
+      --shard "${task##*#}" "${excluded[@]}"
+  fi
+  if [[ "$task" == ./verticals/commerce-customer-context#* ]]; then
+    excluding "${customer_context_migrations[@]}"
+    exec mise exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 \
+      --shard "${task##*#}" "${excluded[@]}"
   fi
   if [[ "$task" == *#* ]]; then
     if [[ "${task%#*}" == ./verticals/privacy ]]; then

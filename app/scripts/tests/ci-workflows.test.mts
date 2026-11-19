@@ -1323,7 +1323,23 @@ const integrationFiles = (directory: string, suffix: string): readonly string[] 
     .map((entry) => path.relative(fileURLToPath(APP_ROOT_URL), path.join(entry.parentPath, entry.name)));
 /** Whole-owner files excluded from their family's shards, which run alone as whole tasks. */
 const WHOLE_FILES = {
-  './verticals/party-registry': ['verticals/party-registry/tests/integration/party-identity-runtime.test.ts'],
+  './packages/core-runtime': [
+    'packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts',
+    'packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts',
+    'packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts',
+    'packages/core-runtime/tests/integration/auth-namespace-migration.test.ts',
+    'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
+    'packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts',
+  ],
+  './verticals/commerce-customer-context': [
+    'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
+    'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
+  ],
+  './verticals/party-registry': [
+    'verticals/party-registry/tests/integration/party-identity-runtime.test.ts',
+    'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
+    'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
+  ],
   './verticals/pricing': ['verticals/pricing/tests/integration/market-revision-whole-current-pricing-postgres.test.ts'],
   './verticals/privacy': ['verticals/privacy/tests/integration/privacy-composition-drain.test.ts'],
   root: [
@@ -1332,6 +1348,9 @@ const WHOLE_FILES = {
     'scripts/integration/symmy-c14-customer-owner-conformance.test.mts',
     'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
     'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
+    'scripts/integration/migrator-runtime-owner-access.test.mts',
+    'scripts/integration/stage-recovery-lifecycle.test.mts',
+    'scripts/integration/vat-deploy-sequence.test.mts',
   ],
 } satisfies Readonly<Record<string, readonly string[]>>;
 /** Root integration files that run in another rstest project of app/rstest.config.ts: operator and owned-cluster tests. */
@@ -1357,7 +1376,16 @@ const NATIVE_TOPOLOGY_PROOFS = [
   'whole:preproposal-basis',
   'whole:preproposal-approval',
 ] as const;
-const WHOLE_PROOFS = [...NATIVE_TOPOLOGY_PROOFS, 'whole:party-worker'];
+/** The migration and recovery proofs, each alone on a freshly reset lane database (scripts/plan-ci-checks.mts). */
+const MIGRATION_PROOFS = [
+  'whole:migrator-owner-access',
+  'whole:stage-recovery',
+  'whole:vat-deploy-sequence',
+  'whole:core-runtime-migrations',
+  'whole:customer-context-migrations',
+  'whole:party-migrations',
+];
+const WHOLE_PROOFS = [...NATIVE_TOPOLOGY_PROOFS, ...MIGRATION_PROOFS, 'whole:party-worker'];
 /** Each sharded family's `k/n` shards, keyed by `root` or the package selector. */
 const shardFamilies = (tasks: readonly string[]) => {
   const families = new Map<string, string[]>();

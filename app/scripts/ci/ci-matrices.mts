@@ -32,7 +32,7 @@ export const taskDirectory = (task: string) =>
 /** Every task form scripts/ci/run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
 export const knownTask = (task: string) =>
   /^root:\d+\/\d+$/u.test(task) ||
-  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-routes|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
+  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-routes|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval|migrator-owner-access|stage-recovery|vat-deploy-sequence|core-runtime-migrations|customer-context-migrations|party-migrations)$/u.test(
     task,
   ) ||
   taskDirectory(task) !== undefined;
