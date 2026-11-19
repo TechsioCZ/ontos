@@ -12,8 +12,9 @@ import {
   oauthPreflightResponse,
   withOAuthResponseHeaders,
 } from '../../api/auth/oauth-server/policy.ts';
-import { serveMcp, serveMcpMetadata, unauthorizedResponse } from '../../api/mcp/http.ts';
-import type { McpHandlerFactory } from '../../api/mcp/http.ts';
+import { serveMcpMetadata, unauthorizedResponse } from '../../api/mcp/http.ts';
+import { serveMcp } from '../../src/mcp/http.server.ts';
+import type { McpHandlerFactory } from '../../src/mcp/http.server.ts';
 
 const config = {
   issuer: 'https://shell.test/shell-super-app-api/oauth',
