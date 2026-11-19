@@ -112,6 +112,13 @@ interface GovernedActionHttpRunnerBaseInput<
   >;
   readonly requestHeaders: ActionHttpRequestHeaders;
   /**
+   * `'withhold'`: a same-key retry of a committed Action fails with ActionAlreadyCommitted instead of
+   * answering the saved reply. Only for an endpoint whose handler performs, after the Action, an effect
+   * that must not repeat and that recovers from ActionAlreadyCommitted itself; every other endpoint
+   * answers the saved reply its client lost on the network.
+   */
+  readonly savedReply?: 'withhold' | undefined;
+  /**
    * O85: the endpoint's own declared success contract, mirrored from its `success` schema. An endpoint
    * that declares `result-or-proposal` answers the parked-proposal 202; every other endpoint keeps the
    * single result type, so its response contract is never widened on the runner's behalf.
@@ -129,7 +136,7 @@ type ActionHttpCommittedRecovery<RecoveryResult, DomainError, MappedProblem> =
       /**
        * Endpoint-owned translation of a committed retry into its declared success contract. A retry of an
        * invocation with a saved reply succeeds with that reply, so this only serves invocations committed
-       * without one.
+       * without one, or an endpoint that withholds saved replies.
        */
       readonly recoverAlreadyCommitted: (failure: ActionAlreadyCommitted) => RecoveryResult;
     };
@@ -313,6 +320,9 @@ export const runGovernedActionHttp = <
       payload: encodedPayload,
       principal,
       registration: input.registration,
+      // The client of an HTTP endpoint can lose a committed reply on the network; its same-key retry
+      // is answered with the reply Core saved for it.
+      savedReply: input.savedReply === 'withhold' ? undefined : 'answer',
       successContract: input.successContract,
       transport,
     });

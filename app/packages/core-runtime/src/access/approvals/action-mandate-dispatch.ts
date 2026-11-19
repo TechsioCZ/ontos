@@ -503,8 +503,8 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
           return yield* refused('The owner Action or payload differs from the approved frozen command');
         }
         // An executed retry must first prove the SAME succeeded invocation/receipt. The runner then
-        // answers that invocation's saved reply for the deterministic request hash without rerunning it,
-        // or ActionAlreadyCommitted for an invocation committed without a saved reply.
+        // answers it for the deterministic request hash without rerunning it: ActionAlreadyCommitted, or
+        // the saved reply when the retry came over a transport that asks for it.
         if (row.status === 'executed') {
           const receipts = yield* ports.database.executor
             .transaction((transaction) =>
