@@ -2,6 +2,7 @@ import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { ContactForm } from "@/components/contact-form";
 import { browserAt, serveHttp } from "../support/http";
+import { settleBrowser } from "../support/browser";
 import { renderStorefront as render } from "../support/storefront";
 
 afterEach(cleanup);
@@ -44,7 +45,7 @@ it("sends one request for a double submit of the same form", async () => {
     if (new URL(request.url).pathname !== "/api/ontos/inquiries" || request.method !== "POST")
       return new Response("Unknown endpoint", { status: 404 });
     arrived.resolve();
-    return answer.promise;
+    return answer.promise.then((response) => response.clone());
   });
   browserAt(network.origin);
   try {
@@ -54,10 +55,9 @@ it("sends one request for a double submit of the same form", async () => {
     fireEvent.submit(form());
     fireEvent.submit(form());
     await arrived.promise;
-    expect(network.requests).toHaveLength(1);
     answer.resolve(Response.json({ taskId: "persisted-task" }));
     expect((await screen.findByRole("status")).textContent).toContain("persisted-task");
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(1);
   } finally {
     answer.resolve(Response.json({ taskId: "persisted-task" }));
@@ -79,15 +79,16 @@ it("keeps the request id of an unchanged submission and renews it for changed co
     fill();
     fireEvent.submit(form());
     expect(await screen.findByRole("alert")).not.toBeNull();
+    await settleBrowser();
     // The same text again is the same submission: the owner answers its existing task, never a second one.
     fireEvent.submit(form());
     expect(await screen.findByRole("alert")).not.toBeNull();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(2);
     fill("Jiný dotaz.");
     fireEvent.submit(form());
     expect(await screen.findByRole("alert")).not.toBeNull();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(3);
     const [first, second, third] = await sentRequestIds(network.requests);
     expect(first).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u);

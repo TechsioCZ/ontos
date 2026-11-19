@@ -308,7 +308,11 @@ describe("market resolution", () => {
     await market$.resolveStorefrontMarket("sk");
     await network.idle();
     expect(catalogReads()).toBe(1);
-    vi.advanceTimersByTime(61_000);
+    vi.advanceTimersByTime(59_999);
+    await market$.resolveStorefrontMarket("cs");
+    await network.idle();
+    expect(catalogReads()).toBe(1);
+    vi.advanceTimersByTime(1);
     await market$.resolveStorefrontMarket("cs");
     await network.idle();
     expect(catalogReads()).toBe(2);

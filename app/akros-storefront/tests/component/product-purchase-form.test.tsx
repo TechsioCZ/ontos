@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -522,7 +523,7 @@ describe("ProductPurchaseForm", () => {
           priceMinor: 60,
         }),
       );
-      await network.idle();
+      await settleBrowser();
       expect(requests).toEqual([
         { quantity: 2, priceMinor: 70 },
         { quantity: 4, priceMinor: 60 },
@@ -544,7 +545,7 @@ describe("ProductPurchaseForm", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("Chyba nákupu").textContent).toContain("Cena se změnila"),
     );
-    await network.idle();
+    await settleBrowser();
     expect(screen.getByLabelText("Řádky košíku").textContent).toBe("[]");
   });
 

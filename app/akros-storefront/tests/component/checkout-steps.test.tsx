@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "next/dist/client/app-bootstrap";
@@ -64,7 +65,7 @@ it("offers only owner shipping tariffs and never fictitious pickup locations or 
     await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
   });
   await waitFor(() => expect(window.location.pathname).toBe("/kosik/dodaci-udaje"));
-  await network.idle();
+  await settleBrowser();
   expect(
     network.requests.some((request) => new URL(request.url).pathname === "/kosik/dodaci-udaje"),
   ).toBe(true);
@@ -81,7 +82,7 @@ it("shows initially empty editable addresses and blocks incomplete delivery data
   const initialPath = window.location.pathname;
   await user.click(screen.getByRole("button", { name: "Souhrn objednávky" }));
   expect(screen.getByText("Zadejte platný e-mail.")).toBeTruthy();
-  await network.idle();
+  await settleBrowser();
   expect(window.location.pathname).toBe(initialPath);
   expect(
     network.requests.some((request) => new URL(request.url).pathname === "/kosik/shrnuti"),

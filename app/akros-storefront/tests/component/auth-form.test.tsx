@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import {
   cleanup,
   fireEvent,
@@ -120,7 +121,7 @@ describe("real customer forms", () => {
       "Nesprávný e-mail nebo heslo.",
     );
     expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
-    await network.idle();
+    await settleBrowser();
     expect(window.location.href).toBe(`${network.origin}/prihlaseni`);
     expect(network.requests.filter((request) => request.method === "GET")).toHaveLength(0);
     expect(localStorage.length).toBe(0);
@@ -130,7 +131,7 @@ describe("real customer forms", () => {
     render(<LoginForm />);
     login();
     await refreshArrived.promise;
-    await network.idle();
+    await settleBrowser();
     await waitFor(() =>
       expect(getCurrentAppRouterState()?.canonicalUrl).toBe("/dokonceni-registrace"),
     );
@@ -148,7 +149,7 @@ describe("real customer forms", () => {
     render(<RegistrationForm />);
     await register("different-password");
     expect((await screen.findByRole("alert")).textContent).toContain("Hesla se neshodují.");
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(0);
   });
   it("sends phone and consent and truthfully acknowledges started enrollment, not a completed fake profile", async () => {
@@ -156,7 +157,7 @@ describe("real customer forms", () => {
     render(<RegistrationForm />);
     await register();
     expect(await screen.findByText(/Registrace byla přijata/)).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(1);
     const request = requestAt(0);
     expect(new URL(request.url).pathname).toBe("/api/ontos/account");
@@ -191,7 +192,7 @@ it("offers email-only resend only after the owner rejects an unverified login", 
   fill("verification-resend-email", "waiting@example.test");
   fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
   expect(await screen.findByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeTruthy();
-  await network.idle();
+  await settleBrowser();
   expect(network.requests).toHaveLength(2);
   const request = requestAt(1);
   expect(new URL(request.url).pathname).toBe("/api/ontos/account");
@@ -230,7 +231,7 @@ it("disables resend while awaiting the owner and shows a real rate-limit refusal
     expect(network.requests).toHaveLength(2);
     complete.resolve(refusal);
     expect(await screen.findByText("Příliš mnoho pokusů. Zkuste to prosím později.")).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(screen.queryByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeNull();
     expect(
       screen

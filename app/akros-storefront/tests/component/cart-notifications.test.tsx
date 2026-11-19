@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
@@ -96,7 +97,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     expect(await screen.findByText("Přidáno do košíku")).not.toBeNull();
     const notification = screen.getByText("Přidáno do košíku").closest('[role="status"]');
     if (!isHTMLElement(notification)) throw new Error("Missing notification");
@@ -114,7 +115,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     expect(lines()[0].quantity).toBe(1);
     expect(screen.getAllByText("Přidáno do košíku")).toHaveLength(1);
   });
@@ -130,7 +131,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     await screen.findByText("Přidáno do košíku");
     expect(document.querySelector('[aria-label="Oznámení"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Notifications"]')).toBeNull();
@@ -153,7 +154,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       "OntOS: požadované množství není skladem.",
@@ -169,7 +170,7 @@ describe("cart action notifications", () => {
     );
     renderCart();
     await screen.findByDisplayValue("2");
-    await network.idle();
+    await settleBrowser();
     expect(screen.queryByText("Přidáno do košíku")).toBeNull();
   });
 
@@ -193,7 +194,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     expect(await screen.findByText("Přidáno 0,2 m.")).not.toBeNull();
     expect(screen.queryByText(/část požadovaného množství/)).toBeNull();
   });
@@ -239,7 +240,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     await user.click(add);
     await waitFor(() =>
@@ -249,7 +250,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     await user.click(screen.getByRole("button", { name: "Obnovit" }));
     await waitFor(() => expect(lines()[0].quantity).toBe(1));
     expect(lines()).toHaveLength(1);
@@ -266,7 +267,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     expect(await screen.findByRole("button", { name: "Obnovit" })).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Vyprázdnit košík" }));
@@ -285,7 +286,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     await screen.findByRole("button", { name: "Obnovit" });
     await user.click(screen.getByRole("button", { name: "Zavřít oznámení" }));
@@ -298,7 +299,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     expect(lines()[0].quantity).toBe(0.5);
     expect(screen.queryByRole("button", { name: "Obnovit" })).toBeNull();
   });
@@ -345,7 +346,7 @@ describe("cart action notifications", () => {
           .getAttribute("aria-disabled"),
       ).not.toBe("true"),
     );
-    await network.idle();
+    await settleBrowser();
     await user.click(screen.getByRole("button", { name: "Obnovit" }));
     await waitFor(() => expect(lines()[0].quantity).toBe(3.5));
     expect(await screen.findByText("Obnoveno 2,5 m.")).not.toBeNull();

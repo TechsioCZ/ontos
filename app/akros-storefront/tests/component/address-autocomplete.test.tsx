@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type FormEvent } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { AddressFields } from "@/features/checkout/address-fields";
 import type { CheckoutAddress } from "@/features/checkout/checkout-state";
 import { AddressAutocomplete } from "@/features/checkout/address-autocomplete";
 import { browserAt, serveHttp } from "../support/http";
+import { settleBrowser } from "../support/browser";
 import { renderStorefront as render } from "../support/storefront";
 
 let network: Awaited<ReturnType<typeof serveHttp>>;
@@ -15,7 +16,6 @@ beforeEach(async () => {
   answer = async () => Response.json({ suggestions: [] });
   network = await serveHttp(async (request) => {
     const url = new URL(request.url);
-    if (url.pathname === "/ready") return new Response("ready");
     if (url.pathname !== "/api/address-suggestions")
       return new Response("Unknown endpoint", { status: 404 });
     return answer(url.searchParams.get("q") ?? "");
@@ -24,6 +24,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   cleanup();
+  vi.useRealTimers();
   await network.idle();
   await network.close();
 });
@@ -72,13 +73,14 @@ describe("checkout address suggestions", () => {
   });
 
   it("keeps manual entry without contacting the provider for an uncovered address country", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     render(<AddressField country="SK" />);
-    const user = userEvent.setup();
     expect(screen.queryByRole("combobox")).toBeNull();
-    await user.type(screen.getByRole("textbox", { name: /Ulice/ }), "Obchodná 10");
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(await (await fetch(`${network.origin}/ready`)).text()).toBe("ready");
-    await network.idle();
+    fireEvent.change(screen.getByRole("textbox", { name: /Ulice/ }), {
+      target: { value: "Obchodná 10" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    await settleBrowser();
     expect(screen.getByRole("textbox", { name: /Ulice/ })).toHaveProperty("value", "Obchodná 10");
     expect(queries()).toEqual([]);
   });
@@ -152,7 +154,7 @@ describe("address completion behavior", () => {
     expect(input).toHaveProperty("value", "Manual street 1");
     await user.click(retry);
     expect(await screen.findByRole("option", { name: "Brno" })).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(submit).not.toHaveBeenCalled();
   });
   it("does not replace newer empty results with a late response to an old query", async () => {
@@ -178,15 +180,18 @@ describe("address completion behavior", () => {
       await user.type(input, "Old street");
       await oldArrived;
       expect(queries()).toEqual(["Old street"]);
+      expect(network.aborts).toHaveLength(1);
       await user.clear(input);
+      // The old client's real HTTP socket must close before it can be called absent.
+      await network.aborts[0];
       await user.type(input, "New street");
       await screen.findByText("Služba nenašla návrhy. Adresu můžete zadat ručně.");
     } finally {
       await act(async () => {
         resolveOld(Response.json({ suggestions: [suggestion] }));
         await old;
-        await network.idle();
       });
+      await settleBrowser();
     }
     expect(input).toHaveProperty("value", "New street");
     expect(screen.queryByRole("option")).toBeNull();

@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { browserAt, serveHttp } from "../support/http";
@@ -12,7 +13,7 @@ beforeEach(async () => {
     if (new URL(request.url).pathname !== "/api/ontos/account" || request.method !== "POST") {
       return new Response("Unknown endpoint", { status: 404 });
     }
-    return accountResponse;
+    return accountResponse.clone();
   });
   browserAt(network.origin);
 });
@@ -33,7 +34,7 @@ describe("password recovery forms", () => {
     fireEvent.submit(document.getElementById("reset-request-email")!.closest("form")!);
 
     expect(await screen.findByText(/odeslali jsme na něj odkaz/)).toBeDefined();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(1);
     expect(network.requests[0]?.url).toBe(`${network.origin}/api/ontos/account`);
     expect(network.requests[0]?.method).toBe("POST");
@@ -69,7 +70,7 @@ describe("password recovery forms", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain("Hesla se neshodují."),
     );
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(0);
   });
 
@@ -82,7 +83,7 @@ describe("password recovery forms", () => {
     fireEvent.submit(document.getElementById("reset-new-password")!.closest("form")!);
 
     expect(await screen.findByText(/Nové heslo je nastaveno/)).toBeDefined();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(1);
     expect(network.requests[0]?.url).toBe(`${network.origin}/api/ontos/account`);
     expect(network.requests[0]?.method).toBe("POST");

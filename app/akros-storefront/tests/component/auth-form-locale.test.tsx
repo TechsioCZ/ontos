@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
@@ -147,7 +148,7 @@ describe.each(["cs", "sk", "en"] as const)("authentication in the %s market", (l
 
   async function expectSingleRequest(operation: string, ownerPath: string) {
     // Called after the visible route response; idle closes the count/non-navigation observation window.
-    await network.idle();
+    await settleBrowser();
     expect(browserRequests()).toHaveLength(1);
     const request = requestAt(browserRequests(), 0);
     expect(new URL(request.url).pathname).toBe("/api/ontos/account");
@@ -211,7 +212,7 @@ describe.each(["cs", "sk", "en"] as const)("authentication in the %s market", (l
       "textContent",
       copy.server.account.unavailable,
     );
-    await network.idle();
+    await settleBrowser();
     expect(ownerRequests()).toHaveLength(2);
     expect(browserRequests()).toHaveLength(2);
     expect(await requestAt(browserRequests(), 1).clone().text()).toBe(initialBody);

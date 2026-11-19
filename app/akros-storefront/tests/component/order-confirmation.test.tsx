@@ -1,8 +1,8 @@
-import { setTimeout as delay } from "node:timers/promises";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { settleBrowser } from "../support/browser";
+import { act, cleanup, screen } from "@testing-library/react";
 import { browserAt, serveHttp } from "../support/http";
 import { renderStorefront as render } from "../support/storefront";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { OrderConfirmation } from "@/features/checkout/order-confirmation";
 import { GuestOrderConfirmation } from "@/features/checkout/guest-order-confirmation";
 import type { CustomerOrder } from "@/ontos/order-model";
@@ -50,12 +50,14 @@ beforeEach(async () => {
 
 afterEach(async () => {
   cleanup();
+  vi.useRealTimers();
   window.sessionStorage.clear();
   await network.idle();
   await network.close();
 });
 
 it("mounts one real receipt panel and polls with only the saved recipient and order number", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   browserAt(
     `${network.origin}/potvrzeni-objednavky?email=query-recipient@example.test&orderNumber=OBJ-QUERY-999`,
   );
@@ -65,7 +67,7 @@ it("mounts one real receipt panel and polls with only the saved recipient and or
   });
 
   expect(await screen.findByText(/Odesláno e-mailem/)).toBeDefined();
-  await network.idle();
+  await settleBrowser();
   expect(screen.getAllByRole("region", { name: "E-maily k objednávce" })).toHaveLength(1);
   expect(screen.getByText("Potvrzení přijetí objednávky")).toBeDefined();
   expect(screen.getByText(/Odesláno e-mailem/)).toBeDefined();
@@ -75,15 +77,15 @@ it("mounts one real receipt panel and polls with only the saved recipient and or
     `${network.origin}/api/ontos/order-emails?email=saved.recipient%40example.test&orderNumber=OBJ-2026-0042`,
   );
 
-  await waitFor(() => expect(network.requests).toHaveLength(2), { timeout: 6_000 });
-  await network.idle();
+  await act(async () => vi.advanceTimersByTimeAsync(4_000));
+  await settleBrowser();
 
   expect(network.requests).toHaveLength(2);
   expect(network.requests[1]?.method).toBe("GET");
   expect(network.requests[1]?.url).toBe(
     `${network.origin}/api/ontos/order-emails?email=saved.recipient%40example.test&orderNumber=OBJ-2026-0042`,
   );
-}, 15_000);
+});
 
 it("tells the customer calmly that the e-mail status will be retried when it cannot be loaded", async () => {
   emailStatus = 503;
@@ -99,6 +101,7 @@ it("tells the customer calmly that the e-mail status will be retried when it can
 it.each([undefined, ""])(
   "does not use a fallback or poll when the saved recipient is %s",
   async (email) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     browserAt(
       `${network.origin}/potvrzeni-objednavky?email=query-recipient@example.test&orderNumber=OBJ-QUERY-999`,
     );
@@ -111,14 +114,13 @@ it.each([undefined, ""])(
       render(<OrderConfirmation order={order} />);
     });
     await act(async () => {
-      await delay(8_100);
-      await network.idle();
+      await vi.advanceTimersByTimeAsync(8_100);
     });
+    await settleBrowser();
 
     expect(screen.queryByRole("region", { name: "E-maily k objednávce" })).toBeNull();
     expect(network.requests).toHaveLength(0);
   },
-  15_000,
 );
 
 it("confirms a guest order from this tab's receipt with live status and e-mail receipts", async () => {
@@ -141,7 +143,7 @@ it("confirms a guest order from this tab's receipt with live status and e-mail r
   expect(screen.getByRole("region", { name: "E-maily k objednávce" })).toBeDefined();
   expect(await screen.findByText("Nová")).toBeDefined();
   expect(await screen.findByText("Potvrzení přijetí objednávky")).toBeDefined();
-  await network.idle();
+  await settleBrowser();
   expect(network.requests).toHaveLength(2);
   const statusRequest = network.requests.find(
     (request) => new URL(request.url).pathname === "/api/ontos/order-status",
@@ -177,6 +179,6 @@ it("does not confirm a guest order that this tab did not place", async () => {
   expect(
     screen.getByRole("heading", { name: "Potvrzení objednávky zde není k dispozici" }),
   ).toBeDefined();
-  await network.idle();
+  await settleBrowser();
   expect(network.requests).toHaveLength(0);
 });

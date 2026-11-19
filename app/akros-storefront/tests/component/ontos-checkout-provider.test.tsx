@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -222,7 +223,7 @@ describe("OntOS submission recovery", () => {
       await waitFor(() =>
         expect(sessionStorage.getItem("akros-ontos-pending:default")).toBe("null"),
       );
-      await network.idle();
+      await settleBrowser();
       expect(requests).toHaveLength(2);
       expect(requests[1]).toBe(requests[0]);
       await waitFor(() =>
@@ -331,7 +332,7 @@ describe("OntOS submission recovery", () => {
       );
       expect(screen.getByLabelText("Submitted").textContent).toBe("false");
       expect(screen.getByLabelText("Cart").textContent).toBe("1");
-      await network.idle();
+      await settleBrowser();
       expect(requests).toHaveLength(1);
       expect(quoteChecks).toBe(1);
       expect(sessionStorage.getItem("akros-ontos-pending:default")).toBe(pending);
@@ -348,7 +349,7 @@ describe("OntOS submission recovery", () => {
       await user.click(screen.getByText("Edit order"));
       await user.click(screen.getByText("Submit"));
       await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
-      await network.idle();
+      await settleBrowser();
       expect(requests).toEqual([requests[0], requests[0]]);
       expect(quoteChecks).toBe(1);
     },
@@ -428,7 +429,7 @@ describe("OntOS submission recovery", () => {
     const placed = JSON.parse(requests[requests.length - 1]);
     expect(placed.clientRequestId).not.toBe(pending.clientRequestId);
     expect(placed.cart.lines[0].quantity).toBe(2);
-    await network.idle();
+    await settleBrowser();
     expect(quoteChecks).toBe(2);
     expect(requests).toHaveLength(rejection === "quote" ? 1 : 2);
   });
@@ -464,7 +465,7 @@ describe("OntOS submission recovery", () => {
     await user.click(screen.getByText("Submit"));
     await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
     expect(screen.getByLabelText("Error").textContent).toBe("");
-    await network.idle();
+    await settleBrowser();
     const orderRequests = network.requests.filter(
       (request) => new URL(request.url).pathname === "/api/ontos/orders",
     );
@@ -629,7 +630,7 @@ describe("OntOS submission recovery", () => {
       await user.click(screen.getByText("Submit"));
       await waitFor(() => expect(screen.getByLabelText("Cart").textContent).toBe("0"));
       expect(screen.getByLabelText("Submitted").textContent).toBe("true");
-      await network.idle();
+      await settleBrowser();
       expect(quoteChecks).toBe(1);
       expect(requests).toHaveLength(2);
       expect(JSON.parse(requests[1]).clientRequestId).toBe(JSON.parse(requests[0]).clientRequestId);

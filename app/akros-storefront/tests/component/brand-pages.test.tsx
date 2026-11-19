@@ -4,6 +4,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRouter } from "../support/router";
 import { generateMetadata as storefrontMetadata } from "@/app/storefront-metadata";
+import { loadLayoutMetadata } from "../support/layout-metadata";
 
 import { CatalogProvider } from "@/ontos/catalog-provider";
 import { browserAt, serveHttp } from "../support/http";
@@ -273,7 +274,8 @@ describe("ŠroubShop brand (STOREFRONT_BRAND=sroubshop)", () => {
   });
 
   it("writes the document metadata for the shop", async () => {
-    const metadata = await generateMetadata();
+    const layoutMetadata = await loadLayoutMetadata();
+    const metadata = await inRequest(() => layoutMetadata());
     expect(metadata).toMatchObject({
       title: { default: "ŠroubShop | Spojovací a nerezový materiál", template: "%s | ŠroubShop" },
       icons: { icon: { url: "/sroubshop/icon.svg" } },

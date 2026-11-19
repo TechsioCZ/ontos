@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
-import { setImmediate } from "node:timers/promises";
 import type { DetachedWindowAPI } from "happy-dom";
+import { settleBrowser } from "./browser";
 
 declare global {
   interface Window {
@@ -11,11 +11,11 @@ declare global {
 /** Real loopback HTTP. Browser requests use happy-dom's own fetch, never a replaced global. */
 export async function serveHttp(answer: (request: Request) => Response | Promise<Response>) {
   const requests: Request[] = [];
-  let active = 0;
-  let moves = 0;
+  const aborts: Promise<void>[] = [];
+  const pending = new Set<Promise<void>>();
   const server = createServer(async (incoming, outgoing) => {
-    active += 1;
-    moves += 1;
+    const finished = Promise.withResolvers<void>();
+    pending.add(finished.promise);
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
@@ -30,15 +30,23 @@ export async function serveHttp(answer: (request: Request) => Response | Promise
         ...(chunks.length ? { body: Buffer.concat(chunks).toString() } : {}),
       });
       requests.push(request.clone());
+      aborts.push(
+        new Promise<void>((resolve) => {
+          outgoing.once("close", () => {
+            if (!outgoing.writableFinished) resolve();
+          });
+        }),
+      );
       const response = await answer(request);
+      const body = Buffer.from(await response.arrayBuffer());
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-      outgoing.end(Buffer.from(await response.arrayBuffer()));
+      outgoing.end(body);
     } catch (error) {
       outgoing.writeHead(500, { "content-type": "text/plain" });
       outgoing.end(String(error));
     } finally {
-      active -= 1;
-      moves += 1;
+      pending.delete(finished.promise);
+      finished.resolve();
     }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -48,13 +56,11 @@ export async function serveHttp(answer: (request: Request) => Response | Promise
   return {
     origin,
     requests,
+    aborts,
+    /** Consume/abort native client requests and commit React before draining server handlers. */
     async idle() {
-      for (;;) {
-        const before = moves;
-        await setImmediate();
-        await setImmediate();
-        if (active === 0 && before === moves) return;
-      }
+      if (typeof window !== "undefined") await settleBrowser();
+      while (pending.size > 0) await Promise.all(pending);
     },
     async close() {
       // server.close() drains active responses; destroying sockets first races

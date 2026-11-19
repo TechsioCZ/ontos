@@ -78,8 +78,8 @@ it("refreshes before ten seconds without blinking, expires on failure, then reva
   fail = true;
   await act(async () => {
     await failedRefresh.promise;
-    await network?.idle();
   });
+  await network.idle();
   expect(network.requests).toHaveLength(2);
   expect(screen.getByLabelText("Status").textContent).toBe("ready");
   expect(screen.getByLabelText("Verified amount").textContent).toBe("121");

@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, it, expect } from "vitest";
@@ -66,7 +67,7 @@ it("discloses old/new unit, line and cart totals BEFORE acceptance and changes n
   );
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByRole("button", { name: "Přijmout nové ceny" });
-  await network.idle();
+  await settleBrowser();
   expect(screen.getByText(/Za ks:/).textContent).toMatch(/1,21.*→.*1,22/);
   expect(screen.getByText(/Za 200 ks:/).textContent).toMatch(/242.*→.*244/);
   expect(screen.getByText(/Celkem za zboží:/).textContent).toMatch(/242.*→.*244/);
@@ -143,7 +144,7 @@ it("marks a blocked line with its unavailable state and names the variant", asyn
   );
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByText("Objednávku teď nelze dokončit");
-  await network.idle();
+  await settleBrowser();
   expect(screen.getByText("Nelze ověřit")).toBeTruthy();
   expect(screen.queryByText("Skladem")).toBeNull();
   expect(screen.getAllByText(message).length).toBeGreaterThan(0);

@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,7 +63,7 @@ describe("password change frontend", () => {
     await user.type(screen.getByLabelText("Nové heslo"), fresh);
     await user.type(screen.getByLabelText("Potvrdit heslo"), "different{Enter}");
     expect(screen.getByText("Hesla se neshodují.")).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(onSubmit).not.toHaveBeenCalled();
     expect(changePassword).not.toHaveBeenCalled();
   });
@@ -86,7 +87,7 @@ describe("password change frontend", () => {
     await waitFor(() => expect(input.value).toBe(""));
     expect(currentInput.value).toBe("");
     expect(screen.getByText("Heslo bylo změněno.")).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(changePassword).toHaveBeenNthCalledWith(1, {
       currentPassword: current,
       newPassword: fresh,
@@ -109,7 +110,7 @@ describe("password change frontend", () => {
     await user.type(screen.getByLabelText("Potvrdit heslo"), fresh);
     await user.click(screen.getByRole("button", { name: "Změnit heslo" }));
     expect(await screen.findByText("Současné heslo nesouhlasí.")).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(localStorage.length).toBe(1);
     expect(localStorage.getItem("unrelated-setting")).toBe("keep-local");
     expect(sessionStorage.length).toBe(1);
@@ -117,7 +118,7 @@ describe("password change frontend", () => {
   });
   it("posts only the two passwords and turns a refusal into a typed error", async () => {
     await requestPasswordChange({ currentPassword: current, newPassword: fresh });
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(1);
     const [request] = network.requests;
     expect(new URL(request.url).pathname).toBe("/api/ontos/account/password");
@@ -129,7 +130,7 @@ describe("password change frontend", () => {
     await expect(
       requestPasswordChange({ currentPassword: "wrong", newPassword: fresh }),
     ).rejects.toBeInstanceOf(PasswordChangeRefused);
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(2);
     expect(await network.requests[1].json()).toEqual({
       currentPassword: "wrong",

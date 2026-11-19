@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -76,6 +77,6 @@ it("restores unfinished customer-entered drafts without inventing a saved order"
   expect(screen.getByLabelText("Company").textContent).toBe("Entered");
   await user.click(screen.getByText("Edit"));
   expect(JSON.parse(sessionStorage.getItem("sf-checkout-v2")!).draft.company).toBe("Edited");
-  await network.idle();
+  await settleBrowser();
   expect(sessionStorage.getItem("akros-demo-order-v1")).toBeNull();
 });

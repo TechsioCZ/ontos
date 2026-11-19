@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 // Run Next's own browser initialization before hydrating its router.
 import "next/dist/client/app-bootstrap";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
@@ -44,7 +45,7 @@ async function expectNavigation(href: string | null, exactlyOnce = true) {
       expected.hash,
     ]);
   });
-  await network.idle();
+  await settleBrowser();
   const navigations = network.requests.filter((request) => request.method === "GET");
   if (exactlyOnce) expect(navigations).toHaveLength(1);
   expect(
@@ -132,7 +133,7 @@ describe("SiteHeader search", () => {
     ).toHaveLength(1);
     const allResults = screen.getByRole("link", { name: /Zobrazit všechny produkty/ });
     expect(allResults.getAttribute("href")).toBe("/cs/vyhledavani?q=retez");
-    await network.idle();
+    await settleBrowser();
     const queries = await Promise.all(
       network.requests
         .filter((request) => new URL(request.url).pathname === "/api/ontos/search")

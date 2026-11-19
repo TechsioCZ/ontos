@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { cleanup, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
@@ -161,7 +162,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
         </AppRouterContext.Provider>,
       );
       await screen.findByText("Souhlasím se zasíláním novinek.");
-      await network.idle();
+      await settleBrowser();
 
       // The password change is its own block: its inputs are never part of the profile save.
       const passwordChange = document.getElementById("zmena-hesla");

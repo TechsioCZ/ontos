@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import "next/dist/client/app-bootstrap";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -84,8 +85,8 @@ async function renderCart() {
   });
   await act(async () => {
     await Promise.all([accountArrived, shippingArrived]);
-    await network.idle();
   });
+  await settleBrowser();
 }
 
 function seedCart() {

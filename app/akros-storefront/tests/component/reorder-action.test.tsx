@@ -1,3 +1,4 @@
+import { settleBrowser } from "../support/browser";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Toaster, toaster } from "@techsio/ui-kit/molecules/toast";
@@ -84,7 +85,7 @@ describe("repeat order", () => {
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
     await user.dblClick(button);
     expect(await screen.findByText("Přidáno položek: 2.")).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(1);
     const [request] = network.requests;
     expect(new URL(request.url).pathname).toBe("/api/ontos/account/reorder");
@@ -162,12 +163,12 @@ describe("repeat order", () => {
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
     await user.dblClick(button);
     await entered.promise;
-    await network.idle();
+    await settleBrowser();
     expect(repeatOrder).toHaveBeenCalledExactlyOnceWith("o5", "default");
     result.resolve({ addedLines: 2, notices: ["Varianta ABC není skladem."] });
     expect(await screen.findByText("Přidáno položek: 2.")).toBeTruthy();
     expect(screen.getByText("Varianta ABC není skladem.")).toBeTruthy();
-    await network.idle();
+    await settleBrowser();
     expect(network.requests).toHaveLength(0);
   });
 
