@@ -8,6 +8,7 @@ import type { GateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import { collectAccessCatalog } from '../../src/authorization/access-declaration.ts';
 import { assetMetadataRead, coreActionCatalog, renameDisplayFilenameAction } from '../../src/index.ts';
+import { isGenuineCoreOperation } from '../../src/modules/module-operation-execution.ts';
 import { MediaDisplayFilenameSchema } from '../../src/media/upload-contract.ts';
 import { RenameDisplayFilenamePayloadSchema } from '../../src/media/rename-contract.ts';
 import { MediaAssetRefSchema } from '../../src/resources/media-asset.ts';
@@ -91,6 +92,11 @@ it('registers the rename as one protected, record-scoped, routine, idempotent Ac
   expect(descriptor.accessEvidencePolicy.captureMode).toBe('metadata_only');
   expect(descriptor.accessWorkload).toBeUndefined();
   expect(Object.isFrozen(descriptor)).toBe(true);
+});
+
+it('is a genuine Core operation, so the Shell host runs it without an owner registration', () => {
+  expect(isGenuineCoreOperation(assetMetadataRead)).toBe(true);
+  expect(isGenuineCoreOperation(renameDisplayFilenameAction)).toBe(true);
 });
 
 it('is in the Core Action catalog exactly once', () => {

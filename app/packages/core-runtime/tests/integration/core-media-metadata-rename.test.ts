@@ -9,6 +9,7 @@ import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { assetMetadataRead } from '../../src/generated-reads/asset-metadata.ts';
+import type { AssetMetadataResponse } from '../../src/generated-reads/asset-metadata.ts';
 import { MediaAssetIdSchema, MediaTenantIdSchema, mediaAssetRefFor } from '../../src/media/identity.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { renameDisplayFilenameAction } from '../../src/modules/actions/rename-display-filename.action.ts';
@@ -17,7 +18,7 @@ import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
 import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
@@ -204,7 +205,7 @@ const rowOf = (world: World, mediaAssetId: string) =>
 const withoutNameAndStamp = ({ display_filename: _name, updated_at: _stamp, ...rest }: MediaAssetRow) => rest;
 
 /** A value as the text a consumer could see, so a test can search it for something that must not be there. */
-const textOf = (value: object | undefined): string => JSON.stringify(value);
+const textOf = (value: AssetMetadataResponse | Error | undefined): string => JSON.stringify(value);
 
 const failureOf = <Failure>(exit: Exit.Exit<unknown, Failure>) =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
@@ -222,6 +223,7 @@ const openHarness = Effect.fn('CoreMediaMetadataTest.harness')(function* openHar
   const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
   const database = yield* makeCoreDatabase(configuration);
   const readerFor = (access: Authorization) => {
+    // Like the Shell host: no owner registration, so the read must be a genuine Core operation to run at all.
     const runtime = makeReadRuntime(
       database,
       openModuleEntrypointGateway,
@@ -229,8 +231,6 @@ const openHarness = Effect.fn('CoreMediaMetadataTest.harness')(function* openHar
       contextAccess,
       {
         accessDecision: makeScriptedBoundAccessGate(access).bound,
-        ownerRegistration: makeTestOperationOwner({ moduleId: 'core.media', reads: [assetMetadataRead] })
-          .ownerRegistration,
       },
     );
     return (world: World, mediaAssetRef: ReturnType<typeof refOf>, legalEntityId?: string) =>
@@ -602,6 +602,34 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })(
         expect(names).toContain(after.display_filename);
         expect(withoutNameAndStamp(after)).toEqual(withoutNameAndStamp(before));
       }).pipe(Effect.scoped),
+    );
+
+    suite.effect(
+      'renames only inside the selected company: another company is not found, a company-less asset is renamable',
+      () =>
+        Effect.gen(function* renameCompanies() {
+          const harness = yield* openHarness();
+          const world = yield* makeWorld(harness.admin, harness.database.executor);
+          const renameAs = harness.renamerFor({ [RENAME]: 'allowed' });
+          const theirs = yield* seedAsset(world, { legalEntityId: world.otherLegalEntityId, status: 'ready' });
+          const shared = yield* seedAsset(world, { status: 'ready' });
+          const before = yield* rowOf(world, theirs);
+          const refused = yield* Effect.exit(
+            renameAs(
+              world,
+              { displayFilename: 'other.pdf', idempotencyKey: 'company-theirs', mediaAssetRef: refOf(world, theirs) },
+              world.legalEntityId,
+            ),
+          );
+          expect(failureTagOf(refused)).toBe('MediaAssetNotFound');
+          expect(yield* rowOf(world, theirs)).toEqual(before);
+          yield* renameAs(
+            world,
+            { displayFilename: 'shared.pdf', idempotencyKey: 'company-shared', mediaAssetRef: refOf(world, shared) },
+            world.legalEntityId,
+          );
+          expect((yield* rowOf(world, shared)).display_filename).toBe('shared.pdf');
+        }).pipe(Effect.scoped),
     );
 
     suite.effect('does not disturb a status change racing the rename: both land', () =>

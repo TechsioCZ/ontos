@@ -4,6 +4,7 @@ import {
   readPrincipalBinding,
   resolveExternalSubjectRead,
 } from '../auth/external-identity/read.ts';
+import { assetMetadataRead } from '../generated-reads/asset-metadata.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
 import { coreOperations } from '../sdk/core-operations.ts';
 import type { AnyReadOperationRef, RequirementCaller } from '../sdk/index.ts';
@@ -293,6 +294,7 @@ const coreReads = Object.freeze([
   selfApiKeyBindingsRead,
   managedPrincipalsRead,
   legalEntityDetailRead,
+  assetMetadataRead,
   readPrincipalBinding,
   bindingSubjectRead,
   resolveExternalSubjectRead,
