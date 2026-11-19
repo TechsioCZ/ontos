@@ -1929,6 +1929,7 @@ const readRuntimeFromDependencies = <
       if (getReadRun(input.registration) !== undefined) {
         // Admitted: the caller runs it after the admission transaction ended (see below).
         return {
+          _tag: 'AdmittedRun' as const,
           admittedRun: executeRunForm({
             accessAnswers,
             admittedCompositionRevision,
@@ -2139,7 +2140,7 @@ const readRuntimeFromDependencies = <
         ),
       );
       if (Exit.isSuccess(transactionExit)) {
-        return { released: transactionExit.value };
+        return { _tag: 'Released' as const, released: transactionExit.value };
       }
       const { cause } = transactionExit;
       if (
@@ -2238,7 +2239,10 @@ const readRuntimeFromDependencies = <
       compositionRevision === undefined
         ? yield* executeTrustedRead(database.executor)
         : yield* governedRead(compositionRevision);
-    return 'admittedRun' in outcome ? yield* outcome.admittedRun : outcome.released;
+    return yield* Match.valueTags(outcome, {
+      AdmittedRun: ({ admittedRun }) => admittedRun,
+      Released: ({ released }) => Effect.succeed(released),
+    });
   });
 
   const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
