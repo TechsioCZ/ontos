@@ -585,7 +585,9 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
 });
 
 const ArtifactStepSchema = Schema.Struct({
+  'continue-on-error': Schema.optional(Schema.Boolean),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  id: Schema.optional(Schema.String),
   if: Schema.optional(Schema.String),
   name: Schema.String,
   run: Schema.optional(Schema.String),
@@ -688,41 +690,68 @@ it('writes the app host entry of every served unit it builds, after its build, a
   expect(build).toContain('--post-build "$UNIT_POST_BUILD"');
 });
 
-it('keeps only verified unit outputs from the unit output cache and saves them only after verification', () => {
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+/** The seed archive the build shard downloads, and the one command that may place anything from it in the checkout. */
+const SEED_UNPACK_COMMAND = 'bash scripts/ci/seed-units.sh unpack "$RUNNER_TEMP/seed-units/units.tar.zst"';
+
+it('starts each build shard from the outputs of the run that proved the comparison base, keeping only verified units', () => {
+  const plan = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [CI_PLAN_JOB]: Schema.Struct({
+          outputs: Schema.Record(Schema.String, Schema.String),
+          steps: Schema.Array(WorkflowStepSchema),
+        }),
+      }),
+    }),
+  )(readGateWorkflow()).jobs[CI_PLAN_JOB];
+  // The seed is looked up from the commit the classification compared with, never from a dispatch input, and only
+  // for a candidate dispatch that has a comparison point or a demo trunk push (scripts/ci/seed-units.sh).
+  const classify = plan.steps.findIndex(({ id }) => id === 'changes');
+  const seed = plan.steps.findIndex(({ id }) => id === 'seed');
+  expect(classify !== -1 && classify < seed).toBe(true);
+  expect(plan.steps[seed]?.if).toBe(
+    "steps.changes.outputs.base != '' && steps.changes.outputs.mode != 'docs' && (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'))",
+  );
+  expect(plan.steps[seed]?.env).toEqual({
+    BASE_SHA: expression('steps.changes.outputs.base'),
+    GH_TOKEN: GITHUB_TOKEN_EXPRESSION,
+  });
+  expect(plan.steps[seed]?.run).toBe('bash app/scripts/ci/seed-units.sh find');
+  expect(plan.outputs['seed-run']).toBe(expression('steps.seed.outputs.run'));
+
+  const { permissions, steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  // Reading another run's artifacts is the one permission the shard adds to the workflow's contents: read.
+  expect(permissions).toEqual({ actions: 'read', contents: 'read' });
   const index = (predicate: (step: (typeof steps)[number]) => boolean) => steps.findIndex(predicate);
-  const paths = index(({ name }) => name === "Name the shard's cached output paths");
-  const restore = index(({ uses }) => uses?.startsWith('actions/cache/restore@') === true);
-  const plan = index(({ run }) => run?.includes('unit-output-cache.mts plan --units "$SHARD_UNITS"') === true);
+  const download = index(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
+  const unpack = index(({ run }) => run === SEED_UNPACK_COMMAND);
+  const keep = index(({ run }) => run?.includes('unit-output-cache.mts plan --units "$SHARD_UNITS"') === true);
   const build = index(({ run }) => run === BUILD_DRIVER_COMMAND);
   const verify = index(
     ({ run }) =>
       run ===
       'mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS" --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD"',
   );
-  const save = index(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
   const pack = index(({ name }) => name === "Pack the shard's build outputs");
-  expect(paths > -1 && paths < restore && restore < plan && plan < build && build < verify).toBe(true);
-  expect(verify < save && save < pack).toBe(true);
-  // Named by the shard's unit identities, never by commit or run; an exact hit saves nothing (cache-budget.test.mts).
-  const keyStep = index(({ name }) => name === "Name the shard's unit output cache entry");
-  expect(paths < keyStep && keyStep < restore).toBe(true);
-  expect(steps[keyStep]?.run).toContain('unit-output-cache.mts digest --unit "$SHARD_UNITS"');
-  expect(steps[keyStep]?.run).toContain(
-    'bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-"',
+  expect(download > -1 && download < unpack && unpack < keep && keep < build && build < verify && verify < pack).toBe(
+    true,
   );
-  const prefix = `gates-units-v2-${expression('runner.os')}-${expression('runner.arch')}-${expression(MATRIX_SHARD)}-`;
-  expect(steps[restore]?.with).toEqual({
-    key: expression('steps.unit-cache-key.outputs.key'),
-    path: expression('steps.unit-cache-paths.outputs.paths'),
-    'restore-keys': prefix,
+  expect(steps[download]).toMatchObject({
+    'continue-on-error': true,
+    id: 'seed-download',
+    if: "needs.ci-plan.outputs.seed-run != ''",
+    with: {
+      'github-token': GITHUB_TOKEN_EXPRESSION,
+      name: `node-units-${expression(MATRIX_SHARD)}`,
+      path: `${RUNNER_TEMP_EXPRESSION}/seed-units`,
+      'run-id': expression('needs.ci-plan.outputs.seed-run'),
+    },
   });
-  expect(steps[save]?.with).toEqual({
-    key: expression('steps.unit-cache-key.outputs.key'),
-    path: expression('steps.unit-cache-paths.outputs.paths'),
-  });
-  expect(steps[save]?.if).toBe("steps.unit-cache.outputs.cache-hit != 'true'");
+  // A missing or expired seed fails only its own download: nothing is unpacked, and every unit of the shard builds.
+  expect(steps[unpack]?.if).toBe("steps.seed-download.outcome == 'success'");
   expect(steps[build]?.env).toEqual({ BUILD_UNITS: expression('steps.cached-plan.outputs.build') });
+  // One mechanism: no Actions cache step is left in the shard.
+  expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache') === true)).toEqual([]);
 });
 
 it('only builds on the shards and proves every unit together on the bootstrap row that no test waits for', () => {
@@ -730,8 +759,10 @@ it('only builds on the shards and proves every unit together on the bootstrap ro
   const build = jobs[NODE_ARTIFACT_BUILD_JOB];
   expect(build.needs).toEqual([CI_PLAN_JOB]);
   expect(build.services).toBeUndefined();
-  expect(build.permissions).toBeUndefined();
-  expect(build.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
+  // Its one download is its own shard's seed, from another run: it never waits for a shard of this run.
+  expect(
+    build.steps.filter(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true).map(({ id }) => id),
+  ).toEqual(['seed-download']);
   expect(build.steps.some(({ run }) => run?.includes('node:proof') === true)).toBe(false);
   expect(build.steps.at(-1)?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
   expect(build.steps.at(-1)?.with?.name).toBe(`node-units-${expression(MATRIX_SHARD)}`);

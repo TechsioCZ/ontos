@@ -128,7 +128,8 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # actions: read finds the newest green push run of a branch without a merge queue (plan-ci-changes.sh).
+    # actions: read finds the newest green push run of a branch without a merge queue (plan-ci-changes.sh) and the run
+    # whose unit outputs the build shards start from (scripts/ci/seed-units.sh).
     permissions:
       actions: read
       contents: read
@@ -143,6 +144,7 @@ jobs:
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
       lint-shards: ${{ steps.lint-shards.outputs.shards || '[1,2,3]' }}
+      seed-run: ${{ steps.seed.outputs.run }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -183,6 +185,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
         run: bash app/scripts/plan-ci-changes.sh "$RUNNER_TEMP/ci-changed-paths"
+      # The build shards start from the unit outputs of the run that proved the commit this plan compares with, so they
+      # build only the units whose inputs changed since. Only a successful trunk push or candidate/* dispatch of this
+      # workflow on that commit, or one of its nearest ancestors, of the trunk's history counts; why that is the only
+      # trustworthy seed is written at the lookup. No such run leaves the output empty and every unit builds.
+      - name: Find the run whose unit outputs the build shards start from
+        id: seed
+        if: steps.changes.outputs.base != '' && steps.changes.outputs.mode != 'docs' && (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'))
+        env:
+          BASE_SHA: ${{ steps.changes.outputs.base }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash app/scripts/ci/seed-units.sh find
       - name: Record the documentation or exact-commit no-op
         if: steps.changes.outputs.mode == 'docs' || steps.changes.outputs.mode == 'proven'
         env:
@@ -298,6 +311,10 @@ jobs:
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # actions: read downloads the shard's unit outputs from the seed run, another run of this workflow.
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -357,52 +374,31 @@ jobs:
         with:
           lockfile-verdict: ${{ strategy.job-index == 0 && 'publish' || '' }}
 
-      # Per-unit output cache (scripts/ci/unit-output-cache.mts). The Actions key only locates a candidate archive:
-      # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
-      # the complete shard before anything is saved or packed.
-      # Cache scope: a run reads caches of its own ref and of the default branch (main), plus the base branch of a
-      # pull request. The demo trunk is not the default branch, so its caches are invisible to candidate/* refs; its own
-      # push runs reuse each other's. A fix round therefore reuses its own earlier runs only when it keeps dispatching
-      # on the same candidate/<name> ref. The key names the shard, so rebalancing the shards makes the next run cold.
-      - name: Name the shard's cached output paths
-        id: unit-cache-paths
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          {
-            echo 'paths<<UNIT_CACHE_PATHS'
-            for unit in $SHARD_UNITS; do
-              printf 'app/%s/dist\napp/%s/.output\n' "$unit" "$unit"
-            done
-            echo 'UNIT_CACHE_PATHS'
-          } >>"$GITHUB_OUTPUT"
+      # Per-unit outputs (scripts/ci/unit-output-cache.mts): the shard starts from what the seed run that ci-plan
+      # found built for this shard, its node-units-<shard> artifact. Its receipts are self-declared, so only a run of
+      # trunk code may be the seed (scripts/ci/seed-units.sh); `plan` keeps a unit only when its recorded input digest
+      # matches this checkout, and `verify` checks the complete shard before anything is packed. An expired or missing
+      # artifact fails only this download, an archive that does not unpack leaves nothing behind, and a seed of another
+      # shard deal holds only some of this shard's units: in each case the rest builds as without a seed.
+      - name: Download the shard's unit outputs from the seed run
+        id: seed-download
+        if: needs.ci-plan.outputs.seed-run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: node-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/seed-units
+          run-id: ${{ needs.ci-plan.outputs.seed-run }}
+          github-token: ${{ github.token }}
 
-      # The entry is named by the shard's unit identities (unit-output-cache.mts digest), never by commit or run: a run
-      # whose units are all unchanged restores its exact entry and saves nothing, a changed unit names a new entry, and
-      # the prefix still restores the nearest older build for one that changed. Whether a restored unit is kept is
-      # decided by `plan` alone, so the entry is right whichever units `plan` accepts.
-      - name: Name the shard's unit output cache entry
-        id: unit-cache-key
+      - name: Unpack the seed's whole unit outputs
+        if: steps.seed-download.outcome == 'success'
         working-directory: app
         env:
-          SHARD: ${{ matrix.shard }}
           SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          # Written only once whole: a failed digest names no entry.
-          key="$(mise exec -- node scripts/ci/unit-output-cache.mts digest --unit "$SHARD_UNITS" \
-            --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD" |
-            bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-")"
-          echo "$key" >>"$GITHUB_OUTPUT"
+        run: bash scripts/ci/seed-units.sh unpack "$RUNNER_TEMP/seed-units/units.tar.zst"
 
-      - name: Restore the shard's unit outputs from earlier runs
-        id: unit-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.unit-cache-paths.outputs.paths }}
-          key: ${{ steps.unit-cache-key.outputs.key }}
-          restore-keys: gates-units-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
-
-      - name: Keep the restored units whose inputs are unchanged
+      - name: Keep the seed's units whose inputs are unchanged
         id: cached-plan
         working-directory: app
         env:
@@ -425,15 +421,6 @@ jobs:
           mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
           --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD"
 
-      # Saved only after verify, under this run's own ref scope; a failed shard saves nothing, and a shard that restored
-      # its exact entry writes nothing (the cache cannot overwrite a key, and nothing in it changed).
-      - name: Save the shard's unit outputs for later runs
-        if: steps.unit-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.unit-cache-paths.outputs.paths }}
-          key: ${{ steps.unit-cache-key.outputs.key }}
-
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
         working-directory: app
@@ -446,6 +433,9 @@ jobs:
             | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
 
       # A re-run of the run's jobs replaces the shard's earlier upload instead of failing on the existing name.
+      # Kept 4 days because later runs start from it: a trunk commit proven on Friday morning is still a seed all of
+      # Monday. A run that builds stores about 0.9 GB over its six shards (85 to 178 MB each, run 44581423294); the 26
+      # such runs of 2026-11-18 stored 13.7 GB and the 61 of 2026-11-19 38.7 GB, so 4 days hold about 55 to 155 GB.
       - name: Upload the shard's build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -454,7 +444,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           overwrite: true
-          retention-days: 1
+          retention-days: 4
 
   # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
