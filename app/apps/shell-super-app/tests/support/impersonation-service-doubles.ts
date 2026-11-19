@@ -30,15 +30,12 @@ const providerDefaults: SupportAuthProvider['api'] = {
 };
 
 const storeDefaults: SupportImpersonationStore = {
-  claimStart: () => unconfiguredEffect('claimStart'),
   deleteRecovery: () => unconfiguredEffect('deleteRecovery'),
   deleteSession: () => unconfiguredEffect('deleteSession'),
   insertRecovery: () => unconfiguredEffect('insertRecovery'),
   loadExpiredRecovery: () => unconfiguredEffect('loadExpiredRecovery'),
   loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
   loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
-  loadSession: () => unconfiguredEffect('loadSession'),
-  releaseStart: () => unconfiguredEffect('releaseStart'),
   updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
 };
 
