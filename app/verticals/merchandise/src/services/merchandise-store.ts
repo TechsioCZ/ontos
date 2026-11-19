@@ -731,28 +731,18 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
 export const writeSnapshotHead = Effect.fn('MerchandiseStore.writeSnapshotHead')(function* writeSnapshotHead(
   db: MerchandiseDb,
   scope: StoreScope,
-  head: Pick<MerchandiseState, 'aiChanges' | 'homepageFeaturedProductIds' | 'storefrontCatalogSettings'>,
+  head: Pick<MerchandiseState, 'aiChanges' | 'homepageFeaturedProductIds'>,
 ) {
   const slice =
     head.aiChanges === undefined ? null : yield* query(encodeSlice(head.aiChanges), 'Snapshot does not encode');
   const now = DateTime.toDateUtc(yield* DateTime.now);
   const featured = [...(head.homepageFeaturedProductIds ?? [])];
-  const settings =
-    head.storefrontCatalogSettings === undefined ? {} : { storefrontCatalogSettings: head.storefrontCatalogSettings };
   const heads = yield* query(
     db
       .insert(catalogHeads)
-      .values({
-        ...scope,
-        ...settings,
-        aiChanges: slice,
-        homepageFeaturedProductIds: featured,
-        revision: 0,
-        updatedAt: now,
-      })
+      .values({ ...scope, aiChanges: slice, homepageFeaturedProductIds: featured, revision: 0, updatedAt: now })
       .onConflictDoUpdate({
         set: {
-          ...settings,
           aiChanges: slice,
           homepageFeaturedProductIds: featured,
           revision: sql`${catalogHeads.revision} + 1`,
@@ -893,19 +883,10 @@ export interface CatalogHead {
   readonly aiChanges: MerchandiseAiSlice | undefined;
   readonly homepageFeaturedProductIds: readonly (typeof ProductIdReferenceSchema.Type)[];
   readonly revision: number;
-  readonly storefrontCatalogSettings?: StorefrontCatalogSettings;
+  readonly storefrontCatalogSettings: StorefrontCatalogSettings;
   /** The company's VAT rates as last synced from Tax; absent before the first sync. */
   readonly taxRates: CompanyTaxRates | undefined;
 }
-
-/** Empty preferences stay omitted in import snapshots and in uninitialised working sets. */
-const withStorefrontSettings = (
-  state: MerchandiseState,
-  settings: StorefrontCatalogSettings | undefined,
-): MerchandiseState =>
-  settings === undefined || Object.keys(settings).length === 0
-    ? state
-    : { ...state, storefrontCatalogSettings: settings };
 
 /**
  * A company whose head row was never written: no products, orders or AI changes yet. Reads answer it at revision 0;
@@ -915,6 +896,7 @@ export const EMPTY_CATALOG_HEAD: CatalogHead = Object.freeze({
   aiChanges: Option.getOrUndefined(Option.none<MerchandiseAiSlice>()),
   homepageFeaturedProductIds: [],
   revision: 0,
+  storefrontCatalogSettings: {},
   taxRates: Option.getOrUndefined(Option.none<CompanyTaxRates>()),
 });
 
@@ -1704,10 +1686,12 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
             .limit(1),
         )).length > 0
       : undefined;
-  let state = withStorefrontSettings(
-    { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) },
-    head.storefrontCatalogSettings,
-  );
+  let state: MerchandiseState = {
+    movements,
+    orders: loadedOrders,
+    products: loaded.map((entry) => entry.product),
+    storefrontCatalogSettings: head.storefrontCatalogSettings,
+  };
   if (categoryIds !== undefined) {
     state = { ...state, categories: loadedCategories };
   }
@@ -2000,14 +1984,12 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
       : undefined;
   yield* dropReclassifiedHolds(db, scope, changedProducts, held);
   yield* recordTaxClassificationLive(db, scope);
-  const update = {
-    revision: working.revision + 1,
-    updatedAt: date(now),
-  };
+  const update = { revision: working.revision + 1, updatedAt: date(now) };
+  const settings = after.storefrontCatalogSettings;
   const catalogUpdate =
-    after.storefrontCatalogSettings === undefined
+    settings === undefined || settings === before.storefrontCatalogSettings
       ? update
-      : { ...update, storefrontCatalogSettings: after.storefrontCatalogSettings };
+      : { ...update, storefrontCatalogSettings: settings };
   const heads = yield* query(
     db
       .update(catalogHeads)
@@ -2052,14 +2034,11 @@ export const readSnapshot = Effect.fn('MerchandiseStore.readSnapshot')(function*
     Effect.gen(function* decodeSnapshot() {
       const movements = yield* Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 });
       const decodedOrders = yield* Effect.forEach(orderRows, (row) => decodeOrder(row.document), { concurrency: 1 });
-      let state = withStorefrontSettings(
-        {
-          movements,
-          orders: decodedOrders,
-          products: loaded.map((entry) => entry.product),
-        },
-        head.storefrontCatalogSettings,
-      );
+      let state: MerchandiseState = {
+        movements,
+        orders: decodedOrders,
+        products: loaded.map((entry) => entry.product),
+      };
       if (categoryRows.length > 0) {
         state = { ...state, categories: yield* Effect.forEach(categoryRows, decodeCategoryRow, { concurrency: 1 }) };
       }

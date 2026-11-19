@@ -1966,6 +1966,8 @@ export const evolveMerchandiseState = (
   command: MerchandiseCommand,
   input: MerchandiseCommandInput,
 ): Effect.Effect<MerchandiseChange, MerchandiseCommandError> => {
+  // Outside the matcher because its pipe() is typed for at most 20 steps. Keeping the state reference when the value is
+  // already in force makes the command a no-op without a new revision.
   if (Predicate.isTagged(command, 'ConfigureStorefrontCatalog')) {
     return Effect.succeed({
       entityIds: [],
@@ -3282,7 +3284,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       } satisfies RecordsResponse;
       const withSettings =
         view.storefrontCatalogSettings === true
-          ? { ...staffResponse, storefrontCatalogSettings: head.storefrontCatalogSettings ?? {} }
+          ? { ...staffResponse, storefrontCatalogSettings: head.storefrontCatalogSettings }
           : staffResponse;
       const withAiChanges =
         canRead && head.aiChanges !== undefined ? { ...withSettings, aiChanges: head.aiChanges } : withSettings;

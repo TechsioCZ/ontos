@@ -102,7 +102,7 @@ it.effect('creates a missing head at revision 0 inside the write, then holds its
   Effect.gen(function* firstWrite() {
     const { db, head, statements } = yield* harness();
     const locked = yield* db.transaction((tx) => lockHeadForWrite(tx, store));
-    expect(locked).toEqual({ ...EMPTY_CATALOG_HEAD, storefrontCatalogSettings: {} });
+    expect(locked).toEqual(EMPTY_CATALOG_HEAD);
     expect(head()).toEqual({ checkpoint: null, revision: 0 });
     expect(headInserts(statements)).toHaveLength(1);
     expect(headInserts(statements)[0]).toContain('on conflict ("tenant_id","legal_entity_id") do nothing');

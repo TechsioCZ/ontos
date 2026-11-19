@@ -60,8 +60,6 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
   featured: Schema.optionalKey(Schema.Boolean),
   fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
   label: Schema.optionalKey(Schema.Literals(['action', 'recommended', 'sale', 'new'])),
-  /** Opt-in source import policy for listings only; absent/false preserves every published product. */
-  mainSourceProductsOnly: Schema.optionalKey(Schema.Boolean),
   marketId: Schema.optionalKey(MarketIdSchema),
   maxMinor: Schema.optionalKey(MinorAmountSchema),
   minMinor: Schema.optionalKey(MinorAmountSchema),
@@ -72,7 +70,7 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
   q: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   slug: Schema.optionalKey(Schema.String),
   sort: Schema.optionalKey(Schema.Literals(['name', 'price-asc', 'price-desc'])),
-  /** Selects this company's saved listing policy; omitted retains the legacy explicit filter. */
+  /** Selects this company's saved listing policy for this storefront; omitted lists every published product. */
   storefrontAppId: Schema.optionalKey(StorefrontAppIdSchema),
   /**
    * Cart/checkout: with `fields: 'full'`, each product's `variantRecords` hold only these variants and up to 50

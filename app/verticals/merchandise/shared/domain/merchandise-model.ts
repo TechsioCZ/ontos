@@ -207,10 +207,15 @@ export const StorefrontCatalogSettingsSchema = Schema.Record(
   }),
 );
 export type StorefrontCatalogSettings = typeof StorefrontCatalogSettingsSchema.Type;
+/** Both stage shops sell the imported AKROS source catalogue, so they list only its main products by default. */
+const MAIN_SOURCE_PRODUCTS_ONLY_STOREFRONTS: ReadonlySet<string> = new Set([
+  'akros-storefront',
+  'sroubshop-storefront',
+]);
 export const mainSourceProductsOnlyFor = (settings: StorefrontCatalogSettings, storefrontAppId: string): boolean =>
   Option.match(Schema.decodeUnknownOption(StorefrontAppIdSchema)(storefrontAppId), {
     onNone: () => false,
-    onSome: (id) => settings[id]?.mainSourceProductsOnly ?? id === 'akros-storefront',
+    onSome: (id) => settings[id]?.mainSourceProductsOnly ?? MAIN_SOURCE_PRODUCTS_ONLY_STOREFRONTS.has(id),
   });
 
 export const ProductMetadataSchema = Schema.Struct({
