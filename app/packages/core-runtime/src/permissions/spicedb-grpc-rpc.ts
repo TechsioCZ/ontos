@@ -17,6 +17,32 @@ export const spiceDbCaCertificate = (configuration: Pick<SpiceDbConfigValue, 'ca
   return Buffer.from(configuration.caCertificate);
 };
 
+/**
+ * SpiceDB recycles every gRPC connection after `--grpc-max-conn-age` (30 s by default; no stage sets it) with a
+ * GOAWAY. A call queued on that connection in the turn the GOAWAY arrives is refused by the client's own HTTP/2
+ * session and never sent, but grpc-js reports it as a write error (UNAVAILABLE) and skips the transparent retry
+ * it gives other refused streams. The read-only calls are therefore retried on UNAVAILABLE, on the next
+ * connection and within the call's deadline: a read changes nothing, and every other answer, a denial included,
+ * is returned as SpiceDB gave it. Writes are never repeated, because UNAVAILABLE cannot tell a refused write from
+ * one SpiceDB applied, and an applied `TOUCH` repeated after a concurrent `DELETE` would restore a revoked grant.
+ */
+const SPICEDB_SERVICE_CONFIG = `{
+  "methodConfig": [{
+    "name": [
+      { "service": "authzed.api.v1.PermissionsService", "method": "CheckPermission" },
+      { "service": "authzed.api.v1.PermissionsService", "method": "CheckBulkPermissions" },
+      { "service": "authzed.api.v1.PermissionsService", "method": "ReadRelationships" }
+    ],
+    "retryPolicy": {
+      "maxAttempts": 3,
+      "initialBackoff": "0.02s",
+      "maxBackoff": "0.1s",
+      "backoffMultiplier": 2,
+      "retryableStatusCodes": ["UNAVAILABLE"]
+    }
+  }]
+}`;
+
 /** An authzed-node gRPC client that trusts only `SPICEDB_CA_CERT`. Every Node caller opens SpiceDB through it. */
 export const newSpiceDbGrpcClient = (
   configuration: Pick<SpiceDbConfigValue, 'caCertificate' | 'endpoint' | 'preSharedKey'>,
@@ -27,7 +53,8 @@ export const newSpiceDbGrpcClient = (
     configuration.endpoint,
     spiceDbCaCertificate(configuration),
     undefined,
-    options,
+    // The retry policy is this client's own; a DNS TXT record cannot replace it.
+    { ...options, 'grpc.service_config': SPICEDB_SERVICE_CONFIG, 'grpc.service_config_disable_resolution': 1 },
   );
 
 const rpcFailure = (cause: unknown): SpiceDbRpcError =>
