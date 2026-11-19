@@ -770,6 +770,7 @@ it.live('compares a push without a merge queue with its newest green push, and r
         stdio: 'pipe',
       });
       return {
+        base: /^base=(?<base>.*)$/mu.exec(readFileSync(output, 'utf-8'))?.groups?.base,
         calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean),
         log,
         mode: /^mode=(?<mode>\w+)$/mu.exec(readFileSync(output, 'utf-8'))?.groups?.mode,
@@ -812,6 +813,8 @@ it.live('compares a push without a merge queue with its newest green push, and r
       expect(mixed.mode).toBe('affected');
       expect(mixed.paths).toEqual(unproven);
       expect(mixed.log).toContain(`Comparing with ${green},`);
+      // The build shards start from the outputs of the run that proved this commit (scripts/ci/seed-units.sh).
+      expect(mixed.base).toBe(green);
 
       // Of two eligible green pushes the newer one by creation time is the base, whatever order the list has.
       const newest = plan(
@@ -831,6 +834,7 @@ it.live('compares a push without a merge queue with its newest green push, and r
         const unrelated = plan(listed(runs));
         expect(unrelated.mode).toBe('full');
         expect(unrelated.paths).toEqual([]);
+        expect(unrelated.base).toBe('');
       }
 
       // (d) Every failed lookup runs everything and never fails the planning step itself.
@@ -851,6 +855,7 @@ it.live('compares a push without a merge queue with its newest green push, and r
         const failed = plan(routes);
         expect(failed.mode).toBe('full');
         expect(failed.paths).toEqual([]);
+        expect(failed.base).toBe('');
         expect(failed.log).toContain('::warning title=Complete suite::');
       }
 

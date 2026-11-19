@@ -10,6 +10,9 @@ paths_file="${1:?Pass the changed-paths output file}"
 
 mode=full
 reason='This event requires the complete suite.'
+# The commit the diff was taken against, when there is one: the build shards start from the unit outputs of the run
+# that proved it (scripts/ci/seed-units.sh).
+compared=''
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
   reason="Run ${PROOF_RUN:-} already proved this exact commit."
@@ -62,6 +65,7 @@ elif [[ "${FORCE_FULL:-false}" != true &&
     [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] &&
     git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" &&
     git diff --name-only --no-renames -z "$BASE_SHA" "$HEAD_SHA" >"$paths_file"; then
+    compared="$BASE_SHA"
     count=0
     documentation=true
     while IFS= read -r -d '' path; do
@@ -87,6 +91,7 @@ fi
 
 printf 'mode=%s\n' "$mode" >>"$GITHUB_OUTPUT"
 printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
+printf 'base=%s\n' "$compared" >>"$GITHUB_OUTPUT"
 if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
     "workspace-gate":"skipped", "workspace-unit":"skipped", "workspace-unit-artifacts":"skipped",
