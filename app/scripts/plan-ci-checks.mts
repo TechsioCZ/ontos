@@ -542,7 +542,7 @@ const workspaceEntries = (text: string): readonly string[] => {
     if (/^\s*(?:#.*)?$/u.test(line)) {
       continue;
     }
-    const item = /^(?<indent> *)- +(?<quote>['"]?)(?<entry>[^\s#'"]+)\k<quote> *(?:#.*)?$/u.exec(line)?.groups;
+    const item = /^(?<indent> *)- +(?<quote>['"]?)(?<entry>[^\s#'"]+)\k<quote>(?: +#.*| *)$/u.exec(line)?.groups;
     if (item === undefined) {
       return /^[A-Za-z_][\w.-]*\s*:/u.test(line) ? declared : [];
     }

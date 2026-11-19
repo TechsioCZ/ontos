@@ -1169,6 +1169,9 @@ it('reads every packages entry of pnpm-workspace.yaml, and nothing it does not u
     workspace.replace(last, `${last}packages:\n  - extra\n`),
     workspace.replace(last, '  - &shop n1-storefront\n'),
     workspace.replace(last, `---\n${last}`),
+    // YAML starts a comment only after whitespace: these name other directories, or are no YAML at all.
+    workspace.replace(last, '  - n1-storefront#not-a-comment\n'),
+    workspace.replace(last, '  - "n1-storefront"#not-a-comment\n'),
   ]) {
     expect(directories(text), text).toHaveProperty('unreadable');
   }
