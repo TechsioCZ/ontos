@@ -972,12 +972,18 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             yield* renameAs(world, OWNER, readyRef, 'unavailable-rename-live', { name: 'Live.pdf' });
             expect(yield* readAs(world, OWNER, readyRef)).toMatchObject({ displayFilename: 'Live.pdf' });
 
-            // A machine is never admitted while the engine is unreachable and its binding is missing: still a stop.
+            // A machine is stopped too while the engine is unreachable, bound or not: the outage is never an allow.
             const beforeMachine = yield* assetCount(world);
             const unbound = yield* refusalOf(
               reserve(world, INTEGRATION_MACHINE, 'machine-dead-unbound', { runtime: 'dead' }),
             );
             expect(unbound).toBeDefined();
+            expect(yield* assetCount(world)).toBe(beforeMachine);
+            yield* world.scenario.bindWorkload({ principalId: INTEGRATION_MACHINE, workloadKey: INGEST });
+            const boundDead = yield* Effect.exit(
+              reserve(world, INTEGRATION_MACHINE, 'machine-dead-bound', { runtime: 'dead' }),
+            );
+            expect(Schema.is(ActionPermissionCheckError)(failureOf(boundDead))).toBe(true);
             expect(yield* assetCount(world)).toBe(beforeMachine);
           }),
         ),
