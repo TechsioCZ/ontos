@@ -12,7 +12,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -183,9 +183,18 @@ const type = (patch: Partial<DetailDraft>) =>
   acted(() => edit().record.setDraft((current) => ({ ...current, ...patch })));
 
 /** The Save button: the changed draft is sent now. Resolves once the save has settled. */
-const saveNow = acted(() => edit().record.save()).pipe(
-  Effect.andThen(waitUntil(() => !['dirty', 'saving'].includes(edit().record.status))),
-);
+const saveNow = Effect.gen(function* saveAndJoin() {
+  const completed = yield* Deferred.make<boolean>();
+  yield* acted(() => {
+    const { record } = edit();
+    record.save();
+    record.afterSave(() => {
+      Deferred.doneUnsafe(completed, Effect.succeed(true));
+    });
+  });
+  yield* Deferred.await(completed);
+  yield* waitUntil(() => !['dirty', 'saving'].includes(edit().record.status));
+});
 
 beforeEach(() => {
   commands.length = 0;
@@ -334,7 +343,7 @@ describe('mounted product detail draft while its product reloads', () => {
 
       // The reload has not landed: the page still shows the old name at revision 1.
       register.priceChangesFail = false;
-      yield* acted(() => edit().record.save());
+      yield* saveNow;
       yield* waitUntil(() => edit().record.status === 'saved');
       expect(sent().slice(2)).toEqual([{ expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' }]);
     }).pipe(Effect.provide(network)),

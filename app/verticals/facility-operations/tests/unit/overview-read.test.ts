@@ -233,6 +233,9 @@ const legacySearchRows = (records: RecordsResponse): SearchRow[] =>
     return envelope === undefined ? [] : legacyCollectionRows(agenda, envelope.state);
   });
 
+const wireSize = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: S['Type']) =>
+  Schema.encodeEffect(Schema.fromJsonString(schema))(value).pipe(Effect.map((encoded) => encoded.length));
+
 const absent = { status: 'unavailable' } as const;
 const opsOnly = (ops: RentalOverviewSources['ops']): RentalOverviewSources => ({
   agreements: absent,
@@ -291,6 +294,38 @@ for (const person of people) {
   );
 }
 
+it.effect('the seeded data exercises every part of the projection', () =>
+  Effect.gen(function* overviewRead2() {
+    const loaded = yield* seeded;
+    const management = people.at(0);
+    if (management === undefined) {
+      throw new Error('Missing management principal fixture');
+    }
+    const overview = yield* finishFacilityOverview(
+      { includeSearch: true },
+      loaded,
+      management.grants,
+      scopeOf(management.principalId),
+    );
+    expect(overview.agendas).toHaveLength(6);
+    const agendasWithDeadlines = new Set(
+      overview.deadlines.map((row) => {
+        const [source, agenda] = row.key.split(':');
+        return source === 'ops' ? agenda : 'agenda';
+      }),
+    );
+    expect(EffectArray.sort([...agendasWithDeadlines], Order.String)).toEqual([
+      'agenda',
+      'assets',
+      'documents',
+      'purchasing',
+      'security',
+    ]);
+    expect(overview.incidents?.length).toBeGreaterThan(0);
+    expect(overview.searchRows?.length).toBeGreaterThan(100);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect('Moje agenda gets no search rows, and without security access no incident count', () =>
   Effect.gen(function* overviewRead3() {
     const loaded = yield* seeded;
@@ -302,6 +337,24 @@ it.effect('Moje agenda gets no search rows, and without security access no incid
     expect(overview.searchRows).toBeUndefined();
     expect(overview.incidents).toBeUndefined();
     expect(overview.deadlines.length).toBeGreaterThan(0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('the overview response is a fraction of the records read', () =>
+  Effect.gen(function* overviewRead4() {
+    const loaded = yield* seeded;
+    const management = people.at(0);
+    if (management === undefined) {
+      throw new Error('Missing management principal fixture');
+    }
+    const scope = scopeOf(management.principalId);
+    const records = yield* finishFacilityRecords({}, loaded, management.grants, scope).pipe(
+      Effect.flatMap((value) => wireSize(RecordsResponseSchema, value)),
+    );
+    const overview = yield* finishFacilityOverview({ includeSearch: true }, loaded, management.grants, scope).pipe(
+      Effect.flatMap((value) => wireSize(OverviewResponseSchema, value)),
+    );
+    expect(overview).toBeLessThan(records / 2);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

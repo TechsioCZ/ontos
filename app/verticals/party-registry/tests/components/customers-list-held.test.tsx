@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 // The real strict store and held hook across reloads, served by the owners' real HTTP contracts.
-import { passFakeTime, settle, unmountAll, waitUntil, waitUntilOnFakeTimers } from '@app/admin-ui/testing/module-ui';
+import { passFakeTime, unmountAll, waitUntil, waitUntilOnFakeTimers } from '@app/admin-ui/testing/module-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
@@ -133,7 +133,7 @@ it.layer(network, { excludeTestServices: true })('customers list held', (suite) 
       answer = Deferred.await(gate).pipe(Effect.as({ items: [customerOf('After')] }));
       shown.length = 0;
       liveChange();
-      // The reads this started have all arrived; the gate holds one of them open.
+      // Only the list handler awaits gate; memberships and gateway requests must finish.
       yield* networkQuietExcept(1);
       expect(customersData.snapshot(customersQuery(company)).state).toBe('pending');
       expect(shown.length).toBeGreaterThan(0);
@@ -141,6 +141,7 @@ it.layer(network, { excludeTestServices: true })('customers list held', (suite) 
 
       yield* Deferred.succeed(gate, true);
       yield* waitUntil(() => result.current === 'rows:After');
+      yield* networkIdle;
       expect(result.current).toBe('rows:After');
       expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
     }),
@@ -158,12 +159,12 @@ it.layer(network, { excludeTestServices: true })('customers list held', (suite) 
       liveChange();
       shown.length = 0;
       rerender({ context: otherCompany });
-      // The read this started has arrived; the gate holds it open.
+      // Only the first company's list handler awaits gate; the other scope has not been loaded.
       yield* networkQuietExcept(1);
       expect(new Set(shown)).toEqual(new Set(['pending']));
       yield* Deferred.succeed(gate, true);
       yield* waitUntil(() => customersData.snapshot(customersQuery(company)).state === 'ready');
-      yield* settle;
+      yield* networkIdle;
     }),
   );
 

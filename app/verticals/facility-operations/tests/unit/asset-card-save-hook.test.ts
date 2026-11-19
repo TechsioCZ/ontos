@@ -273,6 +273,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(1);
     }).pipe(Effect.provide(network)),
   );
 
@@ -312,6 +314,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'conflict'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(1);
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -340,6 +344,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(2);
     }).pipe(Effect.provide(network)),
   );
 
@@ -383,6 +389,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(1);
     }).pipe(Effect.provide(network)),
   );
 
@@ -425,6 +433,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(1);
 
       // A second edit after the save settled must use the acknowledged base, not the old read's runner.
       yield* Effect.promise(() =>
@@ -446,6 +456,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(2);
     }).pipe(Effect.provide(network)),
   );
 
@@ -481,6 +493,8 @@ describe('mounted asset card draft against refreshed reads', () => {
         }),
       );
       yield* Effect.promise(() => waitUntil(() => draftOf().status === 'conflict'));
+      yield* networkIdle;
+      expect(server.saves).toHaveLength(1);
     }).pipe(Effect.provide(network)),
   );
 });

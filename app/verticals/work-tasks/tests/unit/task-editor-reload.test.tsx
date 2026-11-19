@@ -4,6 +4,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -133,7 +134,8 @@ it.layer(network, { excludeTestServices: true })('task editor across a backgroun
       yield* openEdit;
       answer = Effect.fail(refused);
       yield* acted(() => taskRecords.invalidate());
-      yield* waitUntil(() => buttons(labels.save).length === 0);
+      yield* networkIdle;
+      expect(buttons(labels.save)).toHaveLength(0);
       expect(text()).toContain(copy.readOnly);
     }),
   );

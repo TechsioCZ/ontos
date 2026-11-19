@@ -264,6 +264,12 @@ const expectNoReads = () => {
   expect(identifierReads).toHaveLength(0);
 };
 
+const heldDetailRead = () => ({
+  arrived: Deferred.makeUnsafe<true>(),
+  finished: Deferred.makeUnsafe<true>(),
+  release: Deferred.makeUnsafe<true>(),
+});
+
 it.layer(network, { excludeTestServices: true })('customer detail preload', (suite) => {
   suite.effect('exact direct detail lookup does not consult the bounded customer list or invent a revision', () =>
     Effect.gen(function* directDetail() {
@@ -328,6 +334,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       const scope = pageDataScopeKey(context, 'party.registry') ?? '';
       const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
       yield* waitUntil(() => counterpartyReads.length === 2);
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(2);
       clearReads();
       act(() => customerDetailData.invalidate());
@@ -339,8 +346,9 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       row.dataset['index'] = '1';
       customerDetailIntent(context, () => rows).onPointerEnter({ currentTarget: row });
       yield* waitUntil(() => customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state === 'ready');
-      expect(counterpartyReads).toHaveLength(1);
       expect(customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state).toBe('ready');
+      yield* networkIdle;
+      expect(counterpartyReads).toHaveLength(1);
       unmount();
     }),
   );
@@ -373,6 +381,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
         const { result, unmount } = renderHook(() => useCustomerDetailSelection({ ...context, [field]: 'other' }));
         act(() => result.current.openDetail(customer));
         yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
+        yield* networkIdle;
         expect(counterpartyReads).toHaveLength(1);
         unmount();
       }
@@ -380,6 +389,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       const { result } = renderHook(() => useCustomerDetailSelection(context));
       act(() => result.current.openDetail({ ...customer, partyRevision: 2 }));
       yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue).toBeDefined()));
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(1);
     }),
   );
@@ -445,6 +455,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       act(() => result.current.openDetail(customer));
       yield* Effect.promise(() => waitFor(() => expect(result.current.detailFailure).toBe('forbidden')));
       expect(result.current.detailValue).toBeUndefined();
+      yield* networkIdle;
       expect(identityReads).toHaveLength(0);
       counterpartyAnswer = Effect.succeed(snapshot.counterparty);
       act(() => result.current.retryDetail());
@@ -461,6 +472,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       const { result } = renderHook(() => useCustomerDetailSelection(context));
       act(() => result.current.openDetail(customer));
       yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue?.identity.status).toBe('forbidden')));
+      yield* networkIdle;
       expect(identityReads).toHaveLength(2);
       if (snapshot.identity.status === 'ready') {
         identityAnswer = Effect.succeed(snapshot.identity.value);
@@ -468,6 +480,7 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
       act(() => result.current.closeDetail(false));
       act(() => result.current.openDetail(customer));
       yield* Effect.promise(() => waitFor(() => expect(result.current.detailValue?.identity.status).toBe('ready')));
+      yield* networkIdle;
       expect(identityReads).toHaveLength(3);
     }),
   );
@@ -491,39 +504,58 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
   suite.effect('a visible-page prefetch is bounded and releases unfinished work on page change or unmount', () =>
     Effect.gen(function* customerPreloadTest() {
       yield* pinTestDocument;
-      const started = Deferred.makeUnsafe<true>();
+      const firstBatch = [heldDetailRead(), heldDetailRead()] as const;
+      let holds = [...firstBatch];
       let active = 0;
       let peak = 0;
-      counterpartyAnswer = Effect.sync(() => {
-        active += 1;
-        peak = Math.max(peak, active);
-      }).pipe(
-        Effect.andThen(Deferred.succeed(started, true)),
-        Effect.andThen(Effect.never),
-        Effect.ensuring(
-          Effect.sync(() => {
-            active -= 1;
-          }),
-        ),
-      );
+      counterpartyAnswer = Effect.suspend(() => {
+        const hold = holds.shift();
+        return Effect.sync(() => {
+          active += 1;
+          peak = Math.max(peak, active);
+        }).pipe(
+          Effect.andThen(
+            hold === undefined
+              ? Effect.succeed(snapshot.counterparty)
+              : Deferred.succeed(hold.arrived, true).pipe(
+                  Effect.andThen(Deferred.await(hold.release)),
+                  Effect.as(snapshot.counterparty),
+                ),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              active -= 1;
+            }).pipe(Effect.andThen(hold === undefined ? Effect.void : Deferred.succeed(hold.finished, true))),
+          ),
+        );
+      });
       const rows = Array.from({ length: 5 }, (_, index) => ({ ...customer, partyRevision: index + 1 }));
       const { rerender, unmount } = renderHook(({ page }) => usePrefetchCustomerDetails(context, page), {
         initialProps: { page: rows },
       });
-      yield* Deferred.await(started);
-      yield* waitUntil(() => active === 2);
+      yield* Deferred.await(firstBatch[0].arrived);
+      yield* Deferred.await(firstBatch[1].arrived);
+      yield* networkQuietExcept(2);
       expect(active).toBe(2);
       expect(peak).toBe(2);
       rerender({ page: [] });
-      yield* waitUntil(() => active === 0);
+      yield* Deferred.await(firstBatch[0].finished);
+      yield* Deferred.await(firstBatch[1].finished);
       expect(active).toBe(0);
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(2);
+      const nextBatch = [heldDetailRead(), heldDetailRead()] as const;
+      holds = [...nextBatch];
       rerender({ page: rows });
-      yield* waitUntil(() => active === 2);
+      yield* Deferred.await(nextBatch[0].arrived);
+      yield* Deferred.await(nextBatch[1].arrived);
+      yield* networkQuietExcept(2);
       expect(active).toBe(2);
       unmount();
-      yield* waitUntil(() => active === 0);
+      yield* Deferred.await(nextBatch[0].finished);
+      yield* Deferred.await(nextBatch[1].finished);
       expect(active).toBe(0);
+      yield* networkIdle;
       expect(counterpartyReads).toHaveLength(4);
     }),
   );
@@ -531,19 +563,37 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
   suite.effect('foreground detail starts without waiting for unrelated background rows', () =>
     Effect.gen(function* customerPreloadTest() {
       yield* pinTestDocument;
-      const started = Deferred.makeUnsafe<true>();
-      counterpartyAnswer = Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never));
+      const backgroundHolds = [heldDetailRead(), heldDetailRead()] as const;
+      let holds = [...backgroundHolds];
+      counterpartyAnswer = Effect.suspend(() => {
+        const hold = holds.shift();
+        return hold === undefined
+          ? Effect.succeed(snapshot.counterparty)
+          : Deferred.succeed(hold.arrived, true).pipe(
+              Effect.andThen(Deferred.await(hold.release)),
+              Effect.as(snapshot.counterparty),
+              Effect.ensuring(Deferred.succeed(hold.finished, true)),
+            );
+      });
       const rows = [customer, { ...customer, partyRevision: 2 }];
       const background = renderHook(() => usePrefetchCustomerDetails(context, rows));
-      yield* Deferred.await(started);
-      yield* waitUntil(() => counterpartyReads.length === 2);
+      yield* Deferred.await(backgroundHolds[0].arrived);
+      yield* Deferred.await(backgroundHolds[1].arrived);
+      yield* networkQuietExcept(2);
       expect(counterpartyReads).toHaveLength(2);
+      const foregroundHold = heldDetailRead();
+      holds = [foregroundHold];
       const foreground = renderHook(() => useCustomerDetailSelection(context));
       act(() => foreground.result.current.openDetail({ ...customer, partyRevision: 3 }));
-      yield* waitUntil(() => counterpartyReads.length === 3);
+      yield* Deferred.await(foregroundHold.arrived);
+      yield* networkQuietExcept(3);
       expect(counterpartyReads).toHaveLength(3);
       foreground.unmount();
       background.unmount();
+      yield* Deferred.await(foregroundHold.finished);
+      yield* Deferred.await(backgroundHolds[0].finished);
+      yield* Deferred.await(backgroundHolds[1].finished);
+      yield* networkIdle;
     }),
   );
 
@@ -559,12 +609,14 @@ it.layer(network, { excludeTestServices: true })('customer detail preload', (sui
           values.push(loaded.value);
         }
       });
+      yield* networkIdle;
       yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(1)));
       loadCustomerDetailInto(customer, (loaded) => {
         if (loaded.value !== undefined) {
           values.push(loaded.value);
         }
       });
+      yield* networkIdle;
       yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(2)));
       expect(counterpartyReads).toHaveLength(2);
     }),

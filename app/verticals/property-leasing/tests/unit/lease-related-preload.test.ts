@@ -617,4 +617,21 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       expect(reads.finance).toHaveLength(0);
     }),
   );
+
+  suite.effect('uses the rendered-row seam, cold loader and settled invalidation', () =>
+    Effect.gen(function* pageWiring() {
+      yield* pinTestDocument;
+      const { preloadPage } = yield* Effect.promise(() => import('../../src/routes/[lang]/najmy/page.tsx'));
+      yield* Effect.promise(() => preloadPage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }));
+      yield* networkIdle;
+      expect(leaseTasks.snapshot(detail(2)).state).toBe('ready');
+      expect(leaseInvoicesExact.snapshot(detail(2)).state).toBe('ready');
+      expect(reads.work).toEqual([{ contextResourceId: row(2).unitRef.resourceId }]);
+
+      window.dispatchEvent(new Event(moduleWriteEvent));
+      yield* networkIdle;
+      expect(leaseTasks.snapshot(detail(2))).toBe(pageDataPending);
+      expect(leaseInvoicesExact.snapshot(detail(2))).toBe(pageDataPending);
+    }),
+  );
 });

@@ -1,3 +1,4 @@
+import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Deferred, Effect, Schema } from 'effect';
@@ -265,13 +266,14 @@ it.effect('approval sends only revision-bound decision, then re-reads; never sen
   Effect.gen(function* approvalOnly() {
     const item = proposal();
     const decide = rstest.fn<ApprovalsClient['decide']>(() => Effect.void);
+    const execute = rstest.fn<ApprovalsClient['execute']>(() => Effect.void);
     const read = rstest.fn(() => Effect.succeed(list(proposal({ revision: 'revision-2', status: 'approved' }))));
     const model = yield* decideApproval(
       approvalsViewModel(list(item)),
       item.proposalId,
       'approve',
       request(),
-      mockClient({ decide, list: read }),
+      mockClient({ decide, execute, list: read }),
       commandKey,
     );
     expect(decide.mock.calls[0]?.[0]).toEqual({
@@ -281,6 +283,7 @@ it.effect('approval sends only revision-bound decision, then re-reads; never sen
       revision: 'revision-1',
     });
     expect(read).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
     expect(model.state === 'ready' && model.items[0]?.status).toBe('approved');
   }),
 );
@@ -488,60 +491,99 @@ for (const reason of ['conflict', 'unavailable'] as const) {
   );
 }
 
-it.effect('feature fences two same-tick execute clicks before React pending renders', () =>
+it.live('feature fences two same-tick execute clicks before React pending renders', () =>
   Effect.gen(function* doubleClickExecution() {
+    const started = yield* Deferred.make<boolean>();
     const finished = yield* Deferred.make<boolean>();
-    const execute = rstest.fn(() => Deferred.await(finished).pipe(Effect.asVoid));
-    const client = mockClient({ execute, list: () => Effect.succeed(list(proposal({ status: 'executed' }))) });
-    renderCopy(
-      <ApprovalsFeature
-        client={client}
-        createKey={Effect.succeed(commandKey)}
-        initial={approvalsViewModel(list(executableProposal()))}
-      />,
-    );
-    const button = screen.getByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute });
-    expect(button.hasAttribute('disabled')).toBe(false);
-    act(() => {
-      fireEvent.click(button);
-      fireEvent.click(button);
+    const bff = approvalsBff({
+      executeAccessApproval: () =>
+        Deferred.succeed(started, true).pipe(
+          Effect.andThen(Deferred.await(finished)),
+          Effect.as(proposal({ status: 'executed' })),
+        ),
+      listAccessApprovals: () => Effect.succeed(list(proposal({ status: 'executed' }))),
     });
-    yield* Effect.yieldNow;
-    yield* Deferred.succeed(finished, true);
-    yield* Effect.promise(() => screen.findByText(en.shell.accessAdmin.approvals.status.executed));
-    expect(execute).toHaveBeenCalledTimes(1);
+    yield* Effect.gen(function* mountedDoubleClick() {
+      renderCopy(
+        <ApprovalsFeature
+          client={approvalsClient}
+          createKey={Effect.succeed(commandKey)}
+          initial={approvalsViewModel(list(executableProposal()))}
+        />,
+      );
+      const button = screen.getByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute });
+      expect(button.hasAttribute('disabled')).toBe(false);
+      act(() => {
+        fireEvent.click(button);
+        fireEvent.click(button);
+      });
+      yield* Deferred.await(started);
+      yield* networkQuietExcept(1);
+      yield* Deferred.succeed(finished, true);
+      yield* Effect.promise(() => screen.findByText(en.shell.accessAdmin.approvals.status.executed));
+      yield* networkIdle;
+      expect(bff.requests.filter(({ endpoint }) => endpoint === 'executeAccessApproval')).toHaveLength(1);
+    }).pipe(Effect.provide(bff.browser));
   }),
 );
 
-it.effect('503 refresh and explicit retry retain the same execution idempotency key', () =>
+it.live('503 refresh and explicit retry retain the same execution idempotency key', () =>
   Effect.gen(function* executionRetryIdentity() {
-    const execute = rstest
-      .fn<ApprovalsClient['execute']>()
-      .mockReturnValueOnce(Effect.fail(new ApprovalClientFailure({ reason: 'unavailable' })))
-      .mockReturnValue(Effect.void);
+    const refreshed = yield* Deferred.make<boolean>();
+    const retried = yield* Deferred.make<boolean>();
+    let executions = 0;
+    let reads = 0;
+    const bff = approvalsBff({
+      executeAccessApproval: () => {
+        executions += 1;
+        return executions === 1
+          ? Effect.fail({
+              _tag: 'AccessAdminUnavailable',
+              detail: 'redacted',
+              retryable: true,
+              status: 503,
+              title: 'redacted',
+              type: 'about:blank',
+            } satisfies AccessAdminProblem)
+          : Effect.succeed(proposal({ status: 'executed' }));
+      },
+      listAccessApprovals: () => {
+        reads += 1;
+        return Deferred.succeed(reads === 1 ? refreshed : retried, true).pipe(Effect.as(list(executableProposal())));
+      },
+    });
     const makeKey = rstest.fn(() => commandKey);
-    const client = mockClient({ execute, list: () => Effect.succeed(list(executableProposal())) });
-    renderCopy(
-      <ApprovalsFeature
-        client={client}
-        createKey={Effect.sync(makeKey)}
-        initial={approvalsViewModel(list(executableProposal()))}
-      />,
-    );
-    yield* Effect.promise(() =>
-      userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute })),
-    );
-    yield* Effect.promise(() => screen.findByText(en.shell.accessAdmin.common.unavailable));
-    yield* Effect.promise(() =>
-      userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.common.refresh })),
-    );
-    yield* Effect.promise(() => screen.findByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute }));
-    yield* Effect.promise(() =>
-      userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute })),
-    );
-    expect(makeKey).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(execute.mock.calls.map((call) => call[2])).toEqual([commandKey, commandKey]);
+    yield* Effect.gen(function* mountedExecutionRetry() {
+      renderCopy(
+        <ApprovalsFeature
+          client={approvalsClient}
+          createKey={Effect.sync(makeKey)}
+          initial={approvalsViewModel(list(executableProposal()))}
+        />,
+      );
+      yield* Effect.promise(() =>
+        userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute })),
+      );
+      yield* Effect.promise(() => screen.findByText(en.shell.accessAdmin.common.unavailable));
+      yield* networkIdle;
+      yield* Effect.promise(() =>
+        userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.common.refresh })),
+      );
+      yield* Deferred.await(refreshed);
+      yield* networkIdle;
+      yield* Effect.promise(() =>
+        screen.findByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute }),
+      );
+      yield* Effect.promise(() =>
+        userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.approvals.actions.execute })),
+      );
+      yield* Deferred.await(retried);
+      yield* networkIdle;
+      expect(makeKey).toHaveBeenCalledTimes(1);
+      const executeRequests = bff.requests.filter(({ endpoint }) => endpoint === 'executeAccessApproval');
+      expect(executeRequests).toHaveLength(2);
+      expect(executeRequests.map(({ idempotencyKey }) => idempotencyKey)).toEqual([commandKey, commandKey]);
+    }).pipe(Effect.provide(bff.browser));
   }),
 );
 

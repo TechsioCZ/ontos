@@ -1,4 +1,5 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
+import { networkIdle } from '@app/shared-contracts/testing/http-double';
 import { CatchBoundary, RouterProvider, useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -251,7 +252,11 @@ const renderModulePage = (model: ModuleTargetPageModel, options: { readonly hold
     const show = (next: ModuleTargetPageModel) =>
       Effect.sync(() => {
         holder.current = next;
-      }).pipe(Effect.andThen(Effect.promise(() => router.invalidate())), Effect.andThen(reactSettled));
+      }).pipe(
+        Effect.andThen(Effect.promise(() => router.invalidate())),
+        Effect.andThen(networkIdle),
+        Effect.andThen(reactSettled),
+      );
     return { navigations, router, show, view } as const;
   });
 
@@ -281,7 +286,16 @@ const settle = (
   request: string,
   held: Deferred.Deferred<ModuleEntrypointNamespace, Error>,
   value: ModuleEntrypointNamespace,
-) => Deferred.succeed(held, value).pipe(Effect.andThen(fx.settled(request)), Effect.andThen(reactSettled));
+) =>
+  Deferred.succeed(held, value).pipe(
+    Effect.andThen(fx.settled(request)),
+    Effect.andThen(networkIdle),
+    Effect.andThen(reactSettled),
+  );
+
+/** Join the real SDK load before checking completed expose counts; intentionally held loads use their Deferred. */
+const sdkSettled = (fx: { readonly settled: (request: string) => Effect.Effect<void> }, target: ResolvedModuleTarget) =>
+  fx.settled(exposeRequest(target)).pipe(Effect.andThen(networkIdle), Effect.andThen(reactSettled));
 
 /** The fresh-document reload a render failure offers; this boundary test never follows it. */
 const handleReload = constVoid;
@@ -328,6 +342,7 @@ it.live('sends an anonymous visitor of a protected module to sign-in and back', 
       });
       expect(screen.getByText('shell.moduleTarget.sign_in_required')).toBeTruthy();
       expect(screen.queryByText('shell.moduleTarget.selection_required')).toBeNull();
+      yield* networkIdle;
       expect(fx.registered).toEqual([]);
     } finally {
       window.history.replaceState(null, '', '/');
@@ -343,6 +358,7 @@ it.live.each(['selection_required', 'forbidden', 'not_found', 'reload_required',
       yield* renderModulePage({ shell, state } satisfies ModuleTargetPageModel);
 
       expect(screen.getByText(`shell.moduleTarget.${state}`)).toBeTruthy();
+      yield* networkIdle;
       expect(fx.registered).toEqual([]);
       expect(fx.requests).toEqual([]);
     }),
@@ -365,6 +381,7 @@ it.live('does not register or load an owner when disposed during native SDK acqu
       }),
     );
 
+    yield* networkIdle;
     expect(fx.registered).toEqual([]);
     expect(fx.requests).toEqual([]);
     expect(fx.renders).toEqual([]);
@@ -377,6 +394,7 @@ it.live('registers and loads a previously unknown approved remote only after aut
     yield* renderModulePage(resolvedModel);
 
     expect(yield* fx.nextRequest).toBe(`${remoteName}/contacts.core.page-customers`);
+    yield* sdkSettled(fx, resolvedModel.target);
     expect(fx.registered).toEqual([
       {
         entry: resolvedModel.target.federation.manifest.url,
@@ -384,6 +402,7 @@ it.live('registers and loads a previously unknown approved remote only after aut
       },
     ]);
     expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'))).toBeTruthy();
+    expect(fx.requests).toEqual([exposeRequest(resolvedModel.target)]);
   }),
 );
 
@@ -398,6 +417,7 @@ it.live('maps an unreachable approved remote to its safe local diagnostic', () =
     yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
+    yield* networkIdle;
     expect(document.body.textContent).not.toContain('private remote error');
   }),
 );
@@ -425,6 +445,7 @@ it.live('contains a remote render exception while the Shell framing and healthy 
     expect(
       yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:healthy-owner')),
     ).toBeTruthy();
+    yield* networkIdle;
     expect(shellSidebars()).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'shell.moduleTarget.reload_page' }).getAttribute('type')).toBe('button');
     expect(document.body.textContent).not.toContain('1296_PRIVATE_RENDER_SENTINEL');
@@ -465,6 +486,7 @@ it.live('keeps a failed equivalent target contained and resets only for the newl
       yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:correct-next-expose')),
     ).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
+    yield* networkIdle;
     expect(fx.requests).toEqual([
       `${remoteName}/contacts.core.page-customers`,
       `${remoteName}/contacts.core.page-customer-detail`,
@@ -492,6 +514,7 @@ it.live('requests a full document reload instead of locally executing the failed
     );
 
     expect(yield* Deferred.await(navigated)).toMatchObject({ reloadDocument: true, to: '.' });
+    yield* networkIdle;
     expect(fx.requests).toHaveLength(1);
     // The browser test proves actual document replacement and native permission revocation;
     // this unit supplies the denied model the fresh document resolves.
@@ -516,6 +539,7 @@ it.live('never restores previous caller content when a changed tenant and princi
     });
     const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
+    yield* sdkSettled(fx, resolvedModel.target);
     yield* show(detailModel);
     yield* Effect.promise(() => screen.findByRole('alert'));
     const deniedShell: ResolvedPageModel['shell'] = {
@@ -574,6 +598,7 @@ it.live(
         expect(
           yield* Effect.promise(() => screen.findByText('shell.moduleTarget.timeout', {}, { timeout: 7000 })),
         ).toBeTruthy();
+        yield* networkIdle;
         // The timeout is its own diagnostic, not the render-failure alert with its reload action.
         expect(screen.getByRole('alert').textContent).toContain('shell.moduleTarget.timeout');
         expect(screen.queryByText('shell.moduleTarget.render_failed')).toBeNull();
@@ -602,6 +627,8 @@ it.live('shares equivalent cloned targets while an unmounted caller cannot cance
       const first = yield* renderModulePage(resolvedModel);
       yield* renderModulePage(secondModel);
       expect(yield* fx.nextRequest).toBe(exposeRequest(resolvedModel.target));
+      yield* networkIdle;
+      expect(document.querySelectorAll('[data-module-page-skeleton]')).toHaveLength(2);
       expect(fx.registered).toHaveLength(1);
 
       act(() => first.view.unmount());
@@ -652,6 +679,8 @@ it.live('does not let the first queued page caller abort the shared SDK thunk ne
       yield* renderModulePage(sentinel);
       // The sentinel was admitted after both contacts callers queued, and took the last SDK slot.
       expect(yield* fx.nextRequest).toBe(exposeRequest(sentinel.target));
+      yield* networkIdle;
+      expect(document.querySelectorAll('[data-module-page-skeleton]')).toHaveLength(10);
       expect(fx.requests).toHaveLength(8);
       expect(fx.requests).not.toContain(exposeRequest(resolvedModel.target));
 
@@ -667,6 +696,7 @@ it.live('does not let the first queued page caller abort the shared SDK thunk ne
       expect(
         yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:remaining-queued-caller')),
       ).toBeTruthy();
+      yield* networkIdle;
       expect(fx.requests).toHaveLength(9);
       expect(fx.requests.filter((request) => request === exposeRequest(resolvedModel.target))).toHaveLength(1);
       expect(fx.renders).toContainEqual({ routeParams: secondModel.routeParams, target: secondModel.target });
@@ -721,6 +751,7 @@ it.live('passes changed route context to already loaded code without reusing pre
     const fx = yield* federation();
     const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
+    yield* sdkSettled(fx, resolvedModel.target);
     const nextModel: ResolvedPageModel = { ...resolvedModel, routeParams: { id: 'current-route-context' } };
 
     yield* show(nextModel);
@@ -742,6 +773,7 @@ it.live('unmounts loaded code when the current governed page resolution becomes 
     const fx = yield* federation();
     const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
+    yield* sdkSettled(fx, resolvedModel.target);
     const forbidden: ModuleTargetPageModel = { shell, state: 'forbidden' };
 
     expect(yield* executionsBeyond(fx, show, resolvedModel, forbidden)).toEqual([]);
@@ -762,6 +794,7 @@ it.live('rejects a malformed remote module before React receives it', () =>
     yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
+    yield* sdkSettled(fx, resolvedModel.target);
     expect(fx.renders).toEqual([]);
   }),
 );
@@ -792,6 +825,7 @@ it.live.each(exactPageCases)(
 
       expect(yield* fx.nextRequest).toBe(`${remoteName}/${componentKey}`);
       expect(yield* Effect.promise(() => screen.findByText(renderedText))).toBeTruthy();
+      yield* sdkSettled(fx, exactModel.target);
       expect(fx.renders).toContainEqual({ routeParams, target: exactModel.target });
       expect(fx.requests).toHaveLength(1);
     }),
@@ -832,6 +866,7 @@ it.live('maps a null native remote result to a local compatibility diagnostic', 
     yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
+    yield* sdkSettled(fx, resolvedModel.target);
     expect(fx.renders).toEqual([]);
   }),
 );
@@ -852,6 +887,7 @@ it.live('requires reload before admitting a different composition into the same 
     const fx = yield* federation();
     const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
+    yield* sdkSettled(fx, resolvedModel.target);
     const [registeredBefore, requestedBefore] = [fx.registered.length, fx.requests.length];
     const promoted: ResolvedPageModel = {
       ...resolvedModel,
@@ -872,6 +908,7 @@ it.live('does not load a remote when native registration fails', () =>
     yield* renderModulePage(resolvedModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
+    yield* networkIdle;
     expect(fx.registered).toEqual([]);
     expect(fx.requests).toEqual([]);
   }),
@@ -919,6 +956,7 @@ it.live('suppresses a resolved remote owner when Shell document admission requir
     yield* renderModulePage(otherReleaseModel());
 
     expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
+    yield* networkIdle;
     expect(fx.registered).toEqual([]);
     expect(fx.requests).toEqual([]);
     expect(fx.renders).toEqual([]);
@@ -930,6 +968,7 @@ it.live('unmounts an already loaded owner when current Shell admission requires 
     const fx = yield* federation();
     const { show } = yield* renderModulePage(resolvedModel);
     yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
+    yield* sdkSettled(fx, resolvedModel.target);
     const requestedBefore = fx.requests.length;
 
     expect(yield* executionsBeyond(fx, show, resolvedModel, otherReleaseModel())).toEqual([]);
@@ -950,6 +989,7 @@ it.live('shows reload guidance for a Shell model rejected by document admission'
 
     expect(screen.getByText('shell.moduleTarget.reload_required')).toBeTruthy();
     expect(screen.queryByText('shell.moduleTarget.selection_required')).toBeNull();
+    yield* networkIdle;
     expect(fx.registered).toEqual([]);
     expect(fx.requests).toEqual([]);
   }),
@@ -967,6 +1007,7 @@ it.live('rejects an approved remote name that collides with the native Shell hos
     } satisfies ResolvedPageModel);
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
+    yield* networkIdle;
     expect(fx.registered).toEqual([]);
     expect(fx.requests).toEqual([]);
     expect(fx.renders).toEqual([]);
@@ -992,13 +1033,16 @@ it.live('a cold page shows one neutral skeleton, then its content once code and 
     const preloaded = Deferred.makeUnsafe<ModulePageProps>();
     const data = Deferred.makeUnsafe<true>();
     const received: ModulePageProps[] = [];
+    const preloads: ModulePageProps[] = [];
     const PreparedPage = (props: ModulePageProps & { readonly target: ResolvedModuleTarget }) => {
       received.push(props);
       return <div>prepared page</div>;
     };
-    const preloadPage = (props: ModulePageProps) =>
-      browserRuntime.runPromise(Deferred.succeed(preloaded, props).pipe(Effect.andThen(Deferred.await(data))));
-    yield* federation({
+    const preloadPage = (props: ModulePageProps) => {
+      preloads.push(props);
+      return browserRuntime.runPromise(Deferred.succeed(preloaded, props).pipe(Effect.andThen(Deferred.await(data))));
+    };
+    const fx = yield* federation({
       scripted: answeringOnce({
         [exposeRequest(resolvedModel.target)]: Effect.succeed({ default: PreparedPage, preloadPage }),
       }),
@@ -1015,6 +1059,8 @@ it.live('a cold page shows one neutral skeleton, then its content once code and 
 
     yield* Deferred.succeed(data, true);
     expect(yield* Effect.promise(() => screen.findByText('prepared page'))).toBeTruthy();
+    yield* sdkSettled(fx, resolvedModel.target);
+    expect(preloads).toEqual([expectedPageProps(resolvedModel)]);
     expect(skeletonOf(view.container)).toBeNull();
     expect(received.at(-1)).toEqual({ ...expectedPageProps(resolvedModel), target: resolvedModel.target });
   }),

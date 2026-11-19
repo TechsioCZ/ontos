@@ -1,9 +1,9 @@
 // @rstest-environment happy-dom
 // Task creation maps the entered title and domain defaults at the component boundary.
 import { saveLabelsFor } from '@app/admin-ui';
-import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, buttons, unmountAll } from '@app/admin-ui/testing/module-ui';
 import { pinTestDocument } from '@app/shared-contracts/testing/http-double';
-import { Effect, Option } from 'effect';
+import { Deferred, Effect, Option } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { TaskFormDialog } from '../../src/routes/[lang]/ukoly/task-form-dialog.tsx';
 import type { TaskFormSubmission } from '../../src/routes/[lang]/ukoly/task-form-dialog.tsx';
@@ -18,6 +18,7 @@ const mount = () =>
   Effect.gen(function* mountPanel() {
     yield* pinTestDocument;
     const closed: string[] = [];
+    const saveCompleted = yield* Deferred.make<boolean>();
     yield* mountInRoute(
       <TaskFormDialog
         actorName={(principalId) => principalId}
@@ -29,6 +30,7 @@ const mount = () =>
         lookupAccess={undefined}
         onClose={() => {
           closed.push('close');
+          Deferred.doneUnsafe(saveCompleted, Effect.succeed(true));
         }}
         onCreate={(submission) =>
           Effect.sync(() => {
@@ -46,7 +48,7 @@ const mount = () =>
       />,
       { path: 'ukoly', url: '/cs/ukoly' },
     );
-    return { closed };
+    return { closed, saveCompleted };
   });
 
 const button = (name: string): HTMLButtonElement => Option.getOrThrow(Option.fromNullishOr(buttons(name).at(0)));
@@ -78,7 +80,8 @@ describe('task create panel with the shared Uložit', () => {
       const view = yield* mount();
       yield* typeTitle(copy.title);
       yield* click(button(labels.save));
-      yield* waitUntil(() => view.closed.length === 1);
+      // onClose is called by record.afterSave, after the create operation has finished.
+      yield* Deferred.await(view.saveCompleted);
       expect(created).toHaveLength(1);
       expect(created[0]).toMatchObject({ description: '', priority: 'NORMAL', title: copy.title });
       expect(view.closed).toEqual(['close']);

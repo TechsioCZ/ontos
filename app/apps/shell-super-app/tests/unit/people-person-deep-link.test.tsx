@@ -146,6 +146,7 @@ it.live('a link qualified with another company is refused instead of selecting t
   Effect.gen(function* foreignCompany() {
     yield* mountPeople(`person=${otherCompanyId}.${principalId}`);
     yield* Effect.promise(() => screen.findByText(czech.t('shell.people.detail.foreignCompany')));
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
   }).pipe(Effect.provide(network)),
 );
@@ -166,6 +167,7 @@ it.live('a qualified person absent from the governed directory stays a truthful 
     yield* Effect.promise(() =>
       screen.findByText('Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'),
     );
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
   }).pipe(Effect.provide(network)),
 );
@@ -175,6 +177,7 @@ it.live('a forbidden governed directory read shows its denial and never claims o
     directoryAnswer = Effect.fail(forbidden);
     yield* mountPeople(`person=${companyId}.${principalId}`);
     yield* Effect.promise(() => screen.findByText('K této správě nemáte oprávnění.'));
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('table')).toBeNull();
   }).pipe(Effect.provide(network)),
@@ -189,6 +192,7 @@ it.live('a refused reread removes a previously opened person and administration 
       document.dispatchEvent(new Event('visibilitychange'));
     });
     yield* Effect.promise(() => screen.findByText('K této správě nemáte oprávnění.'));
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Spravovat role' })).toBeNull();
@@ -208,6 +212,7 @@ it.live('a row with the same principal but another company membership is not the
     yield* Effect.promise(() =>
       screen.findByText('Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'),
     );
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
   }).pipe(Effect.provide(network)),
 );
@@ -224,6 +229,7 @@ it.live('a row from another tenant is not the linked person', () =>
     yield* Effect.promise(() =>
       screen.findByText('Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'),
     );
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
   }).pipe(Effect.provide(network)),
 );
@@ -233,6 +239,7 @@ it.live('the existing people page still lists people without a deep link', () =>
     yield* mountPeople();
     yield* Effect.promise(() => screen.findByRole('table'));
     expect(screen.getByText('Jana Nováková')).toBeDefined();
+    yield* networkIdle;
     expect(screen.queryByRole('dialog')).toBeNull();
   }).pipe(Effect.provide(network)),
 );

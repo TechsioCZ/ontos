@@ -150,6 +150,7 @@ it.effect('acknowledges only an executed or already committed customer outcome r
       },
     });
     expect(transport.requests[0]?.headers.get('x-correlation-id')).toBe('customer-report:1');
+    expect(transport.requests[0]?.headers.get('x-api-key')).toBe('customer-fixture-module-key');
 
     // A retry after a lost reply carries the same key and payload, so Privacy answers the saved outcome.
     yield* report();

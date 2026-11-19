@@ -5,6 +5,7 @@
 import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   networkQuietExcept,
   pinTestDocument,
   serveApi,
@@ -227,6 +228,7 @@ it.live('the rows, the write capability and the header counts stay on screen whi
     serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'] }, revision: 7 });
     yield* mount(company, 0);
     yield* waitUntil(() => shown.at(-1) === before);
+    yield* networkIdle;
     expect(mounts).toBe(1);
 
     const gate = yield* Deferred.make<boolean>();
@@ -240,6 +242,7 @@ it.live('the rows, the write capability and the header counts stay on screen whi
 
     yield* Deferred.succeed(gate, true);
     yield* waitUntil(() => shown.at(-1) === 'rows:ORD-3,ORD-1|write|shipped:4');
+    yield* networkIdle;
     expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
     expect(mounts).toBe(1);
   }).pipe(Effect.provide(network)),
@@ -264,6 +267,7 @@ it.live('another tenant never shows the rows of the tenant before it', () =>
 
     yield* Deferred.succeed(gate, true);
     yield* waitUntil(() => shown.at(-1) === 'rows:ORD-9|write|shipped:1');
+    yield* networkIdle;
     expect(shown.filter((table) => table.startsWith('rows:ORD-1'))).toEqual([]);
   }).pipe(Effect.provide(network)),
 );
@@ -278,6 +282,7 @@ it.live('a refused reload takes the held rows away at once', () =>
     refuse();
     yield* invalidate;
     yield* waitUntil(() => shown.at(-1) === 'forbidden');
+    yield* networkIdle;
     expect(mounts).toBe(1);
   }).pipe(Effect.provide(network)),
 );

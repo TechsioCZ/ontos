@@ -236,6 +236,7 @@ it.layer(network, { excludeTestServices: true })('customer detail state', (suite
         fireEvent.click(saveButton());
       });
       yield* waitUntil(() => commands.length === 1);
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
       yield* waitUntil(() =>
         ['idle', 'saved'].includes(
@@ -293,9 +294,7 @@ it.layer(network, { excludeTestServices: true })('customer detail state', (suite
       yield* pinTestDocument;
       const { router } = yield* mount(detailDialog(snapshot));
       // A clean panel lets the real router navigate without a leave question.
-      yield* acted(() => {
-        router.history.push('/cs/prodej/zakaznici?clean=1');
-      });
+      yield* Effect.promise(() => router.navigate({ href: '/cs/prodej/zakaznici?clean=1' }));
       yield* waitUntil(() => router.state.location.searchStr === '?clean=1');
       expect(screen.queryByRole('button', { name: 'Zůstat' })).toBeNull();
       yield* acted(() => {

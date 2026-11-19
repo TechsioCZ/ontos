@@ -13,7 +13,7 @@ import { browserNetwork, networkIdle } from '@app/shared-contracts/testing/http-
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
-import { Effect, Schema } from 'effect';
+import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
 import { useSyncExternalStore } from 'react';
 import type { ReactElement } from 'react';
@@ -79,18 +79,25 @@ const mountOperators = (initial: ReactElement) =>
   });
 
 const navigate = (router: ShellRouter, to: string) =>
-  acted(() => {
-    void router.navigate({ to });
+  Effect.gen(function* startNavigation() {
+    let completion = Promise.resolve();
+    yield* acted(() => {
+      completion = router.navigate({ to });
+    });
+    // A blocked navigation completes only after the person saves, discards, or stays.
+    return Effect.promise(() => completion);
   });
 const expectCleanNavigation = (router: ShellRouter) =>
   Effect.gen(function* cleanNavigation() {
     const start = router.state.location.pathname;
     const destination = start === '/cs' ? '/cs/people' : '/cs';
-    yield* navigate(router, destination);
+    const navigation = yield* navigate(router, destination);
+    yield* navigation;
     yield* waitUntil(() => router.state.location.pathname === destination);
     expect(router.state.location.pathname).toBe(destination);
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    yield* navigate(router, start);
+    const returnNavigation = yield* navigate(router, start);
+    yield* returnNavigation;
     yield* waitUntil(() => router.state.location.pathname === start);
   });
 const expectDirtyNavigation = (router: ShellRouter) =>
@@ -180,8 +187,10 @@ it.live('a refused stale save shows a conflict and reloads the latest version', 
   const fixture = operatorsEndpoint('conflict');
   return Effect.gen(function* conflictReload() {
     let refreshed = 0;
+    const refreshedLatest = yield* Deferred.make<boolean>();
     const onChanged = () => {
       refreshed += 1;
+      Deferred.doneUnsafe(refreshedLatest, Effect.succeed(true));
     };
     const view = yield* mountOperators(block([], onChanged));
     yield* acted(() => {
@@ -196,6 +205,7 @@ it.live('a refused stale save shows a conflict and reloads the latest version', 
     yield* acted(() => {
       fireEvent.click(screen.getByRole('button', { name: labels.reloadLatest }));
     });
+    yield* Deferred.await(refreshedLatest);
     expect(refreshed).toBe(1);
     expect(checkbox(petr).getAttribute('aria-checked')).toBe('true');
     expect(checkbox(jana).getAttribute('aria-checked')).toBe('false');
@@ -217,12 +227,13 @@ it.live('leaving with an unsaved selection asks, and Zahodit změny leaves', () 
     yield* acted(() => {
       fireEvent.click(checkbox(jana));
     });
-    yield* navigate(view.router, '/cs');
+    const navigation = yield* navigate(view.router, '/cs');
     yield* waitUntil(() => screen.queryByRole('button', { name: labels.discard }) !== null);
     yield* acted(() => {
       fireEvent.click(screen.getByRole('button', { name: labels.discard }));
     });
     yield* waitUntil(() => view.router.state.location.pathname === '/cs');
+    yield* navigation;
     expect(departures).toHaveLength(1);
     yield* networkIdle;
     expect(fixture.requests).toHaveLength(0);
@@ -246,7 +257,7 @@ it.live('Uložit in the leave question saves once and leaves', () => {
     yield* acted(() => {
       fireEvent.click(checkbox(petr));
     });
-    yield* navigate(view.router, '/cs');
+    const navigation = yield* navigate(view.router, '/cs');
     yield* waitUntil(() => screen.queryByRole('alertdialog') !== null);
     const dialog = screen.getByRole('alertdialog');
     const buttons = dialog.querySelectorAll('button');
@@ -256,6 +267,7 @@ it.live('Uložit in the leave question saves once and leaves', () => {
       fireEvent.click(save ?? dialog);
     });
     yield* waitUntil(() => view.router.state.location.pathname === '/cs');
+    yield* navigation;
     expect(departures).toHaveLength(1);
     yield* networkIdle;
     expect(fixture.requests).toHaveLength(1);

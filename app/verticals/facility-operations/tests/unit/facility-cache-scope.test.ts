@@ -10,7 +10,7 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { afterAll, afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { afterAll, afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
@@ -55,10 +55,14 @@ const recordsResponse = (revision: number) =>
     },
   });
 
-const probe = (agendas: readonly AgendaId[]) => {
+const probe = (agendas: readonly AgendaId[], useRecords = useAgendaRecords) => {
   const Probe = () => {
-    const ops = useAgendaRecords(agendas);
-    return createElement('output', null, `${ops.status}:${ops.data?.agendas.assets?.revision ?? 'none'}`);
+    const ops = useRecords(agendas);
+    return createElement(
+      'output',
+      null,
+      `${ops.status}:${ops.data?.agendas[agendas[0] ?? 'assets']?.revision ?? 'none'}`,
+    );
   };
   return Probe;
 };
@@ -83,16 +87,20 @@ const network = browserNetwork(
   ),
 );
 
+const markupOf = (container: HTMLElement) =>
+  Array.from(container.childNodes, (node) => ('outerHTML' in node ? node.outerHTML : node.textContent));
+
+const documentRenderer = { act, createElement, createRoot };
 const unmounts: (() => void)[] = [];
-const mountProbe = (agendas: readonly AgendaId[]) => {
+const mountProbe = (agendas: readonly AgendaId[], useRecords = useAgendaRecords, renderer = documentRenderer) => {
   const container = document.createElement('div');
   document.body.append(container);
-  const root = createRoot(container);
+  const root = renderer.createRoot(container);
   unmounts.push(() => {
-    act(() => root.unmount());
+    renderer.act(() => root.unmount());
     container.remove();
   });
-  act(() => root.render(createElement(probe(agendas))));
+  renderer.act(() => root.render(renderer.createElement(probe(agendas, useRecords))));
   return container;
 };
 
@@ -112,12 +120,15 @@ it.live('preload and mounted readers canonicalize agenda sets while different ag
     yield* pinTestDocument;
     revision = 3;
     yield* Effect.promise(() => preloadAgendaRecords(['meters', 'assets', 'meters'])(moduleProps));
+    yield* networkIdle;
     expect(reads.map(({ payload }) => payload)).toEqual([{ agendas: ['assets', 'meters'] }]);
     const mounted = mountProbe(['meters', 'assets', 'assets']);
+    yield* networkIdle;
     expect(mounted.textContent).toBe('ready:3');
     expect(agendaRecordsData.snapshot(['purchasing'])).toEqual({ state: 'pending' });
 
     yield* Effect.promise(() => preloadAgendaRecords(['purchasing'])(moduleProps));
+    yield* networkIdle;
     expect(reads.map(({ payload }) => payload)).toEqual([
       { agendas: ['assets', 'meters'] },
       { agendas: ['purchasing'] },
@@ -130,6 +141,42 @@ it.live('preload and mounted readers canonicalize agenda sets while different ag
       state: 'ready',
       value: { agendas: { assets: { revision: 3 }, meters: { revision: 3 } } },
     });
+  }).pipe(Effect.provide(network)),
+);
+
+it.live('a forced document reset drops the ready entry and the fresh document reads again', () =>
+  Effect.gen(function* documentReset() {
+    yield* pinTestDocument;
+    revision = 3;
+    yield* Effect.promise(() => preloadAgendaRecords(['meters'])(moduleProps));
+    yield* networkIdle;
+    expect(reads).toHaveLength(1);
+    const mounted = mountProbe(['meters']);
+    yield* networkIdle;
+    expect(markupOf(mounted)).toEqual(['<output>ready:3</output>']);
+
+    // A document reload evaluates the actual module again. Reset only the native loader registry:
+    // no replacement is installed for the store, React, its runtime, or the HTTP clients.
+    rstest.resetModules();
+    const fresh = yield* Effect.promise(() => import('../../src/ui/use-agenda.ts'));
+    const freshRuntime = yield* Effect.promise(() => import('../../src/runtime/browser-effect-runtime.ts'));
+    const freshReact = yield* Effect.promise(() => import('react'));
+    const freshReactDom = yield* Effect.promise(() => import('react-dom/client'));
+    yield* Effect.gen(function* freshDocument() {
+      expect(fresh.agendaRecordsData.snapshot(['meters'])).toEqual({ state: 'pending' });
+      yield* Effect.promise(() => fresh.preloadAgendaRecords(['meters'])(moduleProps));
+      yield* networkIdle;
+      expect(reads).toHaveLength(2);
+      const freshRead = yield* fresh.agendaRecordsData.read(['meters']);
+      expect(freshRead.agendas.meters?.revision).toBe(4);
+      const freshMounted = mountProbe(['meters'], fresh.useAgendaRecords, {
+        act: freshReact.act,
+        createElement: freshReact.createElement,
+        createRoot: freshReactDom.createRoot,
+      });
+      yield* networkIdle;
+      expect(markupOf(freshMounted)).toEqual(['<output>ready:4</output>']);
+    }).pipe(Effect.ensuring(Effect.promise(() => freshRuntime.browserRuntime.dispose())));
   }).pipe(Effect.provide(network)),
 );
 

@@ -253,6 +253,7 @@ it.live('a company that is not a VAT payer orders at 0 %: the line says so and t
     vat = { rates: [], regime: 'NON_PAYER' };
     yield* fillOneLine(product);
     expect(text()).toContain('DPH Základní (firma není plátce DPH)');
+    yield* networkIdle;
     expect(text()).not.toContain('není nastaveno');
     yield* waitUntil(() => !buttonNamed(labels.save).disabled);
     expect(buttonNamed(labels.save).disabled).toBe(false);

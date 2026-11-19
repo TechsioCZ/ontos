@@ -47,6 +47,7 @@ import {
   occupantKey,
   preloadLeaseOccupants,
   preloadPage,
+  renderedLeaseOccupantRows,
 } from '../../src/routes/[lang]/najmy/lease-occupant.ts';
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
@@ -411,4 +412,11 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       expect(total).toBe(2);
     }).pipe(Effect.scoped),
   );
+
+  it('does not warm hidden table rows on lease or counterparty detail URLs', () => {
+    const visible = [row(1), row(2)];
+    expect(renderedLeaseOccupantRows(undefined, undefined, visible)).toEqual(visible);
+    expect(renderedLeaseOccupantRows(id(1), undefined, visible)).toEqual([]);
+    expect(renderedLeaseOccupantRows(undefined, id(1), visible)).toEqual([]);
+  });
 });

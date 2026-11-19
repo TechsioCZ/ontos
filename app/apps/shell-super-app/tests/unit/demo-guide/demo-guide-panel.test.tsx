@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
-import { settle } from '@app/admin-ui/testing/module-ui';
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import '@app/admin-ui/testing/module-ui';
+import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
@@ -16,7 +16,7 @@ const render = (ui: ReactElement) =>
   Effect.gen(function* renderGuideRoute() {
     const router = makeShellRouter({ page: { component: () => ui, path: '/' }, url: '/cs' });
     const view = yield* renderShellRoute(router, shellLocaleCopy('cs'));
-    yield* settle;
+    yield* Effect.promise(() => act(() => Promise.resolve()));
     return view;
   });
 
@@ -69,6 +69,28 @@ it.live('renders chapters, steps, persona state and both kinds of links', () =>
     expect(external.getAttribute('href')).toBe('http://localhost:3070/');
     expect(external.getAttribute('target')).toBe('_blank');
   }),
+);
+
+it.live.each([undefined, 'vedouci@hanak.demo', 'obchodnik@hanak.demo'])(
+  'keeps every step quote without a talking-point caption for identity %s',
+  (identityEmail) =>
+    Effect.gen(function* renderStepQuotes() {
+      yield* render(<DemoGuidePanel guide={guide} identityEmail={identityEmail} />);
+      expect(screen.queryAllByText(/^co říct$/iu)).toHaveLength(0);
+      expect(screen.getByText('„První věta.“')).toBeTruthy();
+      expect(screen.getByText('„Druhá věta.“')).toBeTruthy();
+      expect(screen.getByText('Vedení obchodu')).toBeTruthy();
+      expect(screen.getByText('vedouci@hanak.demo')).toBeTruthy();
+      expect(screen.getByText('Bez přihlášení do OntOS: zákazník e-shopu, otevře se v nové kartě')).toBeTruthy();
+      expect(screen.getByText('Co kliknout:')).toBeTruthy();
+      expect(screen.getByText('Ukažte nadpis.')).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Otevřít obrazovku' }).getAttribute('href')).toBe(
+        '/cs/crm/klienti?tab=1',
+      );
+      expect(screen.getByRole('link', { name: 'Otevřít e-shop ŠroubShop' }).getAttribute('href')).toBe(
+        'http://localhost:3070/',
+      );
+    }),
 );
 
 it.live('checks a step, persists it and starts again', () =>

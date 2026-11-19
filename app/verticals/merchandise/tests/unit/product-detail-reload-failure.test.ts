@@ -3,9 +3,10 @@
 // generated records client running through its HTTP contract. A reload of the product on screen that fails keeps the editor mounted with its
 // unsaved draft and reports the failure; a first read that fails, a denied read, or another product never shows
 // the product read before.
-import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -152,7 +153,7 @@ const reload = (productId: string) =>
       await browserRuntime.runPromise(productDetailData.refresh(input).pipe(Effect.ignore));
       await browserRuntime.runPromise(Effect.yieldNow);
     }),
-  ).pipe(Effect.andThen(settle));
+  ).pipe(Effect.andThen(networkIdle));
 
 const text = () => container?.textContent ?? '';
 
@@ -178,12 +179,14 @@ it.live('a failed reload keeps the editor mounted with its draft and reports the
     serve('Cable');
     yield* show('product-1');
     yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
+    yield* networkIdle;
     yield* acted(() => typeDraft?.('Cable 2 m'));
 
     refuse(unavailable);
     shown.length = 0;
     yield* reload('product-1');
     yield* waitUntil(() => shown.at(-1) === 'ready:Cable:unavailable');
+    yield* networkIdle;
     expect(shown.filter((state) => !state.startsWith('ready:'))).toEqual([]);
     expect(mounts).toBe(1);
     expect(text()).toBe('Cable 2 m');
@@ -191,6 +194,7 @@ it.live('a failed reload keeps the editor mounted with its draft and reports the
     serve('Cable B');
     yield* reload('product-1');
     yield* waitUntil(() => shown.at(-1) === 'ready:Cable B:current');
+    yield* networkIdle;
     expect(mounts).toBe(1);
     expect(text()).toBe('Cable 2 m');
   }).pipe(Effect.provide(network)),
@@ -202,9 +206,11 @@ it.live('a denied reload drops the shown product at once', () =>
     serve('Cable');
     yield* show('product-1');
     yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
+    yield* networkIdle;
     refuse(denied);
     yield* reload('product-1');
     yield* waitUntil(() => shown.at(-1) === 'error:forbidden');
+    yield* networkIdle;
     expect(text()).toBe('');
   }).pipe(Effect.provide(network)),
 );
@@ -215,10 +221,12 @@ it.live('a failed read of another product never shows the product read before', 
     serve('Cable');
     yield* show('product-1');
     yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
+    yield* networkIdle;
     refuse(unavailable);
     shown.length = 0;
     yield* show('product-2');
     yield* waitUntil(() => shown.at(-1) === 'error:unavailable');
+    yield* networkIdle;
     expect(shown.some((state) => state.startsWith('ready:'))).toBe(false);
     expect(text()).toBe('');
   }).pipe(Effect.provide(network)),

@@ -8,6 +8,7 @@ import {
   unmountAll,
   waitUntilOnFakeTimers,
 } from '@app/admin-ui/testing/module-ui';
+import { LIST_WARM_ROWS } from '@app/admin-ui';
 import { partyRegistryApi } from '@app/party-registry/api';
 import {
   browserNetwork,
@@ -235,6 +236,16 @@ it.live('a list mounted after the preload of its first page reads neither the pa
     yield* idle(1);
     expect(count('list-50')).toBe(0);
     expect(count('count')).toBe(0);
+  }).pipe(Effect.provide(network)),
+);
+
+it.live('the orders list still warms its first rows', () =>
+  Effect.gen(function* listWarms() {
+    yield* pinTestDocument;
+    yield* mount(OrdersList);
+    yield* idle(5);
+    expect(count('list-50')).toBe(1);
+    expect(count('detail')).toBe(Math.min(ROWS, LIST_WARM_ROWS) * 2);
   }).pipe(Effect.provide(network)),
 );
 

@@ -4,7 +4,8 @@
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
+import { Deferred, Effect } from 'effect';
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import type { AgreementOutcome } from '../../src/routes/[lang]/smlouvy/agreements-command.ts';
 import { SignatureForm } from '../../src/routes/[lang]/smlouvy/signature-form.tsx';
@@ -39,8 +40,8 @@ const onSave = (draft: SignatureDraft) =>
     return answer;
   });
 
-const mountForm = () =>
-  mountInRoute(<SignatureForm busy={false} onSave={onSave} reload={Effect.void} />, {
+const mountForm = (save = onSave) =>
+  mountInRoute(<SignatureForm busy={false} onSave={save} reload={Effect.void} />, {
     path: 'smlouvy',
     url: '/cs/smlouvy',
   });
@@ -61,9 +62,11 @@ const expectBlocked = (router: AnyRouter) =>
 
 const expectAllowed = (router: AnyRouter, destination: string) =>
   Effect.gen(function* allowedNavigation() {
-    yield* acted(() => {
-      void router.navigate({ to: destination });
-    });
+    yield* Effect.promise(() =>
+      act(async () => {
+        await router.navigate({ to: destination });
+      }),
+    );
     yield* waitUntil(() => router.state.location.href === destination);
     expect(router.state.location.href).toBe(destination);
     expect(buttons(labels.discard)).toHaveLength(0);
@@ -88,7 +91,10 @@ afterEach(() => {
 describe('manual signature', () => {
   it.live('an incomplete signature cannot save; the complete signature records all four fields', () =>
     Effect.gen(function* recordOnce() {
-      const { router } = yield* mountForm();
+      const completed = yield* Deferred.make<true>();
+      const { router } = yield* mountForm((draft) =>
+        onSave(draft).pipe(Effect.tap(() => Deferred.succeed(completed, true))),
+      );
       yield* expectAllowed(router, '/cs/smlouvy?clean=1');
       expect(buttons(labels.save)).toHaveLength(1);
       expect(button(labels.save).disabled).toBe(true);
@@ -97,6 +103,7 @@ describe('manual signature', () => {
       yield* fill;
 
       yield* click(button(labels.save));
+      yield* Deferred.await(completed);
       yield* waitUntil(() => text().includes(labels.saved));
       expect(sentDrafts).toEqual([signature]);
       yield* expectAllowed(router, '/cs');

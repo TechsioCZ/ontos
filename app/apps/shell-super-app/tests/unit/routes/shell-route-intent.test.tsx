@@ -49,9 +49,14 @@ interface PreparedDestination {
 }
 
 /** Real route loaders record the destinations reached by the Shell's intent scheduler. */
-const mountLinks = (element: ReactElement, navigation: Effect.Effect<unknown> = Effect.void) =>
+const mountLinks = (
+  element: ReactElement,
+  navigation: Effect.Effect<unknown> = Effect.void,
+  preparation: Effect.Effect<unknown> = Effect.void,
+) =>
   Effect.gen(function* mountRealLinks() {
     const prepared: PreparedDestination[] = [];
+    const completed: PreparedDestination[] = [];
     const starts: PreparedDestination[] = [];
     const router = makeShellRouter({
       page: { component: () => null, path: '$destination' },
@@ -70,14 +75,18 @@ const mountLinks = (element: ReactElement, navigation: Effect.Effect<unknown> = 
               });
             }
           },
-          loader: ({ location, preload }: LoaderFnContext) => {
+          loader: ({ abortController, location, preload }: LoaderFnContext) => {
             if (preload) {
-              prepared.push({
+              const destination = {
                 hash: location.hash,
                 search: Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(location.search),
                 to: location.pathname,
-              });
-              return browserRuntime.runPromise(Effect.void);
+              };
+              prepared.push(destination);
+              return browserRuntime.runPromise(
+                preparation.pipe(Effect.andThen(Effect.sync(() => completed.push(destination)))),
+                { signal: abortController.signal },
+              );
             }
             return browserRuntime.runPromise(navigation);
           },
@@ -86,7 +95,7 @@ const mountLinks = (element: ReactElement, navigation: Effect.Effect<unknown> = 
     }
     yield* renderShellRoute(router, shellLocaleCopy('en'));
     yield* settle;
-    return { prepared, router, starts };
+    return { completed, prepared, router, starts };
   });
 
 const ready = () => screen.getByRole('status').textContent === 'ready';
@@ -110,6 +119,50 @@ it.live('rendering staff links prepares nothing; only intent prepares a destinat
     fireEvent.mouseEnter(screen.getByRole('link', { name: 'Operations' }));
     yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([{ hash: '', search: {}, to: '/en/operations' }]);
+  }),
+);
+
+it.live('never cancels started intent work on leave', () =>
+  Effect.gen(function* leaveKeepsWork() {
+    const release = yield* Deferred.make<boolean>();
+    const arrived = yield* Deferred.make<boolean>();
+    const { completed, prepared } = yield* mountLinks(
+      <StaffLinks />,
+      Effect.void,
+      Deferred.succeed(arrived, true).pipe(Effect.andThen(Deferred.await(release))),
+    );
+    yield* Effect.gen(function* leaveWhilePreparing() {
+      fireEvent.mouseEnter(screen.getByRole('link', { name: 'Finance' }));
+      yield* Deferred.await(arrived);
+      fireEvent.mouseLeave(screen.getByRole('link', { name: 'Finance' }));
+      // The real native loader is held open: leaving the link neither cancels nor starts another preparation.
+      expect(prepared).toHaveLength(1);
+      yield* Deferred.succeed(release, true);
+      yield* staffRoutePreloads.awaitIdle;
+      expect(prepared).toHaveLength(1);
+      expect(completed).toHaveLength(1);
+    }).pipe(Effect.ensuring(Deferred.succeed(release, true)));
+  }),
+);
+
+it.live('a menu of many links sends nothing until one is pointed at', () =>
+  Effect.gen(function* manyLinks() {
+    const { prepared, starts } = yield* mountLinks(
+      <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
+        {['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'].map((key) => (
+          <ShellRouteLink key={key} to={`/${key}`}>
+            {key}
+          </ShellRouteLink>
+        ))}
+      </StaffRoutePreloadContext>,
+    );
+    yield* staffRoutePreloads.awaitIdle;
+    expect(prepared).toEqual([]);
+    fireEvent.focus(screen.getByRole('link', { name: 'eight' }));
+    expect(starts).toHaveLength(1);
+    expect(starts.at(-1)).toEqual({ hash: '', search: {}, to: '/en/eight' });
+    yield* staffRoutePreloads.awaitIdle;
+    expect(prepared).toHaveLength(1);
   }),
 );
 
@@ -138,6 +191,7 @@ it.live('retains complete localized query/hash and user event handlers', () =>
         </ShellRouteLink>
       </StaffRoutePreloadContext>,
     );
+    yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([]);
     fireEvent.focus(screen.getByRole('link'));
     expect(focused).toHaveLength(1);
@@ -181,20 +235,22 @@ it.live('drops caches at once after writes and prepares nothing in the backgroun
   Effect.gen(function* invalidation() {
     const { prepared, router } = yield* mountLinks(<IntentContext />);
     yield* waitUntil(ready);
+    yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([]);
     // A repeated native preload reuses its cached loader result until an invalidation.
     const operations = { hash: '', search: {}, to: '/en/operations' };
     const warmCache = Effect.promise(() => router.preloadRoute({ to: operations.to }));
     yield* warmCache;
     yield* warmCache;
+    yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([operations]);
     window.dispatchEvent(new Event(moduleWriteEvent));
     yield* warmCache;
+    yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([operations, operations]);
-    yield* Effect.sleep('30 millis');
     window.dispatchEvent(new Event(moduleWriteEvent));
     yield* warmCache;
-    yield* Effect.sleep('30 millis');
+    yield* staffRoutePreloads.awaitIdle;
     // Each write forced exactly one reload; the idle menu added no preparations.
     expect(prepared.length - 1).toBe(2);
     expect(prepared).toEqual([operations, operations, operations]);
@@ -205,6 +261,7 @@ it.live('drops caches at once after writes and prepares nothing in the backgroun
     });
     expect(window.localStorage.getItem(recording)).toBeNull();
     yield* warmCache;
+    yield* staffRoutePreloads.awaitIdle;
     expect(prepared.length - 1).toBe(3);
   }),
 );

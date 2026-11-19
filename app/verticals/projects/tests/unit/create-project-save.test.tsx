@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 // The real create form, module copy, router guard and generated clients run against the owner's HTTP contracts.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -104,9 +104,7 @@ const expectBlocked = (router: AnyRouter) =>
   });
 const expectAllowed = (router: AnyRouter, destination: string) =>
   Effect.gen(function* allowedDeparture() {
-    yield* acted(() => {
-      void router.navigate({ to: destination });
-    });
+    yield* Effect.promise(() => router.navigate({ to: destination }));
     yield* waitUntil(() => router.state.location.href === destination);
     expect(router.state.location.href).toBe(destination);
     expect(buttons(labels.discard)).toHaveLength(0);
@@ -148,6 +146,18 @@ it.live('typing and Enter send nothing; Uložit creates once and the page can be
   }).pipe(Effect.provide(network)),
 );
 
+it.live('reads the required text of a required field in Czech', () =>
+  Effect.gen(function* requiredText() {
+    yield* pinTestDocument;
+    yield* mount();
+    const label = Option.getOrThrow(
+      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="project-name"]')),
+    );
+    expect(label.textContent).toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('an uncertain create locks the inputs, and Uložit retries the same draft with the same key', () =>
   Effect.gen(function* uncertainLock() {
     yield* pinTestDocument;
@@ -181,11 +191,10 @@ it.live('leaving with typed input asks, and Zahodit změny leaves without creati
     const unsubscribe = router.subscribe('onResolved', (event) => {
       arrivals.push(event.toLocation.pathname);
     });
-    yield* acted(() => {
-      void router.navigate({ to: '/cs/other' });
-    });
+    const departure = router.navigate({ to: '/cs/other' });
     yield* waitUntil(() => buttons(labels.discard).length === 1);
     yield* acted(() => buttonNamed(labels.discard).click());
+    yield* Effect.promise(() => departure);
     yield* waitUntil(() => router.state.location.pathname === '/cs/other');
     expect(arrivals).toEqual(['/cs/other']);
     unsubscribe();

@@ -1016,6 +1016,10 @@ describe('governed internal Party adapter', () => {
             receipts.push(receipt);
           }),
       });
+      expect(peer.gateway[1]?.subject).toMatchObject({
+        declarationKey: 'party.registry.party-source-effect-receipt.read',
+        operationRequirementKey: 'integration.symmy.requirement.worker.party.registry.api.party-source-effect-receipt',
+      });
       expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
       expect(receipts).toEqual([
         Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
@@ -1068,6 +1072,13 @@ describe('governed internal Party adapter', () => {
               }),
           })
           .pipe(Effect.result);
+        if (refusal === 'no saved reply and a denied receipt Read') {
+          expect(peer.gateway[1]?.subject).toMatchObject({
+            originalActionKey: 'party.registry.create-party',
+            originalIdempotencyKey: effectId,
+            originalPrincipalId: executorPrincipalId,
+          });
+        }
         expect(Result.isFailure(recovered)).toBe(true);
         expect(receipts).toEqual([]);
         expect(peer.create.sent).toHaveLength(1);

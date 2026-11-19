@@ -20,7 +20,7 @@ import {
 } from '@app/work-tasks/contracts/records';
 import type { RecordsRequest as WorkRecordsRequest } from '@app/work-tasks/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Deferred, Effect, Exit, Option, Schema } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { afterAll, afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -41,6 +41,7 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { leaseInputOf, leaseRecords } from '../../src/routes/[lang]/najmy/lease-occupant.ts';
 import {
   leaseInvoicesExact,
+  leaseRelatedView,
   leaseTasks,
   preloadLeaseRelated,
   useLeaseRelated,
@@ -356,6 +357,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       );
       yield* dispatch(moduleChangeEvent);
       yield* waitUntil(() => view.text() === 'unavailable');
+      yield* networkIdle;
       expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       answer = Effect.fail(
         yield* Schema.decodeUnknownEffect(LeaseInvoicesUnavailableProblemSchema)({
@@ -369,8 +371,8 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       );
       yield* dispatch(moduleWriteEvent);
       yield* waitUntil(() => view.text() === 'unavailable');
-      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       yield* networkIdle;
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       expect(reads.finance).toHaveLength(0);
     }),
   );
@@ -391,8 +393,8 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed(page(1, 1, 'cursor-1')));
       yield* dispatch(moduleChangeEvent);
       yield* waitUntil(() => view.text() === 'unavailable');
-      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       yield* networkIdle;
+      expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       expect(reads.finance).toHaveLength(0);
     }),
   );
@@ -422,6 +424,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
       // Release the cancelled page's read, still held at the owner, so the next test starts on an idle network.
       yield* Deferred.succeed(held, true);
+      yield* networkIdle;
     }),
   );
 
@@ -453,6 +456,55 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
     }),
   );
 
+  suite.effect('a Finance revision change between pages fails honestly and a later read retries', () =>
+    Effect.gen(function* revisionDrift() {
+      yield* pinTestDocument;
+      answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed({ ...page(2, 1), revision: 24 }));
+      const exit = yield* Effect.exit(leaseInvoicesExact.read(detail()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(leaseInvoicesExact.snapshot(detail()).state).toBe('failed');
+      answer = Effect.succeed({ ...page(1, 1), revision: 24 });
+      const retried = yield* leaseInvoicesExact.read(detail());
+      expect(retried.invoices).toHaveLength(1);
+      expect(retried.revision).toBe(24);
+      expect(leaseInvoicesExact.snapshot(detail()).state).toBe('ready');
+    }),
+  );
+
+  suite.effect('a stalled cursor fails instead of looping or claiming completeness', () =>
+    Effect.gen(function* stalledCursor() {
+      yield* pinTestDocument;
+      answers.push(Effect.succeed(page(1, 1, 'cursor-1')), Effect.succeed(page(1, 1, 'cursor-1')));
+      const exit = yield* Effect.exit(leaseInvoicesExact.read(detail()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(reads.leaseInvoices).toHaveLength(2);
+      expect(leaseInvoicesExact.snapshot(detail()).state).toBe('failed');
+    }),
+  );
+
+  suite.effect('cancellation stops the in-flight page without settling a partial collection', () =>
+    Effect.gen(function* cancelledPage() {
+      yield* pinTestDocument;
+      const started = yield* Deferred.make<boolean>();
+      const held = yield* Deferred.make<boolean>();
+      answers.push(
+        Effect.succeed(page(1, 1, 'cursor-1')),
+        Deferred.succeed(started, true).pipe(Effect.andThen(Deferred.await(held)), Effect.as(page(2, 1))),
+      );
+      const fiber = yield* Effect.forkChild(leaseInvoicesExact.read(detail()));
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      // The interrupted caller is joined; only the owner's deliberately held page response remains.
+      yield* networkQuietExcept(1);
+      expect(leaseInvoicesExact.snapshot(detail())).toBe(pageDataPending);
+      answer = Effect.succeed(page(1, 1));
+      const retried = yield* leaseInvoicesExact.read(detail());
+      expect(retried.invoices).toHaveLength(1);
+      yield* Deferred.succeed(held, true);
+      yield* networkIdle;
+    }),
+  );
+
   suite.effect('foreign-tenant, unseeded and guest rows never reach the exact read with the wrong request', () =>
     Effect.gen(function* scopeFence() {
       yield* pinTestDocument;
@@ -471,6 +523,26 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
         occupancyRef: guestRow.occupancyRef,
         unitRef: guestRow.unitRef,
       });
+    }),
+  );
+
+  suite.effect('the rendered related view consumes the exact prewarmed invoices authoritatively', () =>
+    Effect.gen(function* viewConsumption() {
+      yield* pinTestDocument;
+      const warmed = page(1, 1);
+      answer = Effect.succeed(warmed);
+      yield* seed;
+      yield* preloadLeaseRelated(detail());
+      const view = leaseRelatedView(detail(), leaseTasks.snapshot(detail()), leaseInvoicesExact.snapshot(detail()));
+      expect(view.invoices).toEqual(Option.some(warmed.invoices));
+      const pending = leaseRelatedView(detail(), leaseTasks.snapshot(detail()), pageDataPending);
+      expect(pending.invoices).toEqual(Option.none());
+      const failed = leaseRelatedView(detail(), leaseTasks.snapshot(detail()), {
+        error: 'denied',
+        refreshing: false,
+        state: 'failed',
+      });
+      expect(failed.invoices).toEqual(Option.some('unavailable'));
     }),
   );
 });

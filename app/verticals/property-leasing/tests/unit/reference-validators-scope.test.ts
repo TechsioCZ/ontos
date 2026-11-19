@@ -20,7 +20,7 @@ import {
   GatewayTrustedPrincipalContextSchema,
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
 } from '@app/shared-contracts';
-import { inProcessFetch, serveApi } from '@app/shared-contracts/testing/http-double';
+import { inProcessFetch, networkIdle, serveApi } from '@app/shared-contracts/testing/http-double';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Clock, ConfigProvider, Crypto, Effect, Layer, Predicate, Schema, Tracer } from 'effect';
@@ -279,6 +279,7 @@ const validateInterleavedRequests = (input: {
 
     // The lookups built no further source.
     expect(calls.sources).toHaveLength(2);
+    yield* networkIdle;
     expect(calls.property.map((read) => [read.correlationId, read.authorization])).toEqual([
       ['request-a', credentialsA[0]?.authorization],
       ['request-a', credentialsA[1]?.authorization],

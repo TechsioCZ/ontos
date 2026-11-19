@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
+
 import { NodeFileSystem } from '@effect/platform-node';
-import { Config, Effect, FileSystem } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { Config, Effect, FileSystem, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { loadConfigurationProvider } from '../../api/auth/configuration-provider.ts';
@@ -48,18 +50,35 @@ it.effect('a missing environment file is an empty file, not a failure', () =>
 
 it.effect('an explicit empty environment does not fall through to process values', () =>
   Effect.gen(function* emptyEnvironment() {
-    yield* Effect.acquireRelease(
-      Effect.sync(() => rs.stubEnv('ONTOS_PROVIDER_TEST', 'process-value')),
-      () => Effect.sync(() => rs.unstubAllEnvs()),
-    );
     const envPath = yield* environmentFile('ONTOS_PROVIDER_TEST=file-value\n');
-    const read = (environment?: Readonly<Partial<Record<'ONTOS_PROVIDER_TEST', string>>>) =>
-      loadConfigurationProvider(
-        environment === undefined ? { envPath } : { environment, envPath },
-        () => 'unreadable',
-      ).pipe(Effect.flatMap((provider) => Config.String('ONTOS_PROVIDER_TEST').parse(provider)));
-    expect(yield* read()).toBe('process-value');
-    expect(yield* read({})).toBe('file-value');
+    // Only the child's launch input contains this value; the test worker's process environment stays untouched.
+    const stdout = yield* Effect.try(() =>
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '--eval',
+          `import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { Config, Effect } from 'effect';
+const { loadConfigurationProvider } = await import(pathToFileURL(resolve('api/auth/configuration-provider.ts')).href);
+const envPath = process.argv[1];
+const read = (options) => loadConfigurationProvider({ ...options, envPath }, () => 'unreadable').pipe(
+  Effect.flatMap((provider) => Config.String('ONTOS_PROVIDER_TEST').parse(provider)),
+);
+const inherited = await Effect.runPromise(read({}));
+const empty = await Effect.runPromise(read({ environment: {} }));
+process.stdout.write(JSON.stringify({ inherited, empty }));`,
+          envPath,
+        ],
+        { encoding: 'utf-8', env: { ONTOS_PROVIDER_TEST: 'process-value' } },
+      ),
+    );
+    const result = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Struct({ empty: Schema.String, inherited: Schema.String })),
+    )(stdout);
+    expect(result.inherited).toBe('process-value');
+    expect(result.empty).toBe('file-value');
   }).pipe(Effect.provide(NodeFileSystem.layer)),
 );
 

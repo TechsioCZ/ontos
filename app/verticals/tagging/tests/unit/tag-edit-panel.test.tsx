@@ -140,8 +140,8 @@ describe('tag edit panel with one Save button', () => {
       yield* typeName('VIP klient');
       yield* click(button('Uložit'));
       yield* waitUntil(() => saveState() === 'conflict');
-      expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
       yield* networkIdle;
+      expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
       expect(reads).toHaveLength(1);
       expect(commands).toHaveLength(0);
     }).pipe(Effect.provide(network)),

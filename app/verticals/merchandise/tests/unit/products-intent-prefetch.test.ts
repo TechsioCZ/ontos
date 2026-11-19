@@ -226,9 +226,9 @@ it.live('pointing at a stale row reads its detail once, so the product opens wit
 
     reads.length = 0;
     yield* mount(ProductDetail);
+    yield* networkIdle;
     expect(opened).not.toContain('loading');
     expect(opened.at(-1)).toBe('ready');
-    yield* networkIdle;
     expect(detailReads()).toEqual([]);
   }).pipe(Effect.provide(network)),
 );

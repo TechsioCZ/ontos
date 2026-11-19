@@ -16,6 +16,7 @@ import {
   Schema,
   Scope,
 } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { assert, expect, it, rs } from 'effect-rstest';
 
 import { AccessIntent } from '../../src/access/decision/authority.ts';
@@ -1731,26 +1732,60 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, NativeFixtureEndpointsLive), { exclude
         expect(transport.writeRelationships).toHaveBeenCalledTimes(before);
       }),
     );
-
-    suite.effect(
-      'live fixture rejects missing and malformed release pins before reading configuration or opening services',
-      () =>
-        Effect.gen(function* rejectInvalidFixtureRelease() {
-          for (const compositionRevision of ['', 'latest', 'a'.repeat(63), 'A'.repeat(64)]) {
-            const failure = yield* Effect.flip(
-              makeLiveOperationFixture({
-                authenticationNamespaceId: 'fixture-release-unit',
-                compositionRevision,
-                runtimeConnectionString: Redacted.make(`postgresql://${fixtureRuntimeRole}:unit@127.0.0.1/unit`),
-              }),
-            );
-            expect(Predicate.isTagged(failure, 'LiveOperationFixtureError')).toBe(true);
-            expect(failure.reason).toBe('Invalid live operation fixture configuration');
-          }
-        }),
-    );
   },
 );
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('isolated live fixture configuration', (suite) => {
+  suite.effect(
+    'live fixture rejects missing and malformed release pins before reading configuration or opening services',
+    () =>
+      Effect.gen(function* rejectInvalidFixtureRelease() {
+        // The child has no SpiceDB or database environment; invalid pins must fail before either is read.
+        // Import the actual public fixture, with no module replacement or worker environment mutation.
+        const revisions = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))([
+          '',
+          'latest',
+          'a'.repeat(63),
+          'A'.repeat(64),
+        ]);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stdout = yield* spawner.string(
+          ChildProcess.make(
+            process.execPath,
+            [
+              '--input-type=module',
+              '--eval',
+              `import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { Effect, Redacted } from 'effect';
+const { makeLiveOperationFixture } = await import(pathToFileURL(resolve('src/testing/live-operations.ts')).href);
+const failures = [];
+for (const compositionRevision of JSON.parse(process.argv[1])) {
+  const failure = await Effect.runPromise(Effect.flip(makeLiveOperationFixture({
+    authenticationNamespaceId: 'fixture-release-unit',
+    compositionRevision,
+    runtimeConnectionString: Redacted.make(process.argv[2]),
+  })));
+  failures.push({ _tag: failure._tag, reason: failure.reason });
+}
+process.stdout.write(JSON.stringify(failures));`,
+              revisions,
+              `postgresql://${fixtureRuntimeRole}:unit@127.0.0.1/unit`,
+            ],
+            { env: {}, extendEnv: false, stderr: 'inherit' },
+          ),
+        );
+        const failureSchema = Schema.Struct({ _tag: Schema.String, reason: Schema.String });
+        const failures = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Tuple([failureSchema, failureSchema, failureSchema, failureSchema])),
+        )(stdout);
+        for (const failure of failures) {
+          expect(Predicate.isTagged(failure, 'LiveOperationFixtureError')).toBe(true);
+          expect(failure.reason).toBe('Invalid live operation fixture configuration');
+        }
+      }).pipe(Effect.scoped),
+  );
+});
 
 const safeNative = {
   bypass: false,

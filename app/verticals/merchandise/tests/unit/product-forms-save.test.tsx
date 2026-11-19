@@ -2,7 +2,7 @@
 // The create and bulk product forms send their command only from the shared Save button ("Uložit"), last in the
 // footer: typing and Enter change only the draft. Real clients reach the owner contracts through in-process HTTP.
 // The forms run under the module i18n and router with their real controls and leave protection.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -204,6 +204,17 @@ it.live('the price change asks before leaving only for a percent the user typed 
   }).pipe(Effect.provide(network)),
 );
 
+it.live('reads the required text of a required field in Czech', () =>
+  Effect.gen(function* requiredText() {
+    yield* pinTestDocument;
+    yield* mount(<CategoryDialog {...categoryProps} />);
+    yield* networkIdle;
+    const label = document.querySelector<HTMLLabelElement>('label[for="bulk-category-input"]');
+    expect(label?.textContent ?? '').toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('a refused variant bulk price edit shows its actionable message instead of a revision conflict', () =>
   Effect.gen(function* actionableBulkRefusal() {
     yield* pinTestDocument;
@@ -220,6 +231,7 @@ it.live('a refused variant bulk price edit shows its actionable message instead 
     yield* click(saveButton());
     const message = copy('merchandise.pages.products.messages.variantBulkPriceUnsupported');
     yield* waitUntil(() => (document.body.textContent ?? '').includes(message));
+    yield* networkIdle;
     expect(document.body.textContent).not.toContain(copy('merchandise.pages.products.messages.conflict'));
     expect(committed).toEqual([]);
     return yield* Effect.void;
@@ -272,6 +284,7 @@ it.live('a tree category deleted meanwhile says so instead of a stock refusal', 
     yield* click(saveButton());
     const message = copy('merchandise.pages.products.category.missing');
     yield* waitUntil(() => (document.body.textContent ?? '').includes(message));
+    yield* networkIdle;
     expect(committed).toEqual([]);
   }).pipe(Effect.provide(network)),
 );

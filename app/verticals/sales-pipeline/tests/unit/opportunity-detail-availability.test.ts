@@ -1,9 +1,26 @@
 // @rstest-environment happy-dom
+import { DETAIL_VIEW_MODE_KEY } from '@app/admin-ui';
 import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
-import { Effect, Schema } from 'effect';
+import {
+  browserNetwork,
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
-import { createElement } from 'react';
+import { act, createElement } from 'react';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
+import {
+  RecordsApi,
+  RecordsForbiddenProblemSchema,
+  RecordsResponseSchema,
+  RecordsUnavailableProblemSchema,
+} from '../../shared/apis/records.ts';
+import { RecordsPage } from '../../src/routes/[lang]/prodej/prilezitosti/page.tsx';
 import {
   OpportunityDetailNotice,
   opportunityDetailState,
@@ -47,6 +64,48 @@ const noticeText = (status: OpportunityDetailNoticeStatus) =>
     unmountAll();
     return content;
   });
+
+const pageRecords = (items: readonly ReturnType<typeof opportunity>[]) =>
+  Schema.decodeUnknownSync(RecordsResponseSchema)({
+    actorPrincipalRef: { principalId: partyId, tenantId: partyId },
+    canWrite: false,
+    indicators: {
+      byStage: [],
+      lostCount: 0,
+      openCount: items.length,
+      openValueMinor: 0,
+      weightedValueMinor: 0,
+      winRate: null,
+      wonCount: 0,
+      wonValueMinor: 0,
+    },
+    items: items.map((item) => Schema.encodeSync(OpportunitySchema)(item)),
+    revision: 1,
+  });
+
+const openPage = () =>
+  mountInRoute(createElement(RecordsPage), {
+    path: 'prodej/prilezitosti',
+    url: `/cs/prodej/prilezitosti?opportunityId=${requestedId}`,
+  });
+
+const panelText = () => document.querySelector('[role="dialog"]')?.textContent;
+const flushReact = Effect.promise(() => act(() => Promise.resolve()));
+const pageNetwork = (
+  read: Effect.Effect<
+    typeof RecordsResponseSchema.Type,
+    typeof RecordsForbiddenProblemSchema.Type | typeof RecordsUnavailableProblemSchema.Type
+  >,
+) => {
+  const Owner = RecordsApi.prefix('/sales-pipeline-api');
+  return browserNetwork(
+    shellGatewayIssuer({ 'sales-pipeline': '/sales-pipeline-api' }).application,
+    serveApi(
+      Owner,
+      HttpApiBuilder.group(Owner, 'records', (group) => group.handle('execute', () => read)),
+    ),
+  );
+};
 
 afterEach(unmountAll);
 
@@ -111,4 +170,82 @@ describe('opportunity detail availability', () => {
     }
     expect(state.opportunity).toBe(target);
   });
+
+  it.live('passes the requested id and the authorized read state to the detail panel', () =>
+    Effect.gen(function* pageWiring() {
+      yield* pinTestDocument;
+      const target = opportunity(1, 'Vybraná obchodní příležitost');
+      const other = opportunity(2, 'Jiná příležitost');
+      const forbidden = Schema.decodeUnknownSync(RecordsForbiddenProblemSchema)({
+        _tag: 'RecordsForbiddenProblem',
+        detail: 'Přístup byl odepřen.',
+        status: 403,
+        title: 'Zakázáno',
+        type: 'about:blank',
+      });
+      const unavailable = Schema.decodeUnknownSync(RecordsUnavailableProblemSchema)({
+        _tag: 'RecordsUnavailableProblem',
+        detail: 'Registr není dostupný.',
+        retryable: true,
+        status: 503,
+        title: 'Nedostupné',
+        type: 'about:blank',
+      });
+      let reply: Effect.Effect<typeof RecordsResponseSchema.Type, typeof forbidden | typeof unavailable> =
+        Effect.succeed(pageRecords([other, target]));
+      const entered = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      let firstGate = true;
+      const held = new Set<string>();
+      const network = pageNetwork(
+        Effect.gen(function* readPage() {
+          if (firstGate) {
+            firstGate = false;
+            held.add('initial-records');
+            yield* Deferred.succeed(entered, true);
+            yield* Deferred.await(release).pipe(Effect.ensuring(Effect.sync(() => held.delete('initial-records'))));
+          }
+          return yield* reply;
+        }),
+      );
+      yield* Effect.gen(function* readStates() {
+        localStorage.setItem(DETAIL_VIEW_MODE_KEY, 'panel');
+        yield* openPage();
+        yield* Deferred.await(entered);
+        yield* networkQuietExcept(held.size);
+        expect(panelText()).toContain(czech('sales-pipeline.loading'));
+        yield* Deferred.succeed(release, true);
+        yield* networkIdle;
+        yield* flushReact;
+        expect(panelText()).toContain(target.title);
+        unmountAll();
+
+        const states = [
+          { expected: czech('sales-pipeline.detail.missing'), response: Effect.succeed(pageRecords([other])) },
+          { expected: czech('sales-pipeline.pages.records.forbidden'), response: Effect.fail(forbidden) },
+          { expected: czech('sales-pipeline.pages.records.unavailable'), response: Effect.fail(unavailable) },
+        ];
+        for (const state of states) {
+          reply = state.response;
+          yield* openPage();
+          yield* networkIdle;
+          yield* flushReact;
+          expect(panelText()).toContain(state.expected);
+          unmountAll();
+        }
+      }).pipe(
+        Effect.provide(network),
+        Effect.ensuring(
+          Deferred.succeed(release, true).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                unmountAll();
+                localStorage.removeItem(DETAIL_VIEW_MODE_KEY);
+              }),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
 });

@@ -1,8 +1,7 @@
 // @rstest-environment happy-dom
 // Visit and plan panels bind the selected client and records date to CRM commands.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Predicate, Schema } from 'effect';
-import { constVoid } from 'effect/Function';
+import { Deferred, Effect, Option, Predicate, Schema } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { acted, unmountAll } from '@app/admin-ui/testing/module-ui';
 import { mountInRoute } from '../support/module-ui.ts';
@@ -81,11 +80,15 @@ describe('CRM panel command payloads', () => {
     Effect.gen(function* recordVisitFromSave() {
       const sent: CrmCommandInput[] = [];
       const closed: boolean[] = [];
+      const saveCompleted = yield* Deferred.make<null>();
       yield* mountInRoute(
         <RecordVisitPanel
           clientId={client.id}
           onOpenChange={(open) => {
             closed.push(open);
+            if (!open) {
+              Deferred.doneUnsafe(saveCompleted, Effect.succeed(null));
+            }
           }}
           open
           records={records}
@@ -95,6 +98,7 @@ describe('CRM panel command payloads', () => {
       yield* typeInto('crm-visit-new-result', 'Objednají v pondělí');
 
       yield* clickSave();
+      yield* Deferred.await(saveCompleted);
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'RecordVisit')).toBe(true);
       expect(sent[0]).toMatchObject({ clientId: client.id, result: 'Objednají v pondělí' });
@@ -105,11 +109,20 @@ describe('CRM panel command payloads', () => {
   it.live('a known client gets a contact planned one week after the records date', () =>
     Effect.gen(function* planContactFromSave() {
       const sent: CrmCommandInput[] = [];
+      const saveCompleted = yield* Deferred.make<null>();
       yield* mountInRoute(
-        <PlanContactPanel clientId={client.id} onClose={constVoid} records={records} submit={recording(sent)} />,
+        <PlanContactPanel
+          clientId={client.id}
+          onClose={() => {
+            Deferred.doneUnsafe(saveCompleted, Effect.succeed(null));
+          }}
+          records={records}
+          submit={recording(sent)}
+        />,
       );
 
       yield* clickSave();
+      yield* Deferred.await(saveCompleted);
       expect(sent).toEqual([{ _tag: 'PlanContact', clientId: client.id, dueDate: '2026-10-22' }]);
     }),
   );

@@ -220,10 +220,10 @@ it.effect('creates the buyer user, answers one key command with the buyer key an
     expect(frames[1]).toContain('SERVICE_KEYS_CREATED');
     expect(frames[1]).toContain(`"buyer":{"authBindingId":"${buyerBindingId}","principalId":"${principalId}"`);
     expect(frames[1]).toContain('"tenant":{"authContextRef":"better-auth-session:fixture-tenant-session"}');
-    for (const module of modules) {
-      expect(frames[1]).toContain(`fixture-${module.appId}-provider-key`);
-      expect(frames[1]).toContain(module.principalId);
-      expect(frames[1]).toContain(module.bindingId);
+    for (const credential of modules) {
+      expect(frames[1]).toContain(`fixture-${credential.appId}-provider-key`);
+      expect(frames[1]).toContain(credential.principalId);
+      expect(frames[1]).toContain(credential.bindingId);
     }
     expect(frames[2]).toContain('"operation":"STOPPED"');
   }),

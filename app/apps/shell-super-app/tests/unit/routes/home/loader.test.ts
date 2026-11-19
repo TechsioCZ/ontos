@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { ConfigProvider, Effect, Schema } from 'effect';
+import { ConfigProvider, Deferred, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -276,33 +276,50 @@ it.effect('keeps the configured local HTTP origin for the server-side session re
   }),
 );
 
+/** Keep the composition refusal pending until the independently started company reads reach the real BFF. */
+const compositionRefusalAfterCompanyReads = (refusal: ReturnType<NonNullable<ShellBffScript['shellComposition']>>) =>
+  Effect.gen(function* observedCompanyReads() {
+    const legalEntitiesStarted = yield* Deferred.make<boolean>();
+    const tenantsStarted = yield* Deferred.make<boolean>();
+    const peopleStarted = yield* Deferred.make<boolean>();
+    return signedInBff({
+      availableLegalEntities: () => Deferred.succeed(legalEntitiesStarted, true).pipe(Effect.as(legalEntities)),
+      availableTenants: () => Deferred.succeed(tenantsStarted, true).pipe(Effect.as(tenants)),
+      demoAccountCapability: () => Deferred.succeed(peopleStarted, true).pipe(Effect.as({ canManage: false })),
+      shellComposition: () =>
+        Effect.all(
+          [Deferred.await(legalEntitiesStarted), Deferred.await(tenantsStarted), Deferred.await(peopleStarted)],
+          { discard: true },
+        ).pipe(Effect.andThen(refusal)),
+    });
+  });
+
 it.effect('keeps composition failure authoritative after starting independent company reads', () =>
   Effect.gen(function* verifyCase8() {
-    const bff = signedInBff({ shellComposition: () => Effect.fail(capabilityUnavailable) });
+    const bff = yield* compositionRefusalAfterCompanyReads(Effect.fail(capabilityUnavailable));
     expect(yield* loadModel(bff)).toEqual({ state: 'unavailable' });
     expect(endpoints(bff)).toContain('shellComposition');
     for (const read of ['availableLegalEntities', 'availableTenants', 'demoAccountCapability'] as const) {
-      expect(requestsTo(bff, read).length).toBeLessThanOrEqual(1);
+      expect(requestsTo(bff, read), read).toHaveLength(1);
     }
   }),
 );
 
 it.effect('requires a document reload despite speculative company reads for a stale release', () =>
   Effect.gen(function* staleCompositionStopsOwnerReads() {
-    const bff = signedInBff({
-      shellComposition: () =>
-        Effect.fail(
-          Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)({
-            ...problem,
-            _tag: 'ShellReloadRequiredProblem',
-            status: 409,
-          }),
-        ),
-    });
+    const bff = yield* compositionRefusalAfterCompanyReads(
+      Effect.fail(
+        Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)({
+          ...problem,
+          _tag: 'ShellReloadRequiredProblem',
+          status: 409,
+        }),
+      ),
+    );
     expect(yield* loadModel(bff)).toEqual({ state: 'reload_required' });
     expect(endpoints(bff)).toContain('shellComposition');
     for (const read of ['availableLegalEntities', 'availableTenants', 'demoAccountCapability'] as const) {
-      expect(requestsTo(bff, read).length).toBeLessThanOrEqual(1);
+      expect(requestsTo(bff, read), read).toHaveLength(1);
     }
   }),
 );
@@ -444,6 +461,7 @@ it.effect('shares one composition, tenant and legal-entity read across concurren
     });
     const load = loadAgain(bff, new Request('https://shell.example.test/en/ukoly'));
     yield* resetBrowserSessionCache;
+    yield* Effect.all([load, load, load], { concurrency: 'unbounded' });
     yield* Effect.all([load, load, load], { concurrency: 'unbounded' });
     expect(requestsTo(bff, 'shellComposition')).toHaveLength(1);
     expect(requestsTo(bff, 'availableTenants')).toHaveLength(1);

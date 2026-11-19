@@ -5,6 +5,8 @@ import { useDocumentTitle } from '@app/admin-ui';
 import { settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -104,6 +106,18 @@ it.live('names the browser tab after the product once it is loaded', () =>
   }).pipe(Effect.provide(network)),
 );
 
+it.live('gives the tab back to the Shell once the page is left', () =>
+  Effect.gen(function* leaving() {
+    yield* pinTestDocument;
+    const page = yield* mount();
+    yield* waitUntil(() => document.title === copy.productTab);
+    yield* page.rerender(<Frame>{null}</Frame>);
+    yield* networkIdle;
+    yield* settle;
+    expect(document.title).toBe(copy.shellTitle);
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('does not name the tab before the product has loaded', () =>
   Effect.gen(function* loading() {
     yield* pinTestDocument;
@@ -111,6 +125,7 @@ it.live('does not name the tab before the product has loaded', () =>
     answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Effect.never));
     yield* mount();
     yield* Deferred.await(arrived);
+    yield* networkQuietExcept(1);
     yield* settle;
     expect(text()).toContain(moduleText('cs')('merchandise.pages.products.states.loading'));
     expect(document.title).toBe(copy.shellTitle);

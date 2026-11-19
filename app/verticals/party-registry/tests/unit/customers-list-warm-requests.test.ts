@@ -8,6 +8,7 @@ import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -71,13 +72,30 @@ const rows = Array.from({ length: ROWS }, (_, index) =>
   }),
 );
 
-/** While set, owner reads wait for it to be released; unset, they answer in the same tick. */
-let gate: Deferred.Deferred<boolean> | null = null;
-const answer = <Value>(value: Value) =>
-  gate === null ? Effect.succeed(value) : Deferred.await(gate).pipe(Effect.as(value));
-
-/** Completed once this many Counterparty reads have reached the owner. */
+/** Completed once this many Counterparty handlers actually hold their response. */
 let startedSignal: { readonly count: number; readonly started: Deferred.Deferred<boolean> } | null = null;
+let gate: Deferred.Deferred<boolean> | null = null;
+let heldCounterpartyReads = 0;
+const answerCounterparty = <Value>(value: Value) =>
+  Effect.suspend(() => {
+    const release = gate;
+    if (release === null) {
+      return Effect.succeed(value);
+    }
+    return Effect.acquireUseRelease(
+      Effect.sync(() => {
+        heldCounterpartyReads += 1;
+        if (startedSignal !== null && heldCounterpartyReads === startedSignal.count) {
+          Deferred.doneUnsafe(startedSignal.started, Exit.succeed(true));
+        }
+      }),
+      () => Deferred.await(release).pipe(Effect.as(value)),
+      () =>
+        Effect.sync(() => {
+          heldCounterpartyReads -= 1;
+        }),
+    );
+  });
 
 const ownerReads: string[] = [];
 const counterpartyReads: CounterpartyReadRequest[] = [];
@@ -95,11 +113,8 @@ const network = browserNetwork(
     HttpApiBuilder.group(CounterpartyApi, 'counterpartyRead', (group) =>
       group.handle('execute', ({ payload }) => {
         counterpartyReads.push(payload);
-        if (startedSignal !== null && counterpartyReads.length === startedSignal.count) {
-          Deferred.doneUnsafe(startedSignal.started, Exit.succeed(true));
-        }
         ownerReads.push('counterparty');
-        return answer(
+        return answerCounterparty(
           Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
             counterpartyRef: payload.counterpartyRef,
             createdAt: '2026-11-10T10:00:00.000Z',
@@ -127,7 +142,7 @@ const network = browserNetwork(
     HttpApiBuilder.group(DetailApi, 'partyDetail', (group) =>
       group.handle('execute', ({ payload: { partyRef } }) => {
         ownerReads.push('party');
-        return answer(
+        return Effect.succeed(
           Schema.decodeUnknownSync(PartyDetailResponseSchema)({
             currentFactAssertions: [],
             party: {
@@ -153,7 +168,7 @@ const network = browserNetwork(
     HttpApiBuilder.group(ContactsApi, 'partyContactPoints', (group) =>
       group.handle('execute', () => {
         ownerReads.push('contacts');
-        return answer({ items: [] });
+        return Effect.succeed({ items: [] });
       }),
     ),
   ),
@@ -162,7 +177,7 @@ const network = browserNetwork(
     HttpApiBuilder.group(IdentifiersApi, 'partyOfficialIdentifierHistory', (group) =>
       group.handle('execute', () => {
         ownerReads.push('identifiers');
-        return answer({ items: [] });
+        return Effect.succeed({ items: [] });
       }),
     ),
   ),
@@ -176,6 +191,7 @@ const pass = (millis: number): Effect.Effect<void> =>
   Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(millis))).pipe(
     Effect.andThen(networkIdle),
     Effect.andThen(Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(0)))),
+    Effect.andThen(networkIdle),
     Effect.asVoid,
   );
 
@@ -254,6 +270,11 @@ it.layer(network, { excludeTestServices: true })('customers list warm requests',
     Effect.gen(function* fastSweep() {
       yield* pinTestDocument;
       const release = yield* Deferred.make<boolean>();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          gate = null;
+        }).pipe(Effect.andThen(Deferred.succeed(release, true))),
+      );
       const started = yield* Deferred.make<boolean>();
       gate = release;
       startedSignal = { count: INTENT_READ_CONCURRENCY, started };
@@ -261,7 +282,9 @@ it.layer(network, { excludeTestServices: true })('customers list warm requests',
         prefetchCustomerDetail(context, customer);
       }
       yield* Deferred.await(started);
+      yield* networkQuietExcept(heldCounterpartyReads);
       expect(detailsStarted()).toBe(INTENT_READ_CONCURRENCY);
+      gate = null;
       yield* Deferred.succeed(release, true);
       yield* idle(5);
       expect(reads()).toBe((INTENT_READ_CONCURRENCY + 1) * DETAIL_READS);

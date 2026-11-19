@@ -152,6 +152,7 @@ it.layer(gatewayLive)('privacy measure owner gateway', (suite) => {
       });
       const delegated = transport.requests.findLast((sent) => new URL(sent.url).pathname === delegatedPath);
       expect(delegated?.headers.get('x-correlation-id')).toBe('correlation:1');
+      expect(delegated?.headers.get('x-api-key')).toBe('party-fixture-module-key');
     }),
   );
 

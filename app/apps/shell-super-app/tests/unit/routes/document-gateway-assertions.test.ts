@@ -5,7 +5,7 @@ import {
   GatewayUnavailableProblemSchema,
 } from '@app/shared-contracts';
 import type { GatewayContextRequest, GatewayContextResponse } from '@app/shared-contracts';
-import { browserNetwork, networkIdle, serveApi } from '@app/shared-contracts/testing/http-double';
+import { browserNetwork, networkIdle, networkQuietExcept, serveApi } from '@app/shared-contracts/testing/http-double';
 import { HttpApi } from '@modern-js/bff-effect/effect-client';
 import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
@@ -411,7 +411,8 @@ it.live('answers no remote with an assertion of a context that ended while its b
     const asking = yield* askAssertion({ audience: 'mid-flight', compositionRevision: revision }).pipe(
       Effect.forkChild({ startImmediately: true }),
     );
-    yield* Effect.sleep('50 millis');
+    // The batch is held by release; every already-started consumer has reached its wait before the boundary.
+    yield* networkQuietExcept(1);
     yield* clearBrowserRequestCache;
     yield* Deferred.succeed(release, true);
     expect(Exit.isFailure(yield* Fiber.await(asking))).toBe(true);

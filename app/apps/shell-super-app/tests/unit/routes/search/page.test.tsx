@@ -1,3 +1,4 @@
+import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
 import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import { RouterProvider } from '@modern-js/plugin-tanstack/runtime';
@@ -718,6 +719,7 @@ it.effect('a refined query shows only the searching state, never the previous an
       ['Legal Entity', 'Alpha company'],
       ['Current tenant', 'Alpha tenant'],
     ]);
+    yield* networkQuietExcept(1);
     expect(screen.queryByText('unit')).toBeNull();
     expect(screen.queryByRole('link', { name: /Unit 1/u })).toBeNull();
     expect(screen.queryByText('Other records')).toBeNull();
@@ -725,6 +727,26 @@ it.effect('a refined query shows only the searching state, never the previous an
     expect(resourceLinks()).toHaveLength(0);
   }).pipe(Effect.provide(bff.browser));
 });
+
+it.effect('navigating away is not presented as a pending search of this page', () =>
+  Effect.gen(function* navigatingAway() {
+    const entered = Promise.withResolvers<boolean>();
+    const destination = Promise.withResolvers<boolean>();
+    const { router } = yield* renderSearch(readyModel('stock-item', plainResourceId));
+    router.routesByPath['/$lang'].update({
+      loader: () => {
+        entered.resolve(true);
+        return destination.promise;
+      },
+    });
+    yield* visitSearch(router, '/en');
+    yield* Effect.promise(() => entered.promise);
+    // The real destination loader has started, but has not committed over the search page yet.
+    expect(screen.queryByText('Searching…')).toBeNull();
+    expect(screen.getByRole('link', { name: /Unit 1/u })).toBeTruthy();
+    destination.resolve(true);
+  }),
+);
 
 it.effect('an unavailable search points to the agendas and exposes no resource affordance', () =>
   Effect.gen(function* unavailableSearch() {
@@ -800,10 +822,12 @@ it.effect('a same-mounted query change shows fresh loading and then the new answ
 
       yield* visitSearch(router, '/en/search?q=ADAPTÉRY');
       expect(yield* Effect.promise(() => screen.findByText('Searching…'))).toBeTruthy();
+      yield* networkQuietExcept(1);
       expect(screen.queryByText('Definition 18kop009')).toBeNull();
 
       yield* Deferred.succeed(response, answerOf('ADAPTÉRY definition'));
       expect(yield* Effect.promise(() => screen.findByRole('link', { name: /ADAPTÉRY definition/u }))).toBeTruthy();
+      yield* networkIdle;
     }).pipe(Effect.provide(bff.browser));
     expect(searches(bff)).toEqual([
       expect.objectContaining({
@@ -829,14 +853,17 @@ it.effect('a stale answer from the previous same-route query cannot paint', () =
 
       yield* visitSearch(router, '/en/search?q=first');
       yield* Effect.promise(() => screen.findByText('Searching…'));
+      yield* networkQuietExcept(1);
       yield* visitSearch(router, '/en/search?q=second');
+      yield* networkQuietExcept(2);
       yield* Deferred.succeed(first, answerOf('FIRST definition'));
-      yield* Effect.promise(() => Promise.resolve());
+      yield* networkQuietExcept(1);
       expect(screen.queryByRole('link', { name: /FIRST definition/u })).toBeNull();
       expect(screen.getByText('Searching…')).toBeTruthy();
 
       yield* Deferred.succeed(second, answerOf('SECOND definition'));
       expect(yield* Effect.promise(() => screen.findByRole('link', { name: /SECOND definition/u }))).toBeTruthy();
+      yield* networkIdle;
       expect(screen.queryByRole('link', { name: /FIRST definition/u })).toBeNull();
     }).pipe(Effect.provide(bff.browser));
   }),
@@ -860,10 +887,12 @@ it.effect('back to the first same-route query fetches a fresh answer instead of 
 
       yield* visitSearch(router, '/en/search?q=initial');
       expect(yield* Effect.promise(() => screen.findByText('Searching…'))).toBeTruthy();
+      yield* networkQuietExcept(1);
       expect(screen.queryByRole('link', { name: /first definition/u })).toBeNull();
 
       yield* Deferred.succeed(backResponse, answerOf('initial definition'));
       expect(yield* Effect.promise(() => screen.findByRole('link', { name: /initial definition/u }))).toBeTruthy();
+      yield* networkIdle;
     }).pipe(Effect.provide(bff.browser));
     expect(searches(bff).map(({ body }) => body)).toEqual([
       { compositionRevision: '1'.repeat(64), query: 'first' },
@@ -882,6 +911,7 @@ it.effect('clearing the same-route query shows the prompt instead of the previou
 
     yield* visitSearch(router, '/en/search');
     expect(yield* Effect.promise(() => screen.findByText('Search clients, tasks, invoices, contracts…'))).toBeTruthy();
+    yield* networkIdle;
     expect(screen.queryByRole('link', { name: /Initial definition/u })).toBeNull();
     expect(searches(bff)).toEqual([]);
   }).pipe(Effect.provide(bff.browser));
@@ -912,13 +942,17 @@ it.effect('returning to a resolved query after another pending query fetches fre
       yield* visitSearch(router, '/en/search?q=A');
       expect(yield* Effect.promise(() => screen.findByText('Searching…'))).toBeTruthy();
 
+      yield* networkQuietExcept(1);
+
       // Back to B before A resolves: the retained B client answer must not match the new navigation epoch.
       yield* visitSearch(router, '/en/search?q=B');
       expect(screen.getByText('Searching…')).toBeTruthy();
+      yield* networkQuietExcept(2);
       expect(screen.queryByRole('link', { name: /B old answer/u })).toBeNull();
 
       yield* Deferred.succeed(secondB, answerOf('B fresh answer'));
       expect(yield* Effect.promise(() => screen.findByRole('link', { name: /B fresh answer/u }))).toBeTruthy();
+      yield* networkQuietExcept(1);
       expect(screen.queryByRole('link', { name: /B old answer/u })).toBeNull();
     }).pipe(Effect.provide(bff.browser));
   }),
@@ -937,10 +971,12 @@ it.effect('an explicit same-query re-submit invokes a genuinely fresh search', (
       // The same URL again is a new history entry with its own navigation key.
       yield* visitSearch(router, '/en/search?q=initial');
       expect(yield* Effect.promise(() => screen.findByText('Searching…'))).toBeTruthy();
+      yield* networkQuietExcept(1);
       expect(screen.queryByRole('link', { name: /Initial definition/u })).toBeNull();
 
       yield* Deferred.succeed(resubmitted, answerOf('Resubmitted answer'));
       expect(yield* Effect.promise(() => screen.findByRole('link', { name: /Resubmitted answer/u }))).toBeTruthy();
+      yield* networkIdle;
     }).pipe(Effect.provide(bff.browser));
     expect(searches(bff).map(({ body }) => body)).toEqual([{ compositionRevision: '1'.repeat(64), query: 'initial' }]);
   }),
@@ -1015,6 +1051,7 @@ it.effect('a server-rendered pending search shows the loading placeholder, never
     yield* renderSearch(serverRenderedPending());
 
     expect(screen.getByText('Searching…')).toBeTruthy();
+    yield* networkQuietExcept(1);
     expect(screen.queryByText('Nothing found for “unit”.')).toBeNull();
     expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
     expect(renderedRows()).toHaveLength(0);
@@ -1031,10 +1068,12 @@ it.effect('a server-rendered pending search runs once in the browser after hydra
   return Effect.gen(function* hydratedPendingSearch() {
     const { rerender } = yield* renderSearch(serverRenderedPending());
     expect(yield* Effect.promise(() => screen.findByRole('link', { name: /Unit 1/u }))).toBeTruthy();
+    yield* networkIdle;
     expect(searches(bff)).toEqual([
       expect.objectContaining({ acceptLanguage: 'en', body: { compositionRevision: '1'.repeat(64), query: 'unit' } }),
     ]);
     rerender();
+    yield* networkIdle;
     expect(searches(bff)).toHaveLength(1);
   }).pipe(Effect.provide(bff.browser));
 });

@@ -165,6 +165,7 @@ it.layer(network, { excludeTestServices: true })('customer create ares', (suite)
       expect(field('customer-name').value).toBe('Moje firma');
       expect(field('customer-street').value).toBe('Vlastní 1');
       expect(field('customer-vat-id').value).toBe(`CZ${validIco}`);
+      yield* networkIdle;
       expect(screen.queryByText(copy(`${KEY}.aresLoading`))).toBeNull();
     }),
   );

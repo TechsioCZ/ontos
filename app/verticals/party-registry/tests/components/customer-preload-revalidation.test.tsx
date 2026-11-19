@@ -8,6 +8,7 @@ import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -518,6 +519,7 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
       expect(result.current.busy).toBe(false);
       expect(result.current.notice).toBe(translate('party-registry.pages.customers.detail.forbidden'));
       expect(result.current.stale).toBe(true);
+      yield* networkIdle;
       expect(result.current.snapshot).toBeUndefined();
       expect(result.current.party).toBeUndefined();
       const revalidated = { ...snapshot };
@@ -537,6 +539,7 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
       act(() => result.current.refresh());
       yield* waitUntil(() => !result.current.busy);
       expect(result.current.busy).toBe(false);
+      yield* networkIdle;
       expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
       expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
       const failure = yield* Effect.flip(customerDetailPageData.read(pageInput));
@@ -563,6 +566,7 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
       yield* waitUntil(() => !result.current.busy);
       expect(result.current.busy).toBe(false);
       expect(result.current.snapshot?.identity.status).toBe('forbidden');
+      yield* networkIdle;
       expect(cachedCustomerDetailByRef(context, counterpartyRef)).toBeUndefined();
       expect(customerDetailPageData.snapshot(pageInput)).toBe(pageDataPending);
       const reopened = yield* customerDetailPageData.read(pageInput);
@@ -578,11 +582,13 @@ it.layer(network, { excludeTestServices: true })('customer preload revalidation'
       counterpartyAnswer = Deferred.await(gate).pipe(Effect.as(snapshot.counterparty));
       const { rerender, result } = renderHook(useDetail, { initialProps });
       act(() => result.current.refresh());
+      yield* networkQuietExcept(1);
       const next: CustomerDetailSnapshot = { ...snapshot, identity: { status: 'forbidden' } };
       rerender({ value: next });
       yield* Deferred.succeed(gate, true);
       yield* waitUntil(() => !result.current.busy);
       expect(result.current.busy).toBe(false);
+      yield* networkIdle;
       expect(result.current.snapshot).toBe(next);
       expect(result.current.party).toBeUndefined();
     }),

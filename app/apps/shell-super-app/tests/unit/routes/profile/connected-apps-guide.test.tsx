@@ -51,6 +51,63 @@ const click = (element: HTMLElement) =>
     fireEvent.click(element);
   }).pipe(Effect.andThen(settle));
 
+it.live.each(['cs', 'en'] as const)('renders translated current instructions for all clients in %s', (language) =>
+  Effect.sync(() => {
+    const expectedCopy = shellLocaleCopy(language);
+    const clients = connectGuide(url, (key, values) => expectedCopy.t(key, values ?? {}));
+    const copy = expectedCopy.cloneInstance({ forkResourceStore: true, initAsync: false });
+    copy.addResourceBundle(
+      language,
+      'translation',
+      structuredClone(expectedCopy.getResourceBundle(language, 'translation')),
+    );
+    const view = render(
+      <ShellI18n translations={copy}>
+        <ConnectedAppsGuide mcpUrl={url} />
+      </ShellI18n>,
+    );
+    // This component renders its instructions synchronously; no clipboard operation has started.
+    expect(
+      Array.from(view.container.querySelectorAll('section[aria-labelledby]'), (section) =>
+        section.getAttribute('aria-labelledby')?.replace('mcp-guide-', ''),
+      ),
+    ).toEqual(['chatgpt', 'claude', 'claude-code', 'vscode', 'cursor']);
+    const chatgpt = screen.getByRole('region', { name: 'ChatGPT' });
+    expect(chatgpt.textContent).toContain('Plugins');
+    expect(chatgpt.textContent).toContain('Add custom MCP server');
+    expect(chatgpt.textContent).toContain('Business');
+    expect(chatgpt.textContent).toContain('Enterprise');
+    expect(chatgpt.textContent).toContain('Pro');
+    expect(chatgpt.textContent).toContain('Create as a plugin');
+    expect(chatgpt.textContent).not.toContain('Aplikace a konektory');
+    expect(screen.getByRole('region', { name: 'Claude (claude.ai / Desktop)' }).textContent).toContain('Customize');
+    expect(screen.getByRole('region', { name: 'VS Code' }).textContent).toContain('MCP: Add Server');
+    expect(screen.getByRole('region', { name: 'Cursor' }).textContent).toContain('~/.cursor/mcp.json');
+    expect(
+      screen.getByRole('region', { name: expectedCopy.t('shell.connectedAppsGuide.title') }).textContent,
+    ).not.toContain('https://ontos-stage.web-revolution.cz');
+    for (const client of clients) {
+      expect(
+        within(view.container)
+          .queryAllByRole('region', { name: client.title })
+          .flatMap((section) => within(section).queryAllByRole('listitem')),
+      ).toHaveLength(client.steps.length);
+      const section = within(view.container).getByRole('region', { name: client.title });
+      expect(within(section).queryByText(client.requirements)).toBeTruthy();
+      expect(
+        within(section)
+          .queryByRole('link', { name: expectedCopy.t('shell.connectedAppsGuide.officialDocs') })
+          ?.getAttribute('href'),
+      ).toBe(client.docs);
+      const prompt = section.querySelector('details p')?.textContent ?? '';
+      expect(prompt).toContain(url);
+      expect(prompt).toContain(client.title);
+      expect(prompt).toContain('OAuth');
+      expect(prompt).not.toContain('shell.connectedAppsGuide');
+    }
+  }),
+);
+
 it.live.each(['ChatGPT', 'Claude (claude.ai / Desktop)', 'Claude Code', 'VS Code', 'Cursor'])(
   'copies a Czech OAuth-only guided prompt for %s with a real read-only check',
   (title) =>

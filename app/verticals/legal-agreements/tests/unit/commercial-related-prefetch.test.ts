@@ -330,6 +330,7 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
       yield* agreementCustomerData.read(input).pipe(Effect.ignore);
       expect(agreementCustomerData.snapshot(input).state).toBe('failed');
       yield* mountInRoute(createElement(Detail));
+      yield* networkIdle;
       expect(text()).not.toContain('Authorized customer');
       unmountAll();
       window.dispatchEvent(new Event(moduleWriteEvent));

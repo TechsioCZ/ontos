@@ -1,7 +1,8 @@
 // @rstest-environment happy-dom
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Cause, ConfigProvider, Deferred, Effect, Exit, Fiber, FiberSet, Layer, Schema } from 'effect';
+import { Cause, Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, FiberSet, Layer, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
 import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
 import { beforeEach, expect, it } from 'effect-rstest';
 
@@ -16,6 +17,14 @@ import {
   TenantAuthenticationRequiredProblemSchema,
 } from '../../../../shared/browser-api.ts';
 import { resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
+import {
+  availableLegalEntities,
+  availableTenants,
+  canManageDemoAccounts,
+  currentSession,
+  resolveModuleTarget,
+  shellComposition,
+} from '../../../../src/api/auth-client.ts';
 import { loader, loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffEndpoint, ShellBffScript } from '../../../support/shell-bff-double.ts';
@@ -96,6 +105,18 @@ const endpoints = [
 ] satisfies ShellBffEndpoint[];
 const reads = (bff: ReturnType<typeof moduleBff>, endpoint: ShellBffEndpoint) =>
   bff.requests.filter((received) => received.endpoint === endpoint);
+
+const measured = <Value, Failure, Requirements>(operation: Effect.Effect<Value, Failure, Requirements>) =>
+  Effect.gen(function* measureVirtualOperation() {
+    const start = yield* Clock.currentTimeMillis;
+    const value = yield* operation;
+    return { elapsed: (yield* Clock.currentTimeMillis) - start, value };
+  });
+
+const requestKeys = (bff: ReturnType<typeof moduleBff>) =>
+  bff.requests
+    .map(({ body, endpoint, url }) => ({ body, endpoint, url }))
+    .toSorted((left, right) => left.endpoint.localeCompare(right.endpoint));
 
 const gate = <Value, Failure>(answer: Effect.Effect<Value, Failure>) =>
   Effect.gen(function* deferredTransport() {
@@ -308,6 +329,107 @@ it.live('retains composition failure precedence during overlap and does not cach
       expect(reads(bff, 'resolveModuleTarget')).toHaveLength(2);
     }).pipe(Effect.provide(bff.layer));
   }),
+);
+
+it.effect(
+  'reduces the local cold critical path from 1500 to 600 virtual ms with identical successful request keys',
+  () =>
+    Effect.gen(function* deterministicCriticalPath() {
+      yield* coldDocument;
+      const clock = yield* Clock.clockWith(Effect.succeed);
+      const latencies = {
+        availableLegalEntities: 200,
+        availableTenants: 150,
+        currentSession: 100,
+        demoAccountCapability: 300,
+        resolveModuleTarget: 500,
+        shellComposition: 400,
+      };
+      // Only response latency is virtual: all requests still traverse the real client and HTTP contracts.
+      const timedBff = (delays: typeof latencies, servedTarget = target) =>
+        Effect.gen(function* makeTimedOrigin() {
+          const arrivals = {
+            availableLegalEntities: yield* Deferred.make<boolean>(),
+            availableTenants: yield* Deferred.make<boolean>(),
+            currentSession: yield* Deferred.make<boolean>(),
+            demoAccountCapability: yield* Deferred.make<boolean>(),
+            resolveModuleTarget: yield* Deferred.make<boolean>(),
+            shellComposition: yield* Deferred.make<boolean>(),
+          };
+          const answer = <Value>(endpoint: keyof typeof arrivals, value: Value) =>
+            Deferred.succeed(arrivals[endpoint], true).pipe(
+              Effect.andThen(Effect.sleep(delays[endpoint])),
+              Effect.as(value),
+              Effect.provideService(Clock.Clock, clock),
+            );
+          return {
+            bff: moduleBff({
+              availableLegalEntities: () => answer('availableLegalEntities', companies),
+              availableTenants: () => answer('availableTenants', tenants),
+              currentSession: () => answer('currentSession', session),
+              demoAccountCapability: () => answer('demoAccountCapability', { canManage: false }),
+              resolveModuleTarget: () => answer('resolveModuleTarget', servedTarget),
+              shellComposition: () => answer('shellComposition', composition),
+            }),
+            started: (endpoint: keyof typeof arrivals) => Deferred.await(arrivals[endpoint]),
+          };
+        });
+      const options = { baseUrl: new URL(`${origin}/shell-super-app-api`) };
+      // This control reproduces the old successful dependency chain; it is not a live performance benchmark.
+      const serial = Effect.gen(function* serialControl() {
+        yield* currentSession(options);
+        yield* shellComposition({ compositionRevision: revision }, options);
+        yield* canManageDemoAccounts(options);
+        yield* Effect.all([availableLegalEntities(options), availableTenants(options)], { concurrency: 2 });
+        return yield* resolveModuleTarget({ canonicalPath: '/contacts', compositionRevision: revision }, options);
+      });
+      const control = yield* timedBff(latencies);
+      const controlFiber = yield* Effect.forkChild(measured(serial).pipe(Effect.provide(control.bff.layer)));
+      for (const endpoint of ['currentSession', 'shellComposition', 'demoAccountCapability'] as const) {
+        yield* control.started(endpoint);
+        yield* networkQuietExcept(1);
+        yield* TestClock.adjust(latencies[endpoint]);
+      }
+      yield* Effect.all([control.started('availableLegalEntities'), control.started('availableTenants')]);
+      yield* networkQuietExcept(2);
+      yield* TestClock.adjust(Math.max(latencies.availableLegalEntities, latencies.availableTenants));
+      yield* control.started('resolveModuleTarget');
+      yield* networkQuietExcept(1);
+      yield* TestClock.adjust(latencies.resolveModuleTarget);
+      const controlResult = yield* Fiber.join(controlFiber);
+      expect(controlResult.value).toEqual(target);
+      expect(controlResult.elapsed).toBe(1500);
+      yield* networkIdle;
+      const keys = requestKeys(control.bff);
+
+      const candidateLatencies = { ...latencies };
+      const candidate = yield* timedBff(candidateLatencies);
+      const candidateLoad = loadModulePageModel({ canonicalPath: '/contacts', request: request() }).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+      );
+      const candidateFiber = yield* Effect.forkChild(measured(candidateLoad).pipe(Effect.provide(candidate.bff.layer)));
+      yield* candidate.started('currentSession');
+      yield* networkQuietExcept(1);
+      yield* TestClock.adjust(candidateLatencies.currentSession);
+      yield* Effect.all(
+        endpoints.filter((endpoint) => endpoint !== 'currentSession').map((endpoint) => candidate.started(endpoint)),
+      );
+      yield* networkQuietExcept(5);
+      yield* TestClock.adjust(
+        Math.max(
+          candidateLatencies.shellComposition,
+          candidateLatencies.demoAccountCapability,
+          candidateLatencies.availableLegalEntities,
+          candidateLatencies.availableTenants,
+          candidateLatencies.resolveModuleTarget,
+        ),
+      );
+      const candidateResult = yield* Fiber.join(candidateFiber);
+      expect(candidateResult.value).toMatchObject({ state: 'resolved', target });
+      expect(candidateResult.elapsed).toBe(600);
+      yield* networkIdle;
+      expect(requestKeys(candidate.bff)).toEqual(keys);
+    }),
 );
 
 it.live.each(['target', 'composition'] as const)('requires reload on an overlapping %s revision mismatch', (source) => {

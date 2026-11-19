@@ -101,11 +101,13 @@ const openThread = Effect.gen(function* openThread() {
       left.push('proceed');
     }
   });
+  const pendingNavigation = { current: Promise.resolve() };
   const navigate = (to: string) =>
     acted(() => {
-      void panel.router.navigate({ to });
+      pendingNavigation.current = panel.router.navigate({ to });
     });
-  return { ...panel, left, navigate };
+  const navigationSettled = Effect.promise(() => pendingNavigation.current);
+  return { ...panel, left, navigate, navigationSettled };
 });
 
 beforeEach(() => {
@@ -123,6 +125,8 @@ it.live('Uložit in the question posts the same comment and leaves once it went 
     yield* waitUntil(asked);
     yield* click(labels.save);
     yield* waitUntil(() => panel.router.state.location.pathname === '/cs/left');
+    yield* panel.navigationSettled;
+    yield* networkIdle;
     expect(commands).toEqual([
       {
         _tag: 'DocumentCommentPost',
@@ -140,6 +144,8 @@ it.live('a composer holding only spaces does not block leaving', () =>
     yield* typeInto(composer, '   ');
     yield* panel.navigate('/cs/left');
     yield* waitUntil(() => panel.router.state.location.pathname === '/cs/left');
+    yield* panel.navigationSettled;
+    yield* networkIdle;
     expect(asked()).toBe(false);
     expect(panel.left).toEqual(['proceed']);
   }).pipe(Effect.provide(network)),
@@ -152,6 +158,7 @@ it.live("Zrušit in the edit of one's own comment asks once the wording changed;
     yield* click(editLabel);
     yield* panel.navigate('/cs/unchanged');
     yield* waitUntil(() => panel.router.state.location.pathname === '/cs/unchanged');
+    yield* panel.navigationSettled;
     expect(asked()).toBe(false);
     yield* typeInto(editor, 'Nové znění');
     yield* panel.navigate('/cs/left');

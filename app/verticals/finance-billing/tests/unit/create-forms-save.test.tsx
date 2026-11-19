@@ -292,6 +292,7 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
         yield* fillInvoice('1000');
         yield* clickSave;
         yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
         expect(drafts).toHaveLength(1);
         expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
         expect(toastTitles()).toEqual([t(CREATED)]);

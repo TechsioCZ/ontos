@@ -226,6 +226,7 @@ it.layer(network, { excludeTestServices: true })('customer create save', (suite)
         fireEvent.click(stay);
       });
       yield* waitUntil(() => findButton(labels.stay) === undefined);
+      yield* networkIdle;
       expect(findButton(labels.stay)).toBeUndefined();
       expect(openChanges).not.toContain(false);
     }),

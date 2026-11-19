@@ -1,8 +1,10 @@
 // @rstest-environment happy-dom
 // The Shell's native load runs on the real Federation runtime: a real host named as the Shell's, whose SDK fetches each
 // remote's manifest and asks a runtime plugin for the remote's container (./routes/modules/federation-host.ts). Without
-// that host a load that reaches Federation answers `unavailable`, and a load stopped before it fails with a revision
-// conflict.
+// that host a load that reaches Federation answers `unavailable`. Once the document is pinned, another release
+// fails with a revision conflict without registering or requesting anything from a subsequently installed host.
+import { networkIdle } from '@app/shared-contracts/testing/http-double';
+import { createInstance } from '@module-federation/modern-js-v3/runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -36,6 +38,28 @@ const targetOf = (owner: string) =>
 it.live('loads the exact pinned native expose through the scheduler and validates its export', () =>
   Effect.gen(function* loadPinnedExpose() {
     const target = targetOf('native-success');
+    // The registry contains another real host first. The Shell must select its named host, not the first instance.
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        createInstance({
+          name: 'anotherHost',
+          plugins: [
+            {
+              name: 'refuse-shell-loads-on-another-host',
+              registerRemote: () => {
+                throw new Error('The Shell must not register a remote on another host');
+              },
+            },
+          ],
+          remotes: [],
+        }),
+      ),
+      (instance) =>
+        Effect.sync(() => {
+          const instances = globalThis.__FEDERATION__.__INSTANCES__;
+          instances.splice(instances.indexOf(instance), 1);
+        }),
+    );
     const host = yield* makeFederationHost({
       answer: () => Effect.succeed({ default: View }),
       refusedRemotes: [],
@@ -62,7 +86,7 @@ it.live('rejects a native namespace that does not satisfy the caller contract', 
   }),
 );
 
-it.effect('fails before consulting Federation when a document is already pinned to another release', () =>
+it.live('fails before consulting Federation when a document is already pinned to another release', () =>
   Effect.gen(function* rejectChangedRelease() {
     const target = targetOf('native-revision');
     // No Federation host instance is registered in this case: a load that reaches Federation answers unavailable.
@@ -70,11 +94,18 @@ it.effect('fails before consulting Federation when a document is already pinned 
       reason: 'unavailable',
       state: 'unavailable',
     });
-    // Another release of the same document fails as a conflict, so it never got as far as Federation.
+    // Install a real host only after pinning, so a wrong late Federation operation would now be observable.
+    const host = yield* makeFederationHost({
+      answer: () => Effect.succeed({ default: View }),
+      refusedRemotes: [],
+    });
     const failure = yield* loadBrowserModuleEntrypoint(
       { ...target, compositionRevision: 'c'.repeat(64) },
       pageContract,
     ).pipe(Effect.flip);
     expect(Schema.is(BrowserModuleRevisionConflict)(failure)).toBe(true);
+    yield* networkIdle;
+    expect(host.requests).toEqual([]);
+    expect(host.registered).toEqual([]);
   }),
 );

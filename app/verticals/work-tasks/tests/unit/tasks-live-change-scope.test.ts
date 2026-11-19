@@ -2,7 +2,7 @@
 import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { it } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 import { PartyIdSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
@@ -64,13 +64,17 @@ const network = browserNetwork(
 
 it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
   suite.effect('taskRecords reloads on a live change of the data it reads and ignores an unrelated app', () =>
-    assertLiveChangeReload({
-      ignores: 'tax',
-      input,
-      reads: () => reads.length,
-      // 'shell' names Core identity changes; the owner's read includes assignable principals and their names.
-      reloadsOn: ['work-tasks', 'shell'],
-      store: taskRecords,
+    Effect.gen(function* exactLiveChangeReads() {
+      yield* assertLiveChangeReload({
+        ignores: 'tax',
+        input,
+        reads: () => reads.length,
+        // 'shell' names Core identity changes; the owner's read includes assignable principals and their names.
+        reloadsOn: ['work-tasks', 'shell'],
+        store: taskRecords,
+      });
+      // The helper checks each event's exact delta after networkIdle: three total also pins the initial read to one.
+      expect(reads).toHaveLength(3);
     }),
   );
 });

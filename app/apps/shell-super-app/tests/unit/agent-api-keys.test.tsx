@@ -9,7 +9,7 @@ import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { HttpApiBuilder, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
-import { Deferred, Effect, Layer, Redacted, Schema } from 'effect';
+import { Deferred, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, useSyncExternalStore } from 'react';
 import type { ReactElement } from 'react';
@@ -238,10 +238,10 @@ const advancePageClock = (millis: number) =>
     });
   });
 /** `shown` for a case whose page timers are faked: the page clock moves 100 ms per look. */
-const shownOnFakeClock = (find: () => HTMLElement | null, looks = 200): Effect.Effect<HTMLElement> =>
+const shownOnFakeClock = (find: () => HTMLElement | null, looks = 200): Effect.Effect<Option.Option<HTMLElement>> =>
   Effect.suspend(() =>
     find() !== null || looks === 0
-      ? Effect.sync(() => find() ?? document.body)
+      ? Effect.sync(() => Option.fromNullOr(find()))
       : advancePageClock(100).pipe(Effect.andThen(shownOnFakeClock(find, looks - 1))),
   );
 
@@ -259,6 +259,7 @@ it.live(
   () =>
     Effect.gen(function* loadScopedKeys() {
       yield* mountKeys(<AgentApiKeys agent={agent} />);
+      yield* networkIdle;
       expect(screen.queryByRole('button', { name: copy('retry') })).toBeNull();
       expect(yield* shown(() => screen.queryByText('Automation'))).toBeTruthy();
       expect(lists).toEqual([{ limit: 100, offset: 0, principalId, scope: 'company-agent' }]);
@@ -277,26 +278,28 @@ it.live('issues only after explicit confirmation, displays the secret once and n
     yield* type(copy('name'), 'Worker');
     yield* click(button(labels.save));
     const secretField = yield* shown(() => screen.queryByDisplayValue(testSecret));
+    yield* networkIdle;
     expect(secretField?.hasAttribute('readonly')).toBe(true);
     expect(issues).toEqual([
       { idempotencyKey: expect.any(String), payload: { name: 'Worker', principalId, scope: 'company-agent' } },
     ]);
     expect(stored()).toEqual(storedBefore);
     yield* click(button(copy('hideSecret')));
+    yield* networkIdle;
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     // Live changes of other apps cost no read; a change of Core-owned data reloads the keys.
-    yield* networkIdle;
     expect(lists).toHaveLength(2);
     yield* liveChange(['crm']);
     yield* networkIdle;
     expect(lists).toHaveLength(2);
     yield* liveChange(['shell']);
     yield* waitUntil(() => lists.length === 3);
+    yield* networkIdle;
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     view.unmount();
     yield* mountKeys(<AgentApiKeys agent={agent} />);
-    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     yield* networkIdle;
+    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     expect(issues).toHaveLength(1);
     expect(stored()).toEqual(storedBefore);
   }).pipe(Effect.provide(network)),
@@ -310,6 +313,7 @@ it.live('rotates the exact binding with a reason and reports pending cleanup wit
     yield* type(copy('reason'), 'Scheduled rotation');
     yield* click(button(labels.save));
     expect(yield* shown(() => screen.queryByDisplayValue(testSecret))).toBeTruthy();
+    yield* networkIdle;
     expect(screen.getByText(copy('cleanupPending'))).toBeTruthy();
     expect(rotations.map(({ payload }) => payload)).toEqual([
       {
@@ -332,6 +336,7 @@ it.live('uses the actual binding status to revoke a disabled key, not its provid
     yield* type(copy('reason'), 'Credential retired');
     yield* click(button(labels.save));
     yield* waitUntil(() => statuses.length === 1);
+    yield* networkIdle;
     expect(statuses.map(({ payload }) => payload)).toEqual([
       {
         authBindingId,
@@ -378,6 +383,7 @@ it.live('rejects an out-of-scope server response without revealing or filtering 
     listAnswer = () => listOf([withKey({ name: 'Other secret metadata' }, { principalId: otherPrincipal })]);
     yield* mountKeys(<AgentApiKeys agent={agent} />);
     expect(yield* shown(() => screen.queryByText(copy('failed')))).toBeTruthy();
+    yield* networkIdle;
     expect(screen.queryByText('Other secret metadata')).toBeNull();
     expect(isDisabled(copy('issue'))).toBe(true);
   }).pipe(Effect.provide(network)),
@@ -473,12 +479,13 @@ it.live('keeps a committed key change pending until the reread confirms the actu
         fireEvent.click(button(labels.save));
       });
     });
-    expect(yield* shownOnFakeClock(() => screen.queryByText(copy('projectionPending')))).toBeTruthy();
+    expect(Option.isSome(yield* shownOnFakeClock(() => screen.queryByText(copy('projectionPending'))))).toBe(true);
+    yield* networkIdle;
     expect(screen.queryByText(copy('updated'))).toBeNull();
     expect(isDisabled(copy('disable'))).toBe(true);
     listAnswer = () => listOf([withKey({ bindingStatus: 'disabled' })]);
     // The list re-reads by itself until the projection shows the committed change.
-    expect(yield* shownOnFakeClock(() => screen.queryByText(copy('updated')))).toBeTruthy();
+    expect(Option.isSome(yield* shownOnFakeClock(() => screen.queryByText(copy('updated'))))).toBe(true);
     yield* networkIdle;
     expect(statuses).toHaveLength(1);
   }).pipe(Effect.provide(network)),

@@ -3,7 +3,7 @@
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { pinTestDocument } from '@app/shared-contracts/testing/http-double';
-import { Effect, Option, Schema } from 'effect';
+import { Deferred, Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { PartyIdSchema } from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { OpportunityCreatePanel } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-create-panel.tsx';
@@ -19,7 +19,7 @@ const partyId = Schema.decodeSync(PartyIdSchema)('10000000-0000-4000-8000-000000
 
 const created: CreateCommand[] = [];
 
-const mount = (events: string[]) =>
+const mount = (events: string[], completed: Deferred.Deferred<boolean>) =>
   Effect.gen(function* mountPanel() {
     yield* pinTestDocument;
     yield* mountInRoute(
@@ -37,6 +37,7 @@ const mount = (events: string[]) =>
         }
         onCreated={() => {
           events.push('created');
+          Deferred.doneUnsafe(completed, Effect.succeed(true));
         }}
         onOpenChange={(open) => {
           events.push(open ? 'open' : 'closed');
@@ -84,11 +85,14 @@ describe('opportunity create command', () => {
   it.live('sends the chosen customer and close date with the opportunity title', () =>
     Effect.gen(function* createOnce() {
       const events: string[] = [];
-      yield* mount(events);
+      const completed = yield* Deferred.make<boolean>();
+      yield* mount(events, completed);
 
       yield* fillIn;
 
       yield* acted(() => button(labels.save).click());
+      // The panel calls onCreated from afterSave, after the create Effect has finished.
+      yield* Deferred.await(completed);
       expect(created).toEqual([
         {
           _tag: 'CreateOpportunity',

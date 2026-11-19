@@ -3,6 +3,7 @@ import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -173,12 +174,15 @@ it.live('the order hook cannot resurrect a retained ready page it holds no read 
     // Moving to a pending request clears useHeldSnapshot's key while useSettledPageData keeps the prior page.
     answer = () => Effect.never;
     yield* mounted.rerender(createElement(OrdersProbe, { offset: 2 }));
+    yield* networkQuietExcept(1);
     expect(output()).toBe('<output>ready</output>');
     yield* acted(() => ordersPageData.invalidate());
     yield* mounted.rerender(createElement(OrdersProbe, { offset: 2 }));
+    yield* networkQuietExcept(2);
     expect(output()).toBe('<output>loading</output>');
     answer = () => Effect.fail(denied);
     yield* ordersPageData.refresh({ ...source, query: { ...source.query, offset: 2 } });
+    yield* networkQuietExcept(2);
     yield* waitUntil(() => output() === '<output>forbidden</output>');
     expect(output()).toBe('<output>forbidden</output>');
   }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),

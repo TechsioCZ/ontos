@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   AgentAccessClientIdSchema,
   AgentAccessGrantIdSchema,
@@ -180,6 +180,7 @@ it.live('says so and closes when the connection was revoked elsewhere', () => {
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
     yield* click(saveButton());
     yield* waitUntil(() => events.stale.length > 0);
+    yield* networkIdle;
     expect(events.stale.length).toBeGreaterThan(0);
     expect(events.closed).toHaveLength(1);
   }).pipe(Effect.provide(bff.network));
@@ -190,9 +191,8 @@ it.live('a route change with unsaved changes asks first, and Zahodit změny lets
   return Effect.gen(function* routeChangeAsks() {
     const router = yield* renderPanel(callbacks().props);
     // An unchanged panel permits a real route navigation without asking.
-    yield* acted(() => {
-      void router.navigate({ search: { clean: 1 }, to: '/cs/profile' });
-    });
+    yield* Effect.promise(() => router.navigate({ search: { clean: 1 }, to: '/cs/profile' }));
+    yield* settle;
     expect(router.state.location.href).toBe('/cs/profile?clean=1');
     expect(screen.queryByRole('button', { name: 'Zahodit změny' })).toBeNull();
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
@@ -201,12 +201,11 @@ it.live('a route change with unsaved changes asks first, and Zahodit změny lets
       navigations.push(location.href);
     });
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-    yield* acted(() => {
-      void router.navigate({ to: '/cs' });
-    });
+    const navigation = yield* Effect.sync(() => router.navigate({ to: '/cs' }));
     yield* waitUntil(() => screen.queryByRole('button', { name: 'Zahodit změny' }) !== null);
     expect(router.state.location.href).toBe('/cs/profile?clean=1');
     yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
+    yield* Effect.promise(() => navigation);
     expect(router.state.location.pathname).toBe('/cs');
     expect(navigations).toEqual(['/cs']);
     yield* networkIdle;

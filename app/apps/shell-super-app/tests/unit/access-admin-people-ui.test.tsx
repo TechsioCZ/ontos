@@ -46,13 +46,24 @@ const ShellContext = ({ children, router }: { readonly children: ReactNode; read
 );
 /** A Shell link out of the page, as the router performs it: every registered leave guard is asked first. */
 const leavePage = (router: ShellRouter) => router.history.push('/en');
+/** History notifies only after all asynchronous blockers accepted this push. */
+const pushAccepted = (router: ShellRouter, path: string) =>
+  Effect.callback<undefined>((resume) => {
+    const unsubscribe = router.history.subscribe(() => {
+      if (router.history.location.pathname === path) {
+        resume(Effect.undefined);
+      }
+    });
+    router.history.push(path);
+    return Effect.sync(unsubscribe);
+  });
 /** Leaving the page goes through at once: no form holds unsaved input. */
 const leavesFreely = (router: ShellRouter) =>
   Effect.gen(function* leaveFreely() {
-    leavePage(router);
+    yield* pushAccepted(router, '/en');
     yield* Effect.promise(() => waitFor(() => expect(router.history.location.pathname).toBe('/en')));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    router.history.push(peoplePath);
+    yield* pushAccepted(router, peoplePath);
   });
 /** Leaving the page is held while the shared leave question asks; Zůstat keeps the page and its input. */
 const leaveIsHeld = (router: ShellRouter) =>

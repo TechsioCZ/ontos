@@ -7,10 +7,12 @@
 // The page runs on its real i18n, router and generated clients; the Shell's gateway issuer, the agreements owner's
 // records and Action endpoints and Party Registry's customer reads answer in process through their HttpApi contracts.
 import { saveLabelsFor } from '@app/admin-ui';
-import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkQuietExcept,
+  networkSteady,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -100,6 +102,23 @@ let answer: Effect.Effect<RecordsResponse> = Effect.succeed(recordsAt(7, 'server
 /** Every records read and command the agreements owner received, in order. */
 const reads: RecordsRequest[] = [];
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+let counterpartyTraffic = { held: 0 };
+const holdCounterparty = (traffic: typeof counterpartyTraffic) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      traffic.held += 1;
+    }),
+    () => Effect.never,
+    () =>
+      Effect.sync(() => {
+        traffic.held -= 1;
+      }),
+  );
+
+// Count only the counterparty handler's scoped, deliberately unanswered requests. Stability lets new
+// handlers arrive; the exact-count wait below must still finish all records and Action requests.
+const quietExceptCounterparties = (heldRecords = 0) =>
+  networkSteady.pipe(Effect.andThen(Effect.suspend(() => networkQuietExcept(counterpartyTraffic.held + heldRecords))));
 
 const OwnerRecordsApi = RecordsApi.prefix('/legal-agreements-api');
 const OwnerActionApi = ApplyCommandActionApi.prefix('/legal-agreements-api');
@@ -139,7 +158,14 @@ const network = browserNetwork(
   // The counterparty's name never arrives; the panel does not wait for it.
   serveApi(
     CounterpartyApi,
-    HttpApiBuilder.group(CounterpartyApi, 'counterpartyRead', (group) => group.handle('execute', () => Effect.never)),
+    HttpApiBuilder.group(CounterpartyApi, 'counterpartyRead', (group) =>
+      Effect.sync(() => {
+        // Each served network owns its count; finalizers from a previous case retain its old object.
+        const traffic = { held: 0 };
+        counterpartyTraffic = traffic;
+        return group.handle('execute', () => holdCounterparty(traffic));
+      }),
+    ),
   ),
 );
 
@@ -180,6 +206,7 @@ const openTerms = (resourceId: string) =>
     yield* waitUntil(() => buttons(editTerms).length === 1);
     yield* click(editTerms);
     yield* waitUntil(() => Option.isSome(maybeField(owner)));
+    yield* quietExceptCounterparties();
     return mounted;
   });
 
@@ -190,7 +217,7 @@ const reloadThrough = (gate: Deferred.Deferred<RecordsResponse>) =>
     answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Deferred.await(gate)));
     yield* acted(() => agreements.invalidate());
     yield* Deferred.await(arrived);
-    yield* settle;
+    yield* quietExceptCounterparties(1);
   });
 
 beforeEach(() => {
@@ -218,6 +245,7 @@ describe('contract terms panel across a background reload', () => {
 
       yield* Deferred.succeed(gate, recordsAt(8, 'someone-else-notice'));
       yield* waitUntil(() => reads.length >= 2 && text().includes('someone-else-notice'));
+      yield* quietExceptCounterparties();
       expect(value(owner)).toBe('typed-person');
       // A dirty draft keeps its whole input, not just the typed field.
       expect(value(notice)).toBe('server-notice');
@@ -226,13 +254,17 @@ describe('contract terms panel across a background reload', () => {
 
       yield* click(close);
       yield* waitUntil(() => buttons(labels.stay).length === 1);
+      yield* quietExceptCounterparties();
+      expect(buttons(labels.stay)).toHaveLength(1);
       yield* click(labels.stay);
       yield* waitUntil(() => buttons(labels.stay).length === 0);
+      yield* quietExceptCounterparties();
       expect(value(owner)).toBe('typed-person');
 
       answer = Effect.succeed(recordsAt(8, 'someone-else-notice'));
       yield* click(labels.save);
       yield* waitUntil(() => commands.length > 0);
+      yield* quietExceptCounterparties();
       expect(commands[0]).toMatchObject({
         command: { _tag: 'SetContractTerms', responsiblePerson: 'typed-person' },
         expectedRevision: 7,
@@ -245,10 +277,12 @@ describe('contract terms panel across a background reload', () => {
       const { rerender } = yield* openTerms(firstId);
       yield* type(owner, 'typed-person');
       yield* rerender(<RecordsPage {...propsFor(secondId)} />);
+      yield* quietExceptCounterparties();
       expect(Option.isNone(maybeField(owner))).toBe(true);
       yield* waitUntil(() => buttons(editTerms).length === 1);
       yield* click(editTerms);
       yield* waitUntil(() => Option.isSome(maybeField(owner)));
+      yield* quietExceptCounterparties();
       expect(value(owner)).toBe('second-person');
       expect(text()).not.toContain('typed-person');
     }).pipe(Effect.provide(network)),

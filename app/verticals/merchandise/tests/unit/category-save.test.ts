@@ -21,6 +21,7 @@ import {
   positionOf,
   sameCategoryDraft,
   saveCategoryEdit,
+  savedCategory,
 } from '../../src/routes/[lang]/provoz/produkty/category-save.ts';
 
 const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
@@ -84,6 +85,15 @@ describe('category edit draft', () => {
       position: 20,
     });
     expect(categoryPatchOf({ ...saved, positionText: '10', published: false }, category)).toEqual({ published: false });
+  });
+
+  it('keeps the saved category in step with what the server confirmed', () => {
+    const changedDraft = { ...saved, name: 'Káva a čaj', positionText: '20' };
+    const next = savedCategory(category, changedDraft);
+    expect(next).toMatchObject({ name: 'Káva a čaj', position: 20 });
+    expect(draftOf(next)).toEqual({ ...saved, name: 'Káva a čaj', positionText: '20' });
+    const repeatedDraft = draftOf(next);
+    expect(categoryPatchOf(repeatedDraft, next)).toEqual({});
   });
 });
 

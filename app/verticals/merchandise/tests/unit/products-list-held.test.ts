@@ -226,6 +226,7 @@ it.live('a tree category stays in the request and its rows on screen while the f
     serveCompany(true, 7);
     yield* mountFiltered(company);
     yield* waitUntil(() => shown.at(-1) === filteredBefore);
+    yield* networkIdle;
     const mountsBefore = mounts;
 
     const gate = yield* Deferred.make<boolean>();
@@ -241,8 +242,8 @@ it.live('a tree category stays in the request and its rows on screen while the f
 
     yield* Deferred.succeed(gate, true);
     yield* waitUntil(() => shown.at(-1) === 'tree/rows:Cable|write|r8');
-    expect(new Set(shown)).toEqual(new Set([filteredBefore, 'tree/rows:Cable|write|r8']));
     yield* networkIdle;
+    expect(new Set(shown)).toEqual(new Set([filteredBefore, 'tree/rows:Cable|write|r8']));
     expect(requested.filter((request) => request === 'list:*')).toEqual([]);
     expect(mounts).toBe(mountsBefore);
   }).pipe(Effect.provide(network)),
@@ -267,8 +268,8 @@ it.live('another company never gets the tree filter of the company before it', (
 
     yield* Deferred.succeed(gate, true);
     yield* waitUntil(() => shown.at(-1) === 'labels/rows:Cable,Switch|write|r3');
-    expect(shown.filter((table) => table.startsWith('tree/'))).toEqual([]);
     yield* networkIdle;
+    expect(shown.filter((table) => table.startsWith('tree/'))).toEqual([]);
     expect(requested.filter((request) => request === `list:${TREE_CATEGORY}`)).toEqual([]);
   }).pipe(Effect.provide(network)),
 );

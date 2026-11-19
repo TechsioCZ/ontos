@@ -4,6 +4,7 @@ import { text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -125,7 +126,7 @@ const network = browserNetwork(
         Effect.suspend(() => {
           reads.push(payload);
           const { view } = payload;
-          if (holdDetails) {
+          if (holdDetails && view?.productIds !== undefined && view.summary === true) {
             return Effect.never;
           }
           if (view?.productId !== undefined) {
@@ -201,14 +202,17 @@ it.live('a cold table click renders the authorized row while the detail enriches
     expect(html).toContain(czech('merchandise.ui.deliveryAddress'));
     expect(html).toContain(czech('merchandise.pages.orders.detail.grossTotal'));
     expect(html).toContain(czech('merchandise.pages.orders.detail.loading'));
+    // Detail enrichment is sequential: only its first product-summary read is intentionally held.
+    // Every other HTTP request must finish before checking what the loading panel does not show.
+    yield* networkQuietExcept(1);
     expect([...document.querySelectorAll('h1, h2, h3')].map((heading) => heading.textContent)).not.toContain(
       czech('merchandise.pages.orders.detail.loadingTitle'),
     );
-    expect(html).not.toContain(czech('merchandise.pages.orders.detail.lines'));
-    expect(html).not.toContain(czech('merchandise.pages.orders.detail.updatedAt'));
-    expect(html).not.toContain(czech('merchandise.pages.orders.actions.cancel'));
-    expect(html).not.toContain('Upravit objednávku');
-    expect(html).not.toContain('Odstranit DEMO objednávku');
+    expect(text()).not.toContain(czech('merchandise.pages.orders.detail.lines'));
+    expect(text()).not.toContain(czech('merchandise.pages.orders.detail.updatedAt'));
+    expect(text()).not.toContain(czech('merchandise.pages.orders.actions.cancel'));
+    expect(text()).not.toContain('Upravit objednávku');
+    expect(text()).not.toContain('Odstranit DEMO objednávku');
   }).pipe(Effect.provide(network)),
 );
 

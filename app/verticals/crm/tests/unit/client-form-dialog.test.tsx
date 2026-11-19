@@ -1,9 +1,10 @@
 // @rstest-environment happy-dom
 // Client form commands preserve patch semantics and validate separately entered organization contacts.
 import { saveLabelsFor } from '@app/admin-ui';
-import { acted, settle, unmountAll } from '@app/admin-ui/testing/module-ui';
-import { Effect, Option, Schema } from 'effect';
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import { Deferred, Effect, Option, Schema } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
+import { act } from 'react';
 import { ClientFormDialog } from '../../src/routes/[lang]/crm/klienti/client-form-dialog.tsx';
 import type { CrmCommandSubmit } from '../../src/crm/records.ts';
 import type { CrmCommandInput } from '../../shared/actions/apply-command.ts';
@@ -66,12 +67,15 @@ const mount = (props: {
     { path: 'crm/klienti', url: '/cs/crm/klienti' },
   );
 
+// Await the input handler and React's commit; these validations do not start network or timer work.
 const typeInto = (id: string, value: string) =>
-  acted(() => {
-    const input = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  Effect.promise(() =>
+    act(async () => {
+      const input = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }),
+  );
 
 const buttonNamed = (text: string): HTMLButtonElement => {
   const found = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
@@ -81,13 +85,20 @@ const buttonNamed = (text: string): HTMLButtonElement => {
   return Option.getOrThrow(Option.fromUndefinedOr(found));
 };
 
-const clickButton = (text: string) => acted(() => buttonNamed(text).click());
+const clickButton = (text: string) =>
+  Effect.promise(() =>
+    act(async () => {
+      buttonNamed(text).click();
+    }),
+  );
 
 const succeeding =
-  (sent: CrmCommandInput[]): CrmCommandSubmit =>
+  (sent: CrmCommandInput[], completed: Deferred.Deferred<true>): CrmCommandSubmit =>
   (command) => {
     sent.push(command);
-    return Effect.succeed({ entityIds: [client.id], ok: true });
+    return Effect.succeed({ entityIds: [client.id], ok: true }).pipe(
+      Effect.ensuring(Deferred.succeed(completed, true)),
+    );
   };
 
 afterEach(unmountAll);
@@ -96,12 +107,14 @@ describe('client form', () => {
   it.live('editing a client sends a patch with only the changed name and phone', () =>
     Effect.gen(function* editSendsOnce() {
       const sent: CrmCommandInput[] = [];
-      yield* mount({ client, mode: 'edit', submit: succeeding(sent) });
+      const completed = yield* Deferred.make<true>();
+      yield* mount({ client, mode: 'edit', submit: succeeding(sent, completed) });
 
       yield* typeInto('crm-client-name', 'Akros CZ s.r.o.');
       yield* typeInto('crm-client-phone', '+420 601 000 000');
 
       yield* clickButton('Uložit');
+      yield* Deferred.await(completed);
       expect(sent).toEqual([
         {
           _tag: 'UpdateClient',
@@ -115,13 +128,15 @@ describe('client form', () => {
   it.live('creating an organization includes its trimmed main contact and marks it primary', () =>
     Effect.gen(function* createOnlyOnSave() {
       const sent: CrmCommandInput[] = [];
-      yield* mount({ mode: 'create', submit: succeeding(sent) });
+      const completed = yield* Deferred.make<true>();
+      yield* mount({ mode: 'create', submit: succeeding(sent, completed) });
 
       yield* typeInto('crm-client-name', 'Nová firma');
       yield* typeInto('crm-new-contact-0-name', ' Jana Nováková ');
       yield* typeInto('crm-new-contact-0-email', ' jana@example.test ');
 
       yield* clickButton('Uložit');
+      yield* Deferred.await(completed);
       expect(sent).toEqual([
         {
           _tag: 'CreateClient',
@@ -136,18 +151,17 @@ describe('client form', () => {
   it.live('a new client with only its main contact typed says why Uložit is disabled and marks the name', () =>
     Effect.gen(function* contactOnlyValidation() {
       const sent: CrmCommandInput[] = [];
-      yield* mount({ mode: 'create', submit: succeeding(sent) });
+      const completed = yield* Deferred.make<true>();
+      yield* mount({ mode: 'create', submit: succeeding(sent, completed) });
       expect(bodyText()).not.toContain(labels.invalid);
       expect(bodyText()).not.toContain(copy.nameRequired);
 
       yield* typeInto('crm-new-contact-0-name', copy.contactName);
-      yield* settle;
       expect(bodyText()).toContain(labels.invalid);
       expect(bodyText()).toContain(copy.nameRequired);
       expect(buttonNamed(labels.save).disabled).toBe(true);
 
       yield* typeInto('crm-client-name', copy.clientName);
-      yield* settle;
       expect(bodyText()).not.toContain(labels.invalid);
       expect(bodyText()).toContain(labels.unsaved);
       expect(buttonNamed(labels.save).disabled).toBe(false);

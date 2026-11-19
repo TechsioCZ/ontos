@@ -42,6 +42,7 @@ import { expectHumanReadable } from '../support/visible-text.ts';
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -533,6 +534,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       expect(screen.getByText(copy(`${reviewKey}.saved`))).toBeTruthy();
       expect(confirm().disabled).toBe(true);
       expect(screen.getByText(copy(`${reviewKey}.empty`))).toBeTruthy();
+      yield* networkIdle;
       expect(resolved).toHaveLength(1);
     }),
   );
@@ -611,6 +613,9 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
           review.result.current.resolve('MATCH_EXISTING');
         });
         yield* waitUntil(() => matchCalls.length === 1);
+        // Only the match response awaiting pending is intentionally in flight.
+        yield* networkQuietExcept(1);
+        expect(matchCalls).toHaveLength(1);
         expect(review.result.current.busy).toBe(true);
         expect(matchCalls[0]).toEqual([
           {
@@ -632,6 +637,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         expect(review.result.current.committed).toBe(true);
         expect(review.result.current.canResolve).toBe(false);
         expect(review.result.current.queue).toEqual({ status: 'ready', value: { items: [], nextCaseRef: null } });
+        yield* networkIdle;
         expect(resolved).toHaveLength(1);
       }),
   );
@@ -662,6 +668,8 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       yield* waitUntil(() => matchCalls.length === 1);
       expect(matchCalls[0]?.[0].selectedPartyRef).toEqual(secondPartyRef);
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.busy).toBe(false)));
+      yield* networkIdle;
+      expect(matchCalls).toHaveLength(1);
     }),
   );
 
@@ -727,6 +735,7 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.notice?.key).toBe('forbidden')));
       expect(review.result.current.reason).toBe('Reviewed the signup evidence');
       expect(review.result.current.selectedPartyId).toBe(partyRef.resourceId);
+      yield* networkIdle;
       expect(resolved).toHaveLength(0);
     }),
   );
@@ -807,6 +816,9 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       act(() => review.result.current.resolve('MATCH_EXISTING'));
       yield* waitUntil(() => matchCalls.length === 2);
       expect(matchCalls[1]?.[0].expectedRevision).toBe(4);
+      yield* waitUntil(() => !review.result.current.busy);
+      yield* networkIdle;
+      expect(matchCalls).toHaveLength(2);
     }),
   );
 
@@ -885,6 +897,9 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
         act(() => review.result.current.setReason('Reviewed the evidence'));
         act(() => review.result.current.resolve(resolution));
         yield* waitUntil(() => resolved.length === 1);
+        yield* waitUntil(() => !review.result.current.busy);
+        yield* networkIdle;
+        expect(resolved).toHaveLength(1);
         expect(command[0]).toEqual([
           { caseRef: candidateCase.caseRef, expectedRevision: 3, reason: 'Reviewed the evidence' },
           expect.any(Object),
@@ -921,6 +936,8 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       expect(createCalls).toHaveLength(0);
       act(() => review.result.current.checkStatus());
       yield* waitUntil(() => resolved.length === 1);
+      yield* waitUntil(() => !review.result.current.busy);
+      yield* networkIdle;
       const calls = matchCalls;
       expect(calls).toHaveLength(2);
       expect(calls[0]).toEqual(calls[1]);
@@ -948,9 +965,8 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       expect(review.result.current.selectedPartyId).toBe('');
       expect(review.result.current.reason).toBe('');
       act(() => review.result.current.resolve('MATCH_EXISTING'));
-      // The new detail read is held open, so the network cannot go idle here; the check below, once it is answered,
-      // covers both resolves.
-      yield* settle;
+      // Only the new detail response awaiting pendingDetail is intentionally in flight.
+      yield* networkQuietExcept(1);
       expect(matchCalls).toHaveLength(0);
       yield* Deferred.succeed(pendingDetail, next);
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
@@ -978,12 +994,9 @@ it.layer(network, { excludeTestServices: true })('customer identity review', (su
       act(() => review.result.current.selectCase(next.caseRef));
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
       yield* Deferred.succeed(previous, candidateCase);
-      yield* Effect.promise(() =>
-        waitFor(() => {
-          const { detail } = review.result.current;
-          expect(detail.status === 'ready' ? detail.value.candidateCase.caseRef : undefined).toEqual(next.caseRef);
-        }),
-      );
+      yield* networkIdle;
+      const { detail } = review.result.current;
+      expect(detail.status === 'ready' ? detail.value.candidateCase.caseRef : undefined).toEqual(next.caseRef);
     }),
   );
 });

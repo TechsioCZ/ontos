@@ -1,6 +1,7 @@
 // @rstest-environment happy-dom
 import { settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { networkIdle } from '@app/shared-contracts/testing/http-double';
+import { Link } from '@modern-js/plugin-tanstack/runtime';
 import { act, cleanup, fireEvent, renderHook, screen } from '@testing-library/react';
 import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, expect, it as test } from 'effect-rstest';
@@ -467,7 +468,7 @@ test.live('a header suggestion shows the matched variant name/SKU under the pare
         onFamiliesChange={noop}
         onSearch={noop}
         onValueChange={noop}
-        SuggestionLink={({ children }) => <a href="/product-parent">{children}</a>}
+        SuggestionLink={({ children }) => <Link to="/product-parent">{children}</Link>}
         suggestions={readySuggestions({ groups, query: 'adapt' })}
         value="adapt"
       />,
@@ -522,9 +523,9 @@ test.live('header shows the approved generic subtitle and archive badge in its o
         onSearch={noop}
         onValueChange={noop}
         SuggestionLink={({ 'aria-label': ariaLabel, children }) => (
-          <a aria-label={ariaLabel} href="/suggestion">
+          <Link aria-label={ariaLabel} to="/suggestion">
             {children}
-          </a>
+          </Link>
         )}
         suggestions={readySuggestions({ groups, query: 'praha' })}
         value="praha"

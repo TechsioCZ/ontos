@@ -26,7 +26,7 @@ import { RecordStockMovementActionApi } from '../../shared/apis/record-stock-mov
 import { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
 import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
 import type { RecordStockMovementPayloadSchema } from '../../shared/actions/record-stock-movement.ts';
-import { mountInRoute } from '../support/module-ui.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
@@ -134,14 +134,15 @@ const buttons = (name: string): HTMLButtonElement[] =>
 const mount = async () => {
   await browserRuntime.runPromise(pinTestDocument);
   const view = await browserRuntime.runPromise(mountInRoute(element(), { url: '/cs/test' }));
+  await browserRuntime.runPromise(networkIdle);
   return {
     attemptLeave: Effect.promise(async () => {
       await act(async () => {
         void view.router.navigate({ to: '/cs/away' });
         await Promise.resolve();
       });
-    }).pipe(Effect.andThen(uiWaitUntil(() => buttons('Zůstat').length > 0))),
-    rerender: () => browserRuntime.runPromise(view.rerender(element())),
+    }).pipe(Effect.andThen(uiWaitUntil(() => buttons('Zůstat').length > 0)), Effect.andThen(networkIdle)),
+    rerender: () => browserRuntime.runPromise(view.rerender(element()).pipe(Effect.andThen(networkIdle))),
     router: view.router,
     unmount: unmountAll,
   };
@@ -167,6 +168,7 @@ const typeInto = async (id: string, value: string) => {
     field.dispatchEvent(new Event('input', { bubbles: true }));
     field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     await settle();
+    await browserRuntime.runPromise(networkIdle);
   });
 };
 
@@ -176,6 +178,7 @@ const click = async (target: HTMLElement) => {
   await act(async () => {
     target.click();
     await settle();
+    await browserRuntime.runPromise(networkIdle);
   });
 };
 
@@ -213,6 +216,19 @@ it.layer(network, { excludeTestServices: true })('product editor with one Save b
       // A save the unmount wrongly started goes through the gateway and then the Action; it has arrived by now.
       yield* networkIdle;
       expect(commands()).toEqual([]);
+    }),
+  );
+
+  suite.effect('one click on Save sends the changed fields once', () =>
+    Effect.gen(function* saveOnce() {
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => typeName('Etiopie B'));
+      yield* Effect.promise(() => click(button('Uložit')));
+      yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
+      yield* networkIdle;
+      expect(catalogRequests.map(({ command }) => command)).toEqual([
+        { _tag: 'UpdateProduct', id: 'product-1', patch: { name: 'Etiopie B' } },
+      ]);
     }),
   );
 
@@ -302,6 +318,7 @@ const pickVat = async (value: string) => {
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
     select.dispatchEvent(new Event('change', { bubbles: true }));
     await settle();
+    await browserRuntime.runPromise(networkIdle);
   });
 };
 
@@ -368,6 +385,8 @@ it.layer(network, { excludeTestServices: true })('VAT classification on the prod
 
       yield* Effect.promise(() => click(button('Uložit')));
       yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
+      yield* networkIdle;
+      expect(commands()).toEqual(['UpdateProduct']);
       expect(sentPatches()).toEqual([{ taxClassificationCode: CZ_VAT_STANDARD }]);
     }),
   );
@@ -486,6 +505,18 @@ it.layer(network, { excludeTestServices: true })('the price including VAT on the
 });
 
 it.layer(network, { excludeTestServices: true })('variant editing', (suite) => {
+  suite.effect('explains prices in one translated sentence that names the classification', () =>
+    Effect.gen(function* variantsIntro() {
+      shownTab = 'variants';
+      yield* Effect.promise(mount);
+      expect(text()).toContain('Varianta má vlastní SKU, cenu, sklad a stav.');
+      expect(text()).toContain('se uloží při uložení ceny podle sazby Snížená (12');
+      const english = moduleText('en')('merchandise.ui.variantsIntro', { vat: 'Reduced (12 %)' });
+      expect(english).toContain('at the rate Reduced (12 %).');
+      expect(english).not.toMatch(/[áčďéěíňóřšťúůýž]/u);
+    }),
+  );
+
   suite.effect('variant base-price editing omits inherited tiers while metadata-only editing keeps them', () =>
     Effect.gen(function* variantTierSubmission() {
       const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };

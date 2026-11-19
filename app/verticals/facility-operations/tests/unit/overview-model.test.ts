@@ -166,6 +166,26 @@ it('operations projection preserves nested deadline ties, source dates and paren
   expect(opsRecordHref('custom-source', 'unknown-list', 'record')).toBe('/provoz/custom-source');
 });
 
+it('operations search preserves text precedence, short search fields and the location fallback boundary', () => {
+  // Keep the legacy member order and whitespace visible; search text walks this exact JSON sequence.
+  const fixture = Schema.decodeSync(Schema.fromJsonString(Schema.Json))(`{
+    "documents": [{ "id": "doc 1", "name": "", "title": "  ", "note": "needle", "location": {}, "related": { "label": "Unused" } }],
+    "history": [{ "id": "hidden", "title": "History" }],
+    "other": [{ "title": "Missing identity" }, null]
+  }`);
+  const rows = opsSearchRows('documents', fixture);
+  const expected = Schema.decodeSync(Schema.fromJsonString(Schema.Json))(`[
+    {
+      "href": "/provoz/dokumenty?doc=doc%201",
+      "id": "doc 1",
+      "kind": "ops",
+      "title": "  ",
+      "terms": "documents doc 1     needle"
+    }
+  ]`);
+  expect(rows).toEqual(expected);
+});
+
 const property = (
   id: string,
   lifecycleState: PropertyData['properties'][number]['lifecycleState'],

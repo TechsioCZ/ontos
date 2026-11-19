@@ -248,6 +248,35 @@ it.live(
     }).pipe(Effect.provide(network)),
 );
 
+it.live('concurrent prefetches and foreground selection join the same enrichment', () =>
+  Effect.gen(function* deduplication() {
+    yield* pinTestDocument;
+    yield* ordersPageData.read(source);
+    const gate = yield* Deferred.make<true>();
+    const started = yield* Deferred.make<true>();
+    recordsAnswer = (request) =>
+      Deferred.succeed(started, true).pipe(
+        Effect.andThen(Deferred.await(gate)),
+        Effect.andThen(defaultRecords(request)),
+      );
+    try {
+      const prefetch = yield* Effect.forkChild(preloadOrderDetails(source, base));
+      yield* Deferred.await(started);
+      yield* networkQuietExcept(1);
+      const foreground = yield* Effect.forkChild(orderDetailData.read(detail));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(gate, true);
+      yield* Fiber.join(prefetch);
+      yield* Fiber.join(foreground);
+      yield* networkIdle;
+      // One base page, one summary, one variant read and one ledger, not two enrichment sets.
+      expect(reads).toHaveLength(4);
+    } finally {
+      yield* Deferred.succeed(gate, true);
+    }
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('a write preserves the caller revision, invalidates the row and refetches governed data', () =>
   Effect.gen(function* writeInvalidation() {
     yield* pinTestDocument;

@@ -11,7 +11,7 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Schema } from 'effect';
 import { beforeEach, expect, it } from 'effect-rstest';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
-import { SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandResultSchema, SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { RecordsApi } from '../../shared/apis/records.ts';
@@ -31,6 +31,7 @@ const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
   expiresAt: '2026-11-07T12:00:00Z',
   proposalId: '20000000-0000-4000-8000-000000000001',
 });
+let response: typeof proposal | typeof ApplyCommandResultSchema.Type = proposal;
 
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
 const reads: RecordsRequest[] = [];
@@ -44,7 +45,7 @@ const network = browserNetwork(
       group.handle('execute', ({ payload }) =>
         Effect.sync(() => {
           commands.push(payload);
-          return proposal;
+          return response;
         }),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
@@ -65,6 +66,7 @@ const network = browserNetwork(
 beforeEach(() => {
   commands.length = 0;
   reads.length = 0;
+  response = proposal;
 });
 it.live('a parked proposal never reaches committed command callbacks or revision retries', () =>
   Effect.gen(function* pending() {
@@ -93,5 +95,15 @@ it.live('a parked guarded save reports proposed rather than adopting a fabricate
     yield* networkIdle;
     expect(commands).toHaveLength(1);
     expect(reads).toEqual([]);
+  }).pipe(Effect.provide(network)),
+);
+it.live('only a decoded committed owner result publishes its actual revision', () =>
+  Effect.gen(function* committed() {
+    yield* pinTestDocument;
+    const result = yield* Schema.decodeUnknownEffect(ApplyCommandResultSchema)({ opportunities: [], revision: 8 });
+    response = result;
+    expect(yield* applyPipelineCommand(command, 7)).toStrictEqual(result);
+    yield* networkIdle;
+    expect(commands).toHaveLength(1);
   }).pipe(Effect.provide(network)),
 );

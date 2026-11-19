@@ -14,6 +14,7 @@ import {
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   networkQuietExcept,
   networkSteady,
   pinTestDocument,
@@ -237,6 +238,7 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
       productsAnswer = Effect.succeed(catalog([product('p-1', 'Nájem kanceláře')]));
       const company = yield* renderReferences(companyScope);
       yield* waitUntil(() => customerReads.length === 1 && productReads.length === 1);
+      const held = yield* networkSteady;
 
       customersAnswer = Effect.succeed({ items: [customer(partyB, 'Beta s.r.o.')] });
       productsAnswer = Effect.succeed(catalog([product('p-2', 'Úklid')]));
@@ -245,6 +247,7 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
         () => !other().customersLoading && other().products.length === 1 && company().products.length === 1,
       );
 
+      yield* networkQuietExcept(held);
       expect(names(other())).toEqual(['Beta s.r.o.']);
       expect(productNames(other())).toEqual(['Úklid']);
       expect(names(company())).toEqual([]);
@@ -253,6 +256,7 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
 
       yield* Deferred.succeed(lateCustomers, [customer(partyA, 'Alfa a.s.')]);
       yield* waitUntil(() => !company().customersLoading);
+      yield* networkIdle;
       expect(names(other())).toEqual(['Beta s.r.o.']);
       expect(names(company())).toEqual(['Alfa a.s.']);
       // Each scope read once per list; the reads themselves carry no scope.
@@ -280,6 +284,7 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
       );
       const catalogFailed = yield* renderReferences(catalogScope);
       yield* waitUntil(() => !catalogFailed().customersLoading && catalogFailed().productsFailed);
+      yield* networkIdle;
       expect(names(catalogFailed())).toEqual(['Gama a.s.']);
       expect(catalogFailed().referencesFailed).toBe(false);
       expect(catalogFailed().productsFailed).toBe(true);
@@ -301,6 +306,7 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
       productsAnswer = Effect.succeed(catalog([]));
       const customersFailed = yield* renderReferences(customersScope);
       yield* waitUntil(() => !customersFailed().customersLoading);
+      yield* networkIdle;
       expect(customersFailed().referencesFailed).toBe(true);
     }),
   );
@@ -316,15 +322,20 @@ it.layer(network, { excludeTestServices: true })('finance reference caches per v
       sessionAnswer = Deferred.await(accountantAnswer);
       const accountant = yield* renderRecords(accountantScope);
       yield* waitUntil(() => sessionReads.length === 1);
+      const held = yield* networkSteady;
 
       sessionAnswer = Effect.succeed(sessionResponse('Kontrolor', 'controller@example.test'));
       const controller = yield* renderRecords(controllerScope);
       yield* waitUntil(() => controller().actorLabel !== undefined);
+      // One new ledger request stays held; the old session response is still held too.
+      yield* networkQuietExcept(held + 1);
       expect(controller().actorLabel).toBe('Kontrolor (controller@example.test)');
       expect(accountant().actorLabel).toBeUndefined();
 
       yield* Deferred.succeed(accountantAnswer, sessionResponse('Účetní', 'accountant@example.test'));
       yield* waitUntil(() => accountant().actorLabel !== undefined);
+      // Only the two ledger requests remain held after both session answers settle.
+      yield* networkQuietExcept(held);
       expect(controller().actorLabel).toBe('Kontrolor (controller@example.test)');
       expect(accountant().actorLabel).toBe('Účetní (accountant@example.test)');
       expect(sessionReads).toHaveLength(2);

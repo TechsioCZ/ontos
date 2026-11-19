@@ -63,6 +63,7 @@ interface Mutation {
   readonly credentials: unknown;
   readonly idempotencyKey: string | undefined;
   readonly path: string;
+  readonly signal: AbortSignal;
 }
 
 let queue: AgentQueueResponse = pendingQueue;
@@ -91,11 +92,13 @@ const mutation = (path: string) =>
     `/shell-super-app-api/agent-platform${path}`,
     Effect.gen(function* receiveMutation() {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      const webRequest = yield* HttpServerRequest.toWeb(request);
       mutations.push({
         body: yield* request.text,
         credentials: Predicate.hasProperty(request.source, 'credentials') ? request.source.credentials : undefined,
         idempotencyKey: request.headers['idempotency-key'],
         path,
+        signal: webRequest.signal,
       });
       const [next, ...rest] = answers;
       answers = rest;
@@ -167,6 +170,7 @@ it.live('retains the original decision and key after a lost response, note edit 
     yield* click(retry);
     yield* waitUntil(() => queueReads === beforeRetry + 1);
     yield* networkIdle;
+    expect(queueReads).toBe(beforeRetry + 1);
     expect(mutations).toHaveLength(2);
     expect(mutations[0]?.idempotencyKey).toBeTruthy();
     expect(mutations[0]?.credentials).toBe('same-origin');
@@ -188,6 +192,8 @@ it.live('creates a new key for an intentionally changed decision and clears it a
     yield* waitUntil(() => screen.queryByText(failedDecision) !== null);
     yield* click('Zamítnout dávku');
     yield* waitUntil(() => queueReads === reads + 1);
+    yield* networkIdle;
+    expect(queueReads).toBe(reads + 1);
     expect(mutations[1]?.idempotencyKey).not.toBe(mutations[0]?.idempotencyKey);
     expect(screen.queryByRole('button', { name: retry })).toBeNull();
     yield* waitUntil(
@@ -196,6 +202,7 @@ it.live('creates a new key for an intentionally changed decision and clears it a
     yield* click('Zamítnout dávku');
     yield* waitUntil(() => queueReads === reads + 2);
     yield* networkIdle;
+    expect(queueReads).toBe(reads + 2);
     expect(mutations).toHaveLength(3);
     expect(mutations[2]?.idempotencyKey).not.toBe(mutations[1]?.idempotencyKey);
   }).pipe(Effect.provide(platform)),
@@ -204,6 +211,7 @@ it.live('creates a new key for an intentionally changed decision and clears it a
 it.live('keeps a mutation single-flight through body consumption and finalizes it before the next action', () =>
   Effect.gen(function* bodySingleFlight() {
     const answered = yield* Deferred.make<boolean>();
+    const reading = yield* Deferred.make<boolean>();
     const release = yield* Deferred.make<boolean>();
     let bodyInterrupted = false;
     const bytes = new TextEncoder().encode(JSON.stringify(encodedDecision));
@@ -212,7 +220,9 @@ it.live('keeps a mutation single-flight through body consumption and finalizes i
       Deferred.succeed(answered, true).pipe(
         Effect.as(
           HttpServerResponse.stream(
-            Stream.fromEffect(Deferred.await(release).pipe(Effect.as(bytes))).pipe(
+            Stream.fromEffect(
+              Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(release)), Effect.as(bytes)),
+            ).pipe(
               Stream.onExit((exit) =>
                 Effect.sync(() => {
                   bodyInterrupted = Exit.isFailure(exit);
@@ -232,13 +242,18 @@ it.live('keeps a mutation single-flight through body consumption and finalizes i
       fireEvent.click(approve);
     });
     yield* Deferred.await(answered);
+    yield* Deferred.await(reading);
     yield* networkIdle;
+    expect(mutations[0]?.signal.aborted).toBe(false);
     expect(mutations).toHaveLength(1);
     expect(approve.hasAttribute('disabled')).toBe(true);
     expect(queueReads).toBe(reads);
     expect(bodyInterrupted).toBe(false);
     yield* Deferred.succeed(release, true);
     yield* waitUntil(() => queueReads === reads + 1);
+    yield* networkIdle;
+    expect(queueReads).toBe(reads + 1);
+    expect(mutations[0]?.signal.aborted).toBe(true);
     expect(bodyInterrupted).toBe(false);
     yield* waitUntil(() => !approve.hasAttribute('disabled'));
     yield* acted(() => {
@@ -246,6 +261,7 @@ it.live('keeps a mutation single-flight through body consumption and finalizes i
     });
     yield* waitUntil(() => queueReads === reads + 2);
     yield* networkIdle;
+    expect(queueReads).toBe(reads + 2);
     expect(mutations).toHaveLength(2);
     expect(mutations[1]?.idempotencyKey).not.toBe(mutations[0]?.idempotencyKey);
   }).pipe(Effect.provide(platform)),
@@ -269,6 +285,7 @@ it.live('retains a revert payload and key through an uncertain server error', ()
     yield* waitUntil(() => screen.queryByText('Dávku se nepodařilo vrátit. Zkuste to prosím znovu.') !== null);
     yield* click(retry);
     yield* waitUntil(() => screen.queryByText('Restored') !== null);
+    yield* networkIdle;
     expect(mutations[1]?.path).toBe('/revert');
     expect(mutations[1]?.idempotencyKey).toBe(mutations[0]?.idempotencyKey);
     expect(mutations[1]?.body).toBe(mutations[0]?.body);

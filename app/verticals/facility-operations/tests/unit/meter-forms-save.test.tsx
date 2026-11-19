@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 // Meter creation and readings map their serial numbers, quantities and destination IDs.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { RecordsApi, RecordsResponseSchema } from '@app/property-portfolio/contracts/records';
 import {
@@ -115,6 +115,27 @@ const mountReading = () =>
     />,
   );
 
+const mountMeterInDocumentLanguage = (language: 'cs' | 'en') =>
+  Effect.gen(function* localizedMeter() {
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const previous = document.documentElement.getAttribute('lang');
+        document.documentElement.setAttribute('lang', language);
+        return previous;
+      }),
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === null) {
+            document.documentElement.removeAttribute('lang');
+          } else {
+            document.documentElement.setAttribute('lang', previous);
+          }
+        }),
+    );
+    yield* mountMeter();
+    yield* networkIdle;
+  });
+
 describe('new meter', () => {
   it.live('types, saves once with the create command, and goes on to the new meter', () =>
     Effect.gen(function* scenario() {
@@ -128,6 +149,31 @@ describe('new meter', () => {
       expect(sent[0]).toMatchObject({ serialNumber: 'EL-77' });
       expect(calls).toEqual(['saved:created-1']);
     }).pipe(Effect.provide(network)),
+  );
+
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* pinTestDocument;
+      yield* mountMeterInDocumentLanguage('cs');
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+    }).pipe(Effect.scoped, Effect.provide(network)),
+  );
+
+  it.live('does not render an English required marker in the Czech meter form', () =>
+    Effect.gen(function* noEnglishRequiredText() {
+      yield* pinTestDocument;
+      yield* mountMeterInDocumentLanguage('cs');
+      expect(document.body.textContent).not.toContain('(required)');
+    }).pipe(Effect.scoped, Effect.provide(network)),
+  );
+
+  it.live('marks the meter serial label as required in Czech', () =>
+    Effect.gen(function* requiredSerialLabel() {
+      yield* pinTestDocument;
+      yield* mountMeterInDocumentLanguage('cs');
+      const label = document.querySelector('label[for="meter-serial"]');
+      expect(label?.textContent ?? '').toContain(requiredLabelFor('cs'));
+    }).pipe(Effect.scoped, Effect.provide(network)),
   );
 });
 

@@ -2,8 +2,17 @@
 import { Effect, Option, Schema } from 'effect';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { afterEach, expect, it } from 'effect-rstest';
-import { unmountAll } from '@app/admin-ui/testing/module-ui';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { settle, unmountAll } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { MediaApi, MediaResponseSchema } from '../../shared/apis/media.ts';
+import { moduleCopy, moduleText, mountInRoute } from '../support/module-ui.ts';
 import { constVoid } from 'effect/Function';
 import { createElement } from 'react';
 import {
@@ -36,6 +45,22 @@ const first = mediaImageReference('0192f3a0-0000-7000-8000-000000000001');
 const second = mediaImageReference('0192f3a0-0000-7000-8000-000000000002');
 const third = 'https://www.akros.cz/data/product/18kop009.jpg';
 
+const OwnerMediaApi = MediaApi.prefix('/merchandise-api');
+const mediaResponse = Schema.decodeSync(MediaResponseSchema)({
+  contentBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j/wAAAABJRU5ErkJggg==',
+  contentSha256: 'b202ba81cb3bccec00460b0ab1e54f5d536f6b360a85df95d4f58b8aaa5c6b9e',
+  mimeType: 'image/png',
+});
+const mediaNetwork = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerMediaApi,
+    HttpApiBuilder.group(OwnerMediaApi, 'media', (group) =>
+      group.handle('execute', () => Effect.succeed(mediaResponse)),
+    ),
+  ),
+);
+
 const render = (
   images: readonly string[],
   state: GalleryState = initialGallery(),
@@ -43,6 +68,7 @@ const render = (
 ) =>
   Effect.gen(function* renderGallery() {
     unmountAll();
+    yield* pinTestDocument;
     yield* mountInRoute(
       createElement(ProductImageGalleryView, {
         canWrite: true,
@@ -58,10 +84,14 @@ const render = (
         state,
         ...overrides,
       }),
-      { path: 'provoz/produkty', url: '/cs/provoz/produkty' },
+      {
+        path: 'provoz/produkty',
+        settle: networkIdle.pipe(Effect.andThen(settle)),
+        url: '/cs/provoz/produkty',
+      },
     );
     return new XMLSerializer().serializeToString(document.body);
-  });
+  }).pipe(Effect.provide(mediaNetwork));
 
 const visibleText = (markup: string) => markup.replaceAll(/<[^>]+>/gu, ' ');
 
@@ -88,6 +118,26 @@ it.live('renders the gallery count and upload status with Czech plural forms', (
     expect(emptyText).not.toContain('Nahrávám');
   }),
 );
+
+it('resolves gallery translations natively in both locales, including zero and fractional counts', () => {
+  for (const [language, count, title, uploading] of [
+    ['cs', 0, 'Obrázky (0)', 'Nahrávám 0 obrázků…'],
+    ['cs', 1, 'Obrázek (1)', 'Nahrávám 1 obrázek…'],
+    ['cs', 2, 'Obrázky (2)', 'Nahrávám 2 obrázky…'],
+    ['cs', 4, 'Obrázky (4)', 'Nahrávám 4 obrázky…'],
+    ['cs', 5, 'Obrázky (5)', 'Nahrávám 5 obrázků…'],
+    ['cs', 1.5, 'Obrázky (1.5)', 'Nahrávám 1.5 obrázku…'],
+    ['en', 0, 'Images (0)', 'Uploading 0 images…'],
+    ['en', 1, 'Image (1)', 'Uploading 1 image…'],
+    ['en', 2, 'Images (2)', 'Uploading 2 images…'],
+    ['en', 5, 'Images (5)', 'Uploading 5 images…'],
+    ['en', 1.5, 'Images (1.5)', 'Uploading 1.5 images…'],
+  ] as const) {
+    const t = moduleCopy(language).getFixedT(language);
+    expect(t('merchandise.pages.products.gallery.title', { count })).toBe(title);
+    expect(t('merchandise.pages.products.gallery.uploading', { count })).toBe(uploading);
+  }
+});
 
 it('recognises only uploaded-image references as Core Media Assets', () => {
   expect(Option.getOrUndefined(mediaAssetIdOf(first))).toBe('0192f3a0-0000-7000-8000-000000000001');

@@ -9,6 +9,7 @@ import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/modu
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   networkQuietExcept,
   networkSteady,
   pinTestDocument,
@@ -370,6 +371,24 @@ it.layer(network, { excludeTestServices: true })('customer detail page', (suite)
     }),
   );
 
+  suite.effect('keeps the side panel save bar the last control of its footer', () =>
+    Effect.gen(function* panelFooter() {
+      yield* mount(
+        <CustomerDetailDialog
+          customer={customer}
+          onOpenChange={noop}
+          onRenamed={noop}
+          onRetry={noop}
+          snapshot={record}
+        />,
+      );
+      yield* networkIdle;
+      expect(saveButtons()).toHaveLength(1);
+      const bar = saveButton().closest('[data-save-state]');
+      expect(bar?.parentElement?.lastElementChild).toBe(bar);
+    }),
+  );
+
   suite.effect('lists an ended identifier in the same dated history section on the page and in the panel', () =>
     Effect.gen(function* endedIdentifierHistory() {
       const endedRecord: CustomerDetailPageRecord = {
@@ -400,6 +419,7 @@ it.layer(network, { excludeTestServices: true })('customer detail page', (suite)
   suite.effect('asks for the authenticated scope instead of offering a read that cannot start', () =>
     Effect.gen(function* withoutScope() {
       yield* mount(<CustomerDetailPage routeParams={routeParams} />);
+      yield* networkIdle;
       expect(screen.getByText(detail('unavailable'))).toBeTruthy();
       expect(screen.queryByText(detail('reload'))).toBeNull();
       // Without a scope the page has no read input at all: nothing reached Party Registry.

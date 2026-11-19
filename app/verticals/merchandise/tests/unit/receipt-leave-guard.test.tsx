@@ -5,6 +5,7 @@ import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   networkQuietExcept,
   pinTestDocument,
   serveApi,
@@ -272,6 +273,7 @@ it.live('does not permit a receipt when the selected product record cannot be lo
     yield* Deferred.fail(first.gate, refused);
     yield* waitUntil(() => buttons(copy.retry).length > 0);
     expect(button(copy.submit).disabled).toBe(true);
+    yield* networkIdle;
     expect(commands).toHaveLength(0);
     // The retry reads the same product again; its record then lets the receipt choose a variant.
     yield* click(button(copy.retry));

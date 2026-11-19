@@ -152,6 +152,19 @@ describe('price list editor', () => {
       yield* networkIdle;
       yield* settle;
       expect(commands).toHaveLength(1);
+      expect(commands[0]).toEqual({
+        command: {
+          _tag: 'ConfigureMarket',
+          currency: 'CZK',
+          exchangeRate: '24.5',
+          expectedRevision: 3,
+          marketCode: 'CZ_B2C',
+          marketId,
+          offerMode: 'WHOLE_CATALOGUE',
+          roundingMinor: 1,
+        },
+        expectedRevision: 3,
+      });
     }).pipe(Effect.provide(network)),
   );
 

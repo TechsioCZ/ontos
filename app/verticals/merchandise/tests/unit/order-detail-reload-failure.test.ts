@@ -5,6 +5,7 @@
 import { acted, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -190,6 +191,7 @@ it.live('a failed reload keeps the order and its edit draft on screen and report
     shown.length = 0;
     yield* reload;
     yield* waitUntil(() => shown.at(-1) === 'ready:před změnou:failed');
+    yield* networkIdle;
     expect(shown.filter((state) => !state.startsWith('ready:'))).toEqual([]);
     expect(mounts).toBe(1);
     expect(text()).toBe('rozepsaná poznámka');
@@ -197,6 +199,7 @@ it.live('a failed reload keeps the order and its edit draft on screen and report
     serve('po změně', 8);
     yield* reload;
     yield* waitUntil(() => shown.at(-1) === 'ready:po změně:current');
+    yield* networkIdle;
     expect(mounts).toBe(1);
     expect(text()).toBe('rozepsaná poznámka');
   }).pipe(Effect.provide(network)),
@@ -210,6 +213,7 @@ it.live('a denied reload drops the shown order at once', () =>
     refuse(denied);
     yield* reload;
     yield* waitUntil(() => shown.at(-1) === 'error');
+    yield* networkIdle;
     expect(text()).toBe('');
   }).pipe(Effect.provide(network)),
 );

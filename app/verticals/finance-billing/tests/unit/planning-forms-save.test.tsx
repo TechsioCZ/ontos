@@ -3,9 +3,10 @@
 // ("Uložit"), last in the footer: typing and Enter change only the draft, an untouched form closes without asking, and
 // an edit over someone else's newer version is refused as a conflict. The forms use the real module i18n, router
 // and select components; the supplied view model records commands at the form boundary.
-import { DateTime, Effect, Predicate } from 'effect';
+import { DateTime, Deferred, Effect, Predicate } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
-import { unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import { Profiler } from 'react';
 import { mountInRoute } from '../support/module-ui.ts';
 import type { BudgetLine } from '../../shared/apis/records.ts';
 import { editBudgetDraft, newBudgetDraft } from '../../src/routes/[lang]/finance/budget-draft.ts';
@@ -27,12 +28,15 @@ const budget: BudgetLine = {
 };
 
 const closes: string[] = [];
+let saveClosed = Deferred.makeUnsafe<true>();
 const onClose = () => {
   closes.push('closed');
+  Deferred.doneUnsafe(saveClosed, Effect.succeed(true));
 };
 
 beforeEach(() => {
   closes.length = 0;
+  saveClosed = Deferred.makeUnsafe<true>();
 });
 
 afterEach(unmountAll);
@@ -49,7 +53,8 @@ describe('planning forms save from Uložit only', () => {
       yield* typeInto('budget-planned', '30 000');
 
       yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
+      yield* Deferred.await(saveClosed);
+      expect(closes).toHaveLength(1);
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'UpsertBudgetLine')).toBe(true);
       expect(sent[0]).toMatchObject({ category: 'Energie', period: '2026-10', plannedMinor: 3_000_000 });
@@ -60,17 +65,28 @@ describe('planning forms save from Uložit only', () => {
     Effect.gen(function* step3() {
       const sent: Command[] = [];
       const changed = { ...budget, plannedMinor: 9_900_000, updatedAt: DateTime.makeUnsafe('2026-10-02T08:00:00Z') };
+      const conflicted = yield* Deferred.make<true>();
       yield* mountInRoute(
-        <BudgetEditor
-          budgetMonth="2026-10"
-          initial={editBudgetDraft(budget)}
-          onClose={onClose}
-          vm={fakeVm(sent, { state: { budgets: [changed] } })}
-        />,
+        <Profiler
+          id="budget-conflict"
+          onRender={() => {
+            // The controller publishes conflict only after the preflight save Effect has finished.
+            if (document.querySelector('[data-save-state="conflict"]') !== null) {
+              Deferred.doneUnsafe(conflicted, Effect.succeed(true));
+            }
+          }}
+        >
+          <BudgetEditor
+            budgetMonth="2026-10"
+            initial={editBudgetDraft(budget)}
+            onClose={onClose}
+            vm={fakeVm(sent, { state: { budgets: [changed] } })}
+          />
+        </Profiler>,
       );
       yield* typeInto('budget-planned', '26 000');
       yield* clickSave;
-      yield* waitUntil(() => document.querySelector('[data-save-state="conflict"]') !== null);
+      yield* Deferred.await(conflicted);
       expect(sent).toEqual([]);
       expect(closes).toEqual([]);
     }),
@@ -83,7 +99,8 @@ describe('planning forms save from Uložit only', () => {
       expect(saveButton().disabled).toBe(true);
       yield* typeInto('opening-amount', '-12 500');
       yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
+      yield* Deferred.await(saveClosed);
+      expect(closes).toHaveLength(1);
       expect(sent).toEqual([
         {
           _tag: 'SetOpeningBalance',
@@ -104,7 +121,8 @@ describe('planning forms save from Uložit only', () => {
       yield* typeInto('plan-probability', '80');
 
       yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
+      yield* Deferred.await(saveClosed);
+      expect(closes).toHaveLength(1);
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'UpsertPlanItem')).toBe(true);
       expect(sent[0]).toMatchObject({

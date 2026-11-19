@@ -11,11 +11,29 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { cleanup, screen, within } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../../shared/browser-api.ts';
 import { ApprovalsPanel } from '../../../src/routes/agent-platform/approvals-panel.tsx';
 import { shellLocaleCopy } from '../../support/shell-i18n.tsx';
 import { makeShellRouter, renderShellRoute } from '../../support/shell-router.tsx';
+
+const stylesheet = readFileSync(
+  fileURLToPath(new URL('../../../src/routes/agent-platform/agent-platform.css', import.meta.url)),
+  'utf-8',
+);
+
+const normalized = (text: string) =>
+  text
+    .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
+    .replaceAll(/\s+/gu, ' ')
+    .trim();
+/** Declarations of the stylesheet rule whose selector list is exactly `selector` (comments and whitespace ignored). */
+const ruleBody = (selector: string): string | undefined =>
+  [...stylesheet.matchAll(/(?<selectors>[^{}]+)\{(?<body>[^{}]*)\}/gu)].find(
+    (rule) => normalized(rule.groups?.['selectors'] ?? '') === normalized(selector),
+  )?.groups?.['body'];
 
 const batch = Schema.decodeUnknownSync(AgentQueueBatchSchema)({
   agentLabel: 'AI agent C',
@@ -92,3 +110,14 @@ it.live('renders the diff as a semantic table whose row label is a row header', 
     }
   }).pipe(Effect.provide(network)),
 );
+
+it('styles the semantic diff cells, not the retired span markup, with a readable row label', () => {
+  expect(stylesheet).not.toMatch(/\.ai-review-diff-(?:head|row) > span/u);
+  expect(stylesheet).not.toMatch(/@layer/u);
+  expect(ruleBody('.ai-review-diff-head > :is(th, td), .ai-review-diff-row > :is(th, td)')).toMatch(
+    /padding: 0\.65rem 0\.75rem;[\s\S]*overflow-wrap: anywhere;/u,
+  );
+  expect(ruleBody('.ai-review-diff-head > :is(th, td), .ai-review-diff-row > :is(th, td)')).toMatch(/min-width: 0;/u);
+  expect(ruleBody('.ai-review-diff-row > th')).toMatch(/color: var\(--color-fg-primary\);/u);
+  expect(ruleBody('.ai-review-diff-head')).toMatch(/color: var\(--color-fg-secondary/u);
+});

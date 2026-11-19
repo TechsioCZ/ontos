@@ -26,6 +26,7 @@ import {
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { act } from 'react';
 
 import { CustomerListApi } from '../../../party-registry/shared/apis/customer-list.ts';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
@@ -133,7 +134,7 @@ const network = browserNetwork(
 const button = (label: string): HTMLButtonElement => {
   const [found] = buttons(label);
   expect(found).toBeDefined();
-  return found ?? document.createElement('button');
+  return Option.getOrThrow(Option.fromNullishOr(found));
 };
 const maybeField = (id: string) => Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${id}"]`));
 const value = (id: string) =>
@@ -158,7 +159,7 @@ const panelButton = (label: string): HTMLButtonElement => {
     (candidate) => candidate.textContent?.trim() === label,
   );
   expect(found).toBeDefined();
-  return found ?? document.createElement('button');
+  return Option.getOrThrow(Option.fromNullishOr(found));
 };
 const clickPanel = (label: string) => acted(() => panelButton(label).click());
 
@@ -217,10 +218,20 @@ describe('rent panel across a background reload', () => {
         expect(text()).toContain(labels.unsaved);
         expect(panelButton(labels.save).disabled).toBe(false);
 
-        yield* clickPanel(close);
-        yield* waitUntil(() => buttons(labels.stay).length === 1);
-        yield* click(labels.stay);
-        yield* waitUntil(() => buttons(labels.stay).length === 0);
+        yield* Effect.promise(() =>
+          act(() => {
+            panelButton(close).click();
+            return Promise.resolve();
+          }),
+        );
+        expect(buttons(labels.stay)).toHaveLength(1);
+        yield* Effect.promise(() =>
+          act(() => {
+            button(labels.stay).click();
+            return Promise.resolve();
+          }),
+        );
+        expect(buttons(labels.stay)).toHaveLength(0);
         expect(value(monthly)).toBe('20000');
 
         answer = Effect.succeed(recordsAt(8, 20));

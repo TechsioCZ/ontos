@@ -14,8 +14,9 @@ import {
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
+import { act } from 'react';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { changeProductImagesActionSchemaErrorLive } from '../../api/change-product-images-action-problems.ts';
 import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
@@ -144,7 +145,13 @@ const settingsSaves = () =>
     expectedRevision: payload.expectedRevision,
   }));
 
-const mountWith = ({ canWrite }: { readonly canWrite: boolean }) =>
+const mountWith = ({
+  canWrite,
+  stageImage = stage,
+}: {
+  readonly canWrite: boolean;
+  readonly stageImage?: StageImage;
+}) =>
   mountInRoute(
     <EshopPanel
       canWrite={canWrite}
@@ -156,7 +163,7 @@ const mountWith = ({ canWrite }: { readonly canWrite: boolean }) =>
       prepare={() => Effect.succeed(upload)}
       product={product}
       revision={7}
-      stage={stage}
+      stage={stageImage}
     />,
   );
 const mount = () => mountWith({ canWrite: false });
@@ -223,8 +230,16 @@ it.live('reordering and removing change only the draft; Uložit sends the galler
 it.live('an uploaded picture is stored at once but reaches the e-shop only with Uložit', () =>
   Effect.gen(function* uploadThenSave() {
     yield* pinTestDocument;
-    yield* mount();
+    const stagedDone = yield* Deferred.make<true>();
+    yield* mountWith({
+      canWrite: false,
+      stageImage: (image, onOutcome) => {
+        stage(image, onOutcome);
+        Deferred.doneUnsafe(stagedDone, Effect.succeed(true));
+      },
+    });
     yield* pick(new File([new Uint8Array([1])], 'detail.png', { type: 'image/png' }));
+    yield* Deferred.await(stagedDone);
     yield* waitUntil(() => tiles() === 3);
     yield* waitUntil(() => !button(labels.save).disabled);
     yield* networkIdle;
@@ -252,6 +267,21 @@ it.live('a save over someone else’s newer change is refused as a conflict and 
     expect(gallerySaves()).toHaveLength(1);
     expect(committed).toEqual([]);
     expect(tiles()).toBe(1);
+  }).pipe(Effect.provide(network)),
+);
+
+it.live('an untouched gallery leaves without asking', () =>
+  Effect.gen(function* untouched() {
+    yield* pinTestDocument;
+    const view = yield* mount();
+    yield* Effect.promise(() =>
+      act(async () => {
+        await view.router.navigate({ to: '/cs/other' });
+      }),
+    );
+    yield* networkIdle;
+    expect(view.router.state.location.pathname).toBe('/cs/other');
+    expect(buttons(labels.stay)).toHaveLength(0);
   }).pipe(Effect.provide(network)),
 );
 

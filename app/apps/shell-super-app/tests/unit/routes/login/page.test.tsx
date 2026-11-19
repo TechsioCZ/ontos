@@ -25,7 +25,7 @@ import {
 import { OAUTH_PRELOGIN_PATH } from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
-import { browserNetwork } from '@app/shared-contracts/testing/http-double';
+import { networkIdle, networkSteady, streamingBrowserNetwork } from '@app/shared-contracts/testing/http-double';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 import { ShellI18n, shellTestCopy } from '../../../support/shell-i18n.tsx';
@@ -85,6 +85,7 @@ const OAuthLoginApi = HttpApi.make('oauthLogin')
 /** One request the authorization server's public-client lookup received. */
 interface PreloginRequest {
   readonly body: string;
+  readonly credentials: RequestCredentials;
   readonly method: string;
   readonly url: string;
 }
@@ -106,8 +107,9 @@ const oauthOrigin = (prelogin: () => HttpServerResponse.HttpServerResponse) => {
     OAUTH_PRELOGIN_PATH,
     Effect.gen(function* preloginLookup() {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      const webRequest = yield* Effect.orDie(HttpServerRequest.toWeb(request));
       const body = yield* Effect.orDie(request.text);
-      requests.push({ body, method: request.method, url: request.originalUrl });
+      requests.push({ body, credentials: webRequest.credentials, method: request.method, url: request.originalUrl });
       return prelogin();
     }),
   );
@@ -115,7 +117,7 @@ const oauthOrigin = (prelogin: () => HttpServerResponse.HttpServerResponse) => {
     HttpApiBuilder.layer(OAuthLoginApi).pipe(Layer.provide(signInHandlers)),
     lookup,
   ).pipe(Layer.provide(HttpServer.layerServices));
-  return { browser: browserNetwork(application), requests } as const;
+  return { browser: streamingBrowserNetwork(application), requests } as const;
 };
 
 /** The login route of a real router, in the given language. */
@@ -176,10 +178,12 @@ it.effect('reads the OAuth client public name with the original signed query', (
     yield* Effect.gen(function* lookUpClient() {
       yield* renderLogin(openOAuthLogin());
       expect(yield* Effect.promise(() => screen.findByText('Trusted Client'))).toBeDefined();
+      yield* networkIdle;
     }).pipe(Effect.provide(origin.browser));
     expect(origin.requests).toEqual([
       {
         body: `{"client_id":"https://claude.ai/client","oauth_query":"${oauthQuery}"}`,
+        credentials: 'same-origin',
         method: 'POST',
         url: `http://localhost:3000${OAUTH_PRELOGIN_PATH}`,
       },
@@ -193,7 +197,8 @@ it.effect('keeps the OAuth host fallback when its public client lookup fails', (
     yield* Effect.gen(function* lookUpUnavailableClient() {
       yield* renderLogin(openOAuthLogin());
       expect(yield* Effect.promise(() => screen.findByTestId('oauth-login-banner'))).toBeDefined();
-      yield* Effect.promise(() => waitFor(() => expect(origin.requests).toHaveLength(1)));
+      yield* networkIdle;
+      expect(origin.requests).toHaveLength(1);
     }).pipe(Effect.provide(origin.browser));
     expect(screen.getByText('claude.ai')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -242,7 +247,9 @@ it.effect('the back link resolves Czech from the same canonical target', () =>
 
 /** Every Effect the page has handed to the browser runtime, settled. */
 const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly { readonly value: unknown }[] } }) =>
-  Effect.promise(() => Promise.allSettled(runs.mock.results.map((result) => result.value)));
+  Effect.promise(() => Promise.allSettled(runs.mock.results.map((result) => result.value))).pipe(
+    Effect.andThen(networkIdle),
+  );
 
 /**
  * Renders the login route and submits the given values. The page's own Effects are observed, so a
@@ -260,29 +267,50 @@ const submitLogin = (login: string, password: string, router: ShellRouter = logi
       yield* Effect.promise(() => user.type(getPassword(), password));
     }
     yield* Effect.promise(() => user.click(getSubmit()));
+    // Some cases deliberately hold the sign-in response open. Wait for traffic to settle without releasing it.
+    yield* networkSteady;
     return { runs, user };
   });
 
+/** Let the real Location.assign update its URL without replacing the test document or any browser method. */
+const keepOAuthDocument = Effect.gen(function* keepDocumentDuringAuthorization() {
+  const { settings } = window.happyDOM;
+  const navigationSettings = Schema.Struct({
+    navigation: Schema.Struct({ disableMainFrameNavigation: Schema.mutableKey(Schema.Boolean) }),
+  });
+  if (!Schema.is(navigationSettings)(settings)) {
+    throw new Error('The test DOM must expose its native navigation settings');
+  }
+  const { navigation } = settings;
+  const previous = navigation.disableMainFrameNavigation;
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      navigation.disableMainFrameNavigation = true;
+    }),
+    () =>
+      Effect.sync(() => {
+        navigation.disableMainFrameNavigation = previous;
+      }),
+  );
+});
+
 it.effect('returns an OAuth sign-in to authorization without opening a Shell page', () =>
   Effect.gen(function* preservesOAuthAuthorizationReturn() {
+    yield* keepOAuthDocument;
     const origin = oauthOrigin(() => HttpServerResponse.jsonUnsafe({}));
-    const authorization = Promise.withResolvers<string | URL>();
-    rstest.spyOn(globalThis.location, 'assign').mockImplementation(authorization.resolve);
     const router = openOAuthLogin();
     const invalidations = rstest.spyOn(router, 'invalidate');
     const navigations = rstest.spyOn(router, 'navigate');
-    const href = yield* Effect.gen(function* signInForAuthorization() {
+    yield* Effect.gen(function* signInForAuthorization() {
       const { runs } = yield* submitLogin('admin', 'secret', router);
-      const opened = yield* Effect.promise(() => authorization.promise);
       yield* pageEffectsSettled(runs);
-      return opened;
     }).pipe(Effect.provide(origin.browser));
-    expect(href).toBe(
+    expect(globalThis.location.href).toBe(
       'http://localhost:3000/shell-super-app-api/oauth/oauth2/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&state=preserved',
     );
     expect(invalidations).not.toHaveBeenCalled();
     expect(navigations).not.toHaveBeenCalled();
-  }),
+  }).pipe(Effect.scoped),
 );
 
 interface LoginValidationCase {
@@ -446,9 +474,10 @@ it.effect('says the app is opening while the next page loads after a successful 
     const { runs } = yield* submitLogin('admin', 'secret', router);
 
     const submit = yield* Effect.promise(() => screen.findByRole('button', { name: /shell\.login\.opening/u }));
+    yield* networkIdle;
     expect(navigations).toHaveBeenCalledWith({ to: '/en/' });
     expect(submit.hasAttribute('disabled')).toBe(true);
-    expect(screen.queryByText('shell.login.pending')).toBeNull();
+    expect(screen.queryByText(copy['shell.login.pending'])).toBeNull();
 
     navigation.resolve(null);
     yield* pageEffectsSettled(runs);

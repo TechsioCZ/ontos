@@ -24,7 +24,7 @@ import {
   ManageCatalogActionConflictProblemSchema,
 } from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type { ProductRecord, RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
 import {
   currentProductRows,
@@ -237,6 +237,24 @@ it.live(
       expect(reads).toHaveLength(0);
       expect(commands).toHaveLength(0);
     }).pipe(Effect.provide(network)),
+);
+
+it.live('prefetch follows the final kit row order, not a source-array page slice', () =>
+  Effect.gen(function* finalRowModel() {
+    yield* pinTestDocument;
+    const final: ProductRecord[] = [];
+    for (const row of products.slice(2, 4)) {
+      final.unshift(row);
+    }
+    const table = { getRowModel: () => ({ rows: final.map((original) => ({ original })) }) };
+    const rows = currentProductRows(table, products);
+    expect(rows).toEqual(final);
+    const preloadRows = rows;
+    yield* preloadProductDetails(context, 7, preloadRows);
+    yield* networkIdle;
+    expect(reads.map((request) => request.view?.productId)).toEqual(final.map((row) => row.id));
+    expect(commands).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('warming preserves read-only capabilities without requesting mutations or wider catalog data', () =>

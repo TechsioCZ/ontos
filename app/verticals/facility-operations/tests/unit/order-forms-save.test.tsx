@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // Purchase and sales forms send once through the real owner Action clients on Uložit.
 // Their real i18n, router, VAT read and Finance records run against in-process HttpApi handlers.
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
@@ -9,7 +9,11 @@ import { PurchaseOrderSchema, SalesOrderSchema, SupplierSchema } from '../../sha
 import { salesRemainder } from '../../shared/commands/sales.ts';
 import { InvoiceDraftForm } from '../../src/routes/[lang]/provoz/nakupy/invoice-draft-form.tsx';
 import { InvoiceForm, ReceiveForm } from '../../src/routes/[lang]/provoz/nakupy/orders-tab.tsx';
-import { SalesCloseForm, SalesDeliverForm } from '../../src/routes/[lang]/provoz/nakupy/sales-order-forms.tsx';
+import {
+  SalesCloseForm,
+  SalesDeliverForm,
+  SalesInvoiceForm,
+} from '../../src/routes/[lang]/provoz/nakupy/sales-order-forms.tsx';
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
@@ -274,6 +278,7 @@ describe('purchase order forms', () => {
       yield* typeInto('#draft-invoice-number', 'SUP-2026-118');
       yield* click(labels.save);
       yield* waitUntil(() => calls.includes('created'));
+      yield* networkIdle;
       expect(financeCommands).toEqual([
         expect.objectContaining({
           _tag: 'RecordIncomingInvoice',
@@ -344,5 +349,32 @@ describe('sales order forms', () => {
       ]);
       expect(calls).toEqual(['done']);
     }).pipe(Effect.provide(network)),
+  );
+
+  it.live('the sales invoice opens with its dates and is created once on Uložit', () =>
+    Effect.gen(function* salesInvoice() {
+      const completed = yield* Deferred.make<true>();
+      const issued: string[] = [];
+      yield* mountPanel(
+        createElement(SalesInvoiceForm, {
+          issueInvoice: (invoiced) =>
+            Effect.sync(() => {
+              issued.push(invoiced.id);
+              return { number: 'FV-1', ok: true };
+            }),
+          onDone: () => {
+            calls.push('done');
+            Deferred.doneUnsafe(completed, Effect.succeed(true));
+          },
+          order: salesOrder,
+          totalLabel: copy.close,
+        }),
+      );
+      yield* click(labels.save);
+      // The real form calls onDone through afterSave, after its injected issueInvoice operation finishes.
+      yield* Deferred.await(completed);
+      expect(issued).toEqual([salesOrder.id]);
+      expect(calls).toEqual(['done']);
+    }),
   );
 });

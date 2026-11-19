@@ -26,6 +26,7 @@ import {
   orderDetailData,
   orderDetailIntent,
   ordersPageData,
+  useOrderDetail,
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { OrdersPageInput } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
@@ -81,6 +82,8 @@ const product = Schema.encodeSync(ProductRecordSchema)(
   }),
 );
 
+/** The owner's current revision, advanced when another write changes the register. */
+const register = { revision: 7 };
 const responseOf = (rows: { readonly orders?: typeof orders; readonly products?: (typeof product)[] }) =>
   Schema.decodeSync(RecordsResponseSchema)({
     actorPrincipalRef: {
@@ -93,7 +96,7 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
     movements: [],
     orders: rows.orders ?? [],
     products: rows.products ?? [],
-    revision: 7,
+    revision: register.revision,
     totalOrders: ROWS,
   });
 
@@ -149,7 +152,7 @@ const mount = (component: () => ReturnType<typeof createElement>) =>
   Effect.gen(function* mountList() {
     yield* pinTestDocument;
     yield* Effect.promise(() => renderList(component));
-    yield* waitUntilOnFakeTimers(() => text() === 'ready');
+    yield* waitUntilOnFakeTimers(() => text() === 'ready' || text().startsWith('ready:'));
   });
 
 const closePage = () =>
@@ -176,6 +179,7 @@ beforeEach(() => {
   orderCountsData.invalidate();
   orderDetailData.invalidate();
   customerDirectoryData.invalidate();
+  register.revision = 7;
   reads.length = 0;
 });
 
@@ -248,6 +252,22 @@ it.live('live changes of modules the orders do not show read nothing', () =>
   }).pipe(Effect.provide(network)),
 );
 
+it.live('a write that moves the revision reloads the page and warms its rows again', () =>
+  Effect.gen(function* afterWrite() {
+    yield* mount(OrdersList);
+    yield* idle(5);
+    reads.length = 0;
+
+    register.revision = 8;
+    yield* Effect.sync(() => {
+      ordersPageData.invalidate();
+      orderDetailData.invalidate();
+    });
+    yield* idle(5);
+    expect([count('list'), count('detail')]).toEqual([1, WARMED * DETAIL_READS]);
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('pointing at a row whose warmed detail expired reads that detail once', () =>
   Effect.gen(function* intent() {
     yield* mount(OrdersList);
@@ -272,5 +292,42 @@ it.live('pointing at a row whose warmed detail expired reads that detail once', 
     props.onPointerDown({ currentTarget: row });
     yield* idle(1);
     expect(count('detail')).toBe(DETAIL_READS);
+  }).pipe(Effect.provide(network)),
+);
+
+/** The list with one actual order detail mounted, as the page wires them. */
+const OpenOrder = () => {
+  const query = firstOrdersPage(PAGE_SIZE);
+  const { state } = useOrders(company.legalEntityId, query, company);
+  const detail = useOrderDetail('order-1', 0, company, {
+    legalEntityId: company.legalEntityId,
+    query,
+    scope: pageDataScopeKey(company, 'demo.merchandise'),
+  });
+  return createElement('output', null, `${state.kind}:${detail.status}`);
+};
+
+const openOrderReadsPerBusyMinute = (change: Effect.Effect<void>) =>
+  Effect.gen(function* busyOrder() {
+    yield* mount(OpenOrder);
+    yield* idle(5);
+    reads.length = 0;
+    yield* Effect.forEach(Array.from({ length: 30 }), () => change.pipe(Effect.andThen(idle(2))), { discard: true });
+    return reads.length;
+  });
+
+it.live('an idle open order ignores other modules committing every 2 s', () =>
+  Effect.gen(function* otherModulesBusy() {
+    const perMinute = yield* openOrderReadsPerBusyMinute(liveChange(['finance-billing', 'party-registry', 'shell']));
+    expect(perMinute).toBe(15);
+  }).pipe(Effect.provide(network)),
+);
+
+it.live('a change event without an app list still reloads the open order every time (as before scoping)', () =>
+  Effect.gen(function* unscopedBusy() {
+    const perMinute = yield* openOrderReadsPerBusyMinute(
+      Effect.sync(() => window.dispatchEvent(new Event(moduleChangeEvent))),
+    );
+    expect(perMinute).toBe(150);
   }).pipe(Effect.provide(network)),
 );

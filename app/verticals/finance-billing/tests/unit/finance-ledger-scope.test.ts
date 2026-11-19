@@ -201,6 +201,7 @@ it.layer(network, { excludeTestServices: true })('finance ledger cache per verif
       // Same filter in the other company is its own read, never the cached ledger of the first company.
       answer = Effect.succeed(otherCompanyLedger);
       yield* preloadFinanceRecords(query, otherCompanyContext);
+      yield* networkQuietExcept(1);
       expect(reads).toHaveLength(3);
       // The scope only keys the cache: every read sends the same filter, with no scope on the wire.
       expect(reads).toEqual([
@@ -212,6 +213,7 @@ it.layer(network, { excludeTestServices: true })('finance ledger cache per verif
       expect(numbersOf(otherCompanyView())).toEqual(['FV-2026-0005']);
 
       yield* Deferred.succeed(late, lateCompanyLedger);
+      yield* networkIdle;
       yield* waitUntil(() => companyView().snapshot?.revision === 9);
       const afterLate = otherCompanyView();
       expect(numbersOf(afterLate)).toEqual(['FV-2026-0005']);

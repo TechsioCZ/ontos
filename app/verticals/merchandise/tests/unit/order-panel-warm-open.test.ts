@@ -8,6 +8,8 @@ import { passFakeTime, waitUntilOnFakeTimers } from '@app/admin-ui/testing/modul
 import {
   browserNetwork,
   networkIdle,
+  networkQuietExcept,
+  networkSteady,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -111,6 +113,8 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
 const reads: string[] = [];
 /** While set, detail reads wait for it to be released; unset, they answer in the same tick. */
 let detailGate: Deferred.Deferred<boolean> | null = null;
+/** Only requests actually waiting on our Deferreds, not other unfinished HTTP traffic. */
+const heldDetailReads = new Map<symbol, Deferred.Deferred<boolean>>();
 const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
 const OwnerActionApi = ChangeOrderStatusActionApi.prefix('/merchandise-api');
 const network = browserNetwork(
@@ -123,7 +127,20 @@ const network = browserNetwork(
           if (view?.productIds !== undefined || view?.productId !== undefined) {
             reads.push('detail');
             const answer = Effect.succeed(responseOf({ products: [{ ...product, stockOnHand: register.stock }] }));
-            return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
+            const gate = detailGate;
+            if (gate === null) {
+              return answer;
+            }
+            const held = Symbol('held detail request');
+            heldDetailReads.set(held, gate);
+            return Deferred.await(gate).pipe(
+              Effect.andThen(answer),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  heldDetailReads.delete(held);
+                }),
+              ),
+            );
           }
           if (view?.orderId !== undefined) {
             reads.push('order');
@@ -251,6 +268,7 @@ beforeEach(() => {
   register.revision = 7;
   register.stock = 10;
   detailGate = null;
+  heldDetailReads.clear();
   shownStock.length = 0;
   reads.length = 0;
   statuses.length = 0;
@@ -462,7 +480,9 @@ it.live('a row opened on the full order page while the list still warms it joins
     detailGate = release;
     yield* mountRoot(OrdersList);
     yield* heldSecond;
-    yield* waitUntilOnFakeTimers(() => count('detail') > 0);
+    yield* networkSteady;
+    // The first two rows' product-summary requests await release; all other traffic must finish.
+    yield* networkQuietExcept(heldDetailReads.size);
     // The warm-up of the first rows has started and waits for its detail reads.
     expect(count('detail')).toBeGreaterThan(0);
     reads.length = 0;
@@ -492,6 +512,9 @@ it.live('a queued row whose warm-up the list starts after the click still opens 
     yield* mountRoot(OrdersList);
     yield* heldSecond;
     yield* waitUntilOnFakeTimers(() => ordersPageData.snapshot(listInput).state === 'ready');
+    yield* networkSteady;
+    // The first two rows' product-summary requests are the only intentional holds.
+    yield* networkQuietExcept(heldDetailReads.size);
     // Two rows warm at once; the third waits for one of them.
     const page = ordersPageData.snapshot(listInput);
     expect(page.state).toBe('ready');
@@ -503,10 +526,16 @@ it.live('a queued row whose warm-up the list starts after the click still opens 
     }
     // HTTP reaches the handler asynchronously; keep this row's gate until that request has arrived.
     yield* waitUntilOnFakeTimers(() => count('detail') > started);
+    yield* networkSteady;
+    // The two first-row summaries plus the clicked row's summary await their respective Deferreds.
+    yield* networkQuietExcept(heldDetailReads.size);
     detailGate = null;
     // The first rows finish and the list reaches the clicked row: its warm-up joins the handed-over read.
     yield* Deferred.succeed(first, true);
     yield* heldSecond;
+    // Drain every runnable request before measuring the handoff; only the clicked row remains held.
+    yield* networkSteady;
+    yield* networkQuietExcept(heldDetailReads.size);
     reads.length = 0;
 
     unmounts.shift()?.();

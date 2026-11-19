@@ -143,7 +143,7 @@ it.layer(network, { excludeTestServices: true })('store app contract', (suite) =
       ignores: 'tax',
       input: legalEntityId,
       reads: () => storefrontReads.length,
-      reloadsOn: ['storefront-registry'],
+      reloadsOn: ['storefront-registry', 'commerce-market-catalog'],
       store: storefrontsData,
     }),
   );

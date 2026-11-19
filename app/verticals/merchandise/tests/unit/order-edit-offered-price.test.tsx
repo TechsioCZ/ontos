@@ -280,6 +280,7 @@ it.live(
       yield* click(button('Uložit'));
       yield* waitUntil(() => text().includes(unreadable));
       expect(text()).toContain('Řádek odeberte a přidejte znovu. Týká se: Zrnková káva.');
+      yield* networkIdle;
       expect(text()).not.toContain('Řádky teď nesou aktuální cenu');
       yield* click(button('Uložit'));
       yield* waitUntil(() => sentBeans().length === 2);
@@ -289,6 +290,7 @@ it.live(
       // A save that succeeds ends it.
       yield* click(button('Uložit'));
       yield* waitUntil(() => sentBeans().length === 3);
+      yield* networkIdle;
       yield* waitUntil(() => !text().includes(unreadable));
     }).pipe(Effect.provide(network)),
 );
@@ -307,6 +309,7 @@ it.live('a refused price whose product can no longer be read names that line', (
     expect(addedPrice()).toContain('10');
     yield* click(button('Uložit'));
     yield* waitUntil(() => sentBeans().length === 2);
+    yield* networkIdle;
     yield* waitUntil(() => !text().includes(unreadable));
   }).pipe(Effect.provide(network)),
 );

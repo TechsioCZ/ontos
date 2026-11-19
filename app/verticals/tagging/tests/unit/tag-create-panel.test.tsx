@@ -1,5 +1,6 @@
 // @rstest-environment happy-dom
 // Tag creation sends the entered name and selected subject kinds through the owner contract.
+import { requiredLabelFor } from '@app/admin-ui';
 import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -130,6 +131,15 @@ it.layer(network, { excludeTestServices: true })('tag create panel with one Save
         name: 'VIP klient',
         subjectKinds: ['order'],
       });
+    }),
+  );
+
+  suite.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* pinTestDocument;
+      yield* mount();
+      expect(nameField().labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
     }),
   );
 });

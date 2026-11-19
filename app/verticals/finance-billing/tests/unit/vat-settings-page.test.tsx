@@ -13,6 +13,7 @@ import {
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
+  networkIdle,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
@@ -228,7 +229,11 @@ const render = Effect.gen(function* mount() {
 const showWith = (granted: VatChangeRights) =>
   Effect.sync(() => {
     rights = granted;
-  }).pipe(Effect.andThen(render), Effect.andThen(waitUntil(() => text().includes(say('regime.VAT_PAYER')))));
+  }).pipe(
+    Effect.andThen(render),
+    Effect.andThen(waitUntil(() => text().includes(say('regime.VAT_PAYER')))),
+    Effect.andThen(networkIdle),
+  );
 
 beforeEach(() => {
   declared = true;
@@ -279,6 +284,7 @@ it.layer(network, { excludeTestServices: true })('vat settings page', (suite) =>
       declared = false;
       yield* render;
       yield* waitUntil(() => text().includes(say('notDeclared')));
+      yield* networkIdle;
       expect(text()).toContain(say('notDeclaredDescription'));
       expect(text()).not.toContain(say('notInstalled'));
     }),
@@ -289,6 +295,7 @@ it.layer(network, { excludeTestServices: true })('vat settings page', (suite) =>
       taxInstalled = false;
       yield* render;
       yield* waitUntil(() => text().includes(say('notInstalled')));
+      yield* networkIdle;
       expect(text()).toContain(say('notInstalledDescription'));
       expect(text()).not.toContain(say('forbidden'));
     }),

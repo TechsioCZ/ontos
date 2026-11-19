@@ -271,6 +271,7 @@ it.layer(network, { excludeTestServices: true })('order edit form with one Save 
       yield* click(inDialog ?? document.createElement('button'));
       yield* waitUntil(() => view.saved.length === 1);
       yield* networkIdle;
+      expect(view.saved).toHaveLength(1);
       expect(edits()).toBe(1);
     }),
   );
@@ -327,6 +328,7 @@ it.layer(network, { excludeTestServices: true })('VAT of the order lines', (suit
       yield* mount;
       yield* pickProduct;
       expect(text()).toContain('Produkt nemá zařazení do sazby DPH, proto ho nelze přidat.');
+      yield* networkIdle;
       expect(text()).not.toContain('„není nastaveno“');
       expect(button('Přidat').disabled).toBe(true);
     }),
@@ -342,6 +344,7 @@ it.layer(network, { excludeTestServices: true })('VAT of the order lines', (suit
       expect(text()).toContain(`${copy('merchandise.pages.orders.detail.lineVat')} Snížená (0 %)`);
       // 2,42 Kč for the order's line, plus 8 Kč net and no VAT for the new one.
       expect(text()).toContain('10,42 Kč');
+      yield* networkIdle;
       expect(text()).not.toContain('není nastaveno');
     }),
   );
@@ -356,6 +359,7 @@ it.layer(network, { excludeTestServices: true })('a line added to a storefront o
       yield* mount;
       yield* pickProduct;
       yield* click(button('Přidat'));
+      yield* networkIdle;
       expect(text()).not.toContain('8,96 Kč');
       expect(text()).toContain('10 Kč');
       yield* click(button('Uložit'));

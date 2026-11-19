@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { browserNetwork, networkIdle, pinTestDocument, serveApi } from '@app/shared-contracts/testing/http-double';
@@ -300,11 +300,25 @@ it.live('an invitation with typed input asks before closing; an untouched one cl
   }).pipe(Effect.provide(network)),
 );
 
+it.live('reads the required text of a required field in Czech', () =>
+  Effect.gen(function* requiredText() {
+    yield* pinTestDocument;
+    const user = userEvent.setup();
+    yield* render(<InvitePersonButton onCommitted={() => {}} />);
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
+    yield* Effect.promise(() => screen.findByRole('dialog'));
+    const name = screen.getByLabelText(/Jméno a příjmení/u, { selector: 'input' });
+    expect(document.querySelector(`label[for="${name.id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('opens the real person from a governed deep link in the same Shell page', () =>
   Effect.gen(function* openLinkedPerson() {
     yield* pinTestDocument;
     yield* render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
+    yield* networkIdle;
     expect(lists).toContainEqual({ payload: { limit: 100, offset: 0 }, scope: 'company' });
     expect(accessReads).toEqual([
       { kind: 'options', payload: { limit: 100, scope: companyScope } },
@@ -400,6 +414,7 @@ it.live('renders role chips from the canonical assignment names rather than inte
     ]);
     yield* render(<PeoplePanel companyId={companyId} />);
     yield* Effect.promise(() => screen.findAllByText('Obchodník'));
+    yield* networkIdle;
     expect(screen.queryByText(/crm-sales/u)).toBeNull();
     expect(screen.queryByText(/00000000/u)).toBeNull();
   }).pipe(Effect.provide(network)),
@@ -434,6 +449,25 @@ it.live('uses Czech cardinal forms as pending canonical role changes accumulate'
   }).pipe(Effect.provide(network)),
 );
 
+it.live('stacks full-width person-detail actions on narrow screens without fixed-height buttons', () =>
+  Effect.gen(function* renderResponsiveActions() {
+    yield* pinTestDocument;
+    const user = userEvent.setup();
+    yield* render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.promise(async () => await user.click(await screen.findByText(person.displayName)));
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    const roleAction = within(dialog).getByRole('button', { name: 'Spravovat role' });
+    const membershipAction = within(dialog).getByRole('button', { name: 'Upravit členství' });
+    expect(roleAction.parentElement).toBe(membershipAction.parentElement);
+    expect(roleAction.parentElement?.className).toContain('grid w-full');
+    for (const button of [roleAction, membershipAction]) {
+      expect(button.className).toContain('w-full');
+      expect(button.className).toContain('whitespace-normal');
+      expect(button.className).not.toMatch(/(?:^|\s)h-/u);
+    }
+  }).pipe(Effect.provide(network)),
+);
+
 it.live('updates an open person detail from waiting to the native undeliverable receipt without a refresh button', () =>
   Effect.gen(function* refreshInvitationReceipt() {
     yield* pinTestDocument;
@@ -457,6 +491,7 @@ it.live('updates an open person detail from waiting to the native undeliverable 
     yield* Effect.promise(() =>
       screen.findByText('E-mail s pozvánkou: nelze doručit. Na tuto e-mailovou adresu nelze odesílat zprávy.'),
     );
+    yield* networkIdle;
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
     expect(screen.queryByText(/undeliverable_recipient/u)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Poslat pozvánku znovu' })).toBeNull();
@@ -472,6 +507,7 @@ it.live('loads the terminal invitation receipt on a fresh person deep link witho
     });
     yield* render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
     yield* Effect.promise(() => screen.findByText(/E-mail s pozvánkou: nelze doručit/u));
+    yield* networkIdle;
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
   }).pipe(Effect.provide(network)),
 );
@@ -491,6 +527,7 @@ it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', 
         });
         yield* render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
         yield* Effect.promise(() => screen.findByText(expected));
+        yield* networkIdle;
         expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
         cleanup();
       }),
@@ -503,6 +540,7 @@ it.live('reloads on a live change of Core-owned people data, not on other module
     yield* pinTestDocument;
     yield* render(<PeoplePanel companyId={companyId} />);
     yield* Effect.promise(() => screen.findByText(person.displayName));
+    yield* networkIdle;
     const before = lists.length;
     yield* acted(() => {
       window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['crm'] } }));

@@ -1,8 +1,9 @@
 // @rstest-environment happy-dom
 // The project panel as the user sees it: typing changes only the draft, and the one Save button sends the plan once.
-import { acted, unmountAll } from '@app/admin-ui/testing/module-ui';
-import { Effect, Option, Schema } from 'effect';
+import { unmountAll } from '@app/admin-ui/testing/module-ui';
+import { Deferred, Effect, Option, Schema } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
+import { act } from 'react';
 import type { PlanOutcome } from '../../src/routes/[lang]/ukoly/planning-proposal.ts';
 import { ProjectEditor } from '../../src/routes/[lang]/ukoly/work-planning.tsx';
 import { ProjectSchema } from '../../shared/apis/records.ts';
@@ -26,6 +27,7 @@ const project: WorkProject = Schema.decodeUnknownSync(ProjectSchema)({
 });
 
 interface Mounted {
+  readonly applied: Deferred.Deferred<boolean>;
   readonly closed: string[];
   readonly sent: { readonly _tag: string }[];
   readonly unmount: () => void;
@@ -36,6 +38,7 @@ afterEach(unmountAll);
 
 const mount = (outcome: PlanOutcome): Effect.Effect<Mounted> =>
   Effect.gen(function* mountEditor() {
+    const applied = yield* Deferred.make<boolean>();
     const closed: string[] = [];
     const sent: { readonly _tag: string }[] = [];
     yield* mountInRoute(
@@ -47,6 +50,7 @@ const mount = (outcome: PlanOutcome): Effect.Effect<Mounted> =>
         onApply={(command, done) => {
           sent.push(command);
           done(outcome);
+          Deferred.doneUnsafe(applied, Effect.succeed(true));
         }}
         onProposed={() => {
           closed.push('proposed');
@@ -58,7 +62,7 @@ const mount = (outcome: PlanOutcome): Effect.Effect<Mounted> =>
       />,
       { path: 'ukoly', url: '/cs/ukoly' },
     );
-    return { closed, sent, unmount: unmountAll };
+    return { applied, closed, sent, unmount: unmountAll };
   });
 
 const button = (name: string): HTMLButtonElement => {
@@ -76,17 +80,23 @@ const titleField = (): HTMLInputElement =>
 
 /** Types like a user: a native input event, then the field loses focus. */
 const typeTitle = (value: string): Effect.Effect<void> =>
-  acted(() => {
-    const field = titleField();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
-    field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-  });
+  Effect.promise(() =>
+    act(() => {
+      const field = titleField();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      return Promise.resolve();
+    }),
+  );
 
 const clickSave = (): Effect.Effect<void> =>
-  acted(() => {
-    button('Uložit').click();
-  });
+  Effect.promise(() =>
+    act(() => {
+      button('Uložit').click();
+      return Promise.resolve();
+    }),
+  );
 
 describe('project panel save', () => {
   it.live('maps a renamed project while retaining its dates, state and responsible principal', () =>
@@ -94,6 +104,8 @@ describe('project panel save', () => {
       const view = yield* mount(committed);
       yield* typeTitle('Renamed project');
       yield* clickSave();
+      // The injected apply reply has run the panel's committed/failed/proposed callback to completion.
+      yield* Deferred.await(view.applied);
       expect(view.sent).toHaveLength(1);
       expect(
         Schema.is(PlanningCommandSchema.pipe(Schema.toTaggedUnion('_tag')).cases.UpdateProject)(view.sent[0]),
@@ -117,6 +129,7 @@ describe('project panel save', () => {
       yield* typeTitle('   ');
       expect(saveState()).toBe('invalid');
       expect(button('Uložit').disabled).toBe(true);
+      yield* clickSave();
       expect(view.sent).toEqual([]);
     }),
   );

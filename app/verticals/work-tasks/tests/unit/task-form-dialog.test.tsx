@@ -1,9 +1,10 @@
 // @rstest-environment happy-dom
 // Task editing preserves its submission revision and rejects an empty title.
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import { requiredLabelFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { pinTestDocument } from '@app/shared-contracts/testing/http-double';
-import { Effect, Option, Schema } from 'effect';
+import { Deferred, Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { TaskSchema } from '../../shared/apis/records.ts';
 import { TaskFormDialog } from '../../src/routes/[lang]/ukoly/task-form-dialog.tsx';
@@ -30,6 +31,7 @@ const task = Schema.decodeUnknownSync(TaskSchema)({
 
 const sent: { readonly expectedRevision: number; readonly submission: TaskFormSubmission }[] = [];
 let answer: RevisionedSaveResult = 8;
+let saveCompleted = Deferred.makeUnsafe<boolean>();
 
 const mount = () =>
   Effect.gen(function* mountDialog() {
@@ -57,7 +59,7 @@ const mount = () =>
           Effect.sync(() => {
             sent.push({ expectedRevision, submission });
             return answer;
-          })
+          }).pipe(Effect.tap(() => Deferred.succeed(saveCompleted, true)))
         }
         opportunities={[]}
         opportunitiesLoading={false}
@@ -96,6 +98,7 @@ const saveState = () => document.querySelector<HTMLElement>('[data-save-state]')
 beforeEach(() => {
   sent.length = 0;
   answer = 8;
+  saveCompleted = Deferred.makeUnsafe<boolean>();
 });
 
 afterEach(unmountAll);
@@ -106,6 +109,7 @@ describe('task edit panel with one Save button', () => {
       yield* mount();
       yield* typeTitle('Saved task, revised');
       yield* click(button('Uložit'));
+      yield* Deferred.await(saveCompleted);
       yield* waitUntil(() => text().includes('Uloženo'));
       expect(sent).toHaveLength(1);
       expect(sent[0]?.expectedRevision).toBe(7);
@@ -121,6 +125,14 @@ describe('task edit panel with one Save button', () => {
       expect(saveState()).toBe('invalid');
       expect(button('Uložit').disabled).toBe(true);
       expect(sent).toEqual([]);
+    }),
+  );
+
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* mount();
+      expect(titleField().labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
     }),
   );
 });
