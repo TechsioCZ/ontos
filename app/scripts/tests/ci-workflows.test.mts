@@ -336,15 +336,18 @@ const ProofWorkflowSchema = Schema.Struct({
       steps: Schema.optional(
         Schema.Array(
           Schema.Struct({
+            'continue-on-error': Schema.optional(Schema.Boolean),
             env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
             id: Schema.optional(Schema.String),
             if: Schema.optional(Schema.String),
             run: Schema.optional(Schema.String),
+            'timeout-minutes': Schema.optional(Schema.Number),
             uses: Schema.optional(Schema.String),
             with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
           }),
         ),
       ),
+      'timeout-minutes': Schema.optional(Schema.Number),
     }),
   ),
 });
@@ -380,6 +383,14 @@ it('lets a merge queue entry stand on the pull request run that tested its exact
     BASE_SHA: expression('github.event.merge_group.base_sha'),
     GH_TOKEN: GITHUB_TOKEN_EXPRESSION,
   });
+  // A proof only saves work. Workspace gates fails on a failed queue-proof job, so a checkout or lookup that fails
+  // or stalls must end as "no proof" inside the job's own limit, never as a failed job.
+  for (const step of [checkout, find]) {
+    expect(step?.['continue-on-error']).toBe(true);
+  }
+  expect((checkout?.['timeout-minutes'] ?? Infinity) + (find?.['timeout-minutes'] ?? Infinity)).toBeLessThan(
+    proof?.['timeout-minutes'] ?? 0,
+  );
 });
 
 it("records what a pull request run tested only after its final plan, under the name the queue's finder reads", () => {

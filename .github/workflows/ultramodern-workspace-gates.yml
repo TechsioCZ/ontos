@@ -76,8 +76,12 @@ jobs:
           fi
       # The whole history without file contents holds the queue's base; the merge of the pull request head
       # fetches only the blobs both sides changed. The proof reads one script, so only its directory is checked out.
+      # A proof only saves work: a checkout or lookup that fails or stalls leaves no proof and the gates run, it
+      # never fails the entry. Both steps together end well inside the job's five minutes.
       - name: Checkout the queue entry's history without file contents
         if: github.event_name == 'merge_group'
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -87,6 +91,8 @@ jobs:
       - name: Look up the pull request run that tested this exact tree on this base
         id: pull-request-proof
         if: github.event_name == 'merge_group'
+        continue-on-error: true
+        timeout-minutes: 2
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
