@@ -6,13 +6,14 @@ import type { LanguageSelectionInput, TemplateBaseIdentity } from '../domain/lan
 import type {
   LanguageAvailability,
   LanguageDecision,
+  LanguagePolicySnapshot,
   RevisionAvailability,
   SelectedLanguageDecision,
   SupportedLanguage,
 } from '../domain/language/vocabulary.ts';
 import type { LanguagePolicyPortContract } from './language-policy-port.service.ts';
 import { readLanguagePolicySnapshot } from './language-policy-domain.service.ts';
-import type { TemplateRevisionPortContract } from './template-revision-port.service.ts';
+import type { TemplateReadPortContract } from './template-revision-port.service.ts';
 import { resolveTemplatePin, verifyTemplatePinForHandoff } from './template-revision-domain.service.ts';
 
 /**
@@ -20,7 +21,7 @@ import { resolveTemplatePin, verifyTemplatePinForHandoff } from './template-revi
  * language decision needs. A missing or unusable revision and an ambiguous one are different facts; a store failure is
  * neither and propagates, so nothing is decided on a guess.
  */
-const availabilityOf = (port: TemplateRevisionPortContract, base: TemplateBaseIdentity, language: SupportedLanguage) =>
+const availabilityOf = (port: TemplateReadPortContract, base: TemplateBaseIdentity, language: SupportedLanguage) =>
   resolveTemplatePin(port, { ...base, language }).pipe(
     Effect.map((pin): RevisionAvailability => ({ kind: 'usable', pin })),
     Effect.catchTag('TemplateResolutionFailed', (failure) =>
@@ -31,7 +32,7 @@ const availabilityOf = (port: TemplateRevisionPortContract, base: TemplateBaseId
   );
 
 const resolveLanguageAvailability = Effect.fn('LanguageSelection.availability')(function* availability(
-  port: TemplateRevisionPortContract,
+  port: TemplateReadPortContract,
   base: TemplateBaseIdentity,
 ) {
   return (yield* Effect.all(
@@ -46,12 +47,11 @@ export type DecideLanguageInput = Omit<LanguageSelectionInput, 'availability' | 
  * The decision for a new Message Intent: resolves the Tenant mode and the approved revision of each language, then
  * chooses. The intent lane stores the returned decision verbatim and never calls this for a retry.
  */
-export const decideMessageLanguage = Effect.fn('LanguageSelection.decide')(function* decide(
-  templates: TemplateRevisionPortContract,
-  policies: LanguagePolicyPortContract,
+export const decideMessageLanguageUnderPolicy = Effect.fn('LanguageSelection.decideUnderPolicy')(function* decide(
+  templates: TemplateReadPortContract,
+  policy: LanguagePolicySnapshot,
   input: DecideLanguageInput,
 ) {
-  const policy = yield* readLanguagePolicySnapshot(policies);
   // An unreadable mode needs no template lookup: the handoff is not allowed whatever the templates say.
   const availability: LanguageAvailability =
     policy.kind === 'unreadable'
@@ -60,13 +60,22 @@ export const decideMessageLanguage = Effect.fn('LanguageSelection.decide')(funct
   return chooseLanguage({ ...input, availability, policy }) satisfies LanguageDecision;
 });
 
+/** As above, reading the Tenant mode itself. A request with several intents reads it once and decides each under it. */
+export const decideMessageLanguage = Effect.fn('LanguageSelection.decide')(function* decide(
+  templates: TemplateReadPortContract,
+  policies: LanguagePolicyPortContract,
+  input: DecideLanguageInput,
+) {
+  return yield* decideMessageLanguageUnderPolicy(templates, yield* readLanguagePolicySnapshot(policies), input);
+});
+
 /**
  * The last stoppable handoff of a pinned decision. It verifies the pinned revision (#1398: an unsafe-invalidated
  * revision blocks), reads the Current mode and, for an English pin, the Current Czech revision, then lets the pure gate
  * decide. Only the stored decision goes in: a retry cannot select again, and a stop rewrites nothing.
  */
 export const verifyLanguageForHandoff = Effect.fn('LanguageSelection.verifyHandoff')(function* verify(
-  templates: TemplateRevisionPortContract,
+  templates: TemplateReadPortContract,
   policies: LanguagePolicyPortContract,
   decision: SelectedLanguageDecision,
 ) {

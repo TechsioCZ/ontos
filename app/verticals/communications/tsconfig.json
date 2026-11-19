@@ -20,14 +20,24 @@
     "api",
     "vertical.manifest.ts",
     "vertical.registration.ts",
-    "tests"
+    "tests",
+    "tests/fixtures/*.json"
   ],
   "references": [
+    {
+      "path": "../../packages/communications-contracts"
+    },
     {
       "path": "../../packages/core-runtime"
     },
     {
+      "path": "../../packages/email-delivery"
+    },
+    {
       "path": "../../packages/gateway-principal-verifier"
+    },
+    {
+      "path": "../privacy"
     },
     {
       "path": "../../packages/shared-contracts"

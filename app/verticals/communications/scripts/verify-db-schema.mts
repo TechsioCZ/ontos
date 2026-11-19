@@ -26,11 +26,36 @@ const appendOnlyTables = [
   'template_revisions',
   'template_revision_invalidations',
   'tenant_language_mode_versions',
+  'communication_requests',
+  'communication_request_conflicts',
+  'communication_decisions',
+  'message_intents',
 ];
+// Written ONLY by the pre-handoff worker's scoped routines: the runtime role may read them and nothing else.
+const routineWrittenTables = ['delivery_attempts', 'intent_handoff_stops'];
 const closableTable = 'template_activations';
 // The only columns the runtime role may update: closing an open activation, once. Every other column is immutable.
 const closingColumns = ['end_invocation_id', 'end_reason', 'ended_at', 'ended_by_principal_id', 'ended_kind'];
 const closedHistoryTrigger = 'communications_template_activations_closed_append_only';
+// The scoped routines of the pre-handoff worker and the language mode snapshot: SECURITY DEFINER, pinned search_path,
+// static SQL, executable by the runtime role and by nobody else.
+const scopedRoutines = [
+  'read_language_policy_snapshot',
+  'worker_begin_attempt',
+  'worker_finish_attempt',
+  'worker_read_intent',
+  'worker_read_template_snapshot',
+  'worker_record_stop',
+];
+// Every intake fact rejects an update or delete by trigger, whatever the role; a finished attempt does too.
+const intakeAppendOnlyTriggers = [
+  'communications_decisions_append_only',
+  'communications_handoff_stops_append_only',
+  'communications_intents_append_only',
+  'communications_request_conflicts_append_only',
+  'communications_requests_append_only',
+  'communications_attempts_finished_append_only',
+];
 
 const sameList = (actual: readonly string[], expected: readonly string[]) =>
   actual.length === expected.length && actual.every((value, index) => value === expected[index]);
@@ -51,6 +76,11 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
           not c.relrowsecurity and not c.relforcerowsecurity
           and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
           and has_table_privilege('ontos_runtime', c.oid, 'DELETE') and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
+        when c.relname = any($5::text[]) then
+          c.relrowsecurity and c.relforcerowsecurity
+          and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
+          and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and not has_table_privilege('ontos_runtime', c.oid, 'INSERT')
+          and not has_table_privilege('ontos_runtime', c.oid, 'DELETE') and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
         else
           c.relrowsecurity and c.relforcerowsecurity
           and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
@@ -69,7 +99,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
       ) as safe
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and c.relkind in ('r', 'p') order by c.relname`,
-      [COMMUNICATIONS_SCHEMA_NAME, redemptionTable, appendOnlyTables, closableTable],
+      [COMMUNICATIONS_SCHEMA_NAME, redemptionTable, appendOnlyTables, closableTable, routineWrittenTables],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read the Communications table catalog', cause)));
   if (
@@ -111,7 +141,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
   if (
     columns.some(
       (table) =>
-        table.insertable !== table.total ||
+        table.insertable !== (routineWrittenTables.includes(table.name) ? 0 : table.total) ||
         table.referenceable !== 0 ||
         !sameList(table.updatable, table.name === closableTable ? closingColumns : []),
     )
@@ -121,9 +151,11 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
   const [infrastructure] = yield* client
     .unsafe<{
       readonly closed_history_triggers: number;
+      readonly intake_triggers: number;
       readonly journal: number;
       readonly public_routines: number;
       readonly safe_role: boolean;
+      readonly safe_routines: number;
       readonly safe_schema: boolean;
       readonly unvalidated_constraints: number;
     }>(
@@ -140,10 +172,19 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
         join pg_catalog.pg_class gc on gc.oid = g.tgrelid join pg_catalog.pg_namespace gn on gn.oid = gc.relnamespace
         where gn.nspname = $1 and gc.relname = $2 and g.tgname = $3 and g.tgenabled = 'O' and not g.tgisinternal
           and (g.tgtype & 2) = 2 and (g.tgtype & 16) = 16 and (g.tgtype & 8) = 8) as closed_history_triggers,
+      (select count(*)::integer from pg_catalog.pg_trigger g
+        join pg_catalog.pg_class gc on gc.oid = g.tgrelid join pg_catalog.pg_namespace gn on gn.oid = gc.relnamespace
+        where gn.nspname = $1 and g.tgname = any($4::text[]) and g.tgenabled = 'O' and not g.tgisinternal
+          and (g.tgtype & 2) = 2 and (g.tgtype & 16) = 16 and (g.tgtype & 8) = 8) as intake_triggers,
+      (select count(*)::integer from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = $1 and p.proname = any($5::text[]) and p.prosecdef
+          and coalesce(p.proconfig, '{}') @> array['search_path=pg_catalog, pg_temp']
+          and has_function_privilege('ontos_runtime', p.oid, 'EXECUTE')
+          and not exists (select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) acl where acl.grantee = 0)) as safe_routines,
       (select count(*)::integer from pg_catalog.pg_constraint k join pg_catalog.pg_namespace n on n.oid = k.connamespace
         where n.nspname = $1 and not k.convalidated) as unvalidated_constraints
     from pg_catalog.pg_roles r where r.rolname = 'ontos_runtime'`,
-      [COMMUNICATIONS_SCHEMA_NAME, closableTable, closedHistoryTrigger],
+      [COMMUNICATIONS_SCHEMA_NAME, closableTable, closedHistoryTrigger, intakeAppendOnlyTriggers, scopedRoutines],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read Communications infrastructure', cause)));
   if (
@@ -153,6 +194,8 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
     !infrastructure.safe_schema ||
     infrastructure.public_routines !== 0 ||
     infrastructure.closed_history_triggers !== 1 ||
+    infrastructure.intake_triggers !== intakeAppendOnlyTriggers.length ||
+    infrastructure.safe_routines !== scopedRoutines.length ||
     infrastructure.unvalidated_constraints !== 0
   ) {
     return yield* failure('Communications journal, role, schema, routine privileges or constraints are unsafe');
@@ -173,5 +216,5 @@ const tableCount = await Effect.runPromise(
   verify.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(Reactivity.layer, databaseLayer))),
 );
 process.stdout.write(
-  `Verified ${tableCount} communications tables: replay ledger and append-only template facts least privilege down to every column, the closed-activation history trigger, forced RLS on every governed table and validated constraints\n`,
+  `Verified ${tableCount} communications tables: replay ledger, append-only template and intake facts least privilege down to every column, the closed-activation and finished-attempt history triggers, the hardened scoped worker routines, forced RLS on every governed table and validated constraints\n`,
 );

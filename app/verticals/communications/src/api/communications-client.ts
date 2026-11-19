@@ -31,6 +31,11 @@ export {
   executeSetLanguagePolicyWithAuthorization,
 } from './set-language-policy-action-client.ts';
 export type { SetLanguagePolicyActionClientOptions } from './set-language-policy-action-client.ts';
+export {
+  executeSubmitCommunicationRequest,
+  executeSubmitCommunicationRequestWithAuthorization,
+} from './submit-communication-request-action-client.ts';
+export type { SubmitCommunicationRequestActionClientOptions } from './submit-communication-request-action-client.ts';
 // </generated-action-http-client-exports>
 
 export class CommunicationsApiClient extends Context.Service<

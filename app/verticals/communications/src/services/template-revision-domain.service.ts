@@ -17,6 +17,7 @@ import {
 } from '../../shared/template-revision-errors.ts';
 import type {
   TemplateActivationRecord,
+  TemplateReadPortContract,
   TemplateRevisionPortContract,
   TemplateRevisionRecord,
 } from './template-revision-port.service.ts';
@@ -66,7 +67,7 @@ export const clampBusinessTime = (clock: DateTime.Utc, latest: Option.Option<Dat
  * committed before releasing that lock is then visible and bounds this writer's time from below.
  */
 const businessTimeOf = Effect.fn('TemplateRevision.businessTime')(function* businessTime(
-  port: TemplateRevisionPortContract,
+  port: TemplateReadPortContract,
   templateTypeId: string,
 ) {
   const [clock, latest] = yield* Effect.all([port.clockNow, port.latestActivityAt(templateTypeId)], {
@@ -324,7 +325,7 @@ export const invalidateRevisionAsUnsafe = Effect.fn('TemplateRevision.invalidate
  * language or brand. The Message Intent lane stores the returned pin at the first approved creation of an intent.
  */
 export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(function* resolveTemplatePin(
-  port: TemplateRevisionPortContract,
+  port: TemplateReadPortContract,
   identity: TemplateIdentity,
   decisionTime?: DateTime.Utc,
 ) {
@@ -376,7 +377,7 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
  * pin and never resolves again. The gate returns the very same pin or blocks; it never offers another revision.
  */
 export const verifyTemplatePinForHandoff = Effect.fn('TemplateRevision.verifyPin')(function* verifyPin(
-  port: TemplateRevisionPortContract,
+  port: TemplateReadPortContract,
   pin: TemplatePin,
 ) {
   const revision = yield* port.loadRevision(pin.revisionId);

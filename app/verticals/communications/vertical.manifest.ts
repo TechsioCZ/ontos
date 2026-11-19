@@ -11,6 +11,7 @@ import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
+import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-manifest-imports>
 
 export const communicationsManifest: OntosModuleManifestInput = defineOntosModuleManifest({
@@ -35,6 +36,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
       setLanguagePolicyAction,
+      submitCommunicationRequestAction,
       // </generated-module-manifest-actions>
     ],
     api: {

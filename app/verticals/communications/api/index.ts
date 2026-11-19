@@ -32,6 +32,7 @@ import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { CommunicationsDatabaseLive, CommunicationsPgClientLive } from '../src/database/client.ts';
 import { communicationsApi, communicationsOperationContexts } from '../shared/api.ts';
+import { communicationsProductionOwnerPortsLive } from '../src/composition/owner-ports.ts';
 import type { OperationContext } from '../shared/api.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -45,6 +46,7 @@ import { invalidateTemplateRevisionActionApiLive } from './invalidate-template-r
 import { languagePolicyReadApiLive } from './language-policy-read-server.ts';
 import { prepareTemplateRevisionActionApiLive } from './prepare-template-revision-action-server.ts';
 import { setLanguagePolicyActionApiLive } from './set-language-policy-action-server.ts';
+import { submitCommunicationRequestActionApiLive } from './submit-communication-request-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
@@ -141,6 +143,8 @@ const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
       governedActiveApplicationCompositionLive,
     ),
   ),
+  // The owner ports the intake decision composes (catalog, source facts, Privacy scope, recipient and Privacy gates).
+  GovernedReadLayer.provide(communicationsProductionOwnerPortsLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
@@ -152,6 +156,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   languagePolicyReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   prepareTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  submitCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

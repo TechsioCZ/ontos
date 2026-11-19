@@ -8,8 +8,10 @@ import { activateTemplateRevisionAction } from './src/actions/activate-template-
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
+import { prepareMessageHandoffWorker } from './src/workers/prepare-message-handoff.worker.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
+import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-registration-imports>
 
 export const communicationsRegistration = defineVerticalRuntimeRegistration({
@@ -20,6 +22,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     invalidateTemplateRevisionAction,
     prepareTemplateRevisionAction,
     setLanguagePolicyAction,
+    submitCommunicationRequestAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -48,6 +51,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   manifest: communicationsManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    prepareMessageHandoffWorker,
     // </generated-module-registration-workers>
   ],
   reads: [

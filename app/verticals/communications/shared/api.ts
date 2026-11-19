@@ -14,6 +14,7 @@ import { InvalidateTemplateRevisionActionApi } from './apis/invalidate-template-
 import { LanguagePolicyApi } from './apis/language-policy.ts';
 import { PrepareTemplateRevisionActionApi } from './apis/prepare-template-revision-action.ts';
 import { SetLanguagePolicyActionApi } from './apis/set-language-policy-action.ts';
+import { SubmitCommunicationRequestActionApi } from './apis/submit-communication-request-action.ts';
 // </generated-governed-http-api-imports>
 
 export type OperationContext = MicroVerticalOperationContext;
@@ -45,6 +46,7 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(LanguagePolicyApi)
   .addHttpApi(PrepareTemplateRevisionActionApi)
   .addHttpApi(SetLanguagePolicyActionApi)
+  .addHttpApi(SubmitCommunicationRequestActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

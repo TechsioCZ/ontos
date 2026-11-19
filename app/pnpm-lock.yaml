@@ -261,6 +261,9 @@ importers:
       '@app/commerce-order':
         specifier: workspace:*
         version: link:verticals/commerce-order
+      '@app/communications':
+        specifier: workspace:*
+        version: link:verticals/communications
       '@app/core-runtime':
         specifier: workspace:*
         version: link:packages/core-runtime
@@ -1884,12 +1887,21 @@ importers:
 
   verticals/communications:
     dependencies:
+      '@app/communications-contracts':
+        specifier: workspace:*
+        version: link:../../packages/communications-contracts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/email-delivery':
+        specifier: workspace:*
+        version: link:../../packages/email-delivery
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
+      '@app/privacy':
+        specifier: workspace:*
+        version: link:../privacy
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

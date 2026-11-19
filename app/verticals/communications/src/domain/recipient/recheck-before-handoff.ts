@@ -31,15 +31,17 @@ export type HandoffState = typeof HandoffStateSchema.Type;
  * What the decision fixed about an intent, pinned so a recheck can prove nothing moved: the original contact binding
  * (reference and evidence, never an address) and the approved type revision the audience rule was decided under.
  */
-export interface HandoffPin {
-  readonly contactKey: string;
-  readonly typeRevision: number;
-}
+export const HandoffContactKeySchema = Schema.String.pipe(Schema.brand('HandoffContactKey'));
+export const HandoffPinSchema = Schema.Struct({ contactKey: HandoffContactKeySchema, typeRevision: Schema.Number });
+export type HandoffPin = typeof HandoffPinSchema.Type;
 
 export const handoffPinOf = (
   type: Pick<TransactionalMessageType, 'revision'>,
   binding: OriginalRecipientBinding,
-): HandoffPin => ({ contactKey: contactBindingKey(binding.originalContact), typeRevision: type.revision });
+): HandoffPin => ({
+  contactKey: HandoffContactKeySchema.make(contactBindingKey(binding.originalContact)),
+  typeRevision: type.revision,
+});
 
 export interface HandoffCandidate {
   /** The binding this retry carries. It must still equal the ORIGINAL binding of `RecipientEvaluationInput.bindings`. */

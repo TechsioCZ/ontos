@@ -132,6 +132,7 @@
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",
     "@app/commerce-order": "workspace:*",
+    "@app/communications": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/inventory": "workspace:*",
     "@app/party-registry": "workspace:*",

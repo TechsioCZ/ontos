@@ -7,6 +7,7 @@ import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outb
 import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
 import { outboxWorkerEntry as paymentOutboxWorkerEntry } from '@app/payment/outbox-worker-host';
 import { outboxWorkerEntry as symmyIntegrationOutboxWorkerEntry } from '@app/symmy-integration/outbox-worker-host';
+import { outboxWorkerEntry as communicationsOutboxWorkerEntry } from '@app/communications/outbox-worker-host';
 
 startOutboxWorkerHost({
   entries: [
@@ -20,6 +21,7 @@ startOutboxWorkerHost({
     hostedOutboxWorkerEntry(commerceOrderOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER'),
     hostedOutboxWorkerEntry(paymentOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT'),
     hostedOutboxWorkerEntry(symmyIntegrationOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION'),
+    communicationsOutboxWorkerEntry,
   ],
   health: true,
 });

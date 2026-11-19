@@ -133,6 +133,23 @@ export interface TemplateRevisionPortContract {
   ) => Effect.Effect<readonly TemplateActivationRecord[], TemplateStoreUnavailable>;
 }
 
+/**
+ * What resolving and verifying a pin READS, and nothing it writes. The Action reads it from its own transaction; the
+ * pre-handoff worker has no transaction and reads one consistent snapshot through a scoped routine, so both run the same
+ * domain code over the same narrow surface.
+ */
+export type TemplateReadPortContract = Pick<
+  TemplateRevisionPortContract,
+  | 'activationsAt'
+  | 'clockNow'
+  | 'findInvalidation'
+  | 'findType'
+  | 'latestActivityAt'
+  | 'loadRevision'
+  | 'loadType'
+  | 'lockTypeShared'
+>;
+
 /** The Context tag of the port, for a later lane that composes its own Layer over a scoped transaction. */
 export class TemplateRevisionPort extends Context.Service<TemplateRevisionPort, TemplateRevisionPortContract>()(
   '@app/communications/services/template-revision-port.service/TemplateRevisionPort',

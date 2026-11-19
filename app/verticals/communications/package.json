@@ -4,28 +4,34 @@
   "private": true,
   "exports": {
     "./api": "./shared/api.ts",
-    "./api/client": "./src/api/communications-client.ts"
+    "./api/client": "./src/api/communications-client.ts",
+    "./outbox/communications-core-message-intent-prepared-v1": "./shared/outbox/communications-core-message-intent-prepared-v1.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
-    "dev": "node ../../scripts/prepare-dev-module-contract.mts communications && ultramodern dev",
     "build": "ultramodern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app communications --target dist && ultramodern deploy --skip-build --deploy-target node",
     "cloudflare:build": "ultramodern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target cloudflare-dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app communications --target cloudflare-dist && ultramodern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app communications",
     "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app communications",
-    "serve": "ultramodern serve",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
-    "test:unit": "rstest --project unit",
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts && node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target dist && rstest --project integration tests/integration/persistence.test.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts communications && ultramodern dev",
+    "serve": "ultramodern serve",
     "test:integration": "node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target dist && rstest --project integration",
-    "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts && node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target dist && rstest --project integration tests/integration/persistence.test.ts"
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/communications-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/privacy": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
