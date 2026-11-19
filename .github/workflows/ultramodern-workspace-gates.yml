@@ -204,7 +204,7 @@ jobs:
       # own Node, which strips its types, before anything is installed (scripts/plan-ci-without-install.sh).
       - name: Select the preinstalled Node runtime for dependency-free planning
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
       - name: Resolve affected packages and required matrices
