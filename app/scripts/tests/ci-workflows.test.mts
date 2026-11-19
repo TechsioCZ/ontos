@@ -1957,7 +1957,93 @@ it('saves the pnpm store from the one planner install, on the trunks only', () =
   expect(store?.if).toContain("github.ref == 'refs/heads/main'");
   const gates = readJobsOf(GATES_WORKFLOW);
   const planInstall = gates[CI_PLAN_JOB]?.steps.find(({ uses }) => uses === INSTALL_APP_ACTION);
-  expect(planInstall?.with).toEqual({ 'save-store': 'true' });
+  expect(planInstall?.with).toEqual({ 'lockfile-verdict': 'publish', 'save-store': 'true' });
+});
+
+const LOCKFILE_VERDICT = 'lockfile-verdict';
+const LOCKFILE_RECORD = 'lockfile-verified.jsonl';
+const VerdictJobsSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({ needs: Schema.optional(Schema.Array(Schema.String)), steps: Schema.Array(AnyStepSchema) }),
+  ),
+});
+
+// pnpm skips its supply-chain check of the lockfile when it finds its own record of a passed check. The plan job
+// installs first in every run, so its check is the one fresh check of the attempt. A reader that does not need it
+// could start before the record exists; a second publisher would race the first; a gate left on the default pays
+// the check again for nothing.
+it('publishes the lockfile verdict from the plan job and reuses it in every gate that needs the plan', () => {
+  const { jobs } = Schema.decodeUnknownSync(VerdictJobsSchema)(
+    parse(readFileSync(new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url), 'utf-8')),
+  );
+  const verdicts = Object.entries(jobs).flatMap(([job, { needs = [], steps }]) =>
+    steps
+      .filter(({ uses }) => uses === INSTALL_APP_ACTION)
+      .map((step) => ({ args: step.with?.['install-args'], job, needs, verdict: step.with?.[LOCKFILE_VERDICT] })),
+  );
+  expect(verdicts.filter(({ verdict }) => verdict === 'publish').map(({ job }) => job)).toEqual([CI_PLAN_JOB]);
+  for (const { args, job, needs, verdict } of verdicts) {
+    expect([undefined, 'publish', 'reuse'], job).toContain(verdict);
+    if (verdict === 'reuse') {
+      expect(needs, job).toContain(CI_PLAN_JOB);
+      expect(args, job).toBeUndefined();
+    }
+    if (job !== CI_PLAN_JOB && needs.includes(CI_PLAN_JOB) && args === undefined) {
+      expect(verdict, job).toBe('reuse');
+    }
+  }
+  expect(verdicts.filter(({ verdict }) => verdict === 'reuse').length).toBeGreaterThan(5);
+  // Other workflows install on their own and keep the default.
+  for (const file of ['quality-audit.yml', 'zerops-stage.yml', 'merge-adaptation-check.yml']) {
+    const steps = Object.values(readJobsOf(file)).flatMap(({ steps: jobSteps }) => jobSteps);
+    expect(
+      steps.filter(({ uses, with: inputs }) => uses === INSTALL_APP_ACTION && inputs?.[LOCKFILE_VERDICT] !== undefined),
+      file,
+    ).toEqual([]);
+  }
+});
+
+it('carries one record file per run attempt, around the install and only on the install path', () => {
+  const steps = readInstallAction();
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const install = index('Install dependencies from the frozen lockfile');
+  const installPath = steps[install]?.if ?? '';
+  expect(installPath).toBe("steps.restored.outputs.usable != 'true'");
+  const downloads = steps.filter(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
+  const uploads = steps.filter(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true);
+  const artifact = `pnpm-lockfile-verdict-${expression('github.run_attempt')}`;
+  // A pattern, not a name: an attempt without a record downloads nothing and pnpm checks; no run id, so only this run.
+  expect(downloads.map(({ with: inputs }) => inputs)).toEqual([
+    { path: expression('steps.verdict.outputs.staging'), pattern: artifact },
+  ]);
+  expect(uploads.map(({ with: inputs }) => inputs)).toEqual([
+    {
+      'if-no-files-found': 'error',
+      name: artifact,
+      overwrite: true,
+      path: `${expression('steps.verdict.outputs.staging')}/${LOCKFILE_RECORD}`,
+      'retention-days': 1,
+    },
+  ]);
+  const locate = steps.find(({ id }) => id === 'verdict');
+  expect(locate?.run).toContain(`echo "record=\${XDG_CACHE_HOME:-$HOME/.cache}/pnpm/${LOCKFILE_RECORD}"`);
+  const order = [
+    "Locate pnpm's lockfile verdict",
+    'Download the lockfile verdict of this run attempt',
+    'Put the lockfile verdict in place',
+    'Install dependencies from the frozen lockfile',
+    'Stage the lockfile verdict this install recorded',
+    'Publish the lockfile verdict to this run attempt',
+  ].map(index);
+  expect(order.every((position) => position >= 0)).toBe(true);
+  expect(order).toEqual(EffectArray.sort(order, Order.Number));
+  for (const position of order.filter((candidate) => candidate !== install)) {
+    const step = steps[position];
+    // A restored workspace runs no pnpm: nothing to reuse and no fresh record to publish.
+    expect(step?.if, step?.name).toContain(installPath);
+    expect(step?.if, step?.name).toContain(`inputs.${LOCKFILE_VERDICT}`);
+  }
 });
 
 it('saves the installed workspace from the typecheck row alone, and restores it only for a complete install', () => {

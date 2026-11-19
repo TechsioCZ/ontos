@@ -201,11 +201,15 @@ jobs:
           overwrite: true
           retention-days: 1
       # Every gate installs the workspace from the pnpm store. On the trunks this one install saves a missed store
-      # before the gates fan out; it runs once per run, so no two jobs race to save.
+      # before the gates fan out; it runs once per run, so no two jobs race to save. It is also the one fresh pnpm
+      # check of the lockfile in each run attempt: it publishes pnpm's record of the pass, and every later job, all
+      # of which need this one, reuses it (install-app lockfile-verdict). In docs and proven modes, or from a
+      # restored workspace, nothing is published and every installing gate checks the lockfile itself.
       - name: Install the app workspace for code impact analysis
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
         uses: ./.github/actions/install-app
         with:
+          lockfile-verdict: publish
           save-store: 'true'
       - name: Resolve affected packages and required matrices
         id: selection
@@ -353,6 +357,8 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: reuse
 
       # Per-unit output cache (scripts/ci/unit-output-cache.mts). The Actions key only locates a candidate archive:
       # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
@@ -484,6 +490,7 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
         with:
+          lockfile-verdict: reuse
           restore-typescript-build: ${{ matrix.typescript-build == true }}
           save-node-modules: ${{ matrix.typescript-build == true }}
 
@@ -549,6 +556,7 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
+          lockfile-verdict: reuse
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
       # A row may need system tools or provisioned fixtures before its tests run (the matrices' `setup`).
@@ -612,6 +620,7 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
+          lockfile-verdict: reuse
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
       - name: Download the same-run Node artifacts for unit contract fixtures
@@ -697,6 +706,8 @@ jobs:
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: reuse
 
       # Separate the two memory-heavy analyzers instead of serializing them on one runner.
       # The remaining independent checks share the contracts runner and retain individual logs.
@@ -807,6 +818,8 @@ jobs:
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: reuse
 
       - name: Format and Lint the shard's files through the pre-commit hook
         if: matrix.shard != 0
@@ -963,6 +976,8 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: reuse
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # main's cache warmer saves it for main's lockfile; the demo trunk saves its own below, from its one browser row.
