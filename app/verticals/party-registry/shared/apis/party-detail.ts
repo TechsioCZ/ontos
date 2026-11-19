@@ -2,6 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { moduleOperation } from '@app/core-runtime/sdk';
 
 import { AresAppliedEvidenceSchema } from '../domain/ares-application.ts';
 import { AssertionIdSchema } from '../domain/correction-contracts.ts';
@@ -86,3 +87,16 @@ export const PartyDetailApi = HttpApi.make('PartyDetailApi').add(
     }),
   ),
 );
+
+/** The typed operation reference a consumer passes to the Core SDK's `call`. */
+export const partyDetailOperation = moduleOperation({
+  kind: 'read',
+  path: '/reads/party-detail',
+  provider: {
+    entrypointKey: 'party.registry.api.party-detail',
+    moduleId: 'party.registry',
+    schemaVersion: '1',
+  },
+  request: PartyDetailRequestSchema,
+  response: PartyDetailResponseSchema,
+});
