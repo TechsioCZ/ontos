@@ -7,6 +7,7 @@ import { ObjectStorage, ObjectStorageServerError, ObjectStorageTimeout } from '.
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import type { MediaByteHopAsset } from '../../src/media/byte-stream.ts';
 import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
+import { verifyStoredMediaObject } from '../../src/media/verification.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { makeInMemoryObjectStorage, withObjectStorageFaults } from '../../src/testing/media-object-storage.ts';
 
@@ -96,6 +97,55 @@ it.effect('refuses a same-size body with another digest', () =>
       run(streamMediaObject({ asset: reserved(), body: chunked(other), principalId: reservingPrincipal })),
     );
     expect(tagOf(failure)).toBe('MediaContentConflict');
+  }),
+);
+
+/** What the provider holds under the key, read back and judged the way the confirm leg's evidence is produced. */
+const verifyStored = (storage: Effect.Success<ReturnType<typeof setup>>['storage']) =>
+  verifyStoredMediaObject({
+    expected: { byteSize: content.byteLength, contentSha256: digestOf(content) },
+    storageKey,
+    storageProvider: 'in-memory-test-double',
+  }).pipe(Effect.provideService(ObjectStorage, storage.service));
+
+it.effect('leaves the good stored object intact when a corrected-looking retry ends short', () =>
+  Effect.gen(function* shortRetry() {
+    const { run, storage } = yield* setup();
+    yield* run(streamMediaObject({ asset: reserved(), body: chunked(content), principalId: reservingPrincipal }));
+    const failure = yield* Effect.flip(
+      run(
+        streamMediaObject({ asset: reserved(), body: chunked(content.slice(0, 5)), principalId: reservingPrincipal }),
+      ),
+    );
+    expect(tagOf(failure)).toBe('MediaContentConflict');
+    // The failed retry aborted its put: the first, correct object is what is still stored and still verifies.
+    expect(Option.getOrUndefined(yield* storage.peek(storageKey))).toEqual(content);
+    expect(yield* verifyStored(storage)).toMatchObject({ contentSha256: digestOf(content), outcome: 'verified' });
+  }),
+);
+
+it.effect('leaves the good stored object intact when a retry has the same length and another digest', () =>
+  Effect.gen(function* sameLengthRetry() {
+    const { run, storage } = yield* setup();
+    yield* run(streamMediaObject({ asset: reserved(), body: chunked(content), principalId: reservingPrincipal }));
+    const other = encoder.encode('HELLO MEDIA BYTES');
+    expect(other.byteLength).toBe(content.byteLength);
+    const failure = yield* Effect.flip(
+      run(streamMediaObject({ asset: reserved(), body: chunked(other), principalId: reservingPrincipal })),
+    );
+    expect(tagOf(failure)).toBe('MediaContentConflict');
+    expect(Option.getOrUndefined(yield* storage.peek(storageKey))).toEqual(content);
+    expect(yield* verifyStored(storage)).toMatchObject({ contentSha256: digestOf(content), outcome: 'verified' });
+  }),
+);
+
+it.effect('stores nothing for a first body that ends short or hashes differently', () =>
+  Effect.gen(function* firstBodyRefused() {
+    const { run, storage } = yield* setup();
+    for (const body of [chunked(content.slice(0, 5)), chunked(encoder.encode('HELLO MEDIA BYTES'))]) {
+      yield* Effect.flip(run(streamMediaObject({ asset: reserved(), body, principalId: reservingPrincipal })));
+      expect(Option.isNone(yield* storage.peek(storageKey))).toBe(true);
+    }
   }),
 );
 

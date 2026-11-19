@@ -3,6 +3,12 @@ import { Effect, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
+import type { MediaByteSize, MediaContentSha256 } from './public-contract.ts';
+
+interface TallyResult {
+  readonly byteSize: MediaByteSize;
+  readonly contentSha256: MediaContentSha256;
+}
 
 /**
  * A running size and SHA-256 over the bytes that pass through one stream. It holds only the hash state and a
@@ -11,6 +17,7 @@ import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract
 export class ContentTally {
   readonly #hasher = sha256.create();
   #byteSize = 0;
+  #finished: TallyResult | undefined;
 
   get byteSize(): number {
     return this.#byteSize;
@@ -21,12 +28,13 @@ export class ContentTally {
     this.#byteSize += chunk.byteLength;
   }
 
-  /** The size and lowercase hex digest of everything added so far. Call it once, after the last chunk. */
-  finish() {
-    return {
+  /** The size and lowercase hex digest of everything added. Call it after the last chunk; repeated calls agree. */
+  finish(): TallyResult {
+    this.#finished ??= {
       byteSize: MediaByteSizeSchema.make(this.#byteSize),
       contentSha256: MediaContentSha256Schema.make(Hex.encode(this.#hasher.digest())),
     };
+    return this.#finished;
   }
 }
 

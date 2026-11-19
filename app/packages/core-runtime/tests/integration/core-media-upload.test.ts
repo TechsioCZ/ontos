@@ -300,6 +300,28 @@ type Harness = Effect.Success<ReturnType<typeof openHarness>>;
 
 const carrierOf = (actor: Actor) => (actor.kind === 'human' ? 'human' : 'machine');
 
+/** The reserved row as the byte hop reads it. */
+const hopAssetOf = Effect.fn('CoreMediaUploadTest.hopAsset')(function* hopAssetOf(
+  harness: Harness,
+  tenantId: string,
+  mediaAssetId: string,
+) {
+  const asset = yield* harness.rowOf(tenantId, mediaAssetId);
+  if (asset === undefined) {
+    return yield* Effect.die('The reserved asset row is missing');
+  }
+  return {
+    byteSize: asset.byte_size,
+    contentSha256: asset.content_sha256,
+    ingestedByPrincipalId: asset.ingested_by_principal_id,
+    mimeType: asset.mime_type,
+    processingStatus: asset.processing_status,
+    sealedAt: asset.sealed_at,
+    storageKey: asset.storage_key,
+    storageProvider: asset.storage_provider,
+  } satisfies MediaByteHopAsset;
+});
+
 /** Reserve, stream, verify, confirm: one whole upload through the real Actions and the byte hop. */
 const uploadFlow = Effect.fn('CoreMediaUploadTest.flow')(function* uploadFlow(
   harness: Harness,
@@ -322,20 +344,7 @@ const uploadFlow = Effect.fn('CoreMediaUploadTest.flow')(function* uploadFlow(
       transport: transportOf(`${options.key}-reserve`),
     })
     .pipe(Effect.provideService(ObjectStorage, harness.storage.service));
-  const asset = yield* harness.rowOf(world.tenantId, reservation.mediaAssetRef.resourceId);
-  if (asset === undefined) {
-    return yield* Effect.die('The reserved asset row is missing');
-  }
-  const hopAsset = {
-    byteSize: asset.byte_size,
-    contentSha256: asset.content_sha256,
-    ingestedByPrincipalId: asset.ingested_by_principal_id,
-    mimeType: asset.mime_type,
-    processingStatus: asset.processing_status,
-    sealedAt: asset.sealed_at,
-    storageKey: asset.storage_key,
-    storageProvider: asset.storage_provider,
-  } satisfies MediaByteHopAsset;
+  const hopAsset = yield* hopAssetOf(harness, world.tenantId, reservation.mediaAssetRef.resourceId);
   const streamed = yield* streamMediaObject({
     asset: hopAsset,
     body: Stream.fromIterable([bytes.slice(0, 7), bytes.slice(7)]),
@@ -887,11 +896,59 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
           })
           .pipe(Effect.provideService(StoredMediaObjectVerification, evidence)),
       );
-      expect(failureTagOf(exit)).toBe('MediaUnavailable');
+      // A wiring defect of the caller, not an outage: definite and not retryable.
+      expect(failureTagOf(exit)).toBe('MediaContentConflict');
       expect((yield* harness.rowOf(world.tenantId, reserved.mediaAssetRef.resourceId))?.processing_status).toBe(
         'uploaded',
       );
     }).pipe(Effect.scoped),
+  );
+
+  suite.effect(
+    'keeps a sealed-to-be object when later retries send short or different bytes, then seals it ready',
+    () =>
+      Effect.gen(function* badRetries() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const runtime = harness.runtimeFor('human');
+        const principal = principalOf(world, world.human);
+        const reservation = yield* runtime
+          .runAction({
+            payload: reservationPayload(content),
+            principal,
+            registration: uploadAssetAction,
+            transport: transportOf('retries-reserve'),
+          })
+          .pipe(Effect.provideService(ObjectStorage, harness.storage.service));
+        const mediaAssetId = reservation.mediaAssetRef.resourceId;
+        const key = deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId });
+        const asset = yield* hopAssetOf(harness, world.tenantId, mediaAssetId);
+        const send = (body: Uint8Array) =>
+          streamMediaObject({ asset, body: Stream.make(body), principalId: world.human.principalId }).pipe(
+            Effect.provideService(ObjectStorage, harness.storage.service),
+          );
+        yield* send(content);
+        const sameLengthOther = encoder.encode('X'.repeat(content.byteLength));
+        for (const bad of [content.slice(0, 5), sameLengthOther]) {
+          expect(failureTagOf(yield* Effect.exit(send(bad)))).toBe('MediaContentConflict');
+          expect(Option.getOrUndefined(yield* harness.storage.peek(key))).toEqual(content);
+        }
+        const verification = yield* verifyStoredMediaObject({
+          expected: { byteSize: content.byteLength, contentSha256: digestOf(content) },
+          storageKey: key,
+          storageProvider: 'in-memory-test-double',
+        }).pipe(Effect.provideService(ObjectStorage, harness.storage.service));
+        const confirmed = yield* runtime
+          .runAction({
+            payload: { mediaAssetRef: reservation.mediaAssetRef },
+            principal,
+            registration: confirmAssetAction,
+            transport: transportOf('retries-confirm'),
+          })
+          .pipe(Effect.provideService(StoredMediaObjectVerification, verification));
+        expect(confirmed).toMatchObject({ contentSha256: digestOf(content), processingStatus: 'ready' });
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('ready');
+      }).pipe(Effect.scoped),
   );
   suite.effect('does not fail an asset on a mismatch finding that its own reservation contradicts', () =>
     Effect.gen(function* contradicted() {
