@@ -16,6 +16,8 @@ import {
 import type { ObjectStat, ObjectStorageFailure, ObjectStorageService } from '../media/object-storage.ts';
 import type { MediaStorageKey } from '../media/storage-key.ts';
 
+const IN_MEMORY_PROVIDER_ID = 'in-memory-test-double';
+
 const ObjectStorageOperationSchema = Schema.Literals(['get', 'put', 'stat']);
 export type ObjectStorageOperation = typeof ObjectStorageOperationSchema.Type;
 
@@ -33,6 +35,8 @@ interface StoredObject {
 export interface InMemoryObjectStorageOptions {
   /** Whether the double verifies a requested SHA-256 itself (a provider that attests) or refuses it. Default: refuses. */
   readonly attestsSha256?: boolean;
+  /** The provider identity the double reports. Default: `in-memory-test-double`. */
+  readonly providerId?: string;
   /** Whether each stored object gets a technical `v<n>` version reference. Default: none. */
   readonly versionRefs?: boolean;
 }
@@ -115,6 +119,7 @@ export const makeInMemoryObjectStorage = Effect.fn('MediaObjectStorageDouble.mak
           Effect.andThen(find(key)),
           Effect.map((stored) => ({ body: Stream.make(stored.bytes), stat: statOf(stored) })),
         ),
+      providerId: options.providerId ?? IN_MEMORY_PROVIDER_ID,
       put,
       stat: (key) => record('stat', key).pipe(Effect.andThen(find(key)), Effect.map(statOf)),
     };
@@ -189,6 +194,7 @@ export const withObjectStorageFaults = Effect.fn('MediaObjectStorageDouble.withF
     });
     const faulty: ObjectStorageService = {
       get: (key) => inject('get', inner.get(key)),
+      providerId: inner.providerId,
       put: (request) => inject('put', inner.put(request)),
       stat: (key) => inject('stat', inner.stat(key)),
     };

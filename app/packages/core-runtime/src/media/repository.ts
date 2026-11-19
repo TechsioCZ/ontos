@@ -23,14 +23,19 @@ export type MediaAssetRecord = typeof mediaAssets.$inferSelect;
 export interface ReserveMediaAssetInput {
   /** The declared size; the confirmed size replaces it when the asset becomes `ready`. */
   readonly byteSize: MediaByteSize;
+  /**
+   * The SHA-256 the caller declared, held on the row as an unsealed claim: `sealed_at` stays empty, so the
+   * public projection withholds it, until the stored bytes are verified and the asset becomes `ready`.
+   */
+  readonly declaredContentSha256?: MediaContentSha256 | undefined;
   readonly displayFilename: string;
-  readonly externalSourceRef?: string;
-  readonly ingestedByPrincipalId?: string;
+  readonly externalSourceRef?: string | undefined;
+  readonly ingestedByPrincipalId?: string | undefined;
   readonly ingestionSource: MediaIngestionSource;
   /** Chosen by the owner so the storage key can derive from it before the insert. */
   readonly mediaAssetId: MediaAssetId;
   readonly mimeType: string;
-  readonly originalFilename?: string;
+  readonly originalFilename?: string | undefined;
   readonly storageProvider: string;
 }
 
@@ -39,7 +44,7 @@ export interface ConfirmedMediaBytes {
   readonly byteSize: MediaByteSize;
   readonly contentSha256: MediaContentSha256;
   /** The provider's technical version pin, when it returned one. Never a revision. */
-  readonly storageObjectVersionRef?: string;
+  readonly storageObjectVersionRef?: string | undefined;
 }
 
 export type MediaAssetTransition =
@@ -55,7 +60,7 @@ const persistenceUnavailable = (cause: unknown): MediaUnavailable =>
  * the tenant and company from that scope (never from a caller) and exposes no raw executor, so a handler can
  * only do what this interface names.
  */
-export const makeMediaAssetRepository = (transaction: ScopedTransactionExecutor) => {
+export const mediaAssetRepositoryFromTransaction = (transaction: ScopedTransactionExecutor) => {
   const { legalEntityId, tenantId } = transaction.scope;
   /** An unselected company means tenant-wide; a selected one sees its own and company-less assets only. */
   const scopePredicate = (mediaAssetId: MediaAssetId) =>
@@ -127,6 +132,7 @@ export const makeMediaAssetRepository = (transaction: ScopedTransactionExecutor)
         .insert(mediaAssets)
         .values({
           byteSize: BigInt(input.byteSize),
+          contentSha256: input.declaredContentSha256 ?? null,
           displayFilename: input.displayFilename,
           externalSourceRef: input.externalSourceRef ?? null,
           ingestedByPrincipalId: input.ingestedByPrincipalId ?? null,

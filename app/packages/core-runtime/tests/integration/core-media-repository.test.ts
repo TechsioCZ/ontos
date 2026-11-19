@@ -9,7 +9,7 @@ import { coreRelations } from '../../src/db/schema.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import { MediaAssetNotFound, MediaUnavailable } from '../../src/media/errors.ts';
 import { MediaAssetIdSchema } from '../../src/media/identity.ts';
-import { makeMediaAssetRepository } from '../../src/media/repository.ts';
+import { mediaAssetRepositoryFromTransaction } from '../../src/media/repository.ts';
 import type { ReserveMediaAssetInput } from '../../src/media/repository.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
@@ -85,12 +85,15 @@ const openDatabases = Effect.fn('CoreMediaRepositoryTest.openDatabases')(functio
   const inScope = <Result, Failure>(
     tenant: Tenant,
     legalEntityId: string | undefined,
-    run: (repository: ReturnType<typeof makeMediaAssetRepository>) => Effect.Effect<Result, Failure>,
+    run: (repository: ReturnType<typeof mediaAssetRepositoryFromTransaction>) => Effect.Effect<Result, Failure>,
   ) =>
     scopeOf(tenant, legalEntityId).pipe(
       Effect.flatMap((scope) =>
         runtime.transaction((transaction) =>
-          installOperationalScope(transaction, scope).pipe(Effect.map(makeMediaAssetRepository), Effect.flatMap(run)),
+          installOperationalScope(transaction, scope).pipe(
+            Effect.map(mediaAssetRepositoryFromTransaction),
+            Effect.flatMap(run),
+          ),
         ),
       ),
     );

@@ -29,6 +29,17 @@ const MediaAssetNotFoundValue = actionErrorSchema('MediaAssetNotFound', {
 export type MediaAssetNotFound = InstanceType<typeof MediaAssetNotFoundValue>;
 export { MediaAssetNotFoundValue as MediaAssetNotFound };
 
+/**
+ * The bytes differ from the content identity the reservation fixed: the declared size or SHA-256, or the digest
+ * a sealed asset already holds. A client error, never a silent retry and never an overwrite.
+ */
+const MediaContentConflictValue = actionErrorSchema('MediaContentConflict', {
+  code: Schema.Literal('media_content_conflict'),
+  ...safeReason,
+});
+export type MediaContentConflict = InstanceType<typeof MediaContentConflictValue>;
+export { MediaContentConflictValue as MediaContentConflict };
+
 /** The stored bytes were proven not to match the confirmed identity. This is not an absent asset. */
 const MediaIntegrityFailedValue = actionErrorSchema('MediaIntegrityFailed', {
   code: Schema.Literal('media_integrity_failed'),
@@ -60,6 +71,7 @@ export { MediaIngestUncertainValue as MediaIngestUncertain };
 export type MediaFailure =
   | ActionRequestHashConflict
   | MediaAssetNotFound
+  | MediaContentConflict
   | MediaForbidden
   | MediaIngestUncertain
   | MediaIntegrityFailed
@@ -69,6 +81,7 @@ export type MediaFailure =
 export const MediaFailureSchema = Schema.Union([
   ActionRequestHashConflict,
   MediaAssetNotFoundValue,
+  MediaContentConflictValue,
   MediaForbiddenValue,
   MediaIngestUncertainValue,
   MediaIntegrityFailedValue,
@@ -85,6 +98,7 @@ export const isMediaFailure = Schema.is(MediaFailureSchema);
 const MEDIA_FAILURE_STATUS = {
   ActionRequestHashConflict: 409,
   MediaAssetNotFound: 404,
+  MediaContentConflict: 409,
   MediaForbidden: 403,
   MediaIngestUncertain: 503,
   MediaIntegrityFailed: 422,

@@ -101,6 +101,11 @@ export interface ObjectBody {
 export interface ObjectStorageService {
   /** Opens the stored object as a stream with its stat, or fails with the typed provider failure. */
   readonly get: (key: MediaStorageKey) => Effect.Effect<ObjectBody, ObjectStorageFailure>;
+  /**
+   * The stable identity of the provider behind this port. A reserved row records it as `storageProvider`, and
+   * every later step compares it, so bytes are only ever read through the provider that holds them.
+   */
+  readonly providerId: string;
   /** A failed put is not proof that nothing was stored: the outcome can be uncertain. */
   readonly put: <BodyError>(
     request: PutObjectRequest<BodyError>,
