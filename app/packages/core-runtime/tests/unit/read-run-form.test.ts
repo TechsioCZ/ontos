@@ -524,10 +524,10 @@ it.effect('answers permission unavailable when the owner rule cannot answer', ()
 it.effect('logs the read key and the preserved cause of an aborted transaction, and no value', () =>
   Effect.scoped(
     Effect.gen(function* abortedTransactionLogged() {
-      const logged: string[] = [];
+      const logged: unknown[] = [];
       const logger = Logger.make(({ logLevel, message }) => {
         if (logLevel === 'Warn') {
-          logged.push(JSON.stringify(message));
+          logged.push(message);
         }
       });
       // The opening owner check reads the clock first; the module's own transaction fails at its clock.
@@ -539,20 +539,19 @@ it.effect('logs the read key and the preserved cause of an aborted transaction, 
               context.transaction((owned) => owned.load(input.subject)).pipe(Effect.map(answered)),
             ),
           )
-          .pipe(Effect.provide(Logger.layer([logger]))),
+          .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
       );
       expect(Schema.is(ReadHandlerUnavailable)(failureOf(exit))).toBe(true);
-      expect(logged).toEqual([
-        JSON.stringify([
+      // Exactly the read key and the cause: no input or result value reaches the log.
+      expect(logged).toStrictEqual([
+        [
           'A { run } Read answered unavailable',
           {
             causes: [{ detail: 'database_unavailable', sqlState: '25006', tag: 'TransactionAborted' }],
             readKey: READ_KEY,
           },
-        ]),
+        ],
       ]);
-      // No input or result value reaches the log.
-      expect(logged.join('')).not.toMatch(/customer/u);
     }),
   ),
 );
