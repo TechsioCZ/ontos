@@ -12,7 +12,16 @@ export type MediaProcessingStatus = typeof MediaProcessingStatusSchema.Type;
 export const MediaIngestionSourceSchema = Schema.Literals(['user', 'integration', 'import', 'system']);
 export type MediaIngestionSource = typeof MediaIngestionSourceSchema.Type;
 
-export const MediaContentSha256Schema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+export const MediaContentSha256Schema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)).pipe(
+  Schema.brand('MediaContentSha256'),
+);
+export type MediaContentSha256 = typeof MediaContentSha256Schema.Type;
+
+/** A byte count the database can hold exactly: a non-negative safe integer, so `BigInt` of it cannot throw. */
+export const MediaByteSizeSchema = Schema.Int.check(
+  Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
+).pipe(Schema.brand('MediaByteSize'));
+export type MediaByteSize = typeof MediaByteSizeSchema.Type;
 
 /**
  * Where a processing status may go. `ready` and `failed` are final here: nothing regresses from `ready`, and a
@@ -38,7 +47,7 @@ export const mediaStatusesThatMayEnter = (to: MediaProcessingStatus): readonly M
  * sealed (confirmed), never as an in-flight claim.
  */
 export const MediaAssetMetadataSchema = Schema.Struct({
-  byteSize: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  byteSize: MediaByteSizeSchema,
   contentSha256: Schema.optionalKey(MediaContentSha256Schema),
   displayFilename: Schema.String,
   ingestionSource: MediaIngestionSourceSchema,

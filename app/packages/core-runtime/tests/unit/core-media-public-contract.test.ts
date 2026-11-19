@@ -4,6 +4,8 @@ import { expect, it } from 'effect-rstest';
 import { MediaUnavailable } from '../../src/media/errors.ts';
 import {
   MediaAssetMetadataSchema,
+  MediaByteSizeSchema,
+  MediaContentSha256Schema,
   MediaProcessingStatusSchema,
   canTransitionMediaStatus,
   mediaStatusesThatMayEnter,
@@ -116,4 +118,17 @@ it('lets a status move only forward and never regress from ready or failed', () 
   expect(canTransitionMediaStatus('ready', 'ready')).toBe(false);
   expect(mediaStatusesThatMayEnter('ready')).toEqual(['uploaded', 'scanning']);
   expect(mediaStatusesThatMayEnter('uploaded')).toEqual([]);
+});
+
+it('accepts only a byte count and a digest the database and the public contract can hold', () => {
+  for (const valid of [0, 1, Number.MAX_SAFE_INTEGER]) {
+    expect(Schema.is(MediaByteSizeSchema)(valid)).toBe(true);
+  }
+  for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 1e300, '5']) {
+    expect(Schema.is(MediaByteSizeSchema)(invalid)).toBe(false);
+  }
+  expect(Schema.is(MediaContentSha256Schema)('a'.repeat(64))).toBe(true);
+  for (const invalid of ['A'.repeat(64), 'a'.repeat(63), 'g'.repeat(64), '']) {
+    expect(Schema.is(MediaContentSha256Schema)(invalid)).toBe(false);
+  }
 });

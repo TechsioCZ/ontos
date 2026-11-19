@@ -11,6 +11,7 @@ import { MediaAssetNotFound, MediaUnavailable } from '../../src/media/errors.ts'
 import { MediaAssetIdSchema } from '../../src/media/identity.ts';
 import { makeMediaAssetRepository } from '../../src/media/repository.ts';
 import type { ReserveMediaAssetInput } from '../../src/media/repository.ts';
+import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 
@@ -21,7 +22,9 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/databas
  */
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
-const digest = 'c'.repeat(64);
+const bytes = (count: number) => Schema.decodeUnknownSync(MediaByteSizeSchema)(count);
+const sha = (value: string) => Schema.decodeUnknownSync(MediaContentSha256Schema)(value);
+const digest = sha('c'.repeat(64));
 
 interface Tenant {
   readonly legalEntityId: string;
@@ -99,7 +102,7 @@ const reservation = (
   overrides: Partial<ReserveMediaAssetInput> = {},
 ) =>
   ({
-    byteSize: 5,
+    byteSize: bytes(5),
     displayFilename: 'Brochure.pdf',
     ingestionSource: 'user',
     mediaAssetId,
@@ -136,7 +139,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media repository
       yield* inScope(tenant, undefined, (repository) => repository.reserve(reservation(mediaAssetId)));
       const sealed = yield* inScope(tenant, undefined, (repository) =>
         repository.transition(mediaAssetId, {
-          confirmed: { byteSize: 7, contentSha256: digest, storageObjectVersionRef: 'v1' },
+          confirmed: { byteSize: bytes(7), contentSha256: digest, storageObjectVersionRef: 'v1' },
           to: 'ready',
         }),
       );
@@ -147,7 +150,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media repository
             ? repository.transition(mediaAssetId, { to: 'scanning' })
             : repository.transition(
                 mediaAssetId,
-                to === 'ready' ? { confirmed: { byteSize: 1, contentSha256: 'd'.repeat(64) }, to } : { to },
+                to === 'ready' ? { confirmed: { byteSize: bytes(1), contentSha256: sha('d'.repeat(64)) }, to } : { to },
               ),
         );
         expect(outcome.kind).toBe('rejected');
@@ -183,7 +186,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media repository
       );
       expect(failed.kind).toBe('applied');
       const retry = yield* inScope(tenant, undefined, (repository) =>
-        repository.transition(mediaAssetId, { confirmed: { byteSize: 5, contentSha256: digest }, to: 'ready' }),
+        repository.transition(mediaAssetId, { confirmed: { byteSize: bytes(5), contentSha256: digest }, to: 'ready' }),
       );
       expect(retry.kind).toBe('rejected');
       if (retry.kind === 'rejected') {

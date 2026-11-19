@@ -9,7 +9,12 @@ import type { MediaAssetId } from './identity.ts';
 import { deriveMediaStorageKey } from './storage-key.ts';
 import type { MediaStorageKey } from './storage-key.ts';
 import { mediaStatusesThatMayEnter } from './public-contract.ts';
-import type { MediaIngestionSource, MediaProcessingStatus } from './public-contract.ts';
+import type {
+  MediaByteSize,
+  MediaContentSha256,
+  MediaIngestionSource,
+  MediaProcessingStatus,
+} from './public-contract.ts';
 
 /** The persisted row, storage columns included. Owner-local: it never leaves Core, only its projection does. */
 export type MediaAssetRecord = typeof mediaAssets.$inferSelect;
@@ -17,7 +22,7 @@ export type MediaAssetRecord = typeof mediaAssets.$inferSelect;
 /** The reservation of an asset: the row that anchors one intended upload before any byte is stored. */
 export interface ReserveMediaAssetInput {
   /** The declared size; the confirmed size replaces it when the asset becomes `ready`. */
-  readonly byteSize: number;
+  readonly byteSize: MediaByteSize;
   readonly displayFilename: string;
   readonly externalSourceRef?: string;
   readonly ingestedByPrincipalId?: string;
@@ -31,8 +36,8 @@ export interface ReserveMediaAssetInput {
 
 /** What the confirmed, verified bytes look like. Only a transition to `ready` carries it. */
 export interface ConfirmedMediaBytes {
-  readonly byteSize: number;
-  readonly contentSha256: string;
+  readonly byteSize: MediaByteSize;
+  readonly contentSha256: MediaContentSha256;
   /** The provider's technical version pin, when it returned one. Never a revision. */
   readonly storageObjectVersionRef?: string;
 }

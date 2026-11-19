@@ -17,7 +17,7 @@ export type MediaStorageKey = typeof MediaStorageKeySchema.Type;
 
 /**
  * The key is a pure function of `(tenantId, mediaAssetId)` under a fixed domain-separation prefix. Both ids are
- * fixed-length uuids, so the NUL-joined pair is injective; two assets never share a key, whatever their bytes or
+ * fixed-length uuids (callers pass the scope tenant and a schema-checked asset id), so the NUL-joined pair is injective; two assets never share a key, whatever their bytes or
  * display names. The same asset always gets the same key, which is what lets a retry converge on one object.
  */
 export const deriveMediaStorageKey = (key: {

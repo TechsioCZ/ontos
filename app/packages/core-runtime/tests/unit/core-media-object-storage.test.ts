@@ -123,6 +123,19 @@ it.effect('records a technical version reference only when asked, never a revisi
   }),
 );
 
+it.effect('gives every stored version, an overwrite included, a fresh technical reference', () =>
+  Effect.gen(function* distinctVersionRefs() {
+    const storage = yield* makeInMemoryObjectStorage({ versionRefs: true });
+    const refs = [
+      yield* storage.service.put({ body, contentType: 'x/y', key: key(assetA) }),
+      yield* storage.service.put({ body, contentType: 'x/y', key: key(assetB) }),
+      yield* storage.service.put({ body, contentType: 'x/y', key: key(assetA) }),
+      yield* storage.service.put({ body, contentType: 'x/y', key: key('00000000-0000-4000-8000-0000000000c3') }),
+    ].map(({ versionRef }) => versionRef);
+    expect(new Set(refs).size).toBe(refs.length);
+  }),
+);
+
 it.effect('exposes no delete or revision operation on the port', () =>
   Effect.gen(function* surface() {
     const storage = yield* makeInMemoryObjectStorage();
