@@ -25,6 +25,7 @@ import {
   planCiChecks,
   unknownFilters,
   withCiTopologyDependencies,
+  workspacePackageDirectories,
 } from '../plan-ci-checks.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 
@@ -986,6 +987,10 @@ const asRows = Schema.decodeUnknownSync(Schema.Array(JsonDocument));
 const PNPM_WORKSPACE = 'pnpm-workspace.yaml';
 const APPLY_AFFECTED = '--apply-affected';
 const UNAVAILABLE = 'Workspace impact is unavailable';
+/** The last entry of the packages list of pnpm-workspace.yaml. */
+const LAST_WORKSPACE_ENTRY = '  - n1-storefront\n';
+/** The same entry indented with a tab, which YAML forbids. */
+const TAB_INDENTED_ENTRY = '\t- n1-storefront\n';
 const appFile = (file: string) => readFileSync(path.join(appRoot, file), 'utf-8');
 /** The value of one GITHUB_OUTPUT line. */
 const outputLine = (output: string, key: string) =>
@@ -1131,6 +1136,44 @@ it('fails the plan job on every matrices document the strict decode refuses', ()
   }
 });
 
+/** The package directories the planner reads from a pnpm-workspace.yaml text, listing this checkout. */
+const workspaceDirectories = (text: string) =>
+  workspacePackageDirectories(
+    text,
+    (directory) => readdirSync(path.join(appRoot, directory)),
+    (directory) => existsSync(path.join(appRoot, directory, PACKAGE_MANIFEST)),
+  );
+
+it('reads every packages entry of pnpm-workspace.yaml, and nothing it does not understand', () => {
+  const workspace = appFile(PNPM_WORKSPACE);
+  const directories = workspaceDirectories;
+  const complete = directories(workspace);
+  // The root package and every package directory: none is lost.
+  expect(complete).toHaveProperty('directories.length', workspacePackages.length + 1);
+  const last = LAST_WORKSPACE_ENTRY;
+  expect(workspace).toContain(last);
+  // Comment and blank lines inside the list, at any column, and comments after an entry change nothing.
+  for (const text of [
+    workspace.replace(last, `# a comment\n${last}`),
+    workspace.replace(last, `\n    # an indented comment\n${last}`),
+    workspace.replace(last, '  - n1-storefront # the second storefront\n'),
+    workspace.replace(last, "  - 'n1-storefront'\n"),
+  ]) {
+    expect(directories(text), text).toEqual(complete);
+  }
+  // A form this reader does not know is unreadable, never a shorter list.
+  for (const text of [
+    workspace.replace(/packages:\n(?: {2}- .*\n)+/u, 'packages: [apps/*, verticals/*]\n'),
+    workspace.replace(last, TAB_INDENTED_ENTRY),
+    workspace.replace(last, `${last}    - continued\n`),
+    workspace.replace(last, `${last}packages:\n  - extra\n`),
+    workspace.replace(last, '  - &shop n1-storefront\n'),
+    workspace.replace(last, `---\n${last}`),
+  ]) {
+    expect(directories(text), text).toHaveProperty('unreadable');
+  }
+});
+
 it('plans the complete suite from a workspace the installed decode would not have read', () => {
   const { plan, put, remove, reset } = plannerFixture();
   const catalog = decodeDocument(appFile(CATALOG_MANIFEST));
@@ -1149,6 +1192,7 @@ it('plans the complete suite from a workspace the installed decode would not hav
     [TOPOLOGY, encodeJson({ ...topology, verticals: {} })],
     [TOPOLOGY, encodeJson({ ...topology, shell: { ...shell, moduleFederation: { remotes: [{}] } } })],
     [OWNERSHIP, encodeJson({ ...ownership, owners: rowWith(moduleOwners, 'path', 3) })],
+    [PNPM_WORKSPACE, appFile(PNPM_WORKSPACE).replace(LAST_WORKSPACE_ENTRY, TAB_INDENTED_ENTRY)],
   ];
   try {
     // The fixture as it stands narrows a change inside the catalog.

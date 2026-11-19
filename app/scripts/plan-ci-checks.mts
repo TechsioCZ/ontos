@@ -523,17 +523,36 @@ export interface CiPackageManifest {
 /** A dependency the planner cannot resolve to a workspace package by name. */
 const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version);
 
-/** The entries of the top-level `packages:` list of pnpm-workspace.yaml; undefined for a line that is no plain entry. */
-const workspaceEntries = (text: string) => {
-  const lines = text.split('\n');
-  const start = lines.findIndex((line) => /^packages:\s*$/u.test(line));
-  const end = lines.findIndex((line, index) => index > start && /^\S/u.test(line));
-  return start === -1
-    ? []
-    : lines
-        .slice(start + 1, end === -1 ? undefined : end)
-        .filter((line) => !/^\s*(?:#.*)?$/u.test(line))
-        .map((line) => /^\s+-\s+(?<quote>['"]?)(?<entry>[^\s#'"]+)\k<quote>\s*(?:#.*)?$/u.exec(line)?.groups?.entry);
+/**
+ * The entries of the top-level `packages:` block list of pnpm-workspace.yaml. Comment and blank lines inside the list
+ * are skipped; the next top-level key ends it. Empty when the file has no such list, names it twice, or the list holds
+ * a line this reader does not know (another indentation, a flow list, an anchor, a document marker): a form it cannot
+ * read never yields a shorter list.
+ */
+const workspaceEntries = (text: string): readonly string[] => {
+  const lines = text.split(/\r?\n/u);
+  const keys = lines.flatMap((line, index) => (/^packages\s*:/u.test(line) ? [index] : []));
+  const [start] = keys;
+  if (keys.length !== 1 || start === undefined || !/^packages:\s*(?:#.*)?$/u.test(lines[start] ?? '')) {
+    return [];
+  }
+  const declared: string[] = [];
+  let indentation: string | undefined;
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*(?:#.*)?$/u.test(line)) {
+      continue;
+    }
+    const item = /^(?<indent> *)- +(?<quote>['"]?)(?<entry>[^\s#'"]+)\k<quote> *(?:#.*)?$/u.exec(line)?.groups;
+    if (item === undefined) {
+      return /^[A-Za-z_][\w.-]*\s*:/u.test(line) ? declared : [];
+    }
+    indentation ??= item.indent;
+    if (item.indent !== indentation || item.entry === undefined) {
+      return [];
+    }
+    declared.push(item.entry);
+  }
+  return declared;
 };
 
 /**
@@ -548,13 +567,13 @@ export const workspacePackageDirectories = (
 ): { readonly directories: readonly string[] } | { readonly unreadable: string } => {
   const declared = workspaceEntries(text);
   if (declared.length === 0) {
-    return { unreadable: 'pnpm-workspace.yaml lists no packages' };
+    return { unreadable: 'pnpm-workspace.yaml has no packages list this planner can read' };
   }
   const directories = ['.'];
   for (const entry of declared) {
-    const area = entry?.endsWith('/*') === true ? entry.slice(0, -2) : undefined;
-    if (entry === undefined || !/^[a-z0-9-]+$/u.test(area ?? entry)) {
-      return { unreadable: `unsupported pnpm-workspace.yaml package entry ${entry ?? '(not a plain list item)'}` };
+    const area = entry.endsWith('/*') ? entry.slice(0, -2) : undefined;
+    if (!/^[a-z0-9-]+$/u.test(area ?? entry)) {
+      return { unreadable: `unsupported pnpm-workspace.yaml package entry ${entry}` };
     }
     directories.push(
       ...(area === undefined
