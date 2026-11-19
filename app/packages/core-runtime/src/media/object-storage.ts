@@ -71,7 +71,6 @@ export const ObjectStorageFailureSchema = Schema.Union([
   ObjectStorageServerErrorValue,
   ObjectStorageTimeoutValue,
 ]);
-export const isObjectStorageFailure = Schema.is(ObjectStorageFailureSchema);
 
 /** What the provider reports about a stored object. `versionRef` is a technical pin, never a revision. */
 export interface ObjectStat {
