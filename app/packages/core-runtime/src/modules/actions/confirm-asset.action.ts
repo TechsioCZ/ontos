@@ -10,6 +10,7 @@ import { commitActionThenReject } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import {
   MediaAssetNotFound,
+  MediaContentConflict,
   MediaIngestUncertain,
   MediaIntegrityFailed,
   MediaNotReady,
@@ -51,6 +52,7 @@ type ConfirmAssetContext = ActionHandlerContext<Record<never, never>, ConfirmAss
 
 const MediaConfirmFailureSchema = Schema.Union([
   MediaAssetNotFound,
+  MediaContentConflict,
   MediaIngestUncertain,
   MediaIntegrityFailed,
   MediaNotReady,
@@ -107,7 +109,11 @@ const handleConfirmAsset = Effect.fn('ConfirmAssetAction.handle')(function* hand
     return yield* followRow(asset);
   }
   if (verification.providerId !== asset.storageProvider || verification.storageKey !== asset.storageKey) {
-    return yield* mediaUnavailable('The verification does not describe this asset');
+    // Evidence about another object is a wiring defect of the caller, not an outage: definite, never retryable.
+    return yield* new MediaContentConflict({
+      code: 'media_content_conflict',
+      reason: 'The verification does not describe this asset',
+    });
   }
   if (verification.outcome === 'unverifiable') {
     return yield* new MediaIngestUncertain({

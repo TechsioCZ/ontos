@@ -31,7 +31,8 @@ export { MediaAssetNotFoundValue as MediaAssetNotFound };
 
 /**
  * The bytes differ from the content identity the reservation fixed: the declared size or SHA-256, or the digest
- * a sealed asset already holds. A client error, never a silent retry and never an overwrite.
+ * a sealed asset already holds. It is also the answer when the verification evidence names another object than
+ * the asset's own. A caller error, never a silent retry and never an overwrite.
  */
 const MediaContentConflictValue = actionErrorSchema('MediaContentConflict', {
   code: Schema.Literal('media_content_conflict'),
