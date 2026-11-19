@@ -41,6 +41,7 @@ const crmActivitiesI18nResources = {
 
 type FollowUpFields = Types.Mutable<Pick<ActivityCommand, 'followUpTaskRef'>>;
 type Counterparties = Effect.Success<ReturnType<typeof loadCounterpartiesClient>>;
+type Counterparty = Counterparties[number];
 type Tasks = Effect.Success<ReturnType<typeof executeWorkRecords>>['items'];
 type Card = Effect.Success<ReturnType<typeof executeCounterpartyRead>>;
 /** Governed records reads (activities and Work Tasks) share the generated read problems. */
@@ -87,14 +88,17 @@ export const preloadPage = modulePagePreload((props) =>
   activities.preload({ legalEntityId: props.context?.legalEntityId ?? '', resourceId: resourceIdOf(props.search) }),
 );
 
-/** The activity as typed: the contact, the follow-up task and the summary. */
+/**
+ * The activity as typed: the chosen contact, the follow-up task and the summary. The form owns the chosen contact: a
+ * later search only offers others, so the contact stays chosen until the user picks another one or clears it.
+ */
 interface ActivityDraft {
-  readonly counterpartyId: readonly string[];
+  readonly counterparty: Counterparty | null;
   readonly summary: string;
   readonly taskId: readonly string[];
 }
 
-const blankActivity: ActivityDraft = { counterpartyId: [], summary: '', taskId: [] };
+const blankActivity: ActivityDraft = { counterparty: null, summary: '', taskId: [] };
 
 const useRelationshipsRecords = (input: ActivitiesInput) => {
   const { language, t } = useModernI18n();
@@ -129,12 +133,21 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   const tasksFailure = canWrite && tasksSnapshot.state === 'failed' ? failureText(tasksSnapshot.error) : '';
   // The activity as typed: only Uložit sends it.
   const [draft, setDraft] = useState<ActivityDraft>(blankActivity);
-  const { counterpartyId, summary, taskId } = draft;
+  const { counterparty, summary, taskId } = draft;
+  const counterpartyId = counterparty === null ? [] : [counterparty.ref.resourceId];
   const setSummary = (next: string) => setDraft((current) => ({ ...current, summary: next }));
-  const setCounterpartyId = (next: readonly string[]) => setDraft((current) => ({ ...current, counterpartyId: next }));
   const setTaskId = (next: readonly string[]) => setDraft((current) => ({ ...current, taskId: next }));
   const [query, setQuery] = useState('');
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
+  // The picker's items are its complete collection: the latest search's hits plus the chosen contact they omit.
+  const contactChoices =
+    counterparty === null || counterparties.some((item) => item.ref.resourceId === counterparty.ref.resourceId)
+      ? counterparties
+      : [counterparty, ...counterparties];
+  const setCounterpartyId = (next: readonly string[]) => {
+    const chosen = contactChoices.find((item) => item.ref.resourceId === next[0]) ?? null;
+    setDraft((current) => ({ ...current, counterparty: chosen }));
+  };
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
@@ -196,11 +209,9 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const counterpartyOf = (value: ActivityDraft) =>
-    counterparties.find((item) => item.ref.resourceId === value.counterpartyId[0]);
   const send = (value: ActivityDraft): Effect.Effect<SaveOutcome> => {
-    const counterparty = counterpartyOf(value);
-    if (records === undefined || counterparty === undefined) {
+    const { counterparty: chosen } = value;
+    if (records === undefined || chosen === null) {
       return Effect.succeed('failed');
     }
     const task = tasks.find((item) => item.ref.resourceId === value.taskId[0]);
@@ -223,7 +234,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           {
             command: {
               _tag: 'RecordActivity',
-              counterpartyRef: counterparty.ref,
+              counterpartyRef: chosen.ref,
               kind: 'CALL',
               occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
               ownerPrincipalRef: records.actorPrincipalRef,
@@ -259,7 +270,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   };
   const record = useDraftSave<ActivityDraft, never>({
     initial: blankActivity,
-    isValid: (value) => value.summary.trim() !== '' && counterpartyOf(value) !== undefined,
+    isValid: (value) => value.summary.trim() !== '' && value.counterparty !== null,
     runtime: browserRuntime,
     save: send,
     value: draft,
@@ -285,7 +296,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       }
     });
   };
-  const partyItems = counterparties.map((item) =>
+  const partyItems = contactChoices.map((item) =>
     selectItem(item.ref.resourceId, item.party.title ?? item.ref.resourceId),
   );
   const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
