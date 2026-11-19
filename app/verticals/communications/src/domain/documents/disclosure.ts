@@ -2,10 +2,16 @@ import { Data, Effect, Match, Option, Schema } from 'effect';
 
 import type { CommunicationResourceRef, MessageTypeId, PrivacyEvidence, RecipientRole } from '../catalog/vocabulary.ts';
 import type { DocumentOwnerUnavailable } from './document-owner-errors.ts';
-import { CURRENT_MEDIA_REVISION, DocumentLinkOwner, DocumentOpen, DocumentResolution } from './document-owner.ts';
+import {
+  CURRENT_MEDIA_REVISION,
+  DocumentLinkOwner,
+  DocumentOpen,
+  DocumentResolution,
+  isCoreMediaAssetRef,
+} from './document-owner.ts';
 import type { DocumentResolveQuery, ExactDocumentLink } from './document-owner.ts';
 import { formAllowedByPolicy } from './document-policy.ts';
-import type { DocumentForm, DocumentPolicy } from './document-policy.ts';
+import type { DisclosureRecipientScope, DocumentForm, DocumentPolicy } from './document-policy.ts';
 
 /**
  * The disclosure decision of a document of a message (#1409). It runs before the last stoppable handoff and answers with
@@ -13,20 +19,26 @@ import type { DocumentForm, DocumentPolicy } from './document-policy.ts';
  * same decision asked again with every Current gate asked again, so a retry can never bypass one (ACC-09).
  *
  * Order matters and is part of the contract: the type's own approval is checked first, so an unapproved form never even asks
- * an owner; an ATTACHMENT (irreversible) also needs the Current recipient and Privacy before the owner is asked; only then the
+ * an owner; then the policy is enforced end to end against what is being disclosed (the document owner, the owner's
+ * classification and the recipient scope must each equal what the type approved), so a document the type never approved is a
+ * proven stop that asks no owner; an ATTACHMENT (irreversible) also needs the Current recipient and Privacy before the owner is asked; only then the
  * owner resolves the exact Asset and approves the disclosure. A fact that is PROVEN against the disclosure stops it for good; a
  * fact that could not be established holds it, with its reason, for a new evaluation: nothing is ever delivered on a guess.
  */
 
 export const DocumentStopReasonSchema = Schema.Literals([
   'ATTACHMENT_NOT_APPROVED_FOR_TYPE',
+  'DOCUMENT_ASSET_NOT_CORE_MEDIA',
+  'DOCUMENT_CLASSIFICATION_MISMATCH',
   'DOCUMENT_MEDIA_UNAVAILABLE',
   'DOCUMENT_NOT_APPROVED_FOR_TYPE',
   'DOCUMENT_OWNER_FORBIDDEN',
+  'DOCUMENT_OWNER_MISMATCH',
   'DOCUMENT_OWNER_UNAVAILABLE',
   'DOCUMENT_PRIVACY_INDETERMINATE',
   'DOCUMENT_PRIVACY_NOT_ALLOWED',
   'DOCUMENT_RECIPIENT_NOT_CURRENT',
+  'DOCUMENT_RECIPIENT_SCOPE_MISMATCH',
   'DOCUMENT_RECIPIENT_UNKNOWN',
   'DOCUMENT_REVISION_NOT_CURRENT',
 ]);
@@ -64,9 +76,28 @@ export interface DocumentDisclosureQuery {
   readonly legalEntityId?: string;
   readonly policy: DocumentPolicy | undefined;
   readonly recipient: { readonly recipientRef: CommunicationResourceRef; readonly role: RecipientRole };
+  /** What the handoff is disclosing to: only the ORIGINAL recipient is ever approved (ACC-04, ACC-13). */
+  readonly recipientScope: DisclosureRecipientScope;
   readonly tenantId: string;
   readonly typeId: MessageTypeId;
 }
+
+/**
+ * The policy enforced end to end against what is asked: the document must be the approved owner's own resource, carry the
+ * classification the type approved, and go to the scope the type approved. Each mismatch is PROVEN, so it stops for good
+ * and no owner is asked about a document the type never approved (ACC-13).
+ */
+const policyMismatch = (policy: DocumentPolicy, query: DocumentDisclosureQuery): Option.Option<DocumentStopReason> => {
+  if (query.document.moduleId !== policy.documentOwner) {
+    return Option.some('DOCUMENT_OWNER_MISMATCH');
+  }
+  if (query.classification !== policy.classification) {
+    return Option.some('DOCUMENT_CLASSIFICATION_MISMATCH');
+  }
+  return query.recipientScope === policy.recipientScope
+    ? Option.none()
+    : Option.some('DOCUMENT_RECIPIENT_SCOPE_MISMATCH');
+};
 
 const attachmentGateStop = (gates: DocumentDisclosureQuery['gates']): Option.Option<DocumentStopReason> =>
   Match.value(gates.recipient).pipe(
@@ -126,9 +157,14 @@ const resolveQueryOf = (query: DocumentDisclosureQuery): DocumentResolveQuery =>
 export const assessDocumentDisclosure = Effect.fn('Communications.assessDocumentDisclosure')(function* assess(
   query: DocumentDisclosureQuery,
 ) {
-  if (formAllowedByPolicy(query.policy, query.form) === 'NOT_ALLOWED') {
+  const { policy } = query;
+  if (policy === undefined || formAllowedByPolicy(policy, query.form) === 'NOT_ALLOWED') {
     // an approved link says nothing about an attachment, and neither says anything about another type (ACC-13)
     return stopped(query.form === 'ATTACHMENT' ? 'ATTACHMENT_NOT_APPROVED_FOR_TYPE' : 'DOCUMENT_NOT_APPROVED_FOR_TYPE');
+  }
+  const mismatch = policyMismatch(policy, query);
+  if (Option.isSome(mismatch)) {
+    return stopped(mismatch.value);
   }
   if (query.form === 'ATTACHMENT') {
     const gateStop = attachmentGateStop(query.gates);
@@ -143,14 +179,19 @@ export const assessDocumentDisclosure = Effect.fn('Communications.assessDocument
       onFailure: (failure) => failure.pipe(stopReasonOfOwnerFailure, stopped),
       onSuccess: (resolution) =>
         DocumentResolution.$match(resolution, {
-          Approved: ({ asset }) =>
+          Approved: ({ asset }) => {
+            // a pinned link names a Core Media Asset and nothing else: no business document, Order or foreign resource
+            if (!isCoreMediaAssetRef(asset.ref)) {
+              return stopped('DOCUMENT_ASSET_NOT_CORE_MEDIA');
+            }
             // only V1 is Current: another claimed revision is never trusted or substituted
-            asset.revision === CURRENT_MEDIA_REVISION
+            return asset.revision === CURRENT_MEDIA_REVISION
               ? DocumentDisclosure.Disclose({
                   form: query.form,
                   link: { assetRef: asset.ref, revision: CURRENT_MEDIA_REVISION },
                 })
-              : stopped('DOCUMENT_REVISION_NOT_CURRENT'),
+              : stopped('DOCUMENT_REVISION_NOT_CURRENT');
+          },
           DisclosureForbidden: () => stopped('DOCUMENT_OWNER_FORBIDDEN'),
           MediaUnavailable: () => stopped('DOCUMENT_MEDIA_UNAVAILABLE'),
         }),

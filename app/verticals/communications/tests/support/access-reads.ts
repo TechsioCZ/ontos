@@ -61,15 +61,21 @@ const nativeOwnerQuery = (client: NativeRuntimeClient) => (query: OwnerQuery) =>
     .pipe(Effect.orDie);
 
 /** A labelled stand-in for the source owners' visibility: it answers per scope and records every question. */
-export const visibilityDouble = (answers: (query: SourceVisibilityQuery) => SourceVisibility | 'UNAVAILABLE') => {
+export const visibilityDouble = (
+  answers: (query: SourceVisibilityQuery) => SourceVisibility | 'NOT_COMPOSED' | 'UNAVAILABLE',
+) => {
   const asked: SourceVisibilityQuery[] = [];
   const layer = Layer.succeed(SourceScopeVisibility, {
     check: (query) =>
       Effect.suspend(() => {
         asked.push(query);
         const answer = answers(query);
-        return answer === 'UNAVAILABLE'
-          ? Effect.fail(new SourceScopeVisibilityUnavailable({ reason: 'OWNER_UNAVAILABLE' }))
+        return answer === 'UNAVAILABLE' || answer === 'NOT_COMPOSED'
+          ? Effect.fail(
+              new SourceScopeVisibilityUnavailable({
+                reason: answer === 'NOT_COMPOSED' ? 'NOT_COMPOSED' : 'OWNER_UNAVAILABLE',
+              }),
+            )
           : Effect.succeed(answer);
       }),
   });
@@ -106,14 +112,21 @@ const principalFieldsOf = (options: AccessReadOptions) => {
   return fields;
 };
 
+const principalOf = (options: AccessReadOptions) =>
+  trustVerifiedGatewayPrincipalContext(
+    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(principalFieldsOf(options)),
+    COMPOSITION_REVISION,
+  );
+
+/** The trusted operation scope the Read lifecycle installs, for a test that drives the owner service directly. */
+export const operationalScopeOf = (options: AccessReadOptions) =>
+  Effect.succeed({ ...principalOf(options), correlationId: 'history-access-read' });
+
 export const accessReads = Effect.fn('CommunicationsAccessTest.reads')(function* reads(
   client: NativeRuntimeClient,
   options: AccessReadOptions,
 ) {
-  const principal = trustVerifiedGatewayPrincipalContext(
-    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(principalFieldsOf(options)),
-    COMPOSITION_REVISION,
-  );
+  const principal = principalOf(options);
   const scope = { ...principal, correlationId: 'history-access-read' };
   const executeOwnerQuery = nativeOwnerQuery(client);
   const statements = { count: 0 };

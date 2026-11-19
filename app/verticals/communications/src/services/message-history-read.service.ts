@@ -1,13 +1,11 @@
 import type { CommunicationRequestScope } from '@app/communications-contracts/communication-request';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
-import { evaluateListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { ReadHandlerExecutionError, ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
-import { RecordKeySchema } from '@app/core-runtime/access/ids';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect } from 'effect';
 
-import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import { MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import { MESSAGE_HISTORY_MAX_PAGE_SIZE } from '../../shared/message-history-read.ts';
 import type {
   HistorySourceScopeSelection,
@@ -19,9 +17,10 @@ import type { MessageHistoryListRequest } from '../../shared/apis/message-histor
 import { communicationRequests, messageIntents } from '../database/schema.ts';
 import { CommunicationTenantIdSchema } from '../domain/catalog/vocabulary.ts';
 import { scopeDemandsSourceVisibility, SourceScopeVisibility } from '../domain/access/source-visibility.ts';
+import type { SourceScopeVisibilityUnavailable } from '../domain/access/source-visibility-errors.ts';
 import { scopeKey } from '../domain/recipient/original-binding.ts';
 import { projectMessageHistoryItem, projectTimeline } from '../history/message-history-projection.ts';
-import { loadRequestHistory } from './message-history.service.ts';
+import { loadRequestHistories } from './message-history.service.ts';
 import type { IntentHistoryRecord, RequestHistoryRecord } from './message-history.service.ts';
 
 /**
@@ -43,6 +42,26 @@ const unavailable = (cause?: unknown) =>
     'cause',
     { enumerable: false, value: cause },
   );
+
+/**
+ * A source-scope visibility port that is not composed at all can never answer, so a retry cannot repair it: it is a
+ * non-retryable failure of the deployment, never a retryable outage.
+ */
+const sourceVisibilityNotComposed = () =>
+  new ReadHandlerExecutionError({
+    code: 'read_handler_execution_failed',
+    reason: 'The source scope visibility is not available in this deployment',
+  });
+
+/**
+ * The scope-wide Reads cannot honour a record-scoped row filter: a predicate with a clause means the gate offered a record
+ * scope this owner never declared, and an unrecognised restriction is never widened into "everything" (fail closed).
+ */
+const unsupportedRowFilter = () =>
+  new ReadHandlerExecutionError({
+    code: 'read_handler_execution_failed',
+    reason: 'The history Reads are scope-wide and cannot apply a record-scoped row filter',
+  });
 
 /** Absent and not visible are one answer, so a caller cannot probe which other scopes hold a message. */
 const notFound = () =>
@@ -72,8 +91,16 @@ const exactScopeOf = (
 export interface ReadOptions {
   /** Whether the caller may read the personal-data field group of the endpoint mask. */
   readonly includeEndpointMask: boolean;
-  /** The owner's row filter of a row-scoped read, when the gate supplies one: applied to what the query matched. */
-  readonly listAccess: ListAccessPredicate | undefined;
+  /**
+   * The gate's row filter. Both Reads declare `selectors: []`, so the engine plans only `all` cells for them (a record
+   * selector is never supported, `selectorSupported` in the decision engine) and the only predicate it can build is the empty
+   * "every row of the scope" one: the Reads are scope-wide by design, because history is governed by the exact Tenant,
+   * Legal Entity and source scope, never by an owner of a single message. A predicate that nevertheless names a clause is
+   * refused (`requireScopeWide`), never filtered after the page was read: a fetch-then-filter would leak the hidden rows
+   * through `nextCursor` and could never evaluate a record condition (AUTHORIZATION.md: the owner query never fetches rows
+   * and filters them afterwards).
+   */
+  readonly listAccess?: ListAccessPredicate | undefined;
 }
 
 export interface MessageHistoryPage {
@@ -86,9 +113,8 @@ export interface MessageHistoryDetailRecord {
   readonly timeline: readonly MessageHistoryTimelineEntry[];
 }
 
-const visibleToRowFilter = (filter: ListAccessPredicate | undefined, intentId: string) =>
-  filter === undefined ||
-  evaluateListAccessPredicate(filter, { recordKey: RecordKeySchema.make(intentId), teamIds: [] });
+const requireScopeWide = (filter: ListAccessPredicate | undefined) =>
+  filter === undefined || filter.groups.length === 0 ? Effect.void : Effect.fail(unsupportedRowFilter());
 
 const cursorPredicate = (cursor: MessageHistoryCursor | undefined) =>
   cursor === undefined
@@ -110,30 +136,41 @@ export const messageHistoryReadService = Effect.fn('Communications.messageHistor
   const { principalId, tenantId } = scope;
 
   /**
-   * True only when the source owners say the caller sees this scope; an owner that cannot say is an unavailable Read. A scope
-   * without a source reference is governed by the Current Permission alone and no owner is asked.
+   * True only when the source owners say the caller sees this scope; an owner that cannot say fails with its own typed
+   * failure. A scope without a source reference is governed by the Current Permission alone and no owner is asked.
    */
   const visibleToCaller = (requestScope: CommunicationRequestScope) =>
     scopeDemandsSourceVisibility(requestScope)
-      ? visibility.check({ principalId, scope: requestScope }).pipe(
-          Effect.mapError(unavailable),
-          Effect.map((answer) => answer === 'VISIBLE'),
-        )
+      ? visibility.check({ principalId, scope: requestScope }).pipe(Effect.map((answer) => answer === 'VISIBLE'))
       : Effect.succeed(true);
 
-  const recordOf = (requestId: string) =>
-    loadRequestHistory(transaction, tenantId, CommunicationRequestIdSchema.make(requestId)).pipe(
-      Effect.mapError(unavailable),
+  /** A LIST names its scope itself, so an owner outage says nothing about any stored message and is told as it is. */
+  const listVisibleToCaller = (requestScope: CommunicationRequestScope) =>
+    visibleToCaller(requestScope).pipe(
+      Effect.mapError((failure: SourceScopeVisibilityUnavailable) =>
+        failure.reason === 'NOT_COMPOSED' ? sourceVisibilityNotComposed() : unavailable(failure),
+      ),
+    );
+
+  /**
+   * A DETAIL names only a message, whose source scope is known only once it exists. An owner that cannot answer must
+   * therefore look exactly like a message that is absent or not visible: a 503 for a message of the caller's own Legal
+   * Entity next to a 404 for a foreign or missing one would let the caller probe which identities exist.
+   */
+  const detailVisibleToCaller = (requestScope: CommunicationRequestScope) =>
+    visibleToCaller(requestScope).pipe(
+      Effect.catchTag('SourceScopeVisibilityUnavailable', () => Effect.succeed(false)),
     );
 
   const list = Effect.fn('Communications.listMessageHistory')(function* listPage(
     input: MessageHistoryListRequest,
     options: ReadOptions,
   ) {
+    yield* requireScopeWide(options.listAccess);
     const limit = input.limit ?? MESSAGE_HISTORY_MAX_PAGE_SIZE;
     const exact = exactScopeOf(scope, input.scope ?? {});
     // The source owners are asked before any row is read: an owner that cannot answer ends the Read, never an empty page.
-    if (!(yield* visibleToCaller(exact))) {
+    if (!(yield* listVisibleToCaller(exact))) {
       return yield* notFound();
     }
     const key = scopeKey(exact);
@@ -167,39 +204,20 @@ export const messageHistoryReadService = Effect.fn('Communications.messageHistor
     const more = rows.length > limit;
     const page = rows.slice(0, limit);
     const requestIds = [...new Set(page.map(({ requestId }) => requestId))];
-    // a request that is not readable, or is not of this exact scope, is an inconsistent store: never shown
-    const records = new Map(
-      yield* Effect.forEach(
-        requestIds,
-        (requestId) =>
-          recordOf(requestId).pipe(
-            Effect.flatMap(
-              Option.match({
-                onNone: () => Effect.fail(unavailable()),
-                onSome: (record) =>
-                  scopeKey(record.request.scope) === key
-                    ? Effect.succeed([requestId, record] as const)
-                    : Effect.fail(unavailable()),
-              }),
-            ),
-          ),
-        { concurrency: 1 },
-      ),
-    );
-    const projected = yield* Effect.forEach(
+    // one bounded set of statements for the whole page, never one per row
+    const records = yield* loadRequestHistories(transaction, tenantId, requestIds).pipe(Effect.mapError(unavailable));
+    const items = yield* Effect.forEach(
       page,
       (row) => {
         const request = records.get(row.requestId);
         const intent = request?.intents.find(({ intentId }) => intentId === row.intentId);
-        return request === undefined || intent === undefined
+        // a request that is not readable, or is not of this exact scope, is an inconsistent store: never shown
+        return request === undefined || intent === undefined || scopeKey(request.request.scope) !== key
           ? Effect.fail(unavailable())
-          : projectItem(request, intent, options).pipe(
-              Effect.map((item) => (visibleToRowFilter(options.listAccess, row.intentId) ? [item] : [])),
-            );
+          : projectItem(request, intent, options);
       },
       { concurrency: 1 },
     );
-    const items = projected.flat();
     const last = page.at(-1);
     return {
       items,
@@ -214,16 +232,19 @@ export const messageHistoryReadService = Effect.fn('Communications.messageHistor
     intentId: string,
     options: ReadOptions,
   ) {
+    yield* requireScopeWide(options.listAccess);
     const [row] = yield* transaction
       .select({ requestId: messageIntents.requestId })
       .from(messageIntents)
       .where(and(eq(messageIntents.tenantId, tenantId), eq(messageIntents.intentId, intentId)))
       .pipe(Effect.mapError(unavailable));
-    if (row === undefined || !visibleToRowFilter(options.listAccess, intentId)) {
+    if (row === undefined) {
       return yield* notFound();
     }
-    const found = yield* recordOf(row.requestId);
-    const request = Option.getOrUndefined(found);
+    const records = yield* loadRequestHistories(transaction, tenantId, [row.requestId]).pipe(
+      Effect.mapError(unavailable),
+    );
+    const request = records.get(row.requestId);
     const intent = request?.intents.find((candidate) => candidate.intentId === intentId);
     if (request === undefined || intent === undefined) {
       return yield* notFound();
@@ -232,7 +253,7 @@ export const messageHistoryReadService = Effect.fn('Communications.messageHistor
     if (request.request.scope.legalEntityId !== scope.legalEntityId || request.request.scope.tenantId !== tenantId) {
       return yield* notFound();
     }
-    if (!(yield* visibleToCaller(request.request.scope))) {
+    if (!(yield* detailVisibleToCaller(request.request.scope))) {
       return yield* notFound();
     }
     return {

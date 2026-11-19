@@ -21,6 +21,15 @@ import type {
 const decodeRef = Schema.decodeUnknownSync(CommunicationResourceRefSchema);
 export const assetRef = (id: string): CommunicationResourceRef =>
   decodeRef({ moduleId: 'core.media', resourceId: id, resourceType: 'core.media.asset' });
+/** A reference of ANOTHER module's resource: never a Core Media Asset, whatever an owner claims. */
+export const foreignAssetRef = (id: string): CommunicationResourceRef =>
+  decodeRef({ moduleId: 'fixture.documents', resourceId: id, resourceType: 'fixture.documents.document' });
+/** A Core Media reference of a resource type that is not an Asset (for example a derived rendition). */
+export const wrongTypeAssetRef = (id: string): CommunicationResourceRef =>
+  decodeRef({ moduleId: 'core.media', resourceId: id, resourceType: 'core.media.rendition' });
+/** The business document of ANOTHER module than the one the fixture policy approved as document owner. */
+export const foreignDocumentRef = (id: string): CommunicationResourceRef =>
+  decodeRef({ moduleId: 'fixture.other-module', resourceId: id, resourceType: 'fixture.other-module.document' });
 export const documentRef = (id: string): CommunicationResourceRef =>
   decodeRef({ moduleId: 'fixture.documents', resourceId: id, resourceType: 'fixture.documents.document' });
 

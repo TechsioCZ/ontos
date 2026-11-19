@@ -1,7 +1,12 @@
-import { Effect, Exit, Option, Schema } from 'effect';
+import { findPostgresFailure } from '@app/core-runtime';
+import { RecordKeySchema } from '@app/core-runtime/access/ids';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import { messageHistoryDetailRead } from '../../src/api/message-history-detail.read.ts';
+import { messageHistoryListRead } from '../../src/api/message-history-list.read.ts';
 import { MESSAGE_HISTORY_MAX_PAGE_SIZE, MessageHistoryCursorSchema } from '../../shared/message-history-read.ts';
 import type { MessageHistoryListResultSchema } from '../../shared/message-history-read.ts';
 import {
@@ -16,7 +21,8 @@ import {
   providerObservations,
 } from '../../src/database/schema.ts';
 import { profileRef } from '../unit/support/recipient-fixtures.ts';
-import { accessReads, nativeRuntimeClient, visibilityDouble } from '../support/access-reads.ts';
+import { messageHistoryReadService } from '../../src/services/message-history-read.service.ts';
+import { accessReads, nativeRuntimeClient, operationalScopeOf, visibilityDouble } from '../support/access-reads.ts';
 import type { AccessReadOptions } from '../support/access-reads.ts';
 import { decideOne, ingest, minutesFromNow, step, targetOf } from '../support/history-world.ts';
 import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
@@ -144,6 +150,9 @@ const cursorOf = (page: Page) =>
     onNone: () => Effect.die('the page has no next cursor'),
     onSome: (cursor) => Effect.succeed(encodeCursor(cursor)),
   });
+
+const sqlStateOf = (failure: Parameters<typeof findPostgresFailure>[0]) =>
+  Option.match(findPostgresFailure(failure), { onNone: () => 'none', onSome: ({ code }) => code });
 
 const ADDRESS_LIKE = /[A-Za-z0-9._+-]+@[A-Za-z0-9-]+\.[A-Za-z]|https?:\/\/|<\/?[a-z][^>]*>|token|password|\botp\b/iu;
 
@@ -333,22 +342,32 @@ describe('The public history Reads over native PostgreSQL (#1409)', () => {
   );
 
   it.live(
-    '[S04 AC-03] reading history grants nothing on the source: only references leave, and only Communications keys are asked',
+    '[S04 AC-03] with ONLY the capabilities the Reads declare granted, both Reads succeed and return references only',
     () =>
       Effect.gen(function* noSourceAccess() {
         const { client, world } = yield* setup();
-        yield* submitOne(world, {
+        const scoped = yield* submitOne(world, {
           counterpartyId: 'counterparty-1',
           legalEntityId: LEGAL_ENTITY_ONE,
           occurrenceId: 'order-1',
         });
-        // the script grants ONLY the history keys: any other capability (an Order, a Party, a document) is a denial
-        const reads = yield* readsOf(client, world, { legalEntityId: LEGAL_ENTITY_ONE });
+        // the capabilities the two Reads DECLARE, read from their descriptors; the script grants exactly these and denies
+        // every other key by default, so a Read that needed an Order, a Party, a Counterparty or a document capability
+        // would be refused and this test would fail
+        const declared = [messageHistoryListRead, messageHistoryDetailRead].flatMap(({ descriptor }) => [
+          descriptor.accessDeclaration?.key ?? '',
+          ...(descriptor.accessFieldGroups?.map(({ key }) => key) ?? []),
+        ]);
+        expect(declared).toHaveLength(4);
+        expect(declared.every((key) => key.startsWith('communications.core.'))).toBe(true);
+        const access = Object.fromEntries(declared.map((key) => [key, 'allowed' as const]));
+        const reads = yield* readsOf(client, world, { access, legalEntityId: LEGAL_ENTITY_ONE });
         const visibility = visibleToAll();
         const page = yield* reads
           .list({ scope: { counterpartyRef: profileRef('counterparty-1') } })
           .pipe(Effect.provide(visibility.layer));
         expect(page.items).toHaveLength(1);
+        const detail = yield* reads.detail({ intentId: scoped }).pipe(Effect.provide(visibility.layer));
         const [item] = page.items;
         // the source is only a reference: no Order, Counterparty, Party or document field exists in the result
         expect(item?.source.scope.counterpartyRef).toMatchObject({ resourceId: 'counterparty-1' });
@@ -365,12 +384,12 @@ describe('The public history Reads over native PostgreSQL (#1409)', () => {
           'type',
         ]);
         expect(Object.keys(item ?? {}).every((key) => allowedKeys.has(key))).toBe(true);
-        expect(Object.keys(allowed).every((key) => key.startsWith('communications.core.'))).toBe(true);
+        expect(Object.keys(detail.message).every((key) => allowedKeys.has(key))).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
   it.live(
-    '[AC-03 ACC-02] a source-scoped history needs the source owner: not visible is not found, an outage is unavailable, never empty',
+    '[AC-03 ACC-02] a source-scoped LIST needs the source owner: not visible is not found, an outage is unavailable, never empty',
     () =>
       Effect.gen(function* sourceVisibility() {
         const { client, world } = yield* setup();
@@ -386,15 +405,63 @@ describe('The public history Reads over native PostgreSQL (#1409)', () => {
         expect(yield* failureOf(reads.detail({ intentId: scoped }).pipe(Effect.provide(hidden.layer)))).toBe(
           'ReadHandlerNotFound',
         );
+        // a transient outage is a retryable unavailable Read; the caller named the scope, so it says nothing about a message
         const outage = visibilityDouble(() => 'UNAVAILABLE');
         expect(yield* failureOf(reads.list(selection).pipe(Effect.provide(outage.layer)))).toBe(
           'ReadHandlerUnavailable',
         );
-        expect(yield* failureOf(reads.detail({ intentId: scoped }).pipe(Effect.provide(outage.layer)))).toBe(
-          'ReadHandlerUnavailable',
-        );
+        // no source owner is composed at all: no retry can ever succeed, so it is NOT told as a retryable outage
+        const notComposed = visibilityDouble(() => 'NOT_COMPOSED');
+        const structural = yield* failureOf(reads.list(selection).pipe(Effect.provide(notComposed.layer)));
+        expect(structural).toBe('ReadHandlerExecutionError');
+        expect(structural).not.toBe('ReadHandlerUnavailable');
         // the history of the SAME occurrence in the tenant-level scope is another scope: it is not here
         expect((yield* reads.list().pipe(Effect.provide(outage.layer))).items).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-03 ACC-02] a DETAIL cannot be used to probe existence: an owner that cannot answer looks exactly like absent or foreign',
+    () =>
+      Effect.gen(function* detailOracle() {
+        const { client, world } = yield* setup();
+        const own = yield* submitOne(world, {
+          counterpartyId: 'counterparty-1',
+          legalEntityId: LEGAL_ENTITY_ONE,
+          occurrenceId: 'own-scoped',
+        });
+        const foreign = yield* submitOne(world, {
+          counterpartyId: 'counterparty-1',
+          legalEntityId: LEGAL_ENTITY_TWO,
+          occurrenceId: 'foreign-scoped',
+        });
+        const tenantLevel = yield* submitOne(world, { legalEntityId: LEGAL_ENTITY_ONE, occurrenceId: 'plain' });
+        const reads = yield* readsOf(client, world, { legalEntityId: LEGAL_ENTITY_ONE });
+        const answers = [
+          ['an owner outage', visibilityDouble(() => 'UNAVAILABLE')],
+          ['no owner composed', visibilityDouble(() => 'NOT_COMPOSED')],
+          ['not visible', visibilityDouble(() => 'NOT_VISIBLE')],
+        ] as const;
+        for (const [label, owner] of answers) {
+          const outcomes = yield* Effect.forEach(
+            [own, foreign, NOT_AN_INTENT],
+            (intentId) => failureOf(reads.detail({ intentId }).pipe(Effect.provide(owner.layer))),
+            { concurrency: 1 },
+          );
+          // an intent of the caller's own Legal Entity, a foreign one and a missing one are ONE answer, whatever the owner says
+          expect({ label, outcomes }).toEqual({
+            label,
+            outcomes: ['ReadHandlerNotFound', 'ReadHandlerNotFound', 'ReadHandlerNotFound'],
+          });
+        }
+        // a message of the caller's own scope that needs no owner is still readable while the owners are down
+        const [[, outage]] = answers;
+        expect(
+          (yield* reads.detail({ intentId: tenantLevel }).pipe(Effect.provide(outage.layer))).message.intentId,
+        ).toBe(tenantLevel);
+        // and the visible own message is readable once its owner says so
+        const visible = visibleToAll();
+        expect((yield* reads.detail({ intentId: own }).pipe(Effect.provide(visible.layer))).message.intentId).toBe(own);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -456,9 +523,92 @@ describe('The public history Reads over native PostgreSQL (#1409)', () => {
   );
 });
 
+/** A row filter that names a record scope: the gate can never produce one for these scope-wide Reads. */
+const recordScopedFilter = (intentId: string): ListAccessPredicate => ({
+  groups: [{ clauses: [{ conditions: [{ _tag: 'RecordKeyIn', recordKeys: [RecordKeySchema.make(intentId)] }] }] }],
+});
+const SCOPE_WIDE_FILTER: ListAccessPredicate = { groups: [] };
+
+describe('The row filter of the list is never applied after the page was read (#1409, AUTHORIZATION: no fetch-then-filter)', () => {
+  it('declares both Reads scope-wide, so no record selector is offered and only the all-in-scope filter can exist', () => {
+    for (const read of [messageHistoryListRead, messageHistoryDetailRead]) {
+      expect(read.descriptor.accessDeclaration?.selectors).toEqual([]);
+      expect(read.descriptor.accessTarget).toBeUndefined();
+    }
+    expect(messageHistoryListRead.descriptor.accessKind).toBe('list');
+  });
+
+  it.live(
+    '[listAccess] the all-in-scope filter pages exactly as no filter does, and a record-scoped filter yields NO page and NO cursor',
+    () =>
+      Effect.gen(function* rowFilter() {
+        const { world } = yield* setup();
+        const ids = yield* Effect.forEach(['f1', 'f2', 'f3'], (occurrenceId) => submitOne(world, { occurrenceId }), {
+          concurrency: 1,
+        });
+        const scope = yield* operationalScopeOf({ access: allowed, tenantId: world.tenantId });
+        const visibility = visibleToAll();
+        const outcome = yield* world.database
+          .inTenant(world.tenantId, (tx) =>
+            Effect.gen(function* inTransaction() {
+              const service = yield* messageHistoryReadService(tx, scope);
+              const options = { includeEndpointMask: true };
+              const unfiltered = yield* service.list({ limit: 2 }, options);
+              const scopeWide = yield* service.list({ limit: 2 }, { ...options, listAccess: SCOPE_WIDE_FILTER });
+              // a record-scoped filter on the newest, the oldest and an unrelated record: whatever it names, no short page with a
+              // cursor (the hidden rows would leak through `more`), no page at all
+              const filtered = yield* Effect.forEach(
+                [ids[0] ?? '', ids[1] ?? '', ids[2] ?? '', NOT_AN_INTENT],
+                (intentId) =>
+                  Effect.all(
+                    {
+                      detail: failureOf(
+                        service.detail(ids[0] ?? '', { ...options, listAccess: recordScopedFilter(intentId) }),
+                      ),
+                      list: failureOf(
+                        service.list({ limit: 2 }, { ...options, listAccess: recordScopedFilter(intentId) }),
+                      ),
+                    },
+                    { concurrency: 1 },
+                  ),
+                { concurrency: 1 },
+              );
+              return { filtered, scopeWide, unfiltered };
+            }),
+          )
+          .pipe(Effect.provide(visibility.layer));
+        expect(outcome.unfiltered.items).toHaveLength(2);
+        expect(outcome.unfiltered.nextCursor).toBeDefined();
+        expect(outcome.scopeWide).toEqual(outcome.unfiltered);
+        expect(outcome.filtered).toEqual(
+          Array.from({ length: 4 }, () => ({ detail: 'ReadHandlerExecutionError', list: 'ReadHandlerExecutionError' })),
+        );
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+describe('A page of the history is loaded with a bounded number of statements (#1409)', () => {
+  it.live('[N+1] the owner statements of a list do not grow with the number of messages on the page', () =>
+    Effect.gen(function* boundedStatements() {
+      const { client, world } = yield* setup();
+      yield* Effect.forEach(['n1', 'n2', 'n3', 'n4', 'n5'], (occurrenceId) => submitOne(world, { occurrenceId }), {
+        concurrency: 1,
+      });
+      const visibility = visibleToAll();
+      const one = yield* readsOf(client, world);
+      expect((yield* one.list({ limit: 1 }).pipe(Effect.provide(visibility.layer))).items).toHaveLength(1);
+      const many = yield* readsOf(client, world);
+      expect((yield* many.list().pipe(Effect.provide(visibility.layer))).items).toHaveLength(5);
+      // the page query plus the fixed set of history statements: the same for one message and for five
+      expect(many.ownerStatements()).toBe(one.ownerStatements());
+      expect(many.ownerStatements()).toBeLessThanOrEqual(10);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
 describe('History reads, refusals and permission changes never delete or rewrite (#1409, ACC-12, AC-08)', () => {
   it.live(
-    '[S15 AC-08] a read made after the retention window, a refusal, a page and a resend trigger leave every row as it was',
+    '[S15 AC-08] a read after the retention window, a refusal and a page leave every row as it was, and the database itself refuses the destructive verbs',
     () =>
       Effect.gen(function* nothingDestroyed() {
         const { client, world } = yield* setup();
@@ -473,7 +623,8 @@ describe('History reads, refusals and permission changes never delete or rewrite
         yield* denied.list().pipe(Effect.provide(visibility.layer), Effect.ignore);
         yield* denied.detail({ intentId }).pipe(Effect.provide(visibility.layer), Effect.ignore);
         expect(JSON.stringify(yield* historyRows(world))).toBe(before);
-        // the database itself refuses the destructive verbs to the runtime role the Reads run as
+        // the database itself refuses the destructive verbs to the runtime role the Reads run as: every one of them fails with
+        // the privilege error (42501), not with an arbitrary failure of the statement
         const destructive = [
           world.read((tx) => tx.delete(messageIntents)),
           world.read((tx) => tx.delete(communicationRequests)),
@@ -483,8 +634,16 @@ describe('History reads, refusals and permission changes never delete or rewrite
           world.read((tx) => tx.update(messageIntents).set({ status: 'NOT_SENT' })),
           world.read((tx) => tx.update(communicationRequests).set({ purpose: 'x' })),
         ];
-        const outcomes = yield* Effect.forEach(destructive, (attempt) => Effect.exit(attempt), { concurrency: 1 });
-        expect(outcomes.map((outcome) => Exit.isFailure(outcome))).toEqual(destructive.map(() => true));
+        const causes = yield* Effect.forEach(
+          destructive,
+          (attempt) =>
+            attempt.pipe(
+              Effect.flip,
+              Effect.map((failure) => sqlStateOf(failure)),
+            ),
+          { concurrency: 1 },
+        );
+        expect(causes).toEqual(destructive.map(() => '42501'));
         expect(JSON.stringify(yield* historyRows(world))).toBe(before);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );

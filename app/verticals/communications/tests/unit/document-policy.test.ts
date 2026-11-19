@@ -11,9 +11,20 @@ import {
 } from '../../src/domain/documents/disclosure.ts';
 import type { DocumentDisclosureCase, DocumentDisclosureQuery } from '../../src/domain/documents/disclosure.ts';
 import { unavailableDocumentLinkOwnerLayer } from '../../src/domain/documents/document-owner.ts';
-import { DocumentPolicySchema, formAllowedByPolicy } from '../../src/domain/documents/document-policy.ts';
+import {
+  DocumentClassificationKeySchema,
+  DocumentPolicySchema,
+  formAllowedByPolicy,
+} from '../../src/domain/documents/document-policy.ts';
 import type { DocumentForm, DocumentPolicy } from '../../src/domain/documents/document-policy.ts';
-import { assetRef, documentOwnerDouble, documentRef } from '../support/document-owner-double.ts';
+import {
+  assetRef,
+  documentOwnerDouble,
+  documentRef,
+  foreignAssetRef,
+  foreignDocumentRef,
+  wrongTypeAssetRef,
+} from '../support/document-owner-double.ts';
 import { recipientRef } from './support/access-fixtures.ts';
 import { fixtureType } from './support/catalog-fixtures.ts';
 
@@ -39,6 +50,7 @@ const query = (
   policy: DocumentPolicy | undefined,
   form: DocumentForm,
   gates: Partial<DocumentDisclosureQuery['gates']> = {},
+  overrides: Partial<Pick<DocumentDisclosureQuery, 'classification' | 'document' | 'recipientScope'>> = {},
 ): DocumentDisclosureQuery => ({
   classification: linkOnly.classification,
   document: documentRef('doc-1'),
@@ -46,8 +58,10 @@ const query = (
   gates: { privacy: 'ALLOWED', recipient: 'CURRENT', ...gates },
   policy,
   recipient: { recipientRef, role: RecipientRoleSchema.make('original-recipient') },
+  recipientScope: 'ORIGINAL_RECIPIENT',
   tenantId: TENANT,
   typeId: MessageTypeIdSchema.make('fixture.single-message'),
+  ...overrides,
 });
 
 /** The outcome as a plain summary, so a test states WHAT was decided without comparing a tag by hand. */
@@ -120,7 +134,7 @@ describe('A document link is typed, resolved by its owner to the exact Asset V1 
   );
 
   it.effect(
-    '[S09 AC-05] the owner authorizes every open again: a revoked permission blocks the NEXT open of a delivered link only',
+    '[S09 AC-05] against the labelled owner double: every open asks the owner again, and a revoked permission blocks the NEXT open only',
     () =>
       Effect.gen(function* revokedLink() {
         const owner = documentOwnerDouble();
@@ -134,6 +148,8 @@ describe('A document link is typed, resolved by its owner to the exact Asset V1 
         expect(yield* open()).toBe('OPENED');
         owner.revokeOpen(assetRef('asset-A'), OPENER);
         expect(yield* open()).toBe('DENIED');
+        // this proves only that the DOUBLE was asked about the pinned Asset at each open; a real owner and Core Media V1
+        // (#1443, #1446) are not exercised here
         // the pinned reference is untouched: a revoked open deletes, anonymizes and repoints nothing
         expect(link).toEqual({ assetRef: assetRef('asset-A'), revision: 1 });
         expect(owner.asked.filter(({ kind }) => kind === 'authorizeOpen')).toHaveLength(2);
@@ -141,7 +157,7 @@ describe('A document link is typed, resolved by its owner to the exact Asset V1 
   );
 
   it.effect(
-    '[S10 ACC-08] new bytes are a NEW Asset B by explicit owner assignment: the earlier message never silently repoints',
+    '[S10 ACC-08] against the labelled owner double: new bytes are a NEW Asset B by explicit assignment and the earlier link is asked about Asset A only',
     () =>
       Effect.gen(function* newAsset() {
         const owner = documentOwnerDouble();
@@ -158,6 +174,7 @@ describe('A document link is typed, resolved by its owner to the exact Asset V1 
           Effect.provide(owner.layer),
         );
         expect(stillA).toBe('OPENED');
+        // only the DOUBLE was asked, and about the pinned Asset: it proves how Communications asks, not a real Core Media
         expect(owner.asked).toEqual([{ kind: 'authorizeOpen', subject: 'asset-A' }]);
         expect(first.assetRef).toEqual(assetRef('asset-A'));
         // a NEW message resolves the new assignment: Asset B, revision 1
@@ -278,11 +295,116 @@ describe('An attachment is an irreversible disclosure and needs every approval (
     }),
   );
 
-  it('[S14 ACC-07] an already delivered attachment is not recallable by any permission change, a link only loses its next open', () => {
-    expect(effectOfOwnerRevocation('ATTACHMENT')).toEqual({
-      attachmentRecalled: false,
-      nextOpen: 'NOT_APPLICABLE_BYTES_ALREADY_DELIVERED',
-    });
-    expect(effectOfOwnerRevocation('LINK')).toEqual({ attachmentRecalled: false, nextOpen: 'RE_AUTHORIZED_BY_OWNER' });
+  it.effect(
+    '[S14 ACC-07] a permission change after the disclosure leaves the pinned (delivered) record exactly as it was and recalls nothing',
+    () =>
+      Effect.gen(function* afterDelivery() {
+        const owner = documentOwnerDouble();
+        owner.assign('doc-1', assetRef('asset-A'));
+        const delivered = yield* assessDocumentDisclosure(query(withAttachment, 'ATTACHMENT')).pipe(
+          Effect.provide(owner.layer),
+        );
+        const record = yield* linkOf(delivered);
+        const pinned = JSON.stringify(record);
+        // the owner forbids the disclosure afterwards: a NEW evaluation stops, the delivered record is not touched
+        owner.assign('doc-1', assetRef('asset-A'), { disclosure: 'FORBIDDEN' });
+        const later = yield* assessDocumentDisclosure(query(withAttachment, 'ATTACHMENT')).pipe(
+          Effect.provide(owner.layer),
+        );
+        expect(summaryOf(later)).toMatchObject({ outcome: 'STOP', reason: 'DOCUMENT_OWNER_FORBIDDEN' });
+        expect(JSON.stringify(record)).toBe(pinned);
+        expect(JSON.stringify(delivered)).toBe(
+          JSON.stringify(DocumentDisclosure.Disclose({ form: 'ATTACHMENT', link: record })),
+        );
+        // nothing was asked of the owner but the two disclosure evaluations: no recall, no delete, no rewrite exists to ask for
+        expect(new Set(owner.asked.map(({ kind }) => kind))).toEqual(new Set(['resolve']));
+        // the contract statement the evaluation relies on: bytes already delivered are not recallable by any permission
+        expect(effectOfOwnerRevocation('ATTACHMENT')).toEqual({
+          attachmentRecalled: false,
+          nextOpen: 'NOT_APPLICABLE_BYTES_ALREADY_DELIVERED',
+        });
+        expect(effectOfOwnerRevocation('LINK')).toEqual({
+          attachmentRecalled: false,
+          nextOpen: 'RE_AUTHORIZED_BY_OWNER',
+        });
+      }),
+  );
+});
+
+const stopOf = (
+  overrides: Partial<Pick<DocumentDisclosureQuery, 'classification' | 'document' | 'recipientScope'>>,
+  form: DocumentForm = 'LINK',
+  configure: (owner: ReturnType<typeof documentOwnerDouble>) => void = () => {},
+) =>
+  Effect.gen(function* run() {
+    const owner = documentOwnerDouble();
+    owner.assign('doc-1', assetRef('asset-A'));
+    configure(owner);
+    const outcome = yield* assessDocumentDisclosure(query(withAttachment, form, {}, overrides)).pipe(
+      Effect.provide(owner.layer),
+    );
+    return { asked: owner.asked.length, outcome: summaryOf(outcome) };
+  });
+const provenStop = (reason: string) => ({ asked: 0, outcome: { outcome: 'STOP', proven: true, reason } });
+
+describe('The per-type policy is enforced end to end against what is disclosed (#1409, ACC-04, ACC-13, ACC-08)', () => {
+  it.effect(
+    '[ACC-13] a document of another module than the approved document owner is stopped and the owner is never asked',
+    () =>
+      Effect.gen(function* foreignOwner() {
+        const other = foreignDocumentRef('doc-1');
+        for (const form of ['LINK', 'ATTACHMENT'] as const) {
+          expect(yield* stopOf({ document: other }, form)).toEqual(provenStop('DOCUMENT_OWNER_MISMATCH'));
+        }
+        // the approved owner's own document is not stopped: the check is the owner, not the document type
+        expect(yield* stopOf({})).toMatchObject({ asked: 1, outcome: { outcome: 'DISCLOSE' } });
+      }),
+  );
+
+  it.effect('[ACC-13] a classification other than the approved one is stopped before the owner is asked', () =>
+    Effect.gen(function* otherClassification() {
+      const other = DocumentClassificationKeySchema.make('fixture.classification.internal');
+      expect(yield* stopOf({ classification: other })).toEqual(provenStop('DOCUMENT_CLASSIFICATION_MISMATCH'));
+      expect(yield* stopOf({ classification: other }, 'ATTACHMENT')).toEqual(
+        provenStop('DOCUMENT_CLASSIFICATION_MISMATCH'),
+      );
+    }),
+  );
+
+  it.effect('[ACC-04] a recipient scope other than the original recipient is stopped before the owner is asked', () =>
+    Effect.gen(function* otherRecipient() {
+      for (const form of ['LINK', 'ATTACHMENT'] as const) {
+        expect(yield* stopOf({ recipientScope: 'ANOTHER_RECIPIENT' }, form)).toEqual(
+          provenStop('DOCUMENT_RECIPIENT_SCOPE_MISMATCH'),
+        );
+      }
+    }),
+  );
+
+  it.effect('[ACC-08] an owner that answers with a resource that is not a Core Media Asset is never disclosed', () =>
+    Effect.gen(function* notMedia() {
+      const wrongType = wrongTypeAssetRef('asset-A');
+      const outcomes = yield* Effect.forEach(
+        [foreignAssetRef('asset-A'), wrongType],
+        (ref) =>
+          Effect.gen(function* one() {
+            const owner = documentOwnerDouble();
+            owner.assign('doc-1', ref);
+            const outcome = yield* assessDocumentDisclosure(query(linkOnly, 'LINK')).pipe(Effect.provide(owner.layer));
+            return summaryOf(outcome);
+          }),
+        { concurrency: 1 },
+      );
+      expect(outcomes).toEqual([
+        { outcome: 'STOP', proven: true, reason: 'DOCUMENT_ASSET_NOT_CORE_MEDIA' },
+        { outcome: 'STOP', proven: true, reason: 'DOCUMENT_ASSET_NOT_CORE_MEDIA' },
+      ]);
+    }),
+  );
+
+  it('makes the document owner a live field of the policy, not a decoration', () => {
+    const policy = decodePolicy({ ...base, documentOwner: 'fixture.other-module' });
+    expect(policy.documentOwner).toBe('fixture.other-module');
+    expect(() => decodePolicy({ ...base, documentOwner: 'Not A Module' })).toThrow();
   });
 });

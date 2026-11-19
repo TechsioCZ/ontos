@@ -39,8 +39,8 @@ export const scopeDemandsSourceVisibility = (scope: CommunicationRequestScope) =
 
 /**
  * The only production composition today: no source owner publishes a history visibility Read yet, so a source-scoped
- * history is refused as unavailable. It is explicit so nothing is ever shown by default or by a missing adapter.
+ * history is refused as not composed (a non-retryable refusal, not an outage). It is explicit so nothing is ever shown by default or by a missing adapter.
  */
 export const unavailableSourceScopeVisibilityLayer = Layer.succeed(SourceScopeVisibility, {
-  check: () => Effect.fail(new SourceScopeVisibilityUnavailable({ reason: 'OWNER_UNAVAILABLE' })),
+  check: () => Effect.fail(new SourceScopeVisibilityUnavailable({ reason: 'NOT_COMPOSED' })),
 });

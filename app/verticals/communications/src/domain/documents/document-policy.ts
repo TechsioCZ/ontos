@@ -30,13 +30,23 @@ export const AttachmentApprovalSchema = Schema.Union([
   Schema.Struct({ approvalKey: ApprovedRuleKeySchema, kind: Schema.Literal('APPROVED') }),
 ]);
 
+/** The one recipient scope a policy can approve: the ORIGINAL recipient of the message (ACC-04). */
+export const PolicyRecipientScopeSchema = Schema.Literal('ORIGINAL_RECIPIENT');
+
+/**
+ * The recipient scope a disclosure is ASKED for. Anything but the original recipient (a copy, a forward, a recipient resolved
+ * from today's profile) is a different request that no policy approves.
+ */
+export const DisclosureRecipientScopeSchema = Schema.Literals(['ANOTHER_RECIPIENT', 'ORIGINAL_RECIPIENT']);
+export type DisclosureRecipientScope = typeof DisclosureRecipientScopeSchema.Type;
+
 export const DocumentPolicySchema = Schema.Struct({
   attachment: AttachmentApprovalSchema,
   classification: DocumentClassificationKeySchema,
   /** The module that owns the document and answers for its disclosure and its open: the real source or document owner. */
   documentOwner: OntosModuleIdSchema,
   link: Schema.Literals(['ALLOWED', 'NOT_ALLOWED']),
-  recipientScope: Schema.Literal('ORIGINAL_RECIPIENT'),
+  recipientScope: PolicyRecipientScopeSchema,
 }).check(
   Schema.makeFilter((policy) =>
     policy.link === 'ALLOWED' || policy.attachment.kind === 'APPROVED'

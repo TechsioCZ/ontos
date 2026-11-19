@@ -19,6 +19,16 @@ import type { DocumentClassificationKeySchema, DocumentForm } from './document-p
 /** The only business revision a Core Media V1 Asset has. */
 export const CURRENT_MEDIA_REVISION = 1;
 
+/**
+ * The owner and resource type of a Core Media Asset reference. These are PROPOSED keys until Core Media V1 (#1443, #1446)
+ * publishes its own: a pinned link points at a Media Asset only, never at a business document, an Order, an invoice or another
+ * module's resource, whatever an owner answers.
+ */
+export const CORE_MEDIA_MODULE_ID = 'core.media';
+export const CORE_MEDIA_ASSET_RESOURCE_TYPE = 'core.media.asset';
+export const isCoreMediaAssetRef = (ref: CommunicationResourceRef) =>
+  ref.moduleId === CORE_MEDIA_MODULE_ID && ref.resourceType === CORE_MEDIA_ASSET_RESOURCE_TYPE;
+
 export const ExactDocumentLinkSchema = Schema.Struct({
   /** The exact owner-qualified Media Asset reference. Never repointed: new bytes are another Asset. */
   assetRef: CommunicationResourceRefSchema,

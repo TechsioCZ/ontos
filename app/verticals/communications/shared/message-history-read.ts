@@ -39,17 +39,31 @@ const MessageTypeIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.is
   Schema.brand('CommunicationMessageTypeId'),
 );
 
-const HIDING_CHARACTER = /[*•]/u;
+/**
+ * The ONE fixed shape of a mask, defined once: at most three visible characters, then at least three hiding characters, then
+ * either nothing, a short visible tail of at most four characters, or `@` and a domain without any whitespace or another `@`.
+ * A text that shows the local part of an address (`*john.smith@example.com`), shows nothing hidden or has another shape is
+ * not a mask, however many hiding characters it contains.
+ */
+export const ENDPOINT_MASK_MAX_VISIBLE_PREFIX = 3;
+export const ENDPOINT_MASK_MIN_HIDDEN = 3;
+export const ENDPOINT_MASK_MAX_VISIBLE_TAIL = 4;
+export const ENDPOINT_MASK_MAX_DOMAIN = 60;
+const ENDPOINT_MASK_PATTERN = new RegExp(
+  `^[^\\s@*\u2022]{0,${String(ENDPOINT_MASK_MAX_VISIBLE_PREFIX)}}[*\u2022]{${String(ENDPOINT_MASK_MIN_HIDDEN)},}` +
+    `(?:@[^\\s@]{1,${String(ENDPOINT_MASK_MAX_DOMAIN)}}|[^\\s@*\u2022]{0,${String(ENDPOINT_MASK_MAX_VISIBLE_TAIL)}})$`,
+  'u',
+);
 
 /**
- * The owner's mask of the ORIGINAL endpoint. It is representable only when it hides something: a text that reads as a
- * whole address, or hides nothing, cannot be a mask. The stored mask was vetted when it was stored; this is the
- * independent second check of the projection.
+ * The owner's mask of the ORIGINAL endpoint. It is representable only when it is structurally a mask (the fixed shape above):
+ * a text that reads as a whole address, or hides nothing, cannot be one. The stored mask was vetted when it was stored; this is
+ * the independent second check of the projection.
  */
 export const EndpointMaskSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(80),
-  Schema.makeFilter((mask) => (HIDING_CHARACTER.test(mask) ? undefined : 'a mask must hide part of the endpoint')),
+  Schema.isPattern(ENDPOINT_MASK_PATTERN),
 );
 
 export const HistoryChannelSchema = Schema.String.check(

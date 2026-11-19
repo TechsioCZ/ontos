@@ -164,47 +164,9 @@ interface RequestRows {
   readonly stops: readonly StopRow[];
 }
 
-const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
-  transaction: ScopedTransactionExecutor,
-  tenantId: string,
-  requestId: string,
-) {
-  const [[request], [decision], intents] = yield* Effect.all(
-    [
-      transaction
-        .select()
-        .from(communicationRequests)
-        .where(and(eq(communicationRequests.tenantId, tenantId), eq(communicationRequests.requestId, requestId))),
-      transaction
-        .select()
-        .from(communicationDecisions)
-        .where(and(eq(communicationDecisions.tenantId, tenantId), eq(communicationDecisions.requestId, requestId))),
-      transaction
-        .select()
-        .from(messageIntents)
-        .where(and(eq(messageIntents.tenantId, tenantId), eq(messageIntents.requestId, requestId)))
-        .orderBy(asc(messageIntents.intentKey)),
-    ],
-    { concurrency: 1 },
-  ).pipe(Effect.mapError(unavailable));
-  if (request === undefined || decision === undefined) {
-    return Option.none<RequestRows>();
-  }
-  const ids = intents.map(({ intentId }) => intentId);
-  if (ids.length === 0) {
-    return Option.some<RequestRows>({
-      attempts: [],
-      conflicts: [],
-      decision,
-      intents,
-      observations: [],
-      request,
-      resends: [],
-      retries: [],
-      stops: [],
-    });
-  }
-  const { attempts, conflicts, observations, resends, retries, stops } = yield* Effect.all(
+/** The six append-only child tables of a set of intents: one statement each, whatever the number of intents. */
+const readChildRows = (transaction: ScopedTransactionExecutor, tenantId: string, ids: readonly string[]) =>
+  Effect.all(
     {
       attempts: transaction
         .select()
@@ -240,17 +202,68 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
     },
     { concurrency: 1 },
   ).pipe(Effect.mapError(unavailable));
-  return Option.some<RequestRows>({
-    attempts,
-    conflicts,
-    decision,
-    intents,
-    observations,
-    request,
-    resends,
-    retries,
-    stops,
-  });
+
+/**
+ * Reads every stored fact of a SET of requests of the installed Tenant in a bounded number of statements: three for the
+ * requests, their decisions and their intents, then one per child table by the intent identities, whatever the number of
+ * requests (a page of the history is never one statement set per row). Every row is then grouped back to its request.
+ */
+const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
+  transaction: ScopedTransactionExecutor,
+  tenantId: string,
+  requestIds: readonly string[],
+) {
+  const rowsByRequest = new Map<string, RequestRows>();
+  if (requestIds.length === 0) {
+    return rowsByRequest;
+  }
+  const [requests, decisions, intents] = yield* Effect.all(
+    [
+      transaction
+        .select()
+        .from(communicationRequests)
+        .where(and(eq(communicationRequests.tenantId, tenantId), inArray(communicationRequests.requestId, requestIds))),
+      transaction
+        .select()
+        .from(communicationDecisions)
+        .where(
+          and(eq(communicationDecisions.tenantId, tenantId), inArray(communicationDecisions.requestId, requestIds)),
+        ),
+      transaction
+        .select()
+        .from(messageIntents)
+        .where(and(eq(messageIntents.tenantId, tenantId), inArray(messageIntents.requestId, requestIds)))
+        .orderBy(asc(messageIntents.intentKey)),
+    ],
+    { concurrency: 1 },
+  ).pipe(Effect.mapError(unavailable));
+  const ids = intents.map(({ intentId }) => intentId);
+  const children =
+    ids.length === 0
+      ? { attempts: [], conflicts: [], observations: [], resends: [], retries: [], stops: [] }
+      : yield* readChildRows(transaction, tenantId, ids);
+  for (const request of requests) {
+    const decision = decisions.find(({ requestId }) => requestId === request.requestId);
+    if (decision === undefined) {
+      continue;
+    }
+    const own = intents.filter(({ requestId }) => requestId === request.requestId);
+    const owns = new Set(own.map(({ intentId }) => intentId));
+    rowsByRequest.set(request.requestId, {
+      attempts: children.attempts.filter(({ intentId }) => owns.has(intentId)),
+      conflicts: children.conflicts.filter(({ intentId }) => owns.has(intentId)),
+      decision,
+      intents: own,
+      observations: children.observations.filter(({ intentId }) => owns.has(intentId)),
+      request,
+      resends: children.resends.filter(
+        ({ originalIntentId, resendIntentId }) => owns.has(originalIntentId) || owns.has(resendIntentId),
+      ),
+      retries: children.retries.filter(({ intentId }) => owns.has(intentId)),
+      stops: children.stops.filter(({ intentId }) => owns.has(intentId)),
+    });
+  }
+  return rowsByRequest;
 });
 
 const attemptFactOf = (row: AttemptRow): AttemptFacts => ({
@@ -367,21 +380,12 @@ const intentRecordOf = Effect.fn('Communications.intentHistoryRecord')(function*
   } satisfies IntentHistoryRecord;
 });
 
-/** Loads the safe history record of one request of the installed Tenant, or none when the request does not exist there. */
-export const loadRequestHistory = Effect.fn('Communications.loadRequestHistory')(function* load(
-  transaction: ScopedTransactionExecutor,
-  tenantId: string,
-  requestId: typeof CommunicationRequestIdSchema.Type,
-) {
-  const rows = yield* readRows(transaction, tenantId, requestId);
-  if (Option.isNone(rows)) {
-    return Option.none<RequestHistoryRecord>();
-  }
-  const { decision, intents, request } = rows.value;
+const requestRecordOf = Effect.fn('Communications.requestHistoryRecord')(function* build(rows: RequestRows) {
+  const { decision, intents, request } = rows;
   const { scope } = yield* Schema.decodeUnknownEffect(PayloadScopeSchema)(request.payload).pipe(
     Effect.mapError(unavailable),
   );
-  const records = yield* Effect.forEach(intents, (intent) => intentRecordOf(rows.value, intent), { concurrency: 1 });
+  const records = yield* Effect.forEach(intents, (intent) => intentRecordOf(rows, intent), { concurrency: 1 });
   const decisionId = CommunicationDecisionIdSchema.make(decision.decisionId);
   const feed = sourceOutcomeFeedOf({
     decision: {
@@ -400,7 +404,7 @@ export const loadRequestHistory = Effect.fn('Communications.loadRequestHistory')
     })),
     requestId: CommunicationRequestIdSchema.make(request.requestId),
   });
-  return Option.some({
+  return {
     decidedAt: instant(decision.decidedAt),
     decisionId,
     feed,
@@ -415,5 +419,34 @@ export const loadRequestHistory = Effect.fn('Communications.loadRequestHistory')
       sourceModule: request.sourceModule,
     },
     tenantMode: Option.getOrUndefined(readTenantMode(decision.languagePolicy)),
-  } satisfies RequestHistoryRecord);
+  } satisfies RequestHistoryRecord;
+});
+
+/**
+ * Loads the safe history records of a set of requests of the installed Tenant in a bounded number of statements (see
+ * `readRows`). A request that does not exist there is simply absent from the answer.
+ */
+export const loadRequestHistories = Effect.fn('Communications.loadRequestHistories')(function* load(
+  transaction: ScopedTransactionExecutor,
+  tenantId: string,
+  requestIds: readonly string[],
+) {
+  const rows = yield* readRows(transaction, tenantId, requestIds);
+  const records = yield* Effect.forEach(
+    [...rows],
+    ([requestId, requestRows]) =>
+      requestRecordOf(requestRows).pipe(Effect.map((record) => [requestId, record] as const)),
+    { concurrency: 1 },
+  );
+  return new Map<string, RequestHistoryRecord>(records);
+});
+
+/** Loads the safe history record of one request of the installed Tenant, or none when the request does not exist there. */
+export const loadRequestHistory = Effect.fn('Communications.loadRequestHistory')(function* load(
+  transaction: ScopedTransactionExecutor,
+  tenantId: string,
+  requestId: typeof CommunicationRequestIdSchema.Type,
+) {
+  const records = yield* loadRequestHistories(transaction, tenantId, [requestId]);
+  return Option.fromNullishOr(records.get(requestId));
 });

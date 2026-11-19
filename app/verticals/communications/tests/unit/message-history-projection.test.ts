@@ -2,6 +2,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  EndpointMaskSchema,
   MESSAGE_HISTORY_MAX_PAGE_SIZE,
   MessageHistoryDetailResultSchema,
   TimelineEntryKindSchema,
@@ -113,7 +114,7 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
       const denied = yield* project(withoutMask);
       expect(denied.recipient).not.toHaveProperty('endpointMask');
       expect(denied.recipient.ref).toBeDefined();
-      for (const unsafe of ['someone@example.test', 'plain text', '']) {
+      for (const unsafe of ['someone@example.test', 'plain text', '', '*john.smith@example.test', '**x@example.test']) {
         const item = yield* project(withMask, intentRecord({ endpointMask: unsafe }));
         expect(item.recipient).not.toHaveProperty('endpointMask');
       }
@@ -121,6 +122,34 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
       expect(absent.recipient).not.toHaveProperty('endpointMask');
     }),
   );
+
+  it('[S01 mask shape] a mask is structurally a mask: a short visible prefix, at least three hiding characters, then only a domain', () => {
+    const isMaskText = Schema.is(EndpointMaskSchema);
+    for (const mask of [
+      'p***@example.test',
+      'p***@e***.test',
+      'x***',
+      '***',
+      '\u2022\u2022\u2022@example.test',
+      'ab***cd',
+    ]) {
+      expect(isMaskText(mask)).toBe(true);
+    }
+    for (const notMask of [
+      '*john.smith@example.test',
+      '**x@example.test',
+      '***john.smith@example.test',
+      'john.smith@example.test',
+      'p**@example.test',
+      'abcd***@example.test',
+      'p***@example.test@other.test',
+      'p***@exam ple.test',
+      'plain text',
+      '',
+    ]) {
+      expect(isMaskText(notMask)).toBe(false);
+    }
+  });
 
   it.effect(
     'carries the history vocabulary: HELD_UNPROVEN needs re-evaluation and a conflict needs reconciliation',
