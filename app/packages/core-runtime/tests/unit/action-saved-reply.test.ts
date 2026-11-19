@@ -21,6 +21,7 @@ import {
   makeOwnerApplicationCompositionFixture,
 } from '../../src/testing/module-contract.ts';
 import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -482,7 +483,7 @@ it.effect('refuses the saved reply to a request admitted under a stale compositi
     const snapshot = yield* makeApplicationCompositionSnapshotFixture([appId], buildMarker);
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       expectedDeployment: { appId, buildMarker },
       ownerRegistration: fixtureOwner(action),
     });
@@ -570,12 +571,12 @@ it.effect('answers a saved reply inside the recovery window and withholds it aft
     const { expectedDeployment } = yield* observeComposition;
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
-      applicationComposition: {
-        load: observeComposition.pipe(
+      applicationComposition: makeActiveApplicationCompositionService(
+        observeComposition.pipe(
           Effect.map(({ snapshot }) => snapshot),
           Effect.orDie,
         ),
-      },
+      ),
       expectedDeployment,
       ownerRegistration,
     });

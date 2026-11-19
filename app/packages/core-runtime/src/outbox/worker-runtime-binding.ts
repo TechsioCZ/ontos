@@ -3,7 +3,10 @@ import type { OutboxClaim } from './repository.ts';
 import { Context, Effect, Option, Schema } from 'effect';
 
 import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
-import { validateActiveApplicationCompositionSnapshot } from '../modules/active-application-composition.ts';
+import {
+  loadActiveApplicationComposition,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import {
@@ -101,8 +104,7 @@ export const prepareNativeOutboxClaimAdmission = Effect.fn('Outbox.prepareNative
     }
     const binding = selected.value;
     const loadCatalog = operationCatalogLoader(binding.input.authority, revision);
-    const snapshot = yield* binding.input.authority.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const snapshot = yield* loadActiveApplicationComposition(binding.input.authority).pipe(
       Effect.mapError(unavailable),
     );
     if (!binding.active || snapshot.composition.revision !== revision) {

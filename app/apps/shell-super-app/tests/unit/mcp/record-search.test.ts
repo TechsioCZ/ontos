@@ -14,6 +14,7 @@ import {
   ReadRuntime,
   TenantModuleStateService,
   TenantModuleStateReadUnavailableError,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ContextAccessService, OAuthGrantRecord, ReadCoreError, TenantModuleStateRecord } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
@@ -441,7 +442,7 @@ const runNativeSearch = Effect.fn('McpRecordSearchTest.nativeSearch')(
     const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
     const harness = yield* makeReadTestHarness({
       access: 'allowed',
-      applicationComposition: { load: Effect.succeed(fixture.snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(fixture.snapshot)),
       compositionRevision: request.compositionRevision,
       executeOwnerQuery: neverCalled,
       expectedDeployment: fixture.installed.composition.shell.deployment,
@@ -485,7 +486,10 @@ const acquireSdkServer = (authority: Effect.Success<ReturnType<typeof setup>>['a
               ShellCryptoLive,
               Layer.mock(ActionRuntime, {}),
               Layer.mock(ReadRuntime, {}),
-              Layer.mock(ActiveApplicationCompositionService, {}),
+              Layer.succeed(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+              ),
               Layer.mock(AgentProposalCommandPreparation, {}),
               Layer.mock(AgentProposalQueueModuleReview, {}),
               Layer.mock(GatewayIssuer, {}),

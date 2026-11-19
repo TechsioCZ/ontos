@@ -58,6 +58,9 @@ export { readModuleOperationRequirement, requireModuleOperation } from '../modul
 export {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+  loadCheckedActiveApplicationComposition,
+  requireLiveActiveApplicationCompositionLease,
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 export {

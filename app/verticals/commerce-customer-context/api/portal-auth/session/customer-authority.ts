@@ -2,7 +2,7 @@ import type { ReadCoreError, TrustedPrincipalContext } from '@app/core-runtime';
 import { ReadRuntime, readVerifiedGatewayCompositionRevision } from '@app/core-runtime';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   ExternalGatewayContextRequestSchema,
@@ -97,10 +97,7 @@ export const commerceCustomerAuthorityLive = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     return {
       admit: Effect.fn('CommerceCustomerAuthority.admit')(function* admit(input: CustomerAuthorityInput) {
-        const active = yield* compositions.load.pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-          Effect.mapError(unavailable),
-        );
+        const active = yield* loadActiveApplicationComposition(compositions).pipe(Effect.mapError(unavailable));
         const request = yield* Schema.decodeEffect(ResolveExternalSubjectRequestSchema)({
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           authenticationRef: input.sessionRef,
@@ -206,10 +203,7 @@ export const commerceCustomerAuthorityLive = Layer.effect(
           }),
           { concurrency: 1, discard: true },
         );
-        const current = yield* compositions.load.pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-          Effect.mapError(unavailable),
-        );
+        const current = yield* loadActiveApplicationComposition(compositions).pipe(Effect.mapError(unavailable));
         if (current.composition.revision !== active.composition.revision) {
           return yield* new CustomerAuthorityUnavailableValue();
         }

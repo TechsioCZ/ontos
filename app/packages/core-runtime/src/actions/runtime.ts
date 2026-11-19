@@ -87,7 +87,7 @@ import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
@@ -1194,8 +1194,7 @@ export const makeActionCompositionRevisionResolver = (
   return Effect.fn('ActionRuntime.resolveCompositionRevision')(function* resolveCompositionRevision(
     principal: TrustedPrincipalContext,
   ) {
-    const snapshot = yield* applicationComposition.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const snapshot = yield* loadActiveApplicationComposition(applicationComposition).pipe(
       Effect.mapError(unavailableActionComposition),
     );
     const selectedOwner = snapshot.composition.modules.find(

@@ -4,6 +4,7 @@ import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { OperationalScope, TrustedPrincipalContext } from '@app/core-runtime';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
@@ -520,7 +521,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))('Current Pricing 
         let subjectChecks = 0;
         const harness = yield* makeReadTestHarness({
           access: 'allowed',
-          applicationComposition: { load: Effect.succeed(composition.snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition.snapshot)),
           compositionRevision,
           executeOwnerQuery: () => Effect.die('This non-resolved evaluation never queries owner SQL'),
           expectedDeployment: composition.expectedDeployment,

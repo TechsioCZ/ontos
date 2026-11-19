@@ -1,8 +1,5 @@
-import type {
-  ActiveApplicationCompositionServiceContract,
-  ActiveApplicationCompositionSnapshot,
-} from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import type { ActiveApplicationCompositionLoad, ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, loadActiveApplicationComposition } from '@app/core-runtime';
 import { DateTime, Effect, Layer } from 'effect';
 
 import {
@@ -51,11 +48,7 @@ const assertModuleAbsentAt = (
   return Effect.succeed(snapshot);
 };
 
-const loadAbsentModuleProof = (
-  load: ActiveApplicationCompositionServiceContract['load'],
-  instant: string,
-  compositionRevision: string,
-) =>
+const loadAbsentModuleProof = (load: ActiveApplicationCompositionLoad, instant: string, compositionRevision: string) =>
   load.pipe(
     Effect.mapError((cause) =>
       unavailable('Authoritative active Application Composition evidence for Promotion is unavailable', cause),
@@ -70,7 +63,7 @@ const loadAbsentModuleProof = (
  * proof-replay and generation-confirmation client before Pricing can publish a selected result.
  */
 export const makePromotionModuleNotInstalledFinalFenceGateway = (
-  load: ActiveApplicationCompositionServiceContract['load'],
+  load: ActiveApplicationCompositionLoad,
 ): PricingOwnerMaterialEvidenceFenceGateway => ({
   confirmObservedGenerationsThrough: Effect.fn(
     'PromotionModuleNotInstalledFinalFence.confirmObservedGenerationsThrough',
@@ -108,6 +101,8 @@ export const makePromotionModuleNotInstalledFinalFenceGateway = (
 export const promotionModuleNotInstalledFinalFenceLive = Layer.effect(
   PricingPromotionMaterialEvidenceFenceGateway,
   ActiveApplicationCompositionService.pipe(
-    Effect.map(({ load }) => makePromotionModuleNotInstalledFinalFenceGateway(load)),
+    Effect.map((authority) =>
+      makePromotionModuleNotInstalledFinalFenceGateway(loadActiveApplicationComposition(authority)),
+    ),
   ),
 );

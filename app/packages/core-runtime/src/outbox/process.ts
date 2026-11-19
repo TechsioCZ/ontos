@@ -23,9 +23,9 @@ import type { Layer, Scope } from 'effect';
 
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadCheckedActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
-import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import type { InstalledModuleCatalog } from '../modules/catalog.ts';
 import { OutboxSubscriptionAuthoritySchema } from '../modules/manifest.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from './core-system-subscriptions.ts';
 import { isCoreSystemOutboxSubscription } from './definition.ts';
@@ -48,10 +48,7 @@ import type { OutboxRuntime } from './runtime.ts';
 const isCoreSystemRegistration = ({ descriptor }: AnyOutboxWorkerRegistration) =>
   isCoreSystemOutboxSubscription(descriptor);
 const hasSystemEntrypoint = ({ descriptor }: AnyOutboxWorkerRegistration) => descriptor.entrypoint.scope === 'system';
-const ownerSubscriptions = (
-  catalog: Effect.Success<ReturnType<typeof buildApplicationCompositionCatalog>>,
-  ownerModules: ReadonlySet<string>,
-) =>
+const ownerSubscriptions = (catalog: InstalledModuleCatalog, ownerModules: ReadonlySet<string>) =>
   catalog.contracts.flatMap(({ runtime }) =>
     runtime.outboxSubscriptions.filter(({ consumerModuleKey }) => ownerModules.has(consumerModuleKey)),
   );
@@ -148,7 +145,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
         const admitWorkerComposition = Effect.fn('OutboxWorker.admitComposition')(function* admitCompositionEffect(
           suppliedSubscriptions: readonly (typeof OutboxSubscriptionAuthoritySchema.Type)[],
         ) {
-          const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+          const { catalog, snapshot } = yield* loadCheckedActiveApplicationComposition(authority);
           const modulesById = new Map<string, (typeof snapshot.composition.modules)[number]>();
           for (const module of snapshot.composition.modules) {
             modulesById.set(module.moduleId, module);
@@ -175,9 +172,6 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
               });
             }
           }
-          const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
-            Effect.mapError(unavailableSubscriptionCatalog),
-          );
           const ownerModules = new Set<string>();
           for (const { deployment, moduleId } of snapshot.composition.modules) {
             if (

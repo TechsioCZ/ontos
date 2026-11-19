@@ -1,7 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
@@ -273,7 +273,10 @@ const makeRecoveryTransport = (
           ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
         }),
       ),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
     );
     const issueGatewayAssertion = (principalId = '10000000-0000-4000-8000-000000000010') =>

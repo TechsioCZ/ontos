@@ -3,11 +3,11 @@ import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-cont
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { RetailPortalProfileBindingReadRequestSchema } from '../../shared/apis/retail-portal-profile-binding-read.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../../src/enrollment/attempts/errors.ts';
-import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime/modules/active-application-composition';
+import type { ActiveApplicationCompositionLoad } from '@app/core-runtime/modules/active-application-composition';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
@@ -675,7 +675,7 @@ const actualPartyModule = (entry: { readonly deployment: { readonly appId: strin
 type RetainedServerPartyFailure =
   | Effect.Error<ReturnType<typeof acquireDelegatedGatewayContext>>
   | Effect.Error<ReturnType<typeof executePartyDetailWithAuthorization>>
-  | Effect.Error<ActiveApplicationCompositionServiceContract['load']>
+  | Effect.Error<ActiveApplicationCompositionLoad>
   | ProfilePersistenceDependencyFailure;
 const observeServerPartyFailure = (error: RetainedServerPartyFailure) =>
   Effect.sync(() => {
@@ -704,7 +704,7 @@ const retainedPartyDetailTransportLive = Layer.effect(
       execute: Effect.fn('RetainedConsentOwner.readParty')(
         function* execute(payload, requestCorrelation, authority) {
           serverPartyObservation.stage = 'ENTERED';
-          const snapshot = yield* compositions.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+          const snapshot = yield* loadActiveApplicationComposition(compositions);
           const party = snapshot.composition.modules.find(actualPartyModule);
           serverPartyObservation.stage = 'COMPOSITION_LOADED';
           if (

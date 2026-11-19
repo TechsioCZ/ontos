@@ -2,7 +2,7 @@ import type { CoreSearchResourceRefSchema, OperationalScope } from '@app/core-ru
 import type { PurchaseApprovalFinalBinding } from '../../shared/domain/purchasing-approval.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { executeVerifyOrderCommitmentBindingWithAuthorization } from '@app/commerce-order-contracts/verify-order-commitment-binding/client';
 import { executeCommittedOrderApprovalEvidenceWithAuthorization } from '@app/commerce-order-contracts/committed-order-approval-evidence/client';
@@ -153,10 +153,7 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
       ) {
         return yield* conflict();
       }
-      const active = yield* composition.load.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.mapError(unavailable),
-      );
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
       const correlation = request.commitmentCorrelationId;
       const assertion = yield* acquireDelegatedGatewayContext(
         {

@@ -16,6 +16,7 @@ import {
   SHELL_GATEWAY_ISSUER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { defineOutboxWorkerEntry, extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -137,7 +138,10 @@ const runCycleOnce = (compositionRevision: string) =>
       expectedDeployment: ultramodernApiMarker,
       layer: Layer.mergeAll(
         Layer.succeedContext(workerServices),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
         Layer.succeed(OutboxRuntime, {
           ...runtime,
           runCycle: () =>

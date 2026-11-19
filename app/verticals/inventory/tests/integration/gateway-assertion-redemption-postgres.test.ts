@@ -7,6 +7,7 @@ import {
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
   loadDatabaseConnectionPair,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -277,7 +278,12 @@ it.layer(services, { excludeTestServices: true })('Inventory durable gateway red
           const verification = (bearer: string) =>
             bindGatewayPrincipalVerifier('inventory', ultramodernApiMarker)
               .verifyAndRedeem(Redacted.make(`Bearer ${bearer}`), { environment, redemption })
-              .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+              .pipe(
+                Effect.provideService(
+                  ActiveApplicationCompositionService,
+                  makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+                ),
+              );
           const failure = yield* verification(yield* signToken(claims)).pipe(Effect.flip);
           expect(Schema.is(ActionPrincipalScopeErrorSchema)(failure)).toBe(true);
           expect(yield* test.runtime.unsafe('select jti from inventory.gateway_assertion_redemptions')).toEqual([]);

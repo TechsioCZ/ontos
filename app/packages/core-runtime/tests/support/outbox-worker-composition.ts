@@ -1,13 +1,10 @@
 import { deriveModuleIntrinsicRequirements } from '../../src/modules/module-dependency-contracts.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
-import {
-  ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
-} from '../../src/modules/active-application-composition.ts';
+import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import {
   canonicalizeApplicationComposition,
   freezeApplicationCompositionArtifact,
@@ -20,6 +17,7 @@ import type {
 import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import type { OutboxWorkerSubscription } from '../../src/outbox/definition.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 
 interface OutboxWorkerCompositionModuleFixture {
   readonly appId: string;
@@ -125,4 +123,4 @@ export const freshOutboxWorkerCompositionSnapshot = (composition: ApplicationCom
   );
 
 export const outboxWorkerCompositionLayer = (composition: ApplicationComposition = makeOutboxWorkerComposition()) =>
-  Layer.succeed(ActiveApplicationCompositionService, { load: freshOutboxWorkerCompositionSnapshot(composition) });
+  makeActiveApplicationCompositionLayer(freshOutboxWorkerCompositionSnapshot(composition));

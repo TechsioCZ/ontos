@@ -59,7 +59,7 @@ import { SignJWT, importJWK } from 'jose';
 
 import type { DocumentGatewayAssertion } from '../../shared/document-gateway-api.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
-import type { InstalledModuleCatalogError } from '../modules/installed-module-catalog.ts';
+import type { InstalledModuleCatalogUnavailableError } from '../modules/installed-module-catalog.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
 import type { GatewayIssuerConfigError, GatewayIssuerConfigValue } from './gateway-issuer-config.ts';
 import { readAdmittedPrivacyDispatch } from './gateway-privacy-dispatch-evidence.ts';
@@ -133,7 +133,7 @@ export interface GatewayIssuerLayerOptions {
   readonly generateJti: Effect.Effect<string, GatewayIssuerError>;
   readonly loadAdmission: Effect.Effect<
     { readonly audiences: ReadonlyMap<string, string>; readonly revision: string },
-    InstalledModuleCatalogError | GatewayIssuerError
+    InstalledModuleCatalogUnavailableError | GatewayIssuerError
   >;
   readonly loadConfig: Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError>;
 }

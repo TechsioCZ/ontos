@@ -5,6 +5,7 @@ import {
   SHARED_RUNTIME_IDENTITY,
   loadDatabaseIdentityConnections,
   parseSpiceDbConfig,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
@@ -92,7 +93,7 @@ const serve = Effect.gen(function* independentOwner() {
     return yield* unavailable();
   }
   const database = yield* makeCoreDatabase(connection);
-  const applicationComposition = { load: Effect.succeed(input.compositionSnapshot) };
+  const applicationComposition = makeActiveApplicationCompositionService(Effect.succeed(input.compositionSnapshot));
   const attached = yield* makeNativeActionV2OwnerRuntime({
     configuration: yield* parseSpiceDbConfig(Redacted.value(input.spiceDbEnvironment)),
     database,

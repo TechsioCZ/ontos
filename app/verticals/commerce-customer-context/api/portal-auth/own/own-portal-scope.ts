@@ -1,6 +1,6 @@
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { Crypto, Effect } from 'effect';
 
@@ -32,10 +32,7 @@ export const ownPortalScope = Effect.fn('CustomerOwnPortal.scope')(function* own
   let { compositionRevision } = operation;
   if (compositionRevision === undefined) {
     const compositions = yield* ActiveApplicationCompositionService;
-    const active = yield* compositions.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-      Effect.mapError(unavailable),
-    );
+    const active = yield* loadActiveApplicationComposition(compositions).pipe(Effect.mapError(unavailable));
     compositionRevision = active.composition.revision;
   }
   const crypto = yield* Crypto.Crypto;

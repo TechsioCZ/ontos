@@ -7,6 +7,7 @@ import {
   ReadRuntime,
   TenantModuleStateService,
   TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ContextAccessDecision, ContextAccessService, TenantModuleStateRecord } from '@app/core-runtime';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -215,7 +216,7 @@ const fixture = (controls: AdmissionControls) =>
     const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
     harness = yield* makeReadTestHarness({
       access: 'allowed',
-      applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+      applicationComposition: makeActiveApplicationCompositionService(makeCompositionSnapshot(catalog.contracts)),
       compositionRevision: catalog.composition.revision,
       executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
       expectedDeployment: catalog.composition.shell.deployment,

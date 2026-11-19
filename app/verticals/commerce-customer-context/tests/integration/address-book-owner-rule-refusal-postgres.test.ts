@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActionPermissionDenied, defineScopedRoutine, runAction } from '@app/core-runtime';
+import {
+  ActionPermissionDenied,
+  defineScopedRoutine,
+  runAction,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -108,7 +113,7 @@ it.live(
             actionKeys: [],
             adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
             allowedAudiences: ['commerce-customer-context'],
-            applicationComposition: { load: Effect.succeed(snapshot) },
+            applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
             authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: snapshot.composition.revision,
             expectedDeployment: ultramodernApiMarker,

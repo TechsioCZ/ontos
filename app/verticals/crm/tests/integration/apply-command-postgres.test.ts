@@ -7,6 +7,7 @@ import {
   TrustedPrincipalContextSchema,
   defineDatabaseIdentityEnrollment,
   loadDatabaseConnectionPair,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
@@ -44,7 +45,7 @@ import { crmRegistration } from '../../vertical.registration.ts';
 
 const unusedReference = () => Effect.die('Unexpected reference boundary access');
 const referenceBoundary = Layer.mergeAll(
-  Layer.succeed(ActiveApplicationCompositionService, { load: unusedReference() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unusedReference())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unusedReference() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

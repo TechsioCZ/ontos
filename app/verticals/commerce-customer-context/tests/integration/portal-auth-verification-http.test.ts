@@ -21,7 +21,11 @@ import {
   GatewayAssertionReplayError,
 } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { ActiveApplicationCompositionService, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
@@ -250,7 +254,10 @@ const makeSignedWorkloadAuthority = (
     commercePortalAuthVerificationWorkloadAuthorizationLive,
     Layer.succeed(CommercePortalAuthVerificationWorkloadGrantConfiguration, grantConfiguration),
     Layer.succeed(GatewayAssertionRedemptionService, redemption ?? { consume: () => Effect.void }),
-    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    ),
     makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(environment)),
   );
 };

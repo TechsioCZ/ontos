@@ -16194,8 +16194,8 @@ const hasNativeRemoteReadCaptures = (source: string, body: string): boolean =>
   ) &&
   hasRuntimeNamedSourceImport(
     source,
-    'validateActiveApplicationCompositionSnapshot',
-    'validateActiveApplicationCompositionSnapshot',
+    'loadActiveApplicationComposition',
+    'loadActiveApplicationComposition',
     ACTIVE_COMPOSITION_MODULE,
   ) &&
   body.trimStart().startsWith('const composition = yield* ActiveApplicationCompositionService;') &&
@@ -16260,7 +16260,7 @@ const hasNativeAuthorizedRemoteReadFactory = (owner: ReadPhaseOwner, source: str
     hasExactSourceTokens(
       tokenizeGovernedClient(revision),
       `
-      const active = yield* composition.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot), Effect.mapError(unavailable));
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
       if (compositionRevision !== undefined && compositionRevision !== active.composition.revision) {
         return yield* unavailable('The request composition is no longer active');
       }

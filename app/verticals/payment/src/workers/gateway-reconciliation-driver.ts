@@ -1,8 +1,5 @@
-import { ApplicationCompositionModuleSchema } from '@app/core-runtime';
-import {
-  ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
-} from '@app/core-runtime/outbox/worker';
+import { ApplicationCompositionModuleSchema, loadActiveApplicationComposition } from '@app/core-runtime';
+import { ActiveApplicationCompositionService } from '@app/core-runtime/outbox/worker';
 import { Array as EffectArray, Clock, Duration, Effect, Layer, Match, Option, Ref, Schedule, Schema } from 'effect';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -214,8 +211,7 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
     const listingCursor = yield* Ref.make(Option.none<GatewayReconciliationDueRow>());
 
     /** This compiled Payment artifact must be the approved `payment.core`, with the ABI it first saw. */
-    const admitRelease = authority.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const admitRelease = loadActiveApplicationComposition(authority).pipe(
       Effect.flatMap(({ composition }) => {
         const approved = composition.modules.find(({ moduleId }) => moduleId === PAYMENT_MODULE_ID);
         if (

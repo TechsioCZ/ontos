@@ -6,6 +6,7 @@ import {
   GatewayAssertionRedemptionService,
   ReadHandlerUnavailable,
   ReadRuntime,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
@@ -135,7 +136,10 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
             harness.ownerServices,
             Layer.succeedContext(accessServices),
             Layer.succeed(Crypto.Crypto, yield* Crypto.Crypto),
-            Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+            Layer.succeed(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(composition)),
+            ),
           ),
         ),
       ),

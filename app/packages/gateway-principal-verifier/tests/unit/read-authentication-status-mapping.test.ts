@@ -3,6 +3,7 @@ import {
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
   readVerifiedGatewayScopeAssertion,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
@@ -97,7 +98,10 @@ const verifier = bindGatewayPrincipalVerifier(audience, { appId: audience, build
 type Redemption = Parameters<typeof verifier.verifyAndRedeem>[1]['redemption'];
 
 const provideComposition = (fixture: ReadAuthenticationFixture) =>
-  Effect.provideService(ActiveApplicationCompositionService, { load: fixture.composition });
+  Effect.provideService(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(fixture.composition),
+  );
 
 const verifyAndRedeem = (fixture: ReadAuthenticationFixture, redemption: Redemption) =>
   verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {

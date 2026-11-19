@@ -28,6 +28,7 @@ import {
   loadDatabaseConfig,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { DecisionLogIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
@@ -1630,7 +1631,10 @@ const makeAdmittedPreproposalOutbox = (
         expectedDeployment,
         layer: Layer.mergeAll(
           Layer.succeedContext(services),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           Layer.succeed(OutboxRuntime, {
             ...outbox,
             // Delegate the exact original native cycle; the public entry supplies receiving admission.
@@ -2816,7 +2820,10 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       gateway,
       resolver,
       staffAuthenticationNamespaceRegistryLayer([contextAudience]),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       access,
       overlay,
     );
@@ -2836,7 +2843,12 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const redemption = Context.get(yield* Layer.build(redemptionLayer), GatewayAssertionRedemptionService);
     const authenticatedOperator = yield* bindGatewayPrincipalVerifier(contextAudience, ownDeployment)
       .verifyAndRedeem(yield* signBuyer(contextAudience, true, false), { environment, redemption })
-      .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+      .pipe(
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
+      );
     const administerCurrencyPolicy = (
       label: string,
       expectedGeneration: number,

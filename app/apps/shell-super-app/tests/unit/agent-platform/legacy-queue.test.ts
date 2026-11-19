@@ -2,7 +2,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { GatewayContextClaimsSchema } from '@app/shared-contracts';
 import { NodeHttpServer } from '@effect/platform-node';
@@ -140,7 +143,7 @@ const legacyOwner = Effect.gen(function* serveLegacyOwner() {
   return {
     commands,
     layer: Layer.mergeAll(
-      Layer.succeed(ActiveApplicationCompositionService, { load }),
+      Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(load)),
       Layer.succeed(AgentReadRequestIdentity, { correlationId: 'legacy-command' }),
       makeInstalledModuleCatalogLayer(load),
       issuer,

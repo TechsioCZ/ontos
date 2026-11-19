@@ -5,6 +5,7 @@ import {
   defineTenantModuleEntrypoint,
   extractVerticalRuntimeSafeDescriptors,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionServiceContract, ApplicationComposition } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
@@ -160,8 +161,8 @@ const composition: ApplicationComposition = sealApplicationCompositionFixture({
 /** The admitted release every Symmy worker delivery of these tests was claimed under. */
 export const symmyWorkerCompositionRevision = composition.revision;
 
-const authority: ActiveApplicationCompositionServiceContract = {
-  load: DateTime.now.pipe(
+const authority: ActiveApplicationCompositionServiceContract = makeActiveApplicationCompositionService(
+  DateTime.now.pipe(
     Effect.flatMap((observedAt) =>
       validateActiveApplicationCompositionSnapshot({
         composition,
@@ -170,7 +171,7 @@ const authority: ActiveApplicationCompositionServiceContract = {
       }),
     ),
   ),
-};
+);
 
 /** Runs `effect` as the Symmy job worker holding the native claim of `context`'s delivery. */
 export const withSymmyWorkerClaim =

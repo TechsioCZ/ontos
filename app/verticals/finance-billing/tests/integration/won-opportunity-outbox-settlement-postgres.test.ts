@@ -5,6 +5,7 @@
 // not-ready window) stays pending for its retry.
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { loadActiveApplicationComposition } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import {
@@ -131,7 +132,7 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
       });
       yield* isolated.migrateCoreSchema();
       const claimFixture = makeNativeOutboxWorkerFixture([registration]);
-      yield* isolated.publishInitialComposition(yield* claimFixture.authority.load);
+      yield* isolated.publishInitialComposition(yield* loadActiveApplicationComposition(claimFixture.authority));
       const { executor } = yield* makeCoreDatabase(isolated.connections.runtime);
       const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
       yield* executor.insert(tenants).values({

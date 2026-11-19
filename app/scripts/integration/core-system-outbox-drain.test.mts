@@ -45,6 +45,7 @@ import {
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
   LegacyCompletionPublication,
@@ -237,12 +238,17 @@ const claimAsRetiringHost = (f: DrainFixture) =>
   Effect.gen(function* claimAsRetiringHostEffect() {
     return yield* withWorkerRuntimeBinding(
       {
-        authority: { load: Effect.succeed(f.old) },
+        authority: makeActiveApplicationCompositionService(Effect.succeed(f.old)),
         expectedDeployment: f.old.composition.shell.deployment,
         registrations: ALL_CORE_WORKERS,
       },
       f.repository.claimNext(ALL_CORE_WORKERS, CLAIM_OWNER, yield* DateTime.nowAsDate, f.old.composition.revision),
-    ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(f.old) }));
+    ).pipe(
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(f.old)),
+      ),
+    );
   });
 
 /** A second, matched delivery for a tenant module that is installed nowhere: work no host can ever claim. */
@@ -418,12 +424,17 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // The genuine Core registrations, bound to the composition's own Shell deployment, as the host binds them.
       const claim = yield* withWorkerRuntimeBinding(
         {
-          authority: { load: Effect.succeed(f.old) },
+          authority: makeActiveApplicationCompositionService(Effect.succeed(f.old)),
           expectedDeployment: f.old.composition.shell.deployment,
           registrations: ALL_CORE_WORKERS,
         },
         f.repository.claimNext(ALL_CORE_WORKERS, CLAIM_OWNER, yield* DateTime.nowAsDate, f.old.composition.revision),
-      ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(f.old) }));
+      ).pipe(
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(f.old)),
+        ),
+      );
       expect(Option.isSome(claim)).toBe(true);
       // Two core-system subscriptions consume this topic; either may be claimed first, and both must be claimable.
       expect(ALL_CORE_WORKERS.map(({ descriptor }) => descriptor.workerKey)).toContain(
@@ -474,7 +485,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
           Effect.gen(function* claimAndComplete() {
             const claim = yield* withWorkerRuntimeBinding(
               {
-                authority: { load: Effect.succeed(next) },
+                authority: makeActiveApplicationCompositionService(Effect.succeed(next)),
                 expectedDeployment: next.composition.shell.deployment,
                 registrations: ALL_CORE_WORKERS,
               },
@@ -484,7 +495,12 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
                 yield* DateTime.nowAsDate,
                 next.composition.revision,
               ),
-            ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(next) }));
+            ).pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(next)),
+              ),
+            );
             expect(Option.isSome(claim)).toBe(true);
             yield* f.repository.complete(Option.getOrThrow(claim), yield* DateTime.nowAsDate);
           }),
@@ -719,12 +735,17 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         }
         const claim = yield* withWorkerRuntimeBinding(
           {
-            authority: { load: Effect.succeed(f.old) },
+            authority: makeActiveApplicationCompositionService(Effect.succeed(f.old)),
             expectedDeployment: f.old.composition.shell.deployment,
             registrations: ALL_CORE_WORKERS,
           },
           f.repository.claimNext(ALL_CORE_WORKERS, CLAIM_OWNER, yield* DateTime.nowAsDate, f.old.composition.revision),
-        ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(f.old) }));
+        ).pipe(
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(f.old)),
+          ),
+        );
         // It must really be claimed, or this test would silently stop proving the retry.
         expect(Option.isSome(claim)).toBe(true);
         yield* Ref.set(claimedWorkerKey, Option.getOrThrow(claim).workerKey);

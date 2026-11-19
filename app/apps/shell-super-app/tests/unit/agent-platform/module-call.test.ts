@@ -5,7 +5,10 @@
  * command reaches a real owner release through the Shell's native module transport.
  */
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect';
@@ -102,7 +105,7 @@ const run = (command: AgentCommand, action: ModuleCommandAction, published = tru
     return yield* applyModuleCommand(principal, FIXTURE_APP_ID, command, { action, idempotencyKey: 'key-1' }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          Layer.succeed(ActiveApplicationCompositionService, { load }),
+          Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(load)),
           Layer.succeed(AgentReadRequestIdentity, { correlationId: 'module-call' }),
           Layer.mock(GatewayIssuer, {
             issue: () =>

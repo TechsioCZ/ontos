@@ -20,6 +20,7 @@ import {
   makeActionRuntime,
 } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
+import { makeActiveApplicationCompositionService } from '../../../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../../../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
@@ -480,7 +481,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: priceGroupCatalogRegistration,
       resolveCompositionRevision: makeActionCompositionRevisionResolver(
-        { load: Effect.succeed(approvedComposition) },
+        makeActiveApplicationCompositionService(Effect.succeed(approvedComposition)),
         ultramodernApiMarker,
       ),
 

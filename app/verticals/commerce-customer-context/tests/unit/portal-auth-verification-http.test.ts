@@ -26,6 +26,7 @@ import {
   ActiveApplicationCompositionUnavailableError,
   OperationAuthenticationRequired,
   OperationContextUnavailable,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Clock } from 'effect';
@@ -580,7 +581,10 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     });
     const verifierLayer = Layer.merge(
       makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment)),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(fixture.snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(fixture.snapshot)),
+      ),
     );
     const allowed = yield* runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
       Effect.provide(verifierLayer),
@@ -602,7 +606,10 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     );
     const supersededRelease = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
-        Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(nextRelease) }),
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(nextRelease)),
+        ),
         Effect.provide(makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment))),
       ),
     );
@@ -610,9 +617,12 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
 
     const compositionUnavailable = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
-        Effect.provideService(ActiveApplicationCompositionService, {
-          load: Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'authority unavailable' })),
-        }),
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(
+            Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'authority unavailable' })),
+          ),
+        ),
         Effect.provide(makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment))),
       ),
     );
@@ -652,7 +662,10 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     const sessionFixture = yield* makeWorkloadFixture('session');
     const sessionVerifierLayer = Layer.merge(
       makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(sessionFixture.environment)),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(sessionFixture.snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(sessionFixture.snapshot)),
+      ),
     );
     const sessionPrincipal = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${sessionFixture.token}`, request).pipe(Effect.provide(sessionVerifierLayer)),
@@ -665,7 +678,10 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     );
     const impersonationVerifierLayer = Layer.merge(
       makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(impersonationFixture.environment)),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(impersonationFixture.snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(impersonationFixture.snapshot)),
+      ),
     );
     const impersonationPrincipal = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${impersonationFixture.token}`, request).pipe(

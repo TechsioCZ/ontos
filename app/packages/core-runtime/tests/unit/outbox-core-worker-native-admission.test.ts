@@ -9,7 +9,10 @@ import { projectionWriteRefusal } from '../../src/access/intent/projection-write
 import type { AccessProjectionWriteError } from '../../src/access/intent/projection-write-error.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
-import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { ApplicationCompositionAuthorityError } from '../../src/modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
@@ -263,29 +266,32 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
       Layer.succeed(OutboxRuntime, observedRuntime),
       lifecycle,
       projector,
-      Layer.succeed(ActiveApplicationCompositionService, {
-        load: Effect.suspend(() => {
-          expect(openTransactions).toBe(0);
-          authorityLoads += 1;
-          if (authorityLoads > 1 && options.authority === 'unavailable') {
-            return Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Source unavailable' }));
-          }
-          if (authorityLoads > 1 && options.authority === 'expired') {
-            return DateTime.now.pipe(
-              Effect.map((now) => ({
-                composition,
-                observedAt: DateTime.subtract(now, { seconds: 2 }),
-                validUntil: DateTime.subtract(now, { seconds: 1 }),
-              })),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(
+          Effect.suspend(() => {
+            expect(openTransactions).toBe(0);
+            authorityLoads += 1;
+            if (authorityLoads > 1 && options.authority === 'unavailable') {
+              return Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Source unavailable' }));
+            }
+            if (authorityLoads > 1 && options.authority === 'expired') {
+              return DateTime.now.pipe(
+                Effect.map((now) => ({
+                  composition,
+                  observedAt: DateTime.subtract(now, { seconds: 2 }),
+                  validUntil: DateTime.subtract(now, { seconds: 1 }),
+                })),
+              );
+            }
+            return freshOutboxWorkerCompositionSnapshot(
+              authorityLoads > 1 && options.authority === 'revision-changed'
+                ? makeOutboxWorkerComposition([{ appId: 'other-worker', moduleId: 'worker.other' }])
+                : composition,
             );
-          }
-          return freshOutboxWorkerCompositionSnapshot(
-            authorityLoads > 1 && options.authority === 'revision-changed'
-              ? makeOutboxWorkerComposition([{ appId: 'other-worker', moduleId: 'worker.other' }])
-              : composition,
-          );
-        }),
-      }),
+          }),
+        ),
+      ),
     ),
     registrations: options.registrations ?? workers,
     subscriptions: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,

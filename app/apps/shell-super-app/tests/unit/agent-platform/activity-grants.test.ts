@@ -8,7 +8,10 @@ import {
 } from '@app/core-runtime';
 import type { OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -218,7 +221,10 @@ const fixture = Effect.gen(function* activityGrantsFixture() {
             ),
           checkActionProposalPermission: () => Effect.die('Unexpected proposal permission check'),
         }),
-        Layer.mock(ActiveApplicationCompositionService, {}),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+        ),
         Layer.mock(GatewayIssuer, {}),
       ),
     ),

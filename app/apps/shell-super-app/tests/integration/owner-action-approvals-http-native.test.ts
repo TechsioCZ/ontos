@@ -4,6 +4,7 @@ import {
   SHELL_GATEWAY_ISSUER_IDENTITY,
   TrustedPrincipalContextSchema,
   verifySessionRoleOnFirstUse,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   OWNER_ACTION_APPROVAL_INSPECTION_PATH,
@@ -144,7 +145,7 @@ it.layer(parentServices, { excludeTestServices: true, timeout: '120 seconds' })(
             database: fixture.database,
             enrollment: caseContext.enrollment,
             owner: {
-              applicationComposition: { load: Effect.succeed(snapshot) },
+              applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
               expectedDeployment: caseContext.expectedDeployment,
               ownerRegistration: fixture.owner.ownerRegistration,
             },

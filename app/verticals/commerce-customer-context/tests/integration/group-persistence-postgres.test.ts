@@ -1,4 +1,4 @@
-import { runAction } from '@app/core-runtime';
+import { runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { PgClient } from '@effect/sql-pg';
@@ -103,7 +103,7 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
           actionKeys: [admitCustomerGroupMembershipSnapshotAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(connections.admin.connectionString),
           allowedAudiences: ['commerce-customer-context'],
-          applicationComposition: { load: Effect.succeed(snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
           expectedDeployment: ultramodernApiMarker,

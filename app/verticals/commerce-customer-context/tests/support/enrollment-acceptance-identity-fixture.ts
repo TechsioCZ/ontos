@@ -1,7 +1,12 @@
 import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { randomUUID } from 'node:crypto';
 
-import { ActiveApplicationCompositionService, ActionRuntime, makeActionRuntimeLive } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ActionRuntime,
+  makeActionRuntimeLive,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
@@ -307,7 +312,10 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
           ActionRepositoryLive,
           AcceptanceActionPermissionLive,
           makeTestAccessGateLayers({ spec: { defaultAnswer: { outcome: 'ALLOWED' } } }),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(compositionSnapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(compositionSnapshot)),
+          ),
           ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
           moduleStateGateLive,
           scopeResolverLive,

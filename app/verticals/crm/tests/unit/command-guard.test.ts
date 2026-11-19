@@ -3,7 +3,12 @@ import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate'
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
-import { ActiveApplicationCompositionService, ContextAccess, agentGrantRelationships } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ContextAccess,
+  agentGrantRelationships,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import type { AgentGrantWritePolicy } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
@@ -53,7 +58,7 @@ const unusedProductionServices = Layer.mergeAll(
       },
     },
   }),
-  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unused())),
   Layer.succeed(ContextAccess, {
     legalEntities: unused,
     modules: unused,

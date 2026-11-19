@@ -28,6 +28,7 @@ import {
   makeReadRuntimeLive,
   makeActionRuntimeLive,
   makeDatabaseIdentityEnrollmentLive,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
@@ -468,7 +469,10 @@ it.live(
           Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),
           Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
           Layer.succeed(GatewayDelegationExchangeLedger, makeGatewayDelegationExchangeLedger(auth.executor)),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           Layer.succeed(OperationalScopeResolver, scopes),
           Layer.succeed(AccessDecisionGate, gate),
           // Both module keys were issued by a host of exactly this release; the Shell derives their bindings from that.
@@ -491,7 +495,12 @@ it.live(
               environment: { ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: publicKeys },
               redemption: redemption(runtime),
             })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+            .pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+              ),
+            );
         const issue = (
           subject: (typeof GatewayDelegatedContextRequestSchema.Encoded)['subject'],
           audience = 'symmy-integration',

@@ -2,7 +2,7 @@ import { Effect, Result, Schema } from 'effect';
 
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -171,8 +171,7 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     const actions: readonly AgentProposalQueueAction[] = [];
     return { actions, answered: NOTHING_ANSWERED, revision: '', uninstalled: actions };
   }
-  const snapshot = yield* (yield* ActiveApplicationCompositionService).load.pipe(
-    Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+  const snapshot = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService).pipe(
     Effect.mapError(unavailable),
   );
   const { revision } = snapshot.composition;

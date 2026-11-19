@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { ActionPermissionCheckError } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
@@ -219,7 +222,10 @@ const prepareResolution = (
   executor: typeof RetailPartyDetailExecutor.Service,
 ) =>
   preparedRetailPartyResolution.pipe(
-    Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    ),
     Effect.provideService(RetailPartyDetailExecutor, executor),
     Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
   );
@@ -410,7 +416,10 @@ it.effect('fails closed without an actor-bound Party transport instead of readin
   Effect.gen(function* failClosedWithoutTransport() {
     const snapshot = yield* makeApplicationCompositionSnapshotFixture();
     const execution = yield* preparedRetailPartyResolution.pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
     );
     const failure = yield* Effect.flip(execution.preflight.prepare(nativePreflight));

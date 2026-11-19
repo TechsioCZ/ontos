@@ -19,7 +19,10 @@ import type { NoticeChannelDeliveryAuthorityService } from './record-notice-prov
 import { NoticeProvisionPersistenceError } from '../persistence/notice-provision-repository.ts';
 import { ActionPermissionCheckError } from '@app/core-runtime';
 import type { ActionAuthorizationPreflightInput, ActionAuthorizationPreflightService } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+} from '@app/core-runtime/modules/active-application-composition';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { shellGatewayBaseUrlConfig } from '@app/shared-contracts/shell-gateway-url';
@@ -99,7 +102,7 @@ export const commerceConsentAuthorityLookup = Effect.gen(function* commerceConse
     if (configured.actorPrincipalId !== preflight.principal.principalId) {
       return yield* missing();
     }
-    const active = yield* composition.load.pipe(Effect.mapError(unavailable));
+    const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
     const compositionRevision = active.composition.revision;
     const gateway = yield* issueApiKeyGatewayContext(
       {

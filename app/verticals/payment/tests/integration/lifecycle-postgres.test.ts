@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { defineDatabaseIdentityEnrollment, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import {
+  defineDatabaseIdentityEnrollment,
+  makeActiveApplicationCompositionService,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, Deferred, Effect, Fiber, Layer, Option, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
@@ -512,7 +516,7 @@ it.live('#1148 creates bank transfer with exact Checkout facts and refuses a for
       const { revision } = composition.composition;
       yield* tracked.activate(revision);
       const { actions } = yield* makeLifecycleRuntimes(scenario.native, revision, {
-        applicationComposition: { load: Effect.succeed(composition) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
         expectedDeployment: paymentTermFixtureDeployment,
       });
       const storefrontId = 'storefront-intent-owner';

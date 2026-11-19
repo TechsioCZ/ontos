@@ -38,6 +38,7 @@ import {
   makeDatabaseIdentityEnrollmentLive,
   OntosRegisteredWorkloadCallSchema,
   OntosRegisteredWorkloadCallsSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   AccessDecisionGate,
@@ -1139,7 +1140,10 @@ it.live(
           Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),
           Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
           Layer.succeed(GatewayDelegationExchangeLedger, makeGatewayDelegationExchangeLedger(auth.executor)),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           // The three calling modules' keys were issued by hosts of exactly this release.
           enrolledModuleCredentials(
             (
@@ -1262,7 +1266,12 @@ it.live(
               },
               redemption: nativeRedemption(party),
             })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+            .pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+              ),
+            );
         const verified = yield* receive(issued.token);
         expect(verified.legalEntityId).toBeUndefined();
         expect(Exit.isFailure(yield* Effect.exit(receive(issued.token)))).toBe(true);
@@ -1403,7 +1412,12 @@ it.live(
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          );
         const nestedScope = yield* scopeResolver.resolve({
           audience: 'privacy',
           correlationId: 'native-v4-nested',
@@ -1465,7 +1479,12 @@ it.live(
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          );
         expect(projectedTenantPrincipal.legalEntityId).toBeUndefined();
         expect(readVerifiedGatewayWorkload(projectedTenantPrincipal)?.legalEntityId).toBeUndefined();
         const projectedTenantScope = yield* scopeResolver.resolve({
@@ -1510,7 +1529,12 @@ it.live(
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          );
         expect(declaredTenantOnlyPrincipal.legalEntityId).toBeUndefined();
         expect(readVerifiedGatewayWorkload(declaredTenantOnlyPrincipal)?.legalEntityId).toBeUndefined();
         const companyReadRefusal = yield* Effect.flip(
@@ -1784,7 +1808,12 @@ it.live(
               },
               redemption: nativeRedemption(runtime),
             })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+            .pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+              ),
+            );
           expect(readVerifiedGatewayWorkload(organizationBusinessPrincipal)?.entrypointKey).toBe(
             organizationBusinessKey,
           );
@@ -1937,7 +1966,12 @@ it.live(
               },
               redemption: nativeRedemption(runtime),
             })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+            .pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+              ),
+            );
           const processingScope = yield* scopeResolver.resolve({
             audience: sourceApp,
             correlationId: 'native-organization-processing',
@@ -2044,7 +2078,12 @@ it.live(
               },
               redemption: nativeRedemption(runtime),
             })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+            .pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+              ),
+            );
           expect(Exit.isFailure(yield* Effect.exit(runRead(governanceRequest, governancePrincipal)))).toBe(true);
           expect(calls.reads).toBe(1);
           const cachedKey = 'native-processing-cached-action';
@@ -2404,7 +2443,12 @@ it.live(
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          );
         const recoveryPrivacyScope = yield* scopeResolver.resolve({
           audience: 'privacy',
           correlationId: 'native-recovery-privacy',

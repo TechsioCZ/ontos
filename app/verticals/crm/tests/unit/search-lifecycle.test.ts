@@ -1,6 +1,11 @@
 import { crmRegistration } from '../../vertical.registration.ts';
 import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
-import { ActiveApplicationCompositionService, ContextAccess, ActionAlreadyCommitted } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ContextAccess,
+  ActionAlreadyCommitted,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
@@ -28,7 +33,7 @@ const dependencies = Layer.mergeAll(
       },
     },
   }),
-  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unused())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unused() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

@@ -1,6 +1,6 @@
 // Command reference validators are built per request from that request's scope. Two companies' requests in one
 // process, interleaved, each get their own validators, their own reference credentials and their own lookups.
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
@@ -328,7 +328,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('per-request reference
         referenceOwners(calls).pipe(
           Layer.provideMerge(OccupancyReferenceValidatorsLive),
           Layer.provideMerge(verifier),
-          Layer.provideMerge(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) })),
+          Layer.provideMerge(
+            Layer.succeed(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          ),
         ),
       );
       yield* validateInterleavedRequests({ calls, credentialsA, credentialsB, scopeA, scopeB, snapshot }).pipe(

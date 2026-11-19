@@ -1,4 +1,8 @@
-import { defineDatabaseIdentityEnrollment, GatewayAssertionRedemptionService } from '@app/core-runtime';
+import {
+  defineDatabaseIdentityEnrollment,
+  GatewayAssertionRedemptionService,
+  loadActiveApplicationComposition,
+} from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -251,7 +255,7 @@ const recoveryDelivery = Effect.fn('EvidenceRecoveryTest.delivery')(function* re
   const template = recoveryWorker(() => Effect.void);
   // The composition publishes Payment's real registered subscriptions (executor, notification, recovery).
   const fixture = makeNativeOutboxWorkerFixture(getVerticalRuntimeOutboxWorkers(paymentRegistration));
-  const snapshot = yield* fixture.authority.load;
+  const snapshot = yield* loadActiveApplicationComposition(fixture.authority);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',

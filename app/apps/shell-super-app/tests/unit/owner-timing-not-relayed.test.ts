@@ -9,7 +9,10 @@ import { ActionRuntime, reservePrincipalBindingAction } from '@app/core-runtime'
 import type { ActionRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
 import { runGovernedActionHttp } from '@app/core-runtime/http/action-runner';
 import { ReservePrincipalBindingPayloadSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { Context, Crypto, Effect, FiberSet, Layer, Redacted, Schema } from 'effect';
 import { HttpRouter, HttpServerResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
@@ -59,7 +62,10 @@ const makeOwner = Effect.gen(function* makeTimingOwner() {
       })),
     }),
   };
-  const composition = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  const composition = Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+  );
   return { calls, composition, snapshot };
 });
 

@@ -8,7 +8,12 @@ import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { ReadRuntime, runAction, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  ReadRuntime,
+  runAction,
+  TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Crypto, Effect, Layer, Redacted, Result, Schema } from 'effect';
@@ -61,7 +66,7 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
       access: 'allowed',
       actionKeys: provisionExecution ? [createNoticeVersionAction.descriptor.actionKey] : [],
       adminConnectionString: Redacted.make(isolation.isolated.connections.admin.connectionString),
-      applicationComposition: { load: Effect.succeed(isolation.snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(isolation.snapshot)),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: isolation.snapshot.composition.revision,
       expectedDeployment: ultramodernDeliveryUnit,

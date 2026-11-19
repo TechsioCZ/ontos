@@ -1,5 +1,8 @@
 import { cleanupDemoAction } from '../../src/actions/cleanup-demo.action.ts';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { Effect, Layer, Predicate, Schema } from 'effect';
@@ -38,7 +41,10 @@ const payload = Schema.decodeUnknownSync(ManageCatalogPayloadSchema)({
   expectedRevision: 1,
 });
 const referenceBoundary = Layer.mergeAll(
-  Layer.mock(ActiveApplicationCompositionService, {}),
+  Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+  ),
   Layer.mock(GatewayPrincipalVerifierConfiguration, {}),
   Layer.succeed(
     HttpClient.HttpClient,

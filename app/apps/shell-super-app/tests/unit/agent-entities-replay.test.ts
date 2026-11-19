@@ -13,6 +13,7 @@ import {
   mutateAgentProposalsAction,
   ReadRuntime,
   TenantModuleStateService,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
 import {
@@ -372,7 +373,10 @@ const fixture = (options: ReplayOptions = {}) =>
       Effect.provide(AgentProposalCommandPreparationLive),
       Effect.provideService(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       Effect.provideService(CoreDatabase, { executor: owner }),
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(composition)),
+      ),
       Effect.provideService(AccessDecisionGate, agentStatusGate),
       Effect.provideService(
         AgentLifecycleAuthority,
@@ -469,7 +473,10 @@ const fixture = (options: ReplayOptions = {}) =>
         Effect.provideService(AccessPeopleBff, unusedAccessPeopleBff),
         Effect.provideService(ReadRuntime, readRuntime),
         Effect.provideService(AgentProposalCommandPreparation, preparation),
-        Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(composition)),
+        ),
         Effect.provide(nativeServices),
         Effect.provideService(AgentActionRequestIdentity, transport),
         Effect.provideService(AgentReadRequestIdentity, readTransport),

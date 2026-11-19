@@ -9,6 +9,7 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, FIXTURE_DESCRIPTOR } from '../sup
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { tenants } from '../../src/db/schema.ts';
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
@@ -217,7 +218,7 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
         }
         const harness = yield* makeReadTestHarness({
           access: control === 'denied' || control === 'unavailable' ? control : 'allowed',
-          applicationComposition: { load: Effect.succeed(snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
           compositionRevision: snapshot.composition.revision,
           executeOwnerQuery: () => Effect.die('The Shell definition does not query owner SQL'),
           expectedDeployment:

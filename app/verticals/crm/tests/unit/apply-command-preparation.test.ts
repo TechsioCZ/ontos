@@ -1,5 +1,9 @@
 import { crmRegistration } from '../../vertical.registration.ts';
-import { ActionPermissionDenied, ActiveApplicationCompositionService } from '@app/core-runtime';
+import {
+  ActionPermissionDenied,
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
@@ -16,7 +20,7 @@ import { CrmReferenceUnavailable } from '../../shared/errors/crm-reference-unava
 const unusedReference = () => Effect.die('Unexpected reference boundary access');
 const referenceBoundary = Layer.mergeAll(
   makeTestAccessGateLayers(),
-  Layer.succeed(ActiveApplicationCompositionService, { load: unusedReference() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unusedReference())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unusedReference() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

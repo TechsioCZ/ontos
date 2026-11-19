@@ -4,7 +4,7 @@ import type { Scope } from 'effect';
 import { readVerifiedGatewayCompositionRevision } from '../../auth/system-principal-context-provenance.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '../../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../../modules/application-composition-catalog.ts';
 import { declaredActionAuthorities } from '../../permissions/action-authority.ts';
@@ -933,7 +933,7 @@ export const SubjectAccessInspectionLive: Layer.Layer<
       { concurrency: 1 },
     );
     const currentCatalog = Effect.gen(function* currentInspectionCatalog() {
-      const snapshot = yield* composition.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+      const snapshot = yield* loadActiveApplicationComposition(composition);
       const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
       return { actions: declaredActionAuthorities(catalog), revision: snapshot.composition.revision };
     }).pipe(

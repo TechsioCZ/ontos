@@ -1,7 +1,7 @@
 import type { OperationalScopeRequest, TrustedPrincipalContext } from '@app/core-runtime';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 import {
@@ -94,8 +94,7 @@ export const callModuleAs = Effect.fn('AgentPlatform.callModuleAs')(
     options: ModuleCallOptions = {},
   ) {
     const authority = yield* ActiveApplicationCompositionService;
-    const snapshot = yield* authority.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const snapshot = yield* loadActiveApplicationComposition(authority).pipe(
       Effect.mapError(
         (cause) => new AgentModuleCallError({ cause, reason: COMPOSITION_UNAVAILABLE, stage: 'composition' }),
       ),

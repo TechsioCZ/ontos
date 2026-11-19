@@ -11,6 +11,7 @@ import {
   PrincipalEligibilityLive,
   defineScopedRoutine,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -187,7 +188,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         ].map((action) => action.descriptor.actionKey),
         adminConnectionString: Redacted.make(input.connections.admin.connectionString),
         allowedAudiences: [audience],
-        applicationComposition: { load: Effect.succeed(input.snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(input.snapshot)),
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
         authenticationSubjectTypes: input.finalProofTest === true ? ['user', 'api_key'] : ['user'],
         compositionRevision: input.snapshot.composition.revision,
@@ -389,7 +390,12 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
             },
             redemption,
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(input.snapshot) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(input.snapshot)),
+            ),
+          );
       },
     );
     const transport = (idempotencyKey = randomUUID()) => ({

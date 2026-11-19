@@ -76,7 +76,11 @@ import { createSpiceDbPermissionClient } from '../../../../packages/core-runtime
 import { loadSpiceDbConfig, SpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { ContextAccess, makeContextAccess } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/permissions/schema.ts';
-import { ActiveApplicationCompositionService } from '../../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+  makeActiveApplicationCompositionService,
+} from '../../../../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
   coreSystemOutboxWorkers,
   corePeopleSearchOutboxWorkers,
@@ -194,8 +198,8 @@ it.live(
         graph.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
       );
       const composition = makeOutboxWorkerComposition();
-      const authority = { load: freshOutboxWorkerCompositionSnapshot(composition) };
-      const snapshot = yield* authority.load;
+      const authority = makeActiveApplicationCompositionService(freshOutboxWorkerCompositionSnapshot(composition));
+      const snapshot = yield* loadActiveApplicationComposition(authority);
       yield* admin.executor.insert(applicationCompositionAuthority).values({
         authorityKey: 'active',
         phase: 'active',

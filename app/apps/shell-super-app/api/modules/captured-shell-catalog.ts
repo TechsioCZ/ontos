@@ -1,3 +1,5 @@
+import { ActiveApplicationCompositionUnavailableError, narrowActiveApplicationComposition } from '@app/core-runtime';
+import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime';
 import { Context, Effect } from 'effect';
 
 import { InstalledModuleCatalogUnavailableError } from './installed-module-catalog.ts';
@@ -19,3 +21,25 @@ export const capturedShellCatalog = CapturedShellCompositionCatalog.pipe(
       }),
   ),
 );
+
+/** A Shell-hosted Read admits only the release its request captured. */
+export const narrowToCapturedRelease = (authority: ActiveApplicationCompositionServiceContract) =>
+  narrowActiveApplicationComposition(authority, (checked) =>
+    capturedShellCatalog.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ActiveApplicationCompositionUnavailableError({
+            cause,
+            reason: 'The Shell request release is unavailable',
+          }),
+      ),
+      Effect.filterOrFail(
+        (catalog) => catalog.composition.revision === checked.snapshot.composition.revision,
+        () =>
+          new ActiveApplicationCompositionUnavailableError({
+            reason: 'The Shell request release changed',
+          }),
+      ),
+      Effect.asVoid,
+    ),
+  );

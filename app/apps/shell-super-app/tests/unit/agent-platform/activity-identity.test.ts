@@ -8,7 +8,10 @@ import {
 } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { DateTime, Effect, Layer, Predicate, Schema } from 'effect';
@@ -203,7 +206,10 @@ const fixture = (selected: AgentPlatformCaller, privateRecords = false) =>
             listTenantModuleStates: () => Effect.succeed(activeModules),
           }),
           Layer.succeed(ActionAuthority, authority),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(composition)),
+          ),
           Layer.succeed(GatewayIssuer, {
             issue: () =>
               Effect.succeed({

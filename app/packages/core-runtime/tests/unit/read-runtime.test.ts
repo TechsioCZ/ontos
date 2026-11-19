@@ -12,6 +12,7 @@ import { computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import { historicalOwnerContract, historicalOwnerReadTarget } from '../support/historical-owner-targets.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { fixtureOwnerContract, ownerPermissionTarget } from '../support/owner-permission-target.ts';
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { bindingSubjectRead, resolveExternalSubjectRead } from '../../src/auth/external-identity/read.ts';
 import { ExternalIdentityError } from '../../src/auth/external-identity-contracts.ts';
@@ -3933,8 +3934,8 @@ it.effect('fails a metadata-less synthetic Read closed before permission and han
 it.effect('does not turn a partial authority plus inbound revision into a requirement lease', () =>
   Effect.gen(function* partialReadAuthorityCannotAttest() {
     let authorityLoads = 0;
-    const applicationComposition: ActiveApplicationCompositionServiceContract = {
-      load: Effect.suspend(() => {
+    const applicationComposition: ActiveApplicationCompositionServiceContract = makeActiveApplicationCompositionService(
+      Effect.suspend(() => {
         authorityLoads += 1;
         return Effect.fail(
           new ActiveApplicationCompositionUnavailableError({
@@ -3943,7 +3944,7 @@ it.effect('does not turn a partial authority plus inbound revision into a requir
           }),
         );
       }),
-    };
+    );
     const harness = yield* makeHarness({ applicationComposition, permissionDecision: 'allowed' });
     const read = defineRead(
       { ...registration().descriptor, domainErrorSchema: ModuleOperationRequirementError },
@@ -4048,7 +4049,7 @@ it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound rec
       compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
       legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active', welcome: null }],
       runtimeAdmission: {
-        applicationComposition: { load: Effect.succeed(snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
         expectedDeployment: { appId: 'core-read-host', buildMarker: 'actual-host-build' },
         ownerRegistration: coreReadHost(),
       },
@@ -4101,7 +4102,7 @@ it.effect('rejects recreated Core Reads, wrong receiver builds and every mismatc
         ReadRuntimeOptions,
         'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
       > = {
-        applicationComposition: { load: Effect.succeed(snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
         expectedDeployment: {
           appId: 'core-read-host',
           buildMarker: control === 'wrong-build' ? 'other-build' : 'actual-host-build',
@@ -4225,7 +4226,10 @@ it.effect('admits only captured Shell definitions at the actual authoritative Sh
         'applicationComposition' | 'expectedDeployment' | 'ownerRegistration' | 'shellSystemReads'
       > = { shellSystemReads: definitions };
       if (control !== 'no-authority') {
-        admission = { ...admission, applicationComposition: { load: Effect.succeed(snapshot) } };
+        admission = {
+          ...admission,
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        };
       }
       if (control !== 'no-receiver') {
         admission = {
@@ -4281,7 +4285,7 @@ it.effect('gives bound Shell system Reads no provider-operation execution lease'
       compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
       permissionDecision: 'allowed',
       runtimeAdmission: {
-        applicationComposition: { load: Effect.succeed(snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
         expectedDeployment: snapshot.composition.shell.deployment,
         shellSystemReads: definitions,
       },

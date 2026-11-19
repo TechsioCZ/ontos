@@ -2,6 +2,7 @@ import {
   ActiveApplicationCompositionService,
   TrustedPrincipalContextSchema,
   trustVerifiedGatewayPrincipalContext,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
@@ -125,9 +126,12 @@ const triggerPreparation = Effect.fn('PurchaseApprovalPreparationTest.trigger')(
   const dependencies = Layer.mergeAll(
     configuration,
     profileCounterpartyRoleEligibilityResolverFactoryLive.pipe(Layer.provide(NodeCrypto.layer)),
-    Layer.succeed(ActiveApplicationCompositionService, {
-      load: refuseInsideDatabaseTransaction('module-transport', 'composition').pipe(Effect.as(snapshot)),
-    }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        refuseInsideDatabaseTransaction('module-transport', 'composition').pipe(Effect.as(snapshot)),
+      ),
+    ),
     Layer.succeed(FetchHttpClient.Fetch, fakeFetch),
     Layer.succeed(PurchaseLimitEvaluationCurrentnessPort, {
       prepare: () => Effect.succeed(() => Effect.die('The commit phase is not part of this preparation test')),

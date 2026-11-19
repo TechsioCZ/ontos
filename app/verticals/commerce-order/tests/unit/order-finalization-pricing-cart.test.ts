@@ -5,6 +5,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { canonicalizeApplicationComposition } from '@app/core-runtime';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
@@ -101,13 +102,16 @@ const composition = {
 };
 const testLayer = OrderFinalizationPricingCartLive.pipe(
   Layer.provide(
-    Layer.succeed(ActiveApplicationCompositionService, {
-      load: Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)({
-        composition,
-        observedAt: pricedOperationTime,
-        validUntil: pricedQuotationValidUntil,
-      }).pipe(Effect.orDie),
-    }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)({
+          composition,
+          observedAt: pricedOperationTime,
+          validUntil: pricedQuotationValidUntil,
+        }).pipe(Effect.orDie),
+      ),
+    ),
   ),
   Layer.provide(
     ConfigProvider.layer(

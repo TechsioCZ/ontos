@@ -11,6 +11,7 @@ import {
   ReadRuntime,
   TenantModuleStateService,
   TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ContextAccessDecision, ContextAccessService, TenantModuleStateRecord } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
@@ -288,7 +289,7 @@ const fixture = Effect.fn('TenantModuleTarget.fixture')(function* fixture(contro
   const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
   harness = yield* makeReadTestHarness({
     access: 'allowed',
-    applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+    applicationComposition: makeActiveApplicationCompositionService(makeCompositionSnapshot(catalog.contracts)),
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
     expectedDeployment: catalog.composition.shell.deployment,
@@ -416,7 +417,7 @@ describe('tenant-only module target admission', () => {
         const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
         harness = yield* makeReadTestHarness({
           access: 'allowed',
-          applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+          applicationComposition: makeActiveApplicationCompositionService(makeCompositionSnapshot(catalog.contracts)),
           compositionRevision: catalog.composition.revision,
           executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
           expectedDeployment: catalog.composition.shell.deployment,

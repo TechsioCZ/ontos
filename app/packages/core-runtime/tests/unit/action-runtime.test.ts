@@ -29,6 +29,7 @@ import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
@@ -5569,17 +5570,18 @@ it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
   suite.effect('does not turn a partial authority plus legacy revision resolver into a requirement lease', () =>
     Effect.gen(function* partialActionAuthorityCannotAttest() {
       let authorityLoads = 0;
-      const applicationComposition: ActiveApplicationCompositionServiceContract = {
-        load: Effect.suspend(() => {
-          authorityLoads += 1;
-          return Effect.fail(
-            new ActiveApplicationCompositionUnavailableError({
-              cause: new Error('Synthetic partial constructor'),
-              reason: 'No receiving build was bound',
-            }),
-          );
-        }),
-      };
+      const applicationComposition: ActiveApplicationCompositionServiceContract =
+        makeActiveApplicationCompositionService(
+          Effect.suspend(() => {
+            authorityLoads += 1;
+            return Effect.fail(
+              new ActiveApplicationCompositionUnavailableError({
+                cause: new Error('Synthetic partial constructor'),
+                reason: 'No receiving build was bound',
+              }),
+            );
+          }),
+        );
       const harness = yield* makeHarness({ applicationComposition });
       const action = defineAction(
         { ...registration().descriptor, domainErrorSchema: ModuleOperationRequirementError },
@@ -5717,7 +5719,7 @@ it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', 
         ]),
       );
       const harness = yield* makeHarness({
-        applicationComposition: { load: Effect.succeed(snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
         compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
         expectedDeployment: { appId: 'core-action-host', buildMarker: 'actual-host-build' },
         ownerRegistration: registeredCoreActionHost('test.core-action-host.module'),
@@ -5749,7 +5751,7 @@ it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', 
       });
       for (const control of ['wrong-host', 'wrong-build', 'wrong-projection', 'recreated-key'] as const) {
         const harness = yield* makeHarness({
-          applicationComposition: { load: Effect.succeed(snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
           compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
           expectedDeployment: {
             appId: 'core-action-host',

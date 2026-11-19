@@ -196,7 +196,6 @@ export const ShellNativeGatewayDiagnosticsResponseSchema = Schema.TaggedStruct(g
 });
 export const ShellNativeIssuerCauseTagSchema = Schema.Literals([
   'InstalledModuleCatalogUnavailableError',
-  'InstalledModuleCatalogInvalidError',
   'ActiveApplicationCompositionUnavailableError',
   'ActiveApplicationCompositionSourceReadError',
   'ApplicationCompositionValidationError',

@@ -3,6 +3,7 @@ import {
   DatabaseIdentityEnrollmentContext,
   SHARED_RUNTIME_IDENTITY,
   defineDatabaseIdentityEnrollment,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { AssignablePrincipals, makeAssignablePrincipals } from '@app/core-runtime/auth/assignable-principals';
@@ -49,7 +50,7 @@ const ownerAccess = Layer.mergeAll(
       },
     },
   }),
-  Layer.succeed(ActiveApplicationCompositionService, { load: unusedRemoteBoundary() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unusedRemoteBoundary())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unusedRemoteBoundary() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

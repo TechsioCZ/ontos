@@ -10,6 +10,7 @@ import {
   extractVerticalRuntimeSafeDescriptors,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
@@ -188,7 +189,10 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
     Layer.provide(
       Layer.mergeAll(
         makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
         Layer.succeed(CoreDatabase, database),
         Layer.succeed(ActionRepository, repository),
         Layer.succeed(ActionPermission, {

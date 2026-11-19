@@ -4,7 +4,10 @@ import { GatewayAssertionRedemptionService, ReadRuntime, TrustedPrincipalContext
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { ResolveExternalSubjectResultSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
@@ -145,7 +148,12 @@ const harness = Effect.fnUntraced(function* authorityHarness(
       environment,
       redemption: { consume: () => Effect.void },
     })
-    .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+    .pipe(
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
+    );
   const observedReads: unknown[][] = [];
   const requests: ResolveExternalSubjectRequest[] = [];
   const correlations: string[] = [];
@@ -304,7 +312,10 @@ const harness = Effect.fnUntraced(function* authorityHarness(
         },
       }),
     }),
-    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    ),
     Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
       run: (scope, operation) => {
         expect(scope).toMatchObject({ legalEntityId, tenantId });

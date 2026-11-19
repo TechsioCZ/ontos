@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { v1 } from '@authzed/authzed-node';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgTable } from 'drizzle-orm/pg-core';
@@ -568,7 +569,9 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, NativeFixtureEndpointsLive), { exclude
         const { configuration } = yield* NativeFixtureEndpoints;
         const beforeInsert = transport.insert.mock.calls.length;
         const beforeRelationships = transport.writeRelationships.mock.calls.length;
-        const applicationComposition = { load: Effect.die('Partial runtime binding must not load authority') };
+        const applicationComposition = makeActiveApplicationCompositionService(
+          Effect.die('Partial runtime binding must not load authority'),
+        );
         const expectedDeployment = { appId: 'fixture-owner', buildMarker: 'fixture-build' };
         const failures = yield* Effect.all(
           [

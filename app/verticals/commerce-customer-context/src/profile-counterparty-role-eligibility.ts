@@ -1,4 +1,8 @@
-import { ActiveApplicationCompositionService, validateActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+  requireLiveActiveApplicationCompositionLease,
+} from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import {
   CounterpartyReadResponseSchema,
@@ -53,7 +57,7 @@ const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibil
     if (Option.isNone(composition)) {
       return yield* dependencyFailure('The server Application Composition authority is unavailable');
     }
-    const active = yield* composition.value.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+    const active = yield* loadActiveApplicationComposition(composition.value);
     const compositionRevision = active.composition.revision;
     const issued = yield* seams
       .acquire(
@@ -70,7 +74,8 @@ const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibil
     if (issued.compositionRevision !== compositionRevision) {
       return yield* dependencyFailure('The Party credential does not match the active composition revision');
     }
-    yield* validateActiveApplicationCompositionSnapshot(active);
+    // The snapshot passed the complete check when it was loaded; only its lease can have ended since then.
+    yield* requireLiveActiveApplicationCompositionLease(active);
     return yield* executeCounterpartyReadWithAuthorization(payload, issued.authorization, scope.requestCorrelation, {
       baseUrl: new URL(issued.apiBaseUrl),
       compositionRevision,

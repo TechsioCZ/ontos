@@ -14,6 +14,7 @@ import {
   runAction,
   loadDatabaseConnectionPair,
   findPostgresFailure,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
@@ -512,7 +513,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
       ].map((action) => action.descriptor.actionKey),
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: [audience],
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: ultramodernApiMarker,
@@ -795,7 +796,12 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
         },
         redemption,
       })
-      .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+      .pipe(
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
+      );
   });
   const transport = (idempotencyKey = randomUUID()) => ({
     correlationId: randomUUID(),

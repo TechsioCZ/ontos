@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
-import { ReadRuntime, runAction, ContextAccessLive } from '@app/core-runtime';
+import { ReadRuntime, runAction, ContextAccessLive, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { LegacyIcoInventoryResponseSchema } from '@app/party-registry/apis/legacy-ico-inventory';
@@ -99,7 +99,7 @@ const nativeFixture = Effect.fn('ProfileIcoTests.nativeFixture')(function* nativ
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: ultramodernApiMarker,

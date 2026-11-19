@@ -19,6 +19,7 @@ import {
   matchOutboxMessages,
   OutboxRepositoryLive,
   OutboxRuntimeLive,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -334,7 +335,10 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
         expectedDeployment: ultramodernApiMarker,
         layer: Layer.mergeAll(
           Layer.succeed(OrderFinalizationWorker, worker),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           Layer.succeed(OutboxRuntime, {
             ...outboxRuntime,
             // Preserve the exact native cycle; the public entry owns genuine receiving admission.

@@ -12,6 +12,7 @@ import {
   TrustedPrincipalContextSchema,
   makeContextPermissionRelationshipMutationLive,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -114,7 +115,7 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
       actionExecutor: 'manager-only',
       actionKeys,
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: ultramodernDeliveryUnit,
@@ -541,7 +542,10 @@ const makeDsrHttp = Effect.fn('DsrMultiOwner.makeHttp')(function* makeDsrHttp(
     Layer.provide(
       Layer.merge(
         Layer.succeedContext(native.context),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(native.snapshot)),
+        ),
       ),
     ),
   );

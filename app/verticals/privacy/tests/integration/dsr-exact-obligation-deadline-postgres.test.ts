@@ -25,6 +25,7 @@ import {
   ReadRuntime,
   TrustedPrincipalContextSchema,
   OntosModuleDeploymentContractSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   ActionPermission,
@@ -283,7 +284,10 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
     ActionRepositoryLive,
     moduleGate,
     entrypoint,
-    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    ),
   ).pipe(Layer.provide(fixtureServices));
   const ownerApprovals = makeOwnerActionApprovalsLive(owner.deployment, privacyRegistration).pipe(
     Layer.provide(ownerDependencies),
@@ -459,7 +463,12 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessLayer)),
     );
     readRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
-      Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) })),
+      Layer.provide(
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(native.snapshot)),
+        ),
+      ),
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, gateway, resolver, accessLayer)),
       Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
       Layer.provide(NodeCrypto.layer),

@@ -1,7 +1,10 @@
 import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
 import type { AccessDecisionService } from '@app/core-runtime/access/enforcement';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { HttpClient, HttpServerRequest } from 'effect/http';
 import type { ActionRegistration } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
@@ -30,7 +33,10 @@ import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 
 const unusedRuntimeDependencies = Layer.mergeAll(
   Layer.succeed(TaxRateSource, { read: () => Effect.succeed(TEST_TAX_BOOK) }),
-  Layer.mock(ActiveApplicationCompositionService, {}),
+  Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+  ),
   Layer.mock(GatewayPrincipalVerifierConfiguration, {}),
   Layer.succeed(
     HttpClient.HttpClient,

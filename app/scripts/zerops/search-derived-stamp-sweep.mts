@@ -5,6 +5,7 @@ import { defineDatabaseIdentityEnrollment } from '../../packages/core-runtime/sr
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
@@ -87,7 +88,7 @@ export const startSearchDerivedStampSweep = () =>
       { concurrency: 1 },
     );
     const sweepOnce = Effect.gen(function* sweepDerivedStampsOnce() {
-      const { composition: active } = yield* composition.load;
+      const { composition: active } = yield* loadActiveApplicationComposition(composition);
       const results = yield* Effect.forEach(
         sweeps,
         ({ modules, sweeper }) => sweeper.sweep({ compositionRevision: active.revision, modules }),

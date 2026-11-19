@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ContextAccessLive, ReadRuntime, runAction } from '@app/core-runtime';
+import { ContextAccessLive, ReadRuntime, runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { OrganizationBusinessApplicabilityCurrentSchema } from '@app/privacy/api/organization-business-applicability';
@@ -78,7 +78,7 @@ it.live(
             actionKeys: [createCounterpartyPurchasingProfileAction.descriptor.actionKey],
             adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
             allowedAudiences: ['commerce-customer-context'],
-            applicationComposition: { load: Effect.succeed(snapshot) },
+            applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
             authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: snapshot.composition.revision,
             expectedDeployment: ultramodernApiMarker,

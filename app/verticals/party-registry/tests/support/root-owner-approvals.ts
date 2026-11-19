@@ -1,4 +1,4 @@
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot, OperationalScope } from '@app/core-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
@@ -30,7 +30,7 @@ export const makeRootOwnerApprovals = Effect.fn('PartyRegistryRootTest.ownerAppr
   const cryptoContext = yield* Layer.build(NodeCrypto.layer);
   const ports = inertAccessEnforcementPorts();
   const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'DENIED' } }, ports);
-  const applicationComposition = { load: Effect.succeed(snapshot) };
+  const applicationComposition = makeActiveApplicationCompositionService(Effect.succeed(snapshot));
   const harness = yield* makeReadTestHarness({
     accessDecision: gate.bound,
     applicationComposition,

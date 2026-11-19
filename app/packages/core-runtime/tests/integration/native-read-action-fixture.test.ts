@@ -13,7 +13,10 @@ import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identities.ts';
 import { accessScopeFences } from '../../src/db/schema.ts';
-import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '../../src/modules/active-application-composition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   OwnerAuthorizationOverlay,
@@ -97,7 +100,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServ
             },
             owner.ownerRegistration,
           ).pipe(
-            Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
             Effect.provideService(OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay),
           );
           const actionRuntime = yield* Effect.fromOption(Option.fromUndefinedOr(fixture.actionRuntime));
