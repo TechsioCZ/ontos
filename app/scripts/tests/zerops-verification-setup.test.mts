@@ -405,9 +405,10 @@ for (const scenario of [
         expect(proofRan).toBe(true);
         expect(yield* fs.readFileString(githubEnv)).toContain('PLAYWRIGHT_BROWSERS_PATH=');
         expect(yield* fs.readFileString(githubOutput)).toContain('versions=Version-1.61.0-Version-1.64.0');
-        expect(yield* fs.readFileString(githubOutput)).toContain(
-          'key=playwright-apt-debs-ubuntu24-20261115-Version-1.61.0-Version-1.64.0',
-        );
+        // The image version the runner reports names no part of the entry: the rotating images share it.
+        const outputs = yield* fs.readFileString(githubOutput);
+        expect(outputs).toContain('key=playwright-apt-debs-ubuntu24-Version-1.61.0-Version-1.64.0\n');
+        expect(outputs).not.toContain('20261115');
         const recorded = yield* fs.readFileString(calls);
         const invocations = recorded.trim().split('\n');
         expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(1);

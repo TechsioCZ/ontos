@@ -826,7 +826,7 @@ it('plans from the run history with only the root importer and a depth-1 checkou
 
 const verificationSteps = deliverySteps;
 
-it('installs the full verification workspace and caches the frozen browser graph plus image-specific apt archives', () => {
+it('installs the full verification workspace and caches the frozen browser graph plus per-OS apt archives', () => {
   const steps = verificationSteps();
   // The whole workspace, once the app upload is done, from the store of the caller's root importer install.
   expect(steps.find(({ name }) => name === INSTALL_WORKSPACE)?.run).toBe(
@@ -839,7 +839,13 @@ it('installs the full verification workspace and caches the frozen browser graph
   expect(versions?.run).toContain('pnpm --config.verify-deps-before-run=false exec playwright-core --version');
   const restore = steps.findIndex(({ id }) => id === 'verification-browsers');
   expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml')");
-  expect(steps.find(({ id }) => id === 'chromium-debs')?.run).toContain('$ImageOS-$ImageVersion-');
+  // One apt archive entry per image OS and Playwright pair: the rotating image versions share it (apt checks each
+  // cached package against its own index).
+  const aptKey = steps.find(({ id }) => id === 'chromium-debs')?.run;
+  expect(aptKey).toBe(
+    `echo "key=playwright-apt-debs-$ImageOS-\${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"`,
+  );
+  expect(aptKey).not.toContain('ImageVersion');
   const aptRestore = steps.findIndex(({ id }) => id === 'chromium-debs-cache');
   const aptInstall = steps.findIndex(({ run }) => run?.includes('playwright install --with-deps chromium') === true);
   const aptSeed = steps.findIndex(({ run }) => run?.includes('sudo find ~/.cache/playwright-apt-debs') === true);

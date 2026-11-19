@@ -326,11 +326,18 @@ runs:
         path: ${{ runner.temp }}/zerops-verify-browsers
         key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
 
-    # Reuse the gates' apt archive approach, never a cached installed /usr tree. apt checks the current index.
+    # Reuse the gates' apt archive approach, never a cached installed /usr tree. Named by the image OS and the two
+    # Playwright versions only, not the image version: three image versions rotate under ubuntu-24.04, and an entry per
+    # image version missed in 8 of 10 deliveries, each then downloading the libraries again (up to 6 min at 98 kB/s).
+    # apt uses a seeded .deb only under the file name its current index expects (package, version, architecture) and
+    # with the size the index names, then takes it as complete without hashing it: an obsolete version, a package
+    # another image needed or a file of the wrong size is ignored or downloaded again. A wrong file of the expected
+    # name and size would reach dpkg; only this workflow on the demo branch writes the entry (branch-scoped caches keep
+    # pull requests from replacing it), as before this key changed.
     - name: Name the Chromium system-library package cache
       id: chromium-debs
       shell: bash
-      run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"
+      run: echo "key=playwright-apt-debs-$ImageOS-${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"
 
     - name: Restore the Chromium system-library packages
       id: chromium-debs-cache
