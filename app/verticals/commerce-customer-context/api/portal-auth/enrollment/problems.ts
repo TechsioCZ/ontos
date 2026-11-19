@@ -1,5 +1,7 @@
 import { HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { ACTION_CORE_ERROR_TAGS, ActionPermissionDenied } from '@app/core-runtime';
+import { CommerceEnrollmentAttemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 
 import { failureLogSummary } from '../problems-support.ts';
 
@@ -145,6 +147,48 @@ export const answerEnrollmentOwnerFailure = <Failure, Other>(
     : Effect.logDebug('Commerce portal enrollment refused an owner outcome', failureLogSummary(failure)).pipe(
         Effect.andThen(Effect.fail(otherwise())),
       );
+
+/**
+ * Observe the internal Action failure before its public projection. Only closed tags/codes enter
+ * the log: never the failure's reason, cause, payload, principal, or provider response.
+ * The HTTP runner's own 400/503 values have already been mapped and must pass through unchanged.
+ */
+export const answerEnrollmentActionFailure =
+  (actionKey: string) =>
+  <Failure extends { readonly _tag: string }>(
+    failure: Failure,
+  ): Effect.Effect<
+    never,
+    | ReturnType<typeof commercePortalAuthEnrollmentInvalidProblem>
+    | ReturnType<typeof commercePortalAuthEnrollmentUnavailableProblem>
+    | ReturnType<typeof commercePortalAuthEnrollmentRejectedProblem>
+  > => {
+    if (
+      Schema.is(CommercePortalAuthEnrollmentInvalidProblemSchema)(failure) ||
+      Schema.is(CommercePortalAuthEnrollmentUnavailableProblemSchema)(failure)
+    ) {
+      return Effect.fail(failure);
+    }
+    const failureTag = Option.getOrElse(
+      Schema.decodeUnknownOption(Schema.Literals(ACTION_CORE_ERROR_TAGS))(failure._tag),
+      () =>
+        Schema.is(CommerceEnrollmentAttemptUnavailable)(failure)
+          ? 'CommerceEnrollmentAttemptUnavailable'
+          : 'owner_domain_failure',
+    );
+    let permissionCode = 'none';
+    if (Schema.is(ActionPermissionDenied)(failure)) {
+      permissionCode =
+        failure.reasons?.includes('deny.workload_unbound') === true ? 'deny.workload_unbound' : failure.code;
+    }
+    const problem = Schema.is(CommerceEnrollmentAttemptUnavailable)(failure)
+      ? commercePortalAuthEnrollmentUnavailableProblem()
+      : commercePortalAuthEnrollmentRejectedProblem();
+    return Effect.logWarning('Commerce portal enrollment Action failed').pipe(
+      Effect.annotateLogs({ failure: failureTag, permissionCode, refusedAction: actionKey, stage: 'governed-action' }),
+      Effect.andThen(Effect.fail(problem)),
+    );
+  };
 
 export const commercePortalAuthEnrollmentSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthEnrollmentSchemaErrorMiddleware,
