@@ -525,15 +525,27 @@ const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.
 
 /**
  * The entries of the top-level `packages:` block list of pnpm-workspace.yaml. Comment and blank lines inside the list
- * are skipped; the next top-level key ends it. Empty when the file has no such list, names it twice, or the list holds
- * a line this reader does not know (another indentation, a flow list, an anchor, a document marker): a form it cannot
- * read never yields a shorter list.
+ * are skipped; the next top-level key ends it. Empty when the file has no such list, or the list holds a line this
+ * reader does not know (another indentation, a flow list, an anchor), or the document is not one plain mapping: every
+ * line at column zero is a comment, a list item or a top-level key named once, so a document marker, a directive, text
+ * after a document end or a repeated key is no document this reader knows. A form it cannot read never yields a shorter
+ * list.
  */
 const workspaceEntries = (text: string): readonly string[] => {
   const lines = text.split(/\r?\n/u);
-  const keys = lines.flatMap((line, index) => (/^packages\s*:/u.test(line) ? [index] : []));
-  const [start] = keys;
-  if (keys.length !== 1 || start === undefined || !/^packages:\s*(?:#.*)?$/u.test(lines[start] ?? '')) {
+  const keys = new Set<string>();
+  for (const line of lines) {
+    if (/^(?:\s|#|- |$)/u.test(line)) {
+      continue;
+    }
+    const key = /^(?<quote>['"]?)(?<key>[A-Za-z_@][\w@/.-]*)\k<quote>\s*:(?:\s|$)/u.exec(line)?.groups?.key;
+    if (key === undefined || keys.has(key)) {
+      return [];
+    }
+    keys.add(key);
+  }
+  const start = lines.findIndex((line) => /^packages:\s*(?:#.*)?$/u.test(line));
+  if (start === -1) {
     return [];
   }
   const declared: string[] = [];
