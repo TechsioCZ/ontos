@@ -1,20 +1,23 @@
-import type { EmailDeliveryError, EmailDeliveryReceipt } from '@app/email-delivery/server';
 import { Match } from 'effect';
 
 import type { HistoryStatus } from '../../../shared/communication-history.ts';
-import type { ProviderEvidenceCase } from '../handoff/message-handoff.ts';
 import type { AttemptEffect, AttemptState, ObservationKind, TechnicalEvidence } from './vocabulary.ts';
 
 /**
- * How one SUBMISSION answer reads in the history vocabulary (#1402). The answer comes from `@app/email-delivery` (through the
- * Messaging Adapter of step 22 and the handoff port of the intake lane) and is mapped here, in ONE place, so no other code
- * decides what a provider answer means. The rules are the contract of ADR-0022:
+ * How one SUBMISSION answer reads in the history vocabulary (#1402). There is exactly ONE path, and it is the one production
+ * uses: the pre-handoff worker stores what the Messaging Adapter answered as an attempt state plus the closed reason literal of
+ * the answer, and `submissionFactOfAttempt` reads that stored attempt. The rules are the contract of ADR-0022:
  *
- * - `accepted: true` is PROVIDER_ACCEPTED: the provider took the API submission. It is NEVER delivered;
- * - an indeterminate acceptance is INDETERMINATE: it may or may not have been accepted. It is NEVER a sure failure;
- * - Rejected, Unavailable and InvalidMessage are DISTINCT technical evidence. A rejection and an invalid message prove that
- *   nothing was accepted (FAILED); an unavailable provider does not prove it (INDETERMINATE), exactly as the attempt state
- *   machine already treats it: nothing may be resent blindly after it.
+ * - ACCEPTED (`accepted: true`) is PROVIDER_ACCEPTED: the provider took the API submission. It is NEVER delivered;
+ * - INDETERMINATE (an indeterminate acceptance) may or may not have been accepted. It is NEVER a sure failure;
+ * - REJECTED proves that nothing was accepted (FAILED); UNAVAILABLE because of a provider answer (a 5xx, `provider_unavailable`)
+ *   does not prove it (INDETERMINATE), exactly as the attempt state machine already treats it: nothing may be resent blindly;
+ * - UNAVAILABLE with the reason `configuration` means the deployment could not even build the request: NO request was made,
+ *   so provably nothing was submitted. It reads exactly like NOT_ATTEMPTED (still only prepared, the effect is absent);
+ * - MESSAGE_INVALID (`EmailDeliveryInvalidMessage`: our own message was malformed and the provider was never asked) is
+ *   expressible here as a PROVEN failure with its own evidence. The stored attempt state machine has NO state for it yet, so no
+ *   stored attempt can read as MESSAGE_INVALID today. That is a documented gap for the Messaging Adapter (step 22) and the
+ *   recovery lane (d21-10): they add the state by a forward migration and the case below needs no other change.
  */
 
 /** What one submission answer proves on its own, before any later observation. */
@@ -30,8 +33,21 @@ export interface SubmissionFact {
   readonly technical: TechnicalEvidence;
 }
 
+/** A stored attempt state, or the answer no stored state carries yet (see MESSAGE_INVALID above). */
+export type SubmissionState = AttemptState | 'MESSAGE_INVALID';
+
+/** The reason of an UNAVAILABLE answer that says no request was made at all (a deployment without a usable configuration). */
+export const NO_REQUEST_MADE_REASON = 'configuration';
+
+const notSubmitted = (reason: string | undefined): SubmissionFact => ({
+  effect: 'ABSENT',
+  reason,
+  status: 'PREPARED',
+  technical: 'NOT_ATTEMPTED',
+});
+
 /** The submission fact of a stored attempt state (and the reason its evidence kept, if any). */
-export const submissionFactOfAttempt = (state: AttemptState, reason?: string): SubmissionFact =>
+export const submissionFactOfAttempt = (state: SubmissionState, reason?: string): SubmissionFact =>
   Match.value(state).pipe(
     Match.when('ACCEPTED', (): SubmissionFact => ({
       effect: 'PRESENT',
@@ -45,12 +61,12 @@ export const submissionFactOfAttempt = (state: AttemptState, reason?: string): S
       status: 'FAILED',
       technical: 'PROVIDER_REJECTED',
     })),
-    Match.when('UNAVAILABLE', (): SubmissionFact => ({
-      effect: 'UNKNOWN',
-      reason,
-      status: 'INDETERMINATE',
-      technical: 'PROVIDER_UNAVAILABLE',
-    })),
+    // `configuration`: no request was made, so provably nothing was submitted, which a provider that answered 5xx never proves
+    Match.when('UNAVAILABLE', (): SubmissionFact =>
+      reason === NO_REQUEST_MADE_REASON
+        ? notSubmitted(reason)
+        : { effect: 'UNKNOWN', reason, status: 'INDETERMINATE', technical: 'PROVIDER_UNAVAILABLE' },
+    ),
     Match.when('INDETERMINATE', (): SubmissionFact => ({
       effect: 'UNKNOWN',
       reason,
@@ -58,11 +74,13 @@ export const submissionFactOfAttempt = (state: AttemptState, reason?: string): S
       technical: 'ACCEPTANCE_INDETERMINATE',
     })),
     // no adapter exists: provably nothing was submitted, so the intent is still only prepared
-    Match.when('NOT_ATTEMPTED', (): SubmissionFact => ({
+    Match.when('NOT_ATTEMPTED', (): SubmissionFact => notSubmitted(reason)),
+    // our own message was malformed and the provider was never asked: a PROVEN failure, with its own evidence
+    Match.when('MESSAGE_INVALID', (): SubmissionFact => ({
       effect: 'ABSENT',
       reason,
-      status: 'PREPARED',
-      technical: 'NOT_ATTEMPTED',
+      status: 'FAILED',
+      technical: 'MESSAGE_INVALID',
     })),
     // recorded BEFORE the call: the handoff was begun and no answer is recorded, so the effect is unknown
     Match.when('PREPARED', (): SubmissionFact => ({
@@ -73,33 +91,6 @@ export const submissionFactOfAttempt = (state: AttemptState, reason?: string): S
     })),
     Match.exhaustive,
   );
-
-/** The submission fact of an answer of the handoff port (the vocabulary the pre-handoff worker records). */
-export const submissionFactOfEvidence = (evidence: ProviderEvidenceCase): SubmissionFact =>
-  submissionFactOfAttempt(evidence.kind, evidence.kind === 'ACCEPTED' ? undefined : evidence.reason);
-
-/** A provider answer exactly as `EmailDeliveryService.send` produces it: a receipt, or one of its four typed errors. */
-export type EmailDeliveryResult = EmailDeliveryError | EmailDeliveryReceipt;
-
-/** The submission fact of a result of `EmailDeliveryService`, covering every outcome the service can produce. */
-export const submissionFactOfEmailDelivery = (result: EmailDeliveryResult): SubmissionFact => {
-  if ('accepted' in result) {
-    return submissionFactOfAttempt('ACCEPTED');
-  }
-  return Match.value(result).pipe(
-    Match.tag('EmailDeliveryAcceptanceIndeterminate', ({ reason }) => submissionFactOfAttempt('INDETERMINATE', reason)),
-    Match.tag('EmailDeliveryRejected', ({ reason }) => submissionFactOfAttempt('REJECTED', reason)),
-    Match.tag('EmailDeliveryUnavailable', ({ reason }) => submissionFactOfAttempt('UNAVAILABLE', reason)),
-    // our own message was malformed and the provider was never asked: a PROVEN failure, with its own evidence
-    Match.tag('EmailDeliveryInvalidMessage', ({ reason }): SubmissionFact => ({
-      effect: 'ABSENT',
-      reason,
-      status: 'FAILED',
-      technical: 'MESSAGE_INVALID',
-    })),
-    Match.exhaustive,
-  );
-};
 
 const PRESENCE_KINDS: ReadonlySet<ObservationKind> = new Set([
   'ACCEPTANCE_PROVEN',

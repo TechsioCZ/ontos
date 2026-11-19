@@ -11,7 +11,7 @@ import {
 import { sourceOutcomeFeedOf } from '../../src/domain/history/source-outcome.ts';
 import type { RequestOutcomeFacts } from '../../src/domain/history/source-outcome.ts';
 import { summarizeIntent } from '../../src/domain/history/timeline.ts';
-import { attempt, factsOf, observation } from './support/history-fixtures.ts';
+import { attempt, conflict, factsOf, observation, stop } from './support/history-fixtures.ts';
 
 /**
  * [#1402 H-13 AC-07] The result the SOURCE workflow receives: a required message failure is information, never a commit or a
@@ -127,6 +127,74 @@ describe('Source outcome feed of a request', () => {
       'NOT_REQUIRED',
     );
     expect(feedFor(undefined, []).requiredOutcome).toBe('REQUIREDNESS_UNKNOWN');
+  });
+
+  it('reports a required message held for an UNPROVEN stop as NEEDS_REEVALUATION, distinct from a proven suppression', () => {
+    const feed = feedFor('REQUIRED', [
+      intentOf(
+        1,
+        { stops: [stop({ categories: ['PRIVACY_OWNER_UNAVAILABLE'], proven: false })] },
+        'PRIVACY_OWNER_UNAVAILABLE',
+      ),
+    ]);
+    expect(feed).toMatchObject({
+      messages: [{ attention: 'NEEDS_REEVALUATION', reason: 'PRIVACY_OWNER_UNAVAILABLE', status: 'HELD_UNPROVEN' }],
+      partial: false,
+      requiredOutcome: 'NEEDS_REEVALUATION',
+    });
+    const proven = feedFor('REQUIRED', [intentOf(1, { stops: [stop({ proven: true })] }, 'PRIVACY_NOT_ALLOWED')]);
+    expect(proven).toMatchObject({
+      messages: [{ attention: 'FAILURE', status: 'SUPPRESSED' }],
+      requiredOutcome: 'FAILED',
+    });
+    // a proven failure of the request still outranks an unknown or held message, and a held message outranks quiet success
+    const mixed = feedFor('REQUIRED', [
+      intentOf(1, { stops: [stop({ proven: false })] }),
+      intentOf(2, { attempts: [attempt('ACCEPTED')] }),
+    ]);
+    expect(mixed.requiredOutcome).toBe('NEEDS_REEVALUATION');
+    expect(
+      feedFor('REQUIRED', [
+        intentOf(1, { stops: [stop({ proven: false })] }),
+        intentOf(2, { intentStatus: 'SUPPRESSED', reason: 'X' }),
+      ]).requiredOutcome,
+    ).toBe('FAILED');
+  });
+
+  it('asks for reconciliation when provider evidence conflicts, without erasing the headline or softening a proven failure', () => {
+    const delivered = observation('DELIVERY_PROVEN', { observed: 10 });
+    const conflicting = intentOf(1, {
+      attempts: [attempt('ACCEPTED')],
+      conflicts: [conflict('DELIVERY_PROVEN', { observationId: delivered.observationId, observed: 11 })],
+      observations: [delivered],
+    });
+    const feed = feedFor('REQUIRED', [conflicting]);
+    expect(feed).toMatchObject({
+      messages: [{ attention: 'NEEDS_RECONCILIATION', status: 'DELIVERED' }],
+      requiredOutcome: 'UNKNOWN',
+    });
+    const failed = intentOf(1, {
+      attempts: [attempt('ACCEPTED')],
+      conflicts: [conflict('DELIVERY_FAILED', { observed: 12 })],
+      observations: [observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_PERMANENT', observed: 10 })],
+    });
+    expect(feedFor('REQUIRED', [failed])).toMatchObject({
+      messages: [{ attention: 'FAILURE', status: 'FAILED' }],
+      requiredOutcome: 'FAILED',
+    });
+  });
+
+  it('reports a soft bounce as UNKNOWN (delivery deferred), never as a failure', () => {
+    const feed = feedFor('REQUIRED', [
+      intentOf(1, {
+        attempts: [attempt('ACCEPTED')],
+        observations: [observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_TRANSIENT', observed: 9 })],
+      }),
+    ]);
+    expect(feed).toMatchObject({
+      messages: [{ attention: 'UNKNOWN', status: 'DELIVERY_DEFERRED' }],
+      requiredOutcome: 'UNKNOWN',
+    });
   });
 
   it('is a closed, secret-free contract: it decodes, and any extra field (a token, an address, a link) is refused', () => {

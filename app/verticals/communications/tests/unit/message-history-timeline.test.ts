@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { historyOfIntent, summarizeIntent, timelineOf } from '../../src/domain/history/timeline.ts';
 import type { IntentTimelineFacts } from '../../src/domain/history/timeline.ts';
 import type { AttemptState, ObservationKind } from '../../src/domain/history/vocabulary.ts';
-import { ATTEMPT_1, ATTEMPT_2, attempt, factsOf, observation, stop } from './support/history-fixtures.ts';
+import { ATTEMPT_1, ATTEMPT_2, attempt, conflict, factsOf, observation, stop } from './support/history-fixtures.ts';
 
 /**
  * [#1402 H-02 H-03 H-04 H-05 H-06 H-07 AC-02 AC-03 AC-04 AC-05 AC-10] The headline of an intent says no more than the facts
@@ -35,6 +35,7 @@ describe('Truthful message history: request, decision, intent, attempt and obser
     expect(history.summary).toEqual({
       contradictory: false,
       deliveryProven: false,
+      needsReconciliation: false,
       providerAccepted: false,
       status: 'PREPARED',
     });
@@ -286,5 +287,189 @@ describe('Late, duplicate and out-of-order observations keep one explicit, deter
         }),
       ),
     ).toBe('INDETERMINATE');
+  });
+});
+
+describe('A stop that proves nothing is HELD_UNPROVEN, never a suppression (#1402 review)', () => {
+  it('headlines a stop of unproven reasons distinctly from a proven suppression, with the reason code kept', () => {
+    const unproven = historyOfIntent(
+      factsOf({ stops: [stop({ categories: ['PRIVACY_OWNER_UNAVAILABLE'], proven: false })] }),
+    );
+    expect(unproven.summary).toMatchObject({ providerAccepted: false, status: 'HELD_UNPROVEN' });
+    expect(unproven.entries.map(({ kind, status }) => [kind, status])).toEqual([
+      ['INTENT_PREPARED', 'PREPARED'],
+      ['HANDOFF_STOPPED', 'HELD_UNPROVEN'],
+    ]);
+    expect(unproven.entries[1]?.reasonCodes).toEqual(['PRIVACY_OWNER_UNAVAILABLE']);
+    const proven = historyOfIntent(factsOf({ stops: [stop({ categories: ['PRIVACY_NOT_ALLOWED'], proven: true })] }));
+    expect(proven.summary.status).toBe('SUPPRESSED');
+    expect(proven.entries[1]?.status).toBe('SUPPRESSED');
+  });
+
+  it('keeps a proven stop final even when an unproven evaluation exists, and holds only while nothing is proven', () => {
+    expect(
+      statusOf(
+        factsOf({
+          stops: [stop({ proven: false, seq: 1 }), stop({ categories: ['SOURCE_STALE'], proven: true, seq: 2 })],
+        }),
+      ),
+    ).toBe('SUPPRESSED');
+    expect(statusOf(factsOf({ stops: [stop({ proven: false, seq: 1 }), stop({ proven: false, seq: 2 })] }))).toBe(
+      'HELD_UNPROVEN',
+    );
+  });
+
+  it('holds an unproven stop after an attempt that provably submitted nothing, and says SUPPRESSED for a decision-time suppression', () => {
+    expect(statusOf(factsOf({ attempts: [attempt('NOT_ATTEMPTED')], stops: [stop({ proven: false })] }))).toBe(
+      'HELD_UNPROVEN',
+    );
+    expect(
+      statusOf(
+        factsOf({ attempts: [attempt('UNAVAILABLE', { reason: 'configuration' })], stops: [stop({ proven: false })] }),
+      ),
+    ).toBe('HELD_UNPROVEN');
+    expect(
+      statusOf(
+        factsOf({ intentStatus: 'SUPPRESSED', reason: 'PRIVACY_NOT_ALLOWED', stops: [stop({ proven: false })] }),
+      ),
+    ).toBe('SUPPRESSED');
+  });
+});
+
+describe('A soft bounce is not a sure failure (#1402 review)', () => {
+  const accepted = attempt('ACCEPTED');
+
+  it('headlines BOUNCED_TRANSIENT as DELIVERY_DEFERRED, keeping the acceptance and never FAILED or DELIVERED', () => {
+    const history = historyOfIntent(
+      factsOf({
+        attempts: [accepted],
+        observations: [observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_TRANSIENT', observed: 10 })],
+      }),
+    );
+    expect(history.summary).toMatchObject({
+      deliveryProven: false,
+      providerAccepted: true,
+      status: 'DELIVERY_DEFERRED',
+    });
+    expect(history.entries.map(({ status }) => status)).toEqual([
+      'PREPARED',
+      'PROVIDER_SUBMITTED',
+      'PROVIDER_ACCEPTED',
+      'DELIVERY_DEFERRED',
+    ]);
+  });
+
+  it('ends only with a later CONCLUSIVE provider event: a permanent bounce fails, a delivery delivers', () => {
+    const soft = observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_TRANSIENT', observed: 10 });
+    const hard = observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_PERMANENT', observed: 20 });
+    const delivered = observation('DELIVERY_PROVEN', { observed: 20 });
+    expect(statusOf(factsOf({ attempts: [accepted], observations: [soft, hard] }))).toBe('FAILED');
+    expect(statusOf(factsOf({ attempts: [accepted], observations: [soft, delivered] }))).toBe('DELIVERED');
+    // a provider drop is conclusive
+    expect(
+      statusOf(
+        factsOf({
+          attempts: [accepted],
+          observations: [observation('DELIVERY_FAILED', { failureClass: 'DROPPED_BY_PROVIDER', observed: 20 })],
+        }),
+      ),
+    ).toBe('FAILED');
+  });
+});
+
+describe("The latest delivery fact follows this owner's order, never the provider's clock (#1402 review)", () => {
+  const accepted = attempt('ACCEPTED');
+
+  it('a skewed observed_at cannot flip DELIVERED to FAILED: the observation recorded last decides', () => {
+    // recorded first: a delivery the provider stamps LATE; recorded second: a bounce it stamps EARLY (a skewed clock)
+    const delivered = observation('DELIVERY_PROVEN', { observed: 50, recorded: 10 });
+    const bounced = observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_PERMANENT', observed: 5, recorded: 11 });
+    expect(statusOf(factsOf({ attempts: [accepted], observations: [delivered, bounced] }))).toBe('FAILED');
+    // the opposite skew: the bounce is recorded first with the later claimed time
+    const bouncedFirst = observation('DELIVERY_FAILED', {
+      failureClass: 'BOUNCED_PERMANENT',
+      observed: 50,
+      recorded: 10,
+    });
+    const deliveredSecond = observation('DELIVERY_PROVEN', { observed: 5, recorded: 11 });
+    const flipped = factsOf({ attempts: [accepted], observations: [bouncedFirst, deliveredSecond] });
+    expect(statusOf(flipped)).toBe('DELIVERED');
+    // whatever order the facts arrive in
+    expect(statusOf(factsOf({ attempts: [accepted], observations: [deliveredSecond, bouncedFirst] }))).toBe(
+      'DELIVERED',
+    );
+    // the claim stays visible as claimed: it is informational
+    const entry = timelineOf(flipped).find(({ observationKind }) => observationKind === 'DELIVERY_PROVEN');
+    expect(entry?.occurredAt.epochMilliseconds).toBe(deliveredSecond.observedAt.epochMilliseconds);
+  });
+
+  it('breaks a tie of two facts that claim the very same time by the ingestion sequence, in the headline and the entries', () => {
+    const first = observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_PERMANENT', observed: 20 });
+    const second = observation('DELIVERY_PROVEN', { observed: 20 });
+    for (const observations of [
+      [first, second],
+      [second, first],
+    ]) {
+      const facts = factsOf({ attempts: [accepted], observations });
+      expect(statusOf(facts)).toBe('DELIVERED');
+      // the explicit tie-break of the entries: same claimed time, same kind, same attempt: the own sequence decides
+      expect(
+        timelineOf(facts)
+          .filter(({ kind }) => kind === 'PROVIDER_OBSERVED')
+          .map(({ observationId }) => observationId),
+      ).toEqual([first.observationId, second.observationId]);
+    }
+  });
+
+  it('decides by attempt number first: a late fact of an earlier attempt never overrides a later attempt', () => {
+    const later = attempt('ACCEPTED', { id: ATTEMPT_2, number: 2, prepared: 5 });
+    const earlier = attempt('ACCEPTED', { number: 1 });
+    // attempt 2 delivered (recorded first), then a bounce of attempt 1 arrives LATER in ingestion order
+    const delivered = observation('DELIVERY_PROVEN', { attemptId: ATTEMPT_2, observed: 20 });
+    const lateBounce = observation('DELIVERY_FAILED', {
+      attemptId: ATTEMPT_1,
+      failureClass: 'BOUNCED_PERMANENT',
+      observed: 30,
+    });
+    expect(statusOf(factsOf({ attempts: [earlier, later], observations: [delivered, lateBounce] }))).toBe('DELIVERED');
+  });
+});
+
+describe('A conflicting re-delivery keeps the earlier fact and needs reconciliation (#1402 review)', () => {
+  const accepted = attempt('ACCEPTED');
+  const delivered = observation('DELIVERY_PROVEN', { observed: 10, recorded: 11 });
+
+  it('never erases or changes the headline: the conflict is its own entry and a flag', () => {
+    const clean = historyOfIntent(factsOf({ attempts: [accepted], observations: [delivered] }));
+    const history = historyOfIntent(
+      factsOf({
+        attempts: [accepted],
+        conflicts: [
+          conflict('DELIVERY_PROVEN', { observationId: delivered.observationId, observed: 40, recorded: 41 }),
+        ],
+        observations: [delivered],
+      }),
+    );
+    expect(history.summary).toMatchObject({ deliveryProven: true, needsReconciliation: true, status: 'DELIVERED' });
+    expect(clean.summary.needsReconciliation).toBe(false);
+    // every earlier entry is untouched and the conflict only adds one
+    expect(history.entries.filter(({ kind }) => kind !== 'OBSERVATION_CONFLICTED')).toEqual(clean.entries);
+    const traced = history.entries.find(({ kind }) => kind === 'OBSERVATION_CONFLICTED');
+    expect(traced).toMatchObject({
+      observationId: delivered.observationId,
+      observationKind: 'DELIVERY_PROVEN',
+      reasonCodes: ['OBSERVATION_CONFLICT'],
+      status: 'INDETERMINATE',
+    });
+  });
+
+  it('is never read as a delivery fact of its own: a conflicting delivery cannot flip the latest delivery decision', () => {
+    const bounce = observation('DELIVERY_FAILED', { failureClass: 'BOUNCED_PERMANENT', observed: 20, recorded: 21 });
+    const facts = factsOf({
+      attempts: [accepted],
+      conflicts: [conflict('DELIVERY_PROVEN', { observed: 99, recorded: 99 })],
+      observations: [delivered, bounce],
+    });
+    expect(statusOf(facts)).toBe('FAILED');
   });
 });

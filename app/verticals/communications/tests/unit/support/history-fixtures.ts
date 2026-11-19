@@ -2,6 +2,7 @@ import { DateTime } from 'effect';
 
 import type {
   AttemptFacts,
+  ConflictFacts,
   IntentTimelineFacts,
   ObservationFacts,
   StopFacts,
@@ -61,6 +62,26 @@ export const observation = (kind: ObservationKind, options: ObservationOptions):
   };
 };
 
+interface ConflictOptions {
+  readonly attemptId?: string;
+  readonly observationId?: string;
+  readonly observed: number;
+  readonly recorded?: number;
+}
+
+/** A re-delivery of the identity of `kind` with another content: only the trace, the first observation is untouched. */
+export const conflict = (kind: ObservationKind, options: ConflictOptions): ConflictFacts => {
+  sequence += 1;
+  return {
+    attemptId: options.attemptId ?? ATTEMPT_1,
+    kind,
+    observationId: options.observationId ?? `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
+    observedAt: minute(options.observed),
+    recordedAt: minute(options.recorded ?? options.observed),
+    recordedSeq: sequence,
+  };
+};
+
 interface StopOptions {
   readonly at?: number;
   readonly categories?: readonly string[];
@@ -77,6 +98,7 @@ export const stop = (options: StopOptions = {}): StopFacts => ({
 
 interface FactsParts {
   readonly attempts?: readonly AttemptFacts[];
+  readonly conflicts?: readonly ConflictFacts[];
   readonly intentStatus?: 'NOT_SENT' | 'PENDING_HANDOFF' | 'SUPPRESSED';
   readonly observations?: readonly ObservationFacts[];
   readonly reason?: string;
@@ -85,6 +107,7 @@ interface FactsParts {
 
 export const factsOf = (parts: FactsParts): IntentTimelineFacts => ({
   attempts: parts.attempts ?? [],
+  conflicts: parts.conflicts ?? [],
   intent: {
     createdAt: minute(0),
     intentId: INTENT_ID,

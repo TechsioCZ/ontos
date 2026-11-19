@@ -44,16 +44,28 @@ export interface RequestOutcomeFacts {
   readonly requestId: typeof CommunicationRequestIdSchema.Type;
 }
 
-/** What the source must do ABOUT this message: a proven failure, an unknown effect, work still in progress, or nothing. */
-export const attentionOf = (status: HistoryStatus): MessageAttention =>
+const statusAttention = (status: HistoryStatus): MessageAttention =>
   Match.value(status).pipe(
     Match.whenOr('DELIVERED', 'PROVIDER_ACCEPTED', () => 'NO_FAILURE' as const),
-    // a handoff that began without an answer is not "in progress": its effect is unknown, reconciled and never resent
-    Match.whenOr('INDETERMINATE', 'PROVIDER_SUBMITTED', () => 'UNKNOWN' as const),
+    // a handoff that began without an answer is not "in progress": its effect is unknown, reconciled and never resent;
+    // a soft bounce is no sure failure either: the delivery is deferred and unknown
+    Match.whenOr('DELIVERY_DEFERRED', 'INDETERMINATE', 'PROVIDER_SUBMITTED', () => 'UNKNOWN' as const),
     Match.when('PREPARED', () => 'IN_PROGRESS' as const),
+    // a stop that proved nothing is not a failure of the message: it must be evaluated again
+    Match.when('HELD_UNPROVEN', () => 'NEEDS_REEVALUATION' as const),
     Match.whenOr('FAILED', 'NO_MESSAGE', 'SUPPRESSED', () => 'FAILURE' as const),
     Match.exhaustive,
   );
+
+/**
+ * What the source must do ABOUT this message: a proven failure, an unknown effect, work still in progress, a re-evaluation, a
+ * reconciliation of conflicting provider evidence, or nothing. A conflict never erases the headline fact and never softens a
+ * PROVEN failure; on any other message it asks for reconciliation instead of reporting a quiet success.
+ */
+export const attentionOf = (status: HistoryStatus, needsReconciliation = false): MessageAttention => {
+  const attention = statusAttention(status);
+  return needsReconciliation && attention !== 'FAILURE' ? 'NEEDS_RECONCILIATION' : attention;
+};
 
 const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly MessageOutcome[]) => {
   const { decision } = facts;
@@ -72,8 +84,11 @@ const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly Messag
     // partial: something else of the same request is not a failure
     return { partial: messages.some(({ attention }) => attention !== 'FAILURE'), requiredOutcome: 'FAILED' } as const;
   }
-  if (attentions.has('UNKNOWN')) {
+  if (attentions.has('UNKNOWN') || attentions.has('NEEDS_RECONCILIATION')) {
     return { partial: false, requiredOutcome: 'UNKNOWN' } as const;
+  }
+  if (attentions.has('NEEDS_REEVALUATION')) {
+    return { partial: false, requiredOutcome: 'NEEDS_REEVALUATION' } as const;
   }
   return { partial: false, requiredOutcome: attentions.has('IN_PROGRESS') ? 'IN_PROGRESS' : 'NO_FAILURE' } as const;
 };
@@ -81,7 +96,7 @@ const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly Messag
 /** The typed outcome feed of one request, from the decision and the headline of each of its intents. */
 export const sourceOutcomeFeedOf = (facts: RequestOutcomeFacts): CommunicationOutcomeFeed => {
   const messages = facts.intents.map(({ intentId, reason, recipientRef, slotKey, summary }): MessageOutcome => ({
-    attention: attentionOf(summary.status),
+    attention: attentionOf(summary.status, summary.needsReconciliation),
     intentId,
     reason,
     recipientRef,

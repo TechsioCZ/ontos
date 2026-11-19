@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { canAttemptAfterUnknownEffect, unknownEffectBlock } from '../../src/domain/history/unknown-effect.ts';
 import type { FreshEligibility } from '../../src/domain/history/unknown-effect.ts';
-import { attempt, factsOf, minute, observation } from './support/history-fixtures.ts';
+import { attempt, conflict, factsOf, minute, observation } from './support/history-fixtures.ts';
 
 /**
  * [#1402 H-06 H-08 AC-04] The guard the retry lane calls before any attempt that could duplicate an earlier one: false until a
@@ -77,5 +77,32 @@ describe('canAttemptAfterUnknownEffect', () => {
       observations: [observation('NON_ACCEPTANCE_PROVEN', { observed: 10, recorded: 20 })],
     });
     expect(canAttemptAfterUnknownEffect(facts, eligibleAt(99))).toBe(false);
+  });
+
+  it('treats a provider REJECTION and an unconfigured deployment (no request made) as proven absence: nothing is in doubt', () => {
+    for (const facts of [
+      factsOf({ attempts: [attempt('REJECTED', { reason: 'provider_rejected' })] }),
+      factsOf({ attempts: [attempt('UNAVAILABLE', { reason: 'configuration' })] }),
+      factsOf({ attempts: [attempt('NOT_ATTEMPTED')] }),
+    ]) {
+      expect(unknownEffectBlock(facts, eligibleAt(99))).toEqual(Option.none());
+      expect(unknownEffectBlock(facts, Option.none())).toEqual(Option.some('ELIGIBILITY_NOT_FRESH'));
+    }
+    // an unavailable PROVIDER (a 5xx) is not an absence
+    expect(
+      canAttemptAfterUnknownEffect(
+        factsOf({ attempts: [attempt('UNAVAILABLE', { reason: 'provider_unavailable' })] }),
+        eligibleAt(99),
+      ),
+    ).toBe(false);
+  });
+
+  it('needs reconciliation while provider evidence conflicts with itself, even when nothing else is in doubt', () => {
+    const facts = factsOf({
+      attempts: [attempt('INDETERMINATE')],
+      conflicts: [conflict('NON_ACCEPTANCE_PROVEN', { observed: 15, recorded: 16 })],
+      observations: [observation('NON_ACCEPTANCE_PROVEN', { observed: 10, recorded: 20 })],
+    });
+    expect(unknownEffectBlock(facts, eligibleAt(99))).toEqual(Option.some('RECONCILIATION_REQUIRED'));
   });
 });

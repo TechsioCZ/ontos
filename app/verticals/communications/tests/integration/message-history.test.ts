@@ -7,9 +7,11 @@ import { describe, expect, it } from 'effect-rstest';
 import { DeliveryAttemptIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import type { StoredJson } from '../../src/database/schema.ts';
 import {
+  attemptRetryLinks,
   deliveryAttempts,
   intentResendLinks,
   messageIntents,
+  providerObservationConflicts,
   providerObservations,
 } from '../../src/database/schema.ts';
 import { canAttemptAfterUnknownEffect, unknownEffectBlock } from '../../src/domain/history/unknown-effect.ts';
@@ -24,7 +26,7 @@ import {
   noMessageType,
   nRecipientPolicyType,
 } from '../unit/support/catalog-fixtures.ts';
-import { privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
+import { privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
 import { binding, ORIGINAL_ADDRESS } from '../unit/support/recipient-fixtures.ts';
 import {
   decideOne,
@@ -71,6 +73,7 @@ const attemptAt = Effect.fn('HistoryTest.attemptAt')(function* attempt(world: Wo
 });
 
 const observationsOf = (world: World) => world.read((tx) => tx.select().from(providerObservations));
+const conflictsOf = (world: World) => world.read((tx) => tx.select().from(providerObservationConflicts));
 
 const ProviderRefEvidenceSchema = Schema.Struct({ providerRef: Schema.String });
 const providerRefOf = (evidence: StoredJson | null) =>
@@ -110,6 +113,7 @@ const HISTORY_TABLES = [
   'delivery_attempts',
   'intent_handoff_stops',
   'provider_observations',
+  'provider_observation_conflicts',
   'attempt_retry_links',
   'intent_resend_links',
 ];
@@ -148,12 +152,68 @@ const historyColumnsThatCouldHoldContent = Effect.fn('HistoryTest.historyColumns
   const admin = yield* adminClient;
   const columns = yield* admin.unsafe<{ readonly column_name: string }>(
     `select column_name::text from information_schema.columns where table_schema = 'communications' and table_name = any($1::text[])`,
-    [['provider_observations', 'attempt_retry_links', 'intent_resend_links']],
+    [['provider_observations', 'provider_observation_conflicts', 'attempt_retry_links', 'intent_resend_links']],
   );
   return columns
     .map(({ column_name: name }) => name)
     .filter((name) => /address|email|token|secret|otp|payload|body|html|url|password/u.test(name));
 });
+
+/** The recovery lane (d21-10) will begin the next attempt itself; a second PREPARED attempt stands in for it here. */
+const insertPreparedAttempt = Effect.fn('HistoryTest.insertPreparedAttempt')(function* insertAttempt(
+  world: World,
+  intentId: string,
+  attemptNumber = 2,
+) {
+  const admin = yield* adminClient;
+  const attemptId = yield* nextId;
+  yield* admin.withTransaction(
+    Effect.gen(function* insertSecond() {
+      yield* admin.unsafe(`select set_config('ontos.tenant_id', $1, true)`, [world.tenantId]);
+      yield* admin.unsafe(
+        `insert into communications.delivery_attempts (attempt_id, tenant_id, intent_id, attempt_number, state, prepared_at)
+         values ($1, $2, $3, $4, 'PREPARED', now())`,
+        [attemptId, world.tenantId, intentId, attemptNumber],
+      );
+    }),
+  );
+  return attemptId;
+});
+
+const rejected = () => Effect.succeed({ kind: 'REJECTED', reason: 'provider_rejected' } as const);
+const unavailable = () => Effect.succeed({ kind: 'UNAVAILABLE', reason: 'provider_unavailable' } as const);
+const unconfigured = () => Effect.succeed({ kind: 'UNAVAILABLE', reason: 'configuration' } as const);
+
+type RetryBasisInput = Parameters<typeof linkRetryAttempt>[1]['basis'];
+
+/** One structural retry link of the world's Tenant, through the real scoped routine. */
+const linkRetry = (world: World, intentId: string, previous: string, next: string, basis: RetryBasisInput) =>
+  world.database.inTenant(world.tenantId, (tx) =>
+    linkRetryAttempt(tx, {
+      attemptId: DeliveryAttemptIdSchema.make(next),
+      basis,
+      intentId: MessageIntentIdSchema.make(intentId),
+      previousAttemptId: DeliveryAttemptIdSchema.make(previous),
+      reasonCode: LinkReasonCodeSchema.make('PRIOR_NOT_ACCEPTED'),
+    }),
+  );
+
+/** What the retry guard answers for the intent of a request, with a Current eligibility evaluated after everything recorded. */
+const guardAllows = Effect.fn('HistoryTest.guardAllows')(function* allows(
+  world: World,
+  requestId: Parameters<typeof intentHistoryOf>[1],
+) {
+  const record = yield* intentHistoryOf(world, requestId);
+  return canAttemptAfterUnknownEffect(record.facts, eligibleAt(yield* minutesFromNow(10)));
+});
+
+/** One Explicit Resend link of the world's Tenant, written as the runtime role does. */
+const insertResendLink = (world: World, linkedAt: Date, originalIntentId: string, resendIntentId: string, reasonCode: string) =>
+  world.database.inTenant(world.tenantId, (tx) =>
+    tx
+      .insert(intentResendLinks)
+      .values({ linkedAt, originalIntentId, reasonCode, resendIntentId, tenantId: world.tenantId }),
+  );
 
 describe('Truthful message history on native PostgreSQL (#1402)', () => {
   it.live(
@@ -408,7 +468,7 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
   );
 
   it.live(
-    '[S11] a duplicate or repeated callback is one observation: no second row, no second effect; the same identity with other content conflicts',
+    '[S11] a duplicate or repeated callback is one observation: no second row, no second effect; the same time is part of the content',
     () =>
       Effect.gen(function* duplicateCallback() {
         const { attemptId, handoff, intentId, world } = yield* submitted(indeterminate);
@@ -418,19 +478,196 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
         expect(yield* ingest(world, input)).toBe('DUPLICATE');
         const concurrent = yield* Effect.all([ingest(world, input), ingest(world, input)], { concurrency: 2 });
         expect(concurrent).toEqual(['DUPLICATE', 'DUPLICATE']);
-        // the same event identity arriving with another claim is a conflict, and the first one stays
-        const conflicting = step22Double.nonAcceptanceProven(target, {
-          key: 'evt-dup-1',
-          observedAt: yield* minutesFromNow(2),
-        });
-        expect(yield* ingest(world, conflicting)).toBe('CONFLICT');
-        const stored = yield* observationsOf(world);
-        expect(stored).toHaveLength(1);
-        expect(stored).toMatchObject([{ kind: 'ACCEPTANCE_PROVEN' }]);
+        expect(yield* observationsOf(world)).toHaveLength(1);
+        expect(yield* conflictsOf(world)).toEqual([]);
         // nothing was sent, created or finished by any of it
         expect(handoff.calls).toHaveLength(1);
         expect(yield* attemptsOf(world, intentId)).toHaveLength(1);
         expect(yield* world.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[S11 H-07 review] the SAME identity with another content (even only another time) is a CONFLICT: the first fact stays, a durable safe trace is kept, and the history needs reconciliation',
+    () =>
+      Effect.gen(function* conflictingRedelivery() {
+        const { attemptId, handoff, intentId, requestId, world } = yield* submitted(indeterminate, {
+          types: [fixtureType({ requiredness: 'REQUIRED' })],
+        });
+        const target = targetOf(world, intentId, attemptId);
+        const first = step22Double.acceptanceProven(target, {
+          key: 'evt-conf-1',
+          observedAt: yield* minutesFromNow(1),
+        });
+        expect(yield* ingest(world, first)).toBe('RECORDED');
+        const [original] = yield* observationsOf(world);
+        // the very same event, claimed to have happened at ANOTHER time: this is no duplicate
+        const otherTime = step22Double.acceptanceProven(target, {
+          key: 'evt-conf-1',
+          observedAt: yield* minutesFromNow(9),
+        });
+        expect(yield* ingest(world, otherTime)).toBe('CONFLICT');
+        // another evidence basis and another provider reference under the same identity conflict as well
+        const otherBasis = step22Double.acceptanceProven(
+          target,
+          { key: 'evt-conf-1', observedAt: yield* minutesFromNow(1) },
+          'PROVIDER_EVENT',
+        );
+        expect(yield* ingest(world, otherBasis)).toBe('CONFLICT');
+        const otherRef = step22Double.acceptanceProven(target, {
+          key: 'evt-conf-1',
+          observedAt: yield* minutesFromNow(1),
+          providerRef: 'ref-1',
+        });
+        expect(yield* ingest(world, otherRef)).toBe('CONFLICT');
+        // delivering the same conflicting content again, also concurrently, adds no second trace
+        const again = yield* Effect.all(
+          [ingest(world, otherTime), ingest(world, otherTime), ingest(world, otherBasis)],
+          {
+            concurrency: 3,
+          },
+        );
+        expect(again).toEqual(['CONFLICT', 'CONFLICT', 'CONFLICT']);
+        // the first observation is untouched
+        expect(yield* observationsOf(world)).toEqual([original]);
+        const traces = yield* conflictsOf(world);
+        expect(traces).toHaveLength(3);
+        expect(traces).toMatchObject(
+          traces.map(() => ({
+            attemptId,
+            intentId,
+            kind: 'ACCEPTANCE_PROVEN',
+            observationId: original?.observationId,
+            observationKey: 'evt-conf-1',
+            providerKey: 'fixture-provider',
+            tenantId: world.tenantId,
+          })),
+        );
+        // safe fields only: a fingerprint of the content, never the content
+        expect(traces.every(({ contentFingerprint }) => /^[0-9a-f]{64}$/u.test(contentFingerprint))).toBe(true);
+        expect(new Set(traces.map(({ contentFingerprint }) => contentFingerprint)).size).toBe(3);
+        expect(Object.keys(traces[0] ?? {}).toSorted()).toEqual([
+          'attemptId',
+          'conflictId',
+          'contentFingerprint',
+          'intentId',
+          'kind',
+          'observationId',
+          'observationKey',
+          'observedAt',
+          'providerKey',
+          'recordedAt',
+          'recordedSeq',
+          'tenantId',
+        ]);
+        // the history keeps the earlier fact AND says it needs reconciliation; it is never an acceptance of the conflict
+        const record = yield* intentHistoryOf(world, requestId);
+        expect(record.history.summary).toMatchObject({
+          needsReconciliation: true,
+          providerAccepted: true,
+          status: 'PROVIDER_ACCEPTED',
+        });
+        expect(record.history.entries.filter(({ kind }) => kind === 'PROVIDER_OBSERVED')).toHaveLength(1);
+        expect(record.history.entries.filter(({ kind }) => kind === 'OBSERVATION_CONFLICTED')).toHaveLength(3);
+        expect((yield* historyOf(world, requestId)).feed).toMatchObject({
+          messages: [{ attention: 'NEEDS_RECONCILIATION', status: 'PROVIDER_ACCEPTED' }],
+          requiredOutcome: 'UNKNOWN',
+        });
+        // and nothing may be sent again on the strength of it
+        expect(unknownEffectBlock(record.facts, eligibleAt(yield* minutesFromNow(10)))).toEqual(
+          Option.some('ACCEPTANCE_ALREADY_PROVEN'),
+        );
+        // nothing was sent, created or finished by any of it
+        expect(handoff.calls).toHaveLength(1);
+        expect(yield* attemptsOf(world, intentId)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[S11 H-05 H-07 review] one provider message id may carry an acceptance and a bounce: the same key with ANOTHER evidence kind is a NEW observation, not a conflict',
+    () =>
+      Effect.gen(function* sameKeyOtherKind() {
+        const { attemptId, intentId, requestId, world } = yield* submitted(indeterminate);
+        const target = targetOf(world, intentId, attemptId);
+        const observedAt = yield* minutesFromNow(1);
+        const accepted = step22Double.acceptanceProven(target, { key: 'msg-1', observedAt }, 'PROVIDER_EVENT');
+        const bounced = step22Double.bounced(target, { key: 'msg-1', observedAt: yield* minutesFromNow(5) });
+        expect(yield* ingest(world, accepted)).toBe('RECORDED');
+        expect(yield* ingest(world, bounced)).toBe('RECORDED');
+        // each one is a duplicate of itself, and neither one conflicts with the other
+        expect(yield* ingest(world, accepted)).toBe('DUPLICATE');
+        expect(yield* ingest(world, bounced)).toBe('DUPLICATE');
+        const stored = yield* observationsOf(world);
+        expect(stored.map(({ kind }) => kind).toSorted()).toEqual(['ACCEPTANCE_PROVEN', 'DELIVERY_FAILED']);
+        expect(new Set(stored.map(({ observationId }) => observationId)).size).toBe(2);
+        expect(yield* conflictsOf(world)).toEqual([]);
+        const record = yield* intentHistoryOf(world, requestId);
+        expect(record.history.summary).toMatchObject({
+          needsReconciliation: false,
+          providerAccepted: true,
+          status: 'FAILED',
+        });
+        // a changed content of the BOUNCE under the same key conflicts with the bounce only, and the acceptance stays
+        const changedBounce = step22Double.bounced(
+          target,
+          { key: 'msg-1', observedAt: yield* minutesFromNow(5) },
+          'BOUNCED_TRANSIENT',
+        );
+        expect(yield* ingest(world, changedBounce)).toBe('CONFLICT');
+        expect(yield* conflictsOf(world)).toMatchObject([{ kind: 'DELIVERY_FAILED' }]);
+        expect((yield* intentHistoryOf(world, requestId)).history.summary).toMatchObject({
+          needsReconciliation: true,
+          providerAccepted: true,
+          status: 'FAILED',
+        });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review] a soft bounce is DELIVERY_DEFERRED, and the owner order (not the provider clock) decides the latest delivery fact',
+    () =>
+      Effect.gen(function* skewAndSoftBounce() {
+        const { attempt, attemptId, intentId, requestId, world } = yield* submitted();
+        const target = targetOf(world, intentId, attemptId);
+        const providerRef = providerRefOf(attempt.evidence);
+        yield* ingest(
+          world,
+          step22Double.bounced(
+            target,
+            { key: 'soft-1', observedAt: yield* minutesFromNow(5), providerRef },
+            'BOUNCED_TRANSIENT',
+          ),
+        );
+        expect((yield* intentHistoryOf(world, requestId)).history.summary).toMatchObject({
+          deliveryProven: false,
+          providerAccepted: true,
+          status: 'DELIVERY_DEFERRED',
+        });
+        // recorded FIRST: a delivery the provider stamps late; recorded SECOND: a permanent bounce it stamps early (skew)
+        yield* ingest(
+          world,
+          step22Double.delivered(target, { key: 'dlv-1', observedAt: yield* minutesFromNow(50), providerRef }),
+        );
+        yield* ingest(
+          world,
+          step22Double.bounced(
+            target,
+            { key: 'hard-1', observedAt: yield* minutesFromNow(6), providerRef },
+            'BOUNCED_PERMANENT',
+          ),
+        );
+        const record = yield* intentHistoryOf(world, requestId);
+        expect(record.history.summary).toMatchObject({ providerAccepted: true, status: 'FAILED' });
+        // the entries still list the claimed times, and flag the one recorded after a later claim
+        expect(
+          record.history.entries
+            .filter(({ kind }) => kind === 'PROVIDER_OBSERVED')
+            .map(({ observationKind, outOfOrder }) => [observationKind, outOfOrder]),
+        ).toEqual([
+          ['DELIVERY_FAILED', false],
+          ['DELIVERY_FAILED', true],
+          ['DELIVERY_PROVEN', false],
+        ]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -630,19 +867,7 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
     () =>
       Effect.gen(function* retryAfterReconciliation() {
         const { attemptId, intentId, requestId, world } = yield* submitted(indeterminate);
-        const admin = yield* adminClient;
-        // the recovery lane (d21-10) will begin the next attempt itself; here a second PREPARED attempt stands in for it
-        const secondId = yield* nextId;
-        yield* admin.withTransaction(
-          Effect.gen(function* insertSecond() {
-            yield* admin.unsafe(`select set_config('ontos.tenant_id', $1, true)`, [world.tenantId]);
-            yield* admin.unsafe(
-              `insert into communications.delivery_attempts (attempt_id, tenant_id, intent_id, attempt_number, state, prepared_at)
-             values ($1, $2, $3, 2, 'PREPARED', now())`,
-              [secondId, world.tenantId, intentId],
-            );
-          }),
-        );
+        const secondId = yield* insertPreparedAttempt(world, intentId);
         const link = (basis: Parameters<typeof linkRetryAttempt>[1]['basis']) =>
           world.database.inTenant(world.tenantId, (tx) =>
             linkRetryAttempt(tx, {
@@ -688,6 +913,79 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
   );
 
   it.live(
+    '[AC-09 S15 H-08 review] a retry link follows the same truth as the guard: after a provider REJECTION and an unconfigured deployment, never after UNAVAILABLE, INDETERMINATE or ACCEPTED without reconciliation',
+    () =>
+      Effect.gen(function* retryBases() {
+        const prepared = yield* submitted(rejected);
+        const bases = (world: World, intentId: string, previous: string, second: string) => ({
+          not: linkRetry(world, intentId, previous, second, { kind: 'PRIOR_NOT_ATTEMPTED' }),
+          rejected: linkRetry(world, intentId, previous, second, { kind: 'PRIOR_REJECTED' }),
+        });
+        // REJECTED: the provider provably refused it. The guard says nothing is in doubt, and the link agrees
+        expect(yield* guardAllows(prepared.world, prepared.requestId)).toBe(true);
+        const secondRejected = yield* insertPreparedAttempt(prepared.world, prepared.intentId);
+        const afterRejection = bases(prepared.world, prepared.intentId, prepared.attemptId, secondRejected);
+        // nothing was "not attempted": a rejection is its own basis
+        expect(yield* afterRejection.not).toBe('BASIS_MISSING');
+        expect(yield* afterRejection.rejected).toBe('LINKED');
+        expect(yield* afterRejection.rejected).toBe('EXISTS');
+        expect((yield* intentHistoryOf(prepared.world, prepared.requestId)).links.retries).toMatchObject([
+          { attemptId: secondRejected, basisKind: 'PRIOR_REJECTED', previousAttemptId: prepared.attemptId },
+        ]);
+
+        // an unconfigured deployment made no request: it reads as NOT_ATTEMPTED and so does its retry basis
+        const noRequest = yield* submitted(unconfigured);
+        expect(yield* guardAllows(noRequest.world, noRequest.requestId)).toBe(true);
+        expect((yield* intentHistoryOf(noRequest.world, noRequest.requestId)).history.summary.status).toBe('PREPARED');
+        const secondNoRequest = yield* insertPreparedAttempt(noRequest.world, noRequest.intentId);
+        const afterNoRequest = bases(noRequest.world, noRequest.intentId, noRequest.attemptId, secondNoRequest);
+        expect(yield* afterNoRequest.rejected).toBe('BASIS_MISSING');
+        expect(yield* afterNoRequest.not).toBe('LINKED');
+        // and nothing is left to observe
+        expect(
+          yield* ingest(
+            noRequest.world,
+            step22Double.acceptanceProven(targetOf(noRequest.world, noRequest.intentId, noRequest.attemptId), {
+              key: 'nr-1',
+              observedAt: yield* minutesFromNow(1),
+            }),
+          ),
+        ).toBe('NOT_SUBMITTED');
+
+        // an unavailable PROVIDER and an indeterminate answer leave the effect unknown: neither basis exists for either
+        for (const answer of [unavailable, indeterminate]) {
+          const unknown = yield* submitted(answer);
+          expect(yield* guardAllows(unknown.world, unknown.requestId)).toBe(false);
+          const secondUnknown = yield* insertPreparedAttempt(unknown.world, unknown.intentId);
+          const afterUnknown = bases(unknown.world, unknown.intentId, unknown.attemptId, secondUnknown);
+          expect([yield* afterUnknown.not, yield* afterUnknown.rejected]).toEqual(['BASIS_MISSING', 'BASIS_MISSING']);
+          expect(yield* unknown.world.read((tx) => tx.select().from(attemptRetryLinks))).toEqual([]);
+        }
+
+        // an ACCEPTED attempt has no basis at all, not even a proof of non-acceptance that contradicts it
+        const accepted = yield* submitted();
+        const secondAccepted = yield* insertPreparedAttempt(accepted.world, accepted.intentId);
+        expect(yield* guardAllows(accepted.world, accepted.requestId)).toBe(false);
+        yield* ingest(
+          accepted.world,
+          step22Double.nonAcceptanceProven(targetOf(accepted.world, accepted.intentId, accepted.attemptId), {
+            key: 'contra-1',
+            observedAt: yield* minutesFromNow(1),
+          }),
+        );
+        const [proof] = yield* observationsOf(accepted.world);
+        const afterAccepted = bases(accepted.world, accepted.intentId, accepted.attemptId, secondAccepted);
+        expect([yield* afterAccepted.not, yield* afterAccepted.rejected]).toEqual(['BASIS_MISSING', 'BASIS_MISSING']);
+        expect(
+          yield* linkRetry(accepted.world, accepted.intentId, accepted.attemptId, secondAccepted, {
+            kind: 'RECONCILED_NON_ACCEPTANCE',
+            observationId: proof?.observationId ?? '',
+          }),
+        ).toBe('BASIS_MISSING');
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
     '[AC-09 S16] Explicit Resend is a NEW intent of a NEW request, linked both ways with a safe reason, and keeps its own facts',
     () =>
       Effect.gen(function* explicitResend() {
@@ -708,11 +1006,7 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
         expect(resend.intentId).not.toBe(original.intentId);
         const linkedAt = DateTime.toDateUtc(yield* DateTime.now);
         const insertLink = (originalIntentId: string, resendIntentId: string, reasonCode: string) =>
-          world.database.inTenant(world.tenantId, (tx) =>
-            tx
-              .insert(intentResendLinks)
-              .values({ linkedAt, originalIntentId, reasonCode, resendIntentId, tenantId: world.tenantId }),
-          );
+          insertResendLink(world, linkedAt, originalIntentId, resendIntentId, reasonCode);
         yield* insertLink(original.intentId, resend.intentId, 'SOURCE_APPROVED_RESEND');
         const originalRecord = yield* intentHistoryOf(world, original.requestId);
         const resendRecord = yield* intentHistoryOf(world, resend.requestId);
@@ -727,16 +1021,20 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
         expect(originalRecord.history.summary.status).toBe('FAILED');
         expect(resendRecord.history.summary.status).toBe('PREPARED');
         expect(yield* attemptsOf(world, resend.intentId)).toEqual([]);
-        // a resend names exactly one original, and an intent is never its own ancestor
-        const second = yield* Effect.exit(insertLink(original.intentId, resend.intentId, 'OTHER_REASON'));
-        expect(Exit.isFailure(second)).toBe(true);
-        const cycle = yield* Effect.flip(insertLink(resend.intentId, original.intentId, 'LOOP'));
+        // a resend names exactly one original (a second link of the same resend is refused by its key)
+        const second = yield* Effect.flip(insertLink(original.intentId, resend.intentId, 'SOURCE_APPROVED_RESEND'));
+        expect(sqlStateOf(second)).toBe('23505');
+        // the reason is from a closed list: free or unknown text is refused
+        const unlisted = yield* Effect.flip(insertLink(original.intentId, resend.intentId, 'OTHER_REASON'));
+        expect(sqlStateOf(unlisted)).toBe('23514');
+        // an intent is never its own ancestor: the original cannot be linked as a resend of its own resend
+        const cycle = yield* Effect.flip(insertLink(resend.intentId, original.intentId, 'SOURCE_APPROVED_RESEND'));
         expect(sqlStateOf(cycle)).toBe('23514');
         // a link is a fact: it can be neither rewritten nor removed
-        const rewrite = yield* Effect.exit(
+        const rewrite = yield* Effect.flip(
           world.database.inTenant(world.tenantId, (tx) => tx.update(intentResendLinks).set({ reasonCode: 'EDITED' })),
         );
-        expect(Exit.isFailure(rewrite)).toBe(true);
+        expect(sqlStateOf(rewrite)).toBe('42501');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -809,6 +1107,78 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
   );
 
   it.live(
+    '[AC-09 review] a resend must be NEWER than its original, of the same Tenant, and two opposite inserts cannot both pass',
+    () =>
+      Effect.gen(function* resendOrderAndTenant() {
+        const world = yield* setup();
+        const other = yield* setup();
+        const older = yield* decideOne(world, 'customer-1', 'o-order-1');
+        const newer = yield* decideOne(world, 'customer-1', 'o-order-2');
+        const foreign = yield* decideOne(other, 'customer-1', 'o-order-3');
+        const linkedAt = DateTime.toDateUtc(yield* DateTime.now);
+        const link = (originalIntentId: string, resendIntentId: string, reasonCode = 'SOURCE_APPROVED_RESEND') =>
+          insertResendLink(world, linkedAt, originalIntentId, resendIntentId, reasonCode);
+        // an OLDER intent can never be the resend of a newer one
+        expect(sqlStateOf(yield* Effect.flip(link(newer.intentId, older.intentId)))).toBe('23514');
+        // another Tenant's intent is never found in this Tenant's scope, as original or as resend
+        expect(sqlStateOf(yield* Effect.flip(link(older.intentId, foreign.intentId)))).toBe('23503');
+        expect(sqlStateOf(yield* Effect.flip(link(foreign.intentId, newer.intentId)))).toBe('23503');
+        expect(yield* world.read((tx) => tx.select().from(intentResendLinks))).toEqual([]);
+        // two opposite inserts at once: exactly one passes, and it is the one that respects the order
+        const outcomes = yield* Effect.all(
+          [
+            Effect.exit(link(older.intentId, newer.intentId)),
+            Effect.exit(link(newer.intentId, older.intentId)),
+            Effect.exit(link(older.intentId, newer.intentId)),
+            Effect.exit(link(newer.intentId, older.intentId)),
+          ],
+          { concurrency: 4 },
+        );
+        const failures = outcomes.flatMap((outcome) => (Exit.isFailure(outcome) ? [sqlStateOf(outcome.cause)] : []));
+        expect(outcomes.filter(Exit.isSuccess)).toHaveLength(1);
+        expect(failures.toSorted()).toEqual(['23505', '23514', '23514']);
+        expect(yield* world.read((tx) => tx.select().from(intentResendLinks))).toMatchObject([
+          { originalIntentId: older.intentId, resendIntentId: newer.intentId },
+        ]);
+        // an original may have several resends, and a resend of a resend is a chain, never a loop
+        const third = yield* decideOne(world, 'customer-1', 'o-order-4');
+        yield* link(newer.intentId, third.intentId);
+        expect(sqlStateOf(yield* Effect.flip(link(third.intentId, older.intentId)))).toBe('23514');
+        expect(yield* world.read((tx) => tx.select().from(intentResendLinks))).toHaveLength(2);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[H-03 H-13 review] a stop that only could not establish a fact is HELD_UNPROVEN and needs re-evaluation; a proven stop stays SUPPRESSED',
+    () =>
+      Effect.gen(function* heldUnproven() {
+        const held = yield* setup({ types: [fixtureType({ requiredness: 'REQUIRED' })] });
+        const { intentId, requestId } = yield* decideOne(held);
+        held.privacy.answers.set('customer-1', privacyIndeterminate);
+        expect(yield* step(held, handoffDouble(), intentId)).toMatchObject({ kind: 'STOPPED' });
+        const record = yield* intentHistoryOf(held, requestId);
+        expect(record.history.summary.status).toBe('HELD_UNPROVEN');
+        expect(record.history.entries.at(-1)).toMatchObject({
+          kind: 'HANDOFF_STOPPED',
+          reasonCodes: ['PRIVACY_INDETERMINATE'],
+          status: 'HELD_UNPROVEN',
+        });
+        expect((yield* historyOf(held, requestId)).feed).toMatchObject({
+          messages: [{ attention: 'NEEDS_REEVALUATION', status: 'HELD_UNPROVEN' }],
+          requiredOutcome: 'NEEDS_REEVALUATION',
+        });
+        const proven = yield* setup({ types: [fixtureType({ requiredness: 'REQUIRED' })] });
+        const provenIntent = yield* decideOne(proven);
+        proven.privacy.answers.set('customer-1', privacyNotAllowed());
+        yield* step(proven, handoffDouble(), provenIntent.intentId);
+        expect((yield* historyOf(proven, provenIntent.requestId)).feed).toMatchObject({
+          messages: [{ attention: 'FAILURE', status: 'SUPPRESSED' }],
+          requiredOutcome: 'FAILED',
+        });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
     '[append-only H-05] observations and links are facts: not rewritable, not removable, not forgeable, and invisible to another Tenant',
     () =>
       Effect.gen(function* appendOnly() {
@@ -821,15 +1191,16 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
           }),
         );
         const now = DateTime.toDateUtc(yield* DateTime.now);
-        const update = yield* Effect.exit(
+        // the runtime role holds no INSERT, UPDATE or DELETE privilege on a fact: the database refuses with its own code
+        const update = yield* Effect.flip(
           world.database.inTenant(world.tenantId, (tx) =>
             tx.update(providerObservations).set({ kind: 'DELIVERY_PROVEN' }),
           ),
         );
-        const removal = yield* Effect.exit(
+        const removal = yield* Effect.flip(
           world.database.inTenant(world.tenantId, (tx) => tx.delete(providerObservations)),
         );
-        const forged = yield* Effect.exit(
+        const forged = yield* Effect.flip(
           world.database.inTenant(world.tenantId, (tx) =>
             tx.insert(providerObservations).values({
               attemptId,
@@ -845,7 +1216,24 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
             }),
           ),
         );
-        expect([update, removal, forged].every(Exit.isFailure)).toBe(true);
+        const forgedConflict = yield* Effect.flip(
+          world.database.inTenant(world.tenantId, (tx) =>
+            tx.insert(providerObservationConflicts).values({
+              attemptId,
+              conflictId: '00000000-0000-4000-8000-0000000000e7',
+              contentFingerprint: '0'.repeat(64),
+              intentId,
+              kind: 'ACCEPTANCE_PROVEN',
+              observationId: '00000000-0000-4000-8000-0000000000e8',
+              observationKey: 'forged-2',
+              observedAt: now,
+              providerKey: 'fixture-provider',
+              recordedAt: now,
+              tenantId: world.tenantId,
+            }),
+          ),
+        );
+        expect([update, removal, forged, forgedConflict].map(sqlStateOf)).toEqual(['42501', '42501', '42501', '42501']);
         // even the owner role cannot rewrite or remove one: a trigger refuses it whatever the privileges
         const admin = yield* adminClient;
         const refused = (statement: string) =>
@@ -860,6 +1248,19 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
         const adminUpdate = yield* refused(`update communications.provider_observations set kind = 'DELIVERY_PROVEN'`);
         const adminDelete = yield* refused(`delete from communications.provider_observations`);
         expect([sqlStateOf(adminUpdate), sqlStateOf(adminDelete)]).toEqual(['55000', '55000']);
+        // a conflict trace is a fact as well
+        yield* ingest(
+          world,
+          step22Double.acceptanceProven(targetOf(world, intentId, attemptId), {
+            key: 'evt-ao-1',
+            observedAt: yield* minutesFromNow(2),
+          }),
+        );
+        const adminTraceUpdate = yield* refused(
+          `update communications.provider_observation_conflicts set kind = 'DELIVERY_PROVEN'`,
+        );
+        const adminTraceDelete = yield* refused(`delete from communications.provider_observation_conflicts`);
+        expect([sqlStateOf(adminTraceUpdate), sqlStateOf(adminTraceDelete)]).toEqual(['55000', '55000']);
         // Tenant isolation
         const stranger = yield* nextId;
         expect(yield* world.database.inTenant(stranger, (tx) => tx.select().from(providerObservations))).toEqual([]);

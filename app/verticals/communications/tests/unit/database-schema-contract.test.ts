@@ -36,6 +36,7 @@ describe('Communications database schema contract', () => {
       'delivery_attempts',
       'intent_handoff_stops',
       'provider_observations',
+      'provider_observation_conflicts',
       'attempt_retry_links',
       'intent_resend_links',
     ]);
@@ -231,19 +232,64 @@ describe('Communications message history schema contract (#1402)', () => {
   const unique = (table: string) => byName[table]?.uniqueConstraints.map((constraint) => constraint.getName());
 
   it('enforces Tenant isolation on every history table', () => {
-    for (const name of ['provider_observations', 'attempt_retry_links', 'intent_resend_links']) {
+    for (const name of [
+      'provider_observations',
+      'provider_observation_conflicts',
+      'attempt_retry_links',
+      'intent_resend_links',
+    ]) {
       expect(byName[name]?.enableRLS).toBe(true);
       expect(byName[name]?.policies).toHaveLength(4);
       expect(byName[name]?.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
     }
   });
 
-  it('identifies an observation by (Tenant, attempt, provider, provider observation key) so a repeated callback is one row', () => {
+  it('identifies an observation by (Tenant, attempt, provider, provider observation key, evidence kind): one key may carry an acceptance and a bounce', () => {
     expect(
       byName['provider_observations']?.uniqueConstraints
         .find((constraint) => constraint.getName() === 'communications_observations_provider_identity_uk')
         ?.columns.map((column) => column.name),
-    ).toEqual(['tenant_id', 'attempt_id', 'provider_key', 'observation_key']);
+    ).toEqual(['tenant_id', 'attempt_id', 'provider_key', 'observation_key', 'kind']);
+  });
+
+  it('keeps a conflicting re-delivery as an append-only trace with safe fields only, once per content', () => {
+    expect(columnsOf('provider_observation_conflicts').toSorted()).toEqual([
+      'attempt_id',
+      'conflict_id',
+      'content_fingerprint',
+      'intent_id',
+      'kind',
+      'observation_id',
+      'observation_key',
+      'observed_at',
+      'provider_key',
+      'recorded_at',
+      'recorded_seq',
+      'tenant_id',
+    ]);
+    expect(
+      byName['provider_observation_conflicts']?.uniqueConstraints
+        .find((constraint) => constraint.getName() === 'communications_observation_conflicts_content_uk')
+        ?.columns.map((column) => column.name),
+    ).toEqual(['tenant_id', 'observation_id', 'content_fingerprint']);
+    expect(byName['provider_observation_conflicts']?.checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining([
+        'communications_observation_conflicts_kind_ck',
+        'communications_observation_conflicts_keys_ck',
+        'communications_observation_conflicts_fingerprint_ck',
+      ]),
+    );
+    expect(
+      byName['provider_observation_conflicts']?.foreignKeys.map((key) => [
+        key.getName(),
+        key.reference().columns.map((column) => column.name),
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['communications_observation_conflicts_attempt_fk', ['tenant_id', 'intent_id', 'attempt_id']],
+        ['communications_observation_conflicts_observation_fk', ['tenant_id', 'observation_id']],
+      ]),
+    );
   });
 
   it('binds an observation to its attempt AND its intent by one composite key', () => {

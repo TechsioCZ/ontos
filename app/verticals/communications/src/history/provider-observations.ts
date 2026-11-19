@@ -22,7 +22,9 @@ import {
  * The answer to one observation. None of the refusals carries a value of a row: the same `UNBOUND` is given for another
  * Tenant's intent, an unknown intent and an attempt of another intent, so a caller learns nothing about foreign data.
  * - RECORDED: appended;  DUPLICATE: the same observation again, nothing changes;
- * - CONFLICT: the same identity with another content, the first one stays;
+ * - CONFLICT: the same identity (attempt, provider, key AND evidence kind) with another content, including another claimed
+ *   time: the first one stays untouched and the disagreement is kept as a trace (the history then needs reconciliation);
+ *   the same key with ANOTHER evidence kind is not a conflict but a new observation (a bounce after an acceptance);
  * - UNBOUND: Tenant, intent and attempt do not belong together;
  * - NOT_SUBMITTED: the attempt provably submitted nothing, so there is nothing to observe;
  * - PROVIDER_MISMATCH: another provider identity than the one the attempt is bound to.
@@ -57,9 +59,13 @@ export const ingestProviderObservation = Effect.fn('Communications.ingestProvide
   return answer.outcome;
 });
 
-/** Why a later attempt follows an earlier one of the SAME intent: nothing was submitted, or non-acceptance was proven. */
+/**
+ * Why a later attempt follows an earlier one of the SAME intent: nothing was submitted (including no request made for want of
+ * a usable configuration), the provider provably refused it, or a reconciliation proved non-acceptance of an unknown effect.
+ */
 export type RetryBasis =
   | { readonly kind: 'PRIOR_NOT_ATTEMPTED' }
+  | { readonly kind: 'PRIOR_REJECTED' }
   | { readonly kind: 'RECONCILED_NON_ACCEPTANCE'; readonly observationId: string };
 
 export interface RetryLinkInput {

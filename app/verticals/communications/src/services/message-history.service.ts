@@ -26,12 +26,14 @@ import {
   intentHandoffStops,
   intentResendLinks,
   messageIntents,
+  providerObservationConflicts,
   providerObservations,
 } from '../database/schema.ts';
 import { sourceOutcomeFeedOf } from '../domain/history/source-outcome.ts';
 import { historyOfIntent } from '../domain/history/timeline.ts';
 import type {
   AttemptFacts,
+  ConflictFacts,
   IntentHistory,
   IntentTimelineFacts,
   ObservationFacts,
@@ -145,12 +147,14 @@ type IntentRow = typeof messageIntents.$inferSelect;
 type AttemptRow = typeof deliveryAttempts.$inferSelect;
 type StopRow = typeof intentHandoffStops.$inferSelect;
 type ObservationRow = typeof providerObservations.$inferSelect;
+type ConflictRow = typeof providerObservationConflicts.$inferSelect;
 type RetryRow = typeof attemptRetryLinks.$inferSelect;
 type ResendRow = typeof intentResendLinks.$inferSelect;
 
 /** Every stored fact of one request of the installed Tenant, as rows. A request without intents (no-message) has none of the rest. */
 interface RequestRows {
   readonly attempts: readonly AttemptRow[];
+  readonly conflicts: readonly ConflictRow[];
   readonly decision: DecisionRow;
   readonly intents: readonly IntentRow[];
   readonly observations: readonly ObservationRow[];
@@ -190,6 +194,7 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
   if (ids.length === 0) {
     return Option.some<RequestRows>({
       attempts: [],
+      conflicts: [],
       decision,
       intents,
       observations: [],
@@ -199,12 +204,18 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
       stops: [],
     });
   }
-  const { attempts, observations, resends, retries, stops } = yield* Effect.all(
+  const { attempts, conflicts, observations, resends, retries, stops } = yield* Effect.all(
     {
       attempts: transaction
         .select()
         .from(deliveryAttempts)
         .where(and(eq(deliveryAttempts.tenantId, tenantId), inArray(deliveryAttempts.intentId, ids))),
+      conflicts: transaction
+        .select()
+        .from(providerObservationConflicts)
+        .where(
+          and(eq(providerObservationConflicts.tenantId, tenantId), inArray(providerObservationConflicts.intentId, ids)),
+        ),
       observations: transaction
         .select()
         .from(providerObservations)
@@ -229,7 +240,17 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
     },
     { concurrency: 1 },
   ).pipe(Effect.mapError(unavailable));
-  return Option.some<RequestRows>({ attempts, decision, intents, observations, request, resends, retries, stops });
+  return Option.some<RequestRows>({
+    attempts,
+    conflicts,
+    decision,
+    intents,
+    observations,
+    request,
+    resends,
+    retries,
+    stops,
+  });
 });
 
 const attemptFactOf = (row: AttemptRow): AttemptFacts => ({
@@ -251,6 +272,15 @@ const observationFactOf = (row: ObservationRow): ObservationFacts => ({
   recordedSeq: row.recordedSeq,
 });
 
+const conflictFactOf = (row: ConflictRow): ConflictFacts => ({
+  attemptId: row.attemptId,
+  kind: row.kind,
+  observationId: row.observationId,
+  observedAt: instant(row.observedAt),
+  recordedAt: instant(row.recordedAt),
+  recordedSeq: row.recordedSeq,
+});
+
 const stopFactOf = (row: StopRow): StopFacts => ({
   categories: Option.getOrElse(readStopReasons(row.reasons), () => []).map(({ category }) => category),
   evaluationSeq: row.evaluationSeq,
@@ -263,6 +293,7 @@ const timelineFactsOf = (rows: RequestRows, intent: IntentRow): IntentTimelineFa
   attempts: rows.attempts
     .flatMap((row) => (row.intentId === intent.intentId ? [attemptFactOf(row)] : []))
     .toSorted((left, right) => left.attemptNumber - right.attemptNumber),
+  conflicts: rows.conflicts.flatMap((row) => (row.intentId === intent.intentId ? [conflictFactOf(row)] : [])),
   intent: {
     createdAt: instant(intent.createdAt),
     intentId: intent.intentId,

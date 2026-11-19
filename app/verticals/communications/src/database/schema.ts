@@ -473,10 +473,14 @@ const REASON_CODE_PATTERN = sql.raw("'^[A-Z][A-Z0-9_]{0,79}$'");
  * (accepted, rejected, unavailable, indeterminate); an observation can prove acceptance or non-acceptance after an unknown
  * answer, a delivery, or a failure after acceptance, each as its own row with its own time.
  *
- * The identity of an observation is (Tenant, attempt, provider, provider observation key): a repeated callback is the SAME row,
- * never a second effect. `observed_at` is the provider's own claim; `recorded_at` and `recorded_seq` are this owner's, so the
- * timeline order is explicit: (`observed_at`, `recorded_seq`). Written only by the scoped routine `ingest_provider_observation`,
- * which verifies the Tenant, intent and attempt binding and the provider identity; the runtime role can only read it.
+ * The identity of an observation is (Tenant, attempt, provider, provider observation key, evidence kind): a repeated callback
+ * is the SAME row, never a second effect, and one provider message id may carry an acceptance and, later, a bounce as two
+ * observations. The SAME identity with different content (another `observed_at`, provider reference or evidence) is a
+ * conflict: the first row stays untouched and the disagreement is kept as a row of `provider_observation_conflicts`.
+ * `observed_at` is the provider's own claim and only informational; `recorded_at` and `recorded_seq` are this owner's. The
+ * timeline decides the latest fact by (attempt number, `recorded_seq`), never by the provider's clock. Written only by the
+ * scoped routine `ingest_provider_observation`, which verifies the Tenant, intent and attempt binding and the provider
+ * identity; the runtime role can only read it.
  *
  * `evidence` is a closed, minimal document (kind, basis, failure class): never a provider payload, a recipient address,
  * markup or a secret. The key columns are pattern-checked so they cannot hold an address or a URL either.
@@ -506,6 +510,7 @@ export const providerObservations = communicationsSchema.table.withRLS(
       table.attemptId,
       table.providerKey,
       table.observationKey,
+      table.kind,
     ),
     unique('communications_observations_seq_uk').on(table.recordedSeq),
     foreignKey({
@@ -537,10 +542,71 @@ export const providerObservations = communicationsSchema.table.withRLS(
 );
 
 /**
+ * Provider Observation Conflict (#1402): the durable, append-only trace of a re-delivery that carried the SAME observation
+ * identity (Tenant, attempt, provider, key, kind) with DIFFERENT content. The original observation is never touched and the
+ * conflicting delivery is never silently dropped: this row keeps only safe fields (the identity, the claimed `observed_at`
+ * and a SHA-256 fingerprint of the conflicting content), never the content itself. An intent with a conflict needs
+ * reconciliation until the recovery lane (d21-10) records otherwise; the history never erases the earlier fact.
+ * The same conflicting content delivered again is the same row (`content_fingerprint` is part of the identity).
+ * Written only by `ingest_provider_observation`; the runtime role can only read it.
+ */
+export const providerObservationConflicts = communicationsSchema.table.withRLS(
+  'provider_observation_conflicts',
+  {
+    attemptId: uuid('attempt_id').notNull(),
+    conflictId: uuid('conflict_id').primaryKey(),
+    contentFingerprint: text('content_fingerprint').notNull(),
+    intentId: uuid('intent_id').notNull(),
+    kind: text('kind')
+      .$type<'ACCEPTANCE_PROVEN' | 'DELIVERY_FAILED' | 'DELIVERY_PROVEN' | 'NON_ACCEPTANCE_PROVEN'>()
+      .notNull(),
+    observationId: uuid('observation_id').notNull(),
+    observationKey: text('observation_key').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    providerKey: text('provider_key').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    recordedSeq: bigint('recorded_seq', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('communications_observation_conflicts_content_uk').on(
+      table.tenantId,
+      table.observationId,
+      table.contentFingerprint,
+    ),
+    unique('communications_observation_conflicts_seq_uk').on(table.recordedSeq),
+    foreignKey({
+      columns: [table.tenantId, table.intentId, table.attemptId],
+      foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
+      name: 'communications_observation_conflicts_attempt_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.observationId],
+      foreignColumns: [providerObservations.tenantId, providerObservations.observationId],
+      name: 'communications_observation_conflicts_observation_fk',
+    }).onDelete('restrict'),
+    index('communications_observation_conflicts_intent_idx').on(table.tenantId, table.intentId),
+    check(
+      'communications_observation_conflicts_kind_ck',
+      sql`${table.kind} in ('ACCEPTANCE_PROVEN', 'DELIVERY_FAILED', 'DELIVERY_PROVEN', 'NON_ACCEPTANCE_PROVEN')`,
+    ),
+    check(
+      'communications_observation_conflicts_keys_ck',
+      sql`${table.observationKey} ~ ${SAFE_IDENTITY_PATTERN} and ${table.providerKey} ~ ${SAFE_IDENTITY_PATTERN}`,
+    ),
+    check('communications_observation_conflicts_fingerprint_ck', sql`${table.contentFingerprint} ~ '^[0-9a-f]{64}$'`),
+    ...tenantRlsPolicies('provider_observation_conflicts', table.tenantId),
+  ],
+);
+
+/**
  * Technical Retry link (#1402, H-09): a LATER attempt of the SAME intent follows an earlier one. An attempt carries no
  * recipient, language or template column, so a retry cannot change any pin: they live on the immutable intent. The link
- * records only why the earlier attempt no longer blocks the next (`basis_kind`) and a safe reason code. A retry after an
- * unknown effect names the observation that proved non-acceptance (`basis_observation_id`); nothing else may.
+ * records only why the earlier attempt no longer blocks the next (`basis_kind`) and a safe reason code: nothing was submitted
+ * (`PRIOR_NOT_ATTEMPTED`, which includes an unusable deployment configuration where no request was made), the provider
+ * provably refused it (`PRIOR_REJECTED`), or a reconciliation proved non-acceptance of an unknown effect
+ * (`RECONCILED_NON_ACCEPTANCE`, which names the observation in `basis_observation_id`). An accepted, unavailable or
+ * indeterminate attempt has no basis without such a reconciliation.
  *
  * Structure only: whether a retry is allowed is the recovery lane's (d21-10, #1403). Written only by the scoped routine
  * `worker_link_retry_attempt`, which checks the intent, the order and that the earlier attempt is finished.
@@ -549,7 +615,9 @@ export const attemptRetryLinks = communicationsSchema.table.withRLS(
   'attempt_retry_links',
   {
     attemptId: uuid('attempt_id').primaryKey(),
-    basisKind: text('basis_kind').$type<'PRIOR_NOT_ATTEMPTED' | 'RECONCILED_NON_ACCEPTANCE'>().notNull(),
+    basisKind: text('basis_kind')
+      .$type<'PRIOR_NOT_ATTEMPTED' | 'PRIOR_REJECTED' | 'RECONCILED_NON_ACCEPTANCE'>()
+      .notNull(),
     basisObservationId: uuid('basis_observation_id'),
     intentId: uuid('intent_id').notNull(),
     linkedAt: timestamp('linked_at', { withTimezone: true }).notNull(),
@@ -578,7 +646,7 @@ export const attemptRetryLinks = communicationsSchema.table.withRLS(
     check('communications_retry_links_reason_ck', sql`${table.reasonCode} ~ ${REASON_CODE_PATTERN}`),
     check(
       'communications_retry_links_basis_ck',
-      sql`(${table.basisKind} = 'PRIOR_NOT_ATTEMPTED' and ${table.basisObservationId} is null) or (${table.basisKind} = 'RECONCILED_NON_ACCEPTANCE' and ${table.basisObservationId} is not null)`,
+      sql`(${table.basisKind} in ('PRIOR_NOT_ATTEMPTED', 'PRIOR_REJECTED') and ${table.basisObservationId} is null) or (${table.basisKind} = 'RECONCILED_NON_ACCEPTANCE' and ${table.basisObservationId} is not null)`,
     ),
     ...tenantRlsPolicies('attempt_retry_links', table.tenantId),
   ],
@@ -590,8 +658,10 @@ export const attemptRetryLinks = communicationsSchema.table.withRLS(
  * resend names exactly one original, and an index on `original_intent_id` lists every resend of an original. Never an
  * implicit "resend succeeded": the resend has its own attempts and observations.
  *
- * Structure only (d21-10 decides when a resend is approved). A trigger refuses a resend inside the original's own request,
- * an intent that is its own ancestor, and any update or delete.
+ * Structure only (d21-10 decides when a resend is approved). A trigger refuses a resend that is not strictly newer than its
+ * original, one inside the original's own request, an intent that is its own ancestor (the cycle check is serialized per
+ * Tenant by an advisory lock, so two opposite inserts cannot both pass), and any update or delete. The reason is from a closed
+ * list. Whether the recipient or slot must match the original is a product question this lane does not decide.
  */
 export const intentResendLinks = communicationsSchema.table.withRLS(
   'intent_resend_links',
@@ -616,7 +686,8 @@ export const intentResendLinks = communicationsSchema.table.withRLS(
     }).onDelete('restrict'),
     index('communications_resend_links_original_idx').on(table.tenantId, table.originalIntentId),
     check('communications_resend_links_distinct_ck', sql`${table.originalIntentId} <> ${table.resendIntentId}`),
-    check('communications_resend_links_reason_ck', sql`${table.reasonCode} ~ ${REASON_CODE_PATTERN}`),
+    // a closed list: the vocabulary of the lane that writes the link (d21-10) extends it by a forward migration
+    check('communications_resend_links_reason_ck', sql`${table.reasonCode} in ('SOURCE_APPROVED_RESEND')`),
     ...tenantRlsPolicies('intent_resend_links', table.tenantId),
   ],
 );
@@ -636,6 +707,7 @@ export const COMMUNICATIONS_TABLES = [
   deliveryAttempts,
   intentHandoffStops,
   providerObservations,
+  providerObservationConflicts,
   attemptRetryLinks,
   intentResendLinks,
 ] as const;
@@ -654,6 +726,7 @@ export const COMMUNICATIONS_TABLE_INVENTORY = [
   'delivery_attempts',
   'intent_handoff_stops',
   'provider_observations',
+  'provider_observation_conflicts',
   'attempt_retry_links',
   'intent_resend_links',
 ] as const;
@@ -669,6 +742,7 @@ export const communicationsRelations = defineRelations({
   intentHandoffStops,
   intentResendLinks,
   messageIntents,
+  providerObservationConflicts,
   providerObservations,
   templateActivations,
   templateRevisionInvalidations,

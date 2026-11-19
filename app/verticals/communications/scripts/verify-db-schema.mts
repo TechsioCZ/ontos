@@ -37,6 +37,7 @@ const routineWrittenTables = [
   'delivery_attempts',
   'intent_handoff_stops',
   'provider_observations',
+  'provider_observation_conflicts',
   'attempt_retry_links',
 ];
 const closableTable = 'template_activations';
@@ -64,6 +65,7 @@ const intakeAppendOnlyTriggers = [
   'communications_requests_append_only',
   'communications_attempts_finished_append_only',
   'communications_observations_append_only',
+  'communications_observation_conflicts_append_only',
   'communications_resend_links_append_only',
   'communications_retry_links_append_only',
 ];
@@ -118,52 +120,203 @@ const verifyHandoffContract = Effect.fn('Communications.verifyHandoffContract')(
   }
 });
 
+/** Every constraint the history contract depends on, with the fragments its definition must contain (and the exact text of a unique key). */
+const OBSERVATIONS = 'provider_observations';
+const KIND_LITERALS = ["'ACCEPTANCE_PROVEN'", "'DELIVERY_FAILED'", "'DELIVERY_PROVEN'", "'NON_ACCEPTANCE_PROVEN'"];
+const ATTEMPT_FOREIGN_KEY = 'FOREIGN KEY (tenant_id, intent_id, attempt_id)';
+const historyConstraints: readonly {
+  readonly contains?: readonly string[];
+  readonly exact?: string;
+  readonly name: string;
+  readonly table: string;
+}[] = [
+  {
+    exact: 'UNIQUE (tenant_id, attempt_id, provider_key, observation_key, kind)',
+    name: 'communications_observations_provider_identity_uk',
+    table: OBSERVATIONS,
+  },
+  {
+    contains: [ATTEMPT_FOREIGN_KEY],
+    name: 'communications_observations_attempt_fk',
+    table: OBSERVATIONS,
+  },
+  {
+    contains: KIND_LITERALS,
+    name: 'communications_observations_kind_ck',
+    table: OBSERVATIONS,
+  },
+  {
+    contains: ["'{}'::jsonb", "'BOUNCED_TRANSIENT'", "'PROVIDER_EVENT'", "'RECONCILIATION'"],
+    name: 'communications_observations_evidence_ck',
+    table: OBSERVATIONS,
+  },
+  {
+    contains: ['observation_key', 'provider_key', 'provider_ref'],
+    name: 'communications_observations_keys_ck',
+    table: OBSERVATIONS,
+  },
+  {
+    // a delivery or a failure after acceptance rests on a provider event; a proven non-acceptance on a reconciliation
+    contains: [
+      ...KIND_LITERALS.filter((kind) => kind !== "'ACCEPTANCE_PROVEN'"),
+      "'PROVIDER_EVENT'",
+      "'RECONCILIATION'",
+    ],
+    name: 'communications_observations_basis_ck',
+    table: OBSERVATIONS,
+  },
+  {
+    exact: 'UNIQUE (tenant_id, observation_id, content_fingerprint)',
+    name: 'communications_observation_conflicts_content_uk',
+    table: 'provider_observation_conflicts',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, observation_id)'],
+    name: 'communications_observation_conflicts_observation_fk',
+    table: 'provider_observation_conflicts',
+  },
+  {
+    contains: [ATTEMPT_FOREIGN_KEY],
+    name: 'communications_observation_conflicts_attempt_fk',
+    table: 'provider_observation_conflicts',
+  },
+  {
+    contains: ['[0-9a-f]{64}'],
+    name: 'communications_observation_conflicts_fingerprint_ck',
+    table: 'provider_observation_conflicts',
+  },
+  {
+    contains: KIND_LITERALS,
+    name: 'communications_observation_conflicts_kind_ck',
+    table: 'provider_observation_conflicts',
+  },
+  {
+    contains: [ATTEMPT_FOREIGN_KEY],
+    name: 'communications_retry_links_attempt_fk',
+    table: 'attempt_retry_links',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, intent_id, previous_attempt_id)'],
+    name: 'communications_retry_links_previous_fk',
+    table: 'attempt_retry_links',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, basis_observation_id)'],
+    name: 'communications_retry_links_basis_fk',
+    table: 'attempt_retry_links',
+  },
+  {
+    contains: ['attempt_id <> previous_attempt_id'],
+    name: 'communications_retry_links_distinct_ck',
+    table: 'attempt_retry_links',
+  },
+  { contains: ['reason_code'], name: 'communications_retry_links_reason_ck', table: 'attempt_retry_links' },
+  {
+    // nothing submitted and a provider refusal carry no observation; a reconciled non-acceptance names the one that proved it
+    contains: ["'PRIOR_NOT_ATTEMPTED'", "'PRIOR_REJECTED'", "'RECONCILED_NON_ACCEPTANCE'", 'basis_observation_id'],
+    name: 'communications_retry_links_basis_ck',
+    table: 'attempt_retry_links',
+  },
+  {
+    exact: 'UNIQUE (tenant_id, resend_intent_id)',
+    name: 'communications_resend_links_resend_uk',
+    table: 'intent_resend_links',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, original_intent_id)'],
+    name: 'communications_resend_links_original_fk',
+    table: 'intent_resend_links',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, resend_intent_id)'],
+    name: 'communications_resend_links_resend_fk',
+    table: 'intent_resend_links',
+  },
+  {
+    contains: ['original_intent_id <> resend_intent_id'],
+    name: 'communications_resend_links_distinct_ck',
+    table: 'intent_resend_links',
+  },
+  {
+    contains: ["'SOURCE_APPROVED_RESEND'"],
+    name: 'communications_resend_links_reason_ck',
+    table: 'intent_resend_links',
+  },
+];
+
+/** The history routines and guards: the definer or invoker nature each one must have, and the pinned search path of all. */
+const historyRoutines: readonly { readonly definer: boolean; readonly name: string }[] = [
+  { definer: true, name: 'ingest_provider_observation' },
+  { definer: true, name: 'worker_link_retry_attempt' },
+  // the guard runs as the caller, under the Tenant's own row-level security: it must never be a definer
+  { definer: false, name: 'enforce_resend_link' },
+];
+
 const verifyHistoryContract = Effect.fn('Communications.verifyHistoryContract')(function* verifyHistory() {
   const client = yield* PgClient.PgClient;
   // The contract of the truthful message history (#1402): an observation is identified by (Tenant, attempt, provider,
-  // provider observation key) so a repeated callback is one row; it is bound to its attempt AND intent by one composite key;
-  // its evidence and keys are CLOSED by checks; the resend link is guarded by its shape trigger; and nothing outside the
-  // routines can advance the observation sequence.
+  // provider observation key, evidence kind) so a repeated callback is one row; it is bound to its attempt AND intent by one
+  // composite key; its evidence, keys, kind and basis are CLOSED by checks; a conflicting re-delivery leaves an append-only
+  // trace; the retry and resend links keep their keys and checks; the resend link is guarded by its shape trigger; every
+  // history routine pins its search_path; and nothing outside the routines can advance a sequence.
+  const constraints = yield* client
+    .unsafe<{ readonly definition: string; readonly name: string; readonly table_name: string }>(
+      `
+    select k.conname::text as name, k.conrelid::regclass::text as table_name, pg_catalog.pg_get_constraintdef(k.oid) as definition
+    from pg_catalog.pg_constraint k join pg_catalog.pg_namespace n on n.oid = k.connamespace
+    where n.nspname = $1 and k.conname = any($2::text[])`,
+      [COMMUNICATIONS_SCHEMA_NAME, historyConstraints.map(({ name }) => name)],
+    )
+    .pipe(Effect.mapError((cause) => failure('Unable to read the Communications history constraints', cause)));
+  const definitionOf = new Map(
+    constraints.map(({ definition, name, table_name: table }) => [name, { definition, table }]),
+  );
+  const constraintsDiffer = historyConstraints.some(({ contains, exact, name, table }) => {
+    const found = definitionOf.get(name);
+    return (
+      found === undefined ||
+      found.table !== `${COMMUNICATIONS_SCHEMA_NAME}.${table}` ||
+      (exact !== undefined && found.definition !== exact) ||
+      (contains ?? []).some((fragment) => !found.definition.includes(fragment))
+    );
+  });
   const [contract] = yield* client
     .unsafe<{
-      readonly attempt_fk: string | null;
-      readonly evidence_check: string | null;
-      readonly keys_check: string | null;
-      readonly provider_identity: string | null;
+      readonly pinned_routines: number;
       readonly resend_guard_triggers: number;
-      readonly sequence_exposed: boolean;
+      readonly sequences_exposed: number;
     }>(
       `
     select
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_provider_identity_uk') as provider_identity,
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_attempt_fk') as attempt_fk,
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_evidence_ck') as evidence_check,
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_keys_ck') as keys_check,
       (select count(*)::integer from pg_catalog.pg_trigger g
         where g.tgrelid = 'communications.intent_resend_links'::regclass and g.tgname = 'communications_resend_links_shape'
-          and g.tgenabled = 'O' and not g.tgisinternal and (g.tgtype & 2) = 2 and (g.tgtype & 4) = 4) as resend_guard_triggers,
-      exists (select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-        where n.nspname = $1 and c.relkind = 'S' and c.relname = 'provider_observations_recorded_seq_seq'
+          and g.tgenabled = 'O' and not g.tgisinternal and (g.tgtype & 2) = 2 and (g.tgtype & 4) = 4
+          and g.tgfoid = 'communications.enforce_resend_link()'::regprocedure) as resend_guard_triggers,
+      (select count(*)::integer from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+        join unnest($2::text[], $3::boolean[]) as expected(name, definer) on expected.name = p.proname
+        where n.nspname = $1 and p.prosecdef = expected.definer
+          and coalesce(p.proconfig, '{}') @> array['search_path=pg_catalog, pg_temp']) as pinned_routines,
+      (select count(*)::integer from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = $1 and c.relkind = 'S' and c.relname = any($4::text[])
           and (has_sequence_privilege('ontos_runtime', c.oid, 'USAGE') or has_sequence_privilege('ontos_runtime', c.oid, 'UPDATE')
-            or has_sequence_privilege('ontos_runtime', c.oid, 'SELECT'))) as sequence_exposed`,
-      [COMMUNICATIONS_SCHEMA_NAME],
+            or has_sequence_privilege('ontos_runtime', c.oid, 'SELECT'))) as sequences_exposed`,
+      [
+        COMMUNICATIONS_SCHEMA_NAME,
+        historyRoutines.map(({ name }) => name),
+        historyRoutines.map(({ definer }) => definer),
+        ['provider_observations_recorded_seq_seq', 'provider_observation_conflicts_recorded_seq_seq'],
+      ],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read the Communications history contract', cause)));
   if (
+    constraintsDiffer ||
     contract === undefined ||
-    contract.provider_identity !== 'UNIQUE (tenant_id, attempt_id, provider_key, observation_key)' ||
-    !(contract.attempt_fk ?? '').includes('FOREIGN KEY (tenant_id, intent_id, attempt_id)') ||
-    !(contract.evidence_check ?? '').includes("'{}'::jsonb") ||
-    !(contract.keys_check ?? '').includes('observation_key') ||
     contract.resend_guard_triggers !== 1 ||
-    contract.sequence_exposed
+    contract.pinned_routines !== historyRoutines.length ||
+    contract.sequences_exposed !== 0
   ) {
     yield* failure(
-      'Communications observation identity, evidence checks or resend guard differ from the owner contract',
+      'Communications observation identity, evidence checks, link constraints, routine search paths or resend guard differ from the owner contract',
     );
   }
 });

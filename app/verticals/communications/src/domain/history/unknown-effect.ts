@@ -9,7 +9,9 @@ import type { IntentTimelineFacts } from './timeline.ts';
  * Current eligibility is an input, never assumed.
  *
  * - while any attempt has an UNKNOWN effect (no answer recorded, an indeterminate or unavailable answer) no further send is
- *   allowed: only a reconciliation that proves non-acceptance ends the doubt;
+ *   allowed: only a reconciliation that proves non-acceptance ends the doubt. An UNAVAILABLE answer because the deployment had
+ *   no usable configuration made no request at all and, like NOT_ATTEMPTED and a provider REJECTION, leaves nothing in doubt;
+ * - a conflict of provider evidence (the same observation delivered again with another content) is such a doubt too;
  * - once any attempt is known to have been ACCEPTED no technical retry exists: a second send would duplicate it, and a
  *   deliberate Explicit Resend is a new intent, not an attempt of this one;
  * - contradictory evidence is never resolved in favour of sending;
@@ -51,7 +53,8 @@ export const unknownEffectBlock = (
   if (effects.has('PRESENT')) {
     return Option.some('ACCEPTANCE_ALREADY_PROVEN');
   }
-  if (effects.has('UNKNOWN')) {
+  if (effects.has('UNKNOWN') || facts.conflicts.length > 0) {
+    // an unknown effect, or provider evidence that disagrees with itself: only a reconciliation ends the doubt
     return Option.some('RECONCILIATION_REQUIRED');
   }
   if (Option.isNone(eligibility)) {
