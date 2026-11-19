@@ -12,7 +12,7 @@ import {
   fullyConsistent,
 } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient, openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeContextAccess, toIdentityNamespaceAccessObjectId } from '../../src/permissions/context-access.ts';
 
 const ResourceIdSchema = Schema.String.pipe(Schema.brand('ResourceId'));
@@ -46,6 +46,7 @@ type FixtureTuple = Schema.Schema.Type<typeof FixtureTupleSchema>;
 type FixtureAssertion = Schema.Schema.Type<typeof FixtureAssertionSchema> & { readonly expected: boolean };
 type FixtureMaterializable = Pick<FixtureTuple, 'resourceId' | 'resourceType' | 'subjectId' | 'subjectType'>;
 
+const GRAPH_READ_TIMEOUT_MS = 10_000;
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
 const fixtureTuples = (fixture: Schema.Schema.Type<typeof ExternalIdentityPermissionFixtureSchema>) => ({
@@ -162,6 +163,8 @@ const externalIdentityPermissionIntegration = Effect.gen(function* externalIdent
     expected: assertion.expected,
   }));
   const adminClient = newSpiceDbGrpcClient(configuration);
+  // The assertions read through the production client, with its deadline and its retry of a refused read.
+  const readClient = openSpiceDbGrpcRpc(configuration, GRAPH_READ_TIMEOUT_MS);
   const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
   const cleanup = Effect.forEach(
     relationships,
@@ -207,7 +210,7 @@ const externalIdentityPermissionIntegration = Effect.gen(function* externalIdent
     );
 
     for (const assertion of assertions) {
-      const response = yield* spiceDbEffect(adminClient.promises.checkPermission(toSpiceDbCheckRequest(assertion)));
+      const response = yield* readClient.checkPermission(toSpiceDbCheckRequest(assertion));
       expect(response.permissionship).toBe(
         assertion.expected
           ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
@@ -270,6 +273,7 @@ const externalIdentityPermissionIntegration = Effect.gen(function* externalIdent
           Effect.sync(() => {
             permissionClient.close();
             adminClient.close();
+            readClient.close();
           }),
         ),
       ),

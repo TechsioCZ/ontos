@@ -6,7 +6,7 @@ import { expect, it } from 'effect-rstest';
 
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient, openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
 
 const HAS = v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION;
 const NO = v1.CheckPermissionResponse_Permissionship.NO_PERMISSION;
@@ -20,6 +20,7 @@ const ELAPSED_MS = 946_684_800_000;
 const FUTURE_MS = 4_102_444_800_000;
 /** gRPC INVALID_ARGUMENT, the answer to a relationship whose subject type the schema forbids. */
 const INVALID_ARGUMENT = 3;
+const GRAPH_READ_TIMEOUT_MS = 10_000;
 
 const fullyConsistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
@@ -83,6 +84,11 @@ const makeGraph = Effect.gen(function* accessV2Graph() {
     Effect.sync(() => newSpiceDbGrpcClient(configuration)),
     (current) => Effect.sync(() => current.close()),
   );
+  // Checks go through the production client, with its deadline and its retry of a refused read.
+  const rpc = yield* Effect.acquireRelease(
+    Effect.sync(() => openSpiceDbGrpcRpc(configuration, GRAPH_READ_TIMEOUT_MS)),
+    (current) => Effect.sync(() => current.close()),
+  );
   const touched = new Map<string, v1.ObjectReference>();
   const ref = (objectType: string, id: string) =>
     v1.ObjectReference.create({ objectId: `${prefix}-${id}`, objectType });
@@ -135,9 +141,7 @@ const makeGraph = Effect.gen(function* accessV2Graph() {
     if (context !== undefined) {
       request.context = v1.createStructFromObject(context);
     }
-    return spiceDbEffect(client.promises.checkPermission(request)).pipe(
-      Effect.map((response) => response.permissionship),
-    );
+    return rpc.checkPermission(request).pipe(Effect.map((response) => response.permissionship));
   };
   /** One CheckBulk snapshot; each item is true only for an unconditional HAS_PERMISSION. */
   const checkBulk = (
@@ -147,8 +151,8 @@ const makeGraph = Effect.gen(function* accessV2Graph() {
       readonly subject: Subject;
     }[],
   ) =>
-    spiceDbEffect(
-      client.promises.checkBulkPermissions(
+    rpc
+      .checkBulkPermissions(
         v1.CheckBulkPermissionsRequest.create({
           consistency: fullyConsistent,
           items: items.map((item) =>
@@ -159,12 +163,12 @@ const makeGraph = Effect.gen(function* accessV2Graph() {
             }),
           ),
         }),
-      ),
-    ).pipe(
-      Effect.map(({ pairs }) =>
-        pairs.map(({ response }) => response.oneofKind === 'item' && response.item.permissionship === HAS),
-      ),
-    );
+      )
+      .pipe(
+        Effect.map(({ pairs }) =>
+          pairs.map(({ response }) => response.oneofKind === 'item' && response.item.permissionship === HAS),
+        ),
+      );
 
   yield* Effect.addFinalizer(() =>
     Effect.forEach(
