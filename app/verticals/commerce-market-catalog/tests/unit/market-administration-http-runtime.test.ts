@@ -12,6 +12,7 @@ import {
   getVerticalRuntimeActions,
 } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import {
   AccessDecisionGate,
   AccessDecisionLog,
@@ -29,7 +30,7 @@ import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
+import { Clock, ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { assert, expect, it, rstest } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -191,6 +192,7 @@ for (const scenario of scenarios) {
         kid: 'market-administration-http',
         use: 'sig',
       };
+      const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
       const token = yield* Effect.promise(() =>
         new SignJWT({
           compositionRevision: snapshot.composition.revision,
@@ -202,8 +204,8 @@ for (const scenario of scenarios) {
           .setIssuer(issuer)
           .setAudience('commerce-market-catalog')
           .setSubject(principal.principalId)
-          .setIssuedAt()
-          .setExpirationTime('5m')
+          .setIssuedAt(issuedAt)
+          .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
           .setJti(randomUUID())
           .sign(privateKey),
       );
