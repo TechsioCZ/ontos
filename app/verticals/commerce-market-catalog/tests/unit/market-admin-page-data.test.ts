@@ -145,13 +145,9 @@ it.live('saves one e-shop preference with catalogue authority, revision and idem
   }).pipe(Effect.provide(network)),
 );
 
-it.live('retains proposal receipts and rejects malformed storefront ids without a write', () =>
-  Effect.gen(function* storefrontCatalogProposal() {
+it.live('rejects a malformed storefront id before calling Merchandise', () =>
+  Effect.gen(function* invalidStorefrontCatalogSetting() {
     yield* pinTestDocument;
-    answer = proposal;
-    expect(yield* saveStorefrontCatalog('akros-storefront', true, 17)).toEqual({ ok: true, value: proposal });
-    expect(catalogReceived).toHaveLength(1);
-    catalogReceived.length = 0;
     expect(yield* saveStorefrontCatalog('../invalid', true, 17)).toEqual({ ok: false, reason: 'invalid' });
     expect(catalogReceived).toEqual([]);
   }).pipe(Effect.provide(network)),

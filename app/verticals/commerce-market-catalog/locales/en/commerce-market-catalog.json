@@ -46,8 +46,7 @@
         "saving": "Saving…",
         "saved": "Product visibility saved.",
         "proposed": "The product visibility change is awaiting approval.",
-        "reload": "Load current settings",
-        "loadFailed": "Shop settings could not be loaded."
+        "reload": "Load current settings"
       },
       "unassigned": {
         "title": "Markets without an e-shop",

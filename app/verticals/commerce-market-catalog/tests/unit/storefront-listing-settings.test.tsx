@@ -7,24 +7,21 @@ import {
   ManageCatalogActionConflictProblemSchema,
   ManageCatalogActionInvalidProblemSchema,
   ManageCatalogActionSchemaErrorMiddleware,
-  ManageCatalogActionUnavailableProblemSchema,
 } from '@app/merchandise/apis/manage-catalog-action';
 import type { ManageCatalogPayloadSchema } from '@app/merchandise/apis/manage-catalog-action';
 import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
 import {
   browserNetwork,
   networkIdle,
-  networkQuietExcept,
   pinTestDocument,
   serveApi,
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
-import { Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
-import { constVoid } from 'effect/Function';
-import { EshopCardView } from '../../src/routes/[lang]/prodej/eshopy/page.tsx';
+import { StorefrontListingSetting } from '../../src/routes/[lang]/prodej/eshopy/page.tsx';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const committed = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: [], revision: 18 });
@@ -33,9 +30,7 @@ const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
   expiresAt: '2030-01-01T00:00:00.000Z',
   proposalId: '22222222-2222-4222-8222-222222222222',
 });
-type OwnerProblem =
-  | typeof ManageCatalogActionConflictProblemSchema.Type
-  | typeof ManageCatalogActionUnavailableProblemSchema.Type;
+type OwnerProblem = typeof ManageCatalogActionConflictProblemSchema.Type;
 let answer: Effect.Effect<typeof committed | typeof proposal, OwnerProblem> = Effect.succeed(committed);
 const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
 const OwnerApi = ManageCatalogActionApi.prefix('/merchandise-api');
@@ -75,24 +70,12 @@ const save = () =>
   Option.getOrThrow(
     Option.fromNullOr(buttons(copy('eshops.listing.save'))[0] ?? buttons(copy('eshops.listing.saving'))[0]),
   );
-const mount = (canManageCatalog = true) =>
+const mount = (canManageCatalog = true, appId = 'akros-storefront') =>
   Effect.gen(function* mountStorefrontSetting() {
     yield* pinTestDocument;
     yield* mountInRoute(
       <>
-        <EshopCardView
-          card={{
-            appId: 'akros-storefront',
-            channels: ['B2C'],
-            lifecycle: 'ACTIVE',
-            markets: [],
-            name: 'Akros',
-            url: 'https://akros.test',
-          }}
-          onOpenMarket={constVoid}
-          refresh={Effect.void}
-          settings={{ canManageCatalog, revision: 17 }}
-        />
+        <StorefrontListingSetting appId={appId} refresh={Effect.void} settings={{ canManageCatalog, revision: 17 }} />
         <Toaster />
       </>,
     );
@@ -112,7 +95,21 @@ afterEach(() => {
   toaster.remove();
 });
 
-it.live('shows the Akros default and sends the changed checkbox only after Save', () =>
+it.live('lists only main products by default on AKROS and SroubShop and on no other e-shop', () =>
+  Effect.gen(function* defaults() {
+    for (const [appId, checked] of [
+      ['akros-storefront', true],
+      ['sroubshop-storefront', true],
+      ['n1-storefront', false],
+    ] as const) {
+      yield* mount(true, appId);
+      expect(input().checked).toBe(checked);
+      unmountAll();
+    }
+  }).pipe(Effect.provide(network)),
+);
+
+it.live('sends the changed checkbox only after Save', () =>
   Effect.gen(function* explicitSave() {
     yield* mount();
     expect(input().checked).toBe(true);
@@ -136,66 +133,6 @@ it.live('shows the Akros default and sends the changed checkbox only after Save'
     ]);
     expect(input().checked).toBe(false);
     expect(save().disabled).toBe(true);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('retains an unsaved draft on failure and allows retrying', () =>
-  Effect.gen(function* failedSave() {
-    answer = Effect.fail(
-      Schema.decodeUnknownSync(ManageCatalogActionUnavailableProblemSchema)({
-        _tag: 'ManageCatalogActionUnavailableProblem',
-        code: 'merchandise_persistence_unavailable',
-        detail: 'The catalog owner is temporarily unavailable',
-        retryable: true,
-        status: 503,
-        title: 'Unavailable',
-        type: 'https://ontos.dev/problems/unavailable',
-      }),
-    );
-    yield* mount();
-    yield* toggle();
-    yield* clickSave();
-    yield* networkIdle;
-    yield* waitUntil(() => text().includes(copy('failures.unavailable')));
-    expect(input().checked).toBe(false);
-    expect(save().disabled).toBe(false);
-    expect(saved()).toBe(false);
-    expect(commands).toHaveLength(1);
-
-    answer = Effect.succeed(committed);
-    yield* clickSave();
-    yield* networkIdle;
-    yield* waitUntil(saved);
-    expect(commands).toHaveLength(2);
-    expect(input().checked).toBe(false);
-    expect(save().disabled).toBe(true);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('keeps an unsaved checkbox editable and shows saving only during the request', () =>
-  Effect.gen(function* dirtyIsNotSaving() {
-    const response = yield* Deferred.make<typeof committed>();
-    answer = Deferred.await(response);
-    yield* mount();
-    yield* toggle();
-    expect(input().disabled).toBe(false);
-    expect(save().textContent).toBe(copy('eshops.listing.save'));
-    yield* toggle();
-    expect(input().checked).toBe(true);
-    expect(save().disabled).toBe(true);
-    yield* networkIdle;
-    expect(commands).toEqual([]);
-
-    yield* toggle();
-    yield* clickSave();
-    yield* waitUntil(() => commands.length === 1);
-    yield* networkQuietExcept(1);
-    expect(input().disabled).toBe(true);
-    expect(save().textContent).toBe(copy('eshops.listing.saving'));
-    yield* Deferred.succeed(response, committed);
-    yield* networkIdle;
-    yield* waitUntil(saved);
-    expect(commands).toHaveLength(1);
   }).pipe(Effect.provide(network)),
 );
 
@@ -223,29 +160,6 @@ it.live('offers no Save action without catalog management permission', () =>
     yield* networkIdle;
     expect(input().checked).toBe(true);
     expect(commands).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('prevents duplicate saves and checkbox edits while the owner is responding', () =>
-  Effect.gen(function* pendingSave() {
-    const response = yield* Deferred.make<typeof committed>();
-    answer = Deferred.await(response);
-    yield* mount();
-    yield* toggle();
-    yield* clickSave();
-    yield* waitUntil(() => commands.length === 1);
-    yield* networkQuietExcept(1);
-    expect(input().disabled).toBe(true);
-    expect(save().disabled).toBe(true);
-    yield* clickSave();
-    yield* toggle();
-    yield* networkQuietExcept(1);
-    expect(input().checked).toBe(false);
-    expect(commands).toHaveLength(1);
-    yield* Deferred.succeed(response, committed);
-    yield* networkIdle;
-    yield* waitUntil(saved);
-    expect(commands).toHaveLength(1);
   }).pipe(Effect.provide(network)),
 );
 

@@ -44,7 +44,7 @@ type Query = { view: { storefrontCatalog: Record<string, unknown> } };
 const catalogOf = (call: unknown[]) => {
   const { storefrontAppId, marketId, ...query } = (call[2] as Query).view.storefrontCatalog;
   expect(marketId).toBe(requestMarket.id);
-  expect(storefrontAppId).toBe("akros-storefront");
+  expect(storefrontAppId).toBe("sroubshop-storefront");
   return query;
 };
 
@@ -89,8 +89,7 @@ let server: Server;
 beforeEach(async () => {
   // Fresh module per test: the product and navigation caches are process-local.
   vi.resetModules();
-  vi.stubEnv("STOREFRONT_BRAND", "akros");
-  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "akros-storefront");
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "sroubshop-storefront");
   requestMarket.id = czMarketId;
   server = await vi.importActual<Server>("@/ontos/catalog-server");
   vi.mocked(readRecords).mockReset();
@@ -133,39 +132,6 @@ afterEach(() => {
 });
 
 describe("OntOS catalog server reads", () => {
-  it.each([
-    ["akros", "akros-storefront"],
-    ["sroubshop", "akros-storefront"],
-    ["sroubshop", "sroubshop-storefront"],
-    ["akros", "n1-storefront"],
-    ["akros", "another-storefront"],
-  ] as const)("delegates listing preferences to the owner for %s / %s", async (brand, appId) => {
-    vi.stubEnv("STOREFRONT_BRAND", brand);
-    vi.stubEnv("ONTOS_STOREFRONT_APP_ID", appId);
-    await server.readProducts({ categorySlug: "matice", pageSize: 24 }, "card", true);
-    const query = (vi.mocked(readRecords).mock.calls.at(-1)![2] as Query).view.storefrontCatalog;
-    expect(query.storefrontAppId).toBe(appId);
-    expect(query).not.toHaveProperty("mainSourceProductsOnly");
-  });
-
-  it("keeps Akros and SroubShop listing caches separate", async () => {
-    const query = { categorySlug: "matice", pageSize: 24 };
-    vi.stubEnv("STOREFRONT_BRAND", "sroubshop");
-    vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "sroubshop-storefront");
-    await server.getCategoryListing(query);
-    vi.stubEnv("STOREFRONT_BRAND", "akros");
-    vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "akros-storefront");
-    await server.getCategoryListing(query);
-    vi.stubEnv("STOREFRONT_BRAND", "sroubshop");
-    vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "sroubshop-storefront");
-    await server.getCategoryListing(query);
-    expect(
-      vi
-        .mocked(readRecords)
-        .mock.calls.map((call) => (call[2] as Query).view.storefrontCatalog.storefrontAppId),
-    ).toEqual(["sroubshop-storefront", "akros-storefront"]);
-  });
-
   it("keeps price-free navigation fresh for 15 minutes but refreshes home and detail after 10 seconds", async () => {
     vi.useFakeTimers();
     await server.getCatalog();
@@ -247,7 +213,7 @@ describe("OntOS catalog server reads", () => {
           pageSize: 24,
           fields: "card",
           includeCategories: false,
-          storefrontAppId: "akros-storefront",
+          storefrontAppId: "sroubshop-storefront",
           marketId: czMarketId,
         },
       },

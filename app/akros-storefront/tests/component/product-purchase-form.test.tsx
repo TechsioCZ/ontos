@@ -108,6 +108,11 @@ describe("ProductPurchaseForm", () => {
         expect(minimum.getAttribute("aria-valuenow")).toBe(String(expected));
       }
       await user.keyboard("{Home}");
+      // Page keys skip the kit's fixed step as well, so the thumb never snaps back to where it was.
+      await user.keyboard("{PageUp}");
+      expect(minimum.getAttribute("aria-valuenow")).toBe(String(dimensions[1]));
+      await user.keyboard("{PageDown}");
+      expect(minimum.getAttribute("aria-valuenow")).toBe(String(dimensions[0]));
       maximum.focus();
       for (const expected of dimensions.slice(0, -1).reverse()) {
         await user.keyboard("{ArrowLeft}");

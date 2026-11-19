@@ -46,11 +46,11 @@ export function VariantRangeFilter({
         Math.abs(stop - number) < Math.abs(closest - number) ? stop : closest,
       );
   // Keep the real measurement scale (including ARIA values). The kit supports a fixed
-  // step, so keyboard arrows must move to the next existing dimension across uneven gaps.
+  // step, so arrows and Page keys must move to the next existing dimension across uneven gaps.
   const stepSlider = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!isHTMLElement(event.target) || event.target.getAttribute("role") !== "slider") return;
-    const forward = event.key === "ArrowRight" || event.key === "ArrowUp";
-    const backward = event.key === "ArrowLeft" || event.key === "ArrowDown";
+    const forward = ["ArrowRight", "ArrowUp", "PageUp"].includes(event.key);
+    const backward = ["ArrowLeft", "ArrowDown", "PageDown"].includes(event.key);
     if (!forward && !backward) return;
     const index = event.target.getAttribute("data-index") === "0" ? 0 : 1;
     const next = forward

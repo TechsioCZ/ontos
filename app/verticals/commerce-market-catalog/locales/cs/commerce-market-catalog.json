@@ -46,8 +46,7 @@
         "saving": "Ukládám…",
         "saved": "Zobrazení produktů je uloženo.",
         "proposed": "Změna zobrazení produktů čeká na schválení.",
-        "reload": "Načíst aktuální nastavení",
-        "loadFailed": "Nastavení e-shopů se nepodařilo načíst."
+        "reload": "Načíst aktuální nastavení"
       },
       "unassigned": {
         "title": "Trhy bez e-shopu",

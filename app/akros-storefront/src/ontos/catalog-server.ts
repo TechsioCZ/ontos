@@ -88,12 +88,6 @@ const categoryPages = catalogCache<CategoryPage>({
   limit: 60,
 });
 
-/** Merchandise resolves the company's saved listing preference for this e-shop. */
-const listingQuery = (query: Record<string, unknown>): Record<string, unknown> => ({
-  ...query,
-  storefrontAppId: getConfig().appId,
-});
-
 /**
  * Every storefront catalog read is answered for one market: its offer and its currency. Without a market id
  * (no market exists yet, see market.ts) merchandise answers with the whole published CZK catalogue.
@@ -102,7 +96,8 @@ const readCatalog = async (
   marketId: string | undefined,
   storefrontCatalog: Record<string, unknown>,
 ) => {
-  const query = listingQuery(storefrontCatalog);
+  // Merchandise applies the company's saved listing policy for this e-shop.
+  const query = { ...storefrontCatalog, storefrontAppId: getConfig().appId };
   return (await readRecords("merchandise", "records", {
     view: {
       storefront: true,
@@ -113,8 +108,7 @@ const readCatalog = async (
 /** The request's market (resolved from the path locale; see active-market.ts). */
 const marketIdOf = async () => (await getActiveMarket()).marketId;
 /** Cache keys of market-dependent entries. */
-const marketKey = (marketId: string | undefined, key: string) =>
-  `${getConfig().appId}\u0000${marketId ?? ""}\u0000${key}`;
+const marketKey = (marketId: string | undefined, key: string) => `${marketId ?? ""}\u0000${key}`;
 
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>
@@ -125,7 +119,7 @@ const compact = (query: CatalogQuery): CatalogQuery =>
   ) as CatalogQuery;
 
 const productKey = (marketId: string | undefined, query: CatalogQuery, fields: CatalogFields) =>
-  JSON.stringify(listingQuery({ ...compact(query), fields, includeCategories: false, marketId }));
+  JSON.stringify({ ...compact(query), fields, includeCategories: false, marketId });
 
 const loadProducts = (key: string) => async () => {
   const { marketId, ...query }: Record<string, unknown> = JSON.parse(key);
