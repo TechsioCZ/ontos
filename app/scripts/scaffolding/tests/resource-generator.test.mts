@@ -25,6 +25,9 @@ const verticalName = 'property-registry';
 const moduleId = 'property.registry';
 const resourceName = 'rental-unit';
 const coreResourceName = 'legal-entity';
+const coreMediaResourceName = 'media-asset';
+const corePackagePath = 'packages/core-runtime/package.json';
+const coreIndexEntry = './src/index.ts';
 const resourceCommand = 'resource';
 const verticalFlag = '--vertical';
 const resourceFlag = '--resource';
@@ -57,7 +60,7 @@ const createFixture = (): Effect.Effect<string, unknown> =>
       verticalPackagePath,
       json({
         dependencies: { effect: '4.0.0-beta.107' },
-        exports: { '.': './src/index.ts' },
+        exports: { '.': coreIndexEntry },
         modernjs: {
           apiRuntime: 'effect',
           appId: verticalName,
@@ -192,8 +195,8 @@ it.live(
       Effect.fn(function* coreResourceFixture(root) {
         yield* write(
           root,
-          'packages/core-runtime/package.json',
-          json({ exports: { '.': './src/index.ts' }, name: '@app/core-runtime', private: true, type: 'module' }),
+          corePackagePath,
+          json({ exports: { '.': coreIndexEntry }, name: '@app/core-runtime', private: true, type: 'module' }),
         );
         const result = yield* runScaffoldEffect(
           resourceCommand,
@@ -205,9 +208,12 @@ it.live(
         expect(result.kind).toBe('generated');
         const resourcePath = path.join(root, `packages/core-runtime/src/resources/${coreResourceName}.ts`);
         const resource = yield* Effect.promise(() => readFile(resourcePath, 'utf-8'));
-        const packageSource = yield* Effect.promise(() =>
-          readFile(path.join(root, 'packages/core-runtime/package.json'), 'utf-8'),
+        const packageSource = yield* Effect.promise(() => readFile(path.join(root, corePackagePath), 'utf-8'));
+        // The generator keeps reproducing the committed Core resource byte for byte.
+        const committed = yield* Effect.promise(() =>
+          readFile(path.join(appRoot, `packages/core-runtime/src/resources/${coreResourceName}.ts`), 'utf-8'),
         );
+        expect(resource).toBe(committed);
         expect(resource).toMatch(/@ontos-resource-owner core\.identity/u);
         expect(resource).toMatch(/moduleId: Schema\.Literal\('core\.identity'\)/u);
         expect(resource).toMatch(/resourceType: Schema\.Literal\('core\.identity\.legal-entity'\)/u);
@@ -220,7 +226,7 @@ it.live(
         const unsupported = yield* runScaffoldEffect(resourceCommand, [verticalFlag, 'core', resourceFlag, 'other'], {
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer), Effect.sandbox, Effect.flip);
-        expect(String(Cause.squash(unsupported))).toMatch(/supports only legal-entity/u);
+        expect(String(Cause.squash(unsupported))).toMatch(/supports only legal-entity, media-asset/u);
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeUnsupported);
 
         const beforeRerun = yield* snapshotTree(root, ['node_modules']);
@@ -233,6 +239,56 @@ it.live(
         ).pipe(Effect.provide(NodeServices.layer), Effect.sandbox, Effect.flip);
         expect(String(Cause.squash(rerun))).toMatch(/resource contract export .* already exists/u);
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeRerun);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'resource scaffold publishes the Core-owned media-asset ref under core.media with the brand and type the owner fixes',
+  Effect.fn(function* coreMediaResourceScenario() {
+    yield* withFixture(
+      Effect.fn(function* coreMediaResourceFixture(root) {
+        // The real Core package carries conditional (object) exports in a hand-ordered list.
+        const existingExportEntries: readonly (readonly [string, JsonValue])[] = [
+          ['.', coreIndexEntry],
+          ['./zeta', { default: './src/zeta.node.ts', workerd: './src/zeta.workerd.ts' }],
+          ['./alpha', './src/alpha.ts'],
+        ];
+        const existingExports = Object.fromEntries(existingExportEntries);
+        yield* write(
+          root,
+          corePackagePath,
+          json({ exports: existingExports, name: '@app/core-runtime', private: true, type: 'module' }),
+        );
+        const result = yield* runScaffoldEffect(
+          resourceCommand,
+          [verticalFlag, 'core', resourceFlag, coreMediaResourceName],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        expect(result.kind).toBe('generated');
+        const resource = yield* Effect.promise(() =>
+          readFile(path.join(root, `packages/core-runtime/src/resources/${coreMediaResourceName}.ts`), 'utf-8'),
+        );
+        const packageSource = yield* Effect.promise(() => readFile(path.join(root, corePackagePath), 'utf-8'));
+        expect(resource).toMatch(/@ontos-resource-owner core\.media/u);
+        expect(resource).toMatch(/@ontos-resource-slug media-asset/u);
+        expect(resource).toMatch(/moduleId: Schema\.Literal\('core\.media'\)/u);
+        expect(resource).toMatch(/resourceType: Schema\.Literal\('core\.media\.asset'\)/u);
+        expect(resource).toMatch(/Schema\.brand\('MediaAssetId'\)/u);
+        expect(resource).not.toMatch(/LegalEntityId|core\.identity/u);
+        expect(resource).toMatch(/export const MediaAssetRefSchema = Schema\.Struct/u);
+        expect(resource).toMatch(/export const mediaAssetResourceDescriptor = \{/u);
+        expect(resource).toMatch(/key: 'core\.media\.asset'/u);
+        expect(resource).toMatch(/label: 'Media Asset'/u);
+        expect(resource).toMatch(/owningModuleId: 'core\.media'/u);
+        const publishedPackage = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ exports: Schema.Record(Schema.String, Schema.Unknown) }),
+        )(JSON.parse(packageSource));
+        expect(Object.entries(publishedPackage.exports)).toEqual([
+          ...existingExportEntries,
+          ['./resources/media-asset', './src/resources/media-asset.ts'],
+        ]);
       }),
     );
   }),
