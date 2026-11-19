@@ -504,7 +504,7 @@ jobs:
 
   # Unit rows read the build shards' uploads, so they need the build shards: GitHub starts a row only once
   # every shard uploaded, and no row holds a runner while a shard still builds. Each row also takes the slot
-  # of a check that frees after the owner rows and the bootstrap took the producers' slots: the source
+  # of a check that frees alongside the owner rows and the bootstrap: the source
   # contracts, the changed-file lint, the static contracts and the repository tooling tests. A whole-tree
   # lint frees two slots, so both deferred unit rows follow it and browser checks follow static contracts.
   # A row reads the build shards only when it asks for Node artifacts, so the shards must have reached what
@@ -861,14 +861,15 @@ jobs:
   # another job's artifact names that job in `needs`, so GitHub starts it only once the artifact exists:
   # with 20 hosted runners for the whole organisation, jobs that took a runner and then polled for builds
   # that had no runner filled every runner and deadlocked each other until the 30-minute limit.
-  # Producers start with the run and only produce: 11 build shards and the database producer. Runner
-  # budget, at most 18 of the organisation's 20 including the pull request's Quality Audit: 11 build shards
-  # + database producer + browser checks + lint + tooling tests + source contracts + static contracts = 17.
+  # Producers start with the run and only produce: 6 build shards and the database producer. First-wave
+  # budget: 6 build shards + database producer + browser checks + lint + tooling tests + source contracts
+  # + static contracts = 12 gate jobs, leaving five slots below the 17-gate-job budget.
   # A whole-tree sweep replaces the browser's first-wave slot with a second lint row. Browser checks then
   # take the static-contracts slot, and both deferred unit rows take the two lint slots.
-  # The 11 owner rows and this bootstrap take the 12 producers' slots; each unit row takes the slot of the
-  # check it follows. The bootstrap and the owner rows always read their producers' artifacts, so every
-  # producer they need must have succeeded.
+  # The 10 owner rows and this bootstrap use the seven producers' slots plus four of those spare slots;
+  # each unit row takes the slot of the check it follows. Peak: 11 consumers + five independent checks or
+  # their successors = 16 gate jobs, 17 including the pull request's Quality Audit. The bootstrap and the
+  # owner rows always read their producers' artifacts, so every producer they need must have succeeded.
   node-topology-proof:
     name: ${{ matrix.name }}
     permissions:
@@ -1359,13 +1360,11 @@ jobs:
     steps: *integration-steps
 
   # Release identities and compiler outputs are built from this exact commit, on every run. A build shard
-  # only builds, packs and uploads its units, so it never waits for anything and its slot frees within about
-  # two minutes; every consumer needs this job. Every consumer reads all shards, so the slowest shard sets
-  # when the consumers start: units are paired by measured build time (seconds, two builds sharing a
-  # runner) so that no pair outlasts the largest single unit: catalog 98 alone, customer context 71 alone,
-  # inventory 70, shell 68, symmy 66, pricing 55, market catalog 54, party 53, assortment 50, projects 41,
-  # tax 38, price group 38, order 37, payment 37, promotion 35, privacy 35, payment term 34, storefront 31,
-  # cart 27, availability 19.
+  # only builds, packs and uploads its units, so it never waits for anything; every consumer needs this job.
+  # Every consumer reads all shards, so the slowest shard sets when the consumers start. Consolidating the
+  # measured pairs from run 44429728152 keeps two concurrent builds per runner and avoids five setups.
+  # Sum of the old pairs' build seconds per new shard: 95, 100, 104, 105, 102, with catalog alone at 53.
+  # These are scheduling estimates, not new timings: CI must measure the four-unit shards on real runners.
   node-artifact-build:
     name: ${{ matrix.name }}
     needs: [ci-plan]

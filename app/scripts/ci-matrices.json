@@ -35,17 +35,12 @@
     }
   ],
   "build": [
-    { "shard": 1, "units": "verticals/tax verticals/availability" },
-    { "shard": 2, "units": "verticals/projects verticals/price-group-catalog" },
-    { "shard": 3, "units": "verticals/catalog" },
-    { "shard": 4, "units": "verticals/commerce-customer-context" },
-    { "shard": 5, "units": "verticals/inventory verticals/commerce-cart" },
-    { "shard": 6, "units": "apps/shell-super-app verticals/storefront-registry" },
-    { "shard": 7, "units": "verticals/symmy-integration verticals/payment-term-catalog" },
-    { "shard": 8, "units": "verticals/pricing verticals/privacy" },
-    { "shard": 9, "units": "verticals/commerce-market-catalog verticals/promotion" },
-    { "shard": 10, "units": "verticals/party-registry verticals/payment" },
-    { "shard": 11, "units": "verticals/assortment verticals/commerce-order" }
+    {"shard": 1, "units": "verticals/party-registry verticals/payment verticals/tax verticals/availability"},
+    {"shard": 2, "units": "verticals/assortment verticals/commerce-order verticals/symmy-integration verticals/payment-term-catalog"},
+    {"shard": 3, "units": "verticals/inventory verticals/commerce-cart verticals/pricing verticals/privacy"},
+    {"shard": 4, "units": "verticals/commerce-customer-context apps/shell-super-app verticals/storefront-registry"},
+    {"shard": 5, "units": "verticals/commerce-market-catalog verticals/promotion verticals/projects verticals/price-group-catalog"},
+    {"shard": 6, "units": "verticals/catalog"}
   ],
   "integration": [
     {
@@ -58,10 +53,12 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (1/11)",
+      "name": "Owner Integration (1/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
+        "./verticals/pricing#3/4",
+        "./verticals/commerce-order#1/2",
         "whole:customer-readback",
         "./verticals/commerce-customer-context#4/56",
         "./verticals/privacy#1/8",
@@ -77,7 +74,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (2/11)",
+      "name": "Owner Integration (2/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -97,7 +94,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (3/11)",
+      "name": "Owner Integration (3/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -118,7 +115,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (4/11)",
+      "name": "Owner Integration (4/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -138,25 +135,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (5/11)",
-      "native-composition": true,
-      "lanes": 2,
-      "tasks": [
-        "./apps/shell-super-app#2/8",
-        "root:13/22",
-        "./verticals/pricing#3/4",
-        "./verticals/commerce-customer-context#21/56",
-        "./verticals/commerce-customer-context#6/56",
-        "./verticals/commerce-customer-context#12/56",
-        "./verticals/commerce-order#1/2",
-        "./verticals/commerce-customer-context#11/56",
-        "./verticals/commerce-customer-context#49/56",
-        "./verticals/commerce-customer-context#38/56"
-      ]
-    },
-    {
-      "suite": "integration",
-      "name": "Owner Integration (6/11)",
+      "name": "Owner Integration (5/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -190,7 +169,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (7/11)",
+      "name": "Owner Integration (6/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -218,7 +197,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (8/11)",
+      "name": "Owner Integration (7/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -241,10 +220,17 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (9/11)",
+      "name": "Owner Integration (8/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
+        "root:13/22",
+        "./verticals/commerce-customer-context#21/56",
+        "./verticals/commerce-customer-context#6/56",
+        "./verticals/commerce-customer-context#12/56",
+        "./verticals/commerce-customer-context#11/56",
+        "./verticals/commerce-customer-context#49/56",
+        "./verticals/commerce-customer-context#38/56",
         "whole:preproposal-basis",
         "root:15/22",
         "root:14/22",
@@ -275,7 +261,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (10/11)",
+      "name": "Owner Integration (9/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
@@ -300,10 +286,11 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (11/11)",
+      "name": "Owner Integration (10/10)",
       "native-composition": true,
       "lanes": 2,
       "tasks": [
+        "./apps/shell-super-app#2/8",
         "whole:pricing",
         "./verticals/commerce-market-catalog#1/4",
         "root:1/22",

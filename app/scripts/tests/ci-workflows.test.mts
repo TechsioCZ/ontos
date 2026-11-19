@@ -2223,8 +2223,9 @@ it('refuses root native integration when the same-run build archives are missing
 
 // The organisation's free plan runs 20 hosted jobs for every repository together, and the gates may hold at
 // most 18 of them. The pull request's Quality Audit holds one while the first wave runs, so every job that
-// starts with the run counts against 17, and every later job takes the slot of exactly one finished job.
-it('starts at most 17 gate jobs and hands every finished slot to at most one later job', () => {
+// starts with the run counts against 17. Six build shards leave room for more consumers than producers;
+// independent checks still hand their slots to at most one successor each.
+it('starts 12 gate jobs and keeps the consumer wave at 16 gate jobs', () => {
   const staticRows = readGateCommandJobs()[STATIC_CONTRACTS_JOB].strategy.matrix.row.length;
   for (const lintSweep of ['changed', 'all'] as const) {
     const plan = fullPlanMatrices(lintSweep);
@@ -2232,9 +2233,29 @@ it('starts at most 17 gate jobs and hands every finished slot to at most one lat
     const sourceContracts = 1;
     const producers = plan.integrationBuild.length + plan.integration.length;
     const first = producers + plan.integrationBrowser.length + plan.source.length + sourceContracts + staticRows + lint;
-    expect(first, lintSweep).toBe(17);
-    // The owner rows and the bootstrap need the producers, so they take the producers' slots.
-    expect(plan.integrationOwners.length + plan.integrationTopology.length, lintSweep).toBeLessThanOrEqual(producers);
+    expect(plan.integrationBuild, lintSweep).toHaveLength(6);
+    expect(producers, lintSweep).toBe(7);
+    expect(first, lintSweep).toBe(12);
+    // The owner rows and bootstrap also use four of the five slots left unused by the first wave.
+    const consumers = plan.integrationOwners.length + plan.integrationTopology.length;
+    expect(plan.integrationOwners, lintSweep).toHaveLength(10);
+    expect(consumers, lintSweep).toBe(11);
+    const peak = consumers + first - producers;
+    expect(peak, lintSweep).toBe(16);
+    // A ceiling is intentional here: the organisation reserves two slots outside the gates and audit.
+    expect(peak + 1, lintSweep).toBeLessThanOrEqual(18);
+    // Count executed jobs, including the planner and final gate; a sweep adds one lint job.
+    expect(
+      first +
+        consumers +
+        plan.integrationBrowserAfterStatic.length +
+        plan.unit.length +
+        plan.unitAfterLint.length +
+        plan.unitAfterStatic.length +
+        plan.unitAfterTooling.length +
+        2,
+      lintSweep,
+    ).toBe(lintSweep === 'changed' ? 29 : 30);
     expect(plan.unit.length, lintSweep).toBeLessThanOrEqual(sourceContracts);
     expect(plan.unitAfterLint.length, lintSweep).toBeLessThanOrEqual(lint);
     expect(plan.unitAfterTooling.length, lintSweep).toBeLessThanOrEqual(plan.source.length);
