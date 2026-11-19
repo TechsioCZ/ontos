@@ -3,7 +3,8 @@ import { Command, Flag } from 'effect/cli';
 
 import { parse } from 'yaml';
 
-import { knownTask, loadCiMatrices, taskDirectory } from './ci/ci-matrices.mts';
+import { knownTask, taskDirectory } from './ci/ci-matrices-rules.mts';
+import { loadCiMatrices } from './ci/ci-matrices.mts';
 import type { CiIntegrationEntry, CiScope, CiTemplates } from './ci/ci-matrices.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';

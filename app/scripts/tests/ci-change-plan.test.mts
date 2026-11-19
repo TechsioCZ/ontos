@@ -16,9 +16,9 @@ import { fileURLToPath } from 'node:url';
 import { Array as EffectArray, Effect, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { knownTask, parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
+import { CI_MATRICES_KEYS, knownTask, taskDirectory } from '../ci/ci-matrices-rules.mts';
+import { CiTemplatesSchema, parseCiMatrices } from '../ci/ci-matrices.mts';
 import {
-  CiTemplatesSchema,
   filterPaths,
   matchingPackages,
   planCiChecks,
@@ -935,4 +935,25 @@ it('runs the integration suite of every workspace package that declares one in s
       .map(({ directory }) => directory)
       .filter((directory) => !covered.has(directory)),
   ).toEqual([]);
+});
+
+/** The keys a schema's fields allow and those it requires, in declaration order. */
+const declared = (
+  fields: Readonly<
+    Record<string, { readonly ast: { readonly context?: { readonly isOptional: boolean } | undefined } }>
+  >,
+) => ({
+  allowed: Object.keys(fields),
+  required: Object.entries(fields)
+    .filter(([, field]) => field.ast.context?.isOptional !== true)
+    .map(([key]) => key),
+});
+
+it('checks the matrices without installing against the keys the installed decode declares', () => {
+  const { fields } = CiTemplatesSchema;
+  expect(declared(fields)).toEqual(CI_MATRICES_KEYS.matrices);
+  expect(declared(fields.source.value.fields)).toEqual(CI_MATRICES_KEYS.command);
+  expect(declared(fields.unit.value.fields)).toEqual(CI_MATRICES_KEYS.command);
+  expect(declared(fields.integration.value.fields)).toEqual(CI_MATRICES_KEYS.integration);
+  expect(declared(fields.scopes.schema.value.fields)).toEqual(CI_MATRICES_KEYS.scope);
 });

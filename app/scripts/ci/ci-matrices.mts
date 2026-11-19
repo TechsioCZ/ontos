@@ -10,6 +10,7 @@ import { Config, Console, Effect, FileSystem, Result, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { runQualityCli } from '../quality-cli-lifecycle.mts';
+import { integrationEntryProblem, mergeCiMatrices } from './ci-matrices-rules.mts';
 
 const APP = path.resolve(import.meta.dirname, '../..');
 const CI_MATRICES = 'scripts/ci-matrices.json';
@@ -25,18 +26,6 @@ const CommandEntrySchema = Schema.Struct({
   setup: Schema.optionalKey(Schema.String),
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
-/** The workspace directory a package task such as `./verticals/privacy#2/8` runs in; undefined for root and whole proofs. */
-export const taskDirectory = (task: string) =>
-  /^\.\/(?<directory>[a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.directory;
-
-/** Every task form scripts/ci/run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
-export const knownTask = (task: string) =>
-  /^root:\d+\/\d+$/u.test(task) ||
-  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-routes|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval|migrator-owner-access|stage-recovery|vat-deploy-sequence|core-runtime-migrations|customer-context-migrations|party-migrations)$/u.test(
-    task,
-  ) ||
-  taskDirectory(task) !== undefined;
-
 /**
  * One integration row. The database row prepares this run's database once; each owner row restores it into one
  * PostgreSQL cluster per lane and runs its tasks two at a time (scripts/ci/run-integration-suites.sh); the bootstrap
@@ -49,24 +38,7 @@ export const IntegrationEntrySchema = Schema.Struct({
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
   suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
   tasks: Schema.optionalKey(Schema.Array(Schema.String)),
-}).check(
-  Schema.makeFilter((entry) =>
-    entry.suite === 'integration' && (entry.tasks === undefined || entry.tasks.length === 0)
-      ? 'Integration templates must list the tasks they run'
-      : undefined,
-  ),
-  Schema.makeFilter((entry) =>
-    (entry.tasks ?? []).some((task) => !knownTask(task))
-      ? 'Integration tasks must use a runnable task form'
-      : undefined,
-  ),
-  Schema.makeFilter((entry) =>
-    (entry.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')) &&
-    (entry['proof-packages']?.length ?? 0) === 0
-      ? 'Native preproposal templates must name their runtime proof packages'
-      : undefined,
-  ),
-);
+}).check(Schema.makeFilter(integrationEntryProblem));
 /**
  * A change confined to these paths is proved by the named source rows, the static contracts, the lint of the changed
  * files and the unit rows of the packages it changes; it builds no unit and starts no service. A path matches when it
@@ -104,7 +76,6 @@ const OverlaySchema = Schema.Struct({
   source: Schema.optionalKey(matricesFields.source),
   unit: Schema.optionalKey(matricesFields.unit),
 });
-type Overlay = typeof OverlaySchema.Type;
 
 export class CiMatricesInvalid extends Schema.TaggedError<CiMatricesInvalid>()('CiMatricesInvalid', {
   reason: Schema.String,
@@ -113,49 +84,6 @@ export class CiMatricesInvalid extends Schema.TaggedError<CiMatricesInvalid>()('
     return this.reason;
   }
 }
-
-/** The base list with the overlay's entries appended, or a failure naming every entry either list already holds. */
-const appended = <Entry,>(
-  key: string,
-  base: readonly Entry[] | undefined,
-  added: readonly Entry[] | undefined,
-  nameOf: (entry: Entry) => string,
-): Result.Result<readonly Entry[], CiMatricesInvalid> => {
-  const existing = base ?? [];
-  const extra = added ?? [];
-  const names = new Set(existing.map(nameOf));
-  const repeated = extra.map(nameOf).filter((name, index, all) => names.has(name) || all.indexOf(name) !== index);
-  return repeated.length === 0
-    ? Result.succeed([...existing, ...extra])
-    : Result.fail(new CiMatricesInvalid({ reason: `The overlay repeats ${key} entries: ${repeated.join(', ')}` }));
-};
-const byName = (entry: { readonly name: string }) => entry.name;
-const itself = (entry: string) => entry;
-
-/** The base with the overlay's entries added (see the module comment); every list and map is present, empty if neither file names it. */
-export const mergeCiMatrices = (base: CiTemplates, overlay: Overlay) => {
-  const weights = overlay['test-weights'] ?? {};
-  const repeatedWeights = Object.keys(weights).filter((name) => Object.hasOwn(base['test-weights'] ?? {}, name));
-  if (repeatedWeights.length > 0) {
-    return Result.fail(
-      new CiMatricesInvalid({ reason: `The overlay repeats test-weights entries: ${repeatedWeights.join(', ')}` }),
-    );
-  }
-  return Result.all({
-    'build-origin-variables': appended(
-      'build-origin-variables',
-      base['build-origin-variables'],
-      overlay['build-origin-variables'],
-      itself,
-    ),
-    integration: appended('integration', base.integration, overlay.integration, byName),
-    'root-packages': appended('root-packages', base['root-packages'], overlay['root-packages'], itself),
-    scopes: appended('scopes', base.scopes, overlay.scopes, byName),
-    source: appended('source', base.source, overlay.source, byName),
-    'test-weights': Result.succeed({ ...base['test-weights'], ...weights }),
-    unit: appended('unit', base.unit, overlay.unit, byName),
-  });
-};
 
 /** One matrices document; a key the matrices do not know fails instead of being dropped. */
 const decodeMatrices = <A,>(label: string, schema: Schema.Codec<A>, text: string) =>
@@ -168,7 +96,14 @@ export const parseCiMatrices = (base: string, overlay?: string) =>
   Result.all([
     decodeMatrices(CI_MATRICES, CiTemplatesSchema, base),
     overlay === undefined ? Result.succeed({}) : decodeMatrices('the overlay', OverlaySchema, overlay),
-  ]).pipe(Result.flatMap(([decoded, added]) => mergeCiMatrices(decoded, added)));
+  ]).pipe(
+    Result.flatMap(([decoded, added]) => {
+      const merged = mergeCiMatrices(decoded, added);
+      return 'invalid' in merged
+        ? Result.fail(new CiMatricesInvalid({ reason: merged.invalid }))
+        : Result.succeed(merged.matrices);
+    }),
+  );
 
 /** The merged matrices: the base with the given overlay (relative to app/), or CI_MATRICES_OVERLAY's when none is given. */
 export const loadCiMatrices = (overlay?: string) =>

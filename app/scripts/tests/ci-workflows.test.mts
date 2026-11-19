@@ -18,7 +18,8 @@ import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
-import { parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
+import { taskDirectory } from '../ci/ci-matrices-rules.mts';
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
