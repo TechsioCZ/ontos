@@ -70,6 +70,7 @@ const ORDER_UNIT = 'commerce-order';
 const PRICING_UNIT = 'pricing';
 const MARKET_CATALOG_UNIT = 'commerce-market-catalog';
 const CATALOG_UNIT = 'catalog';
+const COMMUNICATIONS_UNIT = 'communications';
 const PAYMENT_UNIT = 'payment';
 const PARTY_REGISTRY_UNIT = 'party-registry';
 const PRIVACY_UNIT = 'privacy';
@@ -122,6 +123,16 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
     moduleCredentialVariable: moduleCredentialVariable(CATALOG_UNIT),
     operatorValues: [],
     unitId: CATALOG_UNIT,
+  },
+  {
+    // Communications asks Privacy for Current Processing Eligibility, from its intake Action and from its pre-handoff
+    // Outbox Worker; Privacy is reached inside Zerops only.
+    apiDependencies: [zeropsOnly(PRIVACY_UNIT, 'ONTOS_PRIVACY_API_BASE_URL'), shellGateway],
+    credentialVariables: [],
+    moduleCredentialHolders: SERVICE_AND_WORKER,
+    moduleCredentialVariable: moduleCredentialVariable(COMMUNICATIONS_UNIT),
+    operatorValues: [],
+    unitId: COMMUNICATIONS_UNIT,
   },
   {
     apiDependencies: [

@@ -1206,6 +1206,9 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS}
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4120'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'
@@ -1674,6 +1677,9 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS}
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4120'
         OUTBOX_WORKER_HEALTH_PORT: '4120'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1727,6 +1733,7 @@ zerops:
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
         ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}
+        ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS}
         ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY}
         ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT}
         ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY}

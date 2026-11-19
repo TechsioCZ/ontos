@@ -21,7 +21,7 @@ startOutboxWorkerHost({
     hostedOutboxWorkerEntry(commerceOrderOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER'),
     hostedOutboxWorkerEntry(paymentOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT'),
     hostedOutboxWorkerEntry(symmyIntegrationOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION'),
-    communicationsOutboxWorkerEntry,
+    hostedOutboxWorkerEntry(communicationsOutboxWorkerEntry, 'ONTOS_GATEWAY_MODULE_API_KEY_COMMUNICATIONS'),
   ],
   health: true,
 });
