@@ -9,12 +9,14 @@ import { nextRequest } from "../support/next-request";
 type Server = typeof import("@/ontos/catalog-server");
 type Query = { view: { storefrontCatalog: Record<string, unknown> } };
 type Read = [string, string, Query];
+const storefrontAppId = "sroubshop-storefront";
 const czMarketId = "0b3d6c1e-2f4a-4c5b-8d6e-7f8091a2b3c4";
 const skMarketId = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
 const requestMarket: { id: string | undefined } = { id: czMarketId };
 const calls: Read[] = [];
 const catalogOf = (call: Read) => {
-  const { marketId, ...query } = call[2].view.storefrontCatalog;
+  const { storefrontAppId: appId, marketId, ...query } = call[2].view.storefrontCatalog;
+  expect(appId).toBe(storefrontAppId);
   expect(marketId).toBe(requestMarket.id);
   return query;
 };
@@ -83,7 +85,7 @@ const marketCatalog = () => {
       marketRef: { resourceId: marketId },
       channel: "B2C",
       effectivePeriod,
-      storefrontRef: { appId: "akros-storefront", tenantId: "test-tenant" },
+      storefrontRef: { appId: storefrontAppId, tenantId: "test-tenant" },
       sellingLegalEntityRef: { resourceId: legalEntityId },
     })),
   };
@@ -272,15 +274,21 @@ beforeEach(async () => {
   browserAt(network.origin);
   vi.stubEnv("ONTOS_SHELL_URL", network.origin);
   vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "catalog-server-test-key");
-  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "akros-storefront");
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", storefrontAppId);
   vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", legalEntityId);
   ({ nextRequest: requestContext } = await import("../support/next-request"));
   server = await import("@/ontos/catalog-server");
 });
 afterEach(async () => {
-  vi.useRealTimers();
-  vi.unstubAllEnvs();
-  await network.close();
+  try {
+    await network.idle();
+    for (const call of calls)
+      expect(call[2].view.storefrontCatalog.storefrontAppId).toBe(storefrontAppId);
+  } finally {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    await network.close();
+  }
 });
 
 describe("OntOS catalog server reads", () => {
@@ -382,6 +390,7 @@ describe("OntOS catalog server reads", () => {
               pageSize: 24,
               fields: "card",
               includeCategories: false,
+              storefrontAppId,
               marketId: czMarketId,
             },
           },

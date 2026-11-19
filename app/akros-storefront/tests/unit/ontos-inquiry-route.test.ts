@@ -265,6 +265,7 @@ describe("persisted storefront inquiries", () => {
       view: {
         storefront: true,
         storefrontCatalog: {
+          storefrontAppId: "akros-storefront",
           productIds: ["p1"],
           pageSize: 1,
           fields: "card",

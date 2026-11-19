@@ -258,6 +258,7 @@ describe("POST /api/ontos/account/reorder", () => {
           view: {
             storefront: true,
             storefrontCatalog: {
+              storefrontAppId: "akros-storefront",
               productIds: ["p"],
               variantIds: ["a"],
               pageSize: 1,

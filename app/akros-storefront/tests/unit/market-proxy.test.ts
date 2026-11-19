@@ -51,6 +51,8 @@ beforeEach(async () => {
   // Reload the real modules to isolate their process-local market cache between cases.
   vi.resetModules();
   ownerUnavailable = false;
+  // Match next.config.ts: preserve the real receiving URL in NextRequest.
+  vi.stubEnv("__NEXT_NO_MIDDLEWARE_URL_NORMALIZE", "1");
   network = await serveHttp(() =>
     ownerUnavailable
       ? Response.json({ code: "owner_unavailable" }, { status: 500 })
@@ -143,6 +145,22 @@ describe("market routing proxy", () => {
     expect(network.requests).toHaveLength(1);
     expect(forwarded(response, "x-akros-market-locale")).toBe("sk");
   });
+
+  it.each(["localhost:3070", "127.0.0.1:3070"])(
+    "keeps internal rewrites on the receiving origin when the browser uses %s",
+    async (host) => {
+      const context = nextRequest("http://127.0.0.1:3070/cs", { headers: { host } });
+      try {
+        const response = await context.run(() => proxy(context.request));
+        expect(rewrite(response)).toBe("http://127.0.0.1:3070/");
+        expect(response.headers.get("location")).toBeNull();
+        expect(forwarded(response, "x-akros-market-locale")).toBe("cs");
+        expect(network.requests).toHaveLength(1);
+      } finally {
+        await context.close();
+      }
+    },
+  );
 
   it("sends an unknown locale to the root 404 and an inactive market to its unavailable page", async () => {
     const unknown = await run("/de/kategorie/srouby");

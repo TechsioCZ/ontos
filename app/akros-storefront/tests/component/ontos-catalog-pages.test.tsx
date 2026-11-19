@@ -174,6 +174,7 @@ describe("OntOS category and search pages", () => {
       availability: "in-stock",
       fields: "card",
       includeCategories: false,
+      storefrontAppId: "akros-storefront",
     });
     expect(document.querySelector("h1")?.textContent).toBe("Šrouby");
     expect(document.querySelectorAll(".sf-catalog-product-card").length).toBeGreaterThanOrEqual(3);
@@ -232,6 +233,7 @@ describe("OntOS category and search pages", () => {
       pageSize: 24,
       fields: "card",
       includeCategories: false,
+      storefrontAppId: "akros-storefront",
     });
     expect(document.querySelectorAll(".sf-catalog-product-card").length).toBeGreaterThanOrEqual(3);
     const readsBeforeEmpty = network.requests.length;

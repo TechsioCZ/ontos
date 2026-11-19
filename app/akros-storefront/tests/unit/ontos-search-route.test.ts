@@ -437,6 +437,7 @@ describe("header search BFF", () => {
         pageSize: 6,
         fields: "card",
         includeCategories: false,
+        storefrontAppId: "akros-storefront",
         marketId: "search-test-market",
       },
     ]);
@@ -550,6 +551,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
           pageSize: 6,
           fields: "card",
           includeCategories: false,
+          storefrontAppId: "akros-storefront",
           marketId: "search-test-market",
         },
         {
@@ -558,6 +560,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
           pageSize: 6,
           fields: "card",
           includeCategories: false,
+          storefrontAppId: "akros-storefront",
           marketId: "search-test-market",
         },
       ]);
@@ -702,6 +705,7 @@ describe("fresh searches through the real catalog/gateway transport", () => {
         pageSize: 24,
         fields: "card",
         includeCategories: false,
+        storefrontAppId: "akros-storefront",
         marketId: "search-test-market",
       },
     ]);

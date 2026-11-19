@@ -99,7 +99,14 @@ describe("public storefront search query ingress", () => {
       await network.idle();
       // One real card read, with no full-variant hydration for the empty result.
       expect(await productQueries()).toEqual([
-        { q: query, page: 1, pageSize: 6, fields: "card", includeCategories: false },
+        {
+          q: query,
+          page: 1,
+          pageSize: 6,
+          fields: "card",
+          includeCategories: false,
+          storefrontAppId: "akros-storefront",
+        },
       ]);
     },
   );
@@ -110,7 +117,14 @@ describe("public storefront search query ingress", () => {
     await response.json();
     await network.idle();
     expect(await productQueries()).toEqual([
-      { q: "x".repeat(200), page: 1, pageSize: 6, fields: "card", includeCategories: false },
+      {
+        q: "x".repeat(200),
+        page: 1,
+        pageSize: 6,
+        fields: "card",
+        includeCategories: false,
+        storefrontAppId: "akros-storefront",
+      },
     ]);
   });
 

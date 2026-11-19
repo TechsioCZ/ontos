@@ -185,6 +185,7 @@ describe("search suggestions read boundary", () => {
                 marketId,
                 pageSize: 24,
                 q: "helmet",
+                storefrontAppId: "n1-storefront",
               },
             },
           },

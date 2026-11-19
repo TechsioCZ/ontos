@@ -41,6 +41,7 @@ function ownerProduct(input: CatalogProduct, full: boolean) {
 }
 
 const CatalogRead = Schema.Struct({
+  storefrontAppId: Schema.Literal("akros-storefront"),
   mode: Schema.optional(Schema.Literal("categories")),
   slug: Schema.optional(Schema.String),
   pageSize: Schema.optional(Schema.Number),
@@ -197,7 +198,13 @@ describe("OntOS product and news pages", () => {
       `/produkt/${product.slug}`,
     );
     expect(runtime.reads.filter((query) => query.slug !== undefined)).toEqual([
-      { slug: product.slug, pageSize: 1, fields: "full", includeCategories: false },
+      {
+        slug: product.slug,
+        pageSize: 1,
+        fields: "full",
+        includeCategories: false,
+        storefrontAppId: "akros-storefront",
+      },
     ]);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(product.name);
     expect(await runtime.request.run(() => runtime.generateMetadata(props))).toEqual({
@@ -217,6 +224,7 @@ describe("OntOS product and news pages", () => {
         label,
         fields: "card",
         includeCategories: false,
+        storefrontAppId: "akros-storefront",
       })),
     );
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Novinky a akce");
