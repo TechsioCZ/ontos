@@ -6,6 +6,26 @@ import type { HttpApiClient } from 'effect/http-api';
 import { communicationsApi, communicationsApiContract } from '../../shared/api.ts';
 
 // <generated-action-http-client-exports>
+export {
+  executeActivateTemplateRevision,
+  executeActivateTemplateRevisionWithAuthorization,
+} from './activate-template-revision-action-client.ts';
+export type { ActivateTemplateRevisionActionClientOptions } from './activate-template-revision-action-client.ts';
+export {
+  executeDeactivateTemplateRevision,
+  executeDeactivateTemplateRevisionWithAuthorization,
+} from './deactivate-template-revision-action-client.ts';
+export type { DeactivateTemplateRevisionActionClientOptions } from './deactivate-template-revision-action-client.ts';
+export {
+  executeInvalidateTemplateRevision,
+  executeInvalidateTemplateRevisionWithAuthorization,
+} from './invalidate-template-revision-action-client.ts';
+export type { InvalidateTemplateRevisionActionClientOptions } from './invalidate-template-revision-action-client.ts';
+export {
+  executePrepareTemplateRevision,
+  executePrepareTemplateRevisionWithAuthorization,
+} from './prepare-template-revision-action-client.ts';
+export type { PrepareTemplateRevisionActionClientOptions } from './prepare-template-revision-action-client.ts';
 // </generated-action-http-client-exports>
 
 export class CommunicationsApiClient extends Context.Service<

@@ -9,11 +9,14 @@ import {
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
   makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
+  makeActionRuntimeLive as GovernedMakeActionRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
   AccessDecisionLive as GovernedAccessDecisionLive,
   AccessEnforcementPortsLive as GovernedAccessEnforcementPortsLive,
+  ActionPermissionLive as GovernedActionPermissionLive,
+  ActionRepositoryLive as GovernedActionRepositoryLive,
   ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,
   ModuleStateGateLive as GovernedModuleStateGateLive,
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
@@ -36,6 +39,10 @@ import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLiv
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { activateTemplateRevisionActionApiLive } from './activate-template-revision-action-server.ts';
+import { deactivateTemplateRevisionActionApiLive } from './deactivate-template-revision-action-server.ts';
+import { invalidateTemplateRevisionActionApiLive } from './invalidate-template-revision-action-server.ts';
+import { prepareTemplateRevisionActionApiLive } from './prepare-template-revision-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
@@ -119,14 +126,36 @@ const communicationsReadinessLayer = HttpApiBuilder.group(communicationsApi, 'fo
   ),
 );
 
+const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
+  governedActionDeliveryUnit,
+  governedOwnerRegistration,
+).pipe(
+  GovernedReadLayer.provide(
+    GovernedReadLayer.mergeAll(
+      governedReadRuntimeDependenciesLive,
+      governedModuleStateGateLive,
+      GovernedActionRepositoryLive,
+      GovernedActionPermissionLive,
+      governedActiveApplicationCompositionLive,
+    ),
+  ),
+);
+
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   communicationsReadinessLayer,
   // <generated-governed-http-handler-layers>
+  activateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  deactivateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  invalidateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  prepareTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(
-    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
+    GovernedReadLayer.mergeAll(
+      GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+      GovernedGatewayAssertionRedemptionLive,
+    ),
   ),
   // </generated-governed-http-handler-support-layers>
   // Every Read and Action handler of this owner runs in the Core-owned Read runtime composed above.

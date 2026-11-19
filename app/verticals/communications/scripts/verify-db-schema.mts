@@ -20,6 +20,9 @@ const failure = (reason: string, cause?: unknown) => {
 };
 const sortedTableInventory = EffectArray.sort(COMMUNICATIONS_TABLE_INVENTORY, Order.String);
 const redemptionTable = 'gateway_assertion_redemptions';
+// Immutable facts: the runtime role may only read and insert them. An activation may only have its closing columns updated.
+const appendOnlyTables = ['template_types', 'template_revisions', 'template_revision_invalidations'];
+const closableTable = 'template_activations';
 
 const sameList = (actual: readonly string[], expected: readonly string[]) =>
   actual.length === expected.length && actual.every((value, index) => value === expected[index]);
@@ -43,6 +46,15 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
         else
           c.relrowsecurity and c.relforcerowsecurity
           and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
+          and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
+          and not has_table_privilege('ontos_runtime', c.oid, 'DELETE') and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
+          and (c.relname = any($3::text[]) or (
+            c.relname = $4
+            and has_any_column_privilege('ontos_runtime', c.oid, 'UPDATE')
+            and not has_column_privilege('ontos_runtime', c.oid, 'activation_id', 'UPDATE')
+            and not has_column_privilege('ontos_runtime', c.oid, 'revision_id', 'UPDATE')
+            and not has_column_privilege('ontos_runtime', c.oid, 'activated_at', 'UPDATE')
+            and has_column_privilege('ontos_runtime', c.oid, 'ended_at', 'UPDATE')))
         end
       and not has_table_privilege('ontos_runtime', c.oid, 'TRUNCATE')
       and not has_table_privilege('ontos_runtime', c.oid, 'TRIGGER')
@@ -53,7 +65,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
       ) as safe
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and c.relkind in ('r', 'p') order by c.relname`,
-      [COMMUNICATIONS_SCHEMA_NAME, redemptionTable],
+      [COMMUNICATIONS_SCHEMA_NAME, redemptionTable, appendOnlyTables, closableTable],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read the Communications table catalog', cause)));
   if (
@@ -116,5 +128,5 @@ const tableCount = await Effect.runPromise(
   verify.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(Reactivity.layer, databaseLayer))),
 );
 process.stdout.write(
-  `Verified ${tableCount} communications tables: replay ledger least privilege, forced RLS on every governed table and validated constraints\n`,
+  `Verified ${tableCount} communications tables: replay ledger and append-only template facts least privilege, forced RLS on every governed table and validated constraints\n`,
 );

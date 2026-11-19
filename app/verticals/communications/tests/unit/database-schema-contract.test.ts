@@ -21,12 +21,43 @@ describe('Communications database schema contract', () => {
     expect(configs.every((config) => config.schema === COMMUNICATIONS_SCHEMA_NAME)).toBe(true);
   });
 
-  it('declares no domain table before a leaf lane adds one', () => {
-    expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual(['gateway_assertion_redemptions']);
+  it('declares the replay ledger and the four template tables, and no table of a later lane', () => {
+    expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual([
+      'gateway_assertion_redemptions',
+      'template_types',
+      'template_revisions',
+      'template_activations',
+      'template_revision_invalidations',
+    ]);
+  });
+
+  it('enforces Tenant RLS on every template table, one open activation per Type and the Type identity', () => {
+    const template = Object.fromEntries(configs.map((config) => [config.name, config]));
+    for (const name of [
+      'template_types',
+      'template_revisions',
+      'template_activations',
+      'template_revision_invalidations',
+    ]) {
+      expect(template[name]?.enableRLS).toBe(true);
+      expect(template[name]?.policies).toHaveLength(4);
+      expect(template[name]?.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
+    }
+    expect(template['template_types']?.uniqueConstraints.map((constraint) => constraint.getName())).toContain(
+      'communications_template_types_identity_uk',
+    );
+    expect(template['template_revisions']?.uniqueConstraints.map((constraint) => constraint.getName())).toContain(
+      'communications_template_revisions_number_uk',
+    );
+    const open = template['template_activations']?.indexes.find(
+      (index) => index.config.name === 'communications_template_activations_open_uk',
+    );
+    expect(open?.config.unique).toBe(true);
+    expect(open?.config.where).toBeDefined();
   });
 
   it('keeps the replay ledger a Tenant-free table with one replay identity and an expiry index', () => {
-    const [redemptions] = configs;
+    const redemptions = configs.find((config) => config.name === 'gateway_assertion_redemptions');
 
     expect(redemptions?.enableRLS).toBe(false);
     expect(redemptions?.columns.map((column) => column.name)).toEqual([

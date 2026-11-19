@@ -4,11 +4,19 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { communicationsManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
+import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
+import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
+import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 // </generated-module-registration-imports>
 
 export const communicationsRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    activateTemplateRevisionAction,
+    deactivateTemplateRevisionAction,
+    invalidateTemplateRevisionAction,
+    prepareTemplateRevisionAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {

@@ -4,6 +4,10 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
+import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
+import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
+import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 // </generated-module-manifest-imports>
 
 export const communicationsManifest: OntosModuleManifestInput = defineOntosModuleManifest({
@@ -23,6 +27,10 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      activateTemplateRevisionAction,
+      deactivateTemplateRevisionAction,
+      invalidateTemplateRevisionAction,
+      prepareTemplateRevisionAction,
       // </generated-module-manifest-actions>
     ],
     api: {

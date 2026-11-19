@@ -16,10 +16,18 @@ describe('Communications module contract', () => {
     expect(communicationsManifest.publicSurface.components).toEqual({});
   });
 
-  it('starts with no public Action, Read or outbox worker so each leaf lane adds its own through a generator', () => {
-    expect(communicationsManifest.publicSurface.actions).toEqual([]);
+  it('carries the template revision Actions and no Read API before the later lanes add theirs', () => {
+    expect(
+      communicationsManifest.publicSurface.actions
+        .map((action) => action.descriptor.actionKey)
+        .toSorted((left, right) => left.localeCompare(right)),
+    ).toEqual([
+      'communications.core.activate-template-revision',
+      'communications.core.deactivate-template-revision',
+      'communications.core.invalidate-template-revision',
+      'communications.core.prepare-template-revision',
+    ]);
     expect(communicationsManifest.publicSurface.api).toEqual({});
-    expect(communicationsManifest.publicSurface.operationContracts).toEqual([]);
     expect(communicationsRegistration.moduleId).toBe('communications.core');
   });
 

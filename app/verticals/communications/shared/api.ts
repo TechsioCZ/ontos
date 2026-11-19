@@ -7,6 +7,13 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 import { identity } from 'effect';
 
+// <generated-governed-http-api-imports>
+import { ActivateTemplateRevisionActionApi } from './apis/activate-template-revision-action.ts';
+import { DeactivateTemplateRevisionActionApi } from './apis/deactivate-template-revision-action.ts';
+import { InvalidateTemplateRevisionActionApi } from './apis/invalidate-template-revision-action.ts';
+import { PrepareTemplateRevisionActionApi } from './apis/prepare-template-revision-action.ts';
+// </generated-governed-http-api-imports>
+
 export type OperationContext = MicroVerticalOperationContext;
 
 export const communicationsMarkerSchema = Schema.Struct({
@@ -27,12 +34,13 @@ export const communicationsFoundationApi = HttpApi.make('CommunicationsApiFounda
     HttpApiEndpoint.get('readiness', '/communications/readiness', { success: communicationsReadinessSchema }),
   ),
 );
-// <generated-governed-http-api-imports>
-// </generated-governed-http-api-imports>
-
 export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(communicationsFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(ActivateTemplateRevisionActionApi)
+  .addHttpApi(DeactivateTemplateRevisionActionApi)
+  .addHttpApi(InvalidateTemplateRevisionActionApi)
+  .addHttpApi(PrepareTemplateRevisionActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
