@@ -21,7 +21,7 @@ describe('Communications database schema contract', () => {
     expect(configs.every((config) => config.schema === COMMUNICATIONS_SCHEMA_NAME)).toBe(true);
   });
 
-  it('declares the replay ledger, the four template tables and the language mode history, and no table of a later lane', () => {
+  it('declares the replay ledger, the template tables, the language mode history and the intake tables, and no table of a later lane', () => {
     expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual([
       'gateway_assertion_redemptions',
       'template_types',
@@ -29,6 +29,12 @@ describe('Communications database schema contract', () => {
       'template_activations',
       'template_revision_invalidations',
       'tenant_language_mode_versions',
+      'communication_requests',
+      'communication_request_conflicts',
+      'communication_decisions',
+      'message_intents',
+      'delivery_attempts',
+      'intent_handoff_stops',
     ]);
   });
 
@@ -134,5 +140,64 @@ describe('Communications database schema contract', () => {
     expect(redemptions?.indexes.map((index) => index.config.name)).toEqual([
       'communications_gateway_assertion_redemptions_expiry_idx',
     ]);
+  });
+});
+
+describe('Communications intake schema contract (#1401)', () => {
+  const byName = Object.fromEntries(configs.map((config) => [config.name, config]));
+  const unique = (table: string) => byName[table]?.uniqueConstraints.map((constraint) => constraint.getName());
+
+  it('enforces forced-RLS-ready Tenant isolation on every intake table', () => {
+    for (const name of [
+      'communication_requests',
+      'communication_request_conflicts',
+      'communication_decisions',
+      'message_intents',
+      'delivery_attempts',
+      'intent_handoff_stops',
+    ]) {
+      expect(byName[name]?.enableRLS).toBe(true);
+      expect(byName[name]?.policies).toHaveLength(4);
+      expect(byName[name]?.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
+    }
+  });
+
+  it('keys a request by its business identity only, never by a transport or invocation id (I-02)', () => {
+    expect(unique('communication_requests')).toEqual(
+      expect.arrayContaining(['communications_requests_identity_key_uk']),
+    );
+    const identityColumns = byName['communication_requests']?.uniqueConstraints
+      .find((constraint) => constraint.getName() === 'communications_requests_identity_key_uk')
+      ?.columns.map((column) => column.name);
+    expect(identityColumns).toEqual(['tenant_id', 'identity_key']);
+  });
+
+  it('gives a request exactly one decision and an intent exactly one stable identity key', () => {
+    expect(unique('communication_decisions')).toContain('communications_decisions_request_uk');
+    expect(unique('message_intents')).toContain('communications_intents_key_uk');
+    expect(unique('delivery_attempts')).toContain('communications_attempts_number_uk');
+    expect(unique('intent_handoff_stops')).toContain('communications_handoff_stops_intent_uk');
+  });
+
+  it('pins everything a pending intent needs for its last stoppable handoff', () => {
+    expect(byName['message_intents']?.checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining(['communications_intents_pending_pins_ck', 'communications_intents_reason_ck']),
+    );
+    expect(byName['message_intents']?.columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'original_binding',
+        'endpoint_pin',
+        'processing_scope',
+        'language_decision',
+        'template_revision_id',
+        'tenant_mode',
+        'policy_ref',
+      ]),
+    );
+  });
+
+  it('stores no endpoint address: the endpoint pin has no value column, only references and a mask in JSON', () => {
+    const names = byName['message_intents']?.columns.map((column) => column.name) ?? [];
+    expect(names.filter((name) => /address|email|secret|token|otp/u.test(name))).toEqual([]);
   });
 });
