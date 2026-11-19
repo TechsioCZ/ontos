@@ -977,7 +977,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             const unbound = yield* refusalOf(
               reserve(world, INTEGRATION_MACHINE, 'machine-dead-unbound', { runtime: 'dead' }),
             );
-            expect(unbound).toBeDefined();
+            expect(Schema.is(ActionPermissionCheckError)(unbound)).toBe(true);
             expect(yield* assetCount(world)).toBe(beforeMachine);
             yield* world.scenario.bindWorkload({ principalId: INTEGRATION_MACHINE, workloadKey: INGEST });
             const boundDead = yield* Effect.exit(
@@ -1209,11 +1209,18 @@ it.layer(suiteLayer, { excludeTestServices: true })(
           });
           yield* reconcile(scenario);
           const ref = yield* seedAsset(world);
+          const reserved = yield* reserve(world, OWNER, 'agent-owner-reserve');
+          const verification = yield* storeAndVerify(world, OWNER, reserved.mediaAssetRef);
           const before = yield* assetCount(world);
           const upload = yield* refusalOf(reserve(world, AGENT, 'agent-upload'));
           const rename = yield* refusalOf(renameAs(world, AGENT, ref, 'agent-rename'));
+          const confirm = yield* refusalOf(
+            confirmAs(world, AGENT, reserved.mediaAssetRef, verification, 'agent-confirm'),
+          );
           const read = yield* attemptOf(readAs(world, AGENT, ref));
           expect(reasonsOfAction(upload)).toContain('deny.agent_forbidden');
+          expect(reasonsOfAction(confirm)).toContain('deny.agent_forbidden');
+          expect((yield* rowOf(world, reserved.mediaAssetRef.resourceId))?.processing_status).toBe('uploaded');
           expect(reasonsOfAction(rename)).toContain('deny.agent_forbidden');
           expect(read).toMatchObject({ gateRefused: true, ran: false });
           expect(yield* assetCount(world)).toBe(before);
@@ -1325,7 +1332,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             // The four capabilities declare an OPTIONAL legal entity, so the gate decides in the tenant context: a role held
             // only inside one company never authorizes them, whichever company the request names (or none).
             yield* grantOnly(world, seeded, {
-              keys: [UPLOAD],
+              keys: [UPLOAD, METADATA, RENAME],
               legalEntityId: COMPANY_A,
               principalId: UPLOAD_HOLDER,
               slot: 1,
@@ -1333,16 +1340,20 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             yield* reconcile(scenario);
             const before = yield* assetCount(world);
             for (const legalEntityId of [COMPANY_A, COMPANY_B, undefined]) {
-              const refused = yield* refusalOf(
-                reserve(
-                  world,
-                  UPLOAD_HOLDER,
-                  `company-role-${legalEntityId ?? 'none'}`,
-                  withOptional({}, 'legalEntityId', legalEntityId),
-                ),
-              );
+              const named = withOptional({}, 'legalEntityId', legalEntityId);
+              const stamp = legalEntityId ?? 'none';
+              const refused = yield* refusalOf(reserve(world, UPLOAD_HOLDER, `company-role-${stamp}`, named));
               expect(reasonsOfAction(refused)).toContain('deny.insufficient_grant');
+              const renameRefused = yield* refusalOf(
+                renameAs(world, UPLOAD_HOLDER, own, `company-rename-${stamp}`, named),
+              );
+              expect(reasonsOfAction(renameRefused)).toContain('deny.insufficient_grant');
+              expect(yield* attemptOf(readAs(world, UPLOAD_HOLDER, own, named))).toMatchObject({
+                gateRefused: true,
+                ran: false,
+              });
             }
+            expect((yield* rowOf(world, own.resourceId))?.display_filename).toBe('Brochure.pdf');
             expect(yield* assetCount(world)).toBe(before);
             // The negative control: the same capability granted in the tenant context runs for any named company, and
             // the company stays an attribute of the asset, never an authorization input.

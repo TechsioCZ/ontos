@@ -73,7 +73,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media owns no 
       const sources = yield* mediaSources;
       expect(sources.length).toBeGreaterThan(10);
       // `acl` as a word, a snake_case part or a camelCase part (`mediaAcl`, `file_acl`, `ACL`), never inside `oracle`.
-      forbid(sources, 'an ACL', /(?:\b|_)acl|[a-z0-9]Acl|ACL/u);
+      forbid(sources, 'an ACL', /(?:^|[^a-zA-Z])[aA]cl|[a-z0-9]Acl|ACL|AccessControlList/u);
       forbid(sources, 'a permission or grant', /permission|grant|mandate/iu);
       forbid(
         sources,
@@ -100,7 +100,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media owns no 
   suite.effect('caches no decision and reuses no earlier answer as a grant', () =>
     Effect.gen(function* noDecisionCache() {
       const sources = yield* mediaSources;
-      forbid(sources, 'a cache', /(?:\b|_)cache|Cache|CACHE|memoiz/u);
+      forbid(sources, 'a cache', /(?:^|[^a-zA-Z])cache|Cache|CACHE|memoiz/u);
+      // A decision remembered anywhere would need mutable state: media code keeps none.
+      forbid(
+        sources,
+        'a mutable map, ref or cache service',
+        /new\s+(?:Weak)?(?:Map|Set)\s*\(|Ref\.(?:make|unsafeMake)|SynchronizedRef|Cache\.make/u,
+      );
       forbid(sources, 'a memo table', /(?:\b|_)memo\b|lru|ttl/iu);
       forbid(sources, 'a stored decision', /storedDecision|lastDecision|previousDecision|allowedAt/u);
     }),
@@ -122,9 +128,17 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media owns no 
         const end = schema.indexOf('export const', start);
         const definition = schema.slice(start, end === -1 ? undefined : end);
         expect(definition, `${table} must carry no permission column`).not.toMatch(
-          /\b(?:acl|grants?|permissions?|roles?|owner_principal)\w*/iu,
+          /(?:^|[^a-zA-Z])(?:acl|grants?|permissions?|roles?|owner_principal)|[a-z](?:Acl|Grants?|Permissions?|Roles?)/u,
         );
       }
+      // Only these tables key on a Media Asset: a new side table (shares, visibility, per-file rules) would fail here.
+      const keyedOnAsset = schema
+        .split('coreSchema.table(')
+        .slice(1)
+        .filter((block) => /mediaAssetId\(|mediaAssets\.|'media_asset_id'/u.test(block))
+        .map((block) => /^\s*'(?<table>[^']+)'/u.exec(block)?.groups?.['table'] ?? '');
+      // `evidence_references` is the Evidence module's older table that may point at an asset; it is not a permission store.
+      expect(keyedOnAsset.toSorted()).toEqual(['evidence_references', 'media_assets', 'media_links']);
     }),
   );
 

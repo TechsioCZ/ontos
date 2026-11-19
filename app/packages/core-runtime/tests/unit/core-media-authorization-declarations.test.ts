@@ -1,8 +1,13 @@
-import { Result, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, FileSystem, Path, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { collectAccessCatalog } from '../../src/authorization/access-declaration.ts';
+import {
+  collectAccessCatalog,
+  decodeAccessDeclarationOrThrow,
+  missingAccessCarrierIssue,
+} from '../../src/authorization/access-declaration.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import {
   assetMetadataRead,
@@ -87,8 +92,8 @@ const EXPECTED = {
 /**
  * Capabilities the design names whose operation does not exist yet. They are OPEN, not forgotten: each lane that
  * adds the operation must add the declaration with it, and update this list and the matrix in the same change.
- * The audit refuses a key here being claimed by anything today, and the catalog assertion below refuses any other
- * Core Media key, so a half-added capability fails loudly.
+ * The source scan below refuses a key here, or any other Core Media key, being declared anywhere in `src/` today,
+ * so a half-added capability fails loudly.
  */
 const OPEN_DECLARATIONS = [
   'core.media.asset-download.read',
@@ -190,16 +195,64 @@ it('lists exactly the four existing keys in the access catalog, with no duplicat
     'core.media.asset.upload',
     'core.media.display-filename.rename',
   ]);
-  for (const open of OPEN_DECLARATIONS) {
-    expect(keys, `${open} is declared before its operation exists`).not.toContain(open);
-  }
 });
 
-it('has no Core Media Action beyond the audited ones, and each carries a carrier', () => {
+it('has no Core Media Action beyond the audited ones', () => {
   const mediaActions = coreActionCatalog.filter(({ owningModuleKey }) => owningModuleKey === 'core.media');
   expect(mediaActions.map(({ actionKey }) => actionKey).toSorted()).toEqual([
     'core.media.confirm-asset',
     'core.media.rename-display-filename',
     'core.media.upload-asset',
   ]);
+});
+
+it('makes a missing declaration on any Core Media entrypoint a definition-time error, never a reported gap', () => {
+  for (const descriptor of [upload, confirm, rename, metadata]) {
+    // The same entrypoint with no carrier at all is refused by the descriptor rules before it can be registered.
+    expect(missingAccessCarrierIssue({ entrypoint: descriptor.entrypoint })).toBeDefined();
+    expect(
+      missingAccessCarrierIssue(
+        descriptor.accessDeclaration === undefined
+          ? { entrypoint: descriptor.entrypoint }
+          : {
+              accessDeclaration: decodeAccessDeclarationOrThrow(descriptor.accessDeclaration, descriptor.entrypoint),
+              entrypoint: descriptor.entrypoint,
+            },
+      ),
+    ).toBeUndefined();
+  }
+});
+
+/** Every `.ts` source of the package, so a Core Media key declared anywhere is seen, not only in the four files. */
+const allSources = Effect.fn('CoreMediaAuthorizationAudit.sources')(function* allSources() {
+  const [fileSystem, path] = yield* Effect.all([FileSystem.FileSystem, Path.Path], { concurrency: 2 });
+  const root = yield* path.fromFileUrl(new URL('../../src/', import.meta.url));
+  const names = yield* fileSystem.readDirectory(root, { recursive: true });
+  return yield* Effect.forEach(
+    names.filter((name) => name.endsWith('.ts')),
+    (name) => fileSystem.readFileString(path.join(root, name)).pipe(Effect.map((text) => [name, text] as const)),
+    { concurrency: 16 },
+  );
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('core media declarations in the source tree', (suite) => {
+  suite.effect('are exactly the four audited keys, and none of the still-open keys exists before its operation', () =>
+    Effect.gen(function* sourceKeys() {
+      const declared = new Set<string>();
+      for (const [, text] of yield* allSources()) {
+        for (const match of text.matchAll(/key:\s*'(?<key>core\.media\.[^']+)',\s*kind:/gu)) {
+          declared.add(match.groups?.['key'] ?? '');
+        }
+      }
+      expect([...declared].toSorted()).toEqual([
+        'core.media.asset-metadata.read',
+        'core.media.asset.confirm',
+        'core.media.asset.upload',
+        'core.media.display-filename.rename',
+      ]);
+      for (const open of OPEN_DECLARATIONS) {
+        expect(declared.has(open), `${open} is declared before its operation exists`).toBe(false);
+      }
+    }),
+  );
 });
