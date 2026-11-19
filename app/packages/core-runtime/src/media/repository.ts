@@ -46,12 +46,6 @@ export type MediaAssetTransition =
   | { readonly confirmed: ConfirmedMediaBytes; readonly to: 'ready' }
   | { readonly to: 'failed' | 'scanning' };
 
-export type MediaTransitionOutcome =
-  /** The row was in an allowed source status and now has the new one. */
-  | { readonly asset: MediaAssetRecord; readonly kind: 'applied' }
-  /** The row exists but its status does not allow the move; `current` is what stayed untouched. */
-  | { readonly current: MediaAssetRecord; readonly kind: 'rejected' };
-
 const persistenceUnavailable = (cause: unknown): MediaUnavailable =>
   mediaUnavailable('Media asset persistence is temporarily unavailable', cause);
 
@@ -150,6 +144,10 @@ export const makeMediaAssetRepository = (transaction: ScopedTransactionExecutor)
         .pipe(Effect.mapError(persistenceUnavailable));
       return row ?? (yield* mediaUnavailable('Media asset was not reserved'));
     }),
+    /**
+     * A conditional, forward-only status change. `applied` carries the updated row; `rejected` carries the row
+     * that stayed untouched because its status does not allow the move; a missing asset is `MediaAssetNotFound`.
+     */
     transition: Effect.fn('MediaAssetRepository.transition')(function* applyTransition(
       mediaAssetId: MediaAssetId,
       transition: MediaAssetTransition,
