@@ -32,7 +32,10 @@ import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { CommunicationsDatabaseLive, CommunicationsPgClientLive } from '../src/database/client.ts';
 import { communicationsApi, communicationsOperationContexts } from '../shared/api.ts';
-import { communicationsProductionOwnerPortsLive } from '../src/composition/owner-ports.ts';
+import {
+  communicationsHistoryReadPortsLive,
+  communicationsProductionOwnerPortsLive,
+} from '../src/composition/owner-ports.ts';
 import type { OperationContext } from '../shared/api.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -44,6 +47,8 @@ import { activateTemplateRevisionActionApiLive } from './activate-template-revis
 import { deactivateTemplateRevisionActionApiLive } from './deactivate-template-revision-action-server.ts';
 import { invalidateTemplateRevisionActionApiLive } from './invalidate-template-revision-action-server.ts';
 import { languagePolicyReadApiLive } from './language-policy-read-server.ts';
+import { messageHistoryDetailReadApiLive } from './message-history-detail-read-server.ts';
+import { messageHistoryListReadApiLive } from './message-history-list-read-server.ts';
 import { prepareTemplateRevisionActionApiLive } from './prepare-template-revision-action-server.ts';
 import { setLanguagePolicyActionApiLive } from './set-language-policy-action-server.ts';
 import { submitCommunicationRequestActionApiLive } from './submit-communication-request-action-server.ts';
@@ -154,6 +159,14 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   deactivateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   invalidateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   languagePolicyReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  messageHistoryDetailReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    GovernedReadLayer.provide(communicationsHistoryReadPortsLive),
+  ),
+  messageHistoryListReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    GovernedReadLayer.provide(communicationsHistoryReadPortsLive),
+  ),
   prepareTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   submitCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -42,3 +42,10 @@ export const communicationsWorkerOwnerPortsLive = Layer.mergeAll(
   communicationsProductionOwnerPortsLive,
   unavailableMessageHandoffLayer,
 );
+
+/**
+ * The owner port of the public history Reads. No source owner publishes a history visibility Read yet, so the production
+ * port is the explicit unavailable form: a history of a source-owned scope (a profile, a Counterparty, a Storefront) is
+ * refused as unavailable instead of being shown on a guess, and a Tenant or Legal Entity history needs no source owner.
+ */
+export { unavailableSourceScopeVisibilityLayer as communicationsHistoryReadPortsLive } from '../domain/access/source-visibility.ts';

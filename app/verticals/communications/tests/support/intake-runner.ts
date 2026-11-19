@@ -48,7 +48,8 @@ const PRINCIPAL_ID = '00000000-0000-4000-8000-0000000000b1';
 /** The module the fictional requests name as their source, and therefore the verified caller by default. */
 export const FIXTURE_SOURCE_MODULE_KEY = 'fixture.source';
 
-const principalOf = (tenantId: string, callerModule: string) =>
+/** A source worker of one Legal Entity is the same registered system job, with the company of its fan-out signed apart. */
+const principalOf = (tenantId: string, callerModule: string, legalEntityId?: string) =>
   Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     authContextRef: 'job:communications-intake-tests:run:1',
     authMethod: 'system',
@@ -60,6 +61,7 @@ const principalOf = (tenantId: string, callerModule: string) =>
         { ...principal, correlationId: 'communications-intake-tests' },
         callerModule,
         COMPOSITION_REVISION,
+        legalEntityId,
       ),
     ),
     Effect.orDie,
@@ -71,8 +73,9 @@ const runHandler = Effect.fn('CommunicationIntakeTest.runHandler')(function* run
   request: SubmitCommunicationRequestPayload,
   invocationId: string,
   callerModule: string,
+  legalEntityId: string | undefined,
 ) {
-  const scope = yield* principalOf(tenantId, callerModule);
+  const scope = yield* principalOf(tenantId, callerModule, legalEntityId);
   const collector = createActionCollector(
     submitCommunicationRequestAction.descriptor.domainEvents,
     'communications.core',
@@ -115,8 +118,11 @@ export const intakeRunnerOver = (database: RuntimeDatabase, ownerPorts: IntakeOw
     request: SubmitCommunicationRequestPayload,
     invocationId = '00000000-0000-4000-8000-0000000000a9',
     callerModule = FIXTURE_SOURCE_MODULE_KEY,
+    legalEntityId?: string,
   ): Effect.Effect<IntakeRun, unknown> =>
     database
-      .inTenant(tenantId, (transaction) => runHandler(transaction, tenantId, request, invocationId, callerModule))
+      .inTenant(tenantId, (transaction) =>
+        runHandler(transaction, tenantId, request, invocationId, callerModule, legalEntityId),
+      )
       .pipe(Effect.provide(ownerPorts)),
 });

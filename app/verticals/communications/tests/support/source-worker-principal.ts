@@ -31,14 +31,18 @@ const baseWorkload = {
 } as const;
 
 const decodeWorkload = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema);
-const workerWorkload = (callerModule: string) =>
-  decodeWorkload({
+const workerWorkload = (callerModule: string, legalEntityId?: string) => {
+  const worker = {
     ...baseWorkload,
     claimId: 'fixture-claim',
     sourceMode: 'worker',
     workerKey: 'fixture.source-worker',
     workerModuleKey: callerModule,
-  });
+  };
+  return legalEntityId === undefined
+    ? decodeWorkload(worker)
+    : decodeWorkload({ ...worker, legalEntityId, legalEntityScope: 'required' });
+};
 /** An admission is an Action calling directly, not from a source's own delivery: no claim, no worker, no module. */
 const admissionWorkload = () => decodeWorkload({ ...baseWorkload, sourceMode: 'admission' });
 
@@ -47,13 +51,15 @@ export const asSourceWorker = <Principal extends TrustedPrincipalContext>(
   principal: Principal,
   callerModule: string,
   compositionRevision: string,
-): Principal =>
+  legalEntityId?: string,
+) =>
   trustVerifiedGatewayPrincipalContext(
-    principal,
+    // a worker of one company fan-out: the tenant-local system principal plus the signed company of its workload
+    legalEntityId === undefined ? principal : { ...principal, legalEntityId },
     compositionRevision,
     undefined,
     undefined,
-    workerWorkload(callerModule),
+    workerWorkload(callerModule, legalEntityId),
   );
 
 /** A registered ADMISSION (an Action calling directly, not from a source's own Outbox delivery): it names no calling module. */

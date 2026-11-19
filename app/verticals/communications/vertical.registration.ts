@@ -8,6 +8,8 @@ import { activateTemplateRevisionAction } from './src/actions/activate-template-
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
+import { messageHistoryDetailRead } from './src/api/message-history-detail.read.ts';
+import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareMessageHandoffWorker } from './src/workers/prepare-message-handoff.worker.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
@@ -29,6 +31,8 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'language-policy': () => import('./src/api/language-policy-client.ts'),
+      'message-history-detail': () => import('./src/api/message-history-detail-client.ts'),
+      'message-history-list': () => import('./src/api/message-history-list-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -57,6 +61,8 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   reads: [
     // <generated-module-registration-reads>
     languagePolicyRead,
+    messageHistoryDetailRead,
+    messageHistoryListRead,
     // </generated-module-registration-reads>
   ],
 });

@@ -17,7 +17,7 @@ describe('Communications module contract', () => {
     expect(communicationsManifest.publicSurface.components).toEqual({});
   });
 
-  it('carries the template revision Actions, the language mode Action and its Read, the request intake and no later lane', () => {
+  it('carries the template revision Actions, the language mode Action, the history Reads, the request intake and no later lane', () => {
     expect(
       communicationsManifest.publicSurface.actions
         .map((action) => action.descriptor.actionKey)
@@ -30,9 +30,15 @@ describe('Communications module contract', () => {
       'communications.core.set-language-policy',
       'communications.core.submit-communication-request',
     ]);
-    expect(Object.keys(communicationsManifest.publicSurface.api)).toEqual(['language-policy']);
+    expect(Object.keys(communicationsManifest.publicSurface.api)).toEqual([
+      'language-policy',
+      'message-history-detail',
+      'message-history-list',
+    ]);
     expect(communicationsManifest.publicSurface.operationContracts?.map((contract) => contract.operationKey)).toEqual([
       'languagePolicy.execute',
+      'messageHistoryDetail.execute',
+      'messageHistoryList.execute',
     ]);
     expect(communicationsRegistration.moduleId).toBe('communications.core');
   });

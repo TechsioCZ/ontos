@@ -14088,6 +14088,94 @@
         },
         {
           "accessDeclaration": {
+            "key": "communications.core.message-history.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "message-history",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "items.recipient.endpointMask"
+              ],
+              "key": "communications.core.message-history-recipient-mask.list",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "message-history",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.message-history-list",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.message-history.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "message-history",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "message.recipient.endpointMask"
+              ],
+              "key": "communications.core.message-history-recipient-mask.read",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "message-history",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.message-history-detail",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "communications.core.template-revision.activate",
             "kind": "action",
             "modes": [

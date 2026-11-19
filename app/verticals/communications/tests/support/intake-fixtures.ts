@@ -45,6 +45,7 @@ const decodeRequest = Schema.decodeUnknownSync(CommunicationRequestSchema, { onE
 const encodeBinding = Schema.encodeSync(OriginalRecipientBindingSchema);
 
 interface ScopeInput {
+  counterpartyId?: string;
   legalEntityId?: string;
   profileId?: string;
   tenantId: string;
@@ -53,6 +54,7 @@ interface ScopeInput {
 export interface RequestInput {
   readonly bindings: readonly OriginalRecipientBinding[];
   readonly correlationId?: string;
+  readonly counterpartyId?: string;
   readonly idempotencyKey?: string;
   readonly legalEntityId?: string;
   readonly occurrenceId?: string;
@@ -73,6 +75,9 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
   }
   if (input.profileId !== undefined) {
     scopeInput.profileId = input.profileId;
+  }
+  if (input.counterpartyId !== undefined) {
+    scopeInput.counterpartyId = input.counterpartyId;
   }
   const scope = fixtureScope(scopeInput);
   const key = input.idempotencyKey ?? `fixture-key-${input.occurrenceId ?? 'occurrence-1'}`;

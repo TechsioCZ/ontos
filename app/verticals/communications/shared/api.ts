@@ -12,6 +12,8 @@ import { ActivateTemplateRevisionActionApi } from './apis/activate-template-revi
 import { DeactivateTemplateRevisionActionApi } from './apis/deactivate-template-revision-action.ts';
 import { InvalidateTemplateRevisionActionApi } from './apis/invalidate-template-revision-action.ts';
 import { LanguagePolicyApi } from './apis/language-policy.ts';
+import { MessageHistoryDetailApi } from './apis/message-history-detail.ts';
+import { MessageHistoryListApi } from './apis/message-history-list.ts';
 import { PrepareTemplateRevisionActionApi } from './apis/prepare-template-revision-action.ts';
 import { SetLanguagePolicyActionApi } from './apis/set-language-policy-action.ts';
 import { SubmitCommunicationRequestActionApi } from './apis/submit-communication-request-action.ts';
@@ -44,6 +46,8 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(DeactivateTemplateRevisionActionApi)
   .addHttpApi(InvalidateTemplateRevisionActionApi)
   .addHttpApi(LanguagePolicyApi)
+  .addHttpApi(MessageHistoryDetailApi)
+  .addHttpApi(MessageHistoryListApi)
   .addHttpApi(PrepareTemplateRevisionActionApi)
   .addHttpApi(SetLanguagePolicyActionApi)
   .addHttpApi(SubmitCommunicationRequestActionApi)

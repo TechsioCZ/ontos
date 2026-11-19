@@ -9,6 +9,10 @@ import { deactivateTemplateRevisionAction } from './src/actions/deactivate-templ
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
+import { MessageHistoryDetailApi } from './shared/apis/message-history-detail.ts';
+import { messageHistoryDetailRead } from './src/api/message-history-detail.read.ts';
+import { MessageHistoryListApi } from './shared/apis/message-history-list.ts';
+import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
@@ -42,6 +46,8 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     api: {
       // <generated-module-manifest-apis>
       'language-policy': LanguagePolicyApi,
+      'message-history-detail': MessageHistoryDetailApi,
+      'message-history-list': MessageHistoryListApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -52,6 +58,16 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       { apiKey: 'language-policy', operationKey: 'languagePolicy.execute', registration: languagePolicyRead },
+      {
+        apiKey: 'message-history-detail',
+        operationKey: 'messageHistoryDetail.execute',
+        registration: messageHistoryDetailRead,
+      },
+      {
+        apiKey: 'message-history-list',
+        operationKey: 'messageHistoryList.execute',
+        registration: messageHistoryListRead,
+      },
       // </generated-module-manifest-operation-contracts>
     ],
     reports: [
