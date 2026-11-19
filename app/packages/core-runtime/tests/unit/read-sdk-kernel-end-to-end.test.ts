@@ -4,7 +4,10 @@ import { expect, it } from 'effect-rstest';
 
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import type { CallRoute, RouteAnswer } from '../../src/execution/contract.ts';
-import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
+import {
+  makeActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../../src/modules/active-application-composition.ts';
 import {
   ONTOS_SHELL_CONTRIBUTION_ABI,
   OntosShellRuntimeContractSchema,
@@ -227,7 +230,7 @@ const harnessFor = Effect.fn('SdkKernelEndToEnd.harness')(function* harnessFor(
   const { revision } = snapshot.composition;
   const harness = yield* makeReadTestHarness({
     access: options.access ?? 'allowed',
-    applicationComposition: { load: Effect.succeed(snapshot) },
+    applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
     compositionRevision: revision,
     executeOwnerQuery: () => Effect.die('The read runs no owner SQL'),
     expectedDeployment: deployment,
