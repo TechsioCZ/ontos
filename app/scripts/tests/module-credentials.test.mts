@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { NodeServices } from '@effect/platform-node';
 import { DateTime, Effect, Exit, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -29,6 +30,12 @@ import {
   renderModuleCredentialCallers,
 } from '../authorization-catalog-artifact.mts';
 import { installedCallersOf } from '../zerops/provision-module-credentials.mts';
+import { declaresModuleCalls } from '../ops/owner-runtime-configuration.mts';
+
+const { deriveOntosModuleDeploymentContract } = await import(
+  /* webpackIgnore: true */
+  '../generate-ontos-module-contract.mts'
+);
 
 const workspace = path.resolve(import.meta.dirname, '../..');
 const DELEGATED_CLIENT = /\bacquireDelegatedGatewayContext\b/u;
@@ -142,6 +149,29 @@ describe('declared delegated callers', () => {
       ]),
     ).toEqual(['payment']);
   });
+
+  it.live(
+    'keys every module whose module contract declares a call to another module (`declaresModuleCalls`)',
+    () =>
+      Effect.gen(function* everyDeclaredCallerIsKeyed() {
+        const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+          readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
+        );
+        const contracts = yield* Effect.forEach(
+          topology.verticals,
+          ({ path: directory }) =>
+            deriveOntosModuleDeploymentContract({ vertical: path.basename(directory), workspaceRoot: workspace }),
+          { concurrency: 2 },
+        );
+        const declared = contracts
+          .filter(({ manifest }) => declaresModuleCalls(manifest))
+          .map(({ deployment }) => deployment.appId);
+        // The SDK callers carry no gateway client import; their manifests alone show the call.
+        expect(declared).toEqual(expect.arrayContaining(['commerce-customer-context', 'commerce-market-catalog']));
+        expect(MODULE_CREDENTIAL_CALLERS).toEqual(expect.arrayContaining(declared));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 300_000 },
+  );
 
   it('keys no module that only receives calls', () => {
     expect(installedCallersOf([{ deployment: { appId: 'tax' } }, { deployment: { appId: 'crm' } }])).toEqual(['crm']);
