@@ -123,3 +123,14 @@ export const effectAfterObservations = (
   }
   return present ? 'CONTRADICTORY' : 'ABSENT';
 };
+
+/**
+ * The ONE definition of "this attempt may have left the provider boundary" (#1403 review): the technical fact of its stored
+ * answer, not its state label. Only an attempt that provably made no request (no adapter, or no usable configuration) did not;
+ * every other attempt, answered or not, may have. The timeline, the stop of the pre-handoff step and the recovery limit all read
+ * it here, so they can never disagree about whether a stopped message might already have been sent.
+ */
+export const attemptMayHaveLeft = (attempt: {
+  readonly reason?: string | undefined;
+  readonly state: SubmissionState;
+}) => submissionFactOfAttempt(attempt.state, attempt.reason).technical !== 'NOT_ATTEMPTED';

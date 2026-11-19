@@ -141,6 +141,15 @@ export const workerBeginRetryAttemptRoutine = defineScopedRoutine({
   schema: ROUTINE_SCHEMA,
 });
 
+export const workerCloseUnansweredAttemptRoutine = defineScopedRoutine({
+  name: 'worker_close_unanswered_attempt',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [tenant, input('uuid'), input('integer')] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-close-unanswered-attempt',
+  schema: ROUTINE_SCHEMA,
+});
+
 export const workerRecordRecoveryEvaluationRoutine = defineScopedRoutine({
   name: 'worker_record_recovery_evaluation',
   ownerModuleKey: OWNER_MODULE_KEY,

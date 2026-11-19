@@ -1,6 +1,6 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
-import { Data, DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
+import { Clock, Data, DateTime, Duration, Effect, Exit, Match, Option, Schema } from 'effect';
 
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import type { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
@@ -14,9 +14,10 @@ import {
 import { MessageHandoff } from '../domain/handoff/message-handoff.ts';
 import type { PinnedHandoff, ProviderEvidence } from '../domain/handoff/message-handoff.ts';
 import { recoveryPolicyOf } from '../domain/catalog/message-type.ts';
+import { attemptMayHaveLeft } from '../domain/history/delivery-result.ts';
+import { ProviderObservationInputSchema } from '../domain/history/provider-observation.ts';
 import { attemptIdOf } from '../domain/intake/identity.ts';
 import { decodeIntakeInput } from '../domain/intake/intake-input.ts';
-import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import { MessageTypeCatalog } from '../domain/intake/message-type-catalog.ts';
 import { SourceOccurrenceAuthority } from '../domain/intake/source-authority.ts';
 import { SelectedLanguageDecisionSchema } from '../domain/language/vocabulary.ts';
@@ -30,6 +31,7 @@ import { assessAttemptHistory, confirmContinuation } from '../domain/recovery/re
 import type { Continuation, HistoryAssessment } from '../domain/recovery/retry-eligibility.ts';
 import { RETRY_REASON_CODE } from '../domain/recovery/vocabulary.ts';
 import type { RecoveryHaltCode } from '../domain/recovery/vocabulary.ts';
+import { ingestProviderObservation } from '../history/provider-observations.ts';
 import { StoredIntentFactsSchema, timelineFactsOfStored } from '../history/stored-intent-facts.ts';
 import {
   workerBeginAttemptRoutine,
@@ -39,6 +41,9 @@ import {
   workerRecordRecoveryEvaluationRoutine,
   workerRecordStopRoutine,
 } from '../persistence/communications-routines.ts';
+import { storeUnavailable } from './handoff-errors.ts';
+import type { HandoffStoreUnavailable } from './handoff-errors.ts';
+import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from './handoff-lease.ts';
 import { languagePolicyPortOverRoutines, readTemplatePortOverRoutines } from '../persistence/snapshot-ports.ts';
 import { verifyLanguageForHandoff } from '../services/language-selection.service.ts';
 
@@ -62,20 +67,23 @@ import { verifyLanguageForHandoff } from '../services/language-selection.service
  * unknown or contradicted effect, and an acceptance, begin nothing. See `domain/recovery/retry-eligibility.ts`.
  */
 
-/** A retryable failure of the owner's own store: Core delivers the message again and the step is safe to repeat. */
-export class HandoffStoreUnavailable extends Data.TaggedError('HandoffStoreUnavailable')<{
-  readonly reason: string;
-}> {}
-
 /**
- * The typed, retryable failure. It keeps only the SAFE kind of the failure it replaces (non-enumerable): the raw cause of a
- * failed routine call carries its bound parameters, which include recipient references and the owner's mask.
+ * The typed, retryable failure that asks CORE to deliver the message again (#1403). It is raised only after an attempt that the
+ * provider PROVABLY refused, when the approved recovery rule of the type allows another attempt. It is not an error of the
+ * step: everything was recorded. Core's Outbox runtime answers any declared handler failure by returning the delivery to
+ * `pending` after the descriptor's own backoff (or `dead` at its maximum, which only an operator moves on), and the redelivered
+ * step is a fresh evaluation that asks every Current gate again. That is the ONLY automatic trigger of a Technical Retry, and it
+ * uses the one retry configuration this owner has (the worker descriptor's `retryPolicy`): no timer, queue or cadence is added.
  */
-export const storeUnavailable = (reason: string, cause?: unknown) =>
-  Object.defineProperty(new HandoffStoreUnavailable({ reason }), 'cause', {
-    enumerable: false,
-    value: cause === undefined ? undefined : safeCauseOf(cause),
-  });
+export class NonAcceptanceRetryDue extends Data.TaggedError('NonAcceptanceRetryDue')<{ readonly intentId: string }> {}
+
+export { HandoffStoreUnavailable, storeUnavailable } from './handoff-errors.ts';
+
+/** Core redelivers the message (see `NonAcceptanceRetryDue`) exactly when the step ended with a retry that is due; otherwise it is done. */
+export const requireRedeliveryWhenRetryDue = (processing: HandoffProcessing) =>
+  processing.kind === 'HANDED_OFF' && processing.followUp === 'RETRY_DUE'
+    ? Effect.fail(new NonAcceptanceRetryDue({ intentId: processing.intentId }))
+    : Effect.void;
 
 /** Why an intent stopped, in the vocabulary of the suppression lane plus the checks of this step. */
 export interface StopReason {
@@ -93,8 +101,37 @@ export const SkipReasonSchema = Schema.Literals([
 ]);
 export type SkipReason = typeof SkipReasonSchema.Type;
 
+/**
+ * What follows an answer the provider gave, decided from the same history and approved rule the next evaluation uses:
+ * - NONE: nothing more is automatic (accepted, unknown effect, no rule, limit reached, permanent refusal, nothing submitted);
+ * - RETRY_DUE: the provider PROVABLY did not accept and the type's approved recovery rule allows another attempt, so the
+ *   worker asks Core to deliver the message again under its own retry policy (see `prepare-message-handoff.worker.ts`).
+ */
+export const HandoffFollowUpSchema = Schema.Literals(['NONE', 'RETRY_DUE']);
+export type HandoffFollowUp = typeof HandoffFollowUpSchema.Type;
+
+/**
+ * How a provider answer that arrived AFTER its attempt was already closed (a reconciliation closed it as an unanswered
+ * INDETERMINATE) was kept: an ACCEPTED answer is appended as an acceptance observation (so the history says accepted/contradictory
+ * and nothing is ever sent again), any other answer adds no proof the closed attempt does not already carry.
+ */
+export const LateAnswerRecordSchema = Schema.Literals(['ACCEPTANCE_OBSERVED', 'NOT_RECORDED', 'NO_NEW_PROOF']);
+export type LateAnswerRecord = typeof LateAnswerRecordSchema.Type;
+
 export type HandoffProcessing =
-  | { readonly evidence: ProviderEvidence; readonly intentId: string; readonly kind: 'HANDED_OFF' }
+  | {
+      readonly evidence: ProviderEvidence;
+      readonly followUp: HandoffFollowUp;
+      readonly intentId: string;
+      readonly kind: 'HANDED_OFF';
+    }
+  /** The provider answered AFTER its attempt was closed by reconciliation: never swallowed, and never a reason to send again. */
+  | {
+      readonly evidence: ProviderEvidence;
+      readonly intentId: string;
+      readonly kind: 'LATE_ANSWER';
+      readonly recorded: LateAnswerRecord;
+    }
   /** Proven non-acceptance, but automatic recovery was not performed for this closed reason; the source owner decides. */
   | { readonly code: RecoveryHaltCode; readonly intentId: string; readonly kind: 'HALTED' }
   | { readonly intentId: string; readonly kind: 'SKIPPED'; readonly reason: SkipReason }
@@ -154,7 +191,10 @@ const AttemptAnswerSchema = Schema.Struct({
 });
 const StopAnswerSchema = Schema.Struct({ outcome: Schema.String });
 const RecoveryAnswerSchema = Schema.Struct({ outcome: Schema.Literals(['FINAL', 'MISSING', 'RECORDED', 'UNCHANGED']) });
-const FinishAnswerSchema = Schema.Struct({ outcome: Schema.Literals(['CONFLICT', 'FINISHED', 'MISSING']) });
+const FinishAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['CONFLICT', 'FINISHED', 'MISSING']),
+  state: Schema.optionalKey(Schema.String),
+});
 
 const documentOf = <Result>(
   rows: readonly { readonly result: unknown }[],
@@ -180,7 +220,9 @@ const stopIntent = Effect.fn('Communications.recordHandoffStop')(function* recor
   const { intentId } = document.intent;
   const stopped = { intentId, kind: 'STOPPED', reasons } satisfies HandoffProcessing;
   const latest = latestAttemptOf(document);
-  if (latest !== undefined && document.attempts.some(({ state }) => state !== 'NOT_ATTEMPTED')) {
+  // the SAME technical fact the timeline reads: an attempt that made no request at all (no adapter, or no usable configuration)
+  // never let the message leave, so an intent with only such attempts is stopped like one with none, and a proven stop is final
+  if (latest !== undefined && document.attempts.some(attemptMayHaveLeft)) {
     const rows = yield* invoker
       .invoke(workerRecordRecoveryEvaluationRoutine, [
         intentId,
@@ -248,6 +290,11 @@ export type ScopedRunner = <Value, Requirements>(
 ) => Effect.Effect<Value, HandoffStoreUnavailable, Requirements>;
 
 interface StepInput {
+  /**
+   * The time the provider call of this delivery may take at most: the Core worker lease (`handoff-lease.ts`). Only a test of the
+   * bound passes another value.
+   */
+  readonly callLeaseMs?: number | undefined;
   readonly intentId: typeof MessageIntentIdSchema.Type;
   readonly tenantId: string;
 }
@@ -404,18 +451,32 @@ const echoes = (evidence: ProviderEvidence, message: PinnedHandoff) =>
   evidence.attemptId === message.attemptId;
 
 /**
- * The handoff call. Whatever comes back, or does not, is data: a defect, an interruption or an answer bound to another
- * tenant, intent or attempt is INDETERMINATE, because the effect may exist and must be reconciled, never repeated.
+ * The handoff call. Whatever comes back, or does not, is data: a defect, an interruption, an answer bound to another
+ * tenant, intent or attempt, or the end of the time the call may take is INDETERMINATE, because the effect may exist and must
+ * be reconciled, never repeated.
+ *
+ * The call is BOUNDED by `remainingMs`: what is left of the Core worker lease of this delivery, measured from before the
+ * attempt was begun. It is interrupted when it passes, so an attempt prepared longer ago than the lease has no call that can
+ * still answer, which is exactly what reconciliation relies on before it closes a PREPARED attempt (`handoff-lease.ts`).
  */
-const callHandoff = Effect.fn('Communications.callHandoff')(function* call(message: PinnedHandoff) {
+const callHandoff = Effect.fn('Communications.callHandoff')(function* call(
+  message: PinnedHandoff,
+  remainingMs: number,
+) {
   const handoff = yield* MessageHandoff;
-  const exit = yield* Effect.suspend(() => handoff.handoff(message)).pipe(Effect.exit);
-  const indeterminate = (reason: 'response_invalid' | 'transport'): ProviderEvidence => ({
+  const indeterminate = (reason: 'response_invalid' | 'timeout' | 'transport'): ProviderEvidence => ({
     attemptId: message.attemptId,
     intentId: message.intentId,
     outcome: { kind: 'INDETERMINATE', reason },
     tenantId: message.tenantId,
   });
+  const exit = yield* Effect.suspend(() => handoff.handoff(message)).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(Math.max(0, remainingMs)),
+      orElse: () => Effect.succeed(indeterminate('timeout')),
+    }),
+    Effect.exit,
+  );
   if (Exit.isFailure(exit)) {
     return indeterminate('transport');
   }
@@ -596,7 +657,6 @@ const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* deci
     timelineFactsOfStored(document),
     assessment,
     'reasons' in verdict ? { kind: 'STOPPED', reasons: verdict.reasons } : { kind: 'CLEARED' },
-    yield* DateTime.now,
   );
   if (continuation.kind === 'STOP') {
     return (yield* scoped((invoker) => stopIntent(invoker, document, continuation.reasons))) satisfies Prepared;
@@ -609,6 +669,96 @@ const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* deci
   )) satisfies Prepared;
 });
 
+/**
+ * An ACCEPTED answer as the one fact of the history that proves a presence: appended, never an edit of the closed attempt.
+ * Any other answer adds nothing the closed attempt does not already say.
+ */
+const recordLateAnswer = Effect.fn('Communications.recordLateAnswer')(function* record(
+  invoker: ScopedRoutineInvoker,
+  evidence: ProviderEvidence,
+) {
+  const { outcome } = evidence;
+  if (outcome.kind !== 'ACCEPTED') {
+    return 'NO_NEW_PROOF' as const satisfies LateAnswerRecord;
+  }
+  const observation = yield* Schema.decodeUnknownEffect(ProviderObservationInputSchema)({
+    attemptId: evidence.attemptId,
+    evidence: { basis: 'PROVIDER_EVENT', kind: 'ACCEPTANCE_PROVEN' },
+    intentId: evidence.intentId,
+    observationKey: `submission-answer.${evidence.attemptId}`,
+    observedAt: DateTime.formatIso(yield* DateTime.now),
+    providerKey: outcome.providerKey,
+    providerRef: outcome.providerRef,
+    tenantId: evidence.tenantId,
+  }).pipe(Effect.option);
+  if (Option.isNone(observation)) {
+    return 'NOT_RECORDED';
+  }
+  const recorded = yield* ingestProviderObservation(invoker, observation.value);
+  return recorded === 'RECORDED' || recorded === 'DUPLICATE' ? 'ACCEPTANCE_OBSERVED' : 'NOT_RECORDED';
+});
+
+/**
+ * Phase 3 (scoped): commits what the provider answered. The answer of the finish routine is NEVER swallowed. When the attempt
+ * is no longer PREPARED (a reconciliation closed it as an unanswered INDETERMINATE while the call was in flight, or after the
+ * call outlived its lease) the provider's own answer is still the truth: an ACCEPTED answer is appended as an acceptance
+ * observation in the same transaction, which makes the intent accepted (or contradictory) and so blocks every later send; no
+ * answer ever begins an attempt. Any other late answer adds nothing the closed attempt does not already say (an unknown effect).
+ */
+const finishAttempt = Effect.fn('Communications.finishAttempt')(function* finish(
+  invoker: ScopedRoutineInvoker,
+  attemptId: typeof DeliveryAttemptIdSchema.Type,
+  evidence: ProviderEvidence,
+  intentId: typeof MessageIntentIdSchema.Type,
+) {
+  const rows = yield* invoker
+    .invoke(workerFinishAttemptRoutine, [attemptId, finishState(evidence), { ...evidence.outcome }])
+    .pipe(Effect.mapError((cause) => storeUnavailable('The provider evidence could not be recorded', cause)));
+  const { outcome } = yield* documentOf(rows, FinishAnswerSchema, 'The delivery attempt finish answer was unreadable');
+  if (outcome === 'FINISHED') {
+    return { evidence, followUp: 'NONE', intentId, kind: 'HANDED_OFF' } satisfies HandoffProcessing;
+  }
+  if (outcome === 'MISSING') {
+    return yield* storeUnavailable('The delivery attempt to finish no longer exists');
+  }
+  return {
+    evidence,
+    intentId,
+    kind: 'LATE_ANSWER',
+    recorded: yield* recordLateAnswer(invoker, evidence),
+  } satisfies HandoffProcessing;
+});
+
+/**
+ * Whether the answer just recorded PROVES the provider did not accept the message AND the approved recovery rule allows another
+ * attempt: the same evaluation the next delivery makes, over the history as it now stands. Only a provider REFUSAL qualifies. An
+ * attempt that made no request (no adapter, no configuration) is a deployment condition that waiting does not change, so it is
+ * left to the owner and to Core's operator redrive; an unknown effect, an acceptance, a missing rule and a reached limit never do.
+ */
+const followUpOf = (
+  document: IntentDocument,
+  attempt: { readonly attemptId: string; readonly attemptNumber: number },
+  evidence: ProviderEvidence,
+  policy: ReturnType<typeof recoveryPolicyOf> | { readonly kind: 'NONE' },
+  now: DateTime.Utc,
+): HandoffFollowUp => {
+  const state = finishState(evidence);
+  const reason = Match.value(evidence.outcome).pipe(
+    Match.when({ kind: 'ACCEPTED' }, () => Option.none<string>()),
+    Match.orElse(({ reason: answered }) => Option.some<string>(answered)),
+    Option.getOrUndefined,
+  );
+  if (state !== 'REJECTED' || !attemptMayHaveLeft({ reason, state })) {
+    return 'NONE';
+  }
+  const facts = timelineFactsOfStored(document);
+  const assessment = assessAttemptHistory(
+    { ...facts, attempts: [...facts.attempts, { ...attempt, finishedAt: now, preparedAt: now, reason, state }] },
+    policy,
+  );
+  return assessment.kind === 'CONTINUE' && assessment.basis.kind === 'PRIOR_REJECTED' ? 'RETRY_DUE' : 'NONE';
+};
+
 export const processIntentHandoff = Effect.fn('Communications.processIntentHandoff')(function* process(
   input: StepInput,
   scoped: ScopedRunner,
@@ -617,21 +767,33 @@ export const processIntentHandoff = Effect.fn('Communications.processIntentHando
   // with NO connection held, (1b) ask the other owners, then (1c) record the stop or the attempt. The attempt is COMMITTED
   // before the provider is asked; phase 3 commits what the provider answered. A second caller, a stop or an attempt that
   // appeared between the phases is decided again by the routines, so nothing relies on the phases being atomic.
+  //
+  // The delivery has the Core worker lease and no more: the provider call is bounded by what is left of it, measured from here,
+  // which is before the attempt row is stamped. So a PREPARED attempt older than the lease has no call that can still answer.
+  const startedAt = yield* Clock.currentTimeMillis;
+  const leaseMs = input.callLeaseMs ?? PREPARE_MESSAGE_HANDOFF_LEASE_MS;
   const loaded = yield* scoped((invoker) => loadAndGate(input, invoker));
   const prepared = yield* prepareHandoff(input, scoped, loaded);
   if (prepared.kind !== 'READY') {
     return prepared;
   }
-  const evidence = yield* callHandoff({ ...prepared.message, attemptId: prepared.attemptId });
-  yield* scoped((invoker) =>
-    invoker
-      .invoke(workerFinishAttemptRoutine, [prepared.attemptId, finishState(evidence), { ...evidence.outcome }])
-      .pipe(
-        Effect.mapError((cause) => storeUnavailable('The provider evidence could not be recorded', cause)),
-        Effect.flatMap((rows) =>
-          documentOf(rows, FinishAnswerSchema, 'The delivery attempt finish answer was unreadable'),
-        ),
-      ),
-  );
-  return { evidence, intentId: input.intentId, kind: 'HANDED_OFF' } satisfies HandoffProcessing;
+  const remainingMs = leaseMs - ((yield* Clock.currentTimeMillis) - startedAt);
+  const evidence = yield* callHandoff({ ...prepared.message, attemptId: prepared.attemptId }, remainingMs);
+  const finished = yield* scoped((invoker) => finishAttempt(invoker, prepared.attemptId, evidence, input.intentId));
+  if (finished.kind !== 'HANDED_OFF' || loaded.kind !== 'OPEN') {
+    return finished;
+  }
+  const type = (yield* MessageTypeCatalog).byTypeId(loaded.document.intent.typeId);
+  const attemptNumber = (latestAttemptOf(loaded.document)?.attemptNumber ?? 0) + 1;
+  const policy = Option.match(type, { onNone: () => ({ kind: 'NONE' }) as const, onSome: recoveryPolicyOf });
+  return {
+    ...finished,
+    followUp: followUpOf(
+      loaded.document,
+      { attemptId: prepared.attemptId, attemptNumber },
+      evidence,
+      policy,
+      yield* DateTime.now,
+    ),
+  } satisfies HandoffProcessing;
 });

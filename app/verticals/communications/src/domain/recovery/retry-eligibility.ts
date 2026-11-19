@@ -1,10 +1,9 @@
 import { Array as EffectArray, Option, Order } from 'effect';
-import type { DateTime } from 'effect';
 
 import type { RecoveryPolicy } from '../catalog/message-type.ts';
-import { submissionFactOfAttempt } from '../history/delivery-result.ts';
+import { attemptMayHaveLeft, submissionFactOfAttempt } from '../history/delivery-result.ts';
 import type { IntentTimelineFacts } from '../history/timeline.ts';
-import { canAttemptAfterUnknownEffect, effectBlockOf } from '../history/unknown-effect.ts';
+import { effectBlockOf } from '../history/unknown-effect.ts';
 import { PERMANENT_REJECTION_REASON, rejectionClassOf } from './vocabulary.ts';
 import type { RecoveryHaltCode, RecoveryStopReason, RetryBasis } from './vocabulary.ts';
 
@@ -19,7 +18,7 @@ import type { RecoveryHaltCode, RecoveryStopReason, RetryBasis } from './vocabul
  *    provider and never an indeterminate answer, whatever the approved rule says.
  * 2. `confirmContinuation`: the Current gates (source validity, ORIGINAL endpoint and recipient, Privacy for the stored scope,
  *    language and template pin) asked AGAIN now. A retained earlier answer is never an input: the verdict needs the cleared
- *    gates and the history guard `canAttemptAfterUnknownEffect`, evaluated after the latest reconciliation evidence.
+ *    gates and a history that still allows a send; the binding re-check is made by the begin routines (see below).
  *
  * A continuation is the same intent: recipient, endpoint, language, template revision and Privacy scope are pins of the immutable
  * intent that no part of this evaluation reads or changes. No count, interval, backoff or waiting time exists here: the only
@@ -90,9 +89,7 @@ export const assessAttemptHistory = (facts: RecoveryFactsInput, policy: Recovery
   if (policy.kind === 'NONE') {
     return { attemptId: latest.attemptId, code: 'NO_RECOVERY_RULE', kind: 'HALT' };
   }
-  const submitted = facts.attempts.filter(
-    ({ reason, state }) => submissionFactOfAttempt(state, reason).technical !== 'NOT_ATTEMPTED',
-  ).length;
+  const submitted = facts.attempts.filter(attemptMayHaveLeft).length;
   if (submitted >= policy.maxAttempts) {
     return { attemptId: latest.attemptId, code: 'RECOVERY_LIMIT_REACHED', kind: 'HALT' };
   }
@@ -113,20 +110,24 @@ export type Continuation =
   | { readonly kind: 'STOP'; readonly reasons: readonly RecoveryStopReason[] };
 
 /**
- * The final verdict of a continuation (`FIRST_ATTEMPT` or `CONTINUE`) once the Current gates answered. The history guard is the
- * last word: the evaluation counts as Current only if it was made AFTER every reconciliation evidence was recorded, so an answer
- * obtained earlier can never open a send (R-06).
+ * The verdict of a continuation (`FIRST_ATTEMPT` or `CONTINUE`) once the Current gates answered, over the history the step read
+ * AFTER it asked them: stopped gates stop, and a history that now blocks (an effect that became unknown or was contradicted,
+ * an acceptance) skips. This is a READ-SIDE pre-check only. The authority is the routine of the NEXT scoped transaction:
+ * `worker_begin_attempt` / `worker_begin_retry_attempt` re-check, under the intent's advisory lock, that the intent is pending,
+ * no proven stop exists, the attempt is the very next number after exactly the attempt it follows, no provider conflict is
+ * unresolved, no attempt or observation proves an acceptance and the retry basis exists (`worker_link_retry_attempt`, which also
+ * refuses while the earlier attempt is still PREPARED). A reconciliation that lands between this read and that call is therefore
+ * decided by the database, never by a timestamp compared here.
  */
 export const confirmContinuation = (
   facts: RecoveryFactsInput,
   assessment: Extract<HistoryAssessment, { readonly kind: 'CONTINUE' | 'FIRST_ATTEMPT' }>,
   gates: CurrentGates,
-  evaluatedAt: DateTime.Utc,
 ): Continuation => {
   if (gates.kind === 'STOPPED') {
     return { kind: 'STOP', reasons: gates.reasons };
   }
-  if (!canAttemptAfterUnknownEffect(facts, Option.some({ eligible: true, evaluatedAt }))) {
+  if (Option.isSome(effectBlockOf(facts))) {
     return { kind: 'SKIP', reason: 'RECONCILIATION_REQUIRED' };
   }
   return assessment.kind === 'FIRST_ATTEMPT'

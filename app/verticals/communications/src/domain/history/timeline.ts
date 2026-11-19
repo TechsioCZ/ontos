@@ -1,7 +1,7 @@
 import { Array as EffectArray, DateTime, Match, Order, Schema } from 'effect';
 
 import type { HistoryStatus } from '../../../shared/communication-history.ts';
-import { effectAfterObservations, submissionFactOfAttempt } from './delivery-result.ts';
+import { attemptMayHaveLeft, effectAfterObservations, submissionFactOfAttempt } from './delivery-result.ts';
 import type { AttemptState, FailureClass, ObservationKind, TechnicalEvidence } from './vocabulary.ts';
 
 /**
@@ -377,9 +377,7 @@ export const summarizeIntent = (facts: IntentTimelineFacts): IntentHistorySummar
     status,
   });
   // an attempt that provably submitted nothing (no adapter, or no request made) never let a stopped message leave
-  const mayHaveLeft = facts.attempts.some(
-    ({ reason, state }) => submissionFactOfAttempt(state, reason).technical !== 'NOT_ATTEMPTED',
-  );
+  const mayHaveLeft = facts.attempts.some(attemptMayHaveLeft);
   // a stop recorded BEFORE the latest attempt began was superseded by the Current evaluation that cleared it (#1403); a stop
   // that cannot be ordered before it stays current, so an uncertain order never turns a stop into a send
   const currentStops = facts.stops.filter(

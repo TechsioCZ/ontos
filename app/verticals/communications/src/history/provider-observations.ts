@@ -7,7 +7,7 @@ import type { ProviderObservationInput } from '../domain/history/provider-observ
 import { ObservationEvidenceSchema } from '../domain/history/vocabulary.ts';
 import type { LinkReasonCodeSchema } from '../domain/history/vocabulary.ts';
 import type { RetryBasis } from '../domain/recovery/vocabulary.ts';
-import { storeUnavailable } from '../handoff/process-intent-handoff.ts';
+import { storeUnavailable } from '../handoff/handoff-errors.ts';
 import {
   ingestProviderObservationRoutine,
   workerLinkRetryAttemptRoutine,

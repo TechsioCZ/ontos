@@ -5,13 +5,17 @@ import type { MessageIntentIdSchema } from '../../shared/communication-intake.ts
 import { observationIdOf } from '../domain/history/provider-observation.ts';
 import type { ProviderObservationInput } from '../domain/history/provider-observation.ts';
 import { CONFLICT_RESOLUTION_REASON_CODE } from '../domain/recovery/vocabulary.ts';
+import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from '../handoff/handoff-lease.ts';
 import { processIntentHandoff, storeUnavailable } from '../handoff/process-intent-handoff.ts';
 import type { ScopedRunner } from '../handoff/process-intent-handoff.ts';
 import { ingestProviderObservation, resolveObservationConflict } from '../history/provider-observations.ts';
 import type { IngestAnswerSchema } from '../history/provider-observations.ts';
 import { StoredIntentFactsSchema } from '../history/stored-intent-facts.ts';
 import type { StoredIntentFacts } from '../history/stored-intent-facts.ts';
-import { workerFinishAttemptRoutine, workerReadIntentRoutine } from '../persistence/communications-routines.ts';
+import {
+  workerCloseUnansweredAttemptRoutine,
+  workerReadIntentRoutine,
+} from '../persistence/communications-routines.ts';
 
 /**
  * Reconciliation of an uncertain external effect (#1403). While an effect is unknown nothing is submitted: the pre-handoff step
@@ -25,16 +29,21 @@ import { workerFinishAttemptRoutine, workerReadIntentRoutine } from '../persiste
  * - a conflict of provider evidence is settled by a RESOLUTION fact appended when a reconciliation of the same attempt arrived
  *   after it, never by removing the conflict;
  * - an attempt that was begun and never answered (a crash between the call and its evidence) is closed as an unanswered
- *   INDETERMINATE once a reconciliation proved non-acceptance, so it can be the basis of a retry; it is never closed otherwise.
+ *   INDETERMINATE once a reconciliation proved non-acceptance, so it can be the basis of a retry; it is never closed otherwise,
+ *   and NEVER while its provider call may still be running (see `callLeaseMs`): such an attempt stays PREPARED and the outcome
+ *   says RECONCILIATION_PENDING, because a late ACCEPTED answer would otherwise meet a closed attempt and a second send.
  *
  * There is no real step 22 yet: the evidence of this flow is the labelled double of the tests, and a production composition
  * calls this flow only when the Messaging Adapter exists. No endpoint, callback or scheduler is created here.
  */
 
-/** The closed reason of an attempt that never recorded an answer; it is not a provider vocabulary reason. */
-const NO_ANSWER_RECORDED = 'no_answer_recorded';
-
 export interface ReconciliationInput {
+  /**
+   * How long after it was prepared an attempt's provider call may still be running: the lease of the owner's Core Outbox worker,
+   * which the step also bounds its call with (`handoff-lease.ts`). Defaults to that lease; only a test that stands for "the
+   * lease has elapsed" passes another value.
+   */
+  readonly callLeaseMs?: number | undefined;
   /** The evidence step 22 reconciled, each item bound to its own Tenant, intent and attempt. */
   readonly evidence: readonly ProviderObservationInput[];
   readonly intentId: typeof MessageIntentIdSchema.Type;
@@ -45,12 +54,18 @@ export interface ReconciliationOutcome {
   readonly answers: readonly (typeof IngestAnswerSchema.Type)['outcome'][];
   /** Attempts closed as unanswered because a reconciliation proved they were not accepted. */
   readonly closedAttempts: number;
+  /** Attempts a reconciliation proved not accepted whose provider call may still be running: left PREPARED (RECONCILIATION_PENDING). */
+  readonly pendingAttempts: number;
   /** Conflicts of provider evidence settled by an appended resolution. */
   readonly resolvedConflicts: number;
 }
 
 /** The observations that prove an effect: with any of them an unanswered attempt is never closed as "not accepted". */
 const PRESENCE_KINDS: ReadonlySet<string> = new Set(['ACCEPTANCE_PROVEN', 'DELIVERY_FAILED', 'DELIVERY_PROVEN']);
+
+const CloseAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['CLOSED', 'IN_FLIGHT', 'MISSING', 'NOT_PREPARED']),
+});
 
 const sumOf = (counts: readonly number[]) => counts.reduce((total, count) => total + count, 0);
 
@@ -84,10 +99,14 @@ const settleConflicts = Effect.fn('Communications.settleConflicts')(function* se
   return sumOf(settled);
 });
 
-/** Closes an attempt that never recorded an answer, but only when a reconciliation proved it was not accepted. */
+/**
+ * Closes an attempt that never recorded an answer, but only when a reconciliation proved it was not accepted AND the database says
+ * its provider call cannot still be running (the lease elapsed since it was prepared). Otherwise it stays PREPARED.
+ */
 const closeUnansweredAttempts = Effect.fn('Communications.closeUnansweredAttempts')(function* close(
   invoker: ScopedRoutineInvoker,
   facts: StoredIntentFacts,
+  callLeaseMs: number,
 ) {
   const proven = facts.attempts.filter(({ attemptId, state }) => {
     const kinds = facts.observations.flatMap((observation) =>
@@ -97,19 +116,23 @@ const closeUnansweredAttempts = Effect.fn('Communications.closeUnansweredAttempt
       state === 'PREPARED' && kinds.includes('NON_ACCEPTANCE_PROVEN') && !kinds.some((kind) => PRESENCE_KINDS.has(kind))
     );
   });
-  yield* Effect.forEach(
+  const outcomes = yield* Effect.forEach(
     proven,
     ({ attemptId }) =>
-      invoker
-        .invoke(workerFinishAttemptRoutine, [
-          attemptId,
-          'INDETERMINATE',
-          { kind: 'INDETERMINATE', reason: NO_ANSWER_RECORDED },
-        ])
-        .pipe(Effect.mapError((cause) => storeUnavailable('The unanswered attempt could not be closed', cause))),
-    { concurrency: 1, discard: true },
+      invoker.invoke(workerCloseUnansweredAttemptRoutine, [attemptId, callLeaseMs]).pipe(
+        Effect.mapError((cause) => storeUnavailable('The unanswered attempt could not be closed', cause)),
+        Effect.flatMap((rows) =>
+          Schema.decodeUnknownEffect(CloseAnswerSchema)(rows[0]?.result).pipe(
+            Effect.mapError((cause) => storeUnavailable('The unanswered attempt answer was unreadable', cause)),
+          ),
+        ),
+      ),
+    { concurrency: 1 },
   );
-  return proven.length;
+  return {
+    closedAttempts: outcomes.filter(({ outcome }) => outcome === 'CLOSED').length,
+    pendingAttempts: outcomes.filter(({ outcome }) => outcome === 'IN_FLIGHT').length,
+  };
 });
 
 /** One scoped transaction: append the evidence, settle what the evidence settles, and say what changed. */
@@ -145,14 +168,14 @@ export const reconcileProviderEvidence = Effect.fn('Communications.reconcileProv
       const facts = yield* Schema.decodeUnknownEffect(StoredIntentFactsSchema)(rows[0]?.result).pipe(
         Effect.mapError((cause) => storeUnavailable('The Message Intent document was unreadable', cause)),
       );
-      const { closedAttempts, resolvedConflicts } = yield* Effect.all(
+      const { closed, resolvedConflicts } = yield* Effect.all(
         {
-          closedAttempts: closeUnansweredAttempts(invoker, facts),
+          closed: closeUnansweredAttempts(invoker, facts, input.callLeaseMs ?? PREPARE_MESSAGE_HANDOFF_LEASE_MS),
           resolvedConflicts: settleConflicts(invoker, input.intentId, facts, reconciliations),
         },
         { concurrency: 1 },
       );
-      return { answers, closedAttempts, resolvedConflicts } satisfies ReconciliationOutcome;
+      return { answers, ...closed, resolvedConflicts } satisfies ReconciliationOutcome;
     }),
   );
 });

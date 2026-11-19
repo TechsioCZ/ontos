@@ -9,6 +9,8 @@ import {
   CommunicationRequestSourceMismatch,
 } from '../../shared/communication-intake-errors.ts';
 import { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
+import { scopeKey } from '../../src/domain/recipient/original-binding.ts';
+import type { ResendOriginalFacts } from '../../src/domain/recovery/resend-admission.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
@@ -123,19 +125,29 @@ const ORIGINAL_INTENT_ID = '33333333-3333-4333-8333-333333333333';
 
 describe('Explicit Resend over the public Action boundary (#1403)', () => {
   const resendOf = { originalIntentId: ORIGINAL_INTENT_ID, reason: 'RECIPIENT_NOT_RECEIVED' };
-  const request = (key: string) =>
-    communicationRequest({ bindings: [originalRecipient('customer-1')], occurrenceId: key, resendOf, tenantId });
+  const request = (key: string, legalEntityId?: string) =>
+    communicationRequest({
+      bindings: [originalRecipient('customer-1')],
+      legalEntityId,
+      occurrenceId: key,
+      resendOf,
+      tenantId,
+    });
+  /** What the original's store says when it was requested in the SAME scope as `request(...)` and is final. */
+  const originalOf = (typeId: ResendOriginalFacts['typeId'], legalEntityId?: string): ResendOriginalFacts => ({
+    effectBlock: Option.none(),
+    pendingWithoutOutcome: false,
+    scopeKey: scopeKey(request('scope-probe', legalEntityId).scope),
+    sourceModule: 'fixture.source',
+    typeId,
+  });
 
   it.effect(
     "[S08 AC-04] a type without the source owner's resend approval is refused with a closed reason, and the original is never even read",
     () =>
       Effect.gen(function* unapproved() {
         const t = yield* world([fixtureType()], 'fixture.source', {
-          [ORIGINAL_INTENT_ID]: {
-            effectBlock: Option.none(),
-            sourceModule: 'fixture.source',
-            typeId: fixtureType().typeId,
-          },
+          [ORIGINAL_INTENT_ID]: originalOf(fixtureType().typeId),
         });
         const result = yield* t.issue(request('o-resend-1'), 'k-resend-1');
         expect(result).toMatchObject({
@@ -152,7 +164,7 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
       Effect.gen(function* approved() {
         const type = fixtureType({ resend: 'SOURCE_APPROVED' });
         const t = yield* world([type], 'fixture.source', {
-          [ORIGINAL_INTENT_ID]: { effectBlock: Option.none(), sourceModule: 'fixture.source', typeId: type.typeId },
+          [ORIGINAL_INTENT_ID]: originalOf(type.typeId),
         });
         const result = yield* t.issue(request('o-resend-2'), 'k-resend-2');
         expect(result).toMatchObject({ decision: { kind: 'MESSAGE_INTENTS' }, outcome: 'DECIDED' });
@@ -162,6 +174,17 @@ describe('Explicit Resend over the public Action boundary (#1403)', () => {
         expect(yield* missing.issue(request('o-resend-3'), 'k-resend-3')).toMatchObject({
           decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_NOT_FOUND' },
         });
+        // an original that exists but was requested in ANOTHER Legal Entity answers exactly like one that is not there
+        const otherEntity = '55555555-5555-4555-8555-555555555555';
+        const crossEntity = yield* world([type], 'fixture.source', {
+          [ORIGINAL_INTENT_ID]: originalOf(type.typeId, otherEntity),
+        });
+        const refused = yield* crossEntity.issue(request('o-resend-4'), 'k-resend-4');
+        expect(refused).toMatchObject({ decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_NOT_FOUND' } });
+        const notThere = yield* missing.issue(request('o-resend-4'), 'k-resend-4');
+        expect(refused.outcome === 'DECIDED' && refused.decision).toEqual(
+          notThere.outcome === 'DECIDED' && notThere.decision,
+        );
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

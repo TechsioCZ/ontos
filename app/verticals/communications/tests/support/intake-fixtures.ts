@@ -56,9 +56,9 @@ export interface RequestInput {
   readonly correlationId?: string;
   readonly counterpartyId?: string;
   readonly idempotencyKey?: string;
-  readonly legalEntityId?: string;
+  readonly legalEntityId?: string | undefined;
   readonly occurrenceId?: string;
-  readonly profileId?: string;
+  readonly profileId?: string | undefined;
   readonly purpose?: string;
   /** Makes the request an Explicit Resend of the named original intent (#1403). */
   readonly resendOf?: { readonly originalIntentId: string; readonly reason?: string };

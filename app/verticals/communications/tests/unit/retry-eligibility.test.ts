@@ -5,7 +5,7 @@ import { assessAttemptHistory, confirmContinuation } from '../../src/domain/reco
 import type { CurrentGates } from '../../src/domain/recovery/retry-eligibility.ts';
 import { rejectionClassOf } from '../../src/domain/recovery/vocabulary.ts';
 import { fixtureRecovery, fixtureType } from './support/catalog-fixtures.ts';
-import { ATTEMPT_1, ATTEMPT_2, attempt, conflict, factsOf, minute, observation } from './support/history-fixtures.ts';
+import { ATTEMPT_1, ATTEMPT_2, attempt, conflict, factsOf, observation } from './support/history-fixtures.ts';
 
 /**
  * [#1403 R-01 R-04 R-05 R-06 AC-01 AC-02 AC-07] Retry eligibility is decided over the append-only history and the approved
@@ -161,7 +161,7 @@ describe('assessAttemptHistory: what the history and the approved rule allow bef
   });
 });
 
-describe('confirmContinuation: the Current gates asked AGAIN, and the history guard has the last word', () => {
+describe('confirmContinuation: the Current gates asked AGAIN; the begin routines are the binding re-check', () => {
   const retry = assessAttemptHistory(factsOf({ attempts: [attempt('REJECTED', temporary)] }), approved);
   const facts = factsOf({ attempts: [attempt('REJECTED', temporary)] });
 
@@ -170,7 +170,7 @@ describe('confirmContinuation: the Current gates asked AGAIN, and the history gu
     if (retry.kind !== 'CONTINUE') {
       return;
     }
-    expect(confirmContinuation(facts, retry, cleared, minute(30))).toEqual({
+    expect(confirmContinuation(facts, retry, cleared)).toEqual({
       basis: { kind: 'PRIOR_REJECTED' },
       kind: 'BEGIN_RETRY',
       previousAttemptId: ATTEMPT_1,
@@ -182,13 +182,13 @@ describe('confirmContinuation: the Current gates asked AGAIN, and the history gu
     if (retry.kind !== 'CONTINUE') {
       return;
     }
-    expect(confirmContinuation(facts, retry, { kind: 'STOPPED', reasons }, minute(30))).toEqual({
+    expect(confirmContinuation(facts, retry, { kind: 'STOPPED', reasons })).toEqual({
       kind: 'STOP',
       reasons,
     });
   });
 
-  it('[R-06] an evaluation made BEFORE the latest reconciliation evidence is not Current: a stale ALLOWED never opens a send', () => {
+  it('[R-06] a history that no longer allows a send (an effect now unknown, contradicted or accepted) skips instead of beginning one', () => {
     const proof = observation('NON_ACCEPTANCE_PROVEN', { observed: 10, recorded: 20 });
     const reconciled = factsOf({ attempts: [attempt('INDETERMINATE')], observations: [proof] });
     const assessment = assessAttemptHistory(reconciled, approved);
@@ -196,15 +196,20 @@ describe('confirmContinuation: the Current gates asked AGAIN, and the history gu
       expect(assessment.kind).toBe('CONTINUE');
       return;
     }
-    expect(confirmContinuation(reconciled, assessment, cleared, minute(19))).toEqual({
+    expect(confirmContinuation(reconciled, assessment, cleared)).toMatchObject({ kind: 'BEGIN_RETRY' });
+    // the read the verdict is made over changed after the assessment: evidence of an acceptance arrived
+    const contradicted = factsOf({
+      attempts: [attempt('INDETERMINATE')],
+      observations: [proof, observation('ACCEPTANCE_PROVEN', { observed: 30, recorded: 40 })],
+    });
+    expect(confirmContinuation(contradicted, assessment, cleared)).toEqual({
       kind: 'SKIP',
       reason: 'RECONCILIATION_REQUIRED',
     });
-    expect(confirmContinuation(reconciled, assessment, cleared, minute(21))).toMatchObject({ kind: 'BEGIN_RETRY' });
   });
 
   it('the first attempt of an intent begins with no basis and no previous attempt', () => {
-    expect(confirmContinuation(factsOf({}), { kind: 'FIRST_ATTEMPT' }, cleared, minute(3))).toEqual({
+    expect(confirmContinuation(factsOf({}), { kind: 'FIRST_ATTEMPT' }, cleared)).toEqual({
       kind: 'BEGIN_FIRST',
     });
   });

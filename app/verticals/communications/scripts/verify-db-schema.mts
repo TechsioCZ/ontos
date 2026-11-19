@@ -53,6 +53,7 @@ const scopedRoutines = [
   'read_language_policy_snapshot',
   'worker_begin_attempt',
   'worker_begin_retry_attempt',
+  'worker_close_unanswered_attempt',
   'worker_finish_attempt',
   'worker_link_retry_attempt',
   'worker_read_intent',
@@ -308,6 +309,7 @@ const historyConstraints: readonly {
 const historyRoutines: readonly { readonly definer: boolean; readonly name: string }[] = [
   { definer: true, name: 'ingest_provider_observation' },
   { definer: true, name: 'worker_begin_retry_attempt' },
+  { definer: true, name: 'worker_close_unanswered_attempt' },
   { definer: true, name: 'worker_link_retry_attempt' },
   { definer: true, name: 'worker_record_recovery_evaluation' },
   { definer: true, name: 'worker_resolve_observation_conflict' },

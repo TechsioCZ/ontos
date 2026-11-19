@@ -30,7 +30,38 @@ const relativeOf = (file: string) => path.relative(root, file);
 /** The only file that configures a retry: the Core Outbox worker definition requires its own technical redrive policy. */
 const CORE_REDRIVE_WORKER = 'src/workers/prepare-message-handoff.worker.ts';
 
+const NUMERIC_LIMIT_AFTER =
+  /\b(?:attempts?|retr(?:y|ies)|tries|submitted|attemptNumber|maxAttempts|limit)\w*(?:\.length)?\s*(?:>=|<=|===|!==|==|>|<)\s*\d/iu;
+const NUMERIC_LIMIT_BEFORE = /\b\d+\s*(?:>=|<=|===|!==|==|>|<)\s*\w*(?:attempt|retr(?:y|ies)|tries|submitted)\w*/iu;
+const NUMERIC_BOUND_CALL =
+  /\b(?:attempts?|retr(?:y|ies)|tries)\w*\.(?:slice|splice|take)\(\s*\d|\b(?:times|repeats?|retries|maxTries)\s*[:=(]\s*\d/iu;
+
 describe('no invented recovery numbers (#1403)', () => {
+  it('the numeric-limit patterns really catch a limit written against an attempt or retry count, and spare the lease and plain arithmetic', () => {
+    for (const offender of [
+      'if (attempts.length >= 3) {',
+      'submitted > 5',
+      'retries === 4',
+      'attemptNumber > 2',
+      'if (3 <= attempts) {',
+      'attempts.slice(0, 3)',
+      'times: 3',
+    ]) {
+      expect(
+        [NUMERIC_LIMIT_AFTER, NUMERIC_LIMIT_BEFORE, NUMERIC_BOUND_CALL].some((pattern) => pattern.test(offender)),
+      ).toBe(true);
+    }
+    for (const innocent of [
+      'const attemptNumber = (latest?.attemptNumber ?? 0) + 1;',
+      'submitted >= policy.maxAttempts',
+      'export const LEASE_MS = 30_000;',
+    ]) {
+      expect(
+        [NUMERIC_LIMIT_AFTER, NUMERIC_LIMIT_BEFORE, NUMERIC_BOUND_CALL].some((pattern) => pattern.test(innocent)),
+      ).toBe(false);
+    }
+  });
+
   it('finds the sources it scans, so the guard cannot pass on an empty directory', () => {
     expect(scanned.length).toBeGreaterThan(50);
     expect(scanned.map(relativeOf)).toContain(CORE_REDRIVE_WORKER);
@@ -46,6 +77,9 @@ describe('no invented recovery numbers (#1403)', () => {
       'a scheduler, a timer or a polling loop',
       /\b(?:setInterval|setTimeout|Schedule\.|Effect\.(?:retry|repeat|schedule|sleep)|cron|node-cron|p-retry|async-retry|bullmq)\b/u,
     ],
+    ['a numeric limit compared with an attempt or retry count', NUMERIC_LIMIT_AFTER],
+    ['a numeric limit on the left of an attempt or retry comparison', NUMERIC_LIMIT_BEFORE],
+    ['a numeric attempt or retry bound given to a slice, take, repeat or times', NUMERIC_BOUND_CALL],
     [
       'a retry framework import',
       /from\s+['"](?:p-retry|async-retry|retry|bull|bullmq|agenda|node-cron|cron|bee-queue)['"]/u,

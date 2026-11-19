@@ -10,6 +10,8 @@ import { attemptIdOf } from '../../src/domain/intake/identity.ts';
 import {
   workerBeginAttemptRoutine,
   workerBeginRetryAttemptRoutine,
+  workerCloseUnansweredAttemptRoutine,
+  workerRecordStopRoutine,
   workerRecordRecoveryEvaluationRoutine,
   workerResolveObservationConflictRoutine,
 } from '../../src/persistence/communications-routines.ts';
@@ -319,6 +321,7 @@ describe('worker_record_recovery_evaluation and the append-only recovery facts (
       const calls = [
         sql`communications.worker_begin_retry_attempt(${stranger}::uuid, ${intentId}::uuid, ${attemptId}::uuid, 2, ${attemptId}::uuid, 'PRIOR_REJECTED', null::uuid, 'X')`,
         sql`communications.worker_record_recovery_evaluation(${stranger}::uuid, ${intentId}::uuid, ${attemptId}::uuid, 'HALTED', 'X', '[]'::jsonb)`,
+        sql`communications.worker_close_unanswered_attempt(${stranger}::uuid, ${attemptId}::uuid, 0)`,
         sql`communications.worker_resolve_observation_conflict(${stranger}::uuid, ${intentId}::uuid, ${attemptId}::uuid, ${attemptId}::uuid, 'X')`,
       ];
       for (const routineCall of calls) {
@@ -330,6 +333,55 @@ describe('worker_record_recovery_evaluation and the append-only recovery facts (
         expect(sqlStateOf(failure)).toBe('42501');
       }
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+const close = (world: World, attemptId: string, leaseMs: number) =>
+  world.database
+    .inTenant(world.tenantId, (tx) => tx.invoke(workerCloseUnansweredAttemptRoutine, [attemptId, leaseMs]))
+    .pipe(Effect.map((rows) => rows[0]?.result));
+
+describe('worker_close_unanswered_attempt closes only an attempt whose call cannot still be running (#1403 review)', () => {
+  it.live(
+    'answers IN_FLIGHT inside the lease on the database clock, CLOSED after it, and never touches an answered attempt',
+    () =>
+      Effect.gen(function* closing() {
+        const world = yield* setup({ types: [recoverableType()] });
+        const { intentId } = yield* decideOne(world);
+        // an attempt that was begun and never answered: the provider call happened and nothing recorded it
+        const attemptId = yield* attemptIdOf(intentId, 1);
+        yield* world.database.inTenant(world.tenantId, (tx) =>
+          tx.invoke(workerBeginAttemptRoutine, [intentId, attemptId, 1]),
+        );
+        expect(yield* close(world, attemptId, 60_000)).toEqual({ outcome: 'IN_FLIGHT' });
+        expect((yield* attemptsOf(world, intentId)).map(({ state }) => state)).toEqual(['PREPARED']);
+        expect(yield* close(world, attemptId, 0)).toEqual({ outcome: 'CLOSED' });
+        expect(yield* attemptsOf(world, intentId)).toMatchObject([
+          { evidence: { kind: 'INDETERMINATE', reason: 'no_answer_recorded' }, state: 'INDETERMINATE' },
+        ]);
+        expect(yield* close(world, attemptId, 0)).toEqual({ outcome: 'NOT_PREPARED', state: 'INDETERMINATE' });
+        expect(yield* close(world, intentId, 0)).toEqual({ outcome: 'MISSING' });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+describe('worker_record_stop and the attempts that made no request (#1403 review)', () => {
+  it.live(
+    'records a stop when every attempt provably made no request (UNAVAILABLE configuration) and refuses one that may have left',
+    () =>
+      Effect.gen(function* stops() {
+        const noRequest = yield* answered(() =>
+          Effect.succeed({ kind: 'UNAVAILABLE', reason: 'configuration' } as const),
+        );
+        const reasons = [{ category: 'PRIVACY_NOT_ALLOWED', cause: 'FIXTURE', proven: true }];
+        const stopOf = (world: World, intentId: string) =>
+          world.database
+            .inTenant(world.tenantId, (tx) => tx.invoke(workerRecordStopRoutine, [intentId, reasons]))
+            .pipe(Effect.map((rows) => rows[0]?.result));
+        expect(yield* stopOf(noRequest.world, noRequest.intentId)).toMatchObject({ outcome: 'STOPPED' });
+        const mayHaveLeft = yield* answered(answers.timeout);
+        expect(yield* stopOf(mayHaveLeft.world, mayHaveLeft.intentId)).toEqual({ outcome: 'ATTEMPT_EXISTS' });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });
 

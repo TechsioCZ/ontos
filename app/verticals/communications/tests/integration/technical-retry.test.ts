@@ -1,7 +1,8 @@
-import { Effect, Redacted, Ref } from 'effect';
+import { Effect, Exit, Redacted, Ref } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { communicationRequests } from '../../src/database/schema.ts';
+import { requireRedeliveryWhenRetryDue } from '../../src/handoff/process-intent-handoff.ts';
 import { attemptIdOf } from '../../src/domain/intake/identity.ts';
 import type { ProviderEvidenceCase } from '../../src/domain/handoff/message-handoff.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
@@ -51,7 +52,7 @@ const sequence = (...scripted: readonly (() => Effect.Effect<ProviderEvidenceCas
 
 describe('Technical Retry of the same Message Intent (#1403)', () => {
   it.live(
-    '[S01 AC-01 AC-05 AC-06 R-01 R-04] a PROVEN temporary non-acceptance continues the SAME intent as a new attempt: same recipient, endpoint, language and revision, a fresh Current gate',
+    '[S01 AC-01 AC-05 AC-06 R-01 R-04] when Core delivers the message again, a PROVEN temporary non-acceptance continues the SAME intent as a new attempt: same recipient, endpoint, language and revision, a fresh Current gate',
     () =>
       Effect.gen(function* provenTemporary() {
         const world = yield* setup({ types: [recoverableType()] });
@@ -245,6 +246,54 @@ describe('Technical Retry of the same Message Intent (#1403)', () => {
   );
 });
 
+describe('what triggers a Technical Retry (#1403 review)', () => {
+  it.live(
+    '[AC-01 R-13] a provable, recoverable refusal ends the step with a retry due, which asks CORE to redeliver; every other end is final for the delivery',
+    () =>
+      Effect.gen(function* trigger() {
+        const world = yield* setup({ types: [recoverableType(2)] });
+        const handoff = sequence(answers.rateLimited);
+        const { intentId } = yield* decideOne(world);
+        const first = yield* stepWith(world, handoff, intentId);
+        expect(first).toMatchObject({ followUp: 'RETRY_DUE', kind: 'HANDED_OFF' });
+        const redelivery = yield* Effect.exit(requireRedeliveryWhenRetryDue(first));
+        expect(Exit.isFailure(redelivery)).toBe(true);
+        expect(JSON.stringify(redelivery)).toContain('NonAcceptanceRetryDue');
+        // Core redelivers: the second delivery is the evaluation that begins the next attempt; the owner's limit (2) is then reached
+        const second = yield* stepWith(world, handoff, intentId);
+        expect(second).toMatchObject({ followUp: 'NONE', kind: 'HANDED_OFF' });
+        expect(Exit.isSuccess(yield* Effect.exit(requireRedeliveryWhenRetryDue(second)))).toBe(true);
+        expect(handoff.calls).toHaveLength(2);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-07 R-05] no retry is due after an acceptance, an unknown effect, a permanent refusal, no approved rule or a deployment that made no request',
+    () =>
+      Effect.gen(function* notDue() {
+        const cases: readonly [string, Parameters<typeof setup>[0], () => Effect.Effect<ProviderEvidenceCase>][] = [
+          ['accepted', { types: [recoverableType()] }, answers.accepted],
+          ['timeout', { types: [recoverableType()] }, answers.timeout],
+          ['unavailable', { types: [recoverableType()] }, answers.unavailable],
+          ['permanent', { types: [recoverableType()] }, answers.refused],
+          ['no rule', {}, answers.rateLimited],
+          [
+            'no request',
+            { types: [recoverableType()] },
+            () => Effect.succeed({ kind: 'UNAVAILABLE', reason: 'configuration' } as const),
+          ],
+        ];
+        for (const [, options, answer] of cases) {
+          const world = yield* setup(options);
+          const { intentId } = yield* decideOne(world);
+          const processing = yield* stepWith(world, handoffDouble(answer), intentId);
+          expect(processing).toMatchObject({ followUp: 'NONE', kind: 'HANDED_OFF' });
+          expect(Exit.isSuccess(yield* Effect.exit(requireRedeliveryWhenRetryDue(processing)))).toBe(true);
+        }
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
 describe('Current gates during recovery (#1403 R-06 AC-03)', () => {
   const refusedOnce = Effect.fn('RetryTest.refusedOnce')(function* refused(types = [recoverableType()]) {
     const world = yield* setup({ types });
@@ -299,6 +348,29 @@ describe('Current gates during recovery (#1403 R-06 AC-03)', () => {
         expect(handoff.calls).toHaveLength(2);
         expect(yield* recoveriesOf(world, intentId)).toMatchObject([{ outcome: 'STOPPED', proven: false }]);
         expect((yield* attemptsOf(world, intentId)).map(({ state }) => state)).toEqual(['REJECTED', 'ACCEPTED']);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review] the same unproven recovery stop is recorded ONCE per attempt and reason, like a halt: a redelivery cannot flood the history',
+    () =>
+      Effect.gen(function* dedupedStop() {
+        const { handoff, intentId, world } = yield* refusedOnce();
+        world.privacy.answers.set('customer-1', privacyIndeterminate);
+        for (let delivery = 0; delivery < 3; delivery += 1) {
+          expect(yield* stepWith(world, handoff, intentId)).toMatchObject({ kind: 'STOPPED' });
+        }
+        expect(yield* recoveriesOf(world, intentId)).toMatchObject([
+          { evaluationSeq: 1, outcome: 'STOPPED', proven: false },
+        ]);
+        // a DIFFERENT fact is the next evaluation: the proven prohibition is appended and final
+        world.privacy.answers.set('customer-1', privacyNotAllowed());
+        expect(yield* stepWith(world, handoff, intentId)).toMatchObject({ kind: 'STOPPED' });
+        expect(
+          (yield* recoveriesOf(world, intentId)).map(
+            ({ evaluationSeq, proven }) => `${String(evaluationSeq)}:${String(proven)}`,
+          ),
+        ).toEqual(['1:false', '2:true']);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

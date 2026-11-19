@@ -2,8 +2,9 @@ import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext, OutboxWorkerTenantScopeService } from '@app/core-runtime/outbox/worker';
 import { Data, Effect, Option, Ref } from 'effect';
 
-import { storeUnavailable } from './process-intent-handoff.ts';
-import type { HandoffStoreUnavailable, ScopedRunner } from './process-intent-handoff.ts';
+import { storeUnavailable } from './handoff-errors.ts';
+import type { HandoffStoreUnavailable } from './handoff-errors.ts';
+import type { ScopedRunner } from './process-intent-handoff.ts';
 
 type TenantScopeRun = OutboxWorkerTenantScopeService['run'];
 

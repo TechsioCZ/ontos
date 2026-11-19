@@ -13,7 +13,8 @@ import {
 } from '@app/communications/outbox/communications-core-message-intent-prepared-v1';
 import { Effect } from 'effect';
 import { underOwnerCall, workerOwnerCall } from '../integrations/owner-call.ts';
-import { processIntentHandoff } from '../handoff/process-intent-handoff.ts';
+import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from '../handoff/handoff-lease.ts';
+import { processIntentHandoff, requireRedeliveryWhenRetryDue } from '../handoff/process-intent-handoff.ts';
 import { tenantScopedRunner } from '../handoff/tenant-scoped-runner.ts';
 
 /**
@@ -33,6 +34,15 @@ const handlePrepareMessageHandoff = Effect.fn('PrepareMessageHandoffWorker.handl
   yield* Effect.logInfo('Message Intent pre-handoff processed').pipe(
     Effect.annotateLogs({ intentId: outcome.intentId, outcome: outcome.kind }),
   );
+  // WHO triggers a Technical Retry (#1403). Nothing here runs on a clock, and success would make Core complete the delivery, so a
+  // retry that is due (the provider provably refused, the approved rule allows another attempt) ends the step with a typed
+  // failure instead: Core then redelivers the same message under this worker's own `retryPolicy`, and the redelivered step is a
+  // fresh evaluation of every Current gate. Every other end is final for this delivery. Two cases are NOT redelivered by this
+  // worker and are re-evaluated only when something else triggers the step again: an unknown effect (a Core operator redrive of
+  // the dead delivery, or `reconcileAndEvaluate` once step 22's reconciliation evidence exists) and a deployment that made no
+  // request at all. Core's budget is the delivery's `maxAttempts`; if it is spent before the owner's approved limit, the
+  // delivery is `dead`, visible to operators, and only an operator redrive (never a send approval) gives it a fresh budget.
+  yield* requireRedeliveryWhenRetryDue(outcome);
 });
 
 /**
@@ -53,7 +63,7 @@ export const prepareMessageHandoffWorker = defineOutboxWorker(
       moduleKey: 'communications.core',
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
+    leaseDurationMs: PREPARE_MESSAGE_HANDOFF_LEASE_MS,
     // Tenant-wide: a request's company is optional, and the pinned intent holds everything the step needs.
     legalEntityScope: 'forbidden',
     payloadSchema: OutboxPayloadSchema,

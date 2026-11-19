@@ -40,8 +40,9 @@ export const stepWith = (
   handoff: ReturnType<typeof handoffDouble>,
   intentId: typeof MessageIntentIdSchema.Type,
   types = world.types,
+  callLeaseMs?: number,
 ) =>
-  processIntentHandoff({ intentId, tenantId: world.tenantId }, scopedIn(world)).pipe(
+  processIntentHandoff({ callLeaseMs, intentId, tenantId: world.tenantId }, scopedIn(world)).pipe(
     Effect.provide(Layer.mergeAll(world.portsFor(types), handoff.layer, NodeCrypto.layer)),
   );
 
@@ -106,6 +107,9 @@ export const kindOf = (processing: Effect.Success<ReturnType<typeof stepWith>>) 
   if (processing.kind === 'SKIPPED') {
     return `${processing.kind}:${processing.reason}`;
   }
+  if (processing.kind === 'LATE_ANSWER') {
+    return `${processing.kind}:${processing.recorded}`;
+  }
   return processing.kind === 'HALTED' ? `${processing.kind}:${processing.code}` : processing.kind;
 };
 
@@ -137,14 +141,21 @@ export const crashAfterProviderCall = (
     ),
   );
 
+/**
+ * "The lease of the delivery has elapsed since the attempt was prepared" as test data: the tests cannot wait the Core worker
+ * lease, so a test that stands for a crashed worker long ago passes none; a test of an in-flight call passes the real lease.
+ */
+export const ELAPSED_CALL_LEASE_MS = 0;
+
 /** Reconciliation evidence of one intent (the labelled step 22 double), then one evaluation of the SAME pre-handoff step. */
 export const reconcileThenStep = (
   world: World,
   handoff: ReturnType<typeof handoffDouble>,
   intentId: typeof MessageIntentIdSchema.Type,
   evidence: Parameters<typeof reconcileAndEvaluate>[0]['evidence'],
+  callLeaseMs = ELAPSED_CALL_LEASE_MS,
 ) =>
-  reconcileAndEvaluate({ evidence, intentId, tenantId: world.tenantId }, scopedIn(world)).pipe(
+  reconcileAndEvaluate({ callLeaseMs, evidence, intentId, tenantId: world.tenantId }, scopedIn(world)).pipe(
     Effect.provide(Layer.mergeAll(world.portsFor(world.types), handoff.layer, NodeCrypto.layer)),
   );
 
@@ -153,4 +164,8 @@ export const reconcileOnly = (
   world: World,
   intentId: typeof MessageIntentIdSchema.Type,
   evidence: Parameters<typeof reconcileProviderEvidence>[0]['evidence'],
-) => reconcileProviderEvidence({ evidence, intentId }, scopedIn(world)).pipe(Effect.provide(NodeCrypto.layer));
+  callLeaseMs = ELAPSED_CALL_LEASE_MS,
+) =>
+  reconcileProviderEvidence({ callLeaseMs, evidence, intentId }, scopedIn(world)).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );

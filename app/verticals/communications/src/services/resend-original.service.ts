@@ -5,6 +5,7 @@ import { Effect, Option } from 'effect';
 import { CommunicationDecisionUnavailable } from '../../shared/communication-intake-errors.ts';
 import { CommunicationRequestIdSchema } from '../../shared/communication-intake.ts';
 import { communicationRequests, messageIntents } from '../database/schema.ts';
+import { awaitsFirstOutcome } from '../domain/history/awaits-outcome.ts';
 import { effectBlockOf } from '../domain/history/unknown-effect.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import type { ResendOriginalPortContract } from '../domain/recovery/resend-admission.ts';
@@ -35,6 +36,7 @@ export const postgresResendOriginalPort = (
     const [original] = yield* transaction
       .select({
         requestId: messageIntents.requestId,
+        scopeKey: communicationRequests.scopeKey,
         sourceModule: communicationRequests.sourceModule,
         typeId: messageIntents.typeId,
       })
@@ -66,6 +68,8 @@ export const postgresResendOriginalPort = (
       ? yield* unavailable()
       : Option.some({
           effectBlock: effectBlockOf(record.value.facts),
+          pendingWithoutOutcome: awaitsFirstOutcome(record.value.facts),
+          scopeKey: original.scopeKey,
           sourceModule: original.sourceModule,
           typeId: original.typeId,
         });

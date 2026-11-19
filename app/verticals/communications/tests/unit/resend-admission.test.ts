@@ -3,6 +3,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { CommunicationOutcome } from '../../src/domain/catalog/decision.ts';
 import type { ResendRefusal } from '../../src/domain/catalog/vocabulary.ts';
+import { communicationRequest, originalRecipient } from '../support/intake-fixtures.ts';
+import { scopeKey } from '../../src/domain/recipient/original-binding.ts';
 import { resendRefusalOf } from '../../src/domain/recovery/resend-admission.ts';
 import type { ResendOriginalFacts } from '../../src/domain/recovery/resend-admission.ts';
 import {
@@ -22,9 +24,19 @@ import {
  * is an ordinary NO_MESSAGE decision with a closed reason, so the source learns it through the ordinary outcome feed.
  */
 const approvedType = fixtureType({ resend: 'SOURCE_APPROVED' });
+const scopeOf = (legalEntityId?: string) =>
+  scopeKey(
+    communicationRequest({
+      bindings: [originalRecipient('customer-1')],
+      legalEntityId,
+    }).scope,
+  );
+const REQUEST_SCOPE = scopeOf();
 const original = (overrides: Partial<ResendOriginalFacts> = {}): Option.Option<ResendOriginalFacts> =>
   Option.some({
     effectBlock: Option.none(),
+    pendingWithoutOutcome: false,
+    scopeKey: REQUEST_SCOPE,
     sourceModule: FIXTURE_SOURCE_MODULE,
     typeId: approvedType.typeId,
     ...overrides,
@@ -33,7 +45,8 @@ const refusal = (
   type: typeof approvedType,
   found: Option.Option<ResendOriginalFacts>,
   source = FIXTURE_SOURCE_MODULE,
-) => Option.getOrUndefined(resendRefusalOf(type, source, found));
+  scope = REQUEST_SCOPE,
+) => Option.getOrUndefined(resendRefusalOf(type, source, scope, found));
 
 describe('resendRefusalOf', () => {
   it('[S10 S11 AC-04] admits a resend of an approved type, of the same source owner and type, whose effect is known', () => {
@@ -52,6 +65,20 @@ describe('resendRefusalOf', () => {
   it('answers an unknown original and the original of ANOTHER source owner alike: a source learns nothing about intents that are not its own', () => {
     expect(refusal(approvedType, Option.none())).toBe('RESEND_ORIGINAL_NOT_FOUND');
     expect(refusal(approvedType, original({ sourceModule: 'fixture.other-source' }))).toBe('RESEND_ORIGINAL_NOT_FOUND');
+  });
+
+  it('[review] an original requested in ANOTHER scope (another Legal Entity, profile, counterparty or storefront) is answered exactly like an unknown one', () => {
+    const otherEntity = scopeOf('55555555-5555-4555-8555-555555555555');
+    expect(refusal(approvedType, original({ scopeKey: otherEntity }))).toBe('RESEND_ORIGINAL_NOT_FOUND');
+    // no oracle: a same-scope original of another TYPE is the only one that learns the type differs
+    expect(refusal(approvedType, original({ scopeKey: otherEntity, typeId: 'fixture.other-message' }))).toBe(
+      'RESEND_ORIGINAL_NOT_FOUND',
+    );
+    expect(refusal(approvedType, original(), FIXTURE_SOURCE_MODULE, otherEntity)).toBe('RESEND_ORIGINAL_NOT_FOUND');
+  });
+
+  it('[review] an original that is still waiting for any outcome is refused like an unknown effect: both could be delivered', () => {
+    expect(refusal(approvedType, original({ pendingWithoutOutcome: true }))).toBe('RESEND_ORIGINAL_EFFECT_UNKNOWN');
   });
 
   it('a resend is a resend of THAT type, never a path to another message', () => {

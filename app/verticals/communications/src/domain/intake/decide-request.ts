@@ -24,6 +24,7 @@ import type { LanguagePolicySnapshot } from '../language/vocabulary.ts';
 import { assessPrivacyEligibility, PrivacyAssessment, privacyEvidenceOf } from '../privacy/assess-privacy.ts';
 import type { PrivacyAssessmentCase } from '../privacy/assess-privacy.ts';
 import type { ProcessingScope } from '../privacy/processing-scope.ts';
+import { scopeKey } from '../recipient/original-binding.ts';
 import { assessRecipients, recipientFactOf } from '../recipient/assess-recipients.ts';
 import type { EvaluatedRecipient } from '../recipient/assess-recipients.ts';
 import { handoffPinOf } from '../recipient/recheck-before-handoff.ts';
@@ -106,7 +107,7 @@ const resendRefusalFor = Effect.fn('Communications.admitResend')(function* admit
     resendPolicyOf(type.value) === 'SOURCE_APPROVED'
       ? yield* stores.resend.findOriginal(request.resendOf.originalIntentId)
       : Option.none();
-  return resendRefusalOf(type.value, request.source.moduleKey, original);
+  return resendRefusalOf(type.value, request.source.moduleKey, scopeKey(request.scope), original);
 });
 
 const factsFor = Effect.fn('Communications.readSourceFacts')(function* readFacts(

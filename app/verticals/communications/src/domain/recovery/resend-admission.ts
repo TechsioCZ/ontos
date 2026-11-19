@@ -18,6 +18,14 @@ import type { EffectBlock } from '../history/unknown-effect.ts';
 export interface ResendOriginalFacts {
   /** What the history alone says about the original's external effect; absent when it is known (accepted or provably absent). */
   readonly effectBlock: Option.Option<EffectBlock>;
+  /**
+   * The original is still waiting for ANY outcome: it is pending its handoff and nothing about it is final yet (no attempt that
+   * may have left has a known answer, no proven stop). It can still be delivered by the ordinary step, so a resend now could
+   * create two messages for one occurrence.
+   */
+  readonly pendingWithoutOutcome: boolean;
+  /** The scope key of the ORIGINAL's request (`scopeKey` of its Legal Entity, profile, counterparty and storefront). */
+  readonly scopeKey: string;
   readonly sourceModule: string;
   readonly typeId: string;
 }
@@ -26,27 +34,38 @@ export interface ResendOriginalFacts {
  * Why a resend is refused, or none when it is admitted. In this order:
  * 1. the type must have the source owner's resend approval; nothing else is read or revealed when it has not (a tenant
  *    switch, an operator permission or access to the history never grants it);
- * 2. the original must exist in this Tenant and belong to the SAME source owner: another source's intent, and an unknown one,
- *    are answered alike, so a source learns nothing about intents that are not its own;
+ * 2. the original must exist in this Tenant, belong to the SAME source owner and have been requested in the SAME scope (Legal
+ *    Entity, profile, counterparty, storefront) as the resend: another source's intent, another scope's intent and an unknown
+ *    one are answered alike, so a source learns nothing about intents that are not its own, and a resend can never reach a
+ *    message of another Legal Entity;
  * 3. the original must be a message of the SAME type: this is a resend of THAT message, not a path to another one;
- * 4. the original's external effect must not be unknown or contradicted: a new copy is never created while it is not known
- *    whether the first one left (R-05). An acceptance is no obstacle: it is the reason resending exists.
+ * 4. the original's external effect must not be unknown or contradicted, and the original must not still be waiting for any
+ *    outcome: a new copy is never created while it is not known whether the first one left (R-05), nor while the first one may
+ *    still be delivered by the ordinary step (the source can issue a new occurrence later). An acceptance, and a provable
+ *    failure, are no obstacle: they are the reasons resending exists.
  */
 export const resendRefusalOf = (
   type: Pick<TransactionalMessageType, 'resend' | 'typeId'>,
   sourceModule: string,
+  requestScopeKey: string,
   original: Option.Option<ResendOriginalFacts>,
 ): Option.Option<ResendRefusal> => {
   if (resendPolicyOf(type) !== 'SOURCE_APPROVED') {
     return Option.some('RESEND_NOT_APPROVED');
   }
-  if (Option.isNone(original) || original.value.sourceModule !== sourceModule) {
+  if (
+    Option.isNone(original) ||
+    original.value.sourceModule !== sourceModule ||
+    original.value.scopeKey !== requestScopeKey
+  ) {
     return Option.some('RESEND_ORIGINAL_NOT_FOUND');
   }
   if (original.value.typeId !== type.typeId) {
     return Option.some('RESEND_ORIGINAL_TYPE_MISMATCH');
   }
-  return Option.isSome(original.value.effectBlock) && original.value.effectBlock.value !== 'ACCEPTANCE_ALREADY_PROVEN'
+  const unknownEffect =
+    Option.isSome(original.value.effectBlock) && original.value.effectBlock.value !== 'ACCEPTANCE_ALREADY_PROVEN';
+  return unknownEffect || original.value.pendingWithoutOutcome
     ? Option.some('RESEND_ORIGINAL_EFFECT_UNKNOWN')
     : Option.none();
 };

@@ -42,6 +42,7 @@ const resendRequest = (
   original: typeof MessageIntentIdSchema.Type,
   options: {
     readonly occurrenceId: string;
+    readonly profileId?: string;
     readonly purpose?: string;
     readonly reason?: string;
     readonly recipients?: readonly string[];
@@ -51,6 +52,7 @@ const resendRequest = (
   communicationRequest({
     bindings: (options.recipients ?? ['customer-1']).map((id) => originalRecipient(id)),
     occurrenceId: options.occurrenceId,
+    profileId: options.profileId,
     purpose: options.purpose ?? 'fixture.single',
     resendOf: { originalIntentId: original, reason: options.reason ?? 'RECIPIENT_NOT_RECEIVED' },
     sourceModule: options.sourceModule ?? 'fixture.source',
@@ -341,6 +343,53 @@ describe('Explicit Resend is a new, owner-authorized communication (#1403)', () 
         yield* reconcileOnly(world, intentId, [
           step22Double.acceptanceProven(target, { key: 'r-1', observedAt: yield* DateTime.now }),
         ]);
+        const admitted = yield* submitResend(world, intentId, { occurrenceId: 'fixture-occurrence-3' });
+        expect(decided(admitted).decision.kind).toBe('MESSAGE_INTENTS');
+        expect(yield* resendLinksOf(world)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review R-03] an original requested in ANOTHER scope is refused exactly like an unknown one: no oracle, no message, no link',
+    () =>
+      Effect.gen(function* crossLegalEntity() {
+        const world = yield* setup({ recipients: RECIPIENTS, types: [resendableType()] });
+        const original = yield* acceptedOriginal(world);
+        const unknown = MessageIntentIdSchema.make('99999999-9999-4999-8999-999999999999');
+        // the runner's trusted principal is Tenant-wide, so the scope dimension a Postgres test can vary is the profile; the Legal Entity
+        // dimension of the same scope key is proven by the unit and the public-boundary tests (the key covers both)
+        const otherProfile = 'profile-other';
+        const crossed = yield* submitResend(world, original.intentId, {
+          occurrenceId: 'fixture-occurrence-2',
+          profileId: otherProfile,
+        });
+        const missing = yield* submitResend(world, unknown, {
+          occurrenceId: 'fixture-occurrence-3',
+          profileId: otherProfile,
+        });
+        expect(noMessageReasonOf(crossed)).toBe('RESEND_ORIGINAL_NOT_FOUND');
+        expect(noMessageReasonOf(missing)).toBe('RESEND_ORIGINAL_NOT_FOUND');
+        expect(yield* resendLinksOf(world)).toEqual([]);
+        expect(yield* intentRows(world)).toHaveLength(1);
+        // the SAME scope as the original is admitted: the scope, not the request, was the obstacle
+        const sameScope = yield* submitResend(world, original.intentId, { occurrenceId: 'fixture-occurrence-4' });
+        expect(decided(sameScope).decision.kind).toBe('MESSAGE_INTENTS');
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[review R-05] an original that is still waiting for its first outcome is not resent: both could be delivered; a provable refusal can be',
+    () =>
+      Effect.gen(function* pendingOriginal() {
+        const world = yield* setup({ recipients: RECIPIENTS, types: [resendableType()] });
+        const { intentId } = yield* decideOne(world);
+        // no attempt yet: the ordinary step can still deliver it
+        expect(noMessageReasonOf(yield* submitResend(world, intentId, { occurrenceId: 'fixture-occurrence-2' }))).toBe(
+          'RESEND_ORIGINAL_EFFECT_UNKNOWN',
+        );
+        expect(yield* resendLinksOf(world)).toEqual([]);
+        // the original is provably refused and nothing recovers it automatically (no approved rule): the source owner may resend
+        yield* stepWith(world, handoffDouble(answers.refused), intentId);
         const admitted = yield* submitResend(world, intentId, { occurrenceId: 'fixture-occurrence-3' });
         expect(decided(admitted).decision.kind).toBe('MESSAGE_INTENTS');
         expect(yield* resendLinksOf(world)).toHaveLength(1);
