@@ -1,7 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Result } from 'effect';
-import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -20,7 +19,8 @@ import {
 import type { ProjectionFenceAssertion } from '../../src/access/compiler/spice-db-compiler.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient, openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import type { SpiceDbRpcError } from '../../src/permissions/spicedb-rpc.ts';
 import {
   ADMIN,
   ALICE,
@@ -54,6 +54,7 @@ const NO = v1.CheckPermissionResponse_Permissionship.NO_PERMISSION;
 const fullyConsistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 const OTHER_ENTITY = legalEntityId(90);
 const HUMAN = 'access_human';
+const GRAPH_READ_TIMEOUT_MS = 10_000;
 
 interface CompilerContext {
   readonly check: (
@@ -62,7 +63,7 @@ interface CompilerContext {
     permission: string,
     subjectId: string,
     context?: Record<string, number | string>,
-  ) => Effect.Effect<number, Cause.UnknownError>;
+  ) => Effect.Effect<number, SpiceDbRpcError>;
   readonly cleanup: (intent: AccessProjectionIntent) => Effect.Effect<void, readonly AccessProjectionError[]>;
   readonly compile: (
     intent: AccessProjectionIntent,
@@ -128,6 +129,11 @@ const withCompiler = <Value, Failure>(program: (context: CompilerContext) => Eff
       Effect.sync(() => newSpiceDbGrpcClient(configuration)),
       (current) => Effect.sync(() => current.close()),
     );
+    // Graph reads go through the production client, with its deadline and its retry of a refused read.
+    const rpc = yield* Effect.acquireRelease(
+      Effect.sync(() => openSpiceDbGrpcRpc(configuration, GRAPH_READ_TIMEOUT_MS)),
+      (current) => Effect.sync(() => current.close()),
+    );
     yield* Effect.tryPromise(() =>
       client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
     );
@@ -138,8 +144,8 @@ const withCompiler = <Value, Failure>(program: (context: CompilerContext) => Eff
       permission: string,
       subjectId: string,
       context?: Record<string, number | string>,
-    ): Effect.Effect<number, Cause.UnknownError> =>
-      Effect.tryPromise(() => {
+    ): Effect.Effect<number, SpiceDbRpcError> =>
+      Effect.suspend(() => {
         const request = v1.CheckPermissionRequest.create({
           consistency: fullyConsistent,
           permission,
@@ -151,7 +157,7 @@ const withCompiler = <Value, Failure>(program: (context: CompilerContext) => Eff
         if (context !== undefined) {
           request.context = v1.createStructFromObject(context);
         }
-        return client.promises.checkPermission(request);
+        return rpc.checkPermission(request);
       }).pipe(Effect.map((response) => response.permissionship));
     const compile = (
       intent: AccessProjectionIntent,

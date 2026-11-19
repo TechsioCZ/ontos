@@ -40,6 +40,7 @@ import { stageScopeOf } from '../install/stage-context-bootstrap.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { loadSpiceDbConfig, parseSpiceDbConfig } from '../permissions/config.ts';
 import type { SpiceDbConfigValue } from '../permissions/config.ts';
+import { openSpiceDbGrpcRpc } from '../permissions/spicedb-grpc-rpc.ts';
 
 const catalogUrl = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
 
@@ -102,6 +103,16 @@ export const liveFixtureSpiceDb = (environment: {
 }) =>
   parseSpiceDbConfig({ ...environment, SPICEDB_PRESHARED_KEY: Redacted.value(environment.SPICEDB_PRESHARED_KEY) }).pipe(
     Effect.orDie,
+  );
+
+/**
+ * SpiceDB as the runtime reaches it, closed with the scope: the production gRPC client, whose every call has
+ * `timeoutMilliseconds` and whose reads SpiceDB refused while recycling a connection are retried. Writes are sent once.
+ */
+export const openLiveFixtureSpiceDbRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number) =>
+  Effect.acquireRelease(
+    Effect.sync(() => openSpiceDbGrpcRpc(configuration, timeoutMilliseconds)),
+    (rpc) => Effect.sync(() => rpc.close()),
   );
 
 /**
