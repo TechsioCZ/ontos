@@ -1,4 +1,4 @@
-import { Crypto, DateTime, Effect, Option } from 'effect';
+import { Array as EffectArray, Crypto, DateTime, Effect, Option } from 'effect';
 import { templateScopeKey } from '../../shared/template-revision.ts';
 import type { TemplateIdentity } from '../../shared/template-revision.ts';
 import { TemplateStoreUnavailable } from '../../shared/template-revision-errors.ts';
@@ -17,6 +17,12 @@ const sameIdentity = (left: TemplateIdentity, right: TemplateIdentity) =>
   left.language === right.language &&
   templateScopeKey(left.scope) === templateScopeKey(right.scope);
 const isOpen = (activation: TemplateActivationRecord) => Option.isNone(activation.ending);
+const instantsOf = (activation: TemplateActivationRecord) => [
+  activation.activatedAt,
+  ...Option.match(activation.ending, { onNone: () => [], onSome: (ending) => [ending.endedAt] }),
+];
+const unavailable = () =>
+  new TemplateStoreUnavailable({ code: 'template_store_unavailable', reason: 'Template storage is unavailable' });
 const newId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
 
 interface InMemoryState {
@@ -55,10 +61,7 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
       Effect.gen(function* append() {
         // The PostgreSQL form enforces this with a partial unique index; the fake keeps the same promise.
         if (state.activations.some((found) => found.templateTypeId === input.templateTypeId && isOpen(found))) {
-          return yield* new TemplateStoreUnavailable({
-            code: 'template_store_unavailable',
-            reason: 'Template storage is unavailable',
-          });
+          return yield* unavailable();
         }
         const record: TemplateActivationRecord = {
           activatedAt: input.activatedAt,
@@ -84,8 +87,10 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
           contentDigest: input.contentDigest,
           createdAt: input.at,
           createdByPrincipalId: input.principalId,
+          optionalPlaceholders: input.optionalPlaceholders,
           placeholdersUsed: input.placeholdersUsed,
           reason: input.reason,
+          requiredPlaceholders: input.requiredPlaceholders,
           revisionId: yield* newId,
           revisionNumber:
             state.revisions.filter((revision) => revision.templateTypeId === input.templateTypeId).length + 1,
@@ -95,11 +100,15 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
         state.revisions.push(record);
         return record;
       }),
+    // The PostgreSQL form refuses to close a closed row (guard and trigger) and a period that ends before it started.
+    clockNow: Effect.sync(() => state.clock),
     closeActivation: (activationId, ending: TemplateActivationEnding & { readonly actionInvocationId: string }) =>
-      Effect.sync(() => {
+      Effect.gen(function* close() {
         const index = state.activations.findIndex((activation) => activation.activationId === activationId);
         const found = state.activations[index];
-        if (found !== undefined) {
+        if (found === undefined || !isOpen(found) || DateTime.isLessThan(ending.endedAt, found.activatedAt)) {
+          yield* unavailable();
+        } else {
           state.activations[index] = { ...found, ending: Option.some(ending) };
         }
       }),
@@ -113,8 +122,6 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
           createdAt: input.at,
           createdByPrincipalId: input.principalId,
           identity: input.identity,
-          optionalPlaceholders: input.optionalPlaceholders,
-          requiredPlaceholders: input.requiredPlaceholders,
           templateTypeId: yield* newId,
         };
         state.types.push(record);
@@ -124,23 +131,36 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
       Effect.succeed(Option.fromNullishOr(state.invalidations.find((found) => found.revisionId === revisionId))),
     findType: (identity) =>
       Effect.succeed(Option.fromNullishOr(state.types.find((type) => sameIdentity(type.identity, identity)))),
+    latestActivityAt: (templateTypeId) =>
+      Effect.sync(() => {
+        const instants = state.activations.flatMap((activation) =>
+          activation.templateTypeId === templateTypeId ? instantsOf(activation) : [],
+        );
+        return EffectArray.isArrayNonEmpty(instants)
+          ? Option.some(EffectArray.max(instants, DateTime.Order))
+          : Option.none();
+      }),
     loadRevision: (revisionId) =>
       Effect.succeed(Option.fromNullishOr(state.revisions.find((revision) => revision.revisionId === revisionId))),
     loadType: (templateTypeId) =>
       Effect.succeed(Option.fromNullishOr(state.types.find((type) => type.templateTypeId === templateTypeId))),
     lockType: (templateTypeId) =>
       Effect.succeed(Option.fromNullishOr(state.types.find((type) => type.templateTypeId === templateTypeId))),
+    lockTypeShared: () => Effect.void,
     openActivations: (templateTypeId) =>
       Effect.succeed(
         state.activations.filter((activation) => activation.templateTypeId === templateTypeId && isOpen(activation)),
       ),
-    operationAt: Effect.sync(() => state.clock),
   };
   return {
     advance: (minutes: number) => {
       state.clock = DateTime.add(state.clock, { minutes });
     },
+    /** Sets the clock outright, e.g. to a value that lags an activation another writer already committed. */
     port,
+    setClock: (at: string) => {
+      state.clock = DateTime.makeUnsafe(at);
+    },
     state,
   };
 };

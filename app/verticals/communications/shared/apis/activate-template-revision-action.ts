@@ -41,11 +41,7 @@ export const ActivateTemplateRevisionActionNotFoundProblemSchema = makeProblemDe
   'ActivateTemplateRevisionActionNotFoundProblem',
   404,
   {
-    code: Schema.Literals([
-      'action_invocation_not_found',
-      'template_placeholder_missing',
-      'template_revision_not_found',
-    ]),
+    code: Schema.Literals(['action_invocation_not_found', 'template_revision_not_found']),
   },
 );
 export const ActivateTemplateRevisionActionConflictProblemSchema = makeProblemDetailsSchema(
@@ -59,14 +55,20 @@ export const ActivateTemplateRevisionActionConflictProblemSchema = makeProblemDe
       'template_revision_already_invalidated',
       'template_revision_invalidated',
       'template_revision_not_active',
-      'template_type_declaration_conflict',
     ]),
   },
 );
 export const ActivateTemplateRevisionActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'ActivateTemplateRevisionActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'template_content_malformed', 'template_placeholder_undeclared']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'template_content_malformed',
+      'template_placeholder_undeclared',
+      'template_required_placeholder_omitted',
+    ]),
+  },
 );
 export const ActivateTemplateRevisionActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'ActivateTemplateRevisionActionPreconditionProblem',

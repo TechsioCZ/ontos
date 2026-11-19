@@ -39,7 +39,9 @@ export const gatewayAssertionRedemptions = communicationsSchema.table(
 
 /**
  * Template Type: the stable identity of one transactional template, per message type, channel, language and allowed
- * scope (#1398). It is immutable; `scope_key` is `tenant` or `legal-entity:<uuid>` so the identity is one plain unique key.
+ * scope (#1398). It is immutable and carries identity only: every declared placeholder belongs to a Template Revision,
+ * because a change in meaning is a new revision. `scope_key` is `tenant` or `legal-entity:<uuid>` so the identity is one
+ * plain unique key.
  */
 export const templateTypes = communicationsSchema.table.withRLS(
   'template_types',
@@ -51,8 +53,6 @@ export const templateTypes = communicationsSchema.table.withRLS(
     language: text('language').$type<'cs' | 'en'>().notNull(),
     legalEntityId: uuid('legal_entity_id'),
     messageType: text('message_type').notNull(),
-    optionalPlaceholders: jsonb('optional_placeholders').$type<readonly string[]>().notNull(),
-    requiredPlaceholders: jsonb('required_placeholders').$type<readonly string[]>().notNull(),
     scopeKey: text('scope_key').notNull(),
     scopeKind: text('scope_kind').notNull(),
     templateTypeId: uuid('template_type_id').primaryKey(),
@@ -60,6 +60,8 @@ export const templateTypes = communicationsSchema.table.withRLS(
   },
   (table) => [
     unique('communications_template_types_tenant_identity_uk').on(table.tenantId, table.templateTypeId),
+    // the target of the activation's scope foreign key: an activation can only carry the scope of its own Type
+    unique('communications_template_types_scope_identity_uk').on(table.tenantId, table.templateTypeId, table.scopeKey),
     unique('communications_template_types_identity_uk').on(
       table.tenantId,
       table.messageType,
@@ -77,7 +79,10 @@ export const templateTypes = communicationsSchema.table.withRLS(
   ],
 );
 
-/** Immutable Template Revision: any change in meaning or text is a new revision, never an update. */
+/**
+ * Immutable Template Revision: any change in meaning or text is a new revision, never an update. A revision declares its
+ * own required and optional placeholders (names only), so activation checks its text against what it itself declares.
+ */
 export const templateRevisions = communicationsSchema.table.withRLS(
   'template_revisions',
   {
@@ -86,8 +91,10 @@ export const templateRevisions = communicationsSchema.table.withRLS(
     contentDigest: text('content_digest').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
     createdByPrincipalId: uuid('created_by_principal_id').notNull(),
+    optionalPlaceholders: jsonb('optional_placeholders').$type<readonly string[]>().notNull(),
     placeholdersUsed: jsonb('placeholders_used').$type<readonly string[]>().notNull(),
     reason: text('reason').notNull(),
+    requiredPlaceholders: jsonb('required_placeholders').$type<readonly string[]>().notNull(),
     revisionId: uuid('revision_id').primaryKey(),
     revisionNumber: integer('revision_number').notNull(),
     subject: text('subject').notNull(),
@@ -96,6 +103,12 @@ export const templateRevisions = communicationsSchema.table.withRLS(
   },
   (table) => [
     unique('communications_template_revisions_tenant_identity_uk').on(table.tenantId, table.revisionId),
+    // the target of the activation's revision foreign key: an activation can only name the Type of its own revision
+    unique('communications_template_revisions_type_identity_uk').on(
+      table.tenantId,
+      table.revisionId,
+      table.templateTypeId,
+    ),
     unique('communications_template_revisions_number_uk').on(
       table.tenantId,
       table.templateTypeId,
@@ -107,13 +120,19 @@ export const templateRevisions = communicationsSchema.table.withRLS(
       name: 'communications_template_revisions_type_fk',
     }).onDelete('restrict'),
     check('communications_template_revisions_number_ck', sql`${table.revisionNumber} > 0`),
+    check(
+      'communications_template_revisions_placeholders_ck',
+      sql`jsonb_typeof(${table.requiredPlaceholders}) = 'array' and jsonb_typeof(${table.optionalPlaceholders}) = 'array' and jsonb_typeof(${table.placeholdersUsed}) = 'array'`,
+    ),
     ...tenantRlsPolicies('communications_template_revisions', table.tenantId),
   ],
 );
 
 /**
  * One row per activation period of a revision: who, what, when, for which scope and why. Only the closing columns are
- * ever updated; the partial unique index keeps at most one open activation per Template Type.
+ * ever updated, and only once: a database trigger refuses any update of a closed row, so closed history is append-only.
+ * The partial unique index keeps at most one open activation per Template Type, and the composite foreign keys tie the
+ * activation's Type and scope to its revision's Type.
  */
 export const templateActivations = communicationsSchema.table.withRLS(
   'template_activations',
@@ -136,15 +155,19 @@ export const templateActivations = communicationsSchema.table.withRLS(
   },
   (table) => [
     foreignKey({
-      columns: [table.tenantId, table.revisionId],
-      foreignColumns: [templateRevisions.tenantId, templateRevisions.revisionId],
+      columns: [table.tenantId, table.revisionId, table.templateTypeId],
+      foreignColumns: [templateRevisions.tenantId, templateRevisions.revisionId, templateRevisions.templateTypeId],
       name: 'communications_template_activations_revision_fk',
     }).onDelete('restrict'),
     foreignKey({
-      columns: [table.tenantId, table.templateTypeId],
-      foreignColumns: [templateTypes.tenantId, templateTypes.templateTypeId],
+      columns: [table.tenantId, table.templateTypeId, table.scopeKey],
+      foreignColumns: [templateTypes.tenantId, templateTypes.templateTypeId, templateTypes.scopeKey],
       name: 'communications_template_activations_type_fk',
     }).onDelete('restrict'),
+    check(
+      'communications_template_activations_scope_ck',
+      sql`(${table.scopeKey} = 'tenant' and ${table.legalEntityId} is null) or (${table.legalEntityId} is not null and ${table.scopeKey} = 'legal-entity:' || ${table.legalEntityId}::text)`,
+    ),
     uniqueIndex('communications_template_activations_open_uk')
       .on(table.tenantId, table.templateTypeId)
       .where(sql`${table.endedAt} is null`),

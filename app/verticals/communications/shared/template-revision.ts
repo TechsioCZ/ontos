@@ -141,6 +141,9 @@ export const TemplateUseAuditSchema = Schema.Struct({
     }),
   ),
   lifecycleState: TemplateLifecycleStateSchema,
+  /** The placeholder names this revision itself declared; names only, never a value. */
+  optionalPlaceholders: Schema.Array(TemplatePlaceholderNameSchema),
+  requiredPlaceholders: Schema.Array(TemplatePlaceholderNameSchema),
   revisionId: TemplateRevisionIdSchema,
   revisionNumber: Schema.Number,
   templateTypeId: TemplateTypeIdSchema,

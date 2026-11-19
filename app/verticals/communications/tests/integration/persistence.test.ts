@@ -1,7 +1,13 @@
-import { Effect, Option, Result, Schema } from 'effect';
+import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import { Cause, Deferred, Effect, Exit, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TemplateStoreUnavailable } from '../../shared/template-revision-errors.ts';
-import { templateRevisions, templateTypes } from '../../src/database/schema.ts';
+import {
+  templateActivations,
+  templateRevisionInvalidations,
+  templateRevisions,
+  templateTypes,
+} from '../../src/database/schema.ts';
 import {
   actorFor,
   companyA,
@@ -85,6 +91,69 @@ describe('Template revisions on native PostgreSQL as the runtime role', () => {
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
+  it.live('takes business time after the Type lock so racing activations never end a period before it started', () =>
+    Effect.gen(function* race() {
+      const database = yield* makeRuntimeDatabase();
+      const tenant = yield* nextId;
+      const [one, two] = yield* database.withPort(tenant, (port) =>
+        Effect.gen(function* seed() {
+          const t = domainFor(port);
+          const actor = actorWith(yield* nextId);
+          const first = (yield* t.prepare(fictionalDraft({ body: '[FICTIONAL TEST COPY] one {{purpose}}' }), actor))
+            .revision;
+          const second = (yield* t.prepare(fictionalDraft({ body: '[FICTIONAL TEST COPY] two {{purpose}}' }), actor))
+            .revision;
+          return [first, second] as const;
+        }),
+      );
+      const slowBegan = yield* Deferred.make<boolean>();
+      const fastActivated = yield* Deferred.make<boolean>();
+      // The slow transaction begins first, so its transaction time is the earliest, but it takes the Type lock last.
+      // A transaction-time clock would stamp its activation before the period it closes even started; business time
+      // taken under the lock cannot. The ordering is forced, so the failure of such a clock is deterministic.
+      const slow = database.withPort(tenant, (port) =>
+        Effect.gen(function* slowActivation() {
+          yield* Deferred.succeed(slowBegan, true);
+          yield* Deferred.await(fastActivated);
+          return yield* domainFor(port).approve(two.revisionId, actorWith(yield* nextId));
+        }),
+      );
+      const fast = database.withPort(tenant, (port) =>
+        Effect.gen(function* fastActivation() {
+          yield* Deferred.await(slowBegan);
+          const activated = yield* domainFor(port).approve(one.revisionId, actorWith(yield* nextId));
+          // the slow transaction proceeds while this one still holds the Type lock and its uncommitted activation
+          yield* Deferred.succeed(fastActivated, true);
+          return activated;
+        }),
+      );
+      yield* Effect.all([slow, fast], { concurrency: 2 });
+      const all = yield* database.withPort(tenant, (port) =>
+        Effect.gen(function* read() {
+          return [
+            ...(yield* port.activationsOfRevision(one.revisionId)),
+            ...(yield* port.activationsOfRevision(two.revisionId)),
+          ];
+        }),
+      );
+      expect(all).toHaveLength(2);
+      const open = all.filter((activation) => Option.isNone(activation.ending));
+      expect(open).toHaveLength(1);
+      const ordered = all.every((activation) =>
+        Option.match(activation.ending, {
+          onNone: () => true,
+          onSome: (ending) => ending.endedAt.epochMilliseconds >= activation.activatedAt.epochMilliseconds,
+        }),
+      );
+      expect(ordered).toBe(true);
+      // the activation that replaced the other ends it exactly where its own period starts: one gapless timeline
+      const closedAt = all.flatMap((activation) =>
+        Option.match(activation.ending, { onNone: () => [], onSome: (ending) => [ending.endedAt.epochMilliseconds] }),
+      );
+      expect(closedAt).toEqual(open.map((activation) => activation.activatedAt.epochMilliseconds));
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
   it.live('lets the store itself refuse a second open activation of a Type', () =>
     Effect.gen(function* uniqueness() {
       const database = yield* makeRuntimeDatabase();
@@ -96,7 +165,7 @@ describe('Template revisions on native PostgreSQL as the runtime role', () => {
             const { revision, type } = yield* domainFor(port).prepare(fictionalDraft(), actor);
             const append = port.appendActivation({
               actionInvocationId: actor.actionInvocationId,
-              activatedAt: yield* port.operationAt,
+              activatedAt: yield* port.clockNow,
               activatedByPrincipalId: actor.principalId,
               activationReason: 'Fictional direct append',
               legalEntityId: null,
@@ -198,8 +267,6 @@ describe('Template revisions on native PostgreSQL as the runtime role', () => {
               language: 'cs',
               legalEntityId: null,
               messageType: 'fixture.cross-tenant',
-              optionalPlaceholders: [],
-              requiredPlaceholders: [],
               scopeKey: 'tenant',
               scopeKind: 'tenant',
               templateTypeId: revisionId,
@@ -209,5 +276,151 @@ describe('Template revisions on native PostgreSQL as the runtime role', () => {
         );
         expect(Result.isFailure(crossTenant)).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+  it.live(
+    'refuses to rewrite, reopen or delete a closed activation or an invalidation: closed history is append-only',
+    () =>
+      Effect.gen(function* closedHistory() {
+        const database = yield* makeRuntimeDatabase();
+        const tenant = yield* nextId;
+        const seeded = yield* database.withPort(tenant, (port) =>
+          Effect.gen(function* seed() {
+            const t = domainFor(port);
+            const actor = actorWith(yield* nextId);
+            const first = (yield* t.prepare(fictionalDraft(), actor)).revision;
+            const second = (yield* t.prepare(fictionalDraft({ body: '[FICTIONAL TEST COPY] two {{purpose}}' }), actor))
+              .revision;
+            yield* t.approve(first.revisionId, actor);
+            yield* t.approve(second.revisionId, actor);
+            yield* t.invalidate(second.revisionId, 'Fictional unsafe wording', actor);
+            return { first, second };
+          }),
+        );
+        // both activations are now closed: the first was replaced, the second invalidated as unsafe
+        const attempt = <Value, Failure, Requirements>(
+          program: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
+        ) => Effect.exit(database.inTenant(tenant, program));
+        const rewrite = yield* attempt((transaction) =>
+          transaction.update(templateActivations).set({ endReason: 'rewritten history' }),
+        );
+        const reopen = yield* attempt((transaction) =>
+          transaction
+            .update(templateActivations)
+            .set({ endedAt: null, endedByPrincipalId: null, endedKind: null, endInvocationId: null, endReason: null }),
+        );
+        const refused = yield* Effect.all(
+          [
+            attempt((transaction) => transaction.delete(templateActivations)),
+            attempt((transaction) => transaction.update(templateRevisionInvalidations).set({ reason: 'rewritten' })),
+            attempt((transaction) => transaction.delete(templateRevisionInvalidations)),
+            // the opening columns of an activation are not updatable by the runtime role at all
+            attempt((transaction) => transaction.update(templateActivations).set({ activationReason: 'rewritten' })),
+          ],
+          { concurrency: 1 },
+        );
+        expect([rewrite, reopen, ...refused].map((outcome) => Exit.isFailure(outcome))).toEqual([
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+        ]);
+        // a closed row is refused by the trigger itself, not merely for want of a privilege
+        for (const outcome of [rewrite, reopen]) {
+          expect(Exit.isFailure(outcome) ? Cause.pretty(outcome.cause) : '').toContain(
+            'closed template activations are append-only',
+          );
+        }
+        const stored = yield* database.withPort(tenant, (port) =>
+          Effect.gen(function* read() {
+            return {
+              first: yield* port.activationsOfRevision(seeded.first.revisionId),
+              invalidation: yield* port.findInvalidation(seeded.second.revisionId),
+              open: yield* port.openActivations(seeded.first.templateTypeId),
+              second: yield* port.activationsOfRevision(seeded.second.revisionId),
+            };
+          }),
+        );
+        expect(stored.first.map((found) => found.ending.pipe(Option.map((ending) => ending.endedKind)))).toEqual([
+          Option.some('replaced'),
+        ]);
+        expect(stored.second.map((found) => found.ending.pipe(Option.map((ending) => ending.endReason)))).toEqual([
+          Option.some('Fictional unsafe wording'),
+        ]);
+        expect(stored.open).toHaveLength(0);
+        expect(Option.isSome(stored.invalidation)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('lets the database itself tie an activation to the Type and scope of its revision', () =>
+    Effect.gen(function* activationIdentity() {
+      const database = yield* makeRuntimeDatabase();
+      const tenant = yield* nextId;
+      const seeded = yield* database.withPort(tenant, (port) =>
+        Effect.gen(function* seed() {
+          const t = domainFor(port);
+          const actor = actorFor(companyA);
+          const tenantWide = (yield* t.prepare(fictionalDraft(), actorWith(yield* nextId))).revision;
+          const company = (yield* t.prepare(fictionalDraft({ scope: companyScope(companyA) }), actor)).revision;
+          return { company, tenantWide };
+        }),
+      );
+      const forged = (
+        override: Partial<{ legalEntityId: string | null; scopeKey: string; templateTypeId: string }>,
+        revisionId: string,
+      ) =>
+        Effect.exit(
+          database.withPort(tenant, (port) =>
+            Effect.gen(function* append() {
+              const actor = actorWith(yield* nextId);
+              return yield* port.appendActivation({
+                actionInvocationId: actor.actionInvocationId,
+                activatedAt: yield* port.clockNow,
+                activatedByPrincipalId: actor.principalId,
+                activationReason: 'Fictional forged activation',
+                legalEntityId: null,
+                revisionId,
+                scopeKey: 'tenant',
+                templateTypeId: seeded.tenantWide.templateTypeId,
+                ...override,
+              });
+            }),
+          ),
+        );
+      const outcomes = yield* Effect.all(
+        [
+          // the revision of one Type cannot be activated under another Type of the same Tenant
+          forged(
+            {
+              legalEntityId: companyA,
+              scopeKey: `legal-entity:${companyA}`,
+              templateTypeId: seeded.company.templateTypeId,
+            },
+            seeded.tenantWide.revisionId,
+          ),
+          // nor under a scope other than the one of its Type
+          forged({ legalEntityId: companyB, scopeKey: `legal-entity:${companyB}` }, seeded.tenantWide.revisionId),
+          forged(
+            { legalEntityId: null, scopeKey: 'tenant', templateTypeId: seeded.company.templateTypeId },
+            seeded.company.revisionId,
+          ),
+          // a scope key without its Legal Entity is not a scope
+          forged(
+            {
+              legalEntityId: null,
+              scopeKey: `legal-entity:${companyA}`,
+              templateTypeId: seeded.company.templateTypeId,
+            },
+            seeded.company.revisionId,
+          ),
+        ],
+        { concurrency: 1 },
+      );
+      expect(outcomes.map((outcome) => Exit.isFailure(outcome))).toEqual([true, true, true, true]);
+      // the matching activation is accepted
+      const accepted = yield* forged({}, seeded.tenantWide.revisionId);
+      expect(Exit.isSuccess(accepted)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

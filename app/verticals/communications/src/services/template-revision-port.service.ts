@@ -5,12 +5,11 @@ import type { TemplateStoreUnavailable as TemplateStoreUnavailableClass } from '
 
 type TemplateStoreUnavailable = InstanceType<typeof TemplateStoreUnavailableClass>;
 
+/** A Template Type is identity only: its declared placeholders live on each of its revisions. */
 export interface TemplateTypeRecord {
   readonly createdAt: DateTime.Utc;
   readonly createdByPrincipalId: string;
   readonly identity: TemplateIdentity;
-  readonly optionalPlaceholders: readonly string[];
-  readonly requiredPlaceholders: readonly string[];
   readonly templateTypeId: string;
 }
 
@@ -19,8 +18,12 @@ export interface TemplateRevisionRecord {
   readonly contentDigest: string;
   readonly createdAt: DateTime.Utc;
   readonly createdByPrincipalId: string;
+  /** Placeholder names this revision declares as allowed but not required. */
+  readonly optionalPlaceholders: readonly string[];
   readonly placeholdersUsed: readonly string[];
   readonly reason: string;
+  /** Placeholder names this revision declares as required: its text must use every one of them. */
+  readonly requiredPlaceholders: readonly string[];
   readonly revisionId: string;
   readonly revisionNumber: number;
   readonly subject: string;
@@ -89,6 +92,11 @@ export interface TemplateRevisionPortContract {
     input: Omit<TemplateRevisionRecord, 'createdAt' | 'createdByPrincipalId' | 'revisionId' | 'revisionNumber'> &
       TemplateWriteAttribution,
   ) => Effect.Effect<TemplateRevisionRecord, TemplateStoreUnavailable, Crypto.Crypto>;
+  /**
+   * The database wall clock, read at the moment of the call. It is business time only after the Type lock is held: a
+   * transaction-start time would predate the activations a concurrent writer committed while this one waited.
+   */
+  readonly clockNow: Effect.Effect<DateTime.Utc, TemplateStoreUnavailable>;
   readonly closeActivation: (
     activationId: string,
     ending: TemplateActivationEnding & { readonly actionInvocationId: string },
@@ -103,22 +111,26 @@ export interface TemplateRevisionPortContract {
   readonly findType: (
     identity: TemplateIdentity,
   ) => Effect.Effect<Option.Option<TemplateTypeRecord>, TemplateStoreUnavailable>;
+  /** The latest instant any activation of the Type started or ended; none when it was never activated. */
+  readonly latestActivityAt: (
+    templateTypeId: string,
+  ) => Effect.Effect<Option.Option<DateTime.Utc>, TemplateStoreUnavailable>;
   readonly loadRevision: (
     revisionId: string,
   ) => Effect.Effect<Option.Option<TemplateRevisionRecord>, TemplateStoreUnavailable>;
   readonly loadType: (
     templateTypeId: string,
   ) => Effect.Effect<Option.Option<TemplateTypeRecord>, TemplateStoreUnavailable>;
-  /** Loads a Type and locks it for the rest of the transaction. */
+  /** Loads a Type and locks it exclusively for the rest of the transaction: every writer of the Type serializes. */
   readonly lockType: (
     templateTypeId: string,
   ) => Effect.Effect<Option.Option<TemplateTypeRecord>, TemplateStoreUnavailable>;
+  /** Locks a Type for sharing: resolvers run together but never while a writer holds or awaits its exclusive lock. */
+  readonly lockTypeShared: (templateTypeId: string) => Effect.Effect<void, TemplateStoreUnavailable>;
   /** The Type's open activations; more than one is a store defect and surfaces as such. */
   readonly openActivations: (
     templateTypeId: string,
   ) => Effect.Effect<readonly TemplateActivationRecord[], TemplateStoreUnavailable>;
-  /** The authoritative operation time of the store, stable inside one transaction. */
-  readonly operationAt: Effect.Effect<DateTime.Utc, TemplateStoreUnavailable>;
 }
 
 /** The Context tag of the port, for a later lane that composes its own Layer over a scoped transaction. */

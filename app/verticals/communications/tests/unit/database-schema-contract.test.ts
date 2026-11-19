@@ -56,6 +56,42 @@ describe('Communications database schema contract', () => {
     expect(open?.config.where).toBeDefined();
   });
 
+  it('keeps the Type identity-only and gives every revision its own declared placeholders', () => {
+    const columnsOf = (name: string) =>
+      configs.find((config) => config.name === name)?.columns.map((column) => column.name);
+    expect(columnsOf('template_types')).not.toContain('required_placeholders');
+    expect(columnsOf('template_types')).not.toContain('optional_placeholders');
+    expect(columnsOf('template_revisions')).toEqual(
+      expect.arrayContaining(['required_placeholders', 'optional_placeholders', 'placeholders_used']),
+    );
+    expect(
+      configs
+        .find((config) => config.name === 'template_revisions')
+        ?.columns.filter((column) => column.notNull)
+        .map((column) => column.name),
+    ).toEqual(expect.arrayContaining(['required_placeholders', 'optional_placeholders']));
+  });
+
+  it('ties an activation to the Type and scope of its own revision with composite keys', () => {
+    const activations = configs.find((config) => config.name === 'template_activations');
+    const foreignKeys = Object.fromEntries(
+      (activations?.foreignKeys ?? []).map((key) => {
+        const reference = key.reference();
+        return [key.getName(), reference.columns.map((column) => column.name)];
+      }),
+    );
+    expect(foreignKeys).toEqual({
+      communications_template_activations_revision_fk: ['tenant_id', 'revision_id', 'template_type_id'],
+      communications_template_activations_type_fk: ['tenant_id', 'template_type_id', 'scope_key'],
+    });
+    expect(activations?.checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining([
+        'communications_template_activations_end_ck',
+        'communications_template_activations_scope_ck',
+      ]),
+    );
+  });
+
   it('keeps the replay ledger a Tenant-free table with one replay identity and an expiry index', () => {
     const redemptions = configs.find((config) => config.name === 'gateway_assertion_redemptions');
 

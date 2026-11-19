@@ -5,8 +5,8 @@ import { activateTemplateRevisionAction } from '../../src/actions/activate-templ
 import { deactivateTemplateRevisionAction } from '../../src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from '../../src/actions/invalidate-template-revision.action.ts';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
-import { TemplatePinSchema, TemplateUseAuditSchema } from '../../shared/template-revision.ts';
-import { extractPlaceholders } from '../../src/services/template-revision-domain.service.ts';
+import { TemplatePinSchema, TemplateTypeIdSchema, TemplateUseAuditSchema } from '../../shared/template-revision.ts';
+import { clampBusinessTime, extractPlaceholders } from '../../src/services/template-revision-domain.service.ts';
 import {
   actorFor,
   adminOne,
@@ -18,9 +18,12 @@ import {
   failureOf,
   fictionalDraft,
   identity,
+  revisionIdOf,
   withCrypto,
 } from '../support/template-fixtures.ts';
 import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts';
+
+const at = (iso: string) => DateTime.makeUnsafe(iso);
 
 describe('Template revisions: identity, activation, single administrator (#1398)', () => {
   it.effect('[S01 AC-01] an authorized administrator activates a complete prepared revision with a full trace', () => {
@@ -107,7 +110,7 @@ describe('Template revisions: identity, activation, single administrator (#1398)
           fictionalDraft({ body: '[FICTIONAL TEST COPY] no purpose here', subject: '[FICTIONAL TEST COPY] fixed' }),
         );
         expect(yield* failureOf(t.approve(revision.revisionId))).toMatchObject({
-          code: 'template_placeholder_missing',
+          code: 'template_required_placeholder_omitted',
           placeholders: ['purpose'],
         });
         expect(state.activations).toHaveLength(0);
@@ -298,7 +301,14 @@ describe('Template revisions: identity, activation, single administrator (#1398)
         expect(view.lifecycleState).toBe('active');
         expect(view.activations[0]).toMatchObject({ activatedByPrincipalId: adminTwo.principalId, scopeKey: 'tenant' });
         expect(view.contentDigest).toMatch(/^[0-9a-f]{64}$/u);
-        const serialized = JSON.stringify(Schema.encodeSync(TemplateUseAuditSchema)(view));
+        // the audit names placeholders but carries no text and no value of one
+        expect(view.requiredPlaceholders).toEqual(['one_time_code']);
+        const {
+          optionalPlaceholders: _optional,
+          requiredPlaceholders: _required,
+          ...rest
+        } = Schema.encodeSync(TemplateUseAuditSchema)(view);
+        const serialized = JSON.stringify(rest);
         expect(serialized).not.toContain('FICTIONAL TEST COPY');
         expect(serialized).not.toContain('one_time_code');
         expect(Object.keys(pin).toSorted((left, right) => left.localeCompare(right))).toEqual([
@@ -351,7 +361,7 @@ describe('Template revisions: identity, activation, single administrator (#1398)
     );
   });
 
-  it.effect('[T-02 AC-02] every text is a new immutable revision; a Type keeps one declaration', () => {
+  it.effect('[T-02 AC-02] every text is a new immutable revision; the Type keeps identity only', () => {
     const { port, state } = makeInMemoryTemplatePort();
     const t = domainFor(port);
     return withCrypto(
@@ -364,11 +374,203 @@ describe('Template revisions: identity, activation, single administrator (#1398)
         expect(changed.contentDigest).not.toBe(first.contentDigest);
         expect(state.revisions[0]).toEqual(snapshot);
         expect(state.types).toHaveLength(1);
+        expect(Object.keys(state.types[0] ?? {}).toSorted((left, right) => left.localeCompare(right))).toEqual([
+          'createdAt',
+          'createdByPrincipalId',
+          'identity',
+          'templateTypeId',
+        ]);
+      }),
+    );
+  });
+
+  it.effect('[T-02 D2] a revision declares its own placeholders; a changed declaration is a new revision', () => {
+    const { port, state } = makeInMemoryTemplatePort();
+    const t = domainFor(port);
+    return withCrypto(
+      Effect.gen(function* ownDeclaration() {
+        const first = (yield* t.prepare(fictionalDraft())).revision;
+        const wider = (yield* t.prepare(
+          fictionalDraft({
+            body: '[FICTIONAL TEST COPY] {{purpose}} {{reference}}',
+            optionalPlaceholders: [],
+            requiredPlaceholders: ['purpose', 'reference'],
+          }),
+        )).revision;
+        const narrower = (yield* t.prepare(
+          fictionalDraft({
+            body: '[FICTIONAL TEST COPY] only text',
+            optionalPlaceholders: [],
+            requiredPlaceholders: [],
+            subject: '[FICTIONAL TEST COPY] fixed',
+          }),
+        )).revision;
+        expect(state.types).toHaveLength(1);
+        expect([first, wider, narrower].map((found) => found.revisionNumber)).toEqual([1, 2, 3]);
+        expect(first.requiredPlaceholders).toEqual(['purpose']);
+        expect(wider.requiredPlaceholders).toEqual(['purpose', 'reference']);
+        expect(narrower.requiredPlaceholders).toEqual([]);
+        // each revision is activated against its OWN declaration, whatever an earlier revision of the Type declared
+        yield* t.approve(first.revisionId);
+        yield* t.approve(wider.revisionId);
+        yield* t.approve(narrower.revisionId);
+        const pin = yield* t.resolve(identity());
+        expect(pin.revisionNumber).toBe(3);
+        const audit = yield* t.describe(pin);
+        expect([audit.requiredPlaceholders, audit.optionalPlaceholders]).toEqual([[], []]);
+        const widerAudit = yield* t.describe({ ...pin, revisionId: revisionIdOf(wider.revisionId), revisionNumber: 2 });
+        expect(widerAudit.requiredPlaceholders).toEqual(['purpose', 'reference']);
+      }),
+    );
+  });
+
+  it.effect(
+    '[T-02 D3] a revision that omits what it requires or uses what it does not declare is not activatable',
+    () => {
+      const { port, state } = makeInMemoryTemplatePort();
+      const t = domainFor(port);
+      return withCrypto(
+        Effect.gen(function* strict() {
+          const current = (yield* t.prepare(fictionalDraft())).revision;
+          yield* t.approve(current.revisionId);
+          // the earlier revision declared `reference` optional; the next one declares nothing, so using it is undeclared
+          const undeclared = (yield* t.prepare(
+            fictionalDraft({
+              body: '{{purpose}} {{reference}}',
+              optionalPlaceholders: [],
+              requiredPlaceholders: ['purpose'],
+            }),
+          )).revision;
+          const omitted = (yield* t.prepare(
+            fictionalDraft({
+              body: 'text',
+              optionalPlaceholders: [],
+              requiredPlaceholders: ['purpose', 'reference'],
+              subject: 'no placeholder',
+            }),
+          )).revision;
+          expect(yield* failureOf(t.approve(undeclared.revisionId))).toMatchObject({
+            code: 'template_placeholder_undeclared',
+            placeholders: ['reference'],
+          });
+          expect(yield* failureOf(t.approve(omitted.revisionId))).toMatchObject({
+            code: 'template_required_placeholder_omitted',
+            placeholders: ['purpose', 'reference'],
+          });
+          expect(state.activations).toHaveLength(1);
+          expect((yield* t.resolve(identity())).revisionId).toBe(current.revisionId);
+        }),
+      );
+    },
+  );
+
+  it.effect('[S04 AC-04] a subject with a line break is refused at preparation and again at activation', () => {
+    const { port, state } = makeInMemoryTemplatePort();
+    const t = domainFor(port);
+    return withCrypto(
+      Effect.gen(function* header() {
+        for (const subject of [
+          '[FICTIONAL] {{purpose}}\nBcc: x',
+          '[FICTIONAL] {{purpose}}\r\nBcc: x',
+          '{{purpose}}\r',
+        ]) {
+          expect(yield* failureOf(t.prepare(fictionalDraft({ subject })))).toMatchObject({
+            code: 'template_content_malformed',
+          });
+        }
+        expect(state.revisions).toHaveLength(0);
+        // a body may span lines; only the subject is a header
+        const { revision } = yield* t.prepare(fictionalDraft({ body: 'line one {{purpose}}\nline two' }));
+        yield* t.approve(revision.revisionId);
+        // a revision stored with a line break in its subject (written around the domain) is still not activatable
+        const [stored] = state.revisions;
+        if (stored !== undefined) {
+          state.revisions.push({
+            ...stored,
+            revisionId: '00000000-0000-4000-8000-0000000000d1',
+            revisionNumber: 2,
+            subject: 'a\nb {{purpose}}',
+          });
+          expect(yield* failureOf(t.approve('00000000-0000-4000-8000-0000000000d1'))).toMatchObject({
+            code: 'template_content_malformed',
+          });
+        }
+      }),
+    );
+  });
+
+  it('[business clock] the clamp never lets business time precede the latest activation start or end', () => {
+    const clock = at('2026-11-19T10:00:00Z');
+    expect(clampBusinessTime(clock, Option.none())).toEqual(clock);
+    expect(clampBusinessTime(clock, Option.some(at('2026-11-19T09:59:59Z')))).toEqual(clock);
+    expect(clampBusinessTime(clock, Option.some(at('2026-11-19T10:00:00Z')))).toEqual(clock);
+    expect(clampBusinessTime(clock, Option.some(at('2026-11-19T10:00:01Z')))).toEqual(at('2026-11-19T10:00:01Z'));
+  });
+
+  it.effect(
+    '[business clock] a lagging clock is clamped: activation, replacement, deactivation and invalidation stay ordered',
+    () => {
+      const { port, setClock, state } = makeInMemoryTemplatePort('2026-11-19T10:00:00Z');
+      const t = domainFor(port);
+      return withCrypto(
+        Effect.gen(function* lagging() {
+          const one = (yield* t.prepare(fictionalDraft())).revision;
+          const two = (yield* t.prepare(fictionalDraft({ body: '[FICTIONAL TEST COPY] two {{purpose}}' }))).revision;
+          const three = (yield* t.prepare(fictionalDraft({ body: '[FICTIONAL TEST COPY] three {{purpose}}' })))
+            .revision;
+          yield* t.approve(one.revisionId);
+          // another writer committed an activation at 10:00:00; this writer's clock reads earlier
+          setClock('2026-11-19T09:59:00Z');
+          const replaced = yield* t.approve(two.revisionId);
+          expect(DateTime.formatIso(replaced.activation.activatedAt)).toBe('2026-11-19T10:00:00.000Z');
+          const [closed] = state.activations;
+          expect(closed?.ending.pipe(Option.map((ending) => DateTime.formatIso(ending.endedAt)))).toEqual(
+            Option.some('2026-11-19T10:00:00.000Z'),
+          );
+          setClock('2026-11-19T09:58:00Z');
+          const deactivated = yield* t.deactivate(two.revisionId);
+          expect(DateTime.formatIso(deactivated.endedAt)).toBe('2026-11-19T10:00:00.000Z');
+          setClock('2026-11-19T09:57:00Z');
+          yield* t.approve(three.revisionId);
+          setClock('2026-11-19T09:56:00Z');
+          const invalidated = yield* t.invalidate(three.revisionId);
+          expect(DateTime.formatIso(invalidated.invalidatedAt)).toBe('2026-11-19T10:00:00.000Z');
+          // the in-memory store refuses an end before a start, as the database CHECK does: reaching here proves order
+          const ordered = state.activations.every((activation) =>
+            Option.match(activation.ending, {
+              onNone: () => true,
+              onSome: (ending) => DateTime.isGreaterThanOrEqualTo(ending.endedAt, activation.activatedAt),
+            }),
+          );
+          expect(ordered).toBe(true);
+        }),
+      );
+    },
+  );
+
+  it.effect('[T-05] a pin naming another identity than its Type is blocked at the handoff gate', () => {
+    const { port } = makeInMemoryTemplatePort();
+    const t = domainFor(port);
+    return withCrypto(
+      Effect.gen(function* mismatch() {
+        const { revision } = yield* t.prepare(fictionalDraft());
+        yield* t.approve(revision.revisionId);
+        const pin = yield* t.resolve(identity());
+        expect((yield* t.verify(pin)).revisionId).toBe(revision.revisionId);
+        for (const forged of [
+          { ...pin, language: 'en' as const },
+          { ...pin, messageType: 'fixture.other-notice' },
+          { ...pin, scope: companyScope(companyA) },
+        ]) {
+          expect(yield* failureOf(t.verify(forged))).toMatchObject({
+            code: 'pinned_template_identity_mismatch',
+            revisionId: revision.revisionId,
+          });
+        }
+        // the identity check is also the guard of the audit: nothing is read for a pin that names another Type
         expect(
-          yield* failureOf(
-            t.prepare(fictionalDraft({ optionalPlaceholders: [], requiredPlaceholders: ['purpose', 'reference'] })),
-          ),
-        ).toMatchObject({ code: 'template_type_declaration_conflict' });
+          yield* failureOf(t.verify({ ...pin, templateTypeId: TemplateTypeIdSchema.make(pin.revisionId) })),
+        ).toMatchObject({ code: 'pinned_template_revision_unavailable' });
       }),
     );
   });

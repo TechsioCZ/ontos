@@ -32,13 +32,18 @@ type DomainProblemIdentity =
         | 'template_revision_already_active'
         | 'template_revision_already_invalidated'
         | 'template_revision_invalidated'
-        | 'template_revision_not_active'
-        | 'template_type_declaration_conflict';
+        | 'template_revision_not_active';
       readonly kind: 'conflict';
     }
   | { readonly code: 'template_scope_mismatch'; readonly kind: 'forbidden' }
-  | { readonly code: 'template_content_malformed' | 'template_placeholder_undeclared'; readonly kind: 'ineligible' }
-  | { readonly code: 'template_placeholder_missing' | 'template_revision_not_found'; readonly kind: 'notFound' }
+  | {
+      readonly code:
+        | 'template_content_malformed'
+        | 'template_placeholder_undeclared'
+        | 'template_required_placeholder_omitted';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'template_revision_not_found'; readonly kind: 'notFound' }
   | { readonly code: 'template_store_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
@@ -57,14 +62,13 @@ const problemStatus = {
 
 const templateRefusedProblemByCode = {
   template_content_malformed: { code: 'template_content_malformed', kind: 'ineligible' },
-  template_placeholder_missing: { code: 'template_placeholder_missing', kind: 'notFound' },
   template_placeholder_undeclared: { code: 'template_placeholder_undeclared', kind: 'ineligible' },
+  template_required_placeholder_omitted: { code: 'template_required_placeholder_omitted', kind: 'ineligible' },
   template_revision_already_active: { code: 'template_revision_already_active', kind: 'conflict' },
   template_revision_already_invalidated: { code: 'template_revision_already_invalidated', kind: 'conflict' },
   template_revision_invalidated: { code: 'template_revision_invalidated', kind: 'conflict' },
   template_revision_not_active: { code: 'template_revision_not_active', kind: 'conflict' },
   template_scope_mismatch: { code: 'template_scope_mismatch', kind: 'forbidden' },
-  template_type_declaration_conflict: { code: 'template_type_declaration_conflict', kind: 'conflict' },
 } as const satisfies Record<Extract<DomainError, { readonly _tag: 'TemplateRefused' }>['code'], DomainProblemIdentity>;
 
 export const activateTemplateRevisionActionProblem = {

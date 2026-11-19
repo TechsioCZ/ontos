@@ -19,7 +19,6 @@ import type {
   TemplateActivationRecord,
   TemplateRevisionPortContract,
   TemplateRevisionRecord,
-  TemplateTypeRecord,
 } from './template-revision-port.service.ts';
 
 /** Who is acting and in which operating scope; the governed Action supplies it from its trusted operational scope. */
@@ -40,9 +39,8 @@ export const templateActorOf = (context: {
 });
 
 const slot = /\{\{\s*(?<name>[a-z][a-z0-9_]*)\s*\}\}/gu;
+const lineBreak = /[\r\n]/u;
 const uniqueSorted = (names: readonly string[]) => EffectArray.dedupe(names).toSorted(Order.String);
-const sameNames = (left: readonly string[], right: readonly string[]) =>
-  left.length === right.length && left.every((name, index) => name === right[index]);
 const iso = (at: DateTime.Utc) => DateTime.formatIso(at);
 
 /** The placeholder names of a text, and whether it carries any brace that is not a well-formed placeholder. */
@@ -54,6 +52,28 @@ export const extractPlaceholders = (text: string) => {
 
 const refuse = (code: (typeof TemplateRefused.Type)['code'], reason: string, placeholders?: readonly string[]) =>
   Effect.fail(new TemplateRefused(placeholders === undefined ? { code, reason } : { code, placeholders, reason }));
+
+/**
+ * Business time of a write to one Type: the database wall clock, never earlier than the latest instant an activation of
+ * that Type started or ended. The clamp keeps `ended_at >= activated_at` and the activation timeline monotonic even
+ * if the clock of a second writer lags the one that wrote last.
+ */
+export const clampBusinessTime = (clock: DateTime.Utc, latest: Option.Option<DateTime.Utc>) =>
+  Option.match(latest, { onNone: () => clock, onSome: (floor) => DateTime.max(clock, floor) });
+
+/**
+ * Takes business time. It is only meaningful after the Type lock is held, because every activation another writer
+ * committed before releasing that lock is then visible and bounds this writer's time from below.
+ */
+const businessTimeOf = Effect.fn('TemplateRevision.businessTime')(function* businessTime(
+  port: TemplateRevisionPortContract,
+  templateTypeId: string,
+) {
+  const [clock, latest] = yield* Effect.all([port.clockNow, port.latestActivityAt(templateTypeId)], {
+    concurrency: 1,
+  });
+  return clampBusinessTime(clock, latest);
+});
 
 /** Meaning fingerprint of one revision text: identifies it without storing or exposing the text again. */
 export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
@@ -75,31 +95,36 @@ export const assertOperatingScope = (scope: TemplateScope, legalEntityId: string
     ? Effect.void
     : refuse('template_scope_mismatch', 'The Template scope is not the trusted operating scope of this operation');
 
-/** What activation requires of a revision and its Type: required data present, nothing undeclared. */
+/**
+ * What activation requires of a revision: a single-line subject, well-formed placeholders, every placeholder the
+ * revision itself requires present and nothing undeclared by it. The Type carries no declaration to fall back on.
+ */
 export const assessActivatable = Effect.fn('TemplateRevision.assessActivatable')(function* assess(
-  type: TemplateTypeRecord,
   revision: TemplateRevisionRecord,
 ) {
   const subject = extractPlaceholders(revision.subject);
   const body = extractPlaceholders(revision.body);
+  if (lineBreak.test(revision.subject)) {
+    return yield* refuse('template_content_malformed', 'The subject must be one line without a line break');
+  }
   if (subject.malformed || body.malformed) {
     return yield* refuse('template_content_malformed', 'The revision text carries a malformed placeholder');
   }
   const used = new Set([...subject.names, ...body.names]);
-  const missing = type.requiredPlaceholders.filter((name) => !used.has(name));
+  const missing = revision.requiredPlaceholders.filter((name) => !used.has(name));
   if (missing.length > 0) {
     return yield* refuse(
-      'template_placeholder_missing',
-      'The revision lacks a placeholder its Template Type requires',
+      'template_required_placeholder_omitted',
+      'The revision lacks a placeholder it declares as required',
       missing,
     );
   }
-  const declared = new Set([...type.requiredPlaceholders, ...type.optionalPlaceholders]);
+  const declared = new Set([...revision.requiredPlaceholders, ...revision.optionalPlaceholders]);
   const undeclared = uniqueSorted([...used].filter((name) => !declared.has(name)));
   if (undeclared.length > 0) {
     return yield* refuse(
       'template_placeholder_undeclared',
-      'The revision uses a placeholder its Template Type does not declare',
+      'The revision uses a placeholder it does not declare',
       undeclared,
     );
   }
@@ -114,7 +139,10 @@ export interface PrepareRevisionInput extends TemplateIdentity {
   readonly subject: string;
 }
 
-/** Stores a new immutable draft revision, creating its Template Type on first use. The draft is not usable yet. */
+/**
+ * Stores a new immutable draft revision with its own declared placeholders, creating its identity-only Template Type on
+ * first use. The draft is not usable yet.
+ */
 export const prepareRevision = Effect.fn('TemplateRevision.prepare')(function* prepareRevision(
   port: TemplateRevisionPortContract,
   input: PrepareRevisionInput,
@@ -127,6 +155,7 @@ export const prepareRevision = Effect.fn('TemplateRevision.prepare')(function* p
   const optional = uniqueSorted(input.optionalPlaceholders);
   const requiredNames = new Set(required);
   if (
+    lineBreak.test(input.subject) ||
     subject.malformed ||
     body.malformed ||
     required.length !== input.requiredPlaceholders.length ||
@@ -135,31 +164,25 @@ export const prepareRevision = Effect.fn('TemplateRevision.prepare')(function* p
   ) {
     return yield* refuse(
       'template_content_malformed',
-      'The text or the declared placeholders are malformed or repeat a name',
+      'The subject, the text or the declared placeholders are malformed or repeat a name',
     );
   }
   const type = yield* port.ensureType({
     actionInvocationId: actor.actionInvocationId,
-    at: yield* port.operationAt,
+    at: yield* port.clockNow,
     identity: { channel: input.channel, language: input.language, messageType: input.messageType, scope: input.scope },
-    optionalPlaceholders: optional,
     principalId: actor.principalId,
-    requiredPlaceholders: required,
   });
-  if (!sameNames(type.requiredPlaceholders, required) || !sameNames(type.optionalPlaceholders, optional)) {
-    return yield* refuse(
-      'template_type_declaration_conflict',
-      'The Template Type already exists with other declared placeholders; a new meaning needs a new identity',
-    );
-  }
   const revision = yield* port.appendRevision({
     actionInvocationId: actor.actionInvocationId,
-    at: yield* port.operationAt,
+    at: yield* port.clockNow,
     body: input.body,
     contentDigest: yield* templateContentDigest(input.subject, input.body),
+    optionalPlaceholders: optional,
     placeholdersUsed: uniqueSorted([...subject.names, ...body.names]),
     principalId: actor.principalId,
     reason: input.reason,
+    requiredPlaceholders: required,
     subject: input.subject,
     templateTypeId: type.templateTypeId,
   });
@@ -206,12 +229,13 @@ export const activateRevision = Effect.fn('TemplateRevision.activate')(function*
   if (Option.isSome(yield* port.findInvalidation(revision.revisionId))) {
     return yield* refuse('template_revision_invalidated', 'An unsafe-invalidated revision can never be activated');
   }
-  yield* assessActivatable(type, revision);
+  yield* assessActivatable(revision);
   const open = yield* port.openActivations(type.templateTypeId);
   if (openActivationOf(open, revision.revisionId) !== undefined) {
     return yield* refuse('template_revision_already_active', 'The revision is already the active revision');
   }
-  const at = yield* port.operationAt;
+  // The Type lock is held here, so the time taken now cannot predate any activation another writer committed.
+  const at = yield* businessTimeOf(port, type.templateTypeId);
   const [replaced] = open;
   yield* Effect.forEach(
     open,
@@ -249,7 +273,7 @@ export const deactivateRevision = Effect.fn('TemplateRevision.deactivate')(funct
   if (open === undefined) {
     return yield* refuse('template_revision_not_active', 'The revision is not the active revision');
   }
-  const endedAt = yield* port.operationAt;
+  const endedAt = yield* businessTimeOf(port, type.templateTypeId);
   yield* port.closeActivation(open.activationId, {
     actionInvocationId: actor.actionInvocationId,
     endedAt,
@@ -273,7 +297,7 @@ export const invalidateRevisionAsUnsafe = Effect.fn('TemplateRevision.invalidate
   if (Option.isSome(yield* port.findInvalidation(revision.revisionId))) {
     return yield* refuse('template_revision_already_invalidated', 'The revision is already invalidated as unsafe');
   }
-  const invalidatedAt = yield* port.operationAt;
+  const invalidatedAt = yield* businessTimeOf(port, type.templateTypeId);
   yield* port.appendInvalidation({
     actionInvocationId: actor.actionInvocationId,
     invalidatedAt,
@@ -304,7 +328,6 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
   identity: TemplateIdentity,
   decisionTime?: DateTime.Utc,
 ) {
-  const at = decisionTime ?? (yield* port.operationAt);
   const type = yield* port.findType(identity);
   if (Option.isNone(type)) {
     return yield* new TemplateResolutionFailed({
@@ -312,6 +335,13 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
       reason: 'No Template Type exists for this exact message type, channel, language and scope',
     });
   }
+  // A decision time taken from the clock is taken under the shared Type lock, so no activation can later commit with a
+  // start at or before it: the pin's decision time stays consistent with the end of the revision it pins.
+  const at =
+    decisionTime ??
+    (yield* port
+      .lockTypeShared(type.value.templateTypeId)
+      .pipe(Effect.andThen(businessTimeOf(port, type.value.templateTypeId))));
   const active = yield* port.activationsAt(type.value.templateTypeId, at);
   if (active.length > 1) {
     return yield* new TemplateResolutionFailed({
@@ -358,6 +388,20 @@ export const verifyTemplatePinForHandoff = Effect.fn('TemplateRevision.verifyPin
     return yield* new TemplatePinBlocked({
       code: 'pinned_template_revision_unavailable',
       reason: 'The pinned Template Revision is no longer available; reconcile the intent, nothing is upgraded silently',
+      revisionId: pin.revisionId,
+    });
+  }
+  const type = yield* port.loadType(pin.templateTypeId);
+  if (
+    Option.isNone(type) ||
+    type.value.identity.messageType !== pin.messageType ||
+    type.value.identity.channel !== pin.channel ||
+    type.value.identity.language !== pin.language ||
+    templateScopeKey(type.value.identity.scope) !== templateScopeKey(pin.scope)
+  ) {
+    return yield* new TemplatePinBlocked({
+      code: 'pinned_template_identity_mismatch',
+      reason: 'The pin names an identity other than the Template Type of its revision; nothing is handed off',
       revisionId: pin.revisionId,
     });
   }
@@ -451,6 +495,8 @@ export const describeTemplateUse = Effect.fn('TemplateRevision.describeUse')(fun
       }),
     }),
     lifecycleState: lifecycleOf(activations, Option.isSome(invalidation)),
+    optionalPlaceholders: revision.value.optionalPlaceholders,
+    requiredPlaceholders: revision.value.requiredPlaceholders,
     revisionId: pin.revisionId,
     revisionNumber: revision.value.revisionNumber,
     templateTypeId: pin.templateTypeId,

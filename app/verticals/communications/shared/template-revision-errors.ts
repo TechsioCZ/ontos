@@ -4,10 +4,9 @@ import { TemplateRevisionIdSchema } from './template-revision.ts';
 const refusedFields = {
   code: Schema.Literals([
     'template_content_malformed',
-    'template_placeholder_missing',
     'template_placeholder_undeclared',
+    'template_required_placeholder_omitted',
     'template_scope_mismatch',
-    'template_type_declaration_conflict',
     'template_revision_already_active',
     'template_revision_not_active',
     'template_revision_invalidated',
@@ -51,7 +50,11 @@ export const TemplateResolutionFailed = Schema.TaggedError<typeof resolutionCont
 
 /** The pinned revision may not be handed off now. Never carries a replacement: nothing is silently switched. */
 const pinBlockedFields = {
-  code: Schema.Literals(['pinned_template_revision_unavailable', 'pinned_template_revision_invalidated_unsafe']),
+  code: Schema.Literals([
+    'pinned_template_identity_mismatch',
+    'pinned_template_revision_unavailable',
+    'pinned_template_revision_invalidated_unsafe',
+  ]),
   reason: Schema.String,
   revisionId: TemplateRevisionIdSchema,
 };
