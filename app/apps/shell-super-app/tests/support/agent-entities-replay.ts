@@ -33,14 +33,14 @@ import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
 import { projectionWriteRefusal } from '../../../../packages/core-runtime/src/access/intent/projection-write-error.ts';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
-import { agentProposals } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { agentProposals, applicationCompositionAuthority } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { InstalledModuleCatalogServiceLive } from '@app/core-runtime/modules/active-application-composition';
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { AgentAccessClientIdSchema, ConnectionSummarySchema } from '@app/shared-contracts/agent-access';
 import type { ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { asc, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { expect } from 'effect-rstest';
 
 import { IdentityAdministrationDeniedAuditUnavailable } from '../../../../packages/core-runtime/src/auth/identity-administration-audit-unavailable.ts';
@@ -64,6 +64,9 @@ import { installedReleaseComposition } from './installed-release-composition.ts'
 export const transport = { correlationId: 'agent-replay-correlation', idempotencyKey: 'agent-replay-original-key' };
 export const readTransport = { correlationId: transport.correlationId };
 export const firstBatchId = '50000000-0000-4000-8000-000000000001';
+const AGENTS_DECLARATION = 'shell-super-app.access-admin.agents';
+const AGENT_STATUS_DECLARATION = 'core.identity.agent-status.manage';
+const PROPOSAL_COMMAND_DECLARATION = 'core.identity.agent-proposal.mutate';
 
 interface CleanupState {
   connections: string[];
@@ -89,18 +92,32 @@ export const makeAgentReplay = Effect.fn('AgentReplay.make')(function* buildRepl
     return yield* Effect.die('The case must seed a company');
   }
   const persona = options.actionPermission === 'denied' ? 'member' : 'companyAdmin';
-  if (options.actionPermission === 'denied') {
-    // Admit the Shell page but not the native status Action. Both answers still come from the real gate.
-    yield* accessCase.grantRole({
-      capabilityKeys: ['shell-super-app.access-admin.agents'],
-      legalEntityId: company,
-      persona,
-    });
-  }
+  // The seeded role holds admin keys only. Withdrawal also needs the routine proposal Action's own run cell.
+  yield* accessCase.grantRole({
+    capabilityKeys:
+      options.actionPermission === 'denied'
+        ? [AGENTS_DECLARATION, PROPOSAL_COMMAND_DECLARATION]
+        : [PROPOSAL_COMMAND_DECLARATION],
+    legalEntityId: company,
+    persona,
+  });
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
     yield* accessCase.scopeFor(persona, company),
   );
   const caller: DemoAccountCaller = { legalName: 'P14 company', principal: { ...principal, legalEntityId: company } };
+  // The shared template grants Core tables, not the deployment's protected Action fence routine.
+  yield* accessCase.admin.unsafe('grant usage on schema trust to ontos_runtime');
+  yield* accessCase.admin.unsafe(
+    'grant execute on function trust.lock_access_scope_fence(uuid, uuid) to ontos_runtime',
+  );
+  for (const declarationKey of [AGENTS_DECLARATION, AGENT_STATUS_DECLARATION, PROPOSAL_COMMAND_DECLARATION]) {
+    const answer = yield* accessCase.decide({ declarationKey, legalEntityId: company, persona, scope: 'legal-entity' });
+    expect({ declarationKey, ...answer }).toMatchObject({
+      declarationKey,
+      outcome:
+        declarationKey === AGENT_STATUS_DECLARATION && options.actionPermission === 'denied' ? 'DENIED' : 'ALLOWED',
+    });
+  }
   const agent = accessCase.ids.get('agent');
   if (agent === undefined) {
     return yield* Effect.die('The case must seed an agent');
@@ -118,6 +135,14 @@ export const makeAgentReplay = Effect.fn('AgentReplay.make')(function* buildRepl
   const composition = yield* installedReleaseComposition;
   const database = yield* makeCoreDatabase({ ...accessCase.databases.runtime, maxConnections: 6 });
   const adminDatabase = yield* makeCoreDatabase(accessCase.databases.admin);
+  // Actions lock the publisher's persisted authority, not just the installed catalog service.
+  yield* adminDatabase.executor.insert(applicationCompositionAuthority).values({
+    authorityKey: 'active',
+    phase: 'active',
+    revision: composition.composition.revision,
+    subscriptionsJson: [],
+    validUntil: DateTime.toDateUtc(composition.validUntil),
+  });
   const rows = Array.from({ length: options.batchCount ?? 1 }, (_value, index) =>
     proposalRow({
       agentPrincipalId: agentId,
@@ -247,6 +272,18 @@ export const makeAgentReplay = Effect.fn('AgentReplay.make')(function* buildRepl
           and evidence_json ->> 'targetPrincipalId' = $2 and evidence_json ->> 'previousStatus' is not null`,
       [accessCase.tenantId, agentId],
     );
+    const deniedAudits = yield* accessCase.admin.unsafe<{
+      readonly correlationId: string;
+      readonly operation: string;
+      readonly principalId: string;
+      readonly targetPrincipalId: string;
+    }>(
+      `select evidence_json ->> 'correlationId' as "correlationId",
+              evidence_json ->> 'operation' as operation, principal_id as "principalId",
+              evidence_json ->> 'targetPrincipalId' as "targetPrincipalId"
+         from core.audit_events where tenant_id = $1 and outcome_code = 'company_administrator_required'`,
+      [accessCase.tenantId],
+    );
     const readEvidence = yield* accessCase.admin.unsafe(
       `select data_access_event_id from core.data_access_events where tenant_id = $1
           and evidence_policy_key = 'core.identity.agent-proposal-queue.access.v1'`,
@@ -254,6 +291,7 @@ export const makeAgentReplay = Effect.fn('AgentReplay.make')(function* buildRepl
     );
     return {
       committed,
+      deniedAudits,
       proposals: proposals.filter((row) => row.status === 'pending' && row.decidedAt === null).length,
       readEvidence: readEvidence.length,
       rows: proposals,
@@ -369,7 +407,7 @@ export const makeAgentReplay = Effect.fn('AgentReplay.make')(function* buildRepl
         ...realGate,
         decide: (input) =>
           Effect.gen(function* decide() {
-            if (input.carrier.accessDeclaration?.key === 'shell-super-app.access-admin.agents') {
+            if (input.carrier.accessDeclaration?.key === AGENTS_DECLARATION) {
               cleanup.events.push('administrator');
             }
             return yield* realGate.decide(input);
@@ -428,7 +466,21 @@ export const makeAgentReplay = Effect.fn('AgentReplay.make')(function* buildRepl
       "update core.access_assignments set status = 'revoked' where tenant_id = $1 and principal_id = $2",
       [accessCase.tenantId, principal.principalId],
     );
+    // The owner also delegated these admin keys to companyAdmin as a manager; that is an independent basis.
+    yield* accessCase.admin.unsafe(
+      "update core.access_delegations set status = 'revoked' where tenant_id = $1 and manager_id = $2",
+      [accessCase.tenantId, principal.principalId],
+    );
     yield* graph.writer.reconcileTenant({ scope: yield* accessCase.scopeFor('owner', company) });
+    for (const declarationKey of [AGENTS_DECLARATION, AGENT_STATUS_DECLARATION]) {
+      const answer = yield* accessCase.decide({
+        declarationKey,
+        legalEntityId: company,
+        persona,
+        scope: 'legal-entity',
+      });
+      expect({ declarationKey, ...answer }).toMatchObject({ declarationKey, outcome: 'DENIED' });
+    }
   });
   const setStatus = (status: 'active' | 'disabled') =>
     accessCase.admin.unsafe('update core.principals set status = $3 where tenant_id = $1 and principal_id = $2', [

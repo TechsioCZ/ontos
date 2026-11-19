@@ -49,6 +49,11 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
             external.failStep = 'projection';
             const failure = yield* test.run(disable).pipe(Effect.flip);
             expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+            expect(failure).toMatchObject({
+              cause: { code: 'access_projection_write_unavailable', reason: 'Injected projection failure' },
+            });
+            expect(external.failStep).toBeNull();
+            expect(external.events).toEqual(['administrator', 'action', 'projection']);
             expect((yield* test.snapshot).status).toBe('disabled');
             const committedStatus = (yield* test.snapshot).committed;
             expect(committedStatus).toHaveLength(1);
@@ -139,7 +144,10 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
 
             const archive = { ...archiveTemplate, principalId: agentId };
             external.failStep = 'confirm-archived';
-            expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsUnavailable);
+            const failure = yield* test.run(archive).pipe(Effect.flip);
+            expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+            expect(failure).toMatchObject({ cause: 'Interrupted confirm-archived' });
+            expect(external.failStep).toBeNull();
             expect((yield* test.snapshot).status).toBe('archived');
             expect(external.events).toEqual([
               'administrator',
@@ -184,7 +192,15 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
 
               const request = { ...requestTemplate, principalId: agentId };
               external.failStep = 'projection';
-              yield* test.run(request).pipe(Effect.flip);
+              const failure = yield* test.run(request).pipe(Effect.flip);
+              expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+              expect(failure).toMatchObject({
+                cause: { code: 'access_projection_write_unavailable', reason: 'Injected projection failure' },
+              });
+              expect(external.failStep).toBeNull();
+              const { committed } = yield* test.snapshot;
+              expect(committed).toHaveLength(1);
+              expect((yield* test.snapshot).status).toBe(request.operation === 'delete' ? 'archived' : 'disabled');
               external.events = [];
               const changed: ManageAgentEntityRequest =
                 request.operation === 'change-status'
@@ -195,7 +211,10 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 ConnectionsGone,
               );
               expect(external.events).toEqual(['administrator', 'action', 'administrator', 'action']);
-              expect((yield* test.snapshot).committed).toHaveLength(1);
+              expect((yield* test.snapshot).committed).toEqual(committed);
+              expect((yield* test.snapshot).statusWrites).toBe(1);
+              expect((yield* test.snapshot).proposals).toBe(1);
+              expect(external.connections).toEqual(['connection-1', 'connection-2']);
             }),
           ),
         300_000,
@@ -212,12 +231,33 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
 
             const archive = { ...archiveTemplate, principalId: agentId };
             external.failStep = 'projection';
-            yield* test.run(archive).pipe(Effect.flip);
+            const failure = yield* test.run(archive).pipe(Effect.flip);
+            expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+            expect(failure).toMatchObject({
+              cause: { code: 'access_projection_write_unavailable', reason: 'Injected projection failure' },
+            });
+            expect(external.failStep).toBeNull();
+            const { committed } = yield* test.snapshot;
+            expect(committed).toHaveLength(1);
+            expect((yield* test.snapshot).status).toBe('archived');
             yield* test.denyAdministration;
             external.events = [];
             expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsForbidden);
             expect(external.events).toEqual(['administrator', 'denied-audit']);
             expect(test.actions).toHaveLength(1);
+            expect((yield* test.snapshot).committed).toEqual(committed);
+            expect((yield* test.snapshot).statusWrites).toBe(1);
+            expect((yield* test.snapshot).deniedAudits).toEqual([
+              {
+                correlationId: transport.correlationId,
+                operation: 'delete-agent',
+                principalId: test.principal.principalId,
+                targetPrincipalId: agentId,
+              },
+            ]);
+            expect(external.connections).toEqual(['connection-1', 'connection-2']);
+            expect((yield* test.snapshot).proposals).toBe(1);
+            expect(test.proposalActions).toHaveLength(0);
           }),
         ),
       300_000,
@@ -234,10 +274,13 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
             const archive = { ...archiveTemplate, principalId: agentId };
             yield* test.denyAdministration;
             external.failStep = 'denied-audit';
-            expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsUnavailable);
+            const failure = yield* test.run(archive).pipe(Effect.flip);
+            expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+            expect(external.failStep).toBeNull();
             expect(external.events).toEqual(['administrator', 'denied-audit']);
             expect(test.actions).toHaveLength(0);
             expect((yield* test.snapshot).committed).toHaveLength(0);
+            expect((yield* test.snapshot).deniedAudits).toEqual([]);
             expect(external.connections).toEqual(['connection-1', 'connection-2']);
             expect((yield* test.snapshot).proposals).toBe(1);
             expect((yield* test.snapshot).status).toBe('active');
@@ -258,6 +301,12 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
             expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsForbidden);
             expect(external.events).toEqual(['administrator', 'action']);
             expect((yield* test.snapshot).committed).toHaveLength(0);
+            expect((yield* test.snapshot).status).toBe('active');
+            expect((yield* test.snapshot).statusWrites).toBe(0);
+            expect(external.connections).toEqual(['connection-1', 'connection-2']);
+            expect((yield* test.snapshot).proposals).toBe(1);
+            expect(test.readInputs).toEqual([]);
+            expect(test.proposalActions).toEqual([]);
           }),
         ),
       300_000,
@@ -274,11 +323,15 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
 
               const archive = { ...archiveTemplate, principalId: agentId };
               expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsInvalid);
+              expect(external.events).toEqual(['administrator', 'action']);
               expect(external.events).not.toContain('snapshot');
               expect(external.events).not.toContain('projection');
               expect(external.events).not.toContain('connections');
               expect((yield* test.snapshot).status).toBe('active');
               expect((yield* test.snapshot).committed).toHaveLength(0);
+              expect((yield* test.snapshot).statusWrites).toBe(0);
+              expect(external.connections).toEqual(['connection-1', 'connection-2']);
+              expect((yield* test.snapshot).proposals).toBe(1);
             }),
           ),
         300_000,
@@ -297,6 +350,9 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
             yield* test.setStatus('disabled');
             expect(yield* test.run(disable).pipe(Effect.flip)).toBeInstanceOf(ConnectionsGone);
             expect(external.events).toEqual(['administrator', 'action']);
+            expect((yield* test.snapshot).status).toBe('disabled');
+            expect((yield* test.snapshot).committed).toEqual([]);
+            expect((yield* test.snapshot).statusWrites).toBe(0);
           }),
         ),
       300_000,
@@ -312,7 +368,20 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
 
             const archive = { ...archiveTemplate, principalId: agentId };
             external.failStep = 'connection-2';
-            yield* test.run(archive).pipe(Effect.flip);
+            const failure = yield* test.run(archive).pipe(Effect.flip);
+            expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+            expect(failure).toMatchObject({ cause: 'Interrupted connection-2' });
+            expect(external.failStep).toBeNull();
+            expect(external.events).toEqual([
+              'administrator',
+              'action',
+              'projection',
+              'connections',
+              'connection-1',
+              'connection-2',
+            ]);
+            expect((yield* test.snapshot).status).toBe('archived');
+            expect((yield* test.snapshot).committed).toHaveLength(1);
             expect(external.connections).toEqual(['connection-2']);
             expect((yield* test.snapshot).proposals).toBe(1);
             external.events = [];
@@ -344,12 +413,18 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
 
               const request = { ...requestTemplate, principalId: agentId };
               external.failStep = 'proposals';
-              expect(yield* test.run(request).pipe(Effect.flip)).toBeInstanceOf(ConnectionsUnavailable);
+              const failure = yield* test.run(request).pipe(Effect.flip);
+              expect(failure).toBeInstanceOf(ConnectionsUnavailable);
+              expect(failure).toMatchObject({
+                cause: { _tag: 'ReadHandlerUnavailable', reason: 'Injected withdrawal read failure' },
+              });
+              expect(external.failStep).toBeNull();
               expect((yield* test.snapshot).status).toBe(request.operation === 'delete' ? 'archived' : 'disabled');
               expect(external.connections).toEqual([]);
               expect((yield* test.snapshot).proposals).toBe(1);
               expect(external.events).not.toContain('confirm-archived');
               expect(test.proposalActions).toHaveLength(0);
+              expect((yield* test.snapshot).committed).toHaveLength(1);
               external.events = [];
               yield* test.run(request);
               expect(external.events.slice(0, 6)).toEqual([
@@ -442,6 +517,12 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
             const disable = { ...disableTemplate, principalId: agentId };
 
             const claimed = (yield* test.snapshot).rows.find((row) => row.decidedAt !== null);
+            expect(claimed).toMatchObject({
+              decidedByPrincipalId: test.principal.principalId,
+              position: 1,
+              proposalId: '60000000-0000-4000-8000-999999999999',
+              status: 'pending',
+            });
             yield* test.run(disable);
             expect((yield* test.snapshot).rows.filter((row) => row.status === 'rejected')).toHaveLength(1);
             expect((yield* test.snapshot).rows.find((row) => row.proposalId === claimed?.proposalId)).toEqual(claimed);
