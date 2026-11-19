@@ -3,8 +3,14 @@
  * and only erasable types, so the plan job runs it on the hosted runner's Node before anything is installed
  * (scripts/plan-ci-without-install.sh reads the files and writes the outputs).
  */
-import { knownTask, taskDirectory } from './ci/ci-matrices-rules.mts';
-import type { CiIntegrationEntry, CiScope, CiTemplates } from './ci/ci-matrices-rules.mts';
+import { CI_TEXT, CI_TEXTS, knownTask, optionalField, requiredField, taskDirectory } from './ci/ci-matrices-rules.mts';
+import type {
+  CiAuthoredFields,
+  CiAuthoredValue,
+  CiIntegrationEntry,
+  CiScope,
+  CiTemplates,
+} from './ci/ci-matrices-rules.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
 export type { CiScope } from './ci/ci-matrices-rules.mts';
@@ -504,8 +510,8 @@ export interface CiPackageManifest {
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly devDependencies?: Readonly<Record<string, string>>;
   /**
-   * Every path the `exports` map names, through conditions and fallback lists. JSON arrives untyped, so the reader
-   * that parses package.json collects them (scripts/plan-ci-without-install.sh).
+   * Every path the `exports` value names, through conditions and fallback lists, collected by the reader that checks
+   * package.json against CI_WORKSPACE_FIELDS (scripts/plan-ci-without-install.sh).
    */
   readonly exportPaths: readonly string[];
   readonly name: string;
@@ -560,6 +566,48 @@ export const workspacePackageDirectories = (
   }
   return { directories };
 };
+
+const VERSIONS = optionalField({ map: CI_TEXT });
+const topologyUnit: CiAuthoredValue = {
+  closed: false,
+  fields: {
+    id: requiredField(CI_TEXT),
+    moduleFederation: optionalField({
+      closed: false,
+      fields: {
+        remotes: optionalField({ list: { closed: false, fields: { id: requiredField(CI_TEXT) } } }),
+        verticalRefs: optionalField(CI_TEXTS),
+      },
+    }),
+    package: requiredField(CI_TEXT),
+    path: requiredField(CI_TEXT),
+    verticalRefs: optionalField(CI_TEXTS),
+  },
+};
+
+/**
+ * What the planner reads from each workspace package.json, topology/ownership.json and
+ * topology/reference-topology.json, to the strictness the installed planner decoded them with. A file that breaks
+ * its contract leaves the workspace unreadable, and the complete suite runs. Keys outside a contract are not read.
+ */
+export const CI_WORKSPACE_FIELDS = {
+  manifest: {
+    dependencies: VERSIONS,
+    devDependencies: VERSIONS,
+    /** A path, a condition map, or a fallback list of either. */
+    exports: optionalField({ tree: CI_TEXT }),
+    name: requiredField(CI_TEXT),
+    ontosContractOwner: optionalField({ closed: false, fields: { packageName: requiredField(CI_TEXT) } }),
+    optionalDependencies: VERSIONS,
+    peerDependencies: VERSIONS,
+  },
+  ownership: {
+    owners: requiredField({
+      list: { closed: false, fields: { package: requiredField(CI_TEXT), path: requiredField(CI_TEXT) } },
+    }),
+  },
+  topology: { shell: requiredField(topologyUnit), verticals: requiredField({ list: topologyUnit }) },
+} satisfies Readonly<Record<string, CiAuthoredFields>>;
 
 /**
  * The planner's view of the workspace from the manifests of the declared directories, the OntOS module map

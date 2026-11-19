@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { Array as EffectArray, Effect, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CI_MATRICES_KEYS, knownTask, taskDirectory } from '../ci/ci-matrices-rules.mts';
+import { CI_MATRICES_FIELDS, knownTask, taskDirectory } from '../ci/ci-matrices-rules.mts';
+import type { CiAuthoredFields } from '../ci/ci-matrices-rules.mts';
 import { CiTemplatesSchema, parseCiMatrices } from '../ci/ci-matrices.mts';
 import {
   filterPaths,
@@ -937,32 +938,55 @@ it('runs the integration suite of every workspace package that declares one in s
   ).toEqual([]);
 });
 
-/** The keys a schema's fields allow and those it requires, in declaration order. */
+/** The keys a schema's fields allow and those it requires, sorted. */
 const declared = (
   fields: Readonly<
     Record<string, { readonly ast: { readonly context?: { readonly isOptional: boolean } | undefined } }>
   >,
 ) => ({
-  allowed: Object.keys(fields),
+  allowed: Object.keys(fields).toSorted(),
   required: Object.entries(fields)
     .filter(([, field]) => field.ast.context?.isOptional !== true)
-    .map(([key]) => key),
+    .map(([key]) => key)
+    .toSorted(),
+});
+/** The keys a dependency-free contract allows and those it requires, sorted. */
+const contracted = (fields: CiAuthoredFields) => ({
+  allowed: Object.keys(fields).toSorted(),
+  required: Object.entries(fields)
+    .filter(([, field]) => field.optional !== true)
+    .map(([key]) => key)
+    .toSorted(),
 });
 
 it('checks the matrices without installing against the keys the installed decode declares', () => {
   const { fields } = CiTemplatesSchema;
-  expect(declared(fields)).toEqual(CI_MATRICES_KEYS.matrices);
-  expect(declared(fields.source.value.fields)).toEqual(CI_MATRICES_KEYS.command);
-  expect(declared(fields.unit.value.fields)).toEqual(CI_MATRICES_KEYS.command);
-  expect(declared(fields.integration.value.fields)).toEqual(CI_MATRICES_KEYS.integration);
-  expect(declared(fields.scopes.schema.value.fields)).toEqual(CI_MATRICES_KEYS.scope);
+  expect(contracted(CI_MATRICES_FIELDS.matrices)).toEqual(declared(fields));
+  expect(contracted(CI_MATRICES_FIELDS.command)).toEqual(declared(fields.source.value.fields));
+  expect(contracted(CI_MATRICES_FIELDS.command)).toEqual(declared(fields.unit.value.fields));
+  expect(contracted(CI_MATRICES_FIELDS.integration)).toEqual(declared(fields.integration.value.fields));
+  expect(contracted(CI_MATRICES_FIELDS.scope)).toEqual(declared(fields.scopes.schema.value.fields));
+  // The rows reach the outputs in their contract's key order, which must be the decode's.
+  expect(Object.keys(CI_MATRICES_FIELDS.command)).toEqual(Object.keys(fields.source.value.fields));
+  expect(Object.keys(CI_MATRICES_FIELDS.integration)).toEqual(Object.keys(fields.integration.value.fields));
 });
 
 const NO_INSTALL_PLANNER = 'scripts/plan-ci-without-install.sh';
+const BASE_MATRICES = 'scripts/ci-matrices.json';
 const DEMO_OVERLAY = 'scripts/ci-matrices.demo.json';
+const OWNERSHIP = 'topology/ownership.json';
+const TOPOLOGY = 'topology/reference-topology.json';
+const CATALOG_MANIFEST = `${CATALOG_DIRECTORY}/${PACKAGE_MANIFEST}`;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const JsonDocument = Schema.Record(Schema.String, Schema.Json);
+type JsonRow = typeof JsonDocument.Type;
+const decodeDocument = Schema.decodeUnknownSync(Schema.fromJsonString(JsonDocument));
+const asDocument = Schema.decodeUnknownSync(JsonDocument);
+const asRows = Schema.decodeUnknownSync(Schema.Array(JsonDocument));
 const PNPM_WORKSPACE = 'pnpm-workspace.yaml';
 const APPLY_AFFECTED = '--apply-affected';
+const UNAVAILABLE = 'Workspace impact is unavailable';
+const appFile = (file: string) => readFileSync(path.join(appRoot, file), 'utf-8');
 /** The value of one GITHUB_OUTPUT line. */
 const outputLine = (output: string, key: string) =>
   output
@@ -970,17 +994,40 @@ const outputLine = (output: string, key: string) =>
     .find((entry) => entry.startsWith(`${key}=`))
     ?.slice(key.length + 1);
 
-it('plans with nothing installed, from the matrices rows as the installed tools decode them', () => {
+/**
+ * A copy of exactly the files the plan job's planner reads, with no node_modules, and a planner run in it (or in
+ * another directory) through the shell entry point with PATH limited to Node and the base system.
+ */
+const plannerFixture = () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-without-deps-'));
-  const copy = (file: string) => {
-    const target = path.join(fixture, file);
-    mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, readFileSync(path.join(appRoot, file)));
+  const put = (file: string, text: string) => {
+    mkdirSync(path.dirname(path.join(fixture, file)), { recursive: true });
+    writeFileSync(path.join(fixture, file), text);
   };
+  const files = [
+    PACKAGE_MANIFEST,
+    PNPM_WORKSPACE,
+    OWNERSHIP,
+    TOPOLOGY,
+    BASE_MATRICES,
+    DEMO_OVERLAY,
+    'scripts/ci/ci-matrices-rules.mts',
+    'scripts/plan-ci-checks.mts',
+    'scripts/workspace-consumer-closure.mts',
+    NO_INSTALL_PLANNER,
+    ...workspacePackages.map(({ directory }) => path.join(directory, PACKAGE_MANIFEST)),
+  ];
+  const reset = () => {
+    for (const file of files) {
+      put(file, appFile(file));
+    }
+  };
+  reset();
   const outputs = path.join(fixture, 'output');
   const paths = path.join(fixture, 'paths');
-  const plan = (cwd: string, flags: readonly string[]) => {
+  const plan = (changed: string, flags: readonly string[], cwd = fixture) => {
     writeFileSync(outputs, '');
+    writeFileSync(paths, `${changed}\0`);
     const log = execFileSync('/bin/bash', [NO_INSTALL_PLANNER, '--paths-file', paths, ...flags], {
       cwd,
       encoding: 'utf-8',
@@ -994,67 +1041,127 @@ it('plans with nothing installed, from the matrices rows as the installed tools 
     });
     return { log, output: readFileSync(outputs, 'utf-8') };
   };
+  return { fixture, plan, put, remove: () => rmSync(fixture, { force: true, recursive: true }), reset };
+};
+
+it('plans with nothing installed, from the matrices rows as the installed tools decode them', () => {
+  const { fixture, plan, remove } = plannerFixture();
   try {
-    for (const file of [
-      PACKAGE_MANIFEST,
-      PNPM_WORKSPACE,
-      'topology/ownership.json',
-      'topology/reference-topology.json',
-      'scripts/ci-matrices.json',
-      DEMO_OVERLAY,
-      'scripts/ci/ci-matrices-rules.mts',
-      'scripts/plan-ci-checks.mts',
-      'scripts/workspace-consumer-closure.mts',
-      NO_INSTALL_PLANNER,
-    ]) {
-      copy(file);
-    }
-    for (const { directory } of workspacePackages) {
-      copy(path.join(directory, PACKAGE_MANIFEST));
-    }
     expect(existsSync(path.join(fixture, 'node_modules'))).toBe(false);
     for (const [changed, flags] of [
       [CATALOG_SOURCE, [APPLY_AFFECTED]],
       ['app/scripts/check.mts', [APPLY_AFFECTED]],
       [CATALOG_SOURCE, ['--full', APPLY_AFFECTED]],
     ] as const) {
-      writeFileSync(paths, `${changed}\0`);
       // Only the copied files: the same plan as in the installed workspace.
-      expect(plan(fixture, flags), changed).toEqual(plan(appRoot, flags));
+      expect(plan(changed, flags), changed).toEqual(plan(changed, flags, appRoot));
     }
     // A complete plan hands every row on exactly as the installed tools' strict decode reads it, key order included.
-    const { output } = plan(fixture, ['--full']);
+    const { output } = plan(CATALOG_SOURCE, ['--full']);
     expect(outputLine(output, 'mode')).toBe('full');
     expect(outputLine(output, 'source')).toBe(encodeJson(templates.source));
     expect(outputLine(output, 'unit')).toBe(encodeJson(templates.unit.filter((row) => row['node-artifacts'] !== true)));
     expect(outputLine(output, 'integrationOwners')).toBe(
       encodeJson(templates.integration.filter(({ suite }) => suite === 'integration')),
     );
-    // Matrices the planner cannot plan from fail the plan job.
-    const overlay = readFileSync(path.join(appRoot, DEMO_OVERLAY), 'utf-8');
-    for (const [broken, reason] of [
-      [overlay.replace('{', '{"unknown": [],'), /the overlay has the unknown key unknown/u],
-      [
-        `{"integration": [{"name": "Unrunnable", "suite": "integration", "tasks": ["nowhere"]}]}`,
-        /runnable task form/u,
-      ],
-      [`{"integration": [{"name": "Unknown suite", "suite": "smoke"}]}`, /names no known suite/u],
-      [`{"source": [{"commands": "true"}]}`, /lacks the key name/u],
-    ] as const) {
-      writeFileSync(path.join(fixture, DEMO_OVERLAY), broken);
-      expect(() => plan(fixture, []), broken).toThrow(reason);
-    }
-    writeFileSync(path.join(fixture, DEMO_OVERLAY), overlay);
-    // A workspace the planner cannot resolve runs the complete suite.
-    const workspace = readFileSync(path.join(appRoot, PNPM_WORKSPACE), 'utf-8');
-    writeFileSync(path.join(fixture, PNPM_WORKSPACE), workspace.replace('  - apps/*', '  - apps/**'));
-    writeFileSync(paths, `${CATALOG_SOURCE}\0`);
-    const unresolved = plan(fixture, [APPLY_AFFECTED]);
-    expect(unresolved.log).toContain(
-      'unsupported pnpm-workspace.yaml package entry apps/**. Running the complete suite.',
-    );
-    expect(outputLine(unresolved.output, 'mode')).toBe('full');
   } finally {
-    rmSync(fixture, { force: true, recursive: true });
+    remove();
+  }
+});
+
+/** A copy of the rows with one field of the row at `index` replaced. */
+const rowWith = (rows: readonly JsonRow[], key: string, value: Schema.Json, index = 0) =>
+  rows.map((row, at) => (at === index ? { ...row, [key]: value } : row));
+
+// Matrices the installed decode (scripts/ci/ci-matrices.mts) refuses fail the plan job too, before anything is
+// defaulted or merged: a missing list, a value of another JSON type, a value outside its literals.
+it('fails the plan job on every matrices document the strict decode refuses', () => {
+  const { plan, put, remove, reset } = plannerFixture();
+  const base = decodeDocument(appFile(BASE_MATRICES));
+  const rows = (key: string) => asRows(base[key]);
+  const without = (key: string) =>
+    encodeJson(Object.fromEntries(Object.entries(base).filter(([name]) => name !== key)));
+  const replaced = (key: string, value: Schema.Json) => encodeJson({ ...base, [key]: value });
+  const ownerRow = rows('integration').findIndex(({ suite }) => suite === 'integration');
+  const ownerWith = (key: string, value: Schema.Json) =>
+    replaced('integration', rowWith(rows('integration'), key, value, ownerRow));
+  const overlay = appFile(DEMO_OVERLAY);
+  const broken: readonly (readonly [string, string, string])[] = [
+    ['no source list', without('source'), overlay],
+    ['no integration list', without('integration'), overlay],
+    ['no unit list', without('unit'), overlay],
+    ['a null command', replaced('source', rowWith(rows('source'), 'commands', null)), overlay],
+    ['a numeric row name', replaced('source', rowWith(rows('source'), 'name', 7)), overlay],
+    ['a fetch depth in quotes', replaced('unit', rowWith(rows('unit'), 'fetch_depth', '1')), overlay],
+    ['a node-artifacts word', replaced('unit', rowWith(rows('unit'), 'node-artifacts', 'yes')), overlay],
+    ['a task list as one string', ownerWith('tasks', 'root:1/2'), overlay],
+    ['three lanes', ownerWith('lanes', 3), overlay],
+    ['a numeric proof package', ownerWith('proof-packages', [1]), overlay],
+    ['root packages as one string', replaced('root-packages', 'akros-storefront'), overlay],
+    ['a test weight in quotes', replaced('test-weights', { family: '9' }), overlay],
+    ['a scope without paths', replaced('scopes', [{ name: 'empty', paths: [], source: ['x'] }]), overlay],
+    ['an unknown key', replaced('unknown', []), overlay],
+    ['a null document', 'null', overlay],
+    ['an overlay unit of null', appFile(BASE_MATRICES), encodeJson({ unit: null })],
+    ['an overlay list', appFile(BASE_MATRICES), '[]'],
+    [
+      'an overlay row with an unknown key',
+      appFile(BASE_MATRICES),
+      encodeJson({ unit: [{ commands: 'true', extra: 1, name: 'x' }] }),
+    ],
+    [
+      'an unrunnable overlay task',
+      appFile(BASE_MATRICES),
+      encodeJson({ integration: [{ name: 'x', suite: 'integration', tasks: ['nowhere'] }] }),
+    ],
+    ['a repeated overlay row', appFile(BASE_MATRICES), encodeJson({ source: rows('source').slice(0, 1) })],
+  ];
+  try {
+    expect(Result.isSuccess(parseCiMatrices(appFile(BASE_MATRICES), overlay))).toBe(true);
+    expect(outputLine(plan(CATALOG_SOURCE, [APPLY_AFFECTED]).output, 'mode')).toBe('affected');
+    for (const [name, matrices, added] of broken) {
+      put(BASE_MATRICES, matrices);
+      put(DEMO_OVERLAY, added);
+      expect(Result.isFailure(parseCiMatrices(matrices, added)), name).toBe(true);
+      expect(() => plan(CATALOG_SOURCE, [APPLY_AFFECTED]), name).toThrow();
+      reset();
+    }
+  } finally {
+    remove();
+  }
+});
+
+it('plans the complete suite from a workspace the installed decode would not have read', () => {
+  const { plan, put, remove, reset } = plannerFixture();
+  const catalog = decodeDocument(appFile(CATALOG_MANIFEST));
+  const topology = decodeDocument(appFile(TOPOLOGY));
+  const ownership = decodeDocument(appFile(OWNERSHIP));
+  const shell = asDocument(topology.shell);
+  const moduleOwners = asRows(ownership.owners);
+  const allOwnerRows = encodeJson(templates.integration.filter(({ suite }) => suite === 'integration'));
+  const broken: readonly (readonly [string, string])[] = [
+    [CATALOG_MANIFEST, encodeJson({ ...catalog, exports: 42 })],
+    [CATALOG_MANIFEST, encodeJson({ ...catalog, exports: { '.': null } })],
+    [CATALOG_MANIFEST, encodeJson({ ...catalog, name: 5 })],
+    [CATALOG_MANIFEST, encodeJson({ ...catalog, dependencies: { [PRICING]: 1 } })],
+    [CATALOG_MANIFEST, encodeJson({ ...catalog, ontosContractOwner: { packageName: 1 } })],
+    [TOPOLOGY, encodeJson({ ...topology, shell: { ...shell, moduleFederation: null } })],
+    [TOPOLOGY, encodeJson({ ...topology, verticals: {} })],
+    [TOPOLOGY, encodeJson({ ...topology, shell: { ...shell, moduleFederation: { remotes: [{}] } } })],
+    [OWNERSHIP, encodeJson({ ...ownership, owners: rowWith(moduleOwners, 'path', 3) })],
+  ];
+  try {
+    // The fixture as it stands narrows a change inside the catalog.
+    expect(outputLine(plan(CATALOG_SOURCE, [APPLY_AFFECTED]).output, 'mode')).toBe('affected');
+    for (const [file, text] of broken) {
+      put(file, text);
+      const { log, output } = plan(CATALOG_SOURCE, [APPLY_AFFECTED]);
+      expect(log, text).toContain(UNAVAILABLE);
+      expect(outputLine(output, 'mode'), text).toBe('full');
+      expect(outputLine(output, 'integrationOwners'), text).toBe(allOwnerRows);
+      reset();
+    }
+  } finally {
+    remove();
   }
 });

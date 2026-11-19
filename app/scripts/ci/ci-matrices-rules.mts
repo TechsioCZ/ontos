@@ -80,25 +80,74 @@ const ORIGINS = 'build-origin-variables';
 const ROOT_PACKAGES = 'root-packages';
 const TEST_WEIGHTS = 'test-weights';
 
+const JSON_PRIMITIVES = ['boolean', 'number', 'string'] as const;
 /**
- * The keys each matrices document and entry may carry, and those it must carry; any other key is refused, never
- * dropped. app/scripts/tests/ci-change-plan.test.mts pins them to the fields of the schemas in ci-matrices.mts.
+ * What an authored JSON value must be, as data. The plan job runs before anything is installed, so it cannot decode
+ * authored JSON with the Effect schemas; scripts/plan-ci-without-install.sh checks each document against these
+ * contracts instead, to the strictness of the schema each one mirrors, and rebuilds every object in its contract's key
+ * order, as that decode does. A `tree` is a leaf of its contract, or a list or map of trees; a `closed` object refuses
+ * a key it does not declare.
  */
-export const CI_MATRICES_KEYS = {
-  command: {
-    allowed: ['artifact-units', 'commands', 'fetch_depth', 'name', 'node-artifacts', 'setup', 'typescript-build'],
-    required: ['commands', 'name'],
-  },
-  integration: {
-    allowed: ['lanes', 'name', 'native-composition', 'proof-packages', 'suite', 'tasks'],
-    required: ['name', 'suite'],
-  },
-  matrices: {
-    allowed: [ORIGINS, 'integration', ROOT_PACKAGES, 'scopes', 'source', TEST_WEIGHTS, 'unit'],
-    required: ['integration', 'source', 'unit'],
-  },
-  scope: { allowed: ['name', 'paths', 'source'], required: ['name', 'paths', 'source'] },
-} as const;
+export type CiAuthoredValue =
+  | { readonly closed: boolean; readonly fields: CiAuthoredFields }
+  | { readonly list: CiAuthoredValue; readonly nonEmpty?: true }
+  | { readonly literals: readonly (number | string)[] }
+  | { readonly map: CiAuthoredValue }
+  | { readonly primitive: (typeof JSON_PRIMITIVES)[number] }
+  | { readonly tree: CiAuthoredValue };
+/** The keys of an object form, in the order its schema declares them. */
+export type CiAuthoredFields = Readonly<Record<string, { readonly optional?: true; readonly value: CiAuthoredValue }>>;
+
+export const CI_TEXT: CiAuthoredValue = { primitive: 'string' };
+export const CI_TEXTS: CiAuthoredValue = { list: CI_TEXT };
+const FLAG: CiAuthoredValue = { primitive: 'boolean' };
+export const requiredField = (value: CiAuthoredValue) => ({ value });
+export const optionalField = (value: CiAuthoredValue) => ({ optional: true as const, value });
+
+const commandFields = {
+  'artifact-units': optionalField(CI_TEXT),
+  commands: requiredField(CI_TEXT),
+  fetch_depth: optionalField({ primitive: 'number' }),
+  name: requiredField(CI_TEXT),
+  'node-artifacts': optionalField(FLAG),
+  setup: optionalField(CI_TEXT),
+  'typescript-build': optionalField(FLAG),
+} satisfies CiAuthoredFields;
+const integrationFields = {
+  lanes: optionalField({ literals: [2, 4] }),
+  name: requiredField(CI_TEXT),
+  'native-composition': optionalField(FLAG),
+  'proof-packages': optionalField(CI_TEXTS),
+  suite: requiredField({ literals: CI_INTEGRATION_SUITES }),
+  tasks: optionalField(CI_TEXTS),
+} satisfies CiAuthoredFields;
+const scopeFields = {
+  name: requiredField(CI_TEXT),
+  paths: requiredField({ list: CI_TEXT, nonEmpty: true }),
+  source: requiredField({ list: CI_TEXT, nonEmpty: true }),
+} satisfies CiAuthoredFields;
+const matricesFields = {
+  integration: requiredField({ list: { closed: true, fields: integrationFields } }),
+  [ORIGINS]: optionalField(CI_TEXTS),
+  [ROOT_PACKAGES]: optionalField(CI_TEXTS),
+  scopes: optionalField({ list: { closed: true, fields: scopeFields } }),
+  source: requiredField({ list: { closed: true, fields: commandFields } }),
+  [TEST_WEIGHTS]: optionalField({ map: { primitive: 'number' } }),
+  unit: requiredField({ list: { closed: true, fields: commandFields } }),
+} satisfies CiAuthoredFields;
+
+/**
+ * The fields of the matrices, their rows and an overlay, as scripts/ci/ci-matrices.mts declares them;
+ * app/scripts/tests/ci-change-plan.test.mts pins them to those schemas' fields and to their verdicts.
+ */
+export const CI_MATRICES_FIELDS = {
+  command: commandFields,
+  integration: integrationFields,
+  matrices: matricesFields,
+  /** An overlay names only what it adds: every key is optional. */
+  overlay: Object.fromEntries(Object.entries(matricesFields).map(([key, field]) => [key, optionalField(field.value)])),
+  scope: scopeFields,
+};
 
 /** Why an integration row cannot run as written, if it cannot. */
 export const integrationEntryProblem = (entry: CiIntegrationEntry) => {
@@ -114,52 +163,12 @@ export const integrationEntryProblem = (entry: CiIntegrationEntry) => {
     : undefined;
 };
 
-/** Every key the entry carries that its kind does not allow, and every key its kind requires that it lacks. */
-const keyProblems = (
-  where: string,
-  keys: readonly string[],
-  kind: { readonly allowed: readonly string[]; readonly required: readonly string[] },
-) => [
-  ...keys.filter((key) => !kind.allowed.includes(key)).map((key) => `${where} has the unknown key ${key}`),
-  ...kind.required.filter((key) => !keys.includes(key)).map((key) => `${where} lacks the key ${key}`),
-];
-
-const commandProblems = (where: string, entry: CiCommandEntry) =>
-  keyProblems(where, Object.keys(entry), CI_MATRICES_KEYS.command);
-
-const integrationProblems = (where: string, entry: CiIntegrationEntry) => {
-  const problem = integrationEntryProblem(entry);
-  return [
-    ...keyProblems(where, Object.keys(entry), CI_MATRICES_KEYS.integration),
-    ...(CI_INTEGRATION_SUITES.includes(entry.suite) ? [] : [`${where} names no known suite`]),
-    ...(entry.lanes === undefined || entry.lanes === 2 || entry.lanes === 4 ? [] : [`${where} runs 2 or 4 lanes`]),
-    ...(problem === undefined ? [] : [`${where}: ${problem}`]),
-  ];
-};
-
-const scopeProblems = (where: string, scope: CiScope) => [
-  ...keyProblems(where, Object.keys(scope), CI_MATRICES_KEYS.scope),
-  ...(scope.paths.length > 0 && scope.source.length > 0 ? [] : [`${where} needs at least one path and source row`]),
-];
-
-const rowProblems = <Entry,>(
-  where: string,
-  entries: readonly Entry[] | undefined,
-  check: (row: string, entry: Entry) => readonly string[],
-) => (entries ?? []).flatMap((entry, index) => check(`${where}[${String(index)}]`, entry));
-
-/** Every way a matrices document breaks the keys, literal values and integration rules above. */
-const documentProblems = (
-  label: string,
-  document: CiMatricesOverlay,
-  kind: { readonly allowed: readonly string[]; readonly required: readonly string[] },
-) => [
-  ...keyProblems(label, Object.keys(document), kind),
-  ...rowProblems(`${label} source`, document.source, commandProblems),
-  ...rowProblems(`${label} unit`, document.unit, commandProblems),
-  ...rowProblems(`${label} integration`, document.integration, integrationProblems),
-  ...rowProblems(`${label} scopes`, document.scopes, scopeProblems),
-];
+/** Every integration row of a document that cannot run as written. */
+const integrationProblems = (label: string, document: CiMatricesOverlay) =>
+  (document.integration ?? []).flatMap((entry, index) => {
+    const problem = integrationEntryProblem(entry);
+    return problem === undefined ? [] : [`${label} integration[${String(index)}]: ${problem}`];
+  });
 
 interface Appended<Entry> {
   readonly entries: readonly Entry[];
@@ -220,17 +229,13 @@ export const mergeCiMatrices = (
 };
 
 /**
- * The merged matrices from the base document and overlay the plan job parsed with nothing installed, or every reason
- * they cannot be planned from: a key, a suite, a lane count or an integration task this planner does not know fails the
- * plan instead of being dropped. A value of another JSON type fails the planner where it reads it, and the installed
- * tools' strict decode (scripts/ci/ci-matrices.mts) refuses it in every run.
+ * The merged matrices from a base document and an overlay already checked against CI_MATRICES_FIELDS, or why they
+ * cannot be planned from: an integration row that cannot run, or an overlay entry the base already has.
  */
 export const checkedCiMatrices = (base: CiTemplates, overlay: CiMatricesOverlay | undefined) => {
   const problems = [
-    ...documentProblems('scripts/ci-matrices.json', base, CI_MATRICES_KEYS.matrices),
-    ...(overlay === undefined
-      ? []
-      : documentProblems('the overlay', overlay, { allowed: CI_MATRICES_KEYS.matrices.allowed, required: [] })),
+    ...integrationProblems('scripts/ci-matrices.json', base),
+    ...integrationProblems('the overlay', overlay ?? {}),
   ];
   return problems.length === 0 ? mergeCiMatrices(base, overlay ?? {}) : { invalid: problems.join('\n') };
 };
