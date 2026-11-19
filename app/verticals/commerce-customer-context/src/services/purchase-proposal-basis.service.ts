@@ -50,7 +50,7 @@ import type {
 import { PurchaseLimitDependencyUnavailableSchema } from '../../shared/domain/purchase-limit-policy.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   resolvePurchasePricingContextObservation,
@@ -793,8 +793,7 @@ const durablePurchaseLimitEvaluationCurrentness = (
         ) {
           return yield* Effect.fail(basisCurrentnessUnavailable());
         }
-        const active = yield* composition.load.pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+        const active = yield* loadActiveApplicationComposition(composition).pipe(
           Effect.mapError(basisCurrentnessUnavailable),
         );
         const owner = yield* purchaseProposalBasisService(transaction, actualScope, active.composition.revision).pipe(

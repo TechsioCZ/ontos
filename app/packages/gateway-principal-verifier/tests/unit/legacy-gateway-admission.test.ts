@@ -12,7 +12,11 @@ import {
 } from '@app/core-runtime/auth/external-identity-admission';
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
-import { ActiveApplicationCompositionService, OperationAuthenticationRequired } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  OperationAuthenticationRequired,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -197,7 +201,10 @@ it.effect('maps a verified staff v1 assertion before Core resolves a migrated no
     expect(scope.authenticationNamespaceId).toBe(staffNamespace);
     expect(scope.principalId).toBe(principalId);
   }).pipe(
-    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
     Effect.provide(NodeCrypto.layer),
   ),
 );
@@ -233,7 +240,10 @@ it.effect('rejects a mapped v1 assertion whose binding IDs belong to another nam
 
     expect(failure).toBeInstanceOf(OperationAuthenticationRequired);
   }).pipe(
-    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
     Effect.provide(NodeCrypto.layer),
   ),
 );
@@ -263,7 +273,10 @@ it.effect('does not fall back to a namespace-less v1 context for a migrated staf
 
     expect(failure).toBeInstanceOf(OperationAuthenticationRequired);
   }).pipe(
-    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
     Effect.provide(NodeCrypto.layer),
   ),
 );
@@ -280,7 +293,12 @@ it.effect('keeps issuer and namespace mismatches fail closed', () =>
       issuer: 'https://other-shell.ontos.test',
     }).pipe(Effect.flip);
     expect(Schema.is(ActionPrincipalConfigurationErrorSchema)(mismatchFailure)).toBe(true);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('does not let the v1 JWT choose a namespace and leaves v2 namespace claims unchanged', () =>
@@ -297,5 +315,10 @@ it.effect('does not let the v1 JWT choose a namespace and leaves v2 namespace cl
     const v2 = yield* makeAssertion({ principal: v2Principal, version: 2 });
     const verifiedV2 = yield* verifyWithMapping(v2.token, v2.environment);
     expect(verifiedV2.authenticationNamespaceId).toBe(externalNamespace);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );

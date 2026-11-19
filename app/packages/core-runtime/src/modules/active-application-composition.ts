@@ -1,4 +1,4 @@
-import { Clock, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, DateTime, Effect, Layer, Option, Ref, Schema, Semaphore, pipe } from 'effect';
 
 import {
   ApplicationCompositionSchema,
@@ -8,9 +8,12 @@ import {
 import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
 import { ActiveApplicationCompositionUnavailableError } from './active-application-composition-errors.ts';
 import { InstalledModuleCatalogService } from './catalog.ts';
-import type { InstalledModuleCatalogServiceContract } from './catalog.ts';
+import type { InstalledModuleCatalog, InstalledModuleCatalogServiceContract } from './catalog.ts';
 import { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 import { ActiveApplicationCompositionSource } from './active-application-composition-source-service.ts';
+import { ActiveApplicationCompositionService } from './active-application-composition-service.ts';
+
+export { ActiveApplicationCompositionService } from './active-application-composition-service.ts';
 
 /**
  * One bounded observation of the deployment-owned active revision. The publisher owns promotion;
@@ -29,19 +32,19 @@ export const ActiveApplicationCompositionSnapshotSchema = Schema.Struct({
 );
 export type ActiveApplicationCompositionSnapshot = typeof ActiveApplicationCompositionSnapshotSchema.Type;
 
-export interface ActiveApplicationCompositionServiceContract {
-  readonly load: Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>;
+/** A snapshot that passed the complete check, with the installed catalog that check built from it. */
+export interface CheckedActiveApplicationComposition {
+  readonly catalog: InstalledModuleCatalog;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
 }
 
-export class ActiveApplicationCompositionService extends Context.Service<
-  ActiveApplicationCompositionService,
-  ActiveApplicationCompositionServiceContract
->()('@app/core-runtime/modules/active-application-composition/ActiveApplicationCompositionService') {}
+/** A read of the active snapshot, before or after the complete check, depending on who provides it. */
+export type ActiveApplicationCompositionLoad = Effect.Effect<
+  ActiveApplicationCompositionSnapshot,
+  ActiveApplicationCompositionUnavailableError
+>;
 
-export const makeActiveApplicationCompositionLayer = (
-  load: ActiveApplicationCompositionServiceContract['load'],
-): Layer.Layer<ActiveApplicationCompositionService> =>
-  Layer.succeed(ActiveApplicationCompositionService, Object.freeze({ load }));
+type CheckedRead = Effect.Effect<CheckedActiveApplicationComposition, ActiveApplicationCompositionUnavailableError>;
 
 const activeApplicationCompositionSnapshotJsonSchema = Schema.fromJsonString(
   ActiveApplicationCompositionSnapshotSchema,
@@ -53,9 +56,27 @@ const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicat
     reason: 'The active Application Composition snapshot is unavailable or invalid',
   });
 
-/** Every injected/runtime source is checked at the operation edge; expiry never selects an old revision. */
-export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.validateSnapshot')(
-  function* validateSnapshot(snapshot: ActiveApplicationCompositionSnapshot) {
+/**
+ * The lease is live only from its observation until, excluding, its end; checked against the current time. This is
+ * the lease check alone: use it only on a snapshot a service of this module already returned, whose content passed the
+ * complete check.
+ */
+export const requireLiveActiveApplicationCompositionLease = Effect.fnUntraced(function* requireLiveLease({
+  observedAt,
+  validUntil,
+}: Pick<ActiveApplicationCompositionSnapshot, 'observedAt' | 'validUntil'>) {
+  const now = yield* Clock.currentTimeMillis;
+  if (DateTime.toEpochMillis(observedAt) > now || DateTime.toEpochMillis(validUntil) <= now) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority is expired or not yet valid',
+    );
+  }
+  return yield* Effect.void;
+});
+
+/** Every injected/runtime source is checked in full; expiry never selects an old revision. */
+export const checkActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.checkSnapshot')(
+  function* checkSnapshot(snapshot: ActiveApplicationCompositionSnapshot) {
     const decoded = yield* Schema.decodeEffect(Schema.toType(ActiveApplicationCompositionSnapshotSchema), {
       onExcessProperty: 'error',
     })(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
@@ -70,28 +91,41 @@ export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApp
     Object.freeze(DateTime.toPartsUtc(validUntil.value));
     const observed = Object.freeze(observedAt.value);
     const expires = Object.freeze(validUntil.value);
-    const now = yield* Clock.currentTimeMillis;
-    if (DateTime.toEpochMillis(observed) > now || DateTime.toEpochMillis(expires) <= now) {
-      return yield* unavailableActiveApplicationComposition(
-        'Application Composition authority is expired or not yet valid',
-      );
-    }
-    yield* buildApplicationCompositionCatalog(decoded.composition).pipe(
+    yield* requireLiveActiveApplicationCompositionLease({ observedAt: observed, validUntil: expires });
+    const catalog = yield* buildApplicationCompositionCatalog(decoded.composition).pipe(
       Effect.mapError(unavailableActiveApplicationComposition),
     );
-    if (DateTime.toEpochMillis(expires) <= (yield* Clock.currentTimeMillis)) {
+    const checked: CheckedActiveApplicationComposition = {
+      catalog,
+      snapshot: Object.freeze({
+        ...decoded,
+        composition: freezeApplicationCompositionArtifact(decoded.composition),
+        observedAt: observed,
+        validUntil: expires,
+      }),
+    };
+    const validatedAt = yield* Clock.currentTimeMillis;
+    if (DateTime.toEpochMillis(expires) <= validatedAt) {
       return yield* unavailableActiveApplicationComposition(
         'Application Composition authority expired during validation',
       );
     }
-    return Object.freeze({
-      ...decoded,
-      composition: freezeApplicationCompositionArtifact(decoded.composition),
-      observedAt: observed,
-      validUntil: expires,
-    });
+    if (DateTime.toEpochMillis(observed) > validatedAt) {
+      return yield* unavailableActiveApplicationComposition(
+        'Application Composition authority is not yet valid after validation',
+      );
+    }
+    return Object.freeze(checked);
   },
 );
+
+export const validateActiveApplicationCompositionSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
+  checkActiveApplicationCompositionSnapshot(snapshot).pipe(Effect.map((checked) => checked.snapshot));
+
+interface AcceptedText {
+  readonly checked: CheckedActiveApplicationComposition;
+  readonly encoded: string;
+}
 
 const configuredActiveApplicationCompositionSnapshot = (encoded: string) => {
   if (
@@ -106,9 +140,196 @@ const configuredActiveApplicationCompositionSnapshot = (encoded: string) => {
     onExcessProperty: 'error',
   })(encoded).pipe(
     Effect.mapError(unavailableActiveApplicationComposition),
-    Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    Effect.flatMap(checkActiveApplicationCompositionSnapshot),
   );
 };
+
+/**
+ * The checked read behind `ActiveApplicationCompositionServiceContract.admittingText`, with its one entry. Only a
+ * successful check is shared: callers presenting the same invalid text each run their own check, one after another,
+ * each bounded by the check's own time budget.
+ */
+const admitEachTextOnce = Effect.fn('ActiveApplicationComposition.admitEachTextOnce')(function* admitEachTextOnce<
+  Service,
+>(
+  readText: Effect.Effect<string, ActiveApplicationCompositionUnavailableError>,
+  serve: (loadChecked: CheckedRead) => Service,
+) {
+  const accepted = yield* Ref.make(Option.none<AcceptedText>());
+  const admission = yield* Semaphore.make(1);
+  const dropIfKept = (kept: AcceptedText) =>
+    Ref.update(accepted, (current) => (Option.isSome(current) && current.value === kept ? Option.none() : current));
+  const reuse = (kept: AcceptedText) =>
+    requireLiveActiveApplicationCompositionLease(kept.checked.snapshot).pipe(
+      Effect.tapError(() => dropIfKept(kept)),
+      Effect.as(kept.checked),
+    );
+  const keptFor = (encoded: string) =>
+    Ref.get(accepted).pipe(Effect.map(Option.filter((kept) => kept.encoded === encoded)));
+  const admitAlone = Effect.fnUntraced(function* admitAlone(encoded: string) {
+    const settled = yield* keptFor(encoded);
+    if (Option.isSome(settled)) {
+      return yield* reuse(settled.value);
+    }
+    yield* Ref.set(accepted, Option.none());
+    const checked = yield* configuredActiveApplicationCompositionSnapshot(encoded);
+    yield* Ref.set(accepted, Option.some({ checked, encoded }));
+    return checked;
+  });
+  const admit = Effect.fnUntraced(function* admit(encoded: string) {
+    const kept = yield* keptFor(encoded);
+    return Option.isSome(kept) ? yield* reuse(kept.value) : yield* admission.withPermit(admitAlone(encoded));
+  });
+  return serve(pipe(readText, Effect.flatMap(admit)));
+});
+
+/** Held only by this module: a service constructed without it fails every read. */
+const buildToken: unique symbol = Symbol('ActiveApplicationCompositionServiceContract.buildToken');
+/**
+ * Keys the brand member, a type-level barrier only: code outside this module cannot name this symbol, so a mock of the
+ * service type does not type-check without copying it from a built service. A spread or `Object.assign` copy does
+ * carry it, so it grants nothing at run time; only the private field the constructor sets does.
+ */
+const builtByThisModule: unique symbol = Symbol('ActiveApplicationCompositionServiceContract.builtByThisModule');
+const refusedConstruction = Effect.die('Only the Active Application Composition module builds this service');
+const notBuiltByThisModule = (): CheckedRead =>
+  Effect.fail(
+    unavailableActiveApplicationComposition('The service was not built by the Active Application Composition module'),
+  );
+type NarrowingCondition = (
+  checked: CheckedActiveApplicationComposition,
+) => Effect.Effect<void, ActiveApplicationCompositionUnavailableError>;
+type NarrowingFailureObserver = (error: ActiveApplicationCompositionUnavailableError) => Effect.Effect<void>;
+
+/**
+ * Only this module builds one, through the three static constructors, and each of them checks: `checkingEveryRead`
+ * checks an injected load in full on every read, `admittingText` checks each new text of a configured source in full
+ * once, and `narrowing` adds conditions to a read that is already checked. Consumers do not check what they are handed
+ * again, so they use it only through this module's functions `loadCheckedActiveApplicationComposition`,
+ * `loadActiveApplicationComposition` and `narrowActiveApplicationComposition`, which take the read the constructor
+ * stored in that very instance's private field. An instance has no method or readable member of its own, so nothing
+ * is ever dispatched through an object a consumer was handed. The private field and the brand member keep an object
+ * literal or a spread copy from type-checking as this service; a mock, proxy or `Object.assign` copy that does
+ * type-check has no such field and fails closed. So does a service built by a second loaded copy of this module: a
+ * process must build and read its service through one copy. A construction without this module's token stores a read
+ * that dies. The class and its prototype are frozen.
+ */
+export class ActiveApplicationCompositionServiceContract {
+  readonly #checkedRead: CheckedRead;
+  readonly [builtByThisModule]: typeof builtByThisModule;
+
+  private constructor(token: typeof buildToken, loadChecked: CheckedRead) {
+    this.#checkedRead = token === buildToken ? loadChecked : refusedConstruction;
+    this[builtByThisModule] = builtByThisModule;
+    Object.freeze(this);
+  }
+
+  /**
+   * The checked read the constructor stored in `service`'s private field. The language gives that field only to an
+   * instance this class constructed, never to a copy, spread, mock or proxy of one, so anything else fails closed.
+   * Each call returns an Effect of its own around the stored read, and each refusal is made anew, so no caller is
+   * handed an object another caller holds. Consumers use `loadCheckedActiveApplicationComposition`, which is this.
+   */
+  static checkedReadOf(service: ActiveApplicationCompositionServiceContract): CheckedRead {
+    const stored = #checkedRead in service ? service.#checkedRead : undefined;
+    return Effect.suspend(() => stored ?? notBuiltByThisModule());
+  }
+
+  /** A service over an injected load: everything it presents is checked in full on every read. */
+  static checkingEveryRead(
+    load: Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>,
+  ): ActiveApplicationCompositionServiceContract {
+    return new ActiveApplicationCompositionServiceContract(
+      buildToken,
+      pipe(load, Effect.flatMap(checkActiveApplicationCompositionSnapshot)),
+    );
+  }
+
+  /**
+   * A service over the encoded snapshot text a source returns, with one entry per built service: the last text that
+   * passed the complete check, with that result. Text equal to it, compared as the decoded string the source returns,
+   * reuses the result after a lease check against the current time; an entry whose lease check fails is dropped, and
+   * the next read of that text is checked in full again. Other text clears the entry and replaces it only after
+   * passing the complete check itself. A failed source read touches nothing: it fails closed, and a later read of the
+   * kept text reuses its entry. Admission runs one at a time, and the entry is read again under the permit: callers
+   * presenting the same new text share one check when it succeeds, and an older text's check never overwrites the
+   * decision about a newer text admitted after it.
+   */
+  static admittingText(
+    readText: Effect.Effect<string, ActiveApplicationCompositionUnavailableError>,
+  ): Effect.Effect<ActiveApplicationCompositionServiceContract> {
+    return admitEachTextOnce(
+      readText,
+      (loadChecked) => new ActiveApplicationCompositionServiceContract(buildToken, loadChecked),
+    );
+  }
+
+  /**
+   * `service` with more conditions on every read. Every read runs the checked read stored in `service`'s private
+   * field, then `condition` on its result, then a lease check against the current time, and returns that same checked
+   * value. `condition` can only fail the read: what it returns is discarded, so it can neither make a checked value
+   * nor skip the read. `observeFailure` runs on every failure of the narrowed read and can never turn it into a
+   * success or change its error; but if `observeFailure` dies, the read ends with that defect, and if it never
+   * completes, the read hangs. Narrowing anything this module did not build gives a service whose every read fails
+   * closed. Consumers use `narrowActiveApplicationComposition`, which is this.
+   */
+  static narrowing(
+    service: ActiveApplicationCompositionServiceContract,
+    condition: NarrowingCondition,
+    observeFailure: NarrowingFailureObserver,
+  ): ActiveApplicationCompositionServiceContract {
+    const checkedRead = ActiveApplicationCompositionServiceContract.checkedReadOf(service);
+    return new ActiveApplicationCompositionServiceContract(
+      buildToken,
+      Effect.gen(function* narrowedRead() {
+        const checked = yield* checkedRead;
+        yield* condition(checked);
+        yield* requireLiveActiveApplicationCompositionLease(checked.snapshot);
+        return checked;
+      }).pipe(Effect.tapError(observeFailure)),
+    );
+  }
+}
+Object.freeze(ActiveApplicationCompositionServiceContract.prototype);
+Object.freeze(ActiveApplicationCompositionServiceContract);
+
+/**
+ * The trusted checked read of `service`: the read its constructor stored in the instance's private field. Anything
+ * this module did not build, however it was copied or wrapped, fails closed with
+ * `ActiveApplicationCompositionUnavailableError`. The read fails unless the snapshot passed the complete check and
+ * its lease is live at the time of the call.
+ */
+export const loadCheckedActiveApplicationComposition = (
+  service: ActiveApplicationCompositionServiceContract,
+): CheckedRead => ActiveApplicationCompositionServiceContract.checkedReadOf(service);
+
+/** The snapshot of `loadCheckedActiveApplicationComposition`, with the same checks. */
+export const loadActiveApplicationComposition = (
+  service: ActiveApplicationCompositionServiceContract,
+): ActiveApplicationCompositionLoad =>
+  loadCheckedActiveApplicationComposition(service).pipe(Effect.map((checked) => checked.snapshot));
+
+/**
+ * `service` with more conditions on every read, as `ActiveApplicationCompositionServiceContract.narrowing` describes.
+ * A function of this module, not a method of `service`, so a copy or proxy of a service cannot answer for it: the
+ * narrowed service reads the private field of `service` itself and fails closed when there is none.
+ */
+export const narrowActiveApplicationComposition = (
+  service: ActiveApplicationCompositionServiceContract,
+  condition: NarrowingCondition,
+  observeFailure: NarrowingFailureObserver = () => Effect.void,
+): ActiveApplicationCompositionServiceContract =>
+  ActiveApplicationCompositionServiceContract.narrowing(service, condition, observeFailure);
+
+/** A service over an injected load: everything it presents is checked in full on every read. */
+export const makeActiveApplicationCompositionService = (
+  load: Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>,
+): ActiveApplicationCompositionServiceContract => ActiveApplicationCompositionServiceContract.checkingEveryRead(load);
+
+export const makeActiveApplicationCompositionLayer = (
+  load: Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>,
+): Layer.Layer<ActiveApplicationCompositionService> =>
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(load));
 
 /**
  * Server runtime adapter. Deployment automation publishes the immutable active snapshot as one atomic
@@ -117,15 +338,13 @@ const configuredActiveApplicationCompositionSnapshot = (encoded: string) => {
  * consumers instead of falling back to topology or a last-known-good revision.
  */
 export const ActiveApplicationCompositionConfigLive = Layer.effect(ActiveApplicationCompositionService)(
-  Effect.gen(function* activeCompositionLayer() {
-    const source = yield* ActiveApplicationCompositionSource;
-    return Object.freeze({
-      load: source.load.pipe(
-        Effect.mapError(unavailableActiveApplicationComposition),
-        Effect.flatMap(configuredActiveApplicationCompositionSnapshot),
+  ActiveApplicationCompositionSource.pipe(
+    Effect.flatMap((source) =>
+      ActiveApplicationCompositionServiceContract.admittingText(
+        source.load.pipe(Effect.mapError(unavailableActiveApplicationComposition)),
       ),
-    });
-  }),
+    ),
+  ),
 );
 
 const moduleStateCatalogUnavailable = (cause?: unknown) => {
@@ -142,19 +361,13 @@ const moduleStateCatalogUnavailable = (cause?: unknown) => {
 /** The bounded revision load operation, shared without constructing a contextual service in callers. */
 export const loadInstalledModuleCatalogForRevision = Effect.fn('InstalledModuleCatalog.loadForRevision')(
   function* loadForRevision(authority: ActiveApplicationCompositionServiceContract, compositionRevision: string) {
-    const snapshot = yield* authority.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const { catalog, snapshot } = yield* loadCheckedActiveApplicationComposition(authority).pipe(
       Effect.mapError(moduleStateCatalogUnavailable),
     );
     if (snapshot.composition.revision !== compositionRevision) {
       return yield* moduleStateCatalogUnavailable();
     }
-    const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
-      Effect.mapError(moduleStateCatalogUnavailable),
-    );
-    if (DateTime.toEpochMillis(snapshot.validUntil) <= (yield* Clock.currentTimeMillis)) {
-      return yield* moduleStateCatalogUnavailable();
-    }
+    yield* requireLiveActiveApplicationCompositionLease(snapshot).pipe(Effect.mapError(moduleStateCatalogUnavailable));
     return catalog;
   },
 );

@@ -18,6 +18,7 @@ import {
   findPostgresFailure,
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -405,7 +406,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     ],
     adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     allowedAudiences: ['commerce-market-catalog', 'storefront-registry'],
-    applicationComposition: { load: Effect.succeed(snapshot) },
+    applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     compositionRevision: snapshot.composition.revision,
     expectedDeployment: ultramodernDeliveryUnit,

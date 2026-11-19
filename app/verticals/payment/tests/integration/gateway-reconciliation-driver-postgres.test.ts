@@ -6,6 +6,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
   OntosModuleDeploymentContractSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ActiveApplicationCompositionSnapshot, ReadRuntimeService } from '@app/core-runtime';
 import {
@@ -376,7 +377,7 @@ const makeDriver = Effect.fn('DriverNative.driver')(function* makeDriver(
   const dueSource = yield* ownedDueSource(prefix);
   const fakeKey = Redacted.make(Schema.decodeUnknownSync(PaymentReconciliationApiKeySchema)('fake-native-driver-key'));
   const layer = Layer.mergeAll(
-    Layer.succeed(ActiveApplicationCompositionService, { load: approvedSnapshot }),
+    Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(approvedSnapshot)),
     Layer.succeed(GatewayReconciliationDueSource, dueSource),
     Layer.succeed(
       ReconciliationCredentials,

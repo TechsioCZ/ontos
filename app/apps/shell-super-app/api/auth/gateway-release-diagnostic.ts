@@ -1,7 +1,6 @@
 import { Context, Effect, Schema } from 'effect';
 
 export const ShellGatewayReleaseDiagnosticSchema = Schema.Literals([
-  'catalog_invalid',
   'catalog_unavailable',
   'composition_revision_mismatch',
   'shell_marker_mismatch',

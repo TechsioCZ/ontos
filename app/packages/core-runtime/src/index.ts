@@ -716,7 +716,12 @@ export {
   InstalledModuleCatalogServiceLive,
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  loadActiveApplicationComposition,
+  loadCheckedActiveApplicationComposition,
   makeActiveApplicationCompositionLayer,
+  makeActiveApplicationCompositionService,
+  narrowActiveApplicationComposition,
+  requireLiveActiveApplicationCompositionLease,
   validateActiveApplicationCompositionSnapshot,
 } from './modules/active-application-composition.ts';
 export {
@@ -742,6 +747,7 @@ export {
   ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY,
 } from './modules/active-application-composition-edge.ts';
 export type {
+  ActiveApplicationCompositionLoad,
   ActiveApplicationCompositionServiceContract,
   ActiveApplicationCompositionSnapshot,
 } from './modules/active-application-composition.ts';

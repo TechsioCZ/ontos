@@ -6,6 +6,7 @@ import {
   ModuleStateDeniedError,
   ReadRuntime,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -373,7 +374,7 @@ describe('Promotion native Core Action management', () => {
           additionalLegalEntity: 'same-tenant',
           adminConnectionString: Redacted.make(composition.connections.admin.connectionString),
           allowedAudiences: ['promotion'],
-          applicationComposition: { load: Effect.succeed(composition.snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition.snapshot)),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.snapshot.composition.revision,
           expectedDeployment: composition.contract.deployment,

@@ -7,6 +7,7 @@ import {
   failClosedOwnerAuthorizationOverlay,
   loadDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import type { ApplicationComposition } from '@app/core-runtime';
@@ -123,7 +124,10 @@ export const createNativeManagementFixture = Effect.fn('PromotionTest.nativeMana
       },
       promotionRegistration,
     ).pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.sync(() => authority.snapshot) }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.sync(() => authority.snapshot)),
+      ),
       Effect.provideService(OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay),
     );
     const actionRuntime = yield* Effect.fromOption(Option.fromUndefinedOr(fixture.actionRuntime));

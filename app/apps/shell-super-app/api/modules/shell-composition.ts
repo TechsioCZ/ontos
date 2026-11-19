@@ -17,7 +17,7 @@ import {
   shellAccessOutcome,
   shellLegalEntityScope,
 } from './shell-access-decisions.ts';
-import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
+import type { InstalledModuleCatalogUnavailableError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -48,7 +48,7 @@ export type ShellCompositionContext = OperationalScope;
 
 export interface ShellCompositionSources {
   readonly access: ShellAccessGate;
-  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
+  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 

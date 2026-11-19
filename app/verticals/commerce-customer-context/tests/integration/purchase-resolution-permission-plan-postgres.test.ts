@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { ContextAccessLive, defineScopedRoutine, runAction } from '@app/core-runtime';
+import {
+  ContextAccessLive,
+  defineScopedRoutine,
+  runAction,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -160,7 +165,7 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
       actionKeys: [addSavedAddressAction.descriptor.actionKey],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: { ...ultramodernApiMarker, buildMarker: marker.buildMarker },

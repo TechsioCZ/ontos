@@ -1,6 +1,10 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { readVerifiedGatewayCompositionRevision, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import {
+  readVerifiedGatewayCompositionRevision,
+  trustVerifiedGatewayPrincipalContext,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import type { ReadTestHarnessOptions } from '@app/core-runtime/testing/reads';
@@ -544,7 +548,7 @@ describe('#1147 R1 payment-method-applicability through the Core Read runtime', 
         const composition = yield* makePaymentTermOwnerComposition();
         const compositionRevision = composition.composition.revision;
         const harness = yield* readHarness(runtimeClient, scope, {
-          applicationComposition: { load: Effect.succeed(composition) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
           compositionRevision,
           expectedDeployment: paymentTermFixtureDeployment,
         });

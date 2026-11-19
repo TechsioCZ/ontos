@@ -16,6 +16,7 @@ import {
   OwnerAuthorizationOverlay,
   publishApplicationCompositionAuthority,
   ReadRuntime,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
@@ -396,7 +397,7 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   );
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
     accessDecision: makeScriptedBoundAccessGate(readAccess).bound,
-    applicationComposition: { load: Effect.succeed(snapshot) },
+    applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
     expectedDeployment: ultramodernApiMarker,
     ownerAuthorizationOverlay,
     ownerRegistration: commerceCustomerContextRegistration,
@@ -409,7 +410,10 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
           ActionPermission,
           makeActionPermissionLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' })),
         ),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
         Layer.succeed(ContextAccess, contextAccess),
         Layer.succeed(CoreDatabase, database),
         Layer.succeed(ModuleEntrypointGateway, moduleGateway),

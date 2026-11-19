@@ -1,6 +1,6 @@
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseFetch } from '@app/core-runtime/unit-service-fetch';
@@ -12,7 +12,7 @@ import { relayModuleResponse } from './response-relay.ts';
 
 const dispatchApprovedModuleApiRequest = Effect.fn('ModuleApi.dispatchApprovedRequest')(
   function* dispatchApprovedRequest(request: Request, authority: ActiveApplicationCompositionServiceContract) {
-    const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+    const snapshot = yield* loadActiveApplicationComposition(authority);
     const target = yield* admitModuleApiRequest(request, snapshot.composition);
     const response = yield* moduleReleaseFetch(target.forwardedRequest, target.module);
     // Applied at the dispatcher rather than the route, so every caller — including the exported

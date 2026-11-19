@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import type { AnyActionRegistration } from '../../src/actions/definition.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
@@ -287,7 +288,7 @@ it.effect('uses the genuine approved owner/build revision instead of the histori
     const snapshot = yield* makeApplicationCompositionSnapshotFixture([appId], buildMarker);
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       expectedDeployment: { appId, buildMarker },
       ownerRegistration: fixtureOwner(action),
       tenantPermission: 'allowed',

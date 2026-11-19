@@ -92,7 +92,9 @@ import {
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  loadActiveApplicationComposition,
   makeActiveApplicationCompositionLayer,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -399,7 +401,7 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
   }
   const config = configured.value;
   const activeComposition = yield* ActiveApplicationCompositionService;
-  const activeSnapshot = yield* activeComposition.load.pipe(
+  const activeSnapshot = yield* loadActiveApplicationComposition(activeComposition).pipe(
     Effect.mapError(() => unavailable('active-composition-unavailable')),
   );
   const actualRevision = activeSnapshot.composition.revision;
@@ -1282,7 +1284,7 @@ const exerciseRealCatalogConsumer1262 = Effect.fn('CatalogConsumer1262.exercise'
         tenantId: input.tenantId,
       },
       {
-        applicationComposition: { load: Effect.succeed(input.composition) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(input.composition)),
         catalog: {
           acquire: catalogAcquire,
           execute: executeCatalog,
@@ -1992,7 +1994,10 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
           transport: { correlationId: yield* nextId },
         })
         .pipe(
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(composition)),
+          ),
           Effect.provideContext(readContext),
         );
       return yield* Schema.decodeUnknownEffect(Schema.toType(QuantityTierSelectionResultSchema))(result);
@@ -2288,7 +2293,7 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
         tenantId: fixture.tenantId,
       },
       {
-        applicationComposition: { load: Effect.succeed(composition) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
         catalog: {
           acquire: issuer1225,
           execute: (payload, credential, correlation, options) =>
@@ -2409,7 +2414,10 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
           transport: { correlationId: yield* nextId },
         })
         .pipe(
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(composition)),
+          ),
           Effect.provideService(JoinedPrerequisites1225, {
             external: live1225,
             observe: (value) => {
@@ -2673,7 +2681,10 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
         transport: { correlationId: yield* nextId },
       })
       .pipe(
-        Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(composition)),
+        ),
         Effect.provideService(JoinedPrerequisites1225, {
           external: live1225,
           observe: (value) => {

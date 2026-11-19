@@ -3,11 +3,15 @@ import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-cont
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { RetailPortalProfileBindingReadRequestSchema } from '../../shared/apis/retail-portal-profile-binding-read.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../../src/enrollment/attempts/errors.ts';
-import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime/modules/active-application-composition';
+import type {
+  ActiveApplicationCompositionLoad,
+  ActiveApplicationCompositionServiceContract,
+} from '@app/core-runtime/modules/active-application-composition';
 import type { PartyRegistryRetailPartyResolverFactoryInput } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
@@ -672,7 +676,7 @@ const actualPartyModule = (entry: { readonly deployment: { readonly appId: strin
 type RetainedServerPartyFailure =
   | Effect.Error<ReturnType<typeof acquireDelegatedGatewayContext>>
   | Effect.Error<ReturnType<typeof executePartyDetailWithAuthorization>>
-  | Effect.Error<ActiveApplicationCompositionServiceContract['load']>
+  | Effect.Error<ActiveApplicationCompositionLoad>
   | ProfilePersistenceDependencyFailure;
 const observeServerPartyFailure = (error: RetainedServerPartyFailure) =>
   Effect.sync(() => {
@@ -698,7 +702,9 @@ const resolveRetainedParty = (
 ) =>
   Effect.gen(function* resolveActualServerParty() {
     serverPartyObservation.stage = 'ENTERED';
-    const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+    const snapshot = yield* loadActiveApplicationComposition(authority).pipe(
+      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    );
     serverPartyObservation.stage = 'COMPOSITION_LOADED';
     const party = snapshot.composition.modules.find(actualPartyModule);
     if (

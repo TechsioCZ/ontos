@@ -21,9 +21,8 @@ import type { Layer } from 'effect';
 
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadCheckedActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
-import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { OntosOutboxSubscriptionContractSchema } from '../modules/manifest.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
@@ -41,11 +40,6 @@ import type { OutboxRuntime } from './runtime.ts';
 
 const sameSubscriptions = Schema.toEquivalence(Schema.Array(OntosOutboxSubscriptionContractSchema));
 const subscriptionOrder = Order.mapInput(Order.String, ({ workerKey }: { readonly workerKey: string }) => workerKey);
-const unavailableSubscriptionCatalog = (cause: unknown) =>
-  new ActiveApplicationCompositionUnavailableError({
-    cause,
-    reason: 'The complete Application Composition subscription catalog is unavailable',
-  });
 
 const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
@@ -147,7 +141,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           Effect.map((subscriptions) => subscriptions.toSorted(subscriptionOrder)),
         );
         const admitComposition = Effect.gen(function* admitWorkerComposition() {
-          const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+          const { catalog, snapshot } = yield* loadCheckedActiveApplicationComposition(authority);
           const modulesById = new Map<string, (typeof snapshot.composition.modules)[number]>();
           for (const module of snapshot.composition.modules) {
             modulesById.set(module.moduleId, module);
@@ -165,9 +159,6 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
               });
             }
           }
-          const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
-            Effect.mapError(unavailableSubscriptionCatalog),
-          );
           const ownerModules = new Set<string>();
           for (const { deployment, moduleId } of snapshot.composition.modules) {
             if (

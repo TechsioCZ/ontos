@@ -11,6 +11,7 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
@@ -90,13 +91,16 @@ const composition = {
 };
 const testLayer = ApprovalOwnerGatewayLive.pipe(
   Layer.provide(
-    Layer.succeed(ActiveApplicationCompositionService, {
-      load: Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)({
-        composition,
-        observedAt: operationTime,
-        validUntil,
-      }).pipe(Effect.orDie),
-    }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)({
+          composition,
+          observedAt: operationTime,
+          validUntil,
+        }).pipe(Effect.orDie),
+      ),
+    ),
   ),
   Layer.provide(
     ConfigProvider.layer(

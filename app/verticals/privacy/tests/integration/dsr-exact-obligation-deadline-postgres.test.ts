@@ -14,6 +14,7 @@ import {
   ReadRuntime,
   TrustedPrincipalContextSchema,
   OntosModuleDeploymentContractSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   ModuleEntrypointGatewayLive,
@@ -403,7 +404,12 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessLayer)),
     );
     readRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
-      Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) })),
+      Layer.provide(
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(native.snapshot)),
+        ),
+      ),
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, gateway, resolver, accessLayer)),
       Layer.provide(NodeCrypto.layer),
     );

@@ -14,7 +14,7 @@ import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principa
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
@@ -483,8 +483,7 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
       return yield* Effect.fail(invalidError());
     }
     const compositionService = yield* ActiveApplicationCompositionService;
-    const snapshot = yield* compositionService.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const snapshot = yield* loadActiveApplicationComposition(compositionService).pipe(
       Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
     );
     const approvedDeploymentOf = (appId: string) =>

@@ -1,8 +1,9 @@
-import type {
-  ActiveApplicationCompositionServiceContract,
-  ActiveApplicationCompositionSnapshot,
+import type { ActiveApplicationCompositionLoad, ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+  ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import { ActiveApplicationCompositionService, ReadHandlerUnavailable } from '@app/core-runtime';
 import { MarketAffectedUseSourceEvidenceSchema } from '@app/customer-market-retirement-contracts';
 import type {
   MarketAffectedUseAssessmentRequest,
@@ -59,7 +60,7 @@ const absentOwnerEvidence = (
 };
 
 export const makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority = (
-  load: ActiveApplicationCompositionServiceContract['load'],
+  load: ActiveApplicationCompositionLoad,
 ): MarketReferenceOwnerDeploymentStateAuthority => ({
   proveReferenceOwnerStates: Effect.fn(
     'ApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority.proveReferenceOwnerStates',
@@ -87,6 +88,10 @@ export const makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthor
 export const applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive = Layer.effect(
   MarketReferenceOwnerDeploymentStateAuthorityService,
   ActiveApplicationCompositionService.pipe(
-    Effect.map(({ load }) => makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(load)),
+    Effect.map((authority) =>
+      makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
+        loadActiveApplicationComposition(authority),
+      ),
+    ),
   ),
 );

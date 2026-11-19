@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { eq, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { getTableConfig } from 'drizzle-orm/pg-core';
@@ -305,7 +306,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
             testOperationalScopeResolver,
             contextAccess,
             {
-              applicationComposition: { load: Effect.sync(() => currentSnapshot) },
+              applicationComposition: makeActiveApplicationCompositionService(Effect.sync(() => currentSnapshot)),
               expectedDeployment: owner.expectedDeployment,
               ownerAuthorizationOverlay: {
                 authorize: () => Effect.sync(() => ownerAuthorizationDecision),

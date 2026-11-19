@@ -16,7 +16,7 @@ import {
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/browser-api.ts';
 import type { ShellAccessDecision, ShellAccessGate } from './shell-access-decisions.ts';
 import { shellAccessOutcome } from './shell-access-decisions.ts';
-import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
+import type { InstalledModuleCatalogUnavailableError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
@@ -155,7 +155,7 @@ export interface ShellResourceGateways {
 
 interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
   readonly access: ShellAccessGate;
-  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
+  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 

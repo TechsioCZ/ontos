@@ -8,6 +8,7 @@ import {
   canonicalizeApplicationComposition,
   failClosedOwnerAuthorizationOverlay,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -151,7 +152,10 @@ const privacyNativeReadContext = Effect.fn('PrivacyTests.privacyNativeReadContex
     },
     privacyRegistration,
   ).pipe(
-    Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(composition)),
+    ),
     Effect.provideService(OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay),
   );
 });
