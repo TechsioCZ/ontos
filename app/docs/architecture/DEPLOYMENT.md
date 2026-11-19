@@ -561,6 +561,12 @@ run of the workflow on that commit; when one exists every gate job is skipped an
 passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
 gates.
 
+`demo/sales-crm` has no merge queue. A push to it skips its gates on the same `queue-proof` job when a
+successful `candidate/*` dispatch of the workflow ran on that exact commit with `base-ref` `demo/sales-crm`
+and compared with the commit the push starts from, and that commit's own push run is green. The
+candidate's plan records what it compared with in its `ci-comparison` artifact;
+`scripts/ci/commit-proof.sh` reads it, and its log and step summary name the proving run.
+
 Stage deploys from `demo/sales-crm` (`zerops-stage.yml`), never from `main`.
 
 ## Demo branch divergence from main

@@ -647,8 +647,8 @@ it.live('compares a push without a merge queue with its newest green push, and r
           GITHUB_REPOSITORY: 'TechsioCZ/ontos',
           GITHUB_RUN_ID: String(PUSH_RUN_ID),
           HEAD_SHA: git('rev-parse', 'HEAD'),
+          NEWEST_GREEN_BASE: 'true',
           PATH: `${bin}:/usr/bin:/bin`,
-          QUEUE_PROOF: 'skipped',
           ...environment,
         },
         stdio: 'pipe',
@@ -738,14 +738,20 @@ it.live('compares a push without a merge queue with its newest green push, and r
         expect(failed.log).toContain('::warning title=Complete suite::');
       }
 
-      // A push the queue-proof job looked at (main, behind its merge queue) never enters the lookup: it compares
-      // with the commit before the push as it always did, whatever the proof found, and calls no API.
-      for (const result of ['success', 'failure']) {
-        const queued = plan(listed([greenPush(green)]), { QUEUE_PROOF: result });
-        expect(queued.calls, result).toEqual([]);
-        expect(queued.paths, result).toEqual(['pushed.ts']);
+      // A push to main (behind its merge queue) never enters the lookup: it compares with the commit before the push
+      // as it always did, and calls no API.
+      for (const value of ['false', '']) {
+        const queued = plan(listed([greenPush(green)]), { NEWEST_GREEN_BASE: value });
+        expect(queued.calls, value).toEqual([]);
+        expect(queued.paths, value).toEqual(['pushed.ts']);
       }
-      expect(plan({}, { QUEUE_PROOF: '' }).calls).toEqual([]);
+      // A commit the queue-proof job proved plans no gate and names the proving run; force-ci-full never skips.
+      const proof = 'https://github.com/TechsioCZ/ontos/actions/runs/44490000000';
+      const proven = plan({}, { PROOF_RUN: proof, QUEUE_PROVEN: 'true' });
+      expect(proven.mode).toBe('proven');
+      expect(proven.calls).toEqual([]);
+      expect(proven.log).toContain(`Run ${proof} already proved this exact commit.`);
+      expect(plan({}, { FORCE_FULL: 'true', NEWEST_GREEN_BASE: 'false', QUEUE_PROVEN: 'true' }).mode).toBe('full');
       // Nor does any other event without a queue proof.
       for (const event of ['merge_group', 'pull_request', 'schedule', 'workflow_dispatch']) {
         expect(plan({}, { GITHUB_EVENT_NAME: event }).calls, event).toEqual([]);
