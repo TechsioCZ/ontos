@@ -2678,10 +2678,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             return false;
           }
         }
-        if (proposeIntent) {
-          return true;
-        }
-        // The governing Read is the same independent record and field-read question the first request answered.
+        // A replay answers a saved execution result, whatever intent the retry carries (a parked proposal is
+        // answered before this, from its own receipt): the governing Read is the same independent record and
+        // field-read question the run that committed it answered.
         return yield* decideGoverningReads(yield* DateTime.nowAsDate).pipe(
           Effect.flatMap(requireAllowedGoverningReads),
           Effect.as(true),
