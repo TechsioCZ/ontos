@@ -130,26 +130,30 @@ afterEach(() => {
 });
 
 it.layer(network, { excludeTestServices: true })('new invoice safeguards', (suite) => {
-  suite.effect('a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again', () =>
-    Effect.gen(function* zeroPrice() {
-      const drafts: DraftInvoiceInput[] = [];
-      yield* mount(
-        <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
-      );
-      yield* fillInvoice('0');
-      expect(text()).not.toContain(ZERO_PRICE);
-      yield* clickSave;
-      expect(drafts).toEqual([]);
-      expect(text()).toContain(ZERO_PRICE);
+  suite.effect(
+    'a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again',
+    () =>
+      Effect.gen(function* zeroPrice() {
+        const drafts: DraftInvoiceInput[] = [];
+        yield* mount(
+          <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
+        );
+        yield* fillInvoice('0');
+        expect(text()).not.toContain(ZERO_PRICE);
+        yield* clickSave;
+        expect(drafts).toEqual([]);
+        expect(text()).toContain(ZERO_PRICE);
 
-      yield* typeInto('invoice-line-description-line-1', 'Dárek');
-      expect(text()).not.toContain(ZERO_PRICE);
-      yield* clickSave;
-      expect(drafts).toEqual([]);
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      expect(drafts).toHaveLength(1);
-    }),
+        yield* typeInto('invoice-line-description-line-1', 'Dárek');
+        expect(text()).not.toContain(ZERO_PRICE);
+        yield* clickSave;
+        expect(drafts).toEqual([]);
+        yield* clickSave;
+        yield* waitUntil(() => closes.length === 1);
+        expect(drafts).toHaveLength(1);
+      }),
+    // The file's first mount of the real dialog, then three saves: 3.49 s on a loaded runner.
+    { timeout: 20_000 },
   );
 
   suite.effect('a failed create keeps the form and its input and shows the error toast', () =>

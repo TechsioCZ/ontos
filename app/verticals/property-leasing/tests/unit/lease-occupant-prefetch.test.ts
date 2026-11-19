@@ -338,18 +338,22 @@ it.layer(network, { excludeTestServices: true })('lease occupant prefetch', (sui
       expect(leaseRecords.snapshot(input)).not.toHaveProperty('value');
     }),
   );
-  suite.effect('caps speculative work at 200 rendered rows', () =>
-    Effect.gen(function* boundsRows() {
-      yield* pinTestDocument;
-      yield* preloadLeaseOccupants(
-        input,
-        Array.from({ length: 202 }, (_, index) => row(index + 1)),
-        9,
-      );
-      yield* networkIdle;
-      expect(reads.counterparty).toHaveLength(200);
-      expect(leaseOccupant.snapshot(detail(201, 9)).state).toBe('pending');
-    }),
+  suite.effect(
+    'caps speculative work at 200 rendered rows',
+    () =>
+      Effect.gen(function* boundsRows() {
+        yield* pinTestDocument;
+        yield* preloadLeaseOccupants(
+          input,
+          Array.from({ length: 202 }, (_, index) => row(index + 1)),
+          9,
+        );
+        yield* networkIdle;
+        expect(reads.counterparty).toHaveLength(200);
+        expect(leaseOccupant.snapshot(detail(201, 9)).state).toBe('pending');
+      }),
+    // 200 owner reads, each with its own gateway assertion, through the real stack: 2.84 s on a loaded runner.
+    { timeout: 20_000 },
   );
 
   it('does not reuse incomplete context across mounts or partial identity changes', () => {

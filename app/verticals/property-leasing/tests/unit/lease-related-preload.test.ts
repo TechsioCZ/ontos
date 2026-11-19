@@ -549,22 +549,28 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
     };
     expect(invoicesForLease(detail(1).record, [foreign])).toEqual([]);
   });
-  suite.effect('caps the combined speculative batch at 200 canonical visible rows', () =>
-    Effect.gen(function* maxRows() {
-      yield* pinTestDocument;
-      const many = yield* Schema.decodeEffect(RecordsResponseSchema)({
-        occupancies: Array.from({ length: 202 }, (_, index) => row(index + 1)),
-        revision: 7,
-      });
-      recordsAnswer = many;
-      yield* seed;
-      yield* warm(canonicalRecords().occupancies);
-      yield* networkIdle;
-      expect(reads.counterparty).toHaveLength(200);
-      expect(reads.work).toHaveLength(200);
-      expect(reads.leaseInvoices).toHaveLength(200);
-      expect(reads.finance).toHaveLength(0);
-    }),
+  suite.effect(
+    'caps the combined speculative batch at 200 canonical visible rows',
+    () =>
+      Effect.gen(function* maxRows() {
+        yield* pinTestDocument;
+        const many = yield* Schema.decodeEffect(RecordsResponseSchema)({
+          occupancies: Array.from({ length: 202 }, (_, index) => row(index + 1)),
+          revision: 7,
+        });
+        recordsAnswer = many;
+        // Only the reads are counted here: an empty task list spares 200 encodes and decodes of six tasks.
+        workAnswer = Effect.succeed({ ...workResponse, items: [] });
+        yield* seed;
+        yield* warm(canonicalRecords().occupancies);
+        yield* networkIdle;
+        expect(reads.counterparty).toHaveLength(200);
+        expect(reads.work).toHaveLength(200);
+        expect(reads.leaseInvoices).toHaveLength(200);
+        expect(reads.finance).toHaveLength(0);
+      }),
+    // 200 rows of three owner reads, each with its own gateway assertion: 1200 real round trips, 7.55 s loaded.
+    { timeout: 20_000 },
   );
   suite.effect('two combined background rows join foreground task work and cancellation preserves that join', () =>
     Effect.gen(function* boundedJoin() {

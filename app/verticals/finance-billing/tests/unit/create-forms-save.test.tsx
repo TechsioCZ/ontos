@@ -256,35 +256,47 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
     }),
   );
 
-  suite.effect('an incoming invoice maps supplier, document number and VAT-inclusive total', () =>
-    Effect.gen(function* step2() {
-      yield* pinTestDocument;
-      yield* mount((vm) => <IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
-      expect(saveButton().disabled).toBe(true);
-      yield* typeInto('incoming-supplier', 'ČEZ Prodej');
-      yield* typeInto('incoming-number', 'ZF-2026-77');
-      yield* typeInto('invoice-line-description-incoming-line-1', 'Elektřina říjen');
-      yield* typeInto('invoice-line-price-incoming-line-1', '1000');
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      yield* networkIdle;
-      expect(sent).toHaveLength(1);
-      expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
-      expect(sent[0]).toMatchObject({ documentNumber: 'ZF-2026-77', supplierName: 'ČEZ Prodej', totalMinor: 121_000 });
-    }),
+  suite.effect(
+    'an incoming invoice maps supplier, document number and VAT-inclusive total',
+    () =>
+      Effect.gen(function* step2() {
+        yield* pinTestDocument;
+        yield* mount((vm) => <IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
+        expect(saveButton().disabled).toBe(true);
+        yield* typeInto('incoming-supplier', 'ČEZ Prodej');
+        yield* typeInto('incoming-number', 'ZF-2026-77');
+        yield* typeInto('invoice-line-description-incoming-line-1', 'Elektřina říjen');
+        yield* typeInto('invoice-line-price-incoming-line-1', '1000');
+        yield* clickSave;
+        yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
+        expect(sent).toHaveLength(1);
+        expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
+        expect(sent[0]).toMatchObject({
+          documentNumber: 'ZF-2026-77',
+          supplierName: 'ČEZ Prodej',
+          totalMinor: 121_000,
+        });
+      }),
+    // Mounts the real dialog and saves through the real network: 2.58 s on a loaded runner.
+    { timeout: 20_000 },
   );
 
-  suite.effect('a new invoice draft carries its selected customer and document kind', () =>
-    Effect.gen(function* step3() {
-      yield* pinTestDocument;
-      const drafts: DraftInvoiceInput[] = [];
-      yield* mount((vm) => <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />, drafts);
-      yield* fillInvoice('1000');
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      expect(drafts).toHaveLength(1);
-      expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
-      expect(toastTitles()).toEqual([t(CREATED)]);
-    }),
+  suite.effect(
+    'a new invoice draft carries its selected customer and document kind',
+    () =>
+      Effect.gen(function* step3() {
+        yield* pinTestDocument;
+        const drafts: DraftInvoiceInput[] = [];
+        yield* mount((vm) => <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />, drafts);
+        yield* fillInvoice('1000');
+        yield* clickSave;
+        yield* waitUntil(() => closes.length === 1);
+        expect(drafts).toHaveLength(1);
+        expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
+        expect(toastTitles()).toEqual([t(CREATED)]);
+      }),
+    // Mounts the real dialog and saves through the real network: 3.04 s on a loaded runner.
+    { timeout: 20_000 },
   );
 });

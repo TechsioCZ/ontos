@@ -165,33 +165,37 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 it.layer(network, { excludeTestServices: true })('price list item editor across a background reload', (suite) => {
-  suite.effect('the finance page keeps its price editor through a ledger reload and saves its typed name', () =>
-    Effect.gen(function* typedSurvives() {
-      yield* openItem;
-      yield* type(name, 'typed-name');
-      expect(text()).toContain(labels.unsaved);
+  suite.effect(
+    'the finance page keeps its price editor through a ledger reload and saves its typed name',
+    () =>
+      Effect.gen(function* typedSurvives() {
+        yield* openItem;
+        yield* type(name, 'typed-name');
+        expect(text()).toContain(labels.unsaved);
 
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      // While the ledger reads `pending`, the dialog and the typed value stay on screen.
-      expect(value(name)).toBe('typed-name');
-      expect(text()).toContain(labels.unsaved);
+        const gate = yield* Deferred.make<RecordsResponse>();
+        yield* reloadThrough(gate);
+        // While the ledger reads `pending`, the dialog and the typed value stay on screen.
+        expect(value(name)).toBe('typed-name');
+        expect(text()).toContain(labels.unsaved);
 
-      // The reload brings a newer revision of the ledger; the item itself is unchanged.
-      yield* Deferred.succeed(gate, ledgerAt(4, 10_000));
-      yield* networkIdle;
-      yield* waitUntil(() => reads.length >= 2);
-      yield* waitUntil(() => buttons(labels.save).length > 0);
-      expect(value(name)).toBe('typed-name');
-      expect(text()).toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(false);
+        // The reload brings a newer revision of the ledger; the item itself is unchanged.
+        yield* Deferred.succeed(gate, ledgerAt(4, 10_000));
+        yield* networkIdle;
+        yield* waitUntil(() => reads.length >= 2);
+        yield* waitUntil(() => buttons(labels.save).length > 0);
+        expect(value(name)).toBe('typed-name');
+        expect(text()).toContain(labels.unsaved);
+        expect(button(labels.save).disabled).toBe(false);
 
-      answer = Effect.succeed(ledgerAt(5, 10_000));
-      yield* click(labels.save);
-      yield* waitUntil(() => commands.length > 0);
-      expect(commands[0]).toMatchObject({
-        command: { _tag: 'UpsertPriceListItem', id: itemId, name: 'typed-name' },
-      });
-    }),
+        answer = Effect.succeed(ledgerAt(5, 10_000));
+        yield* click(labels.save);
+        yield* waitUntil(() => commands.length > 0);
+        expect(commands[0]).toMatchObject({
+          command: { _tag: 'UpsertPriceListItem', id: itemId, name: 'typed-name' },
+        });
+      }),
+    // Mounts the real finance page, reloads its ledger and saves: 4.96 s on a loaded runner.
+    { timeout: 20_000 },
   );
 });

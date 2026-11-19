@@ -194,40 +194,44 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe('rent panel across a background reload', () => {
-  it.live('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
-    Effect.gen(function* typedSurvives() {
-      yield* openRent;
-      yield* type(monthly, '20000');
-      expect(text()).toContain(labels.unsaved);
+  it.live(
+    'keeps typed input, its status and the leave question; Save sends it against the old revision',
+    () =>
+      Effect.gen(function* typedSurvives() {
+        yield* openRent;
+        yield* type(monthly, '20000');
+        expect(text()).toContain(labels.unsaved);
 
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      // While the leases read `pending`, the panel and the typed value stay on screen.
-      expect(value(monthly)).toBe('20000');
-      expect(text()).toContain(labels.unsaved);
+        const gate = yield* Deferred.make<RecordsResponse>();
+        yield* reloadThrough(gate);
+        // While the leases read `pending`, the panel and the typed value stay on screen.
+        expect(value(monthly)).toBe('20000');
+        expect(text()).toContain(labels.unsaved);
 
-      yield* Deferred.succeed(gate, recordsAt(8, 20));
-      yield* waitUntil(() => reads.length >= 2);
-      yield* waitUntil(() => leaseRecords.snapshot(leaseInputOf(context)).state === 'ready');
-      expect(value(monthly)).toBe('20000');
-      // A dirty draft keeps its whole input, not just the typed field.
-      expect(value(paymentDay)).toBe('15');
-      expect(text()).toContain(labels.unsaved);
-      expect(panelButton(labels.save).disabled).toBe(false);
+        yield* Deferred.succeed(gate, recordsAt(8, 20));
+        yield* waitUntil(() => reads.length >= 2);
+        yield* waitUntil(() => leaseRecords.snapshot(leaseInputOf(context)).state === 'ready');
+        expect(value(monthly)).toBe('20000');
+        // A dirty draft keeps its whole input, not just the typed field.
+        expect(value(paymentDay)).toBe('15');
+        expect(text()).toContain(labels.unsaved);
+        expect(panelButton(labels.save).disabled).toBe(false);
 
-      yield* clickPanel(close);
-      yield* waitUntil(() => buttons(labels.stay).length === 1);
-      yield* click(labels.stay);
-      yield* waitUntil(() => buttons(labels.stay).length === 0);
-      expect(value(monthly)).toBe('20000');
+        yield* clickPanel(close);
+        yield* waitUntil(() => buttons(labels.stay).length === 1);
+        yield* click(labels.stay);
+        yield* waitUntil(() => buttons(labels.stay).length === 0);
+        expect(value(monthly)).toBe('20000');
 
-      answer = Effect.succeed(recordsAt(8, 20));
-      yield* clickPanel(labels.save);
-      yield* waitUntil(() => commands.length > 0);
-      expect(commands[0]).toMatchObject({
-        command: { _tag: 'SetRentTerms', rentTerms: { monthlyRentMinor: 2_000_000, paymentDay: 15 } },
-        expectedRevision: 7,
-      });
-    }).pipe(Effect.provide(network)),
+        answer = Effect.succeed(recordsAt(8, 20));
+        yield* clickPanel(labels.save);
+        yield* waitUntil(() => commands.length > 0);
+        expect(commands[0]).toMatchObject({
+          command: { _tag: 'SetRentTerms', rentTerms: { monthlyRentMinor: 2_000_000, paymentDay: 15 } },
+          expectedRevision: 7,
+        });
+      }).pipe(Effect.provide(network)),
+    // Mounts the real lease page, reloads its records and saves: 2.56 s on a loaded runner.
+    { timeout: 20_000 },
   );
 });
