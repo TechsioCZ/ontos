@@ -1,5 +1,5 @@
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
-import { Schema } from 'effect';
+import { Redacted, Schema } from 'effect';
 
 import {
   CommunicationResourceRefSchema,
@@ -57,12 +57,17 @@ export type OriginalRecipientBinding = typeof OriginalRecipientBindingSchema.Typ
 
 const optionalRefKey = (ref: CommunicationResourceRef | undefined) => (ref === undefined ? '' : resourceRefKey(ref));
 
-export const sameScope = (a: RecipientScope, b: RecipientScope) =>
-  a.tenantId === b.tenantId &&
-  a.legalEntityId === b.legalEntityId &&
-  optionalRefKey(a.profileRef) === optionalRefKey(b.profileRef) &&
-  optionalRefKey(a.counterpartyRef) === optionalRefKey(b.counterpartyRef) &&
-  optionalRefKey(a.storefrontRef) === optionalRefKey(b.storefrontRef);
+/** Stable text identity of a scope: equal exactly when every dimension is, whatever the key order or absence. */
+export const scopeKey = (scope: RecipientScope) =>
+  [
+    scope.tenantId,
+    scope.legalEntityId ?? '',
+    optionalRefKey(scope.profileRef),
+    optionalRefKey(scope.counterpartyRef),
+    optionalRefKey(scope.storefrontRef),
+  ].join('|');
+
+export const sameScope = (a: RecipientScope, b: RecipientScope) => scopeKey(a) === scopeKey(b);
 
 const evidenceDetail = (evidence: OriginalContactEvidence) => {
   if (evidence.kind === 'HISTORICAL_SNAPSHOT') {
@@ -98,3 +103,16 @@ export const ProtectedEndpointSchema = Schema.Struct({
   value: Schema.Redacted(Schema.String),
 });
 export type ProtectedEndpoint = typeof ProtectedEndpointSchema.Type;
+
+/** A mask that still reads as a whole e-mail style address: it hides nothing. */
+const WHOLE_ADDRESS = /^[^\s@*\u2022]+@[^\s@*\u2022]+\.[^\s@*\u2022]+$/u;
+
+/**
+ * A mask is storable only if it hides the endpoint: it must not equal or contain the protected value and must not
+ * itself look like a whole address. The value is read here to compare and is never returned, stored or logged.
+ */
+export const endpointMaskIsSafe = ({ mask, value }: Pick<ProtectedEndpoint, 'mask' | 'value'>) => {
+  const shown = mask.trim().toLowerCase();
+  const secret = Redacted.value(value).trim().toLowerCase();
+  return !WHOLE_ADDRESS.test(shown) && (secret.length === 0 || !shown.includes(secret));
+};

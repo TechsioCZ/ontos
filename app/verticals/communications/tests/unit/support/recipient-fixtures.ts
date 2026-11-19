@@ -12,6 +12,8 @@ import {
 import type { OriginalRecipientBinding, RecipientScope } from '../../../src/domain/recipient/original-binding.ts';
 import type { GateUnusableReason, UnavailableAuthority } from '../../../src/domain/recipient/recipient-assessment.ts';
 import type { RecipientEvaluationInput } from '../../../src/domain/recipient/assess-recipients.ts';
+import { handoffPinOf } from '../../../src/domain/recipient/recheck-before-handoff.ts';
+import type { HandoffCandidate, HandoffState } from '../../../src/domain/recipient/recheck-before-handoff.ts';
 import {
   FIXTURE_CONTACT_OWNER,
   FIXTURE_CONTACT_RESOURCE_TYPE,
@@ -26,6 +28,9 @@ import type { fixtureType } from './catalog-fixtures.ts';
  * below is a labelled test double: it proves how the domain REACTS to an owner answer, never that a real owner
  * publishes such an answer, and no test using it is delivery or production evidence.
  */
+
+/** TEST-ONLY gate deadline. The production deadline is the owner composition's decision; the domain has no default. */
+export const TEST_GATE_CHECK_TIMEOUT = '5 seconds';
 
 export const ORIGINAL_ADDRESS = 'puvodni@example.test';
 export const NEW_ADDRESS = 'nova@example.test';
@@ -73,6 +78,7 @@ type Evidence =
 export interface BindingOverrides {
   readonly contactOwner?: string;
   readonly contactResourceType?: string;
+  readonly eventTime?: string;
   readonly evidence?: Evidence;
   readonly scope?: RecipientScope;
 }
@@ -100,7 +106,7 @@ export const binding = (
     recipientRef: ref('fixture.recipient', recipientId),
     role,
     scope: overrides.scope ?? fixtureScope(),
-    validAt: FIXTURE_EVENT_TIME,
+    validAt: overrides.eventTime ?? FIXTURE_EVENT_TIME,
   };
   return decodeBinding(
     contactId === null ? encoded : { ...encoded, originalContact: originalContactOf(contactId, overrides) },
@@ -123,12 +129,19 @@ type OwnerReply = Effect.Effect<RecipientGateVerdictCase, RecipientAuthorityUnav
 /** What a fictional owner answers, given the query it was asked. */
 export type OwnerAnswer = (query: RecipientGateQuery) => OwnerReply;
 
-const protectedEndpoint = (query: RecipientGateQuery, address: string, contactRef = query.contact.contactRef) => {
+const SAFE_MASK = 'p***@example.test';
+
+const protectedEndpoint = (
+  query: RecipientGateQuery,
+  address: string,
+  contactRef = query.contact.contactRef,
+  mask = SAFE_MASK,
+) => {
   const { evidence } = query.contact;
   const endpoint = {
     channel: 'email',
     contactRef,
-    mask: 'p***@example.test',
+    mask,
     value: Redacted.make(address),
   };
   return RecipientGateVerdict.Usable({
@@ -141,6 +154,12 @@ export const usable =
   (address = ORIGINAL_ADDRESS): OwnerAnswer =>
   (query) =>
     Effect.succeed(protectedEndpoint(query, address));
+
+/** An owner whose mask is the given text, which a test makes unsafe on purpose. */
+export const usableWithMask =
+  (address: string, mask: string): OwnerAnswer =>
+  (query) =>
+    Effect.succeed(protectedEndpoint(query, address, query.contact.contactRef, mask));
 
 /** An owner that answers for another contact than the one it was asked about. */
 export const usableForOtherContact =
@@ -155,6 +174,17 @@ export const unusable =
   () =>
     Effect.succeed(RecipientGateVerdict.Unusable({ reason }));
 
+/** A defective owner adapter whose check throws instead of returning an Effect. */
+export const throwing = (): OwnerAnswer => () => {
+  throw new Error('fixture owner adapter threw');
+};
+
+/** A defective owner adapter that dies inside its Effect. */
+export const dying = (): OwnerAnswer => () => Effect.die(new Error('fixture owner adapter died'));
+
+/** An owner that never answers. */
+export const hanging = (): OwnerAnswer => () => Effect.never;
+
 export const unavailable =
   (authority: UnavailableAuthority = 'SOURCE_OWNER'): OwnerAnswer =>
   () =>
@@ -168,11 +198,11 @@ export const unavailable =
 export const gateDouble = (answers: Readonly<Record<string, OwnerAnswer>>) => {
   const queries: RecipientGateQuery[] = [];
   const layer = Layer.succeed(RecipientCurrentGate, {
-    check: (query): OwnerReply =>
-      Effect.suspend(() => {
-        queries.push(query);
-        return (answers[query.contact.contactRef.resourceId] ?? unavailable())(query);
-      }),
+    check: (query): OwnerReply => {
+      queries.push(query);
+      return (answers[query.contact.contactRef.resourceId] ?? unavailable())(query);
+    },
+    checkTimeout: TEST_GATE_CHECK_TIMEOUT,
   });
   return { layer, queries };
 };
@@ -191,4 +221,17 @@ export const intentIdentity = (
   sourceModule: input.request.source.moduleKey,
   tenantId: input.request.tenantId,
   typeId: input.type.typeId,
+});
+
+/** A handoff candidate exactly as the decision pinned it: its original binding, identity and type revision. */
+export const handoffCandidate = (
+  input: RecipientEvaluationInput,
+  recipientBinding: OriginalRecipientBinding,
+  slotKey: string,
+  handoff: HandoffState = 'STOPPABLE',
+): HandoffCandidate => ({
+  binding: recipientBinding,
+  handoff,
+  identity: intentIdentity(input, recipientBinding, slotKey),
+  pin: handoffPinOf(input.type, recipientBinding),
 });

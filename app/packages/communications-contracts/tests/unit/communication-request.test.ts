@@ -1,7 +1,13 @@
+import { readFileSync } from 'node:fs';
+
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CommunicationRequestSchema } from '../../src/communication-request.ts';
+import {
+  CommunicationRequestSchema,
+  CommunicationRequestScopeSchema,
+  OriginalRecipientBindingSchema,
+} from '../../src/communication-request.ts';
 import type { CommunicationRequestEncoded } from '../../src/communication-request.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -289,5 +295,43 @@ describe('#1395 original recipient binding', () => {
     const decoded = Schema.decodeUnknownSync(CommunicationRequestSchema)(minimalRequest);
 
     expect(Schema.encodeSync(CommunicationRequestSchema)(decoded)).toEqual(minimalRequest);
+  });
+});
+
+/**
+ * Drift guard shared with the Communications domain. `original-recipients.fixture.json` is the encoded
+ * `originalRecipients` payload; the domain binding schema decodes the very same file (`recipient-binding-contract`
+ * test in `@app/communications`). A field added, renamed or loosened on one side breaks one of the two tests.
+ */
+const sharedFixture: unknown = JSON.parse(
+  readFileSync(new URL('../fixtures/original-recipients.fixture.json', import.meta.url), 'utf-8'),
+);
+
+describe('Original Recipient binding contract mirror', () => {
+  const decodeBindings = Schema.decodeUnknownSync(Schema.NonEmptyArray(OriginalRecipientBindingSchema), {
+    onExcessProperty: 'error',
+  });
+
+  it('decodes the shared payload and encodes it back unchanged', () => {
+    expect(
+      Schema.encodeSync(Schema.NonEmptyArray(OriginalRecipientBindingSchema))(decodeBindings(sharedFixture)),
+    ).toEqual(sharedFixture);
+  });
+
+  it('keeps the field set the domain binding schema is pinned to', () => {
+    expect(Object.keys(OriginalRecipientBindingSchema.fields).toSorted()).toEqual([
+      'originalContact',
+      'recipientRef',
+      'role',
+      'scope',
+      'validAt',
+    ]);
+    expect(Object.keys(CommunicationRequestScopeSchema.fields).toSorted()).toEqual([
+      'counterpartyRef',
+      'legalEntityId',
+      'profileRef',
+      'storefrontRef',
+      'tenantId',
+    ]);
   });
 });

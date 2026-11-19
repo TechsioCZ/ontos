@@ -1,15 +1,18 @@
 import { Data, DateTime, Effect, Schema } from 'effect';
 
-import { isGroupComplete } from '../catalog/audience.ts';
+import { isGroupComplete, isGroupMember } from '../catalog/audience.ts';
 import type { GroupMember } from '../catalog/audience.ts';
 import type { MessageIntentIdentity } from '../catalog/decision.ts';
+import type { TransactionalMessageType } from '../catalog/message-type.ts';
 import { resourceRefKey } from '../catalog/vocabulary.ts';
-import { bindRecipient } from './bind-original-recipients.ts';
+import type { RecipientRole } from '../catalog/vocabulary.ts';
+import { bindRecipient, withoutContact } from './bind-original-recipients.ts';
 import { checkBoundRecipient, evaluatedRecipientOf, GATE_CONCURRENCY } from './assess-recipients.ts';
 import type { EvaluatedRecipient, RecipientEvaluationInput } from './assess-recipients.ts';
+import { contactBindingKey } from './original-binding.ts';
 import type { OriginalRecipientBinding, ProtectedEndpoint } from './original-binding.ts';
 import { RecipientAssessment } from './recipient-assessment.ts';
-import type { RecipientAssessmentCase } from './recipient-assessment.ts';
+import type { NotAllowedReason, RecipientAssessmentCase } from './recipient-assessment.ts';
 import { groupStoppedEvidenceOf } from './recipient-evidence.ts';
 import type { RecipientEvidence } from './recipient-evidence.ts';
 
@@ -24,11 +27,26 @@ import type { RecipientEvidence } from './recipient-evidence.ts';
 export const HandoffStateSchema = Schema.Literals(['PROVEN_HANDED_OFF', 'STOPPABLE']);
 export type HandoffState = typeof HandoffStateSchema.Type;
 
+/**
+ * What the decision fixed about an intent, pinned so a recheck can prove nothing moved: the original contact binding
+ * (reference and evidence, never an address) and the approved type revision the audience rule was decided under.
+ */
+export interface HandoffPin {
+  readonly contactKey: string;
+  readonly typeRevision: number;
+}
+
+export const handoffPinOf = (
+  type: Pick<TransactionalMessageType, 'revision'>,
+  binding: OriginalRecipientBinding,
+): HandoffPin => ({ contactKey: contactBindingKey(binding.originalContact), typeRevision: type.revision });
+
 export interface HandoffCandidate {
-  /** The original binding the intent was decided under; a retry never swaps it for another. */
+  /** The binding this retry carries. It must still equal the ORIGINAL binding of `RecipientEvaluationInput.bindings`. */
   readonly binding: OriginalRecipientBinding;
   readonly handoff: HandoffState;
   readonly identity: MessageIntentIdentity;
+  readonly pin: HandoffPin;
 }
 
 export type HandoffVerdictCase = Data.TaggedEnum<{
@@ -63,45 +81,78 @@ const belongsToRequest = (candidate: HandoffCandidate, input: RecipientEvaluatio
   );
 };
 
-/** A candidate whose intent, binding and request no longer agree is stopped, never re-addressed. */
-const identityChanged = (candidate: HandoffCandidate) =>
+/** A candidate that cannot be handed off for a fixed reason; its binding never echoes a contact nobody proved. */
+const stoppedFor = (reason: NotAllowedReason, candidate: HandoffCandidate) =>
   RecipientAssessment.RecipientNotAllowed({
-    reason: 'RECIPIENT_IDENTITY_CHANGED',
-    subject: { binding: candidate.binding, slotKey: candidate.identity.slotKey },
+    reason,
+    subject: { binding: withoutContact(candidate.binding), slotKey: candidate.identity.slotKey },
   });
 
-const assessCandidate = (candidate: HandoffCandidate, input: RecipientEvaluationInput) => {
+const candidateKey = ({ identity }: HandoffCandidate) => `${identity.slotKey}|${resourceRefKey(identity.recipient)}`;
+
+/**
+ * Every binding the source originally sent for the candidate's recipient in its slot. The recheck is judged against
+ * these, never against what the retry carries, so a retry can neither swap the contact nor drop an ambiguity.
+ */
+const originalsOf = (candidate: HandoffCandidate, role: RecipientRole, input: RecipientEvaluationInput) =>
+  input.bindings.filter(
+    ({ recipientRef, role: bindingRole }) =>
+      bindingRole === role && resourceRefKey(recipientRef) === resourceRefKey(candidate.identity.recipient),
+  );
+
+const assessCandidate = (candidate: HandoffCandidate, input: RecipientEvaluationInput, duplicate: boolean) => {
   const slot =
     input.type.result.kind === 'MESSAGE_INTENTS'
       ? input.type.result.slots.find(({ slotKey }) => slotKey === candidate.identity.slotKey)
       : undefined;
   if (slot === undefined || !belongsToRequest(candidate, input)) {
-    return Effect.succeed(identityChanged(candidate));
+    return Effect.succeed(stoppedFor('RECIPIENT_IDENTITY_CHANGED', candidate));
   }
-  const stage = bindRecipient(slot, input.scope, [candidate.binding]);
-  return stage.kind === 'settled' ? Effect.succeed(stage.assessment) : checkBoundRecipient(input, stage);
+  if (duplicate) {
+    return Effect.succeed(stoppedFor('DUPLICATE_CANDIDATE', candidate));
+  }
+  if (candidate.pin.typeRevision !== input.type.revision) {
+    return Effect.succeed(stoppedFor('TYPE_REVISION_CHANGED', candidate));
+  }
+  const [first, ...rest] = originalsOf(candidate, slot.recipientRole, input);
+  if (first === undefined) {
+    return Effect.succeed(stoppedFor('RECIPIENT_IDENTITY_CHANGED', candidate));
+  }
+  const stage = bindRecipient(slot, input.scope, [first, ...rest]);
+  if (stage.kind === 'settled') {
+    return Effect.succeed(stage.assessment);
+  }
+  const originalKey = contactBindingKey(stage.contact);
+  return candidate.pin.contactKey === originalKey &&
+    contactBindingKey(candidate.binding.originalContact) === originalKey
+    ? checkBoundRecipient(input, stage)
+    : Effect.succeed(
+        RecipientAssessment.RecipientNotAllowed({ reason: 'ORIGINAL_CONTACT_CHANGED', subject: stage.subject }),
+      );
 };
 
 const isAllowed = (evaluated: EvaluatedRecipient | undefined) =>
   evaluated !== undefined && RecipientAssessment.$is('RecipientAllowed')(evaluated.assessment);
 
+/** The one place a group verdict is decided: only a member of an incomplete approved group is held back by it. */
 const verdictOf = (
   candidate: HandoffCandidate,
   { assessment, evidence }: EvaluatedRecipient,
-  groupComplete: boolean,
+  groupHeld: boolean,
 ): HandoffVerdictCase => {
   const { identity } = candidate;
   if (!RecipientAssessment.$is('RecipientAllowed')(assessment)) {
     return HandoffVerdict.Stopped({ assessment, evidence, identity });
   }
-  return groupComplete
-    ? HandoffVerdict.Proceed({ endpoint: assessment.endpoint, evidence, identity })
-    : HandoffVerdict.GroupStopped({ evidence: groupStoppedEvidenceOf(evidence), identity });
+  return groupHeld
+    ? HandoffVerdict.GroupStopped({ evidence: groupStoppedEvidenceOf(evidence), identity })
+    : HandoffVerdict.Proceed({ endpoint: assessment.endpoint, evidence, identity });
 };
 
 /**
  * Re-check every stoppable candidate against the owners' Current facts, individually, then apply the approved
- * audience rule. Candidates already proven handed off are not asked again. Verdicts keep the input order. Never fails:
+ * audience rule to the members of its group only. Candidates already proven handed off are not asked again. A
+ * candidate listed more than once is stopped in every stoppable copy. Verdicts keep the input order. Never fails:
  * an unreachable authority is a Stopped verdict, so no stale permission can let a handoff through.
  */
 export const recheckBeforeHandoff = Effect.fn('Communications.recheckBeforeHandoff')(function* recheckAll(
@@ -109,12 +160,13 @@ export const recheckBeforeHandoff = Effect.fn('Communications.recheckBeforeHando
   candidates: readonly HandoffCandidate[],
 ) {
   const evaluatedAt = yield* DateTime.now;
+  const copies = Object.groupBy(candidates, candidateKey);
   const evaluated = yield* Effect.forEach(
     candidates,
     (candidate) =>
       candidate.handoff === 'PROVEN_HANDED_OFF'
         ? Effect.undefined
-        : assessCandidate(candidate, input).pipe(
+        : assessCandidate(candidate, input, (copies[candidateKey(candidate)]?.length ?? 0) > 1).pipe(
             Effect.map((assessment) => evaluatedRecipientOf(input, evaluatedAt, assessment)),
           ),
     { concurrency: GATE_CONCURRENCY },
@@ -126,8 +178,9 @@ export const recheckBeforeHandoff = Effect.fn('Communications.recheckBeforeHando
   const groupComplete = isGroupComplete(input.type.audience, members);
   return candidates.map((candidate, index): HandoffVerdictCase => {
     const result = evaluated[index];
+    const groupHeld = !groupComplete && isGroupMember(input.type.audience, candidate.identity.slotKey);
     return result === undefined
-      ? HandoffVerdict.AlreadyHandedOff({ identity: candidate.identity, reconciliationRequired: !groupComplete })
-      : verdictOf(candidate, result, groupComplete);
+      ? HandoffVerdict.AlreadyHandedOff({ identity: candidate.identity, reconciliationRequired: groupHeld })
+      : verdictOf(candidate, result, groupHeld);
   });
 });

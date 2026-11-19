@@ -2,7 +2,7 @@ import { Array as EffectArray, Order } from 'effect';
 
 import type { TransactionalMessageType, AudienceSlot } from '../catalog/message-type.ts';
 import { resourceRefKey } from '../catalog/vocabulary.ts';
-import { contactBindingKey, sameScope } from './original-binding.ts';
+import { contactBindingKey, sameScope, scopeKey } from './original-binding.ts';
 import type { OriginalContactBinding, OriginalRecipientBinding, RecipientScope } from './original-binding.ts';
 import { RecipientAssessment } from './recipient-assessment.ts';
 import type { RecipientAssessmentCase, RecipientSubject, UnresolvedReason } from './recipient-assessment.ts';
@@ -27,7 +27,7 @@ export type BindingStage = BoundRecipient | SettledRecipient;
 const settled = (assessment: RecipientAssessmentCase): SettledRecipient => ({ assessment, kind: 'settled' });
 
 /** The subject of an ambiguous recipient names the recipient only: no contact is ever picked. */
-const withoutContact = ({
+export const withoutContact = ({
   originalContact: _dropped,
   ...binding
 }: OriginalRecipientBinding): OriginalRecipientBinding => binding;
@@ -50,23 +50,33 @@ const declaredContact = (slot: AudienceSlot, contact: OriginalContactBinding | u
     : { ok: false, reason: 'EVIDENCE_KIND_NOT_DECLARED' };
 };
 
+/** Canonical order of the bindings of one recipient: scope, then contact, then event instant. Input order is lost. */
+const bindingOrder = Order.mapInput(
+  Order.Tuple([Order.String, Order.String, Order.Number]),
+  ({ originalContact, scope, validAt }: OriginalRecipientBinding) =>
+    [scopeKey(scope), contactBindingKey(originalContact), validAt.epochMilliseconds] as const,
+);
+
 /**
  * Bind one distinct recipient of one slot, given every binding the source sent for it. The same recipient repeated
- * with the same contact is one recipient; different contacts for it are ambiguous and none is picked.
+ * with the same contact is one recipient; different contacts for it are ambiguous and none is picked. A recipient
+ * with any binding evidenced outside the trusted scope is a scope mismatch as a whole. The group is put in a
+ * canonical order first (the earliest event instant represents a repeated binding), so the result never depends
+ * on the order the source listed the bindings in.
  */
 export const bindRecipient = (
   slot: AudienceSlot,
   scope: RecipientScope,
   group: readonly [OriginalRecipientBinding, ...OriginalRecipientBinding[]],
 ): BindingStage => {
-  const [first] = group;
+  const [first] = EffectArray.sort(group, bindingOrder);
   const unproven: RecipientSubject = { binding: withoutContact(first), slotKey: slot.slotKey };
   if (new Set(group.map(({ originalContact }) => contactBindingKey(originalContact))).size > 1) {
     return settled(
       RecipientAssessment.RecipientUnresolved({ reason: 'ORIGINAL_CONTACT_AMBIGUOUS', subject: unproven }),
     );
   }
-  if (!sameScope(first.scope, scope)) {
+  if (!group.every((candidate) => sameScope(candidate.scope, scope))) {
     // A contact evidenced in another scope is neither used nor echoed into this request's evidence.
     return settled(RecipientAssessment.RecipientNotAllowed({ reason: 'SCOPE_MISMATCH', subject: unproven }));
   }

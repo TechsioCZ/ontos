@@ -14,6 +14,10 @@ import type { OriginalRecipientBinding, ProtectedEndpoint } from './original-bin
  * - SCOPE_MISMATCH: the binding was evidenced in another Tenant, Legal Entity, profile, Counterparty or Storefront;
  * - RECIPIENT_IDENTITY_CHANGED: the intent, binding and request no longer name the same recipient and slot;
  * - ENDPOINT_IDENTITY_CHANGED: the owner answered for another contact or revision than the original one;
+ * - ENDPOINT_MASK_UNSAFE: the owner's endpoint mask would expose the protected address, so it cannot be recorded;
+ * - ORIGINAL_CONTACT_CHANGED: a handoff candidate carries another contact or evidence than the original binding;
+ * - TYPE_REVISION_CHANGED: the intent was decided under another approved type revision than the one rechecked now;
+ * - DUPLICATE_CANDIDATE: the same intent was listed more than once, so none of its copies may be handed off;
  * - SOURCE_NO_LONGER_VALID: the source occurrence is no longer valid for this communication;
  * - ORIGINAL_ENDPOINT_UNUSABLE: the original endpoint ended, was revoked or can no longer be used safely;
  * - OWNER_BINDING_INVALID: an Auth or invitation owner binding is no longer valid (revoked, expired, claimed);
@@ -33,6 +37,10 @@ export const NotAllowedReasonSchema = Schema.Literals([
   'SCOPE_MISMATCH',
   'RECIPIENT_IDENTITY_CHANGED',
   'ENDPOINT_IDENTITY_CHANGED',
+  'ENDPOINT_MASK_UNSAFE',
+  'ORIGINAL_CONTACT_CHANGED',
+  'TYPE_REVISION_CHANGED',
+  'DUPLICATE_CANDIDATE',
   ...GateUnusableReasonSchema.literals,
 ]);
 export type NotAllowedReason = typeof NotAllowedReasonSchema.Type;

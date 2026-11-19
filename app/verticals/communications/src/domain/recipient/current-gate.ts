@@ -1,4 +1,5 @@
 import { Context, Data, Effect, Layer } from 'effect';
+import type { Duration } from 'effect';
 
 import type { CommunicationDecisionRequest } from '../catalog/decision-request.ts';
 import type {
@@ -37,7 +38,22 @@ export type RecipientGateVerdictCase = Data.TaggedEnum<{
 }>;
 export const RecipientGateVerdict = Data.taggedEnum<RecipientGateVerdictCase>();
 
-export interface RecipientCurrentGateService {
+/**
+ * What a gate adapter must supply besides its answers. The deadline is a deployment decision of the owner
+ * composition, so the domain declares no default: a gate that cannot be bounded cannot be wired.
+ */
+export interface RecipientGateSettings {
+  /** Longest one per-recipient check may take. A check past it fails closed as an unavailable source owner. */
+  readonly checkTimeout: Duration.Input;
+}
+
+/**
+ * TRUST BOUNDARY for the owner contract (d21-07): the domain only compares what the owner echoes. A real adapter
+ * MUST echo and pin the contact reference and, for a versioned snapshot, the revision (or snapshot reference) it
+ * actually resolved. An owner that omits or invents them can pass the echo check without having resolved the
+ * original contact, so that echo is part of the owner contract, not something Communications can verify alone.
+ */
+export interface RecipientCurrentGateService extends RecipientGateSettings {
   /** Re-check the original recipient and endpoint now; an unreachable authority fails closed, never as stale data. */
   readonly check: (query: RecipientGateQuery) => Effect.Effect<RecipientGateVerdictCase, RecipientAuthorityUnavailable>;
 }
@@ -50,6 +66,8 @@ export class RecipientCurrentGate extends Context.Service<RecipientCurrentGate, 
  * The only production composition today: no owner publishes a recipient authority yet, so every check fails closed
  * with an unavailable source owner. It is explicit so nothing is ever allowed by default or by a missing adapter.
  */
-export const unavailableRecipientCurrentGateLayer = Layer.succeed(RecipientCurrentGate, {
-  check: () => Effect.fail(new RecipientAuthorityUnavailable({ authority: 'SOURCE_OWNER' })),
-});
+export const unavailableRecipientCurrentGateLayer = (settings: RecipientGateSettings) =>
+  Layer.succeed(RecipientCurrentGate, {
+    ...settings,
+    check: () => Effect.fail(new RecipientAuthorityUnavailable({ authority: 'SOURCE_OWNER' })),
+  });

@@ -1,4 +1,4 @@
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -7,6 +7,7 @@ import { RecipientAssessment } from '../../src/domain/recipient/recipient-assess
 import { assessRecipients, recipientFactOf } from '../../src/domain/recipient/assess-recipients.ts';
 import type { RecipientEvaluationInput } from '../../src/domain/recipient/assess-recipients.ts';
 import { unavailableRecipientCurrentGateLayer } from '../../src/domain/recipient/current-gate.ts';
+import { handoffPinOf, recheckBeforeHandoff } from '../../src/domain/recipient/recheck-before-handoff.ts';
 import { RecipientEvidenceSchema } from '../../src/domain/recipient/recipient-evidence.ts';
 import type { PrivacyEvidence } from '../../src/domain/catalog/vocabulary.ts';
 import {
@@ -22,19 +23,32 @@ import {
 } from './support/catalog-fixtures.ts';
 import {
   binding,
+  dying,
   evaluationInput,
   fixtureScope,
   gateDouble,
+  handoffCandidate,
+  hanging,
+  intentIdentity,
   NEW_ADDRESS,
   ORIGINAL_ADDRESS,
   slotKeyOf,
+  TEST_GATE_CHECK_TIMEOUT,
+  throwing,
   unavailable,
   unusable,
   usable,
   usableForOtherContact,
+  usableWithMask,
 } from './support/recipient-fixtures.ts';
 import type { OwnerAnswer } from './support/recipient-fixtures.ts';
-import { assessmentSummary, outcomeSummary, requiredSummary, revealedAddresses } from './support/summaries.ts';
+import {
+  assessmentSummary,
+  outcomeSummary,
+  requiredSummary,
+  revealedAddresses,
+  verdictSummaries,
+} from './support/summaries.ts';
 
 const single = fixtureType();
 
@@ -324,6 +338,29 @@ describe('#1395 Rule: every recipient of an approved audience is evaluated indiv
   );
 });
 
+describe('#1395 Rule: two recipients may share one contact reference without sharing an outcome', () => {
+  it.effect('each recipient is bound, asked and evidenced on its own even though the contactRef is the same', () =>
+    Effect.gen(function* sharedContactRef() {
+      const input = evaluationInput(nRecipientPolicyType, [
+        binding(FIXTURE_APPROVER_ROLE, 'approver-a', 'contact-shared'),
+        binding(FIXTURE_APPROVER_ROLE, 'approver-b', 'contact-shared'),
+      ]);
+      const { gate, run } = assess(input, { 'contact-shared': usable('shared@example.test') });
+      const evaluated = yield* run;
+
+      expect(evaluated.map(({ assessment }) => assessmentSummary(assessment))).toEqual([
+        { outcome: 'recipient-allowed', recipient: 'approver-a' },
+        { outcome: 'recipient-allowed', recipient: 'approver-b' },
+      ]);
+      expect(gate.queries.map(({ recipient }) => recipient.recipientRef.resourceId)).toEqual([
+        'approver-a',
+        'approver-b',
+      ]);
+      expect(evaluated.map(({ evidence }) => evidence.recipientRef.resourceId)).toEqual(['approver-a', 'approver-b']);
+    }),
+  );
+});
+
 describe('#1395 Rule: nothing is handed off on error, unavailable authority or a forbidden scope (BR-08, BR-09, BR-12)', () => {
   it.effect(
     'AC-06 Scenario: the owner is unavailable: no stale permission, a truthful unavailable result, not a ban',
@@ -350,7 +387,9 @@ describe('#1395 Rule: nothing is handed off on error, unavailable authority or a
   it.effect('the production composition has no recipient authority yet, so it fails closed for every recipient', () =>
     Effect.gen(function* productionFailsClosed() {
       const input = evaluationInput(single, [binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-original')]);
-      const evaluated = yield* assessRecipients(input).pipe(Effect.provide(unavailableRecipientCurrentGateLayer));
+      const evaluated = yield* assessRecipients(input).pipe(
+        Effect.provide(unavailableRecipientCurrentGateLayer({ checkTimeout: TEST_GATE_CHECK_TIMEOUT })),
+      );
 
       expect(evaluated.map(({ assessment }) => assessmentSummary(assessment))).toEqual([
         { authority: 'SOURCE_OWNER', outcome: 'source-unavailable', recipient: 'recipient-a' },
@@ -396,6 +435,88 @@ describe('#1395 Rule: nothing is handed off on error, unavailable authority or a
     expect(unavailableFact('ALLOWED').recipientStop).toBe('RECIPIENT_AUTHORITY_UNAVAILABLE');
     expect(unavailableFact('NOT_ALLOWED').privacy).toBe('NOT_ALLOWED');
   });
+});
+
+const summaries = (evaluated: Effect.Success<ReturnType<typeof assessRecipients>>) =>
+  evaluated.map(({ assessment }) => assessmentSummary(assessment));
+
+describe('#1395 Rule: one failing owner check never takes the other recipients down (BR-06, BR-08)', () => {
+  const approvers = [
+    binding(FIXTURE_APPROVER_ROLE, 'approver-a', 'contact-a'),
+    binding(FIXTURE_APPROVER_ROLE, 'approver-b', 'contact-b'),
+    binding(FIXTURE_APPROVER_ROLE, 'approver-c', 'contact-c'),
+  ];
+  const othersStillEvaluated = [
+    { outcome: 'recipient-allowed', recipient: 'approver-a' },
+    { authority: 'SOURCE_OWNER', outcome: 'source-unavailable', recipient: 'approver-b' },
+    { outcome: 'recipient-allowed', recipient: 'approver-c' },
+  ];
+
+  it.effect.each([
+    ['throws', throwing()],
+    ['dies', dying()],
+  ] as const)('a gate that %s fails closed for that recipient only', ([, answer]) =>
+    Effect.gen(function* defectiveGate() {
+      const evaluated = yield* assess(evaluationInput(nRecipientPolicyType, approvers), {
+        'contact-a': usable('a@example.test'),
+        'contact-b': answer,
+        'contact-c': usable('c@example.test'),
+      }).run;
+
+      expect(summaries(evaluated)).toEqual(othersStillEvaluated);
+      expect(evaluated[1]?.evidence).toMatchObject({
+        authorization: 'SOURCE_UNAVAILABLE',
+        reason: 'AUTHORITY_UNAVAILABLE',
+      });
+    }),
+  );
+
+  it.effect('a gate that never answers fails closed after its deadline for that recipient only', () =>
+    Effect.gen(function* hangingGate() {
+      const { run } = assess(evaluationInput(nRecipientPolicyType, approvers), {
+        'contact-a': usable('a@example.test'),
+        'contact-b': hanging(),
+        'contact-c': usable('c@example.test'),
+      });
+      const fiber = yield* Effect.forkChild(run);
+      yield* TestClock.adjust(TEST_GATE_CHECK_TIMEOUT);
+
+      expect(summaries(yield* Fiber.join(fiber))).toEqual(othersStillEvaluated);
+    }),
+  );
+});
+
+const evaluateWithMask = (mask: string) =>
+  assess(evaluationInput(single, [binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-original')]), {
+    'contact-original': usableWithMask(ORIGINAL_ADDRESS, mask),
+  }).run;
+
+describe('#1395 Rule: a recorded endpoint mask never exposes the protected address (BR-11)', () => {
+  it.effect.each([
+    ['equals the address', ORIGINAL_ADDRESS],
+    ['equals it in another case', ORIGINAL_ADDRESS.toUpperCase()],
+    ['contains the address', `to: ${ORIGINAL_ADDRESS}`],
+    ['reads as a whole address', 'someone@example.test'],
+  ] as const)('a mask that %s is not allowed and is never recorded', ([, mask]) =>
+    Effect.gen(function* unsafeMask() {
+      const [evaluated] = yield* evaluateWithMask(mask);
+
+      expect(evaluated && assessmentSummary(evaluated.assessment)).toEqual({
+        outcome: 'recipient-not-allowed',
+        reason: 'ENDPOINT_MASK_UNSAFE',
+        recipient: 'recipient-a',
+      });
+      expect(JSON.stringify(evaluated?.evidence)).not.toMatch(/example\.test/iu);
+    }),
+  );
+
+  it.effect('a genuinely masked address is recorded', () =>
+    Effect.gen(function* safeMask() {
+      const [evaluated] = yield* evaluateWithMask('p***@e***.test');
+
+      expect(evaluated?.evidence).toMatchObject({ authorization: 'RECIPIENT_ALLOWED', endpointMask: 'p***@e***.test' });
+    }),
+  );
 });
 
 describe('#1395 Rule: Auth and invitation owner bindings cannot be overwritten (BR-05, AC-07)', () => {
@@ -498,21 +619,35 @@ describe('#1395 Rule: recipient evidence is minimal, safe and immutable (BR-10, 
   );
 
   it.effect(
-    'BR-10 Scenario: a retry of the same occurrence keeps recipient, endpoint and identity, and adds no duplicate',
+    'BR-10 Scenario: a retry rebuilt from a changed profile still hits the original recipient and endpoint',
     () =>
       Effect.gen(function* retryKeepsRecipient() {
-        const input = evaluationInput(single, [binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-original')]);
+        const original = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-original');
+        const input = evaluationInput(single, [original]);
         const first = yield* assess(input, { 'contact-original': usable(ORIGINAL_ADDRESS) }).run;
-        // Between the attempts the profile gets a new contact; the retry still names the original one.
-        const retry = yield* assess(input, {
-          'contact-new': usable(NEW_ADDRESS),
-          'contact-original': usable(ORIGINAL_ADDRESS),
-        }).run;
-        const identities = [first, retry].map((run) => outcomeSummary(decisionOf(input, run)));
+        // Between the attempts the profile got a new contact and the retry candidate was rebuilt from it.
+        const rebuilt = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-new');
+        const gate = gateDouble({ 'contact-new': usable(NEW_ADDRESS), 'contact-original': usable(ORIGINAL_ADDRESS) });
+        const stoppedVerdicts = yield* recheckBeforeHandoff(input, [
+          {
+            binding: rebuilt,
+            handoff: 'STOPPABLE',
+            identity: intentIdentity(input, original, 'primary'),
+            pin: handoffPinOf(single, rebuilt),
+          },
+        ]).pipe(Effect.provide(gate.layer));
+        const keptVerdicts = yield* recheckBeforeHandoff(input, [handoffCandidate(input, original, 'primary')]).pipe(
+          Effect.provide(gate.layer),
+        );
 
-        expect(identities[0]).toEqual(identities[1]);
-        expect(retry).toHaveLength(1);
-        expect(retry[0]?.evidence.originalContact).toEqual(first[0]?.evidence.originalContact);
+        expect(verdictSummaries([...stoppedVerdicts, ...keptVerdicts])).toMatchObject([
+          { assessment: { reason: 'ORIGINAL_CONTACT_CHANGED' }, kind: 'Stopped' },
+          { address: ORIGINAL_ADDRESS, kind: 'Proceed' },
+        ]);
+        // Only the original contact was ever asked about; the rebuilt one and its address never surfaced.
+        expect(gate.queries.map(({ contact }) => contact.contactRef.resourceId)).toEqual(['contact-original']);
+        expect(JSON.stringify(stoppedVerdicts)).not.toContain(NEW_ADDRESS);
+        expect(first[0]?.evidence.originalContact).toEqual(original.originalContact);
       }),
   );
 

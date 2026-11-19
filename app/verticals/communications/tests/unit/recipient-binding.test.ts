@@ -219,3 +219,76 @@ describe('#1395 Rule: a contact evidenced in another scope is never used (BR-09,
     expect(JSON.stringify(stages)).not.toContain('contact-a');
   });
 });
+
+const permutationsOf = <T>(items: readonly T[]): readonly (readonly T[])[] =>
+  items.length <= 1
+    ? [items]
+    : items.flatMap((item, index) =>
+        permutationsOf([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [item, ...rest]),
+      );
+
+const stageDetail = (stage: BindingStage) => ({
+  ...view(stage),
+  validAt: (stage.kind === 'bound' ? stage.subject.binding : stage.assessment.subject.binding).validAt
+    .epochMilliseconds,
+});
+
+describe('#1395 Rule: the result never depends on the order the source listed the bindings in (BR-06)', () => {
+  it('one recipient evidenced in two scopes is one scope mismatch in every order, never a bound contact', () => {
+    const inScope = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-a');
+    const foreign = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-a', {
+      scope: fixtureScope({ profileId: 'profile-b' }),
+    });
+    const results = permutationsOf([inScope, foreign]).map((order) =>
+      bindOriginalRecipients(original, fixtureScope(), order).map(stageDetail),
+    );
+
+    expect(results[0]).toHaveLength(1);
+    expect(results[0]).toMatchObject([{ kind: 'settled', outcome: 'recipient-not-allowed', reason: 'SCOPE_MISMATCH' }]);
+    expect(new Set(results.map((result) => JSON.stringify(result))).size).toBe(1);
+  });
+
+  it('the same contact listed with different event instants binds the same event instant in every order', () => {
+    const early = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-a', { eventTime: '2026-11-18T09:30:00.000Z' });
+    const late = binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-a', { eventTime: '2026-11-18T10:30:00.000Z' });
+    const results = permutationsOf([late, early]).map((order) =>
+      bindOriginalRecipients(original, fixtureScope(), order).map(stageDetail),
+    );
+
+    expect(new Set(results.map((result) => JSON.stringify(result))).size).toBe(1);
+    expect(results[0]).toEqual([
+      {
+        contact: 'contact-a',
+        kind: 'bound',
+        recipient: 'recipient-a',
+        validAt: Date.parse('2026-11-18T09:30:00.000Z'),
+      },
+    ]);
+  });
+
+  it('an ambiguous recipient with mixed scopes and event instants is the same ambiguity in every order', () => {
+    const bindings = [
+      binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-one', { eventTime: '2026-11-18T10:30:00.000Z' }),
+      binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-two', { scope: fixtureScope({ profileId: 'profile-b' }) }),
+      binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', null),
+    ];
+    const results = permutationsOf(bindings).map((order) =>
+      bindOriginalRecipients(original, fixtureScope(), order).map(stageDetail),
+    );
+
+    expect(new Set(results.map((result) => JSON.stringify(result))).size).toBe(1);
+    expect(results[0]).toMatchObject([{ kind: 'settled', reason: 'ORIGINAL_CONTACT_AMBIGUOUS' }]);
+  });
+
+  it('two recipients sharing one contact reference are two bound recipients, each with that contact', () => {
+    const shared = [
+      binding(FIXTURE_APPROVER_ROLE, 'approver-b', 'contact-shared'),
+      binding(FIXTURE_APPROVER_ROLE, 'approver-a', 'contact-shared'),
+    ];
+
+    expect(bind(nRecipientPolicyType, shared)).toEqual([
+      { contact: 'contact-shared', kind: 'bound', recipient: 'approver-a' },
+      { contact: 'contact-shared', kind: 'bound', recipient: 'approver-b' },
+    ]);
+  });
+});

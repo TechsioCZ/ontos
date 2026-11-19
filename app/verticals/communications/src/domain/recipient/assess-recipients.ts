@@ -1,4 +1,4 @@
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Exit, identity, Option } from 'effect';
 
 import type { CommunicationDecisionRequest, RecipientFact } from '../catalog/decision-request.ts';
 import type { TransactionalMessageType } from '../catalog/message-type.ts';
@@ -8,6 +8,7 @@ import { bindOriginalRecipients } from './bind-original-recipients.ts';
 import type { BoundRecipient } from './bind-original-recipients.ts';
 import { RecipientCurrentGate, RecipientGateVerdict } from './current-gate.ts';
 import type { RecipientGateQuery } from './current-gate.ts';
+import { endpointMaskIsSafe } from './original-binding.ts';
 import type {
   OriginalContactBinding,
   OriginalRecipientBinding,
@@ -47,6 +48,16 @@ const answersOriginalContact = (endpoint: ProtectedEndpoint, contact: OriginalCo
   resourceRefKey(endpoint.contactRef) === resourceRefKey(contact.contactRef) &&
   (contact.evidence.kind !== 'VERSIONED_SNAPSHOT' || endpoint.contactRevision === contact.evidence.contactRevision);
 
+/** A usable endpoint is allowed only for the original contact and with a mask that hides the address. */
+const assessEndpoint = (endpoint: ProtectedEndpoint, bound: BoundRecipient): RecipientAssessmentCase => {
+  if (!answersOriginalContact(endpoint, bound.contact)) {
+    return RecipientAssessment.RecipientNotAllowed({ reason: 'ENDPOINT_IDENTITY_CHANGED', subject: bound.subject });
+  }
+  return endpointMaskIsSafe(endpoint)
+    ? RecipientAssessment.RecipientAllowed({ endpoint, subject: bound.subject })
+    : RecipientAssessment.RecipientNotAllowed({ reason: 'ENDPOINT_MASK_UNSAFE', subject: bound.subject });
+};
+
 const queryOf = (input: RecipientEvaluationInput, { contact, subject }: BoundRecipient): RecipientGateQuery => ({
   contact,
   occurrence: input.request.occurrence,
@@ -57,28 +68,36 @@ const queryOf = (input: RecipientEvaluationInput, { contact, subject }: BoundRec
   typeId: input.type.typeId,
 });
 
-/** Ask the gate about one bound recipient; unavailable authority fails closed into its own outcome. */
+const sourceUnavailable = (bound: BoundRecipient) =>
+  RecipientAssessment.SourceUnavailable({ authority: 'SOURCE_OWNER', subject: bound.subject });
+
+/**
+ * Ask the gate about one bound recipient; unavailable authority fails closed into its own outcome. A gate that
+ * throws, dies or does not answer within its deadline makes THIS recipient SourceUnavailable and no other: the
+ * failure never reaches the recipients evaluated beside it.
+ */
 export const checkBoundRecipient = (
   input: RecipientEvaluationInput,
   bound: BoundRecipient,
 ): Effect.Effect<RecipientAssessmentCase, never, RecipientCurrentGate> =>
   Effect.flatMap(Effect.service(RecipientCurrentGate), (gate) =>
-    gate.check(queryOf(input, bound)).pipe(
+    Effect.suspend(() => gate.check(queryOf(input, bound))).pipe(
       Effect.map((verdict) =>
         RecipientGateVerdict.$match(verdict, {
           Unusable: ({ reason }) => RecipientAssessment.RecipientNotAllowed({ reason, subject: bound.subject }),
-          Usable: ({ endpoint }) =>
-            answersOriginalContact(endpoint, bound.contact)
-              ? RecipientAssessment.RecipientAllowed({ endpoint, subject: bound.subject })
-              : RecipientAssessment.RecipientNotAllowed({
-                  reason: 'ENDPOINT_IDENTITY_CHANGED',
-                  subject: bound.subject,
-                }),
+          Usable: ({ endpoint }) => assessEndpoint(endpoint, bound),
         }),
       ),
       Effect.catchTag('RecipientAuthorityUnavailable', ({ authority }) =>
         Effect.succeed(RecipientAssessment.SourceUnavailable({ authority, subject: bound.subject })),
       ),
+      Effect.timeoutOption(gate.checkTimeout),
+      Effect.map(Option.getOrElse(() => sourceUnavailable(bound))),
+      // Anything left is a defect of the owner adapter: it is logged, kept out of this recipient's result and
+      // turned into the same fail-closed outcome as an unavailable owner.
+      Effect.tapCause((cause) => Effect.logError('Recipient gate check failed unexpectedly; failing closed', cause)),
+      Effect.exit,
+      Effect.map(Exit.match({ onFailure: () => sourceUnavailable(bound), onSuccess: identity })),
     ),
   );
 
