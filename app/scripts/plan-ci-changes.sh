@@ -10,7 +10,7 @@ mode=full
 reason='This event requires the complete suite.'
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
-  reason='The merge queue already proved this exact commit.'
+  reason="${QUEUE_PROOF_RUN:?A proven commit names its proving run} already passed every gate of this workflow on this exact tree."
 elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ]]; then
   # GitHub tests a pull request as its merge into the current base, the merge commit's first parent.
   # The event's base.sha is the fork point instead: a shallow checkout lacks it, and it would count every
