@@ -459,8 +459,8 @@ runs:
       working-directory: app
       run: bash scripts/zerops/stage-proofs.sh start
 
-    # Every service against the live app while the proofs run, then their verdicts. Unconditional: a run whose proofs
-    # never started fails here.
+    # Every service and the N1 guest checkout quote (never placement) after all pushes, then the proof verdicts.
+    # Shared by both delivery paths. Unconditional: missing proofs or a failed checkout quote fail verification.
     - name: Verify every service and finish the proofs
       shell: bash
       working-directory: app

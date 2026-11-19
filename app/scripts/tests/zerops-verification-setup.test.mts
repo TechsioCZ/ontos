@@ -227,7 +227,7 @@ it.effect('proves the app only while it is live and verifies every service after
     const superseded = index('End here when a newer push superseded this run');
     expect(superseded).toBeGreaterThan(Math.max(waitApp, waitStorefronts));
     // Exactly one of the two starts runs: before the storefront waits when the app is kept, after the app is live
-    // when it is pushed. Neither proof reads a storefront.
+    // when it is pushed. The storefront checkout quote runs only at finish.
     const keptApp = steps[index(PROVE_KEPT_APP)];
     const liveApp = steps[index(PROVE_LIVE_APP)];
     expect(keptApp?.if).toBe("inputs.app != 'true'");
@@ -283,6 +283,7 @@ case "$*" in
     echo oauth-output
     exit "$OAUTH_EXIT"
     ;;
+  *"scripts/ops/stage-n1-checkout.mts quote") echo checkout-output; exit "$CHECKOUT_EXIT" ;;
   *"scripts/zerops/verify-service.mjs "*) echo "service-output $*"; exit "$SERVICE_EXIT" ;;
   *) echo "unexpected mise invocation: $*" >&2; exit 98 ;;
 esac
@@ -306,11 +307,12 @@ exec "$@"
 `;
 
 for (const scenario of [
-  { name: 'both succeed', oauth: 0, services: 0, status: 0, warmup: 0 },
-  { name: 'warm-up fails', oauth: 0, services: 0, status: 1, warmup: 17 },
-  { name: 'OAuth fails', oauth: 23, services: 0, status: 1, warmup: 0 },
-  { name: 'both fail', oauth: 23, services: 0, status: 1, warmup: 17 },
-  { name: 'a service verification fails', oauth: 0, services: 29, status: 1, warmup: 0 },
+  { checkout: 0, name: 'both succeed', oauth: 0, services: 0, status: 0, warmup: 0 },
+  { checkout: 0, name: 'warm-up fails', oauth: 0, services: 0, status: 1, warmup: 17 },
+  { checkout: 0, name: 'OAuth fails', oauth: 23, services: 0, status: 1, warmup: 0 },
+  { checkout: 0, name: 'both fail', oauth: 23, services: 0, status: 1, warmup: 17 },
+  { checkout: 0, name: 'a service verification fails', oauth: 0, services: 29, status: 1, warmup: 0 },
+  { checkout: 31, name: 'N1 checkout quote fails', oauth: 0, services: 0, status: 1, warmup: 0 },
 ]) {
   for (const app of ['pushed', 'kept'] as const) {
     it.effect(`executes Verify scripts under strict Bash when ${scenario.name} and the app is ${app}`, () =>
@@ -354,6 +356,7 @@ for (const scenario of [
         }
         const environment = {
           APT_ARCHIVES: archives,
+          CHECKOUT_EXIT: String(scenario.checkout),
           GITHUB_ENV: githubEnv,
           GITHUB_OUTPUT: githubOutput,
           HOME: home,
@@ -395,6 +398,9 @@ for (const scenario of [
             proofRan = true;
             expect(result.stdout).toContain('warmup-output');
             expect(result.stdout).toContain('oauth-output');
+            expect(result.stdout).toContain('checkout-output');
+            expect(result.stdout).toContain(`N1 checkout quote exit: ${scenario.checkout}`);
+            expect(yield* fs.readFileString(path.join(proofs, 'n1-checkout.log'))).toContain('checkout-output');
             expect(result.stdout).toContain(`Warm-up exit: ${scenario.warmup}`);
             expect(result.stdout).toContain(`MCP OAuth exit: ${scenario.oauth}`);
             expect(result.stdout).toContain(`Service verification exit: ${scenario.services}`);
@@ -417,6 +423,10 @@ for (const scenario of [
         for (const service of scenario.services === 0 ? ['app', 'storefront', 'shop', 'n1'] : ['app']) {
           expect(recorded).toContain(`exec -- node scripts/zerops/verify-service.mjs ${service}`);
         }
+        expect(
+          invocations.filter((call) => call === 'exec -- node scripts/ops/stage-n1-checkout.mts quote'),
+        ).toHaveLength(1);
+        expect(recorded).not.toContain('stage-n1-checkout.mts place');
         expect(recorded).toContain('sudo find ');
         expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
         expect(yield* fs.readFileString(path.join(cached, 'downloaded.deb'))).toBe('downloaded package');
@@ -440,6 +450,7 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
         ChildProcess.make('bash', [PROOFS_SCRIPT, command], {
           cwd: directory,
           env: {
+            CHECKOUT_EXIT: '0',
             OAUTH_EXIT: '0',
             OAUTH_STARTED: path.join(directory, 'oauth-started'),
             PATH: searchPath,

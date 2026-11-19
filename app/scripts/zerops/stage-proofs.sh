@@ -5,8 +5,9 @@
 #   stage-proofs.sh finish   verifies every service against the live app while they run, then waits for both, prints
 #                            their logs and fails when the verification or either proof failed, or none was started
 #
-# Neither proof reads a storefront. A run that pushes the app starts them once the app is live; a run that does not
-# push it starts them as soon as the browsers are installed, while its storefronts deploy. `finish` runs once every
+# The background proofs do not read a storefront; finish also verifies N1 checkout in quote-only mode. A run that
+# pushes the app starts them once the app is live; a run that does not starts them as soon as the browsers are installed,
+# while its storefronts deploy. `finish` runs once every
 # push of the run has finished: the storefronts sign in through the app, so each service is verified against the live
 # app, and a kept service deploys nothing and is verified all the same.
 #
@@ -19,7 +20,7 @@
 set -euo pipefail
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 : "${STAGE_SHELL_URL:?STAGE_SHELL_URL is required}"
-# Both logs land in the proof artifact the delivery uploads (mcp-oauth-e2e).
+# All proof logs and N1 checkout evidence land in the proof artifact the delivery uploads (mcp-oauth-e2e).
 export E2E_OUT_DIR="$RUNNER_TEMP/mcp-oauth-e2e"
 export E2E_SHOTS_DIR="$E2E_OUT_DIR/shots"
 state="$RUNNER_TEMP/stage-proofs"
@@ -62,12 +63,16 @@ verify_services() {
 }
 
 finish() {
-  local verified=0 warmup oauth
+  local verified=0 checkout=0 warmup oauth
   if [ ! -d "$state" ]; then
     echo '::error::the warm-up and the MCP OAuth proof never started in this job'
     return 1
   fi
   verify_services || verified=$?
+  # All selected services are live here in both delivery paths. Quote never confirms a stock-debiting order.
+  E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+  export E2E_PLAYWRIGHT_MODULE
+  mise exec -- node scripts/ops/stage-n1-checkout.mts quote >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 || checkout=$?
   until [ -e "$state/warmup.status" ] && [ -e "$state/oauth.status" ]; do sleep 1; done
   warmup="$(cat "$state/warmup.status")"
   oauth="$(cat "$state/oauth.status")"
@@ -79,8 +84,12 @@ finish() {
   cat "$E2E_OUT_DIR/oauth.log"
   echo "MCP OAuth exit: $oauth"
   echo '::endgroup::'
+  echo '::group::N1 checkout quote'
+  cat "$E2E_OUT_DIR/n1-checkout.log"
+  echo "N1 checkout quote exit: $checkout"
+  echo '::endgroup::'
   echo "Service verification exit: $verified"
-  test "$verified" -eq 0 && test "$warmup" -eq 0 && test "$oauth" -eq 0
+  test "$verified" -eq 0 && test "$checkout" -eq 0 && test "$warmup" -eq 0 && test "$oauth" -eq 0
 }
 
 case "${1:-}" in

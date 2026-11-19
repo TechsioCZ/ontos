@@ -662,6 +662,7 @@ it('marks the attempt after the plan is retained and before any remote mutation,
   const proofs = readFileSync(stageProofsPath, 'utf-8');
   for (const proof of [
     'scripts/ops/stage-warmup.mts',
+    'scripts/ops/stage-n1-checkout.mts quote',
     'scripts/zerops/verify-service.mjs app',
     'scripts/demo/prove-mcp-oauth.mts',
   ]) {
