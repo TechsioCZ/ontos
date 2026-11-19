@@ -21,7 +21,7 @@ describe('Communications database schema contract', () => {
     expect(configs.every((config) => config.schema === COMMUNICATIONS_SCHEMA_NAME)).toBe(true);
   });
 
-  it('declares the replay ledger, the template tables, the language mode history and the intake tables, and no table of a later lane', () => {
+  it('declares the replay ledger, the template tables, the language mode history, the intake tables and the history tables, and no table of a later lane', () => {
     expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual([
       'gateway_assertion_redemptions',
       'template_types',
@@ -35,6 +35,9 @@ describe('Communications database schema contract', () => {
       'message_intents',
       'delivery_attempts',
       'intent_handoff_stops',
+      'provider_observations',
+      'attempt_retry_links',
+      'intent_resend_links',
     ]);
   });
 
@@ -219,5 +222,104 @@ describe('Communications intake schema contract (#1401)', () => {
   it('stores no endpoint address: the endpoint pin has no value column, only references and a mask in JSON', () => {
     const names = byName['message_intents']?.columns.map((column) => column.name) ?? [];
     expect(names.filter((name) => /address|email|secret|token|otp/u.test(name))).toEqual([]);
+  });
+});
+
+describe('Communications message history schema contract (#1402)', () => {
+  const byName = Object.fromEntries(configs.map((config) => [config.name, config]));
+  const columnsOf = (table: string) => byName[table]?.columns.map((column) => column.name) ?? [];
+  const unique = (table: string) => byName[table]?.uniqueConstraints.map((constraint) => constraint.getName());
+
+  it('enforces Tenant isolation on every history table', () => {
+    for (const name of ['provider_observations', 'attempt_retry_links', 'intent_resend_links']) {
+      expect(byName[name]?.enableRLS).toBe(true);
+      expect(byName[name]?.policies).toHaveLength(4);
+      expect(byName[name]?.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
+    }
+  });
+
+  it('identifies an observation by (Tenant, attempt, provider, provider observation key) so a repeated callback is one row', () => {
+    expect(
+      byName['provider_observations']?.uniqueConstraints
+        .find((constraint) => constraint.getName() === 'communications_observations_provider_identity_uk')
+        ?.columns.map((column) => column.name),
+    ).toEqual(['tenant_id', 'attempt_id', 'provider_key', 'observation_key']);
+  });
+
+  it('binds an observation to its attempt AND its intent by one composite key', () => {
+    expect(unique('delivery_attempts')).toContain('communications_attempts_intent_identity_uk');
+    const foreignKey = byName['provider_observations']?.foreignKeys.find(
+      (key) => key.getName() === 'communications_observations_attempt_fk',
+    );
+    expect(foreignKey?.reference().columns.map((column) => column.name)).toEqual([
+      'tenant_id',
+      'intent_id',
+      'attempt_id',
+    ]);
+    expect(foreignKey?.reference().foreignColumns.map((column) => column.name)).toEqual([
+      'tenant_id',
+      'intent_id',
+      'attempt_id',
+    ]);
+  });
+
+  it("gives the timeline an explicit, owner-side order: the provider claim and this owner's own time and sequence", () => {
+    expect(columnsOf('provider_observations')).toEqual(
+      expect.arrayContaining(['observed_at', 'recorded_at', 'recorded_seq']),
+    );
+    const sequence = byName['provider_observations']?.columns.find((column) => column.name === 'recorded_seq');
+    expect(sequence?.generatedIdentity?.type).toBe('always');
+  });
+
+  it('closes the evidence of an observation: no payload, address, markup or secret column, and checked keys and evidence', () => {
+    expect(columnsOf('provider_observations').toSorted()).toEqual([
+      'attempt_id',
+      'evidence',
+      'intent_id',
+      'kind',
+      'observation_id',
+      'observation_key',
+      'observed_at',
+      'provider_key',
+      'provider_ref',
+      'recorded_at',
+      'recorded_seq',
+      'tenant_id',
+    ]);
+    expect(byName['provider_observations']?.checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining([
+        'communications_observations_kind_ck',
+        'communications_observations_keys_ck',
+        'communications_observations_evidence_ck',
+        'communications_observations_basis_ck',
+      ]),
+    );
+  });
+
+  it('links a Technical Retry to an attempt of the SAME intent and an Explicit Resend to exactly one original', () => {
+    const retry = byName['attempt_retry_links']?.foreignKeys.map((key) => [
+      key.getName(),
+      key.reference().columns.map((column) => column.name),
+    ]);
+    expect(retry).toEqual(
+      expect.arrayContaining([
+        ['communications_retry_links_attempt_fk', ['tenant_id', 'intent_id', 'attempt_id']],
+        ['communications_retry_links_previous_fk', ['tenant_id', 'intent_id', 'previous_attempt_id']],
+      ]),
+    );
+    expect(unique('intent_resend_links')).toContain('communications_resend_links_resend_uk');
+    expect(columnsOf('intent_resend_links').toSorted()).toEqual([
+      'linked_at',
+      'original_intent_id',
+      'reason_code',
+      'resend_intent_id',
+      'tenant_id',
+    ]);
+  });
+
+  it('carries no pin on an attempt or a link: recipient, language and template live on the immutable intent only', () => {
+    for (const table of ['delivery_attempts', 'attempt_retry_links']) {
+      expect(columnsOf(table).filter((name) => /recipient|language|template|endpoint|address/u.test(name))).toEqual([]);
+    }
   });
 });

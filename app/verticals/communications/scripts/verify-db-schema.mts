@@ -30,9 +30,15 @@ const appendOnlyTables = [
   'communication_request_conflicts',
   'communication_decisions',
   'message_intents',
+  'intent_resend_links',
 ];
-// Written ONLY by the pre-handoff worker's scoped routines: the runtime role may read them and nothing else.
-const routineWrittenTables = ['delivery_attempts', 'intent_handoff_stops'];
+// Written ONLY by scoped routines (the pre-handoff worker's and the history's): the runtime role may read them and nothing else.
+const routineWrittenTables = [
+  'delivery_attempts',
+  'intent_handoff_stops',
+  'provider_observations',
+  'attempt_retry_links',
+];
 const closableTable = 'template_activations';
 // The only columns the runtime role may update: closing an open activation, once. Every other column is immutable.
 const closingColumns = ['end_invocation_id', 'end_reason', 'ended_at', 'ended_by_principal_id', 'ended_kind'];
@@ -40,9 +46,11 @@ const closedHistoryTrigger = 'communications_template_activations_closed_append_
 // The scoped routines of the pre-handoff worker and the language mode snapshot: SECURITY DEFINER, pinned search_path,
 // static SQL, executable by the runtime role and by nobody else.
 const scopedRoutines = [
+  'ingest_provider_observation',
   'read_language_policy_snapshot',
   'worker_begin_attempt',
   'worker_finish_attempt',
+  'worker_link_retry_attempt',
   'worker_read_intent',
   'worker_read_template_snapshot',
   'worker_record_stop',
@@ -55,6 +63,9 @@ const intakeAppendOnlyTriggers = [
   'communications_request_conflicts_append_only',
   'communications_requests_append_only',
   'communications_attempts_finished_append_only',
+  'communications_observations_append_only',
+  'communications_resend_links_append_only',
+  'communications_retry_links_append_only',
 ];
 
 const sameList = (actual: readonly string[], expected: readonly string[]) =>
@@ -103,6 +114,56 @@ const verifyHandoffContract = Effect.fn('Communications.verifyHandoffContract')(
   ) {
     yield* failure(
       'Communications stop evaluations, attempt states or the begin routine differ from the owner contract',
+    );
+  }
+});
+
+const verifyHistoryContract = Effect.fn('Communications.verifyHistoryContract')(function* verifyHistory() {
+  const client = yield* PgClient.PgClient;
+  // The contract of the truthful message history (#1402): an observation is identified by (Tenant, attempt, provider,
+  // provider observation key) so a repeated callback is one row; it is bound to its attempt AND intent by one composite key;
+  // its evidence and keys are CLOSED by checks; the resend link is guarded by its shape trigger; and nothing outside the
+  // routines can advance the observation sequence.
+  const [contract] = yield* client
+    .unsafe<{
+      readonly attempt_fk: string | null;
+      readonly evidence_check: string | null;
+      readonly keys_check: string | null;
+      readonly provider_identity: string | null;
+      readonly resend_guard_triggers: number;
+      readonly sequence_exposed: boolean;
+    }>(
+      `
+    select
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_provider_identity_uk') as provider_identity,
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_attempt_fk') as attempt_fk,
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_evidence_ck') as evidence_check,
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.provider_observations'::regclass and k.conname = 'communications_observations_keys_ck') as keys_check,
+      (select count(*)::integer from pg_catalog.pg_trigger g
+        where g.tgrelid = 'communications.intent_resend_links'::regclass and g.tgname = 'communications_resend_links_shape'
+          and g.tgenabled = 'O' and not g.tgisinternal and (g.tgtype & 2) = 2 and (g.tgtype & 4) = 4) as resend_guard_triggers,
+      exists (select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = $1 and c.relkind = 'S' and c.relname = 'provider_observations_recorded_seq_seq'
+          and (has_sequence_privilege('ontos_runtime', c.oid, 'USAGE') or has_sequence_privilege('ontos_runtime', c.oid, 'UPDATE')
+            or has_sequence_privilege('ontos_runtime', c.oid, 'SELECT'))) as sequence_exposed`,
+      [COMMUNICATIONS_SCHEMA_NAME],
+    )
+    .pipe(Effect.mapError((cause) => failure('Unable to read the Communications history contract', cause)));
+  if (
+    contract === undefined ||
+    contract.provider_identity !== 'UNIQUE (tenant_id, attempt_id, provider_key, observation_key)' ||
+    !(contract.attempt_fk ?? '').includes('FOREIGN KEY (tenant_id, intent_id, attempt_id)') ||
+    !(contract.evidence_check ?? '').includes("'{}'::jsonb") ||
+    !(contract.keys_check ?? '').includes('observation_key') ||
+    contract.resend_guard_triggers !== 1 ||
+    contract.sequence_exposed
+  ) {
+    yield* failure(
+      'Communications observation identity, evidence checks or resend guard differ from the owner contract',
     );
   }
 });
@@ -248,6 +309,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
     return yield* failure('Communications journal, role, schema, routine privileges or constraints are unsafe');
   }
   yield* verifyHandoffContract();
+  yield* verifyHistoryContract();
   return COMMUNICATIONS_TABLES.length;
 });
 
@@ -264,5 +326,5 @@ const tableCount = await Effect.runPromise(
   verify.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(Reactivity.layer, databaseLayer))),
 );
 process.stdout.write(
-  `Verified ${tableCount} communications tables: replay ledger, append-only template and intake facts least privilege down to every column, the closed-activation and finished-attempt history triggers, the hardened scoped worker routines, forced RLS on every governed table and validated constraints\n`,
+  `Verified ${tableCount} communications tables: replay ledger, append-only template, intake and history facts least privilege down to every column, the closed-activation and finished-attempt history triggers, the hardened scoped worker routines, forced RLS on every governed table and validated constraints\n`,
 );

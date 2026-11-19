@@ -2,6 +2,7 @@ import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import type { Schema } from 'effect';
 import {
+  bigint,
   boolean,
   check,
   foreignKey,
@@ -408,6 +409,8 @@ export const deliveryAttempts = communicationsSchema.table.withRLS(
   },
   (table) => [
     unique('communications_attempts_number_uk').on(table.tenantId, table.intentId, table.attemptNumber),
+    // the target of every history foreign key: an observation or a retry link names an attempt AND the intent it belongs to
+    unique('communications_attempts_intent_identity_uk').on(table.tenantId, table.intentId, table.attemptId),
     foreignKey({
       columns: [table.tenantId, table.intentId],
       foreignColumns: [messageIntents.tenantId, messageIntents.intentId],
@@ -458,6 +461,166 @@ export const intentHandoffStops = communicationsSchema.table.withRLS(
   ],
 );
 
+/** A safe opaque identity text: no address, URL, token separator, markup or whitespace can be stored in it. */
+const SAFE_IDENTITY_PATTERN = sql.raw("'^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'");
+/** A closed, upper-case reason code of a link: a vocabulary of the lane that writes it, never free text. */
+const REASON_CODE_PATTERN = sql.raw("'^[A-Z][A-Z0-9_]{0,79}$'");
+
+/**
+ * Provider Observation (#1402): one later, external fact about ONE delivery attempt, as step 22 reports or reconciles it.
+ * It is the only place where truth that arrives AFTER the attempt's own answer is kept, and it is append-only: a later
+ * observation never edits an earlier one and never edits the attempt. The attempt row keeps the submission answer
+ * (accepted, rejected, unavailable, indeterminate); an observation can prove acceptance or non-acceptance after an unknown
+ * answer, a delivery, or a failure after acceptance, each as its own row with its own time.
+ *
+ * The identity of an observation is (Tenant, attempt, provider, provider observation key): a repeated callback is the SAME row,
+ * never a second effect. `observed_at` is the provider's own claim; `recorded_at` and `recorded_seq` are this owner's, so the
+ * timeline order is explicit: (`observed_at`, `recorded_seq`). Written only by the scoped routine `ingest_provider_observation`,
+ * which verifies the Tenant, intent and attempt binding and the provider identity; the runtime role can only read it.
+ *
+ * `evidence` is a closed, minimal document (kind, basis, failure class): never a provider payload, a recipient address,
+ * markup or a secret. The key columns are pattern-checked so they cannot hold an address or a URL either.
+ */
+export const providerObservations = communicationsSchema.table.withRLS(
+  'provider_observations',
+  {
+    attemptId: uuid('attempt_id').notNull(),
+    evidence: jsonb('evidence').$type<StoredJson>().notNull(),
+    intentId: uuid('intent_id').notNull(),
+    kind: text('kind')
+      .$type<'ACCEPTANCE_PROVEN' | 'DELIVERY_FAILED' | 'DELIVERY_PROVEN' | 'NON_ACCEPTANCE_PROVEN'>()
+      .notNull(),
+    observationId: uuid('observation_id').primaryKey(),
+    observationKey: text('observation_key').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    providerKey: text('provider_key').notNull(),
+    providerRef: text('provider_ref'),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    recordedSeq: bigint('recorded_seq', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('communications_observations_tenant_identity_uk').on(table.tenantId, table.observationId),
+    unique('communications_observations_provider_identity_uk').on(
+      table.tenantId,
+      table.attemptId,
+      table.providerKey,
+      table.observationKey,
+    ),
+    unique('communications_observations_seq_uk').on(table.recordedSeq),
+    foreignKey({
+      columns: [table.tenantId, table.intentId, table.attemptId],
+      foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
+      name: 'communications_observations_attempt_fk',
+    }).onDelete('restrict'),
+    index('communications_observations_intent_idx').on(table.tenantId, table.intentId),
+    check(
+      'communications_observations_kind_ck',
+      sql`${table.kind} in ('ACCEPTANCE_PROVEN', 'DELIVERY_FAILED', 'DELIVERY_PROVEN', 'NON_ACCEPTANCE_PROVEN')`,
+    ),
+    check(
+      'communications_observations_keys_ck',
+      sql`${table.observationKey} ~ ${SAFE_IDENTITY_PATTERN} and ${table.providerKey} ~ ${SAFE_IDENTITY_PATTERN} and (${table.providerRef} is null or ${table.providerRef} ~ ${SAFE_IDENTITY_PATTERN})`,
+    ),
+    // the evidence is closed: only these keys, the kind it states is the row's kind, and the basis fits the kind
+    check(
+      'communications_observations_evidence_ck',
+      sql`jsonb_typeof(${table.evidence}) = 'object' and (${table.evidence} - array['basis', 'failureClass', 'kind']) = '{}'::jsonb and ${table.evidence} ->> 'kind' = ${table.kind} and (${table.evidence} ->> 'basis') in ('PROVIDER_EVENT', 'RECONCILIATION') and ((${table.kind} = 'DELIVERY_FAILED') = ((${table.evidence} ->> 'failureClass') is not null)) and (${table.kind} <> 'DELIVERY_FAILED' or (${table.evidence} ->> 'failureClass') in ('BOUNCED_PERMANENT', 'BOUNCED_TRANSIENT', 'DROPPED_BY_PROVIDER'))`,
+    ),
+    // a delivery claim and a failure after acceptance need a provider event; a proven non-acceptance needs a reconciliation
+    check(
+      'communications_observations_basis_ck',
+      sql`(${table.kind} not in ('DELIVERY_PROVEN', 'DELIVERY_FAILED') or (${table.evidence} ->> 'basis') = 'PROVIDER_EVENT') and (${table.kind} <> 'NON_ACCEPTANCE_PROVEN' or (${table.evidence} ->> 'basis') = 'RECONCILIATION')`,
+    ),
+    ...tenantRlsPolicies('provider_observations', table.tenantId),
+  ],
+);
+
+/**
+ * Technical Retry link (#1402, H-09): a LATER attempt of the SAME intent follows an earlier one. An attempt carries no
+ * recipient, language or template column, so a retry cannot change any pin: they live on the immutable intent. The link
+ * records only why the earlier attempt no longer blocks the next (`basis_kind`) and a safe reason code. A retry after an
+ * unknown effect names the observation that proved non-acceptance (`basis_observation_id`); nothing else may.
+ *
+ * Structure only: whether a retry is allowed is the recovery lane's (d21-10, #1403). Written only by the scoped routine
+ * `worker_link_retry_attempt`, which checks the intent, the order and that the earlier attempt is finished.
+ */
+export const attemptRetryLinks = communicationsSchema.table.withRLS(
+  'attempt_retry_links',
+  {
+    attemptId: uuid('attempt_id').primaryKey(),
+    basisKind: text('basis_kind').$type<'PRIOR_NOT_ATTEMPTED' | 'RECONCILED_NON_ACCEPTANCE'>().notNull(),
+    basisObservationId: uuid('basis_observation_id'),
+    intentId: uuid('intent_id').notNull(),
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull(),
+    previousAttemptId: uuid('previous_attempt_id').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.intentId, table.attemptId],
+      foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
+      name: 'communications_retry_links_attempt_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.intentId, table.previousAttemptId],
+      foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
+      name: 'communications_retry_links_previous_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.basisObservationId],
+      foreignColumns: [providerObservations.tenantId, providerObservations.observationId],
+      name: 'communications_retry_links_basis_fk',
+    }).onDelete('restrict'),
+    index('communications_retry_links_previous_idx').on(table.tenantId, table.previousAttemptId),
+    check('communications_retry_links_distinct_ck', sql`${table.attemptId} <> ${table.previousAttemptId}`),
+    check('communications_retry_links_reason_ck', sql`${table.reasonCode} ~ ${REASON_CODE_PATTERN}`),
+    check(
+      'communications_retry_links_basis_ck',
+      sql`(${table.basisKind} = 'PRIOR_NOT_ATTEMPTED' and ${table.basisObservationId} is null) or (${table.basisKind} = 'RECONCILED_NON_ACCEPTANCE' and ${table.basisObservationId} is not null)`,
+    ),
+    ...tenantRlsPolicies('attempt_retry_links', table.tenantId),
+  ],
+);
+
+/**
+ * Explicit Resend link (#1402, H-09): a NEW Message Intent, decided by a NEW Communication Request of the source owner,
+ * linked to the original intent with a safe reason code. The row is readable both ways: `resend_intent_id` is unique, so a
+ * resend names exactly one original, and an index on `original_intent_id` lists every resend of an original. Never an
+ * implicit "resend succeeded": the resend has its own attempts and observations.
+ *
+ * Structure only (d21-10 decides when a resend is approved). A trigger refuses a resend inside the original's own request,
+ * an intent that is its own ancestor, and any update or delete.
+ */
+export const intentResendLinks = communicationsSchema.table.withRLS(
+  'intent_resend_links',
+  {
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull(),
+    originalIntentId: uuid('original_intent_id').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    resendIntentId: uuid('resend_intent_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('communications_resend_links_resend_uk').on(table.tenantId, table.resendIntentId),
+    foreignKey({
+      columns: [table.tenantId, table.originalIntentId],
+      foreignColumns: [messageIntents.tenantId, messageIntents.intentId],
+      name: 'communications_resend_links_original_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.resendIntentId],
+      foreignColumns: [messageIntents.tenantId, messageIntents.intentId],
+      name: 'communications_resend_links_resend_fk',
+    }).onDelete('restrict'),
+    index('communications_resend_links_original_idx').on(table.tenantId, table.originalIntentId),
+    check('communications_resend_links_distinct_ck', sql`${table.originalIntentId} <> ${table.resendIntentId}`),
+    check('communications_resend_links_reason_ck', sql`${table.reasonCode} ~ ${REASON_CODE_PATTERN}`),
+    ...tenantRlsPolicies('intent_resend_links', table.tenantId),
+  ],
+);
+
 /** Every owner table, so the verifier and the schema contract test reach each one through its typed reference. */
 export const COMMUNICATIONS_TABLES = [
   gatewayAssertionRedemptions,
@@ -472,6 +635,9 @@ export const COMMUNICATIONS_TABLES = [
   messageIntents,
   deliveryAttempts,
   intentHandoffStops,
+  providerObservations,
+  attemptRetryLinks,
+  intentResendLinks,
 ] as const;
 
 export const COMMUNICATIONS_TABLE_INVENTORY = [
@@ -487,17 +653,23 @@ export const COMMUNICATIONS_TABLE_INVENTORY = [
   'message_intents',
   'delivery_attempts',
   'intent_handoff_stops',
+  'provider_observations',
+  'attempt_retry_links',
+  'intent_resend_links',
 ] as const;
 
 /** Relational Queries v2 entry point for this owner. */
 export const communicationsRelations = defineRelations({
+  attemptRetryLinks,
   communicationDecisions,
   communicationRequestConflicts,
   communicationRequests,
   deliveryAttempts,
   gatewayAssertionRedemptions,
   intentHandoffStops,
+  intentResendLinks,
   messageIntents,
+  providerObservations,
   templateActivations,
   templateRevisionInvalidations,
   templateRevisions,
