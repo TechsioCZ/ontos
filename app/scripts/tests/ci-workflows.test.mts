@@ -1996,7 +1996,7 @@ it('uses a restored workspace only when pnpm would run in it without installing'
   // current directory, as the shell reads it, and printed absolute because the fixture runs elsewhere.
   const bash = lookup(
     [
-      'entries="$PATH:"; IFS=:',
+      'entries="$PATH:"; IFS=:; set -f',
       'for d in $entries; do',
       '  case "$d" in /*) ;; *) d="$PWD/$d" ;; esac',
       '  if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi',
