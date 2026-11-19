@@ -76,7 +76,8 @@ const persistenceUnavailable = {
  * 1. one transaction reads the subject's one current relation and proves its revision chain;
  * 2. with no transaction open, the target's owner answers its current status;
  * 3. a second transaction proves the same relation revision is still current at the same instant, so
- *    the owner status is never paired with a relation revision that was superseded meanwhile.
+ *    no owner answer (status, absence, denial or outage) is paired with a relation revision that was
+ *    superseded meanwhile.
  */
 export const runManufacturerRelationCurrent = Effect.fn('ManufacturerRelationCurrentRead.run')(function* run(
   input: ManufacturerRelationCurrentRequest,
@@ -93,7 +94,7 @@ export const runManufacturerRelationCurrent = Effect.fn('ManufacturerRelationCur
   if (outcome.kind === 'ABSENT') {
     return yield* notFound();
   }
-  // Once the owner has answered, the same relation revision must still be the current one.
+  // Whatever the owner answered, the same relation revision must still be the current one.
   const recheck = context
     .transaction((services) => services.current(input.subject, at))
     .pipe(
@@ -106,7 +107,7 @@ export const runManufacturerRelationCurrent = Effect.fn('ManufacturerRelationCur
           : Effect.fail(unavailable('The current Manufacturer relation changed during owner resolution')),
       ),
     );
-  const owner = yield* manufacturerTargetResolverForCalls({
+  const ownerAnswer = yield* manufacturerTargetResolverForCalls({
     legalEntityDetail: (payload) => context.call('legalEntityDetail', payload),
     partyDetail: (payload) => context.call('partyDetail', payload),
   })
@@ -118,8 +119,11 @@ export const runManufacturerRelationCurrent = Effect.fn('ManufacturerRelationCur
         ManufacturerTargetInvalid: (failure) => Effect.fail(unavailable(failure)),
         ManufacturerTargetUnavailable: (failure) => Effect.fail(unavailable(failure)),
       }),
-      Effect.tap(() => recheck),
+      Effect.exit,
     );
+  // A refusal or absence is the owner's answer about this revision's target, so it is rechecked too.
+  yield* recheck;
+  const owner = yield* ownerAnswer;
   const { effectiveFrom, effectiveTo, evidenceRefs, reason, recordedAt, relationId, revision, subject, target } =
     outcome.claim;
   const period: ManufacturerWirePeriod = {};
