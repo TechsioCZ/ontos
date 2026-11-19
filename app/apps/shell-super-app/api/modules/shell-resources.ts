@@ -30,7 +30,7 @@ import {
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/browser-api.ts';
 import type { ShellAccessDecision, ShellAccessGate } from './shell-access-decisions.ts';
 import { shellAccessOutcome } from './shell-access-decisions.ts';
-import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
+import type { InstalledModuleCatalogUnavailableError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 import { SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS, withShellSearchRequestBudget } from './shell-governed-search.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 import { compileShellSearchPresentation } from './shell-search-presentation.ts';
@@ -205,7 +205,7 @@ export interface ShellResourceGateways {
 
 interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
   readonly access: ShellAccessGate;
-  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
+  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 

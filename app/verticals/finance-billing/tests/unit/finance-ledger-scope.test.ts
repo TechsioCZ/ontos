@@ -1,13 +1,29 @@
+// @rstest-environment happy-dom
+import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { Deferred, Effect, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import { Deferred, Effect, Layer, Schema } from 'effect';
+import { HttpServerRequest } from 'effect/http';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
-import type { ReactNode } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandPayloadSchema, ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { financePageScope } from '../../src/routes/[lang]/finance/finance-page-scope.ts';
 import { preloadFinanceRecords, useFinanceRecords } from '../../src/routes/[lang]/finance/use-finance-records.ts';
+
+import { mountInRoute } from '../support/module-ui.ts';
 
 /**
  * The Finance ledger cache is document-wide and keyed by its input, so the input must carry the Shell's verified
@@ -15,38 +31,6 @@ import { preloadFinanceRecords, useFinanceRecords } from '../../src/routes/[lang
  * the real store and hook: one scope never shows or writes with another scope's ledger, a late read of the old scope
  * lands only in that scope, and a page without a verified scope reads nothing and sends nothing.
  */
-
-const mocks = rstest.hoisted(() => ({
-  apply: rstest.fn(),
-  location: { search: {}, searchStr: '' },
-  records: rstest.fn(),
-}));
-
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
-  // The shared admin toaster configures the kit's singleton at import time; it only needs somewhere to write.
-  toaster: { attrs: {} },
-  useToast: () => ({ create: () => {}, dismiss: () => {} }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  // Finance reads the router only through a selector, so the mock answers with exactly what that selector returns.
-  useRouterState: <Selected>(options: {
-    readonly select: (state: { readonly location: typeof mocks.location }) => Selected;
-  }): Selected => options.select({ location: mocks.location }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, _options?: Readonly<Record<string, string | number>>) => key,
-  }),
-}));
-// The store is deliberately browser-gated; in the node test the render reads the current entry directly.
-rstest.mock('react', () => ({
-  ...rstest.requireActual('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const companyContext = {
@@ -120,30 +104,59 @@ const lateCompanyLedger = ledgerOf(9, [
 
 const numbersOf = (vm: ReturnType<typeof useFinanceRecords>) => vm.invoices.map((invoice) => invoice.number);
 
-const rendered: ReturnType<typeof useFinanceRecords>[] = [];
-const renderScope = (scope?: string) => {
-  rendered.length = 0;
-  const Harness = () => {
-    rendered.push(useFinanceRecords({ scope }));
-    return null;
-  };
-  renderToStaticMarkup(createElement(Harness));
-  const vm = rendered.at(-1);
-  if (vm === undefined) {
-    throw new Error('the finance ledger hook did not render');
-  }
-  return vm;
-};
+type FinanceView = ReturnType<typeof useFinanceRecords>;
+const renderScope = (scope?: string) =>
+  Effect.gen(function* mountScope() {
+    let current: FinanceView | undefined;
+    const Harness = () => {
+      current = useFinanceRecords({ scope });
+      return null;
+    };
+    yield* mountInRoute(createElement(Harness), { path: 'finance', url: `/cs/finance${query}` });
+    return () => {
+      if (current === undefined) {
+        throw new Error('the finance ledger hook did not render');
+      }
+      return current;
+    };
+  });
 
-/** Lets the store's runtime run fiber turns; bounded so a broken load cannot hang the test. */
-const waitForReads = (reads: number, attempts: number): Effect.Effect<void> =>
-  Effect.suspend(() =>
-    mocks.records.mock.calls.length >= reads || attempts === 0
-      ? Effect.void
-      : Effect.yieldNow.pipe(Effect.andThen(waitForReads(reads, attempts - 1))),
-  );
-const yieldTurns = (turns: number): Effect.Effect<void> =>
-  Effect.suspend(() => (turns === 0 ? Effect.void : Effect.yieldNow.pipe(Effect.andThen(yieldTurns(turns - 1)))));
+const reads: (readonly [RecordsRequest, string | undefined])[] = [];
+const commands: ApplyCommandPayload[] = [];
+const committed = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ changed: true, revision: 8 });
+let answer: Effect.Effect<RecordsResponse> = Effect.succeed(companyLedger);
+const OwnerRecordsApi = RecordsApi.prefix('/finance-billing-api');
+const OwnerActionApi = ApplyCommandActionApi.prefix('/finance-billing-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'finance-billing': '/finance-billing-api' }).application,
+  HttpRouter.add('GET', '/shell-super-app-api/auth/session', HttpServerResponse.jsonUnsafe({})),
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.gen(function* readLedger() {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          reads.push([payload, request.headers['x-correlation-id']]);
+          return yield* answer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)(payload).pipe(
+          Effect.orDie,
+          Effect.map((command) => {
+            commands.push(command);
+            return committed;
+          }),
+        ),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+);
 
 /** A write that needs no cross-module reference credentials, so only the ledger revision decides its base. */
 const priceItemCommand = {
@@ -154,91 +167,94 @@ const priceItemCommand = {
   vatRate: 21 as const,
 };
 
-describe('finance ledger cache per verified Shell scope', () => {
+it.layer(network, { excludeTestServices: true })('finance ledger cache per verified Shell scope', (suite) => {
   beforeEach(() => {
-    rstest.stubGlobal('document', {});
-    rstest.stubGlobal('addEventListener', () => {});
-    rstest.stubGlobal('removeEventListener', () => {});
-    rstest.stubGlobal('dispatchEvent', () => true);
-    rstest.stubGlobal('React', rstest.requireActual('react'));
-    mocks.location.search = { partyId };
+    reads.length = 0;
+    commands.length = 0;
+    answer = Effect.succeed(companyLedger);
   });
 
-  afterEach(() => {
-    mocks.apply.mockReset();
-    mocks.records.mockReset();
-  });
+  afterEach(unmountAll);
 
-  it.live('keeps each scope on its own ledger, even when the old scope answers late', () =>
+  suite.effect('keeps each scope on its own ledger, even when the old scope answers late', () =>
     Effect.gen(function* scoped() {
+      yield* pinTestDocument;
       const companyScope = financePageScope(companyContext);
       const otherCompanyScope = financePageScope(otherCompanyContext);
       expect(companyScope).toBeDefined();
       expect(otherCompanyScope).not.toBe(companyScope);
 
-      mocks.records.mockReturnValue(Effect.succeed(companyLedger));
       yield* preloadFinanceRecords(query, companyContext);
-      const inCompany = renderScope(companyScope);
+      const companyView = yield* renderScope(companyScope);
+      const inCompany = companyView();
       expect(numbersOf(inCompany)).toEqual(['FV-2026-0001']);
 
       // The first company's refresh is still in flight when the page switches company.
       const late = yield* Deferred.make<RecordsResponse>();
-      mocks.records.mockReturnValueOnce(Deferred.await(late));
-      inCompany.reload();
-      yield* waitForReads(2, 400);
-      expect(mocks.records).toHaveBeenCalledTimes(2);
+      answer = Deferred.await(late);
+      yield* acted(() => inCompany.reload());
+      yield* waitUntil(() => reads.length >= 2);
+      // Only the held refresh is open; a second one the reload wrongly started would have arrived by now.
+      yield* networkQuietExcept(1);
+      expect(reads).toHaveLength(2);
 
       // Same filter in the other company is its own read, never the cached ledger of the first company.
-      mocks.records.mockReturnValue(Effect.succeed(otherCompanyLedger));
+      answer = Effect.succeed(otherCompanyLedger);
       yield* preloadFinanceRecords(query, otherCompanyContext);
-      expect(mocks.records).toHaveBeenCalledTimes(3);
+      expect(reads).toHaveLength(3);
       // The scope only keys the cache: every read sends the same filter, with no scope on the wire.
-      expect(mocks.records.mock.calls).toEqual([
+      expect(reads).toEqual([
         [{ partyId }, 'finance-billing.records'],
         [{ partyId }, 'finance-billing.records'],
         [{ partyId }, 'finance-billing.records'],
       ]);
-      expect(numbersOf(renderScope(otherCompanyScope))).toEqual(['FV-2026-0005']);
+      const otherCompanyView = yield* renderScope(otherCompanyScope);
+      expect(numbersOf(otherCompanyView())).toEqual(['FV-2026-0005']);
 
       yield* Deferred.succeed(late, lateCompanyLedger);
-      yield* yieldTurns(100);
-      const afterLate = renderScope(otherCompanyScope);
+      yield* waitUntil(() => companyView().snapshot?.revision === 9);
+      const afterLate = otherCompanyView();
       expect(numbersOf(afterLate)).toEqual(['FV-2026-0005']);
       expect(afterLate.snapshot?.revision).toBe(7);
       // The late answer settled the first company's own entry.
-      expect(numbersOf(renderScope(companyScope))).toEqual(['FV-2026-0001', 'FV-2026-0002']);
+      expect(numbersOf(companyView())).toEqual(['FV-2026-0001', 'FV-2026-0002']);
 
       // A write from the switched page is based on its own ledger revision, not the late one.
-      mocks.apply.mockReturnValue(Effect.succeed({ changed: true, revision: 8 }));
-      expect(yield* afterLate.execute(priceItemCommand)).toEqual({ ok: true });
-      expect(mocks.apply).toHaveBeenCalledTimes(1);
-      expect(mocks.apply.mock.calls[0]?.[0]).toMatchObject({ expectedRevision: 7 });
+      const outcome = yield* afterLate.execute(priceItemCommand);
+      yield* settle;
+      yield* networkIdle;
+      expect(outcome).toEqual({ ok: true });
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ expectedRevision: 7 });
     }),
   );
 
-  it.live('reads nothing and sends nothing without a verified scope', () =>
+  suite.effect('reads nothing and sends nothing without a verified scope', () =>
     Effect.gen(function* unscoped() {
+      yield* pinTestDocument;
       // A ledger for the same filter is cached in a verified scope.
-      mocks.records.mockReturnValue(Effect.succeed(companyLedger));
       yield* preloadFinanceRecords(query, companyContext);
-      const reads = mocks.records.mock.calls.length;
+      const readCount = reads.length;
 
       yield* preloadFinanceRecords(query, contextlessShellProps.context);
       yield* preloadFinanceRecords(query, { ...companyContext, principalId: '' });
       expect(financePageScope({ ...companyContext, legalEntityId: '' })).toBeUndefined();
 
-      const vm = renderScope();
+      const unscopedView = yield* renderScope();
+      const vm = unscopedView();
       expect(vm.snapshot).toBeUndefined();
       expect(vm.invoices).toEqual([]);
       expect(vm.canWrite).toBe(false);
       expect(vm.feedback).toBe('forbidden');
 
-      vm.reload();
-      yield* yieldTurns(100);
-      expect(mocks.records.mock.calls.length).toBe(reads);
+      yield* acted(() => vm.reload());
+      // A read the reload wrongly started goes through the gateway and then the records endpoint; it has by now.
+      yield* networkIdle;
+      expect(reads.length).toBe(readCount);
 
       expect(yield* vm.execute(priceItemCommand)).toEqual({ feedback: 'unavailable', ok: false });
-      expect(mocks.apply).not.toHaveBeenCalled();
+      yield* networkIdle;
+      expect(commands).toHaveLength(0);
     }),
   );
 });

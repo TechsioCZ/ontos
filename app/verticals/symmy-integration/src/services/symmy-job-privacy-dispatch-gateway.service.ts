@@ -59,6 +59,7 @@ const gatewayFailure = (cause: unknown) => {
   );
 };
 // Core checks the same scoped idempotency identity and normalized input hash before emitting this exact reply.
+// A replay normally gets the saved outcome; only a report committed before Core saved replies answers this 409.
 export const symmyJobPrivacyOutcomeAlreadyRecorded = Schema.is(
   RecordOwnerExecutionOutcomeActionAlreadyCommittedProblemSchema,
 );

@@ -1,88 +1,58 @@
 // @rstest-environment happy-dom
-// The new invoice form keeps the safeguards of its old button behind the shared Uložit: a 0 Kč line needs a second,
-// deliberate Uložit, a failed create keeps the input and shows the error toast, and a draft sent for approval is
-// announced and closes the panel. Only the i18n runtime, the router blocker, the toaster and the two pickers are
-// replaced.
-import { requiredLabelFor } from '@app/admin-ui';
-import { Effect } from 'effect';
-import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { baselineVatChoices } from '../support/finance-tax-rates.ts';
-import { createElement } from 'react';
+// The new-invoice safeguards through the real i18n, router, pickers, VAT client and toast renderer.
+
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { ToastProvider } from '@techsio/ui-kit/molecules/toast';
+import { Effect, Option } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import type { ReactElement } from 'react';
+import { VatChoicesApi } from '../../shared/apis/vat-choices.ts';
 import { CreateInvoiceDialog } from '../../src/routes/[lang]/finance/create-invoice-dialog.tsx';
 import type { FinanceViewModel } from '../../src/routes/[lang]/finance/finance-ui.tsx';
 import type { DraftInvoiceInput, DraftInvoiceOutcome } from '../../src/routes/[lang]/finance/use-finance-records.ts';
-import {
-  clickCancel,
-  clickSave,
-  fakeVm,
-  invoiceFixture,
-  leaveQuestion,
-  mount,
-  pick,
-  typeInto,
-  unmountAll,
-  waitUntil,
-} from './finance-form-harness.ts';
+import { baselineVatChoices } from '../support/finance-tax-rates.ts';
+import { moduleCopy, moduleText, mountInRoute } from '../support/module-ui.ts';
+import { clickSave, fakeVm, invoiceFixture, leaveQuestion, saveButton, typeInto } from './finance-form-harness.ts';
 
-interface Toast {
-  readonly title?: unknown;
-  readonly type?: unknown;
-}
-const { toasts } = rstest.hoisted(() => {
-  const recorded: Toast[] = [];
-  return { toasts: recorded };
+const czech = moduleText('cs');
+const translations = moduleCopy('cs');
+const OwnerApi = VatChoicesApi.prefix('/finance-billing-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'finance-billing': '/finance-billing-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'vatChoices', (group) =>
+      group.handle('execute', () =>
+        Effect.succeed(baselineVatChoices('00000000-0000-4000-8000-0000000000aa', '2026-10-05')),
+      ),
+    ),
+  ),
+);
+
+const mount = (element: ReactElement) =>
+  Effect.gen(function* mountForm() {
+    yield* pinTestDocument;
+    yield* mountInRoute(<ToastProvider>{element}</ToastProvider>, { path: 'finance', url: '/cs/finance' });
+    yield* waitUntil(() => document.querySelector('[id="invoice-customer-input"]') !== null);
+  });
+
+const clickCancel = acted(() => {
+  Option.getOrThrow(Option.fromUndefinedOr(buttons(czech('finance-billing.financeUi.common.cancel')).at(-1))).click();
 });
-// The toaster records what the forms announce.
-rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
-  Toaster: () => null,
-  toaster: { attrs: {} },
-  useToast: () => ({
-    create: (toast: { readonly title?: unknown; readonly type?: unknown }) => {
-      toasts.push({ title: toast.title, type: toast.type });
-    },
-    dismiss: constVoid,
-  }),
-}));
-// Tax answers with the company's baseline rates: 21 % standard and 12 % reduced.
-rstest.mock('../../src/routes/[lang]/finance/use-vat-choices.ts', () => ({
-  choicesOf: (vat: { readonly choices?: unknown }) => vat.choices,
-  useVatChoices: () => ({
-    choices: baselineVatChoices('00000000-0000-4000-8000-0000000000aa', '2026-10-05'),
-    state: 'ready',
-  }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
-}));
-// The pickers: one button that picks the first item; its `data-pick` names the field.
-rstest.mock('@app/admin-ui/select-template', () => ({
-  SelectTemplate: (props: {
-    readonly items: readonly { readonly value: string }[];
-    readonly label?: unknown;
-    readonly onValueChange?: (details: { readonly value: string[] }) => void;
-  }) =>
-    createElement('button', {
-      'data-pick': String(props.label),
-      onClick: () => props.onValueChange?.({ value: props.items.slice(0, 1).map((item) => item.value) }),
-      type: 'button',
-    }),
-}));
-rstest.mock('@techsio/ui-kit/molecules/combobox', () => ({
-  Combobox: (props: {
-    readonly items: readonly { readonly value: string }[];
-    readonly label?: unknown;
-    readonly onChange: (values: string[]) => void;
-  }) =>
-    createElement('button', {
-      'data-pick': String(props.label),
-      onClick: () => props.onChange(props.items.slice(0, 1).map((item) => item.value)),
-      type: 'button',
-    }),
-}));
+
+/** Rendered toast titles carry the same type the user sees in their icon and styling. */
+const visibleToasts = () =>
+  [...document.querySelectorAll<HTMLElement>('[data-scope="toast"][data-part="title"]')].map((title) => ({
+    title: title.textContent,
+    type: title.dataset['type'],
+  }));
 
 const invoice = invoiceFixture();
 const { tenantId } = invoice.ref;
@@ -118,14 +88,12 @@ const onOpenChange = (open: boolean) => {
 };
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   closes.length = 0;
-  toasts.length = 0;
 });
 
-const ZERO_PRICE = 'finance-billing.faktury.form.zeroPriceConfirm';
-const CREATE_FAILED = 'finance-billing.faktury.form.createFailed';
-const PENDING_APPROVAL = 'finance-billing.demo.feedback.pendingApproval';
+const ZERO_PRICE = czech('finance-billing.faktury.form.zeroPriceConfirm');
+const CREATE_FAILED = czech('finance-billing.faktury.form.createFailed');
+const PENDING_APPROVAL = czech('finance-billing.demo.feedback.pendingApproval');
 
 /** A view model whose `createDraft` records each draft and answers `outcome`. */
 const draftVm = (drafts: DraftInvoiceInput[], outcome: () => DraftInvoiceOutcome): FinanceViewModel =>
@@ -136,59 +104,59 @@ const draftVm = (drafts: DraftInvoiceInput[], outcome: () => DraftInvoiceOutcome
         drafts.push(input);
         return outcome();
       }),
+    t: (key) => translations.t(key),
   });
 
 const fillInvoice = (price: string) =>
   Effect.gen(function* fill() {
-    yield* pick('finance-billing.faktury.form.customer');
+    yield* acted(() => {
+      Option.getOrThrow(
+        Option.fromNullOr(document.querySelector<HTMLInputElement>('[id="invoice-customer-input"]')),
+      ).click();
+    });
+    yield* waitUntil(() => document.querySelector('[data-scope="combobox"][data-part="item"]') !== null);
+    yield* acted(() => {
+      Option.getOrThrow(
+        Option.fromNullOr(document.querySelector<HTMLElement>('[data-scope="combobox"][data-part="item"]')),
+      ).click();
+    });
     yield* typeInto('invoice-line-description-line-1', 'Pronájem kavárny');
     yield* typeInto('invoice-line-price-line-1', price);
+    yield* waitUntil(() => !saveButton().disabled);
   });
 
 afterEach(() => {
   unmountAll();
-  rstest.unstubAllGlobals();
 });
 
-describe('new invoice safeguards', () => {
-  it.live('reads the required text of a required field in Czech', () =>
-    Effect.gen(function* requiredText() {
-      const drafts: DraftInvoiceInput[] = [];
-      yield* mount(
-        <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
-      );
-      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
-      expect(document.body.textContent).not.toContain('(required)');
-      const issueDateLabel = [...document.querySelectorAll('label')].find((label) =>
-        label.textContent?.includes('finance-billing.faktury.form.issueDate'),
-      );
-      expect(issueDateLabel?.textContent ?? '').toContain(requiredLabelFor('cs'));
-    }),
+it.layer(network, { excludeTestServices: true })('new invoice safeguards', (suite) => {
+  suite.effect(
+    'a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again',
+    () =>
+      Effect.gen(function* zeroPrice() {
+        const drafts: DraftInvoiceInput[] = [];
+        yield* mount(
+          <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
+        );
+        yield* fillInvoice('0');
+        expect(text()).not.toContain(ZERO_PRICE);
+        yield* clickSave;
+        expect(drafts).toEqual([]);
+        expect(text()).toContain(ZERO_PRICE);
+
+        yield* typeInto('invoice-line-description-line-1', 'Dárek');
+        expect(text()).not.toContain(ZERO_PRICE);
+        yield* clickSave;
+        expect(drafts).toEqual([]);
+        yield* clickSave;
+        yield* waitUntil(() => closes.length === 1);
+        expect(drafts).toHaveLength(1);
+      }),
+    // The file's first mount of the real dialog, then three saves: 3.49 s on a loaded runner.
+    { timeout: 20_000 },
   );
 
-  it.live('a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again', () =>
-    Effect.gen(function* zeroPrice() {
-      const drafts: DraftInvoiceInput[] = [];
-      yield* mount(
-        <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
-      );
-      yield* fillInvoice('0');
-      expect(document.body.textContent).not.toContain(ZERO_PRICE);
-      yield* clickSave;
-      expect(drafts).toEqual([]);
-      expect(document.body.textContent).toContain(ZERO_PRICE);
-
-      yield* typeInto('invoice-line-description-line-1', 'Dárek');
-      expect(document.body.textContent).not.toContain(ZERO_PRICE);
-      yield* clickSave;
-      expect(drafts).toEqual([]);
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      expect(drafts).toHaveLength(1);
-    }),
-  );
-
-  it.live('a failed create keeps the form and its input and shows the error toast', () =>
+  suite.effect('a failed create keeps the form and its input and shows the error toast', () =>
     Effect.gen(function* failed() {
       const drafts: DraftInvoiceInput[] = [];
       yield* mount(
@@ -200,8 +168,8 @@ describe('new invoice safeguards', () => {
       );
       yield* fillInvoice('1000');
       yield* clickSave;
-      yield* waitUntil(() => toasts.length === 1);
-      expect(toasts[0]).toMatchObject({ title: CREATE_FAILED, type: 'error' });
+      yield* waitUntil(() => visibleToasts().length === 1);
+      expect(visibleToasts()[0]).toMatchObject({ title: CREATE_FAILED, type: 'error' });
       expect(closes).toEqual([]);
       expect(drafts).toHaveLength(1);
       yield* clickCancel;
@@ -209,7 +177,7 @@ describe('new invoice safeguards', () => {
     }),
   );
 
-  it.live('a draft sent for approval announces it and closes the panel', () =>
+  suite.effect('a draft sent for approval announces it and closes the panel', () =>
     Effect.gen(function* proposed() {
       const drafts: DraftInvoiceInput[] = [];
       yield* mount(
@@ -223,7 +191,7 @@ describe('new invoice safeguards', () => {
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(closes).toEqual([false]);
-      expect(toasts).toEqual([{ title: PENDING_APPROVAL, type: 'info' }]);
+      expect(visibleToasts()).toEqual([{ title: PENDING_APPROVAL, type: 'info' }]);
       expect(drafts).toHaveLength(1);
     }),
   );

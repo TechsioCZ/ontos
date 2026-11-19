@@ -1,41 +1,21 @@
-import { afterEach, expect, it, rstest } from 'effect-rstest';
-import React, { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+// @rstest-environment happy-dom
+import { acted, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { Effect, Option } from 'effect';
+import { afterEach, expect, it } from 'effect-rstest';
+import { createElement } from 'react';
 
+import csResource from '../../locales/cs/finance-billing.json';
+import enResource from '../../locales/en/finance-billing.json';
 import { ObjectFields } from '../../src/routes/[lang]/finance/object-fields.tsx';
 import type { ObjectSelection } from '../../src/routes/[lang]/finance/object-fields.tsx';
 import type { RentalObjects } from '../../src/routes/[lang]/finance/use-rental-objects.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-interface Picker {
-  readonly disabled?: boolean;
-  readonly items: readonly { readonly displayValue: string; readonly label: string; readonly value: string }[];
-  readonly name: string;
-  readonly onValueChange: (details: { readonly value: string[] }) => void;
-  readonly value: readonly string[];
-}
-
-const { pickers } = rstest.hoisted(() => {
-  const captured: Picker[] = [];
-  return { pickers: captured };
-});
-rstest.mock('@techsio/ui-kit/templates/select', () => ({
-  SelectTemplate: (props: Picker) => {
-    pickers.push(props);
-    return null;
-  },
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    t: (key: string) => {
-      const labels = new Map([
-        ['finance-billing.financeUi.objects.contract', 'Agreement'],
-        ['finance-billing.financeUi.objects.property', 'Property'],
-        ['finance-billing.financeUi.priceList.unit', 'Unit'],
-      ]);
-      return labels.get(key) ?? key;
-    },
-  }),
-}));
+const resources = {
+  cs: { 'finance-billing': csResource },
+  en: { 'finance-billing': enResource },
+};
+const czech = moduleText('cs', resources);
 
 const unavailableName = (): undefined => {
   // Optional label reads have not supplied an answer.
@@ -56,56 +36,90 @@ const selection: ObjectSelection = {
   unitId: 'existing-unit',
 };
 
-const renderFields = () => {
-  // This owner's Node test config uses the classic React JSX runtime for imported TSX.
-  rstest.stubGlobal('React', React);
-  pickers.length = 0;
-  const onChange = rstest.fn<(next: ObjectSelection) => void>();
-  renderToStaticMarkup(
-    createElement(ObjectFields, { idPrefix: 'edit', objects, onChange, showContract: true, value: selection }),
-  );
-  const picker = (field: string) => {
-    const found = pickers.find(({ name }) => name === `edit-${field}`);
-    expect(found).toBeDefined();
-    if (found === undefined) {
-      throw new Error(`Missing fixture picker: ${field}`);
-    }
-    return found;
-  };
-  return { onChange, picker };
+const picker = (field: string) => {
+  const found = document.querySelector<HTMLSelectElement>(`select[name="edit-${field}"]`);
+  expect(found).not.toBeNull();
+  return Option.getOrThrow(Option.fromNullOr(found));
 };
-afterEach(() => {
-  rstest.unstubAllGlobals();
-});
 
-it('renders existing unavailable references as selected generic localized options without clearing them', () => {
-  const { onChange, picker } = renderFields();
-  for (const { field, label, value } of [
-    { field: 'property', label: 'Property', value: selection.propertyId },
-    { field: 'unit', label: 'Unit', value: selection.unitId },
-    { field: 'contract', label: 'Agreement', value: selection.contractId },
-  ]) {
-    expect(picker(field).value).toEqual([value]);
-    expect(picker(field).items).toContainEqual({ displayValue: label, label, value });
-  }
-  expect(picker('unit').disabled).toBe(false);
-  expect(onChange).not.toHaveBeenCalled();
-});
+const renderFields = () =>
+  Effect.gen(function* render() {
+    const changes: ObjectSelection[] = [];
+    yield* mountInRoute(
+      createElement(ObjectFields, {
+        idPrefix: 'edit',
+        objects,
+        onChange: (next) => {
+          changes.push(next);
+        },
+        showContract: true,
+        value: selection,
+      }),
+      { path: 'finance', resources, url: '/cs/finance' },
+    );
+    return changes;
+  });
 
-it('lets explicit property removal clear both property and unit without clearing the contract', () => {
-  const { onChange, picker } = renderFields();
-  picker('property').onValueChange({ value: ['NONE'] });
-  expect(onChange).toHaveBeenCalledWith({ ...selection, propertyId: '', unitId: '' });
-});
+const clear = (field: string) =>
+  acted(() => {
+    const select = picker(field);
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, 'NONE');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 
-it('lets an editor clear just the unavailable unit', () => {
-  const { onChange, picker } = renderFields();
-  picker('unit').onValueChange({ value: ['NONE'] });
-  expect(onChange).toHaveBeenCalledWith({ ...selection, unitId: '' });
-});
+afterEach(unmountAll);
 
-it('lets an editor explicitly unlink the unavailable agreement', () => {
-  const { onChange, picker } = renderFields();
-  picker('contract').onValueChange({ value: ['NONE'] });
-  expect(onChange).toHaveBeenCalledWith({ ...selection, contractId: '' });
-});
+it.live('renders existing unavailable references as selected generic localized options without clearing them', () =>
+  Effect.gen(function* existingReferences() {
+    const changes = yield* renderFields();
+    for (const { field, label, value } of [
+      { field: 'property', label: czech('finance-billing.financeUi.objects.property'), value: selection.propertyId },
+      { field: 'unit', label: czech('finance-billing.financeUi.priceList.unit'), value: selection.unitId },
+      { field: 'contract', label: czech('finance-billing.financeUi.objects.contract'), value: selection.contractId },
+    ]) {
+      const select = picker(field);
+      expect([...select.selectedOptions].map((option) => option.value)).toEqual([value]);
+      expect(
+        [...select.options].map((option) => ({
+          displayValue: option.textContent,
+          value: option.value,
+        })),
+      ).toContainEqual({ displayValue: label, value });
+      const trigger = select.nextElementSibling?.querySelector<HTMLButtonElement>('[data-part="trigger"]');
+      expect(trigger).toBeDefined();
+      expect(trigger).not.toBeNull();
+      const button = Option.getOrThrow(Option.fromNullishOr(trigger));
+      expect(button.textContent?.trim()).toBe(label);
+      yield* acted(() => button.click());
+      const item = document.querySelector(`[role="option"][data-value="${value}"]`);
+      expect(item?.textContent?.trim()).toBe(label);
+      yield* acted(() => button.click());
+    }
+    expect(picker('unit').disabled).toBe(false);
+    expect(changes).toEqual([]);
+  }),
+);
+
+it.live('lets explicit property removal clear both property and unit without clearing the contract', () =>
+  Effect.gen(function* clearProperty() {
+    const changes = yield* renderFields();
+    yield* clear('property');
+    expect(changes).toContainEqual({ ...selection, propertyId: '', unitId: '' });
+  }),
+);
+
+it.live('lets an editor clear just the unavailable unit', () =>
+  Effect.gen(function* clearUnit() {
+    const changes = yield* renderFields();
+    yield* clear('unit');
+    expect(changes).toContainEqual({ ...selection, unitId: '' });
+  }),
+);
+
+it.live('lets an editor explicitly unlink the unavailable agreement', () =>
+  Effect.gen(function* clearContract() {
+    const changes = yield* renderFields();
+    yield* clear('contract');
+    expect(changes).toContainEqual({ ...selection, contractId: '' });
+  }),
+);

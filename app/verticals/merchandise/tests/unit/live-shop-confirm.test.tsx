@@ -1,37 +1,55 @@
 // @rstest-environment happy-dom
 // One-click commands that change what the public e-shop shows ask first, naming what changes: bulk Aktivovat /
-// Deaktivovat names how many products, archiving a DEMO product names the product. Zrušit runs nothing. Only the
-// generated clients and the i18n runtime are replaced.
-import { Effect, Option, Schema } from 'effect';
+// Deaktivovat names how many products, archiving a DEMO product names the product. Zrušit runs nothing. The
+// real i18n, router and cleanup Action client run against the owner’s in-process HTTP contract.
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { cleanupDemoActionSchemaErrorLive } from '../../api/cleanup-demo-action-problems.ts';
+import { CleanupDemoResultSchema } from '../../shared/actions/cleanup-demo.ts';
+import type { CleanupDemoPayloadSchema } from '../../shared/actions/cleanup-demo.ts';
+import { CleanupDemoActionApi } from '../../shared/apis/cleanup-demo-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeCleanupDemo } from '../../src/api/cleanup-demo-action-client.ts';
 import { ProductBulkBar } from '../../src/routes/[lang]/provoz/produkty/product-bulk-bar.tsx';
 import { DemoArchiveSection } from '../../src/routes/[lang]/provoz/produkty/product-eshop-sections.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-/** Shows the key with its values, so a test sees what the question names. */
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, values?: Record<string, number | string>) => [key, ...Object.values(values ?? {})].join(' '),
-  }),
-}));
-
+const czech = moduleText('cs');
 const copy = {
-  activate: 'merchandise.pages.products.bulk.activate',
-  activateTitle: 'merchandise.pages.products.bulk.activateTitle 3',
-  archiveTitle: 'merchandise.pages.products.eshop.archiveTitle Etiopie',
-  cancel: 'merchandise.pages.products.common.cancel',
-  deactivate: 'merchandise.pages.products.bulk.deactivate',
-  deactivateDescription: 'merchandise.pages.products.bulk.deactivateDescription 3',
+  activate: czech('merchandise.pages.products.bulk.activate'),
+  activateTitle: czech('merchandise.pages.products.bulk.activateTitle', { total: 3 }),
+  archiveTitle: czech('merchandise.pages.products.eshop.archiveTitle', { name: 'Etiopie' }),
+  cancel: czech('merchandise.pages.products.common.cancel'),
+  deactivate: czech('merchandise.pages.products.bulk.deactivate'),
+  deactivateDescription: czech('merchandise.pages.products.bulk.deactivateDescription', { total: 3 }),
 };
+
+const commands: (typeof CleanupDemoPayloadSchema.Encoded)[] = [];
+const cleaned = Schema.decodeUnknownSync(CleanupDemoResultSchema)({ entityIds: [], revision: 2 });
+const OwnerActionApi = CleanupDemoActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'cleanupDemoAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return cleaned;
+        }),
+      ),
+    ).pipe(Layer.provide(cleanupDemoActionSchemaErrorLive)),
+  ),
+);
 
 const product = Schema.decodeSync(ProductRecordSchema)({
   active: false,
@@ -53,66 +71,24 @@ const product = Schema.decodeSync(ProductRecordSchema)({
   vatRate: 12,
 });
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const unmounts: (() => void)[] = [];
-
-const mount = async (element: ReactNode) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  await act(async () => {
-    root.render(element);
-    await settle();
-  });
-  unmounts.push(() => {
-    act(() => {
-      root.unmount();
-      container.remove();
-    });
-  });
-};
-
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
 const button = (name: string) => Option.getOrThrow(Option.fromNullishOr(buttons(name)[0]));
 const byTestId = (id: string) =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)));
-const text = () => document.body.textContent ?? '';
 
-const click = (element: HTMLElement) =>
-  Effect.promise(() =>
-    act(async () => {
-      element.click();
-      await settle();
-    }),
-  );
+const click = (element: HTMLElement) => acted(() => element.click());
 
 const type = (id: string, value: string) =>
-  Effect.promise(() =>
-    act(async () => {
-      const field = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${id}"]`)));
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
-      field.dispatchEvent(new Event('input', { bubbles: true }));
-      await settle();
-    }),
-  );
+  acted(() => {
+    const field = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${id}"]`)));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
-  rstest.mocked(executeCleanupDemo).mockReturnValue(Effect.succeed({ entityIds: [], revision: 2 }));
+  commands.length = 0;
 });
 
-afterEach(() => {
-  for (const unmount of unmounts) {
-    unmount();
-  }
-  unmounts.length = 0;
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 const bulkBar = (onSetActive: (active: boolean) => void) => (
   <ProductBulkBar
@@ -127,33 +103,31 @@ const bulkBar = (onSetActive: (active: boolean) => void) => (
   />
 );
 
-it.effect('bulk Aktivovat asks first, naming how many products go on the e-shop', () =>
+it.live('bulk Aktivovat asks first, naming how many products go on the e-shop', () =>
   Effect.gen(function* activate() {
+    yield* pinTestDocument;
     const calls: boolean[] = [];
-    yield* Effect.promise(() =>
-      mount(
-        bulkBar((active) => {
-          calls.push(active);
-        }),
-      ),
+    yield* mountInRoute(
+      bulkBar((active) => {
+        calls.push(active);
+      }),
     );
     yield* click(button(copy.activate));
     expect(calls).toEqual([]);
     expect(text()).toContain(copy.activateTitle);
     yield* click(byTestId('live-shop-confirm'));
     expect(calls).toEqual([true]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('bulk Deaktivovat names the products leaving the e-shop; Zrušit changes nothing', () =>
+it.live('bulk Deaktivovat names the products leaving the e-shop; Zrušit changes nothing', () =>
   Effect.gen(function* deactivate() {
+    yield* pinTestDocument;
     const calls: boolean[] = [];
-    yield* Effect.promise(() =>
-      mount(
-        bulkBar((active) => {
-          calls.push(active);
-        }),
-      ),
+    yield* mountInRoute(
+      bulkBar((active) => {
+        calls.push(active);
+      }),
     );
     yield* click(button(copy.deactivate));
     expect(text()).toContain(copy.deactivateDescription);
@@ -162,37 +136,37 @@ it.effect('bulk Deaktivovat names the products leaving the e-shop; Zrušit chang
     yield* click(button(copy.deactivate));
     yield* click(byTestId('live-shop-confirm'));
     expect(calls).toEqual([false]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('archiving a DEMO product asks first, naming the product, and runs once after the confirmation', () =>
+it.live('archiving a DEMO product asks first, naming the product, and runs once after the confirmation', () =>
   Effect.gen(function* archive() {
+    yield* pinTestDocument;
     const archived: string[] = [];
-    yield* Effect.promise(() =>
-      mount(
-        <DemoArchiveSection
-          onArchived={() => {
-            archived.push('archived');
-          }}
-          onCommitted={constVoid}
-          onReload={constVoid}
-          product={product}
-          revision={4}
-        />,
-      ),
+    yield* mountInRoute(
+      <DemoArchiveSection
+        onArchived={() => {
+          archived.push('archived');
+        }}
+        onCommitted={constVoid}
+        onReload={constVoid}
+        product={product}
+        revision={4}
+      />,
     );
     yield* type('demo-archive-reason', 'Testovací produkt');
     yield* click(byTestId('demo-archive'));
-    expect(executeCleanupDemo).not.toHaveBeenCalled();
+    yield* networkIdle;
+    expect(commands).toEqual([]);
     expect(text()).toContain(copy.archiveTitle);
     yield* click(byTestId('live-shop-confirm'));
-    yield* Effect.promise(() => act(settle));
-    yield* Effect.promise(() => act(settle));
-    expect(executeCleanupDemo).toHaveBeenCalledTimes(1);
-    expect(rstest.mocked(executeCleanupDemo).mock.calls[0]?.[0]).toMatchObject({
+    yield* waitUntil(() => archived.length > 0);
+    yield* networkIdle;
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
       command: { _tag: 'ArchiveDemoProduct', reason: 'Testovací produkt' },
       expectedRevision: 4,
     });
     expect(archived).toEqual(['archived']);
-  }),
+  }).pipe(Effect.provide(network)),
 );

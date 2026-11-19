@@ -368,6 +368,8 @@ export const makeIdentityLifecycleService = (
         payload: input.payload,
         principal: input.principal,
         registration: changePrincipalStatusAction,
+        // Served as-is by the Shell's HTTP endpoint: its client's same-key retry gets the saved reply.
+        savedReply: 'answer',
         transport: transport(input),
       }),
     configureDemoCompanies: (
@@ -389,6 +391,8 @@ export const makeIdentityLifecycleService = (
         payload: input.payload,
         principal: input.principal,
         registration: createNonHumanPrincipalAction,
+        // Served as-is by the Shell's HTTP endpoint: its client's same-key retry gets the saved reply.
+        savedReply: 'answer',
         transport: transport(input),
       }),
     issue,

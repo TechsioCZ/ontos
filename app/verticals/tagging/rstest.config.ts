@@ -7,7 +7,13 @@ const swc = {
 export default defineConfig({
   projects: [
     { include: ['tests/unit/**/*.test.{ts,tsx}'], name: 'unit', tools: { swc } },
-    { include: ['tests/integration/**/*.test.ts'], name: 'integration', testTimeout: 30_000, tools: { swc } },
+    {
+      include: ['tests/integration/**/*.test.ts'],
+      name: 'integration',
+      setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
+      testTimeout: 30_000,
+      tools: { swc },
+    },
   ],
   root: new URL('.', import.meta.url).pathname,
   testEnvironment: 'node',

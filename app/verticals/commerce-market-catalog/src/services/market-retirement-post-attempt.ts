@@ -253,6 +253,8 @@ export const settleMarketRetirementAttempt: MarketRetirementPostAttemptHook = Ef
   return yield* Match.value(attempt.outcome).pipe(
     Match.tag('Committed', (outcome) => settleCommitted(attempt, outcome.result)),
     Match.tag('CommittedRejection', () => Effect.succeed(settled)),
+    // Core reports a same-key replay as AlreadyCommitted and answers the caller its saved reply; the
+    // recovery still finishes a pending Customer Context finalization of the original commit.
     Match.tag('AlreadyCommitted', () => recoverCommitted(attempt)),
     Match.tag('DefinitelyUncommitted', (outcome) => settleUncommitted(attempt, outcome.rejection)),
     Match.tag('Indeterminate', () => recoverCommitted(attempt)),

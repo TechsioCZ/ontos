@@ -11,6 +11,7 @@ import {
   ReadRuntime,
   ContextAccessLive,
   OntosModuleDeploymentContractSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -134,7 +135,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
       additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: { ...ultramodernApiMarker, buildMarker },

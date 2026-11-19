@@ -7,6 +7,7 @@ import {
   ContextAccess,
   agentGrantRelationships,
   ReadRuntime,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { AgentGrantWritePolicy } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -65,7 +66,7 @@ const request = {
 // the registered Action's canonical gate still run before its owner write.
 const unused = () => Effect.die('Unexpected production-factory dependency');
 const unusedProductionServices = Layer.mergeAll(
-  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unused())),
   Layer.succeed(ContextAccess, {
     legalEntities: unused,
     modules: unused,

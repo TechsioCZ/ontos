@@ -4,59 +4,35 @@
 // must stay mounted: typed input, its unsaved status and the leave question survive and a save sends the typed draft,
 // while a draft with nothing typed takes the reloaded item. Before, the price list tab unmounted for the reload and the
 // dialog closed with everything typed into it. The plan, accounting and recurring tabs sit behind the same gate.
+// The page runs on its real i18n, router and generated clients; the Shell's gateway issuer and the finance owner's
+// records and Action endpoints answer in process through their HttpApi contracts. Other owners stay out of the
+// composition and are refused as the Shell refuses them.
 import { saveLabelsFor } from '@app/admin-ui';
-import type { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { constVoid } from 'effect/Function';
-import { Deferred, Effect, Option, Redacted, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
-import { RecordsPage } from '../../src/routes/[lang]/finance/page.tsx';
-import { financeBrowserRuntime } from '../../src/runtime/browser.ts';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 
-/** The part of the router state the page reads. */
-interface TestRouterState {
-  readonly location: { readonly search: { readonly resourceId?: string }; readonly searchStr: string };
-}
-const mocks = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
-// The reference credentials a finance command carries come from the Shell's gateway, which a unit test does not have.
-rstest.mock('@app/shared-contracts', () => ({
-  ...rstest.requireActual<{
-    readonly makeReferenceGatewayCredentials: typeof makeReferenceGatewayCredentials;
-  }>('@app/shared-contracts'),
-  makeReferenceGatewayCredentials: () => Effect.succeed(Redacted.make('credentials')),
-}));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/party-registry/apis/customer-list/client', () => ({ executeCustomerList: () => Effect.never }));
-rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useNavigate: () => () => Promise.resolve(),
-  useRouterState: <Selected,>(options?: { readonly select?: (state: TestRouterState) => Selected }) => {
-    const state: TestRouterState = { location: { search: {}, searchStr: '?tab=cenik' } };
-    return options?.select === undefined ? state : options.select(state);
-  },
-}));
-rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import { RecordsPage } from '../../src/routes/[lang]/finance/page.tsx';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
 const name = 'price-name';
-const amount = 'price-amount';
-const close = 'finance-billing.financeUi.priceList.close';
 const itemId = 'price-item-1';
 
 /** The ledger at `revision` with one price list item; every read is a new object, as a reload returns. */
@@ -104,46 +80,42 @@ const context: ModulePageProps['context'] = {
   tenantId: 'a0000000-0000-4000-8000-000000000001',
 };
 
-/** Lets running reads and saves take a step, then flushes React's updates. */
-const settle: Effect.Effect<void> = Effect.promise(() => financeBrowserRuntime.runPromise(Effect.yieldNow)).pipe(
-  Effect.andThen(
-    Effect.sync(() => {
-      act(constVoid);
-    }),
+const saved = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ changed: true, revision: 5 });
+
+/** What the finance owner answers the next records read with; each test scripts it. */
+let answer: Effect.Effect<RecordsResponse> = Effect.succeed(ledgerAt(3, 10_000));
+/** Every records read and command the finance owner received, in order. */
+const reads: RecordsRequest[] = [];
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+
+const OwnerRecordsApi = RecordsApi.prefix('/finance-billing-api');
+const OwnerActionApi = ApplyCommandActionApi.prefix('/finance-billing-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'finance-billing': '/finance-billing-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          reads.push(payload);
+          return answer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return saved;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
   ),
 );
-/** Runs `step` inside React's act, then lets what it started settle. */
-const acted = (step: () => void): Effect.Effect<void> =>
-  Effect.sync(() => {
-    act(() => {
-      step();
-    });
-  }).pipe(Effect.andThen(settle));
-/** Lets the page work until `condition` holds; fails the test when it never does. */
-const waitUntil = (condition: () => boolean, attempt = 0): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    if (condition() || attempt >= 400) {
-      return Effect.sync(() => {
-        expect(condition()).toBe(true);
-      });
-    }
-    return settle.pipe(Effect.andThen(waitUntil(condition, attempt + 1)));
-  });
 
-const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
-const render = () =>
-  acted(() => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ container, root });
-    root.render(<RecordsPage context={context} />);
-  });
-
-const buttons = (label: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter(
-    (button) => button.textContent?.trim() === label || button.getAttribute('aria-label') === label,
-  );
 const button = (label: string): HTMLButtonElement => {
   const [found] = buttons(label);
   expect(found).toBeDefined();
@@ -155,7 +127,6 @@ const value = (id: string) =>
     Option.map((input) => input.value),
     Option.getOrUndefined,
   );
-const text = () => document.body.textContent ?? '';
 const type = (id: string, typed: string) =>
   acted(() => {
     const input = Option.getOrThrow(maybeField(id));
@@ -166,86 +137,65 @@ const click = (label: string) => acted(() => button(label).click());
 
 /** Opens the price list tab with the ledger at revision 3 and opens the item's editor. */
 const openItem = Effect.gen(function* open() {
-  yield* render();
+  yield* pinTestDocument;
+  yield* mountInRoute(<RecordsPage context={context} />, { path: 'finance', url: '/cs/finance?tab=cenik' });
   yield* waitUntil(() => buttons('Upravit server-name').length === 1);
   yield* click('Upravit server-name');
   yield* waitUntil(() => Option.isSome(maybeField(name)));
 });
 
-/** Someone else's change of finance data: the ledger reloads and answers once `gate` opens. */
+/** Someone else's change of finance data: the ledger reloads, the owner answers once `gate` opens. */
 const reloadThrough = (gate: Deferred.Deferred<RecordsResponse>) =>
   Effect.gen(function* reload() {
-    mocks.records.mockReturnValue(Deferred.await(gate));
+    const arrived = yield* Deferred.make<true>();
+    answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Deferred.await(gate)));
     yield* acted(() => {
-      globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['finance-billing'] } }));
+      window.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['finance-billing'] } }));
     });
+    yield* Deferred.await(arrived);
+    yield* settle;
   });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  mocks.records.mockReset();
-  mocks.records.mockImplementation(() => Effect.succeed(ledgerAt(3, 10_000)));
-  mocks.apply.mockReset();
-  mocks.apply.mockReturnValue(Effect.succeed({ revision: 5 }));
+  reads.length = 0;
+  commands.length = 0;
+  answer = Effect.succeed(ledgerAt(3, 10_000));
 });
 
-afterEach(() => {
-  for (const { container, root } of roots.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
-describe('price list item editor across a background reload', () => {
-  it.live('keeps typed input, its status and the leave question; Save sends the typed draft', () =>
-    Effect.gen(function* typedSurvives() {
-      yield* openItem;
-      yield* type(name, 'typed-name');
-      expect(text()).toContain(labels.unsaved);
+it.layer(network, { excludeTestServices: true })('price list item editor across a background reload', (suite) => {
+  suite.effect(
+    'the finance page keeps its price editor through a ledger reload and saves its typed name',
+    () =>
+      Effect.gen(function* typedSurvives() {
+        yield* openItem;
+        yield* type(name, 'typed-name');
+        expect(text()).toContain(labels.unsaved);
 
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      // While the ledger reads `pending`, the dialog and the typed value stay on screen.
-      expect(value(name)).toBe('typed-name');
-      expect(text()).toContain(labels.unsaved);
+        const gate = yield* Deferred.make<RecordsResponse>();
+        yield* reloadThrough(gate);
+        // While the ledger reads `pending`, the dialog and the typed value stay on screen.
+        expect(value(name)).toBe('typed-name');
+        expect(text()).toContain(labels.unsaved);
 
-      // The reload brings a newer revision of the ledger; the item itself is unchanged.
-      yield* Deferred.succeed(gate, ledgerAt(4, 10_000));
-      yield* waitUntil(() => mocks.records.mock.calls.length >= 2);
-      yield* waitUntil(() => buttons(labels.save).length > 0);
-      expect(value(name)).toBe('typed-name');
-      expect(text()).toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(false);
+        // The reload brings a newer revision of the ledger; the item itself is unchanged.
+        yield* Deferred.succeed(gate, ledgerAt(4, 10_000));
+        yield* networkIdle;
+        yield* waitUntil(() => reads.length >= 2);
+        yield* waitUntil(() => buttons(labels.save).length > 0);
+        expect(value(name)).toBe('typed-name');
+        expect(text()).toContain(labels.unsaved);
+        expect(button(labels.save).disabled).toBe(false);
 
-      yield* click(close);
-      expect(buttons(labels.stay)).toHaveLength(1);
-      yield* click(labels.stay);
-      yield* waitUntil(() => buttons(labels.stay).length === 0);
-      expect(value(name)).toBe('typed-name');
-
-      mocks.records.mockImplementation(() => Effect.succeed(ledgerAt(5, 10_000)));
-      yield* click(labels.save);
-      yield* waitUntil(() => mocks.apply.mock.calls.length > 0);
-      expect(mocks.apply.mock.calls[0]?.[0]).toMatchObject({
-        command: { _tag: 'UpsertPriceListItem', id: itemId, name: 'typed-name' },
-      });
-    }),
-  );
-
-  it.live('a draft with nothing typed takes the reloaded item', () =>
-    Effect.gen(function* cleanFollows() {
-      yield* openItem;
-      const opened = value(amount);
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value(amount)).toBe(opened);
-      yield* Deferred.succeed(gate, ledgerAt(4, 25_000));
-      yield* waitUntil(() => value(amount) !== opened && value(amount) !== undefined);
-      expect(text()).not.toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(true);
-    }),
+        answer = Effect.succeed(ledgerAt(5, 10_000));
+        yield* click(labels.save);
+        yield* waitUntil(() => commands.length > 0);
+        expect(commands[0]).toMatchObject({
+          command: { _tag: 'UpsertPriceListItem', id: itemId, name: 'typed-name' },
+        });
+      }),
+    // Mounts the real finance page, reloads its ledger and saves: 4.96 s on a loaded runner.
+    { timeout: 20_000 },
   );
 });

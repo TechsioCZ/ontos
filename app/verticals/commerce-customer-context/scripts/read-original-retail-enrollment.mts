@@ -25,6 +25,7 @@ import {
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
@@ -72,7 +73,7 @@ const accessEnforcement = AccessDecisionLive.pipe(
 );
 const runtime = Layer.unwrap(
   Effect.gen(function* originalRequestRuntime() {
-    const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
+    const snapshot = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService);
     const owner = snapshot.composition.modules.find((module) => module.deployment.appId === audience);
     if (owner === undefined) {
       return yield* unavailable();
@@ -144,7 +145,7 @@ const operator = Command.make(
         onExcessProperty: 'error',
       })(encoded).pipe(Effect.catchTag('SchemaError', () => Effect.fail(unavailable())));
       const read = Effect.gen(function* authenticateAndReadOriginalRequest() {
-        const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
+        const snapshot = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService);
         const owner = snapshot.composition.modules.find((module) => module.deployment.appId === audience);
         if (owner === undefined || snapshot.composition.revision !== input.compositionRevision) {
           return yield* unavailable();

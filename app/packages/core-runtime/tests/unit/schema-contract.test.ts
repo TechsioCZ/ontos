@@ -225,3 +225,20 @@ it('keeps the inferred Action status type aligned with the lifecycle union', () 
 
   expect(status).toBe('indeterminate');
 });
+it('keeps the saved reply on the invocation row and only on a succeeded one', () => {
+  const column = getColumn('committed_reply_json');
+  expect(column.getSQLType()).toBe('jsonb');
+  expect(column.notNull).toBe(false);
+
+  const replyCheck = actionConfig.checks.find(
+    (candidate) => candidate.name === 'core_action_invocations_committed_reply_ck',
+  );
+  if (replyCheck === undefined) {
+    expect.unreachable('Expected value to be present');
+  }
+  const replySql = dialect.sqlToQuery(replyCheck.value).sql;
+  expect(replySql).toMatch(/"committed_reply_json" is null or \(\S*"status" = 'succeeded'/u);
+  expect(replySql).toContain(`in ('result', 'rejection')`);
+  // A missing or JSON-null `kind` makes the envelope UNKNOWN; only IS TRUE refuses it.
+  expect(replySql).toMatch(/"committed_reply_json" is null or \(.*\) is true$/u);
+});

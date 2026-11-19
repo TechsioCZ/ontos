@@ -2,7 +2,7 @@ import { delegationSubject } from '../services/order-module-call.ts';
 import type { OrderFinalizationCall } from '../services/order-module-call.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   FinalCartCandidateRequestSchema,
@@ -209,10 +209,7 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
       if (Option.isNone(configured)) {
         return yield* unavailable();
       }
-      const active = yield* composition.load.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.mapError(unavailable),
-      );
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
       const issued = yield* acquireDelegatedGatewayContext(
         {
           audience,
@@ -313,6 +310,9 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
             onSuccess: (result) => ({ failed: false as const, result }),
           }),
         );
+        // A same-key retry normally receives the saved issuance result from Core. Only a confirmation
+        // committed before Core saved replies still answers AlreadyCommitted; its invocation id keys the
+        // verification read below.
         const recovery =
           issued.failed && Schema.is(ManageCommitmentConfirmationActionAlreadyCommittedProblemSchema)(issued.error)
             ? issued.error

@@ -3,11 +3,12 @@ import { ConfigProvider, Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
-import { expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { ActiveApplicationCompositionSource } from '../../packages/core-runtime/src/modules/active-application-composition-source-service.ts';
@@ -26,13 +27,14 @@ const encodedSnapshot = (revision: string, validUntil = '2030-01-01T00:00:00.000
     revision,
     validUntil: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(validUntil),
   });
-const encodedActiveApplicationCompositionSnapshot = Effect.suspend(() =>
-  ActiveApplicationCompositionSource.pipe(
-    Effect.flatMap(({ load }) => load),
-    Effect.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(httpClient))),
-    Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-  ),
-);
+const encodedActiveApplicationCompositionSnapshot = (authorityFetch: typeof fetch) =>
+  Effect.suspend(() =>
+    ActiveApplicationCompositionSource.pipe(
+      Effect.flatMap(({ load }) => load),
+      Effect.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(httpClient))),
+      Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
+    ),
+  );
 
 interface SnapshotResponse {
   readonly body: string | Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>;
@@ -40,22 +42,20 @@ interface SnapshotResponse {
   readonly status?: number;
 }
 
-const serveSnapshot = (response: (request: RequestInit | undefined) => SnapshotResponse) =>
-  Effect.gen(function* serveSnapshotEffect() {
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        rstest.stubGlobal('fetch', async (_input: Parameters<typeof fetch>[0], request?: RequestInit) => {
-          const current = response(request);
-          return new Response(current.body, {
-            headers: current.headers,
-            status: current.status ?? 200,
-          });
-        }),
-      ),
-      (resource) => Effect.sync(() => resource[Symbol.dispose]()),
+const authorityUrl = 'https://authority.invalid/active';
+
+/** The authority as the source's own Fetch transport service; the process-wide fetch is never replaced. */
+const authorityTransport =
+  (response: (request: RequestInit | undefined) => SnapshotResponse): typeof fetch =>
+  (_input, request) => {
+    const current = response(request);
+    return Promise.resolve(
+      new Response(current.body, {
+        headers: current.headers,
+        status: current.status ?? 200,
+      }),
     );
-    return 'https://authority.invalid/active';
-  });
+  };
 
 const sourceConfiguration = (url: string, token?: string) =>
   ConfigProvider.layer(
@@ -80,13 +80,13 @@ it.effect('the same long-lived Node consumer reads new snapshot bytes after the 
             : Effect.succeed(value),
         ),
       );
-      const url = yield* Effect.fromResult(NetAddress.toUrl(address));
-      url.hostname = '127.0.0.1';
+      const serverUrl = yield* Effect.fromResult(NetAddress.toUrl(address));
+      serverUrl.hostname = '127.0.0.1';
       const source = yield* ActiveApplicationCompositionSource.pipe(
         Effect.provide(
           ActiveApplicationCompositionSourceLive.pipe(
             Layer.provide(httpClient),
-            Layer.provide(sourceConfiguration(url.href)),
+            Layer.provide(sourceConfiguration(serverUrl.href)),
           ),
         ),
       );
@@ -104,7 +104,7 @@ it.live('retains its scoped configuration provider while keeping missing or malf
   Effect.gen(function* retainedSourceConfiguration() {
     let requests = 0;
     const token = 'scoped-source-read-token';
-    const url = yield* serveSnapshot((request) => {
+    const authorityFetch = authorityTransport((request) => {
       requests += 1;
       expect(new Headers(request?.headers).get('authorization')).toBe(`Bearer ${token}`);
       return { body: encodedSnapshot('retained-provider') };
@@ -113,10 +113,10 @@ it.live('retains its scoped configuration provider while keeping missing or malf
       Effect.provide(
         ActiveApplicationCompositionSourceLive.pipe(
           Layer.provide(httpClient),
-          Layer.provide(sourceConfiguration(url, token)),
+          Layer.provide(sourceConfiguration(authorityUrl, token)),
         ),
       ),
-      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
     );
     expect(requests).toBe(0);
     expect(yield* source.load.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))))).toBe(
@@ -134,10 +134,12 @@ it.live('retains its scoped configuration provider while keeping missing or malf
         Effect.provide(
           ActiveApplicationCompositionSourceLive.pipe(Layer.provide(httpClient), Layer.provide(configuration)),
         ),
-        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
       );
       expect(requests).toBe(1);
-      const failure = yield* Effect.flip(unconfigured.load.pipe(Effect.provide(sourceConfiguration(url, token))));
+      const failure = yield* Effect.flip(
+        unconfigured.load.pipe(Effect.provide(sourceConfiguration(authorityUrl, token))),
+      );
       expect(failure.reason).toContain(reason);
       expect(requests).toBe(1);
     }
@@ -148,7 +150,7 @@ it.effect('coalesces concurrent reads and never caches failed or malformed obser
   Effect.gen(function* cacheSingleAuthority() {
     let requests = 0;
     let current: SnapshotResponse = { body: encodedSnapshot('first') };
-    const url = yield* serveSnapshot(() => {
+    const authorityFetch = authorityTransport(() => {
       requests += 1;
       return current;
     });
@@ -173,8 +175,8 @@ it.effect('coalesces concurrent reads and never caches failed or malformed obser
       expect(requests).toBe(4);
     }).pipe(
       Effect.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(httpClient))),
-      Effect.provide(sourceConfiguration(url)),
-      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(sourceConfiguration(authorityUrl)),
+      Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
     );
   }).pipe(Effect.scoped),
 );
@@ -185,7 +187,7 @@ it.effect('caps successful raw caching at the published authority deadline', () 
     let requests = 0;
     const first = encodedSnapshot('first', ONE_SECOND_AFTER_EPOCH);
     let current = first;
-    const url = yield* serveSnapshot(() => {
+    const authorityFetch = authorityTransport(() => {
       requests += 1;
       return { body: current };
     });
@@ -201,8 +203,8 @@ it.effect('caps successful raw caching at the published authority deadline', () 
       expect(requests).toBe(2);
     }).pipe(
       Effect.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(httpClient))),
-      Effect.provide(sourceConfiguration(url)),
-      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(sourceConfiguration(authorityUrl)),
+      Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
     );
   }).pipe(Effect.scoped),
 );
@@ -211,7 +213,7 @@ it.live('captures many one-byte HTTP fragments without carrying bytes into the n
   Effect.gen(function* fragmentedSnapshotBody() {
     let current = encodedSnapshot(`ř${'x'.repeat(65_536)}`, ONE_SECOND_AFTER_EPOCH);
     let fragments = 0;
-    const url = yield* serveSnapshot(() => {
+    const authorityFetch = authorityTransport(() => {
       const bytes = new TextEncoder().encode(current);
       let offset = 0;
       return {
@@ -238,8 +240,8 @@ it.live('captures many one-byte HTTP fragments without carrying bytes into the n
       expect(fragments).toBe(new TextEncoder().encode(current).byteLength);
     }).pipe(
       Effect.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(httpClient))),
-      Effect.provide(sourceConfiguration(url)),
-      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(sourceConfiguration(authorityUrl)),
+      Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
     );
   }).pipe(Effect.scoped),
 );
@@ -248,11 +250,13 @@ it.live('uses the configured read token without retaining it in source failures'
   Effect.gen(function* sourceAuthorization() {
     const token = 'fixture-read-only-token';
     let expected = true;
-    const url = yield* serveSnapshot((request) => ({
+    const authorityFetch = authorityTransport((request) => ({
       body: encodedSnapshot('authorized'),
       status: expected && new Headers(request?.headers).get('authorization') === `Bearer ${token}` ? 200 : 401,
     }));
-    const read = encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url, token)));
+    const read = encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+      Effect.provide(sourceConfiguration(authorityUrl, token)),
+    );
     expect(yield* read).toBe(encodedSnapshot('authorized'));
     expected = false;
     const failure = yield* Effect.flip(read);
@@ -264,16 +268,18 @@ it.live('uses the configured read token without retaining it in source failures'
 it.effect('bounds the complete HTTP body read, including a stalled stream', () =>
   Effect.gen(function* sourceTimeout() {
     let cancelled = false;
-    const url = yield* serveSnapshot(() => ({
+    const authorityFetch = authorityTransport(() => ({
       body: new ReadableStream({
         cancel: () => {
           cancelled = true;
         },
       }),
     }));
-    // The stubbed fetch never emits, so the read's own timeout is the only elapsing clock.
+    // The authority body never emits, so the read's own timeout is the only elapsing clock.
     const fiber = yield* Effect.flip(
-      encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url))),
+      encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+        Effect.provide(sourceConfiguration(authorityUrl)),
+      ),
     ).pipe(Effect.forkChild);
     yield* TestClock.adjust('5 seconds');
     const failure = yield* Fiber.join(fiber);
@@ -299,8 +305,10 @@ it.live('cancels an oversized streaming body and rejects invalid UTF-8', () =>
         },
       }),
     };
-    const url = yield* serveSnapshot(() => current);
-    const read = encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url)));
+    const authorityFetch = authorityTransport(() => current);
+    const read = encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+      Effect.provide(sourceConfiguration(authorityUrl)),
+    );
     expect((yield* Effect.flip(read)).reason).toContain('exceeds');
     expect(cancelled).toBe(true);
     expect(emitted).toBeLessThanOrEqual(ONTOS_APPLICATION_COMPOSITION_MAX_BYTES + 2 * chunkBytes);
@@ -312,8 +320,10 @@ it.live('cancels an oversized streaming body and rejects invalid UTF-8', () =>
 it.live('rejects unavailable and oversized responses without retaining the previous snapshot', () =>
   Effect.gen(function* sourceFailures() {
     let current: SnapshotResponse = { body: encodedSnapshot('first') };
-    const url = yield* serveSnapshot(() => current);
-    const read = encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url)));
+    const authorityFetch = authorityTransport(() => current);
+    const read = encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+      Effect.provide(sourceConfiguration(authorityUrl)),
+    );
     expect(yield* read).toBe(current.body);
     current = { body: 'unavailable', status: 503 };
     expect((yield* Effect.flip(read)).reason).toContain('HTTP 503');
@@ -326,13 +336,15 @@ it.live('rejects unavailable and oversized responses without retaining the previ
 
 it.live('never follows a source redirect', () =>
   Effect.gen(function* sourceRedirect() {
-    const url = yield* serveSnapshot((request) => {
+    const authorityFetch = authorityTransport((request) => {
       expect(request?.redirect).toBe('manual');
       expect(request?.cache).toBe('no-store');
       return { body: '', headers: { location: 'https://untrusted.example/active' }, status: 302 };
     });
     const error = yield* Effect.flip(
-      encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url))),
+      encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+        Effect.provide(sourceConfiguration(authorityUrl)),
+      ),
     );
     expect(error.reason).toContain('HTTP 302');
   }).pipe(Effect.scoped),
@@ -341,12 +353,14 @@ it.live('never follows a source redirect', () =>
 it.live('closes failed-status requests immediately even when their body remains open', () =>
   Effect.gen(function* failedResponseLifetime() {
     let signal: AbortSignal | null | undefined;
-    const url = yield* serveSnapshot((request) => {
+    const authorityFetch = authorityTransport((request) => {
       signal = request?.signal;
       return { body: new ReadableStream(), status: 503 };
     });
     const error = yield* Effect.flip(
-      encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url))),
+      encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+        Effect.provide(sourceConfiguration(authorityUrl)),
+      ),
     );
     expect(error.reason).toContain('HTTP 503');
     expect(signal?.aborted).toBe(true);
@@ -356,18 +370,18 @@ it.live('closes failed-status requests immediately even when their body remains 
 it.live('layer acquisition is independent of absent, unavailable, and malformed composition', () =>
   Effect.gen(function* lazyBootstrap() {
     let current: SnapshotResponse = { body: 'unavailable', status: 503 };
-    const url = yield* serveSnapshot(() => current);
+    const authorityFetch = authorityTransport(() => current);
     for (const { configuration, response } of [
       {
         configuration: ConfigProvider.layer(ConfigProvider.fromUnknown({})),
         response: { body: 'unavailable', status: 503 },
       },
       {
-        configuration: sourceConfiguration(url),
+        configuration: sourceConfiguration(authorityUrl),
         response: { body: 'unavailable', status: 503 },
       },
       {
-        configuration: sourceConfiguration(url),
+        configuration: sourceConfiguration(authorityUrl),
         response: { body: 'not a snapshot', status: 200 },
       },
     ]) {
@@ -378,13 +392,13 @@ it.live('layer acquisition is independent of absent, unavailable, and malformed 
       );
       yield* ActiveApplicationCompositionService.pipe(
         Effect.provide(runtime),
-        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
       );
       const unavailable = yield* Effect.flip(
         ActiveApplicationCompositionService.pipe(
-          Effect.flatMap(({ load }) => load),
+          Effect.flatMap(loadActiveApplicationComposition),
           Effect.provide(runtime),
-          Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+          Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
         ),
       );
       expect(Schema.is(ActiveApplicationCompositionUnavailableError)(unavailable)).toBe(true);
@@ -394,7 +408,12 @@ it.live('layer acquisition is independent of absent, unavailable, and malformed 
 
 it.effect('only accepts a trusted HTTPS or loopback HTTP source URL', () =>
   Effect.gen(function* trustedSourceUrl() {
-    for (const url of [
+    let requests = 0;
+    const authorityFetch = authorityTransport(() => {
+      requests += 1;
+      return { body: encodedSnapshot('untrusted') };
+    });
+    for (const untrustedUrl of [
       'not a URL',
       'http://untrusted.example/active',
       'https://user:password@example.com/active',
@@ -402,9 +421,12 @@ it.effect('only accepts a trusted HTTPS or loopback HTTP source URL', () =>
       'https://example.com/active#fragment',
     ]) {
       const error = yield* Effect.flip(
-        encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url))),
+        encodedActiveApplicationCompositionSnapshot(authorityFetch).pipe(
+          Effect.provide(sourceConfiguration(untrustedUrl)),
+        ),
       );
       expect(error.reason).toMatch(/URL|requires HTTPS/u);
     }
+    expect(requests).toBe(0);
   }),
 );

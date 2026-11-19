@@ -2,7 +2,12 @@ import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-ve
 import { HttpServerRequest } from 'effect/http';
 import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
-import { ActionAlreadyCommitted, ActiveApplicationCompositionService, ContextAccess } from '@app/core-runtime';
+import {
+  ActionAlreadyCommitted,
+  ActiveApplicationCompositionService,
+  ContextAccess,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Exit, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -53,7 +58,7 @@ it.effect('rebuild uses its canonical declaration; denial queues no message', ()
 
 const unused = () => Effect.die('Unexpected boundary');
 const dependencies = Layer.mergeAll(
-  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unused())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unused() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

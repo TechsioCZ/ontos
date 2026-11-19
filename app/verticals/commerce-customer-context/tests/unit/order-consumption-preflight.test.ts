@@ -2,6 +2,7 @@ import {
   ActiveApplicationCompositionService,
   TrustedPrincipalContextSchema,
   trustVerifiedGatewayPrincipalContext,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { VerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -135,9 +136,12 @@ const fixture = Effect.fn('OrderConsumptionPreflightTest.fixture')(function* fix
   };
   const dependencies = Layer.mergeAll(
     configuration,
-    Layer.succeed(ActiveApplicationCompositionService, {
-      load: refuseInsideDatabaseTransaction('module-transport', 'composition').pipe(Effect.as(snapshot)),
-    }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        refuseInsideDatabaseTransaction('module-transport', 'composition').pipe(Effect.as(snapshot)),
+      ),
+    ),
     Layer.succeed(Crypto.Crypto, crypto),
     Layer.succeed(FetchHttpClient.Fetch, fakeFetch),
   );

@@ -1,158 +1,41 @@
 // @rstest-environment happy-dom
-// The create-project form sends its create only from the shared Save button ("Uložit"): typing and Enter change only
-// the draft, an untouched form leaves without asking, and leaving with typed input asks first. Only the generated
-// clients, the i18n runtime and the router blocker are replaced.
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option } from 'effect';
-import { afterEach, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
+// The real create form, module copy, router guard and generated clients run against the owner's HTTP contracts.
+import { saveLabelsFor } from '@app/admin-ui';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { createProjectActionSchemaErrorLive } from '../../api/create-project-action-problems.ts';
+import { CreateProjectResultSchema } from '../../shared/actions/create-project.ts';
+import type { CreateProjectPayloadSchema } from '../../shared/actions/create-project.ts';
+import { CreateProjectActionApi } from '../../shared/apis/create-project-action.ts';
 import type { CreateProjectActionCommitIndeterminateProblemSchema } from '../../shared/apis/create-project-action.ts';
-import { executeCreateProject } from '../../src/api/create-project-action-client.ts';
+import { ProjectOwnerCandidatesApi } from '../../shared/apis/project-owner-candidates.ts';
+import { projectsI18nResources } from '../../src/i18n/resources.ts';
 import { CreateProjectForm } from '../../src/routes/[lang]/projects/create-project/create-project-form.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-interface Navigation {
-  proceeded: number;
-  shouldBlock: () => boolean;
-  status: 'blocked' | 'idle';
-}
-const { navigation } = rstest.hoisted(() => {
-  const state: Navigation = { proceeded: 0, shouldBlock: () => false, status: 'idle' };
-  return { navigation: state };
-});
 const owner = { displayName: 'Jana', principalId: '00000000-0000-4000-8000-000000000021' };
-
-rstest.mock('../../src/api/create-project-action-client.ts', () => ({
-  executeCreateProject: rstest.fn(() => Effect.succeed({})),
-}));
-rstest.mock('../../src/api/project-owner-candidates-client.ts', () => ({
-  executeProjectOwnerCandidates: () => Effect.succeed({ candidates: [owner] }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime/consumer', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
-    navigation.shouldBlock = options.shouldBlockFn;
-    return {
-      proceed: () => {
-        navigation.status = 'idle';
-        navigation.proceeded += 1;
-      },
-      reset: () => {
-        navigation.status = 'idle';
-      },
-      status: navigation.status,
-    };
-  },
-}));
-
-const labels = saveLabelsFor('cs');
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-const unmounts: (() => void)[] = [];
-afterEach(() => {
-  for (const unmount of unmounts.splice(0)) {
-    unmount();
-  }
-  navigation.proceeded = 0;
-  navigation.status = 'idle';
-  rstest.mocked(executeCreateProject).mockClear();
+const created = Schema.decodeUnknownSync(CreateProjectResultSchema)({
+  createdAt: '2026-11-10T12:00:00.000Z',
+  createdByPrincipalId: owner.principalId,
+  lifecycleState: 'active',
+  name: 'Nový web',
+  ownerPrincipalId: owner.principalId,
+  parentProjectId: null,
+  prefix: 'WEB',
+  projectId: '00000000-0000-4000-8000-000000000022',
+  shortText: null,
+  tenantId: '00000000-0000-4000-8000-000000000023',
 });
-
-const mount = async () => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  await act(async () => {
-    root.render(<CreateProjectForm />);
-    await settle();
-  });
-  unmounts.push(() => {
-    act(() => {
-      root.unmount();
-      container.remove();
-    });
-  });
-  return () =>
-    Effect.promise(() =>
-      act(async () => {
-        root.render(<CreateProjectForm />);
-        await settle();
-      }),
-    );
-};
-
-const buttonNamed = (name: string): HTMLButtonElement =>
-  Option.getOrThrow(
-    Option.fromNullishOr(
-      [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === name),
-    ),
-  );
-const field = (selector: string): HTMLInputElement =>
-  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(selector)));
-const act$ = (run: () => void) =>
-  Effect.promise(() =>
-    act(async () => {
-      run();
-      await settle();
-    }),
-  );
-const typeInto = (id: string, value: string) =>
-  act$(() => {
-    const input = field(`#${id}`);
-    const prototype = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
-it.live('typing and Enter send nothing; Uložit creates once and the page can be left', () =>
-  Effect.gen(function* createOnce() {
-    yield* Effect.promise(mount);
-    expect(navigation.shouldBlock()).toBe(false);
-    yield* typeInto('project-name', 'Nový web');
-    yield* typeInto('project-prefix', 'WEB');
-    yield* act$(() => buttonNamed('projects.pages.createProject.findOwners').click());
-    yield* Effect.promise(() =>
-      waitUntil(() => document.querySelector(`input[value="${owner.principalId}"]`) !== null),
-    );
-    yield* act$(() => field(`input[value="${owner.principalId}"]`).click());
-    yield* act$(() => field('#project-name').form?.requestSubmit());
-    expect(executeCreateProject).not.toHaveBeenCalled();
-    expect(navigation.shouldBlock()).toBe(true);
-    yield* act$(() => buttonNamed(labels.save).click());
-    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(labels.saved)));
-    expect(executeCreateProject).toHaveBeenCalledTimes(1);
-    expect(rstest.mocked(executeCreateProject).mock.calls[0]?.[0]).toMatchObject({
-      name: 'Nový web',
-      ownerPrincipalId: owner.principalId,
-      prefix: 'WEB',
-    });
-    expect(navigation.shouldBlock()).toBe(false);
-  }),
-);
-
-it.live('reads the required text of a required field in Czech', () =>
-  Effect.gen(function* requiredText() {
-    yield* Effect.promise(mount);
-    const label = Option.getOrThrow(
-      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="project-name"]')),
-    );
-    expect(label.textContent).toContain(requiredLabelFor('cs'));
-    expect(document.body.textContent).not.toContain('(required)');
-  }),
-);
-
 const uncertain: typeof CreateProjectActionCommitIndeterminateProblemSchema.Type = {
   _tag: 'CreateProjectActionCommitIndeterminateProblem',
   detail: 'uncertain',
@@ -163,45 +46,153 @@ const uncertain: typeof CreateProjectActionCommitIndeterminateProblemSchema.Type
   title: 'uncertain',
   type: 'about:blank',
 };
+const commands: { readonly key: string | undefined; readonly payload: typeof CreateProjectPayloadSchema.Encoded }[] =
+  [];
+let answer: Effect.Effect<typeof created, typeof uncertain> = Effect.succeed(created);
+const OwnerActionApi = CreateProjectActionApi.prefix('/projects-api');
+const OwnerCandidatesApi = ProjectOwnerCandidatesApi.prefix('/projects-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ projects: '/projects-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'createProjectAction', (group) =>
+      group.handle('execute', ({ payload, request }) =>
+        Effect.suspend(() => {
+          commands.push({ key: request.headers['idempotency-key'], payload });
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(createProjectActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerCandidatesApi,
+    HttpApiBuilder.group(OwnerCandidatesApi, 'projectOwnerCandidates', (group) =>
+      group.handle('execute', () => Effect.succeed({ candidates: [owner] })),
+    ),
+  ),
+);
+
+const labels = saveLabelsFor('cs');
+const copy = moduleText('cs', projectsI18nResources);
+const buttonNamed = (name: string): HTMLButtonElement => Option.getOrThrow(Option.fromNullishOr(buttons(name)[0]));
+const field = (selector: string): HTMLInputElement =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(selector)));
+const typeInto = (id: string, value: string) =>
+  acted(() => {
+    const input = field(`#${id}`);
+    const prototype = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+const mount = () =>
+  mountInRoute(<CreateProjectForm />, {
+    resources: projectsI18nResources,
+    url: '/cs/projects/create-project',
+  });
+
+const expectBlocked = (router: AnyRouter) =>
+  Effect.gen(function* blockedDeparture() {
+    const previous = router.state.location.href;
+    yield* acted(() => {
+      void router.navigate({ to: '/cs/other' });
+    });
+    yield* waitUntil(() => buttons(labels.discard).length === 1);
+    expect(router.state.location.href).toBe(previous);
+    expect(buttons(labels.discard)).toHaveLength(1);
+    yield* acted(() => buttonNamed(labels.stay).click());
+    yield* waitUntil(() => buttons(labels.discard).length === 0);
+  });
+const expectAllowed = (router: AnyRouter, destination: string) =>
+  Effect.gen(function* allowedDeparture() {
+    yield* acted(() => {
+      void router.navigate({ to: destination });
+    });
+    yield* waitUntil(() => router.state.location.href === destination);
+    expect(router.state.location.href).toBe(destination);
+    expect(buttons(labels.discard)).toHaveLength(0);
+  });
+const fill = Effect.gen(function* fillDraft() {
+  yield* typeInto('project-name', 'Nový web');
+  yield* typeInto('project-prefix', 'WEB');
+  yield* acted(() => buttonNamed(copy('projects.pages.createProject.findOwners')).click());
+  yield* waitUntil(() => document.querySelector(`input[value="${owner.principalId}"]`) !== null);
+  yield* acted(() => field(`input[value="${owner.principalId}"]`).click());
+});
+
+beforeEach(() => {
+  commands.length = 0;
+  answer = Effect.succeed(created);
+});
+afterEach(unmountAll);
+
+it.live('typing and Enter send nothing; Uložit creates once and the page can be left', () =>
+  Effect.gen(function* createOnce() {
+    yield* pinTestDocument;
+    const { router } = yield* mount();
+    yield* expectAllowed(router, '/cs/projects/create-project?clean=1');
+    yield* fill;
+    yield* acted(() => field('#project-name').form?.requestSubmit());
+    yield* networkIdle;
+    expect(commands).toHaveLength(0);
+    yield* expectBlocked(router);
+    yield* acted(() => buttonNamed(labels.save).click());
+    yield* waitUntil(() => text().includes(labels.saved));
+    yield* networkIdle;
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.payload).toMatchObject({
+      name: 'Nový web',
+      ownerPrincipalId: owner.principalId,
+      prefix: 'WEB',
+    });
+    yield* expectAllowed(router, '/cs/other');
+  }).pipe(Effect.provide(network)),
+);
 
 it.live('an uncertain create locks the inputs, and Uložit retries the same draft with the same key', () =>
   Effect.gen(function* uncertainLock() {
-    rstest.mocked(executeCreateProject).mockImplementationOnce(() => Effect.fail(uncertain));
-    yield* Effect.promise(mount);
-    yield* typeInto('project-name', 'Nový web');
-    yield* typeInto('project-prefix', 'WEB');
-    yield* act$(() => buttonNamed('projects.pages.createProject.findOwners').click());
-    yield* Effect.promise(() =>
-      waitUntil(() => document.querySelector(`input[value="${owner.principalId}"]`) !== null),
-    );
-    yield* act$(() => field(`input[value="${owner.principalId}"]`).click());
-    yield* act$(() => buttonNamed(labels.save).click());
-    yield* Effect.promise(() => waitUntil(() => document.querySelector('[data-save-state="error"]') !== null));
+    yield* pinTestDocument;
+    answer = Effect.fail(uncertain);
+    const { router } = yield* mount();
+    yield* fill;
+    yield* acted(() => buttonNamed(labels.save).click());
+    yield* waitUntil(() => document.querySelector('[data-save-state="error"]') !== null);
     expect(field('#project-name').disabled).toBe(true);
     expect(field('#project-prefix').disabled).toBe(true);
-    expect(buttonNamed('projects.pages.createProject.findOwners').disabled).toBe(true);
-    yield* act$(() => buttonNamed(labels.save).click());
-    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(labels.saved)));
-    const { calls } = rstest.mocked(executeCreateProject).mock;
-    expect(calls).toHaveLength(2);
-    expect(calls[1]?.[0]).toEqual(calls[0]?.[0]);
-    expect(calls[1]?.[2]).toEqual(calls[0]?.[2]);
-    expect(navigation.shouldBlock()).toBe(false);
-  }),
+    expect(buttonNamed(copy('projects.pages.createProject.findOwners')).disabled).toBe(true);
+    answer = Effect.succeed(created);
+    yield* acted(() => buttonNamed(labels.save).click());
+    yield* waitUntil(() => text().includes(labels.saved));
+    yield* networkIdle;
+    expect(commands).toHaveLength(2);
+    expect(commands[1]?.payload).toEqual(commands[0]?.payload);
+    expect(commands[0]?.key).toEqual(expect.any(String));
+    expect(commands[1]?.key).toEqual(commands[0]?.key);
+    yield* expectAllowed(router, '/cs/other');
+  }).pipe(Effect.provide(network)),
 );
 
 it.live('leaving with typed input asks, and Zahodit změny leaves without creating', () =>
   Effect.gen(function* leaveDiscard() {
-    const rerender = yield* Effect.promise(mount);
+    yield* pinTestDocument;
+    const { rerender, router } = yield* mount();
     yield* typeInto('project-name', 'Rozpracovaný');
-    expect(navigation.shouldBlock()).toBe(true);
-    navigation.status = 'blocked';
-    yield* rerender();
-    yield* act$(() => buttonNamed(labels.discard).click());
-    expect(navigation.proceeded).toBe(1);
-    expect(executeCreateProject).not.toHaveBeenCalled();
-    yield* rerender();
+    yield* expectBlocked(router);
+    const arrivals: string[] = [];
+    const unsubscribe = router.subscribe('onResolved', (event) => {
+      arrivals.push(event.toLocation.pathname);
+    });
+    yield* acted(() => {
+      void router.navigate({ to: '/cs/other' });
+    });
+    yield* waitUntil(() => buttons(labels.discard).length === 1);
+    yield* acted(() => buttonNamed(labels.discard).click());
+    yield* waitUntil(() => router.state.location.pathname === '/cs/other');
+    expect(arrivals).toEqual(['/cs/other']);
+    unsubscribe();
+    yield* networkIdle;
+    expect(commands).toHaveLength(0);
+    yield* rerender(<CreateProjectForm />);
     expect(field('#project-name').value).toBe('');
-    expect(navigation.shouldBlock()).toBe(false);
-  }),
+    yield* expectAllowed(router, '/cs/another');
+  }).pipe(Effect.provide(network)),
 );

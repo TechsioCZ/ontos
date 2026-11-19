@@ -9,6 +9,7 @@ import {
   extractOutboxWorkerSubscriptions,
   extractVerticalRuntimeSafeDescriptors,
   canonicalOntosPublicApiKey,
+  narrowActiveApplicationComposition,
   OntosActionContractSchema,
   OntosApiContractSchema,
   OntosOperationContractSchema,
@@ -394,7 +395,7 @@ const run = Effect.scoped(
       ActiveApplicationCompositionService,
       Effect.gen(function* observeActualCompositionSourceFailure() {
         const actualAuthority = yield* ActiveApplicationCompositionService;
-        return { load: actualAuthority.load.pipe(Effect.tapError(recordActualFailure)) };
+        return narrowActiveApplicationComposition(actualAuthority, () => Effect.void, recordActualFailure);
       }),
     ).pipe(Layer.provide(sourceAuthority));
     const entry = defineOutboxWorkerEntry({

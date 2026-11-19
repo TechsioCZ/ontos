@@ -148,6 +148,8 @@ const makePolicyFixtureAdapter = (
       compositionRevision: gateway.compositionRevision,
       idempotencyKey: effect.ref.effectId,
     };
+    // A same-key resend of a committed import gets Core's saved reply as a success. AlreadyCommitted only
+    // answers an import committed before Core saved replies; its invocation ID still proves the commit.
     const reportedInvocationId = yield* Match.value(command).pipe(
       Match.tags({
         AssortmentRuleFixture: ({ payload }) =>

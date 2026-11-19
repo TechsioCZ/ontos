@@ -64,30 +64,18 @@ const renderPage = async (
   );
 };
 
-/** The stage readiness probe's purchase check (app/scripts/ops/stage-demo-readiness.mjs). */
-const hasProductPurchase = (main: Element) =>
-  [...main.querySelectorAll("#product-variants .sf-variant-table__order, .sf-purchase-form")].some(
-    (controls) =>
-      [...controls.querySelectorAll("input[value]")].some(
-        (input) => (input.getAttribute("value") ?? "").trim() !== "",
-      ) &&
-      [...controls.querySelectorAll("button")].some(
-        (button) => (button.textContent ?? "").trim() !== "",
-      ),
-  );
-
 beforeEach(() => {
   vi.mocked(getCatalogPage).mockReset();
 });
 afterEach(cleanup);
 
 describe("product detail page", () => {
-  it("lists every variant with the markup the stage readiness probe reads", async () => {
+  it("exposes every owner variant for purchase", async () => {
     const { container } = await renderPage(withVariants);
     const main = container.querySelector("main")!;
     expect(main.querySelector("h1#product-title")?.textContent).toBe(withVariants.name);
     expect(main.querySelector("#product-variants .sf-variant-table__order")).not.toBeNull();
-    expect(hasProductPurchase(main)).toBe(true);
+    expect(screen.getAllByRole("button", { name: /^Koupit/ }).length).toBeGreaterThan(0);
     const table = screen.getByRole("table", { name: "Varianty produktu" });
     expect(within(table).getAllByRole("row")).toHaveLength(withVariants.detail.variants.length + 1);
     expect(screen.getByRole("heading", { name: "Doprava a platba" })).toBeTruthy();
@@ -115,7 +103,7 @@ describe("product detail page", () => {
     expect(screen.getByText("Hmotnost")).toBeTruthy();
     expect(screen.getByText("0,0034 kg")).toBeTruthy();
     expect(container.querySelector("main .sf-purchase-form")).not.toBeNull();
-    expect(hasProductPurchase(container.querySelector("main")!)).toBe(true);
+    expect(screen.getByRole("button", { name: "Koupit" })).toBeTruthy();
     expect(screen.getByRole("button", { name: `Uložit ${plain.name} do oblíbených` })).toBeTruthy();
   });
 

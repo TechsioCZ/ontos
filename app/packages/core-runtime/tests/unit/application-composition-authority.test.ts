@@ -15,6 +15,7 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
   ActiveApplicationCompositionUnavailableError,
   canonicalizeApplicationComposition,
+  loadActiveApplicationComposition,
   makeActiveApplicationCompositionLayer,
 } from '../../src/index.ts';
 
@@ -70,7 +71,7 @@ const loadConfiguredSnapshot = (environment: Readonly<Record<string, string>>, b
         ),
       ),
     );
-    return yield* authority.load;
+    return yield* loadActiveApplicationComposition(authority);
   });
 
 it.effect('delivers one decoded, bounded active Application Composition snapshot', () =>
@@ -92,7 +93,7 @@ it.effect('delivers one decoded, bounded active Application Composition snapshot
         ),
       ),
     );
-    const loadedSnapshot = yield* authority.load;
+    const loadedSnapshot = yield* loadActiveApplicationComposition(authority);
 
     expect(Schema.is(ActiveApplicationCompositionSnapshotSchema)(loadedSnapshot)).toBe(true);
     expect(loadedSnapshot.composition).toEqual(composition);
@@ -139,7 +140,9 @@ it.effect('preserves a typed source-unavailable failure through the service laye
     reason: 'Deployment composition publisher is unavailable',
   });
   return Effect.gen(function* sourceUnavailable() {
-    const failure = yield* (yield* ActiveApplicationCompositionService).load.pipe(Effect.flip);
+    const failure = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService).pipe(
+      Effect.flip,
+    );
     expect(failure).toBe(unavailable);
   }).pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.fail(unavailable))));
 });
@@ -173,13 +176,13 @@ it.effect('the snapshot authority lease bounds source caching and cannot be exte
       ),
     );
     expect(requests).toBe(0);
-    expect((yield* authority.load).composition.revision).toBe(revision);
+    expect((yield* loadActiveApplicationComposition(authority)).composition.revision).toBe(revision);
     expect(requests).toBe(1);
     yield* TestClock.adjust('400 millis');
-    expect((yield* authority.load).composition.revision).toBe(revision);
+    expect((yield* loadActiveApplicationComposition(authority)).composition.revision).toBe(revision);
     expect(requests).toBe(1);
     yield* TestClock.adjust('100 millis');
-    const failure = yield* Effect.flip(authority.load);
+    const failure = yield* Effect.flip(loadActiveApplicationComposition(authority));
     expect(failure.cause).toBe('Application Composition authority is expired or not yet valid');
     expect(requests).toBe(2);
   }),
@@ -223,13 +226,13 @@ it.effect('pins authoritative HTTP transport across caller overrides and cache r
         Effect.provideService(FetchHttpClient.Fetch, rejectingOwnerFetch),
         Effect.provideService(FetchHttpClient.RequestInit, { cache: 'force-cache', redirect: 'follow' }),
       );
-    expect((yield* underOwnerRelay(authority.load)).composition.revision).toBe(revision);
+    expect((yield* underOwnerRelay(loadActiveApplicationComposition(authority))).composition.revision).toBe(revision);
     expect(sourceRequests).toBe(1);
     expect(ownerRequests).toBe(0);
-    expect((yield* underOwnerRelay(authority.load)).composition.revision).toBe(revision);
+    expect((yield* underOwnerRelay(loadActiveApplicationComposition(authority))).composition.revision).toBe(revision);
     expect(sourceRequests).toBe(1);
     yield* TestClock.adjust('31 seconds');
-    expect((yield* underOwnerRelay(authority.load)).composition.revision).toBe(revision);
+    expect((yield* underOwnerRelay(loadActiveApplicationComposition(authority))).composition.revision).toBe(revision);
     expect(sourceRequests).toBe(2);
     yield* underOwnerRelay(unrelatedOwnerCall);
     expect(ownerRequests).toBe(1);
@@ -263,7 +266,7 @@ it.effect('builds the live authority service before source configuration is avai
     );
     expect(requestCount).toBe(0);
 
-    const failure = yield* service.load.pipe(
+    const failure = yield* loadActiveApplicationComposition(service).pipe(
       Effect.provide(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({

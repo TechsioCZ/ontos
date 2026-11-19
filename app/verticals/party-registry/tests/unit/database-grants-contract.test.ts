@@ -50,6 +50,20 @@ it('declares worker read policies on exactly the Party tables the worker may sel
   }
 });
 
+it('keeps saved Action replies out of the cross-tenant worker read of Action invocations', () => {
+  const grant = PARTY_REGISTRY_WORKER_DATABASE_GRANTS.tables.find(
+    (candidate) => candidate.table === 'core.action_invocations',
+  );
+  expect(grant?.privileges).toEqual(['select']);
+  expect(grant?.columns?.select).toBeDefined();
+  expect(grant?.columns?.select).not.toContain('committed_reply_json');
+  // The columns Core's outbox and completion publication read for the originating invocation.
+  expect(grant?.columns?.select).toEqual(
+    expect.arrayContaining(['action_invocation_id', 'tenant_id', 'legal_entity_id', 'principal_id', 'status']),
+  );
+  expect(grant?.columns?.select).toEqual(expect.arrayContaining(['correlation_id']));
+});
+
 it('never grants table-wide reads of Core identity tables', () => {
   for (const grants of [PARTY_REGISTRY_REQUEST_DATABASE_GRANTS, PARTY_REGISTRY_WORKER_DATABASE_GRANTS]) {
     for (const grant of grants.tables) {

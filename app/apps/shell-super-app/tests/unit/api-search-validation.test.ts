@@ -22,6 +22,7 @@ import {
   defineVerticalRuntimeRegistration,
   defineTenantModuleEntrypoint,
   makeActiveApplicationCompositionLayer,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { GatewayScopeGrantInput, ReadCoreError, TrustedPrincipalContext } from '@app/core-runtime';
 import {
@@ -572,7 +573,7 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
   });
   const ownerHarness = yield* makeReadTestHarness({
     access: 'allowed',
-    applicationComposition: { load: Effect.succeed(snapshot) },
+    applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: neverPrivateQuery,
     expectedDeployment: ownerContract.deployment,
@@ -652,7 +653,7 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
   const readRegistrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
   harness = yield* makeReadTestHarness({
     access: 'allowed',
-    applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+    applicationComposition: makeActiveApplicationCompositionService(makeCompositionSnapshot(catalog.contracts)),
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
     expectedDeployment: catalog.composition.shell.deployment,

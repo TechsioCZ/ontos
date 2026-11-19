@@ -3,7 +3,7 @@ import { Command, Flag } from 'effect/cli';
 
 import { parse } from 'yaml';
 
-import { loadCiMatrices } from './ci/ci-matrices.mts';
+import { knownTask, loadCiMatrices, taskDirectory } from './ci/ci-matrices.mts';
 import type { CiIntegrationEntry, CiScope, CiTemplates } from './ci/ci-matrices.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
@@ -19,12 +19,6 @@ export interface CiWorkspacePackage {
   readonly directory: string;
   /** Package-relative files the manifest's `exports` map points at: what other packages consume from it. */
   readonly exportTargets?: readonly string[];
-  /**
-   * False when the manifest declares no `test:integration` script: every integration row runs
-   * `pnpm -r --if-present … run test:integration`, so such a package makes no integration suite run and an
-   * exclusion-only row must not pay for its services. Absent means unknown and covered.
-   */
-  readonly integrationSuite?: boolean;
   readonly name: string;
   readonly uncertain?: boolean;
 }
@@ -101,10 +95,7 @@ const gateIds = [
   'static-contracts',
   'format-and-lint',
   'service-integration',
-  'integration-seed-proof',
-  'browser-integration',
   'node-artifact-build',
-  'node-artifact-proof',
 ] as const;
 
 const rootDocumentation = (changedPath: string) =>
@@ -181,14 +172,28 @@ const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
   );
 };
 
+/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
+const GLOBSTAR = '<<globstar>>';
+const pathGlobMatcher = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .replaceAll('**', GLOBSTAR)
+      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
+      .replaceAll('*', '[^/]*')
+      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
+      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
+      .replaceAll(GLOBSTAR, '.*')}$`,
+    'u',
+  );
+
 /**
- * Everything the migrated integration database is made of. This list mirrors, entry for entry, the `hashFiles(...)`
- * arguments of the step named "Name the integration seed cache" in
- * .github/workflows/ultramodern-workspace-gates.yml. The two lists must stay comparable by eye: the seed key and the
- * Fresh Database Integration rows have to agree on what can change the database, because a diff that names no new
- * seed cannot change what those rows prove.
+ * What a migration, a database bootstrap or a recovery proves, and those proofs themselves: the migrations and their
+ * runner, the database identities and grants, the access catalog, the service images, the lane scripts and matrices
+ * that prepare every owner row's database, and every migration or recovery test. These are the inputs that selected the
+ * demo trunk's former Fresh Database rows (app/scripts/tests/plan-ci-selection.test.mts); a change to one runs the
+ * migration proof tasks below beside its owners.
  */
-export const integrationSeedInputs: readonly string[] = [
+const migrationProofInputs = [
   'app/**/drizzle*/**',
   'app/**/drizzle*.config.ts',
   'app/database/**',
@@ -203,52 +208,43 @@ export const integrationSeedInputs: readonly string[] = [
   'app/scripts/verify-application-db-schema.mts',
   'app/scripts/audit-database-trust-boundaries.mts',
   'app/scripts/prove-zerops-migrator-artifact.sh',
-  'app/scripts/ci/integration-seed*.mts',
-  // The fresh-database tests: a change to that list changes which rows may restore the seed.
+  'app/scripts/ci/*integration*',
   'app/scripts/ci-matrices*.json',
   'app/scripts/ci/ci-matrices.mts',
   'app/packages/core-runtime/spicedb/**',
-  'app/packages/core-runtime/src/install/**',
-  'app/packages/core-runtime/src/access/**',
-  'app/packages/core-runtime/src/permissions/**',
-  'app/packages/core-runtime/src/db/**',
   'app/topology/**',
   'app/docker-compose.yml',
   'app/zerops.yaml',
   'app/package.json',
   'app/pnpm-lock.yaml',
   'app/.mise.toml',
-  '!app/**/node_modules/**',
-  '!app/tools/**',
+  'app/**/tests/integration/*migration*',
+  'app/scripts/integration/*migration*',
+  'app/**/*stage-recovery*',
+  'app/scripts/integration/vat-deploy-sequence.test.mts',
+  'app/scripts/integration/migrator-runtime-owner-access.test.mts',
 ];
-
-/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
-const GLOBSTAR = '<<globstar>>';
-const seedInputMatcher = (glob: string) =>
-  new RegExp(
-    `^${glob
-      .replaceAll('**', GLOBSTAR)
-      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
-      .replaceAll('*', '[^/]*')
-      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
-      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
-      .replaceAll(GLOBSTAR, '.*')}$`,
-    'u',
-  );
-const seedInputs = integrationSeedInputs.filter((glob) => !glob.startsWith('!')).map(seedInputMatcher);
-const seedExclusions = integrationSeedInputs
-  .filter((glob) => glob.startsWith('!'))
-  .map((glob) => seedInputMatcher(glob.slice(1)));
-
-/** Whether a changed path names a new integration seed, and so can change what the fresh-database rows prove. */
-const namesNewSeed = (changedPath: string) =>
-  seedInputs.some((pattern) => pattern.test(changedPath)) &&
-  !seedExclusions.some((pattern) => pattern.test(changedPath));
+const migrationProofExclusions = ['app/**/node_modules/**', 'app/tools/**'];
+const migrationProofInput = (changedPath: string) =>
+  migrationProofInputs.some((glob) => pathGlobMatcher(glob).test(changedPath)) &&
+  !migrationProofExclusions.some((glob) => pathGlobMatcher(glob).test(changedPath));
+/**
+ * The tasks of scripts/ci/run-integration-suites.sh that run the migration and recovery proofs, each on a freshly reset
+ * lane database, by their owner's directory. A migration proof input selects all of them; an owner selects its own.
+ */
+const migrationProofTasks = new Map([
+  ['whole:migrator-owner-access', '.'],
+  ['whole:stage-recovery', '.'],
+  ['whole:vat-deploy-sequence', '.'],
+  ['whole:core-runtime-migrations', 'packages/core-runtime'],
+  ['whole:customer-context-migrations', 'verticals/commerce-customer-context'],
+  ['whole:party-migrations', 'verticals/party-registry'],
+]);
 
 /** Whether a path is one of the scope's paths: some glob matches it and no `!` glob does. */
 export const inScope = (scope: CiScope, changedPath: string) =>
-  scope.paths.some((glob) => !glob.startsWith('!') && seedInputMatcher(glob).test(changedPath)) &&
-  !scope.paths.some((glob) => glob.startsWith('!') && seedInputMatcher(glob.slice(1)).test(changedPath));
+  scope.paths.some((glob) => !glob.startsWith('!') && pathGlobMatcher(glob).test(changedPath)) &&
+  !scope.paths.some((glob) => glob.startsWith('!') && pathGlobMatcher(glob.slice(1)).test(changedPath));
 
 /**
  * The scopes a diff stays inside: every changed path that is not root documentation lies in one of them and none is
@@ -261,7 +257,11 @@ const diffScopes = (changedPaths: readonly string[], templates: Templates): read
     scope.source.every((name) => templates.source.some((entry) => entry.name === name)),
   );
   const paths = changedPaths.filter((changedPath) => !rootDocumentation(changedPath));
-  if (!valid || paths.length === 0 || paths.some(sensitivePath)) {
+  if (
+    !valid ||
+    paths.length === 0 ||
+    paths.some((changedPath) => sensitivePath(changedPath) || migrationProofInput(changedPath))
+  ) {
     return [];
   }
   const owners = paths.map((changedPath) => scopes.filter((scope) => inScope(scope, changedPath)));
@@ -298,13 +298,21 @@ const broadDiff = (
   changedPaths.some((changedPath) => broadPath(changedPath, rootPackages)) ||
   changedPaths.some((changedPath) => !rootDocumentation(changedPath) && pathOwners(changedPath, packages).length === 0);
 
-/** Whether a matrix names a package selector or a proof dependency this planner cannot resolve to a package. */
+/**
+ * Whether a matrix names a package selector, an integration task or a proof dependency this planner cannot resolve to
+ * a package. A package task in a directory outside the workspace graph matches no affected package: it widens the plan
+ * instead of vanishing from it.
+ */
 const unprovenTemplates = (templates: Templates, packages: readonly CiWorkspacePackage[]) =>
   templates.unit.some(({ commands }) => unknownFilters(commands)) ||
   templates.integration.some(
     (entry) =>
-      unknownFilters(entry['package-filters'] ?? '') ||
-      (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
+      (entry.tasks ?? []).some((task) => {
+        const directory = taskDirectory(task);
+        return (
+          !knownTask(task) || (directory !== undefined && !packages.some((owner) => owner.directory === directory))
+        );
+      }) || (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
   );
 
 interface PlanInput {
@@ -345,6 +353,23 @@ const planReason = (mode: PlanMode, input: PlanInput, broad: boolean, scopes: re
     : 'Affected selection is recorded in shadow mode; the complete suite remains required.';
 };
 
+/** The whole-owner tasks that run one root integration file (scripts/ci/run-integration-suites.sh). */
+const rootWholeTasks = new Set([
+  'whole:migrations',
+  'whole:organization',
+  'whole:organization-identity',
+  'whole:customer-readback',
+  'whole:customer-roundtrip',
+  'whole:pricing-routes',
+]);
+/** The whole-owner tasks that run one file or project of a package's suite, by that package's directory. */
+const packageWholeTasks = new Map([
+  ['whole:party-worker', 'verticals/party-registry'],
+  ['whole:pricing', 'verticals/pricing'],
+  ['whole:privacy', 'verticals/privacy'],
+  ['whole:privacy-recovery', 'verticals/privacy'],
+]);
+
 export const planCiChecks = (input: PlanInput) => {
   const { packages, templates } = input;
   const owned = input.changedPaths.flatMap((changedPath) =>
@@ -370,32 +395,38 @@ export const planCiChecks = (input: PlanInput) => {
     broadDiff(input.changedPaths, packages, rootPackagesOf(templates)) ||
     seeds.length === 0;
   const mode = !broad && input.applyAffected ? 'affected' : 'full';
-  const freshDatabaseTests = new Set((templates['fresh-database-tests'] ?? []).map((file) => `app/${file}`));
+  const affectedDirectories = new Set(affected.map(({ directory }) => directory));
+  const rootAffected = affectedDirectories.has('.');
+  const migrationProofChanged = input.changedPaths.some(migrationProofInput);
+  // Each task names its owner, so the task list alone decides what an affected plan keeps.
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
+    // A row that is neither a package suite nor the browser suite proves the deployment bootstrap or the
+    // build outputs themselves: it reads no matrix input and has nothing to narrow, so affected selection
+    // always keeps it.
+    if (entry.suite !== 'integration' && entry.suite !== 'browser') {
+      return [entry];
+    }
     if (entry.suite === 'browser') {
-      return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
+      return affectedDirectories.has('apps/shell-super-app') ? [entry] : [];
     }
-    // The files that migrate or recover their own database run from a fresh preparation, to prove the migration,
-    // database, grant, topology and image inputs the seed is made of. A diff that names none of them cannot change
-    // what they prove, so these rows follow the diff exactly as the seed cache key does — plus the diff that
-    // changes one of the very files they run.
-    if (entry['fresh-database-tests'] === 'only') {
-      return input.changedPaths.some((changedPath) => namesNewSeed(changedPath) || freshDatabaseTests.has(changedPath))
-        ? [entry]
-        : [];
-    }
-    const packageFilters = entry['package-filters'] ?? '';
-    const selected =
-      packageFilters.length === 0
-        ? []
-        : matchingPackages(packageFilters, affected).filter(({ integrationSuite }) => integrationSuite !== false);
-    const rootSuite = entry['root-suite'] === true && affected.some(({ directory }) => directory === '.');
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
-    if (selected.length === 0 && !rootSuite && !proofAffected) {
-      return [];
-    }
-    const filters = selected.length === 0 ? '' : selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
-    return [{ ...entry, 'package-filters': filters, 'root-suite': rootSuite }];
+    // A whole-owner task runs one file of its owner's suite on its own; it follows that owner exactly as the file did
+    // inside the suite: the root conformance proofs follow the root package, the others their package directory.
+    const tasks = (entry.tasks ?? []).filter((task) => {
+      const migrationProofOwner = migrationProofTasks.get(task);
+      if (migrationProofOwner !== undefined) {
+        return migrationProofChanged || affectedDirectories.has(migrationProofOwner);
+      }
+      if (task.startsWith('root:') || rootWholeTasks.has(task)) {
+        return rootAffected;
+      }
+      if (task.startsWith('whole:preproposal-')) {
+        return proofAffected;
+      }
+      const owner = packageWholeTasks.get(task) ?? taskDirectory(task);
+      return owner !== undefined && affectedDirectories.has(owner);
+    });
+    return tasks.length > 0 ? [{ ...entry, tasks }] : [];
   });
   // A change only the root package owns is in no unit row: every row excludes the workspace root with
   // `--filter '!.'`, and `app/scripts/check-ci-gates.sh` requires the workspace unit gate to have run in an
@@ -431,23 +462,26 @@ export const planCiChecks = (input: PlanInput) => {
   const built = effectiveMode === 'scoped' ? 0 : 1;
   // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
   // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
-  // Eligible rows restore the cached seed when it exists and prepare their own database otherwise; the seed
-  // producer runs whenever an integration row does, to prove and refresh it.
+  // No job holds a runner while it waits for another: the database producer (service-integration) migrates, exports
+  // and uploads this run's database whenever an owner row will restore it, and starts with the run like the build
+  // shards; the owner rows need both, the bootstrap row needs the build shards, and the browser checks migrate their
+  // own database and need nobody.
+  const owners = integration.filter(({ suite }) => suite === 'integration');
   const jobs = {
     browser: integration.filter(({ suite }) => suite === 'browser'),
-    services: integration.filter(({ suite }) => suite === 'integration'),
+    database: owners.length === 0 ? [] : [{ name: 'Prepare integration database', suite: 'database' as const }],
+    owners,
+    topology: integration.filter(({ suite }) => suite === 'bootstrap'),
     unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
     unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
   };
   // Every gate names its row count; gates without a matrix always run one row, except that a scoped plan builds no
-  // unit. The seed producer runs whenever an integration row does.
+  // unit. The owner rows, the bootstrap row and the browser checks report through the integration gate
+  // (app/scripts/check-ci-gates.sh).
   const rows = {
-    'browser-integration': jobs.browser.length,
     'format-and-lint': 3,
-    'integration-seed-proof': jobs.services.length,
     'node-artifact-build': built,
-    'node-artifact-proof': built,
-    'service-integration': jobs.services.length,
+    'service-integration': jobs.database.length,
     'static-contracts': 1,
     'workspace-gate': source.length,
     'workspace-unit': jobs.unitPlain.length,
@@ -481,7 +515,6 @@ const ManifestSchema = Schema.Struct({
   ontosContractOwner: Schema.optionalKey(Schema.Struct({ packageName: Schema.String })),
   optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
 /** Every file an `exports` map points at, package-relative, through conditions and fallback lists. */
@@ -569,7 +602,6 @@ const readWorkspace = (rootPackages: readonly string[]) =>
         ],
         directory,
         exportTargets: exportTargets(manifest.exports),
-        integrationSuite: manifest.scripts?.['test:integration'] !== undefined,
         name: manifest.name,
         uncertain:
           // `topology/ownership.json` is the OntOS module map: it names the root-level storefront packages nowhere.
@@ -614,9 +646,11 @@ const cli = Command.make(
       });
       const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
       const encoded = yield* Effect.all({
-        browser: encode(plan.jobs.browser),
         expected: encode(plan.expected),
-        integration: encode(plan.jobs.services),
+        integration: encode(plan.jobs.database),
+        integrationBrowser: encode(plan.jobs.browser),
+        integrationOwners: encode(plan.jobs.owners),
+        integrationTopology: encode(plan.jobs.topology),
         source: encode(plan.source),
         unit: encode(plan.jobs.unitPlain),
         'unit-artifacts': encode(plan.jobs.unitArtifacts),
@@ -633,8 +667,8 @@ const cli = Command.make(
           plan.reason,
           '',
           `Affected packages: ${plan.affectedPackages.join(', ') || 'full/unknown'}.`,
-          `Required integration shards: ${plan.integration.length} of ${templates.integration.length}.`,
-          `Affected-plan integration shards: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
+          `Required integration rows: ${plan.integration.length} of ${templates.integration.length}.`,
+          `Affected-plan integration rows: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
           '',
           `Mode: ${plan.mode}. Source rows: ${plan.source.map(({ name }) => name).join(', ')}.`,
           'Only a candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates; every other run is complete.',

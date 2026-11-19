@@ -31,6 +31,18 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../party-registry"
+    },
+    {
+      "path": "../legal-agreements"
+    },
+    {
+      "path": "../property-portfolio"
+    },
+    {
+      "path": "../finance-billing"
     }
   ]
 }

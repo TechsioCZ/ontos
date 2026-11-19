@@ -461,14 +461,15 @@ it.layer(correctionReuseLayer, { excludeTestServices: true, timeout: 120_000 })(
         expect(durable.find((row) => row.officialIdentifierId === existing.officialIdentifierRef.resourceId)).toEqual(
           preserved,
         );
-        const replay = yield* Effect.flip(
-          h.correct(thirdParty, old.officialIdentifierRef.resourceId, '01000004', {
-            ...unknownOptions,
-            correlationId: yield* nextId,
-          }),
-        );
-        expect(Predicate.isTagged(replay, 'PartyCommandAlreadyCommittedProblem')).toBe(true);
+        const durableCorrections = yield* h.corrections();
+        // The same-key resend gets the saved reply of the unacknowledged commit; nothing runs again.
+        const replay = yield* h.correct(thirdParty, old.officialIdentifierRef.resourceId, '01000004', {
+          ...unknownOptions,
+          correlationId: yield* nextId,
+        });
+        expect(Option.getOrThrow(replay.replacementAssertionId)).toBe(existing.officialIdentifierRef.resourceId);
         expect(yield* h.rows()).toEqual(durable);
+        expect(yield* h.corrections()).toEqual(durableCorrections);
         const history = yield* h.history(thirdParty);
         expect(history.items.filter((row) => row.state === 'ACTIVE').map((row) => row.officialIdentifierRef)).toEqual([
           existing.officialIdentifierRef,
@@ -693,13 +694,12 @@ it.layer(correctionReuseLayer, { excludeTestServices: true, timeout: 120_000 })(
         expect(detail.actingPrincipalId).toBe(h.principal.principalId);
         expect(yield* ownCorrections()).toHaveLength(1);
         const evidence = yield* h.fixture.evidence(h.coreEvidenceExecutor);
-        const replay = yield* Effect.flip(
-          h.correct(partyRef, a.officialIdentifierRef.resourceId, '26168685', {
-            ...commandOptions,
-            correlationId: yield* nextId,
-          }),
-        );
-        expect(Predicate.isTagged(replay, 'PartyCommandAlreadyCommittedProblem')).toBe(true);
+        const replay = yield* h.correct(partyRef, a.officialIdentifierRef.resourceId, '26168685', {
+          ...commandOptions,
+          correlationId: yield* nextId,
+        });
+        expect(replay).toEqual(corrected);
+        expect(yield* ownCorrections()).toHaveLength(1);
         expect((yield* h.fixture.evidence(h.coreEvidenceExecutor)).events).toHaveLength(evidence.events.length);
         expect((yield* h.fixture.evidence(h.coreEvidenceExecutor)).outbox).toHaveLength(evidence.outbox.length);
         expect((yield* h.resolve(detail.actionInvocationId)).state).toBe('COMMITTED');

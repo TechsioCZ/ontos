@@ -2,7 +2,10 @@ import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
 import type { ActiveApplicationCompositionUnavailableError } from './active-application-composition-errors.ts';
-import type { ActiveApplicationCompositionSnapshot } from './active-application-composition.ts';
+import type {
+  ActiveApplicationCompositionSnapshot,
+  CheckedActiveApplicationComposition,
+} from './active-application-composition.ts';
 import type { ApplicationComposition } from './application-composition.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
 
@@ -19,10 +22,10 @@ export interface ProcessCompositionValidationRegistry {
   readonly catalog: ValidatedCompositionCatalogLookup;
   readonly decode: (
     encoded: string,
-  ) => Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>;
+  ) => Effect.Effect<CheckedActiveApplicationComposition, ActiveApplicationCompositionUnavailableError>;
   readonly validate: (
     snapshot: ActiveApplicationCompositionSnapshot,
-  ) => Effect.Effect<ActiveApplicationCompositionSnapshot, ActiveApplicationCompositionUnavailableError>;
+  ) => Effect.Effect<CheckedActiveApplicationComposition, ActiveApplicationCompositionUnavailableError>;
 }
 
 export class ProcessCompositionValidation extends Context.Service<

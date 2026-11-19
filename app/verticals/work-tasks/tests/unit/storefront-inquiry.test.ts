@@ -4,6 +4,7 @@ import {
   ActiveApplicationCompositionService,
   ContextAccess,
   TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import type { OperationalScope } from '@app/core-runtime';
@@ -195,7 +196,7 @@ it('is hidden from the MCP catalogue, so no agent tool runs it', () => {
 
 const unused = () => Effect.die('Unexpected boundary');
 const runtimeDependencies = Layer.mergeAll(
-  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unused())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unused() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

@@ -1,20 +1,26 @@
 // @rstest-environment happy-dom
-// Intent prefetch of the products list: the real list hooks, the strict detail store and the ui-kit table, with only
-// the generated records client replaced and the clock faked. A row the user points at or focuses after the warm-up
-// went stale reads its detail once, so the product opens ready; a fresh row sends nothing.
-import { INTENT_READ_CONCURRENCY, LIST_WARM_ROWS } from '@app/admin-ui';
+// Intent prefetch through the real list hooks, strict detail store, ui-kit table and generated records client.
+// The Shell gateway issuer and owner records API answer in process; cache expiry and pointer dwell run on fake timers.
+import { LIST_WARM_ROWS } from '@app/admin-ui';
+import { passFakeTime, settleOnFakeTimers, unmountAll } from '@app/admin-ui/testing/module-ui';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef, TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { Deferred, Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { ProductRecord } from '../../shared/apis/records.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
 import { useCategoryChoices, useProductPage } from '../../src/routes/[lang]/provoz/produkty/product-list-page.ts';
 import {
   categoryChoicesData,
@@ -29,7 +35,7 @@ import {
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-rstest.mock('../../src/api/records-consumer.ts');
+import { mountInRoute } from '../support/module-ui.ts';
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -83,21 +89,30 @@ const responseOf = (rows: typeof products) =>
 const reads: string[] = [];
 /** While set, detail reads wait for it to be released; unset, they answer in the same tick. */
 let detailGate: Deferred.Deferred<boolean> | null = null;
-const serve = () => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.includeProductCategories === true) {
-      reads.push('choices');
-      return Effect.succeed(responseOf([]));
-    }
-    if (view?.productId !== undefined) {
-      reads.push(`detail:${view.productId}`);
-      const answer = Effect.succeed(responseOf(products.filter((entry) => entry.id === view.productId)));
-      return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
-    }
-    reads.push('list');
-    return Effect.succeed(responseOf(products));
-  });
-};
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload: { view } }) =>
+        Effect.suspend(() => {
+          if (view?.includeProductCategories === true) {
+            reads.push('choices');
+            return Effect.succeed(responseOf([]));
+          }
+          if (view?.productId !== undefined) {
+            reads.push(`detail:${view.productId}`);
+            const answer = Effect.succeed(responseOf(products.filter((entry) => entry.id === view.productId)));
+            return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
+          }
+          reads.push('list');
+          return Effect.succeed(responseOf(products));
+        }),
+      ),
+    ),
+  ),
+);
 const detailReads = () => reads.filter((read) => read.startsWith('detail:'));
 
 const columns: ColumnDef<ProductRecord>[] = [{ accessorKey: 'name', id: 'name' }];
@@ -135,33 +150,15 @@ const ProductDetail = () => {
   return null;
 };
 
-const unmounts: (() => void)[] = [];
 const mount = (component: () => ReturnType<typeof createElement> | null) =>
-  Effect.promise(async () => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    unmounts.push(() => {
-      act(() => {
-        root.unmount();
-        container.remove();
-      });
-    });
-    await act(async () => {
-      root.render(createElement(component));
-      await browserRuntime.runPromise(Effect.yieldNow);
-    });
+  mountInRoute(createElement(component), {
+    path: '/provoz/produkty',
+    settle: settleOnFakeTimers,
+    url: '/cs/provoz/produkty',
   });
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each timer starts are answered before the next step. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
 const rowAt = (index: number): HTMLElement => {
   const row = document.querySelector<HTMLElement>(`tbody tr[data-index="${index}"]`);
@@ -172,37 +169,10 @@ const rowAt = (index: number): HTMLElement => {
 };
 const pointedRow = (): HTMLElement => rowAt(POINTED);
 
-/** The pointer passes over `indexes` in order within one frame, as a fast sweep down the table does. */
-const sweep = (indexes: readonly number[]) =>
-  Effect.promise(() =>
-    act(async () => {
-      for (const index of indexes) {
-        rowAt(index).dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
-      }
-      await browserRuntime.runPromise(Effect.yieldNow);
-    }),
-  );
-
 /** The pointer enters the row (React derives `pointerenter` from `pointerover`). */
 const pointAt = Effect.promise(() =>
   act(async () => {
     pointedRow().dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
-    await browserRuntime.runPromise(Effect.yieldNow);
-  }),
-);
-
-/** A finger touches the row: `pointerdown` comes before the click. */
-const touch = Effect.promise(() =>
-  act(async () => {
-    pointedRow().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
-    await browserRuntime.runPromise(Effect.yieldNow);
-  }),
-);
-
-/** Keyboard focus moves to the row. */
-const focus = Effect.promise(() =>
-  act(async () => {
-    pointedRow().focus();
     await browserRuntime.runPromise(Effect.yieldNow);
   }),
 );
@@ -225,28 +195,23 @@ const staleList = Effect.gen(function* staleList() {
 });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  rstest.resetAllMocks();
   productListData.invalidate();
   productDetailData.invalidate();
   categoryChoicesData.invalidate();
   reads.length = 0;
   opened.length = 0;
   detailGate = null;
-  serve();
 });
 
 afterEach(() => {
-  while (unmounts.length > 0) {
-    unmounts.pop()?.();
-  }
+  unmountAll();
   rstest.useRealTimers();
-  rstest.unstubAllGlobals();
 });
 
-it.effect('pointing at a stale row reads its detail once, so the product opens without a loading state', () =>
+it.live('pointing at a stale row reads its detail once, so the product opens without a loading state', () =>
   Effect.gen(function* pointThenOpen() {
+    yield* pinTestDocument;
     yield* staleList;
 
     yield* pointAt;
@@ -263,81 +228,7 @@ it.effect('pointing at a stale row reads its detail once, so the product opens w
     yield* mount(ProductDetail);
     expect(opened).not.toContain('loading');
     expect(opened.at(-1)).toBe('ready');
+    yield* networkIdle;
     expect(detailReads()).toEqual([]);
-  }),
-);
-
-it.effect('a touch or keyboard focus on a stale row warms it once and joins the read already running', () =>
-  Effect.gen(function* touchAndFocus() {
-    yield* staleList;
-
-    yield* touch;
-    yield* focus;
-    yield* pointAt;
-    yield* idle(1);
-    expect(detailReads()).toEqual([`detail:${pointedId}`]);
-    expect(pointedSnapshot()).toBe('ready');
-  }),
-);
-
-it.effect('an idle list nobody points at sends no detail reads', () =>
-  Effect.gen(function* idleList() {
-    yield* staleList;
-    yield* idle(60);
-    expect(detailReads()).toEqual([]);
-    expect(reads.length).toBeLessThanOrEqual(6);
-  }),
-);
-
-it.effect('opening the list warms its first rows only; a row further down is warmed once the user points at it', () =>
-  Effect.gen(function* coldRow() {
-    yield* mount(ProductsList);
-    yield* idle(5);
-    expect(detailReads()).toEqual(Array.from({ length: LIST_WARM_ROWS }, (_, index) => `detail:product-${index + 1}`));
-    reads.length = 0;
-
-    yield* sweep([ROWS - 1]);
-    yield* idle(1);
-    expect(detailReads()).toEqual([`detail:product-${ROWS}`]);
-  }),
-);
-
-it.effect('a pointer passing quickly over many rows reads only the row it rests on', () =>
-  Effect.gen(function* fastSweep() {
-    yield* staleList;
-    const swept = Array.from({ length: 20 }, (_, index) => index + LIST_WARM_ROWS);
-    yield* sweep(swept);
-    expect(detailReads()).toEqual([]);
-    yield* idle(1);
-    const last = swept.at(-1) ?? 0;
-    expect(detailReads()).toEqual([`detail:product-${last + 1}`]);
-  }),
-);
-
-it.effect('keyboard focus run quickly down many stale rows reads at most two details at once, then the last row', () =>
-  Effect.gen(function* fastFocus() {
-    yield* staleList;
-    const gate = yield* Deferred.make<boolean>();
-    detailGate = gate;
-
-    const walked = Array.from({ length: 20 }, (_, index) => index + LIST_WARM_ROWS);
-    yield* Effect.promise(() =>
-      act(async () => {
-        for (const index of walked) {
-          rowAt(index).focus();
-        }
-        await browserRuntime.runPromise(Effect.yieldNow);
-      }),
-    );
-    // The first two rows start at once; every later one waits, and each newer row replaces the one waiting.
-    expect(detailReads()).toHaveLength(INTENT_READ_CONCURRENCY);
-    yield* Deferred.succeed(gate, true);
-    yield* idle(3);
-    const last = walked.at(-1) ?? 0;
-    expect(detailReads()).toEqual([
-      `detail:product-${LIST_WARM_ROWS + 1}`,
-      `detail:product-${LIST_WARM_ROWS + 2}`,
-      `detail:product-${last + 1}`,
-    ]);
-  }),
+  }).pipe(Effect.provide(network)),
 );

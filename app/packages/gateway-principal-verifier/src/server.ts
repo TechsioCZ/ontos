@@ -14,8 +14,9 @@ import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principa
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
+import type { ActiveApplicationCompositionLoad } from '@app/core-runtime/modules/active-application-composition';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
   WORKLOAD_GATEWAY_ASSERTION_VERSION,
@@ -431,8 +432,8 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
       token: string,
       options: GatewayPrincipalVerificationOptions,
       loadComposition: Effect.Effect<
-        Effect.Success<ActiveApplicationCompositionService['Service']['load']>,
-        Effect.Error<ActiveApplicationCompositionService['Service']['load']>,
+        Effect.Success<ActiveApplicationCompositionLoad>,
+        Effect.Error<ActiveApplicationCompositionLoad>,
         R
       >,
     ): Effect.fn.Return<VerifiedGatewayPrincipal, ActionPrincipalError, R> {
@@ -485,7 +486,6 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
       }
       // The composition is read only after the signature, audience and issuer checks pass, as on main.
       const snapshot = yield* loadComposition.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
         Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
       );
       const approvedDeploymentOf = (appId: string) =>
@@ -639,7 +639,7 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
       expectedDeployment,
       token,
       options,
-      ActiveApplicationCompositionService.pipe(Effect.flatMap((composition) => composition.load)),
+      ActiveApplicationCompositionService.pipe(Effect.flatMap(loadActiveApplicationComposition)),
     );
   },
 );
@@ -793,8 +793,7 @@ export const makeReferenceGatewayCredentialSource = Effect.fn('GatewayPrincipalV
         if (credential === undefined) {
           return yield* Effect.fail(unavailableError());
         }
-        const snapshot = yield* composition.load.pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+        const snapshot = yield* loadActiveApplicationComposition(composition).pipe(
           Effect.mapError((cause) => Object.defineProperty(unavailableError(), 'cause', { value: cause })),
         );
         const module = snapshot.composition.modules.find((entry) => entry.deployment.appId === audience);
@@ -802,7 +801,13 @@ export const makeReferenceGatewayCredentialSource = Effect.fn('GatewayPrincipalV
           return yield* Effect.fail(invalidError());
         }
         const token = yield* readBearer(credential.authorization);
-        const { principal } = yield* verifyToken(audience, module.deployment, token, {}, composition.load);
+        const { principal } = yield* verifyToken(
+          audience,
+          module.deployment,
+          token,
+          {},
+          loadActiveApplicationComposition(composition),
+        );
         if (
           principal.tenantId !== scope.tenantId ||
           principal.principalId !== scope.principalId ||

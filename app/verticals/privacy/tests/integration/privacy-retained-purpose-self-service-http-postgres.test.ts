@@ -17,6 +17,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
@@ -151,7 +152,6 @@ import {
 import { RecordNoticeProvisionResultSchema } from '../../shared/actions/record-notice-provision.ts';
 import { privacySubjectRefForParty } from '@app/consent-authority-contracts';
 import {
-  AcknowledgePrivacyNoticeActionAlreadyCommittedProblemSchema,
   AcknowledgePrivacyNoticeActionAuthenticationProblemSchema,
   AcknowledgePrivacyNoticeActionConflictProblemSchema,
   AcknowledgePrivacyNoticeActionIneligibleProblemSchema,
@@ -1590,7 +1590,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   // The Privacy runtime attaches to the creator's own identities, so it attaches before the reader is repurposed.
   const privacyFixture = yield* Effect.acquireRelease(
     makeLiveOperationFixtureRuntime({
-      applicationComposition: { load: Effect.succeed(initialSnapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(initialSnapshot)),
       configuration: fixture.runtimeHandoff.configuration,
       expectedDeployment: privacyOwner.deployment,
       handoff: fixture.runtimeHandoff,
@@ -2383,7 +2383,10 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       Layer.provide(
         Layer.merge(
           fixtureServices,
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(initialSnapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(initialSnapshot)),
+          ),
         ),
       ),
     );
@@ -2842,23 +2845,14 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       acknowledgementAudit,
     );
     const originalAcknowledgementFacts = yield* noticeFacts();
-    // A fresh genuine assertion with the ORIGINAL command key must resolve Core's terminal
-    // invocation rather than execute the owner handler or append any owner/audit/access fact.
+    // A fresh genuine assertion with the ORIGINAL command key must receive Core's saved reply
+    // rather than execute the owner handler or append any owner/audit/access fact.
     const replayTransport = yield* privacyTransport('account', acknowledgementKey);
-    const committed = yield* executeAcknowledgePrivacyNoticeWithAuthorization(
-      acknowledgementPayload,
-      ...replayTransport,
-    ).pipe(
-      Effect.flip,
-      Effect.mapError(() => failed('ack-terminal-replay-succeeded')),
-      Effect.flatMap(Schema.decodeUnknownEffect(AcknowledgePrivacyNoticeActionAlreadyCommittedProblemSchema)),
+    const replayed = yield* requireExecutionResult(
+      AcknowledgePrivacyNoticeResultSchema,
+      executeAcknowledgePrivacyNoticeWithAuthorization(acknowledgementPayload, ...replayTransport),
     );
-    expect(committed).toMatchObject({
-      code: 'action_already_committed',
-      invocationId: initialAckEvidence.invocation.actionInvocationId,
-      resolution: 'REFRESH_GOVERNED_READS',
-      retryCommand: false,
-    });
+    expect(replayed).toEqual(acknowledgement);
     expect(yield* noticeFacts()).toEqual(originalAcknowledgementFacts);
     expect(yield* evidenceFor(acknowledgementKey)).toEqual(initialAckEvidence);
 

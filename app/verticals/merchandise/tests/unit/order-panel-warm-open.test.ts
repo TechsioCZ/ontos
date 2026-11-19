@@ -1,18 +1,27 @@
 // @rstest-environment happy-dom
 // A warmed order opens at once. The real `useOrders` list (or the list warm-up itself) warms the rows, then the
 // detail mounts the way the orders route mounts it: `page.tsx` (side panel, with the list as its source) or
-// `order-detail-page.tsx` (full page, the default view, without a source). Only the records client is replaced.
+// `order-detail-page.tsx` (full page, the default view, without a source). The generated clients run against real in-process HTTP contracts.
 import { moduleChangeEvent, moduleWriteEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Deferred, Effect, Schema } from 'effect';
+import { passFakeTime, waitUntilOnFakeTimers } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Layer, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LIST_WARM_ROWS } from '@app/admin-ui';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeChangeOrderStatus } from '../../src/api/change-order-status-action-client.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { OrderSchema, ProductRecordSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { changeOrderStatusActionSchemaErrorLive } from '../../api/change-order-status-action-problems.ts';
+import { ChangeOrderStatusActionApi } from '../../shared/apis/change-order-status-action.ts';
 import { customerDirectoryData } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
 import {
   changeOrderStatuses,
@@ -28,11 +37,6 @@ import {
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { OrdersPageInput } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -107,25 +111,43 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
 const reads: string[] = [];
 /** While set, detail reads wait for it to be released; unset, they answer in the same tick. */
 let detailGate: Deferred.Deferred<boolean> | null = null;
-const serve = () => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.productIds !== undefined || view?.productId !== undefined) {
-      reads.push('detail');
-      const answer = Effect.succeed(responseOf({ products: [{ ...product, stockOnHand: register.stock }] }));
-      return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
-    }
-    if (view?.orderId !== undefined) {
-      reads.push('order');
-      return Effect.succeed(responseOf({ orders: orders.filter((order) => order.id === view.orderId) }));
-    }
-    if (view?.ordersLimit === 0) {
-      reads.push('count');
-      return Effect.succeed(responseOf({}));
-    }
-    reads.push('list');
-    return Effect.succeed(responseOf({ orders: orders.slice(0, view?.ordersLimit ?? ROWS) }));
-  });
-};
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const OwnerActionApi = ChangeOrderStatusActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload: { view } }) =>
+        Effect.suspend(() => {
+          if (view?.productIds !== undefined || view?.productId !== undefined) {
+            reads.push('detail');
+            const answer = Effect.succeed(responseOf({ products: [{ ...product, stockOnHand: register.stock }] }));
+            return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
+          }
+          if (view?.orderId !== undefined) {
+            reads.push('order');
+            return Effect.succeed(responseOf({ orders: orders.filter((order) => order.id === view.orderId) }));
+          }
+          if (view?.ordersLimit === 0) {
+            reads.push('count');
+            return Effect.succeed(responseOf({}));
+          }
+          reads.push('list');
+          return Effect.succeed(responseOf({ orders: orders.slice(0, view?.ordersLimit ?? ROWS) }));
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'changeOrderStatusAction', (group) =>
+      group.handle('execute', () =>
+        Effect.sync(() => Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: ['order-1'], revision: 8 })),
+      ),
+    ).pipe(Layer.provide(changeOrderStatusActionSchemaErrorLive)),
+  ),
+);
 const count = (kind: string) => reads.filter((read) => read === kind).length;
 
 /** The detail status on every render, in order. */
@@ -194,15 +216,8 @@ const mountRoot = (component: () => ReturnType<typeof createElement>) =>
     });
   });
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each timer starts are answered before the next step. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
 /** The list warm-up without a mounted list: the first page, then its first rows' details. */
 const warmWithoutList = Effect.gen(function* warmWithoutList() {
@@ -216,18 +231,19 @@ const warmWithoutList = Effect.gen(function* warmWithoutList() {
 const dispatch = (event: Event) =>
   Effect.promise(() =>
     act(async () => {
-      globalThis.dispatchEvent(event);
+      window.dispatchEvent(event);
       await browserRuntime.runPromise(Effect.yieldNow);
     }),
   );
+
+/** One fake second while a gated read is held open, so the network cannot go idle. */
+const heldSecond = passFakeTime('1 second');
 
 const WARMED = Math.min(ROWS, LIST_WARM_ROWS);
 const DETAIL_READS = 2;
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  rstest.resetAllMocks();
   ordersPageData.invalidate();
   orderCountsData.invalidate();
   orderDetailData.invalidate();
@@ -238,7 +254,6 @@ beforeEach(() => {
   shownStock.length = 0;
   reads.length = 0;
   statuses.length = 0;
-  serve();
 });
 
 afterEach(() => {
@@ -246,11 +261,11 @@ afterEach(() => {
     unmount();
   }
   rstest.useRealTimers();
-  rstest.unstubAllGlobals();
 });
 
-it.effect('a row warmed by the list opens its panel at once: ready on the first render, no read', () =>
+it.live('a row warmed by the list opens its panel at once: ready on the first render, no read', () =>
   Effect.gen(function* warmedOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     expect(count('detail')).toBe(WARMED * DETAIL_READS);
@@ -261,11 +276,12 @@ it.effect('a row warmed by the list opens its panel at once: ready on the first 
     expect(statuses[0]).toBe('ready');
     expect(statuses).not.toContain('loading');
     expect(reads).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a row warmed by the list opens on the full order page at once: ready on the first render, no read', () =>
+it.live('a row warmed by the list opens on the full order page at once: ready on the first render, no read', () =>
   Effect.gen(function* warmedFullPage() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     reads.length = 0;
@@ -276,11 +292,12 @@ it.effect('a row warmed by the list opens on the full order page at once: ready 
     expect(statuses).not.toContain('loading');
     expect(count('detail')).toBe(0);
     expect(count('order')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a row warmed by pointer intent opens its panel at once: ready on the first render, no read', () =>
+it.live('a row warmed by pointer intent opens its panel at once: ready on the first render, no read', () =>
   Effect.gen(function* intentOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     reads.length = 0;
@@ -300,38 +317,38 @@ it.effect('a row warmed by pointer intent opens its panel at once: ready on the 
     expect(statuses[0]).toBe('ready');
     expect(statuses).not.toContain('loading');
     expect(reads).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect(
-  'a row warmed by pointer intent opens on the full order page at once: ready on the first render, no read',
-  () =>
-    Effect.gen(function* intentFullPage() {
-      yield* mountRoot(OrdersList);
-      yield* idle(5);
-      reads.length = 0;
-      const page = ordersPageData.snapshot(listInput);
-      const records = page.state === 'ready' ? page.value : undefined;
-      const row = document.createElement('tr');
-      row.dataset.index = String(LIST_WARM_ROWS);
-      const props = orderDetailIntent(listInput, records, records?.orders ?? []);
-      props.onPointerEnter({ currentTarget: row });
-      props.onFocus({ currentTarget: row });
-      yield* idle(1);
-      expect(count('detail')).toBe(DETAIL_READS);
-      reads.length = 0;
+it.live('a row warmed by pointer intent opens on the full order page at once: ready on the first render, no read', () =>
+  Effect.gen(function* intentFullPage() {
+    yield* pinTestDocument;
+    yield* mountRoot(OrdersList);
+    yield* idle(5);
+    reads.length = 0;
+    const page = ordersPageData.snapshot(listInput);
+    const records = page.state === 'ready' ? page.value : undefined;
+    const row = document.createElement('tr');
+    row.dataset.index = String(LIST_WARM_ROWS);
+    const props = orderDetailIntent(listInput, records, records?.orders ?? []);
+    props.onPointerEnter({ currentTarget: row });
+    props.onFocus({ currentTarget: row });
+    yield* idle(1);
+    expect(count('detail')).toBe(DETAIL_READS);
+    reads.length = 0;
 
-      yield* mountRoot(fullPageFor(`order-${LIST_WARM_ROWS + 1}`));
-      yield* idle(2);
-      expect(statuses[0]).toBe('ready');
-      expect(statuses).not.toContain('loading');
-      expect(count('detail')).toBe(0);
-      expect(count('order')).toBe(0);
-    }),
+    yield* mountRoot(fullPageFor(`order-${LIST_WARM_ROWS + 1}`));
+    yield* idle(2);
+    expect(statuses[0]).toBe('ready');
+    expect(statuses).not.toContain('loading');
+    expect(count('detail')).toBe(0);
+    expect(count('order')).toBe(0);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a warmed row older than the freshness window opens at once and is read again in the background', () =>
+it.live('a warmed row older than the freshness window opens at once and is read again in the background', () =>
   Effect.gen(function* agedOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     yield* idle(25);
@@ -344,11 +361,12 @@ it.effect('a warmed row older than the freshness window opens at once and is rea
     // The aged copy is refreshed once, as the open panel refreshes its order after the freshness window.
     expect(count('detail')).toBe(DETAIL_READS);
     expect(statuses.at(-1)).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an order nobody warmed still shows loading and reads its detail once', () =>
+it.live('an order nobody warmed still shows loading and reads its detail once', () =>
   Effect.gen(function* coldOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     reads.length = 0;
@@ -358,16 +376,15 @@ it.effect('an order nobody warmed still shows loading and reads its detail once'
     yield* idle(2);
     expect(count('detail')).toBe(DETAIL_READS);
     expect(statuses.at(-1)).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an own write drops the warmed copy: the full page never shows it and reads the order again', () =>
+it.live('an own write drops the warmed copy: the full page never shows it and reads the order again', () =>
   Effect.gen(function* writeOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     yield* idle(25);
-    const commit = yield* Schema.decodeEffect(ApplyCommandResultSchema)({ entityIds: ['order-1'], revision: 8 });
-    rstest.mocked(executeChangeOrderStatus).mockReturnValueOnce(Effect.succeed(commit));
     register.revision = 8;
     register.stock = 9;
     reads.length = 0;
@@ -382,11 +399,12 @@ it.effect('an own write drops the warmed copy: the full page never shows it and 
     expect(count('detail')).toBeGreaterThanOrEqual(DETAIL_READS);
     expect(shownStock).not.toContain(10);
     expect(shownStock.at(-1)).toBe(9);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a write settled elsewhere drops the warmed copy: the panel never shows it and reads the order again', () =>
+it.live('a write settled elsewhere drops the warmed copy: the panel never shows it and reads the order again', () =>
   Effect.gen(function* settledWriteOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     yield* idle(25);
@@ -400,11 +418,12 @@ it.effect('a write settled elsewhere drops the warmed copy: the panel never show
     expect(count('detail')).toBe(DETAIL_READS);
     expect(shownStock).not.toContain(10);
     expect(shownStock.at(-1)).toBe(9);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a live change of the orders drops the warmed copy, also a fresh one', () =>
+it.live('a live change of the orders drops the warmed copy, also a fresh one', () =>
   Effect.gen(function* liveChangeOpen() {
+    yield* pinTestDocument;
     yield* mountRoot(OrdersList);
     yield* idle(5);
     yield* dispatch(new CustomEvent(moduleChangeEvent, { detail: { apps: ['merchandise'] } }));
@@ -418,11 +437,12 @@ it.effect('a live change of the orders drops the warmed copy, also a fresh one',
     expect(count('detail')).toBe(DETAIL_READS);
     expect(shownStock).not.toContain(10);
     expect(shownStock.at(-1)).toBe(9);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a live change of another module keeps the warmed copy', () =>
+it.live('a live change of another module keeps the warmed copy', () =>
   Effect.gen(function* unrelatedChangeOpen() {
+    yield* pinTestDocument;
     yield* warmWithoutList;
     yield* idle(25);
     yield* dispatch(new CustomEvent(moduleChangeEvent, { detail: { apps: ['party-registry'] } }));
@@ -432,15 +452,17 @@ it.effect('a live change of another module keeps the warmed copy', () =>
     expect(statuses[0]).toBe('ready');
     yield* idle(2);
     expect(statuses).not.toContain('loading');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a row opened on the full order page while the list still warms it joins that read', () =>
+it.live('a row opened on the full order page while the list still warms it joins that read', () =>
   Effect.gen(function* openWhileWarming() {
+    yield* pinTestDocument;
     const release = yield* Deferred.make<boolean>();
     detailGate = release;
     yield* mountRoot(OrdersList);
-    yield* idle(1);
+    yield* heldSecond;
+    yield* waitUntilOnFakeTimers(() => count('detail') > 0);
     // The warm-up of the first rows has started and waits for its detail reads.
     expect(count('detail')).toBeGreaterThan(0);
     reads.length = 0;
@@ -459,27 +481,32 @@ it.effect('a row opened on the full order page while the list still warms it joi
     // The order comes from the warm-up already under way: nothing of it is read again, not even the order by id.
     expect(count('order')).toBe(0);
     expect(count('detail')).toBe(DETAIL_READS - 1);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a queued row whose warm-up the list starts after the click still opens from the handed-over read', () =>
+it.live('a queued row whose warm-up the list starts after the click still opens from the handed-over read', () =>
   Effect.gen(function* openQueuedRow() {
+    yield* pinTestDocument;
     const first = yield* Deferred.make<boolean>();
     detailGate = first;
     yield* mountRoot(OrdersList);
-    yield* idle(1);
+    yield* heldSecond;
+    yield* waitUntilOnFakeTimers(() => ordersPageData.snapshot(listInput).state === 'ready');
     // Two rows warm at once; the third waits for one of them.
     const page = ordersPageData.snapshot(listInput);
     expect(page.state).toBe('ready');
     const clicked = yield* Deferred.make<boolean>();
     detailGate = clicked;
+    const started = count('detail');
     if (page.state === 'ready') {
       openOrderDetail(listInput, page.value, 'order-3');
     }
+    // HTTP reaches the handler asynchronously; keep this row's gate until that request has arrived.
+    yield* waitUntilOnFakeTimers(() => count('detail') > started);
     detailGate = null;
     // The first rows finish and the list reaches the clicked row: its warm-up joins the handed-over read.
     yield* Deferred.succeed(first, true);
-    yield* idle(1);
+    yield* heldSecond;
     reads.length = 0;
 
     unmounts.shift()?.();
@@ -489,5 +516,5 @@ it.effect('a queued row whose warm-up the list starts after the click still open
     expect(statuses.at(-1)).toBe('ready');
     expect(count('order')).toBe(0);
     expect(count('detail')).toBe(DETAIL_READS - 1);
-  }),
+  }).pipe(Effect.provide(network)),
 );

@@ -16,6 +16,7 @@ import {
   SHELL_GATEWAY_ISSUER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { defineOutboxWorkerEntry, extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -137,7 +138,10 @@ const runCycleOnce = (compositionRevision: string) =>
       expectedDeployment: ultramodernApiMarker,
       layer: Layer.mergeAll(
         Layer.succeedContext(workerServices),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
         Layer.succeed(OutboxRuntime, {
           ...runtime,
           runCycle: () =>
@@ -546,11 +550,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             container: Config.String('ONTOS_TEST_DB_CONTAINER').pipe(Config.withDefault('ontos-db')),
             isolatedWorkers: Config.String('ONTOS_CI_ISOLATED_WORKERS').pipe(Config.withDefault('')),
           });
-          if (worker.isolatedWorkers === '4') {
-            expect(['5541', '5542', '5543', '5544']).toContain(resetDatabase.port);
-            expect(worker.container).toBe(`ontos-ci-db-${Number(resetDatabase.port) - 5540}`);
-          } else {
+          if (worker.isolatedWorkers === '') {
             expect(resetDatabase.port).toBe('5433');
+          } else {
+            expect(['2', '4']).toContain(worker.isolatedWorkers);
+            expect(Number(resetDatabase.port)).toBeGreaterThan(5540);
+            expect(Number(resetDatabase.port)).toBeLessThanOrEqual(5540 + Number(worker.isolatedWorkers));
+            expect(worker.container).toBe(`ontos-ci-db-${Number(resetDatabase.port) - 5540}`);
           }
           expect(resetDatabase.pathname).toBe('/ontos_ci');
           expect(resetDatabase.username).toBe('ontos_ci_admin');

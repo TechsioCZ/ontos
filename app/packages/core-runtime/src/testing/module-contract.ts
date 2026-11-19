@@ -5,7 +5,10 @@ import { Clock, DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { moduleReleaseWorkerName } from '../http/module-release-identity.ts';
-import { validateActiveApplicationCompositionSnapshot } from '../modules/active-application-composition.ts';
+import {
+  makeActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 import {
   ApplicationCompositionCloudflareWorkerBackendSchema,
@@ -274,7 +277,7 @@ export const makeOwnerApplicationCompositionFixture = Effect.fn('CoreTesting.mak
       owners,
     });
     return Object.freeze({
-      applicationComposition: Object.freeze({ load: Effect.succeed(snapshot) }),
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       expectedDeployment: Object.freeze({ appId, buildMarker }),
       ownerRegistration: input.ownerRegistration,
       snapshot,

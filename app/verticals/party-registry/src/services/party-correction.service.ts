@@ -440,7 +440,6 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
     },
     now: Date,
   ) {
-    let replacementOfficialIdentifierId: null | string = null;
     const correctedPartyId = command.partyId;
     yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
     const [targetRow] = yield* transaction
@@ -502,7 +501,7 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
     }
     // A correction record owns the A -> B edge. Reusing B must never rewrite its
     // acceptance, validity, provenance or original supersession link.
-    replacementOfficialIdentifierId = existingReplacement?.officialIdentifierId ?? null;
+    let replacementOfficialIdentifierId = existingReplacement?.officialIdentifierId ?? null;
     yield* transaction
       .update(partyOfficialIdentifiers)
       .set({

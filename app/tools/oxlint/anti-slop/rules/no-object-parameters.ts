@@ -2,9 +2,9 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree, SourceCode } from "@oxlint/plugins";
 
-import { unshadowedAliasName } from "../shared/type-alias-reference.ts";
+import type { VisitorKeys } from "../shared/lexical-type-parameters.ts";
 
-import { lexicalTypeParameterNames } from "../shared/lexical-type-parameters.ts";
+import { resolvedTypeMatches } from "../shared/type-alias-resolution.ts";
 
 import {
   parameterAnnotation,
@@ -12,10 +12,25 @@ import {
   type ParameterOwner,
 } from "../shared/function-parameters.ts";
 
-function parameterName(parameter: Parameter, sourceCode: SourceCode): string {
-  return parameter.type === "Identifier"
-    ? parameter.name
-    : sourceCode.getText(parameter).replace(/\s*:\s*object\s*$/u, "");
+/** The parameter's local binding, without its annotation or default value. */
+function parameterName(parameter: Parameter | ESTree.BindingPattern, sourceCode: SourceCode): string {
+  if (parameter.type === "TSParameterProperty") return parameterName(parameter.parameter, sourceCode);
+  if (parameter.type === "AssignmentPattern") return parameterName(parameter.left, sourceCode);
+  if (parameter.type === "RestElement") return parameterName(parameter.argument, sourceCode);
+  if (parameter.type === "Identifier") return parameter.name;
+  const annotation = parameter.typeAnnotation;
+  const text = sourceCode.getText(parameter);
+  return annotation === null || annotation === undefined
+    ? text
+    : text.slice(0, annotation.start - parameter.start).trimEnd();
+}
+
+function resolvesToObject(type: ESTree.TSType, visitorKeys: VisitorKeys): boolean {
+  return resolvedTypeMatches(type, visitorKeys, (resolved, matches) => {
+    if (resolved.type === "TSObjectKeyword") return true;
+    if (resolved.type === "TSParenthesizedType") return matches(resolved.typeAnnotation);
+    return resolved.type === "TSUnionType" && resolved.types.some(matches);
+  });
 }
 
 /** Ban the broad object type on function inputs, including local aliases to object. */
@@ -32,34 +47,11 @@ export const noObjectParametersRule = defineRule({
     },
   },
   createOnce(context) {
-    const aliases = new Map<string, ESTree.TSType>();
-
-    const resolvesToObject = (
-      type: ESTree.TSType,
-      shadowedAliases: ReadonlySet<string>,
-      visited = new Set<string>(),
-    ): boolean => {
-      if (type.type === "TSObjectKeyword") return true;
-      if (type.type === "TSParenthesizedType")
-        return resolvesToObject(type.typeAnnotation, shadowedAliases, visited);
-      if (type.type === "TSUnionType") {
-        return type.types.some((member) => resolvesToObject(member, shadowedAliases, visited));
-      }
-      const name = unshadowedAliasName(type, shadowedAliases, visited);
-      if (name === null) return false;
-      const alias = aliases.get(name);
-      if (alias === undefined) return false;
-      const nextVisited = new Set(visited);
-      nextVisited.add(name);
-      return resolvesToObject(alias, shadowedAliases, nextVisited);
-    };
-
     const checkParameters = (node: ParameterOwner) => {
-      const shadowedAliases = lexicalTypeParameterNames(node, context.sourceCode.visitorKeys);
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
         if (annotation === null || annotation === undefined) continue;
-        if (!resolvesToObject(annotation.typeAnnotation, shadowedAliases)) continue;
+        if (!resolvesToObject(annotation.typeAnnotation, context.sourceCode.visitorKeys)) continue;
         context.report({
           node: annotation.typeAnnotation,
           messageId: "objectParameter",
@@ -69,19 +61,6 @@ export const noObjectParametersRule = defineRule({
     };
 
     return {
-      Program(node) {
-        aliases.clear();
-        for (const statement of node.body) {
-          const declaration =
-            statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-          if (
-            declaration?.type === "TSTypeAliasDeclaration" &&
-            (declaration.typeParameters === null || declaration.typeParameters === undefined)
-          ) {
-            aliases.set(declaration.id.name, declaration.typeAnnotation);
-          }
-        }
-      },
       ArrowFunctionExpression: checkParameters,
       FunctionDeclaration: checkParameters,
       FunctionExpression: checkParameters,

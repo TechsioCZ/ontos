@@ -1,8 +1,17 @@
 // @rstest-environment happy-dom
 // How many records reads an idle products list and an idle product detail send: the real hooks over the real strict
-// stores and the ui-kit table, with only the generated records client replaced and the clock faked. An idle page
+// stores and the ui-kit table, with the real records client served in process and controlled time. An idle page
 // reloads what it shows after the 20 s freshness window, after a live change and after a write: a few reads a minute.
 // The details warmed for the list's rows are read once per list revision, not again whenever they expire.
+import { passFakeTime } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -11,10 +20,9 @@ import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { ProductRecord } from '../../shared/apis/records.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
 import { useCategoryChoices, useProductPage } from '../../src/routes/[lang]/provoz/produkty/product-list-page.ts';
 import {
   categoryChoicesData,
@@ -27,8 +35,6 @@ import {
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { LIST_WARM_ROWS } from '@app/admin-ui';
-
-rstest.mock('../../src/api/records-consumer.ts');
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -78,20 +84,29 @@ const responseOf = (rows: typeof products) =>
 
 /** Every records read the page sent, by what it asked for. */
 const reads: string[] = [];
-const serve = () => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.includeProductCategories === true) {
-      reads.push('choices');
-      return Effect.succeed(responseOf([]));
-    }
-    if (view?.productId !== undefined) {
-      reads.push('detail');
-      return Effect.succeed(responseOf(products.filter((entry) => entry.id === view.productId)));
-    }
-    reads.push('list');
-    return Effect.succeed(responseOf(products));
-  });
-};
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload: { view } }) =>
+        Effect.sync(() => {
+          if (view?.includeProductCategories === true) {
+            reads.push('choices');
+            return responseOf([]);
+          }
+          if (view?.productId !== undefined) {
+            reads.push('detail');
+            return responseOf(products.filter((entry) => entry.id === view.productId));
+          }
+          reads.push('list');
+          return responseOf(products);
+        }),
+      ),
+    ),
+  ),
+);
 const count = (kind: string) => reads.filter((read) => read === kind).length;
 
 const columns: ColumnDef<ProductRecord>[] = [{ accessorKey: 'name', id: 'name' }];
@@ -142,40 +157,30 @@ const mount = (component: () => ReturnType<typeof createElement>) =>
     });
   });
 
-/** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
-const idle = (seconds: number): Effect.Effect<void> =>
-  seconds <= 0
-    ? Effect.void
-    : Effect.promise(() =>
-        act(async () => {
-          await rstest.advanceTimersByTimeAsync(1000);
-        }),
-      ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
+/** Lets fake time pass in one-second steps; the reads each step starts reach the owner before the next one. */
+const idle = (seconds: number): Effect.Effect<void> => passFakeTime(`${seconds} seconds`, { between: networkIdle });
 
 /** The Shell's live channel reports a change committed elsewhere (another module, session or worker). */
-const liveChange = Effect.sync(() => globalThis.dispatchEvent(new Event(moduleChangeEvent)));
+const liveChange = Effect.sync(() => window.dispatchEvent(new Event(moduleChangeEvent)));
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  rstest.resetAllMocks();
   productListData.invalidate();
   productDetailData.invalidate();
   categoryChoicesData.invalidate();
   register.revision = 7;
   reads.length = 0;
-  serve();
 });
 
 afterEach(() => {
   unmount?.();
   unmount = null;
   rstest.useRealTimers();
-  rstest.unstubAllGlobals();
 });
 
-it.effect('an idle products list reloads its page and choices every 20 s and warms its rows once', () =>
+it.live('an idle products list reloads its page and choices every 20 s and warms its rows once', () =>
   Effect.gen(function* idleList() {
+    yield* pinTestDocument;
     yield* mount(ProductsList);
     yield* idle(5);
     // Opening the page: the choices, the page and one warm-up read of each of the first rows' details (not all 25).
@@ -187,30 +192,34 @@ it.effect('an idle products list reloads its page and choices every 20 s and war
     expect(count('list')).toBeGreaterThanOrEqual(2);
     expect(reads.length).toBeLessThanOrEqual(6);
     expect(count('detail')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an opened products list warms its rows only once the browser is idle', () =>
+it.live('an opened products list warms its rows only once the browser is idle', () =>
   Effect.gen(function* warmWhenIdle() {
+    yield* pinTestDocument;
     yield* mount(ProductsList);
+    yield* networkIdle;
     expect([count('list'), count('detail')]).toEqual([1, 0]);
     yield* idle(1);
     expect(count('detail')).toBe(LIST_WARM_ROWS);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a products list unmounted before the browser is idle sends no detail read', () =>
+it.live('a products list unmounted before the browser is idle sends no detail read', () =>
   Effect.gen(function* leaveBeforeIdle() {
+    yield* pinTestDocument;
     yield* mount(ProductsList);
     unmount?.();
     unmount = null;
     yield* idle(5);
     expect(count('detail')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('live changes reload the page on screen, not the details of its unchanged rows', () =>
+it.live('live changes reload the page on screen, not the details of its unchanged rows', () =>
   Effect.gen(function* liveList() {
+    yield* pinTestDocument;
     yield* mount(ProductsList);
     yield* idle(5);
     reads.length = 0;
@@ -221,11 +230,12 @@ it.effect('live changes reload the page on screen, not the details of its unchan
     }
     expect(count('list')).toBe(5);
     expect(count('detail')).toBe(0);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a write that moves the revision reloads the page and warms its rows again', () =>
+it.live('a write that moves the revision reloads the page and warms its rows again', () =>
   Effect.gen(function* afterWrite() {
+    yield* pinTestDocument;
     yield* mount(ProductsList);
     yield* idle(5);
     reads.length = 0;
@@ -238,11 +248,12 @@ it.effect('a write that moves the revision reloads the page and warms its rows a
     });
     yield* idle(5);
     expect([count('choices'), count('list'), count('detail')]).toEqual([1, 1, LIST_WARM_ROWS]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('an idle product detail reloads its record on each expiry of the freshness window only', () =>
+it.live('an idle product detail reloads its record on each expiry of the freshness window only', () =>
   Effect.gen(function* idleDetail() {
+    yield* pinTestDocument;
     yield* mount(ProductDetail);
     yield* idle(5);
     expect(reads).toEqual(['detail']);
@@ -251,7 +262,7 @@ it.effect('an idle product detail reloads its record on each expiry of the fresh
     yield* idle(60);
     expect(reads.length).toBeGreaterThanOrEqual(2);
     expect(reads.length).toBeLessThanOrEqual(3);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
 /** Another module commits every 2 s for a minute, as on a busy stage tenant, and the page stays idle. */
@@ -261,13 +272,14 @@ const busyMinute = (change: Effect.Effect<void>): Effect.Effect<void> =>
 /** Reads of an idle product detail during that minute; `scoped: false` is a change event without an app list. */
 const detailReadsPerBusyMinute = (scoped: boolean) =>
   Effect.gen(function* busyDetail() {
+    yield* pinTestDocument;
     yield* mount(ProductDetail);
     yield* idle(5);
     reads.length = 0;
     yield* busyMinute(
       scoped
         ? Effect.sync(() =>
-            globalThis.dispatchEvent(
+            window.dispatchEvent(
               new CustomEvent(moduleChangeEvent, { detail: { apps: ['finance-billing', 'party-registry', 'shell'] } }),
             ),
           )
@@ -276,17 +288,17 @@ const detailReadsPerBusyMinute = (scoped: boolean) =>
     return reads.length;
   });
 
-it.effect('an idle product detail ignores other modules committing every 2 s', () =>
+it.live('an idle product detail ignores other modules committing every 2 s', () =>
   Effect.gen(function* otherModulesBusy() {
     const perMinute = yield* detailReadsPerBusyMinute(true);
     // The freshness window alone: one read every 20 s.
     expect(perMinute).toBe(3);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a change event without an app list still reloads the product detail every time (as before scoping)', () =>
+it.live('a change event without an app list still reloads the product detail every time (as before scoping)', () =>
   Effect.gen(function* unscopedBusy() {
     const perMinute = yield* detailReadsPerBusyMinute(false);
     expect(perMinute).toBe(30);
-  }),
+  }).pipe(Effect.provide(network)),
 );

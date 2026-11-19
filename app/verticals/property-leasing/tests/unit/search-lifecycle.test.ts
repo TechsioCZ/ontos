@@ -1,4 +1,4 @@
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -172,9 +172,12 @@ it.layer(queryCompilationLayer)('Leasing prepared business writes', (suite) => {
                 return validators;
               }),
           }),
-          Effect.provideService(ActiveApplicationCompositionService, {
-            load: Effect.die('Unexpected reference transport in a lifecycle-only test'),
-          }),
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(
+              Effect.die('Unexpected reference transport in a lifecycle-only test'),
+            ),
+          ),
           Effect.provideService(GatewayPrincipalVerifierConfiguration, {
             configuration: Effect.die('Unexpected gateway configuration in a lifecycle-only test'),
           }),

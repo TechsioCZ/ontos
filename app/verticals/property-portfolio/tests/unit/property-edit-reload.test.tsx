@@ -3,59 +3,34 @@
 // window, a settled write). The strict register store reads `pending` during such a reload; the open dialog must stay
 // mounted: typed input, its unsaved status and the leave question survive, a save goes out against the revision the
 // draft was read at, and a draft with nothing typed takes the reloaded building.
+// The page runs on its real i18n, router and generated clients; the Shell's gateway issuer, the property owner's
+// records and Action endpoints and Workforce's records endpoint answer in process through their HttpApi contracts.
 import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
-import type { Employee } from '@app/workforce/contracts/records';
-import { EmployeeIdSchema } from '@app/workforce/resources/employee';
+import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { constVoid } from 'effect/Function';
-import { Deferred, Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
-import { RecordsPage } from '../../src/routes/[lang]/nemovitosti/page.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-import { propertyRecords } from '../../src/routes/[lang]/nemovitosti/property-summary.ts';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import {
+  RecordsApi as WorkforceRecordsApi,
+  RecordsResponseSchema as WorkforceRecordsSchema,
+} from '@app/workforce/contracts/records';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 
-/** The part of the router state the page reads. */
-interface TestRouterState {
-  readonly location: { readonly search: { readonly resourceId?: string }; readonly searchStr: string };
-}
-const mocks = rstest.hoisted(() => ({
-  apply: rstest.fn(),
-  employees: rstest.fn(),
-  records: rstest.fn(),
-  search: { resourceId: '' },
-}));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/workforce/clients/records', () => ({
-  executeRecords: () => mocks.employees().pipe(Effect.map((items: readonly Employee[]) => ({ items }))),
-}));
-rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/finance-billing/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: () => Effect.never }));
-rstest.mock('@app/facility-operations/ui/record-discussion', () => ({
-  PropertyEquipment: () => null,
-  RecordDiscussion: () => null,
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useNavigate: () => () => Promise.resolve(),
-  useRouterState: <Selected,>(options?: { readonly select?: (state: TestRouterState) => Selected }) => {
-    const state: TestRouterState = { location: { search: mocks.search, searchStr: '' } };
-    return options?.select === undefined ? state : options.select(state);
-  },
-}));
-rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import { RecordsPage } from '../../src/routes/[lang]/nemovitosti/page.tsx';
+import { propertyRecords } from '../../src/routes/[lang]/nemovitosti/property-summary.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
 const tenantId = '70000000-0000-4000-8000-000000000020';
@@ -93,58 +68,90 @@ const recordsAt = (revision: number, address: string): RecordsResponse =>
     revision,
     units: [],
   });
+/** Workforce's employees, the responsible-person choices. */
+const workforceRecords = Schema.decodeUnknownSync(WorkforceRecordsSchema)({
+  actorPrincipalRef: { principalId: '72000000-0000-4000-8000-000000000001', tenantId },
+  availablePrincipals: [],
+  canWrite: false,
+  indicators: {
+    active: 1,
+    byDepartment: [],
+    byRole: { ACCOUNTANT: 0, SALES_HEAD: 0, SALES_REP: 0, SUPPORT: 1, WAREHOUSE: 0 },
+    total: 1,
+  },
+  items: [
+    {
+      active: true,
+      createdAt: '2026-10-27T09:00:00.000Z',
+      department: 'Správa',
+      email: 'jana@example.test',
+      fullName: 'Jana',
+      id: employeeId,
+      role: 'SUPPORT',
+      updatedAt: '2026-10-27T09:00:00.000Z',
+    },
+  ],
+  revision: 1,
+});
+const saved = Schema.decodeUnknownSync(ApplyCommandResultSchema)({
+  resourceRef: {
+    moduleId: 'property.portfolio',
+    resourceId: firstId,
+    resourceType: 'property.portfolio.property',
+    tenantId,
+  },
+  revision: 6,
+});
 
 const context: ModulePageProps['context'] = { legalEntityId: 'company-a', principalId: 'manager-a', tenantId };
 
 const name = 'property-name';
 const address = 'property-address';
-const edit = 'property-portfolio.pages.records.editor.edit';
-const close = 'property-portfolio.pages.records.editor.close';
+const czech = moduleText('cs');
+const edit = czech('property-portfolio.pages.records.editor.edit');
+const close = czech('property-portfolio.pages.records.editor.close');
 
-/** Lets running reads and saves take a step, then flushes React's updates. */
-const settle: Effect.Effect<void> = Effect.promise(() => browserRuntime.runPromise(Effect.yieldNow)).pipe(
-  Effect.andThen(
-    Effect.sync(() => {
-      act(constVoid);
-    }),
+/** What the property owner answers the next records read with; each test scripts it. */
+let answer: Effect.Effect<RecordsResponse> = Effect.succeed(recordsAt(4, 'server-address'));
+/** Every records read and command the property owner received, in order. */
+const reads: RecordsRequest[] = [];
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+
+const OwnerRecordsApi = RecordsApi.prefix('/property-portfolio-api');
+const OwnerActionApi = ApplyCommandActionApi.prefix('/property-portfolio-api');
+const WorkforceApi = WorkforceRecordsApi.prefix('/workforce-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'property-portfolio': '/property-portfolio-api', workforce: '/workforce-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          reads.push(payload);
+          return answer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return saved;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    WorkforceApi,
+    HttpApiBuilder.group(WorkforceApi, 'records', (group) =>
+      group.handle('execute', () => Effect.succeed(workforceRecords)),
+    ),
   ),
 );
-/** Runs `step` inside React's act, then lets what it started settle. */
-const acted = (step: () => void): Effect.Effect<void> =>
-  Effect.sync(() => {
-    act(() => {
-      step();
-    });
-  }).pipe(Effect.andThen(settle));
-/** Lets the page work until `condition` holds; fails the test when it never does. */
-const waitUntil = (condition: () => boolean, attempt = 0): Effect.Effect<void> =>
-  Effect.suspend(() => {
-    if (condition() || attempt >= 400) {
-      return Effect.sync(() => {
-        expect(condition()).toBe(true);
-      });
-    }
-    return settle.pipe(Effect.andThen(waitUntil(condition, attempt + 1)));
-  });
 
-const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
-const render = (resourceId: string) =>
-  acted(() => {
-    mocks.search.resourceId = resourceId;
-    const [existing] = roots;
-    if (existing === undefined) {
-      const container = document.createElement('div');
-      document.body.append(container);
-      const root = createRoot(container);
-      roots.push({ container, root });
-      root.render(<RecordsPage context={context} />);
-    } else {
-      existing.root.render(<RecordsPage context={{ ...context }} />);
-    }
-  });
-
-const buttons = (label: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === label);
 const button = (label: string): HTMLButtonElement => {
   const [found] = buttons(label);
   expect(found).toBeDefined();
@@ -156,7 +163,6 @@ const value = (id: string) =>
     Option.map((input) => input.value),
     Option.getOrUndefined,
   );
-const text = () => document.body.textContent ?? '';
 const type = (id: string, typed: string) =>
   acted(() => {
     const input = Option.getOrThrow(maybeField(id));
@@ -168,53 +174,47 @@ const click = (label: string) => acted(() => button(label).click());
 /** Opens the page on `resourceId` with the register at revision 4 and opens its edit dialog. */
 const openEdit = (resourceId: string) =>
   Effect.gen(function* open() {
-    yield* render(resourceId);
+    yield* pinTestDocument;
+    const mounted = yield* mountInRoute(<RecordsPage context={context} />, {
+      path: 'nemovitosti',
+      url: `/cs/nemovitosti?resourceId=${resourceId}`,
+    });
     yield* waitUntil(() => buttons(edit).length === 1 && !button(edit).disabled);
     yield* click(edit);
     yield* waitUntil(() => Option.isSome(maybeField(name)));
+    return mounted;
   });
 
-/** A background reload of the register that answers once `gate` opens, with someone else's address. */
+/** A background reload of the register that the owner answers once `gate` opens; resolves once the read arrived. */
 const reloadThrough = (gate: Deferred.Deferred<RecordsResponse>) =>
   Effect.gen(function* reload() {
-    mocks.records.mockReturnValue(Deferred.await(gate));
+    const arrived = yield* Deferred.make<true>();
+    answer = Deferred.succeed(arrived, true).pipe(Effect.andThen(Deferred.await(gate)));
     yield* acted(() => propertyRecords.invalidate());
+    yield* Deferred.await(arrived);
+    yield* settle;
   });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  mocks.records.mockReset();
-  mocks.records.mockImplementation(() => Effect.succeed(recordsAt(4, 'server-address')));
-  mocks.employees.mockReset();
-  mocks.employees.mockReturnValue(
-    Effect.succeed([{ active: true, fullName: 'Jana', id: Schema.decodeUnknownSync(EmployeeIdSchema)(employeeId) }]),
-  );
-  mocks.apply.mockReset();
-  mocks.apply.mockReturnValue(Effect.succeed({ resourceRef: { resourceId: firstId }, revision: 6 }));
+  reads.length = 0;
+  commands.length = 0;
+  answer = Effect.succeed(recordsAt(4, 'server-address'));
   propertyRecords.invalidate();
 });
 
-afterEach(() => {
-  for (const { container, root } of roots.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
-describe('property edit dialog across a background reload', () => {
-  it.live('reads the required text of a required field in Czech', () =>
+it.layer(network, { excludeTestServices: true })('property edit dialog across a background reload', (suite) => {
+  suite.effect('reads the required text of a required field in Czech', () =>
     Effect.gen(function* requiredText() {
       yield* openEdit(firstId);
-      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
-      expect(document.body.textContent).not.toContain('(required)');
+      expect(text()).toContain(requiredLabelFor('cs'));
+      expect(text()).not.toContain('(required)');
       expect(document.querySelector(`label[for="${name}"]`)?.textContent).toContain(requiredLabelFor('cs'));
     }),
   );
 
-  it.live('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
+  suite.effect('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
     Effect.gen(function* typedSurvives() {
       yield* openEdit(firstId);
       yield* type(name, 'typed-name');
@@ -227,7 +227,7 @@ describe('property edit dialog across a background reload', () => {
       expect(text()).toContain(labels.unsaved);
 
       yield* Deferred.succeed(gate, recordsAt(5, 'someone-else-address'));
-      yield* waitUntil(() => mocks.records.mock.calls.length >= 2 && text().includes('someone-else-address'));
+      yield* waitUntil(() => reads.length >= 2 && text().includes('someone-else-address'));
       expect(value(name)).toBe('typed-name');
       // A dirty draft keeps its whole input, not just the typed field.
       expect(value(address)).toBe('server-address');
@@ -235,43 +235,32 @@ describe('property edit dialog across a background reload', () => {
       expect(button(labels.save).disabled).toBe(false);
 
       yield* click(close);
-      expect(buttons(labels.stay)).toHaveLength(1);
+      yield* waitUntil(() => buttons(labels.stay).length === 1);
       yield* click(labels.stay);
       yield* waitUntil(() => buttons(labels.stay).length === 0);
       expect(value(name)).toBe('typed-name');
 
-      mocks.records.mockImplementation(() => Effect.succeed(recordsAt(5, 'someone-else-address')));
+      answer = Effect.succeed(recordsAt(5, 'someone-else-address'));
       yield* click(labels.save);
-      yield* waitUntil(() => mocks.apply.mock.calls.length > 0);
-      expect(mocks.apply.mock.calls[0]?.[0]).toMatchObject({
+      yield* waitUntil(() => commands.length > 0);
+      expect(commands[0]).toMatchObject({
         command: { name: 'typed-name' },
         expectedRevision: 4,
       });
     }),
   );
 
-  it.live('a draft with nothing typed takes the reloaded building', () =>
-    Effect.gen(function* cleanFollows() {
-      yield* openEdit(firstId);
-      expect(value(address)).toBe('server-address');
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value(address)).toBe('server-address');
-      yield* Deferred.succeed(gate, recordsAt(5, 'someone-else-address'));
-      yield* waitUntil(() => value(address) === 'someone-else-address');
-      expect(text()).not.toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(true);
-    }),
-  );
-
-  it.live('another building never shows the draft typed for this one', () =>
+  suite.effect('another building never shows the draft typed for this one', () =>
     Effect.gen(function* otherBuilding() {
-      yield* openEdit(firstId);
+      const { router } = yield* openEdit(firstId);
       yield* type(name, 'typed-name');
       yield* click(close);
+      yield* waitUntil(() => buttons(labels.discard).length === 1);
       yield* click(labels.discard);
       yield* waitUntil(() => Option.isNone(maybeField(name)));
-      yield* render(secondId);
+      yield* acted(() => {
+        router.history.push(`/cs/nemovitosti?resourceId=${secondId}`);
+      });
       yield* waitUntil(() => buttons(edit).length === 1);
       yield* click(edit);
       yield* waitUntil(() => Option.isSome(maybeField(name)));

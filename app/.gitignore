@@ -27,5 +27,8 @@ build/
 **/.wrangler/
 # Transient module-contract bundles; a concurrent unit build reads the worktree as its release source.
 **/.ontos-contract-*/
+# Transient price-group receiver bundles of the Commerce Customer Context integration tests. Owner rows run two lanes
+# in one checkout, and a native fixture on the other lane takes the checkout's release identity only while it is clean.
+**/target-price-group-temporal/
 **/src/modern-tanstack/
 **/.tsgo.*.resolved.json

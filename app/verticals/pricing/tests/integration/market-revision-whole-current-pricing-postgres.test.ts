@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
 import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
@@ -727,7 +728,7 @@ const evaluateWhole = Effect.fn('MarketWholePricing1250.evaluateWhole')(function
       tenantId: owner.tenantId,
     },
     {
-      applicationComposition: { load: Effect.succeed(owner.snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(owner.snapshot)),
       catalog: {
         acquire: () =>
           Effect.succeed({

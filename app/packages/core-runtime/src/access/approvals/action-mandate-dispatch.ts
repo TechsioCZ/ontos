@@ -503,7 +503,8 @@ const constructDrizzleActionMandateDispatchEffect = Effect.fn('ActionMandateDisp
         }
         yield* bindForwardCommand(input, record);
         // An executed retry must first prove the SAME succeeded invocation/receipt. The runner then
-        // returns ActionAlreadyCommitted for that deterministic request hash, without rerunning it.
+        // answers it for the deterministic request hash without rerunning it: ActionAlreadyCommitted, or
+        // the saved reply when the retry came over a transport that asks for it.
         if (row.status === 'executed') {
           const receipts = yield* ports.database.executor
             .transaction((transaction) =>

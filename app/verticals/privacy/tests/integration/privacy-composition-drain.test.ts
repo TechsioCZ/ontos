@@ -2232,12 +2232,7 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
             },
           ]);
           expect(yield* f.ownerCount()).toBe('1');
-          const replay = yield* Effect.result(f.dispatch(f.suffix));
-          expect(Result.isFailure(replay)).toBe(true);
-          if (Result.isFailure(replay)) {
-            expect(Schema.is(DispatchPrivacyMeasureActionAlreadyCommittedProblemSchema)(replay.failure)).toBe(true);
-            expect(replay.failure).toMatchObject({ code: 'action_already_committed' });
-          }
+          expect(yield* f.dispatch(f.suffix)).toEqual(accepted);
           const replayEvidence = yield* f.evidence();
           expect(replayEvidence.outbox).toEqual(evidence.outbox);
           expect(replayEvidence.events).toEqual(evidence.events);
@@ -2635,7 +2630,14 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
         }),
       120_000,
     );
+  },
+);
 
+// Each case allocates its own database and native processes. Separate runner tasks keep the
+// admission and durable recovery proofs bounded without sharing live state between them.
+it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, timeout: '30 seconds' })(
+  'Privacy message-bound completion recovery',
+  (suite) => {
     suite.effect(
       'completes the real public BUSINESS_REJECTED receipt/execute/report before ACK permits Core-only drain and seal',
       () =>

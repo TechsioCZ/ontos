@@ -1,9 +1,41 @@
-import { Deferred, Effect, Fiber, Option, Schema } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+
+import { pinDocumentNavigationModules } from '@app/shared-contracts';
+import {
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  streamingBrowserNetwork,
+} from '@app/shared-contracts/testing/http-double';
+import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import {
+  RecordsApi as AgreementsApi,
+  RecordsResponseSchema as AgreementsResponse,
+  RecordsForbiddenProblemSchema,
+} from '@app/legal-agreements/contracts/records';
+import type { RecordsRequest as AgreementRequest } from '@app/legal-agreements/contracts/records';
+import { RecordsApi as TasksApi, RecordsResponseSchema as TasksResponse } from '@app/work-tasks/contracts/records';
+import type { RecordsRequest as TaskRequest } from '@app/work-tasks/contracts/records';
+import {
+  RecordsApi as MerchandiseApi,
+  RecordsResponseSchema as MerchandiseResponse,
+} from '@app/merchandise/contracts/records';
+import type { RecordsRequest as OrderRequest } from '@app/merchandise/contracts/records';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
+import {
+  ApplyCommandActionApi,
+  ApplyCommandActionForbiddenProblemSchema,
+} from '../../shared/apis/apply-command-action.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { mountInRoute } from '../support/module-ui.ts';
+import { Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
-import type ReactRuntime from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { moduleChangeEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   opportunityRelatedData,
@@ -14,43 +46,6 @@ import { preloadPage as preloadPipelinePage } from '../../src/routes/[lang]/prod
 import { applyPipelineCommand } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-api.ts';
 import { pipelineRecords, initialRecordsInput } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-records.ts';
 
-const mocks = rstest.hoisted(() => ({
-  command: rstest.fn(),
-  contracts: rstest.fn(),
-  orders: rstest.fn(),
-  records: rstest.fn(),
-  tasks: rstest.fn(),
-}));
-rstest.mock('@app/shared-contracts', () => ({
-  ...rstest.requireActual<object>('@app/shared-contracts'),
-  documentNavigationModules: () => new Set(['work.tasks', 'demo.merchandise', 'legal.agreements']),
-}));
-rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: mocks.orders }));
-rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: mocks.contracts }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: mocks.tasks }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.command }));
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-const events = new EventTarget();
-const globals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(globals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(globals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
 const context = { legalEntityId: 'company-a', principalId: 'principal-a', tenantId: 'tenant-a' };
 const scope = pageDataScopeKey(context, 'demo.sales-pipeline') ?? '';
 const opportunity = Schema.decodeSync(OpportunitySchema)({
@@ -67,41 +62,224 @@ const opportunity = Schema.decodeSync(OpportunitySchema)({
   title: 'Visible case',
   updatedAt: '2026-11-03T00:00:00Z',
 });
-const row = { counterpartyId: 'customer-a', opportunity };
+
+const tenantId = '20000000-0000-4000-8000-000000000001';
+const actorPrincipalRef = { principalId: '20000000-0000-4000-8000-000000000002', tenantId };
+const customerId = '10000000-0000-4000-8000-000000000003';
+const row = { counterpartyId: customerId, opportunity };
 const input = { ...row, revision: 7, scope };
-const contracts = {
+const contracts = Schema.decodeUnknownSync(AgreementsResponse)({
   contracts: [
     {
-      contractRef: { resourceId: 'contract-a' },
-      counterpartyRef: { resourceId: 'customer-a' },
+      contractRef: {
+        moduleId: 'legal.agreements',
+        resourceId: '10000000-0000-4000-8000-000000000004',
+        resourceType: 'legal.agreements.contract',
+        tenantId,
+      },
+      counterpartyRef: {
+        moduleId: 'party.registry',
+        resourceId: customerId,
+        resourceType: 'party.registry.counterparty',
+        tenantId,
+      },
+      endDate: null,
+      expiringSoon: false,
+      hasSuccessorDraft: false,
+      isExpired: false,
       kind: 'OTHER',
       lifecycleState: 'ACTIVE',
+      note: null,
+      occupancyRef: null,
+      propertyRef: null,
+      renewalNoticeDate: null,
+      signatureState: 'NOT_SENT',
       startDate: '2026-11-03',
       subject: 'Visible contract',
+      supersedesContractRef: null,
+      unitRef: null,
     },
   ],
+  documents: [],
+  revision: 7,
+});
+const collectionRef = {
+  moduleId: 'work.tasks',
+  resourceId: 'default',
+  resourceType: 'work.tasks.task-collection',
+  tenantId,
 };
+const tasks = Schema.decodeUnknownSync(TasksResponse)({
+  actorPrincipalRef,
+  assignablePrincipals: [],
+  canWrite: true,
+  collection: {
+    properties: {
+      dueDate: { locked: true, type: 'DATE' },
+      ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+      status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+      title: { locked: true, type: 'TEXT' },
+    },
+    ref: collectionRef,
+    title: 'Tasks',
+  },
+  indicators: { open: 1, openByAssignee: [], overdue: 0 },
+  items: [
+    {
+      collectionRef,
+      contextRefs: [],
+      createdAt: '2026-11-03T00:00:00Z',
+      opportunityId: opportunity.id,
+      priority: 'NORMAL',
+      ref: {
+        moduleId: 'work.tasks',
+        resourceId: '10000000-0000-4000-8000-000000000005',
+        resourceType: 'work.tasks.task',
+        tenantId,
+      },
+      state: 'NEW',
+      title: 'Visible task',
+      updatedAt: '2026-11-03T00:00:00Z',
+    },
+  ],
+  principalNames: [],
+  referenceDate: '2026-11-03',
+  revision: 7,
+});
+const orders = Schema.decodeUnknownSync(MerchandiseResponse)({
+  actorPrincipalRef,
+  canWrite: true,
+  indicators: { lowStockCount: 0, openOrderValueMinor: 100, orderCount: 1, productCount: 0, stockValueMinor: 0 },
+  movements: [],
+  orders: [
+    {
+      createdAt: '2026-11-03T00:00:00Z',
+      id: 'order-a',
+      lines: [
+        { productId: 'product-a', productName: 'Product A', quantity: 1, sku: 'A', unitPriceMinor: 100, vatRate: 0 },
+      ],
+      number: 'Order A',
+      partyId: opportunity.partyId,
+      status: 'NEW',
+      totalMinor: 100,
+      totalVatMinor: 0,
+      updatedAt: '2026-11-03T00:00:00Z',
+    },
+  ],
+  products: [],
+  revision: 7,
+});
+const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef,
+  canWrite: true,
+  indicators: {
+    byStage: [],
+    lostCount: 0,
+    openCount: 1,
+    openValueMinor: 100,
+    weightedValueMinor: 10,
+    winRate: null,
+    wonCount: 0,
+    wonValueMinor: 0,
+  },
+  items: [Schema.encodeSync(OpportunitySchema)(opportunity)],
+  revision: 7,
+});
+const forbidden = RecordsForbiddenProblemSchema.make({
+  detail: 'Records denied',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/records-forbidden',
+});
+const commandForbidden = ApplyCommandActionForbiddenProblemSchema.make({
+  code: 'action_permission_denied',
+  detail: 'Command denied',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/action-forbidden',
+});
+const contractReads: AgreementRequest[] = [];
+const taskReads: TaskRequest[] = [];
+const orderReads: OrderRequest[] = [];
+const recordsReads: RecordsRequest[] = [];
+let contractAnswer: Effect.Effect<typeof contracts, typeof forbidden> = Effect.succeed(contracts);
+let recordsAnswer: Effect.Effect<typeof records, typeof forbidden> = Effect.succeed(records);
+const Agreements = AgreementsApi.prefix('/legal-agreements-api');
+const Tasks = TasksApi.prefix('/work-tasks-api');
+const Merchandise = MerchandiseApi.prefix('/merchandise-api');
+const Pipeline = RecordsApi.prefix('/sales-pipeline-api');
+const Commands = ApplyCommandActionApi.prefix('/sales-pipeline-api');
+const applications = [
+  shellGatewayIssuer({
+    'legal-agreements': '/legal-agreements-api',
+    merchandise: '/merchandise-api',
+    'sales-pipeline': '/sales-pipeline-api',
+    'work-tasks': '/work-tasks-api',
+  }).application,
+  serveApi(
+    Agreements,
+    HttpApiBuilder.group(Agreements, 'records', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          contractReads.push(payload);
+          return contractAnswer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Tasks,
+    HttpApiBuilder.group(Tasks, 'records', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          taskReads.push(payload);
+          return tasks;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Merchandise,
+    HttpApiBuilder.group(Merchandise, 'records', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          orderReads.push(payload);
+          return orders;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Pipeline,
+    HttpApiBuilder.group(Pipeline, 'records', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          recordsReads.push(payload);
+          return recordsAnswer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    Commands,
+    HttpApiBuilder.group(Commands, 'applyCommandAction', (g) =>
+      g.handle('execute', () => Effect.fail(commandForbidden)),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+] as const;
+
+const network = streamingBrowserNetwork(...applications);
+afterEach(unmountAll);
 beforeEach(() => {
-  rstest.resetAllMocks();
+  contractReads.length = 0;
+  taskReads.length = 0;
+  orderReads.length = 0;
+  recordsReads.length = 0;
   opportunityRelatedData.invalidate();
   pipelineRecords.invalidate();
-  mocks.contracts.mockReturnValue(Effect.succeed(contracts));
-  mocks.orders.mockReturnValue(
-    Effect.succeed({ orders: [{ id: 'order-a', number: 'Order A', status: 'NEW', totalMinor: 100 }] }),
-  );
-  mocks.tasks.mockReturnValue(
-    Effect.succeed({
-      items: [
-        {
-          dueDate: null,
-          opportunityId: opportunity.id,
-          ref: { resourceId: 'task-a' },
-          state: 'NEW',
-          title: 'Visible task',
-        },
-      ],
-    }),
-  );
+  contractAnswer = Effect.succeed(contracts);
+  recordsAnswer = Effect.succeed(records);
+  pinDocumentNavigationModules(['work.tasks', 'demo.merchandise', 'legal.agreements'], document);
 });
 const Detail = () => {
   const related = useOpportunityRelated(opportunity, row.counterpartyId, context, 7);
@@ -115,21 +293,25 @@ const Detail = () => {
     ].join('|'),
   );
 };
-it.effect('warms actual related data before selection and renders it without any extra request', () =>
-  Effect.gen(function* test() {
+it.live('renders the opportunity task, customer contract and case order from the warmed related-data hook', () =>
+  Effect.gen(function* relatedHook() {
+    yield* pinTestDocument;
     yield* preloadOpportunityDetails(context, [row], 7);
-    expect(mocks.contracts).toHaveBeenCalledTimes(1);
-    expect(mocks.tasks).toHaveBeenCalledTimes(2);
-    expect(mocks.orders).toHaveBeenCalledTimes(1);
-    expect(renderToStaticMarkup(createElement(Detail))).toContain('Visible task|Visible contract|Order A');
-    yield* opportunityRelatedData.read(input);
-    expect(mocks.contracts).toHaveBeenCalledTimes(1);
-    expect(mocks.tasks).toHaveBeenCalledTimes(2);
-    expect(mocks.orders).toHaveBeenCalledTimes(1);
-  }),
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(1);
+    expect(taskReads).toHaveLength(2);
+    expect(orderReads).toHaveLength(1);
+    yield* mountInRoute(createElement(Detail));
+    expect(text()).toContain('Visible task|Visible contract|Order A');
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(1);
+    expect(taskReads).toHaveLength(2);
+    expect(orderReads).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('separates tenant, principal, company, module, revision and exact customer link', () =>
+it.live('separates tenant, principal, company, module, revision and exact customer link', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadOpportunityDetails(context, [row], 7);
     for (const next of [
       { ...context, tenantId: 'other' },
@@ -141,21 +323,25 @@ it.effect('separates tenant, principal, company, module, revision and exact cust
     yield* opportunityRelatedData.read({ ...input, scope: pageDataScopeKey(context, 'other.module') ?? '' });
     yield* opportunityRelatedData.read({ ...input, revision: 8 });
     yield* opportunityRelatedData.read({ ...input, counterpartyId: 'different-customer' });
-    expect(mocks.contracts).toHaveBeenCalledTimes(7);
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(7);
     expect(opportunityRelatedData.snapshot(input).state).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
-it.effect('does not prefetch with absent or incomplete identity', () =>
+it.live('does not prefetch with absent or incomplete identity', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadOpportunityDetails(undefined, [row], 7);
     yield* preloadOpportunityDetails({ ...context, principalId: '' }, [row], 7);
-    expect(mocks.contracts).not.toHaveBeenCalled();
-    expect(mocks.tasks).not.toHaveBeenCalled();
-  }),
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(0);
+    expect(taskReads).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('keeps independent successful sections but never reuses a denial as success', () =>
+it.live('keeps independent successful sections but never reuses a denial as success', () =>
   Effect.gen(function* test() {
-    mocks.contracts.mockReturnValue(Effect.fail({ _tag: 'RecordsForbiddenProblem', status: 403 }));
+    yield* pinTestDocument;
+    contractAnswer = Effect.fail(forbidden);
     yield* preloadOpportunityDetails(context, [row], 7);
     const failed = opportunityRelatedData.snapshot(input);
     expect(failed.state).toBe('failed');
@@ -164,30 +350,34 @@ it.effect('keeps independent successful sections but never reuses a denial as su
       expect(failed.error.value.tasks.status).toBe('ready');
       expect(failed.error.value.orders.status).toBe('ready');
     }
-    mocks.contracts.mockReturnValue(Effect.succeed(contracts));
+    contractAnswer = Effect.succeed(contracts);
     yield* opportunityRelatedData.read(input);
-    expect(mocks.contracts).toHaveBeenCalledTimes(2);
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(2);
     expect(opportunityRelatedData.snapshot(input).state).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
-it.effect('limits background work to two rows and cancels both active and queued work', () =>
+it.live('limits background work to two rows and cancels both active and queued work', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     const started = yield* Deferred.make<boolean>();
+    const cancelled = yield* Deferred.make<boolean>();
     let active = 0;
     let stopped = 0;
-    mocks.contracts.mockImplementation(() =>
-      Effect.gen(function* blocked() {
-        active += 1;
-        if (active === 2) {
-          yield* Deferred.succeed(started, true);
-        }
-        return yield* Effect.never;
-      }).pipe(
-        Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            stopped += 1;
-          }),
-        ),
+    contractAnswer = Effect.gen(function* blocked() {
+      active += 1;
+      if (active === 2) {
+        yield* Deferred.succeed(started, true);
+      }
+      return yield* Effect.never;
+    }).pipe(
+      Effect.onInterrupt(() =>
+        Effect.gen(function* cancelledRequest() {
+          stopped += 1;
+          if (stopped === 2) {
+            yield* Deferred.succeed(cancelled, true);
+          }
+        }),
       ),
     );
     const rows = Array.from({ length: 5 }, (_, i) => ({
@@ -201,68 +391,53 @@ it.effect('limits background work to two rows and cancels both active and queued
     }));
     const fiber = yield* Effect.forkChild(preloadOpportunityDetails(context, rows, 7));
     yield* Deferred.await(started);
+    yield* networkQuietExcept(2);
     expect(active).toBe(2);
     yield* Fiber.interrupt(fiber);
+    yield* Deferred.await(cancelled);
     expect(stopped).toBe(2);
-    expect(mocks.contracts).toHaveBeenCalledTimes(2);
-    expect(mocks.orders).not.toHaveBeenCalled();
-  }),
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(2);
+    expect(orderReads).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
-it.effect('joins a foreground opening without cancelling it when the background page changes', () =>
+it.live('invalidates related records even when an opportunity command is refused', () =>
   Effect.gen(function* test() {
-    const started = yield* Deferred.make<boolean>();
-    const release = yield* Deferred.make<boolean>();
-    mocks.contracts.mockImplementation(() =>
-      Deferred.succeed(started, true).pipe(Effect.andThen(Deferred.await(release)), Effect.as(contracts)),
-    );
-    const background = yield* Effect.forkChild(preloadOpportunityDetails(context, [row], 7));
-    yield* Deferred.await(started);
-    const joined = yield* Effect.forkChild(opportunityRelatedData.read(input));
-    yield* Effect.yieldNow;
-    yield* Fiber.interrupt(background);
-    yield* Deferred.succeed(release, true);
-    yield* Fiber.join(joined);
-    expect(mocks.contracts).toHaveBeenCalledTimes(1);
-  }),
-);
-it.effect('clears warm data on live updates and on a failed settled command', () =>
-  Effect.gen(function* test() {
+    yield* pinTestDocument;
     yield* preloadOpportunityDetails(context, [row], 7);
-    events.dispatchEvent(new Event(moduleChangeEvent));
-    expect(opportunityRelatedData.snapshot(input).state).toBe('pending');
-    yield* opportunityRelatedData.read(input);
-    expect(mocks.contracts).toHaveBeenCalledTimes(2);
-    mocks.command.mockReturnValue(Effect.fail({ _tag: 'ApplyCommandActionForbiddenProblem', status: 403 }));
     yield* applyPipelineCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, 7).pipe(Effect.ignore);
     expect(opportunityRelatedData.snapshot(input).state).toBe('pending');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 it.live('preserves a cold URL record and does not return last-authorized rows after a denied refresh', () =>
   Effect.gen(function* test() {
+    yield* pinTestDocument;
     const initial = initialRecordsInput({ context, routeParams: {}, search: `?opportunityId=${opportunity.id}` });
     expect(Option.isSome(initial)).toBe(true);
     if (Option.isNone(initial)) {
       return;
     }
-    mocks.records.mockReturnValue(Effect.succeed({ items: [opportunity], revision: 7 }));
+    recordsAnswer = Effect.succeed(records);
     yield* Effect.promise(() =>
       preloadPipelinePage({ context, routeParams: {}, search: `?opportunityId=${opportunity.id}` }),
     );
     yield* pipelineRecords.read(initial.value);
-    expect(mocks.records).toHaveBeenCalledTimes(1);
+    yield* networkIdle;
+    expect(recordsReads).toHaveLength(1);
     const ready = pipelineRecords.snapshot(initial.value);
     expect(ready.state).toBe('ready');
     if (ready.state === 'ready') {
       expect(ready.value.items[0]?.id).toBe(opportunity.id);
     }
-    mocks.records.mockReturnValue(Effect.fail({ _tag: 'RecordsForbiddenProblem' }));
+    recordsAnswer = Effect.fail(forbidden);
     yield* pipelineRecords.refresh(initial.value);
     expect(pipelineRecords.snapshot(initial.value).state).toBe('failed');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('does not invent a successful contract section before the independent customer reference exists', () =>
+it.live('does not invent a successful contract section before the independent customer reference exists', () =>
   Effect.gen(function* noCustomerReference() {
+    yield* pinTestDocument;
     const counterpartyId = new Map<string, string>().get(opportunity.partyId);
     yield* preloadOpportunityDetails(context, [{ counterpartyId, opportunity }], 7);
     const partial = opportunityRelatedData.snapshot({ ...input, counterpartyId });
@@ -272,15 +447,14 @@ it.effect('does not invent a successful contract section before the independent 
       expect(partial.error.value.orders.status).toBe('ready');
       expect(partial.error.value.tasks.status).toBe('ready');
     }
-    expect(mocks.contracts).not.toHaveBeenCalled();
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(0);
     yield* opportunityRelatedData.read(input);
-    expect(mocks.contracts).toHaveBeenCalledTimes(1);
-    expect(mocks.orders.mock.calls[0]?.[0]).toEqual({
+    yield* networkIdle;
+    expect(contractReads).toHaveLength(1);
+    expect(orderReads[0]).toEqual({
       view: { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 },
     });
-    expect(mocks.tasks.mock.calls.slice(0, 2).map(([query]) => query)).toEqual([
-      { opportunityId: opportunity.id },
-      { partyId: opportunity.partyId },
-    ]);
-  }),
+    expect(taskReads.slice(0, 2)).toEqual([{ opportunityId: opportunity.id }, { partyId: opportunity.partyId }]);
+  }).pipe(Effect.provide(network)),
 );

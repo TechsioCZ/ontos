@@ -23,6 +23,7 @@ import {
   ReadRuntime,
   defineDatabaseIdentityEnrollment,
   loadDatabaseConnectionPair,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
@@ -113,7 +114,7 @@ const comparable = (response: typeof RecordsResponseSchema.Type) => {
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const unused = () => Effect.die('Unexpected production reference transport');
 const financeBoundary = Layer.mergeAll(
-  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(unused())),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unused() }),
   Layer.succeed(
     HttpServerRequest.HttpServerRequest,

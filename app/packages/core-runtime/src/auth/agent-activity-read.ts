@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect';
 
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -22,8 +22,7 @@ const prepare = Effect.fn('AgentActivityRead.prepare')(function* prepare(
   if (legalEntityId === undefined) {
     return yield* agentActivityUnavailable('An exact company context is required');
   }
-  const snapshot = yield* (yield* ActiveApplicationCompositionService).load.pipe(
-    Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+  const snapshot = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService).pipe(
     Effect.mapError(agentActivityUnavailable),
   );
   if (context.compositionRevision !== undefined && context.compositionRevision !== snapshot.composition.revision) {

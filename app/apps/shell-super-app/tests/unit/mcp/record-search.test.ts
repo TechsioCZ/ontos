@@ -1,4 +1,3 @@
-import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 // @rstest-environment node
 import {
   ContextAccess,
@@ -15,6 +14,7 @@ import {
   ReadRuntime,
   TenantModuleStateService,
   TenantModuleStateReadUnavailableError,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ContextAccessService, OAuthGrantRecord, ReadCoreError, TenantModuleStateRecord } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
@@ -25,7 +25,7 @@ import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { Crypto, Effect, Layer, Option, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { HttpRouter, HttpServerRequest } from 'effect/http';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
@@ -69,12 +69,7 @@ import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-
 import { connectionDescription, fixtureCatalog, FIXTURE_MODULE_ID } from './fixture-vertical.ts';
 import { agentConnectionStoreDouble } from '../../support/agent-connection-store-double.ts';
 import { tenantModuleTargetTestCarrier } from '../../support/tenant-module-target-carrier.ts';
-
-rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
-  get loadOAuthServerConfig() {
-    return Effect.succeed({ issuer: 'https://ontos.test/oauth', resource: 'https://ontos.test/mcp' });
-  },
-}));
+import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 
 const alphaModule = 'fixture.notes';
 const alphaType = 'fixture.notes.record';
@@ -447,7 +442,7 @@ const runNativeSearch = Effect.fn('McpRecordSearchTest.nativeSearch')(
     const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
     const harness = yield* makeReadTestHarness({
       access: 'allowed',
-      applicationComposition: { load: Effect.succeed(fixture.snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(fixture.snapshot)),
       compositionRevision: request.compositionRevision,
       executeOwnerQuery: neverCalled,
       expectedDeployment: fixture.installed.composition.shell.deployment,
@@ -491,7 +486,10 @@ const acquireSdkServer = (authority: Effect.Success<ReturnType<typeof setup>>['a
               ShellCryptoLive,
               Layer.mock(ActionRuntime, {}),
               Layer.mock(ReadRuntime, {}),
-              Layer.mock(ActiveApplicationCompositionService, {}),
+              Layer.succeed(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+              ),
               Layer.mock(AgentProposalCommandPreparation, {}),
               Layer.mock(AgentProposalQueueModuleReview, {}),
               Layer.mock(GatewayIssuer, {}),

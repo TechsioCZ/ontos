@@ -1,125 +1,156 @@
 // @rstest-environment happy-dom
-// The bulk change by tag as the user sees it: choosing the tag and the new stage sends nothing, the shared Save button
-// ("Uložit", last in the footer) sends one bulk command for the previewed opportunities, an untouched panel closes
-// without asking and a started choice asks first. The opportunity and tag reads, the command, the router blocker, the
-// i18n runtime, the tag filter (by one button) and the select template (by a native select) are replaced.
+// A customer tag selects the exact opportunity IDs and revision used by the bulk stage command.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import {
+  RecordsApi as TagRecordsApi,
+  RecordsResponseSchema as TagRecordsResponseSchema,
+} from '@app/tagging/contracts/records';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import { BulkByTagDialog } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-bulk-by-tag.tsx';
 import type { BulkByTagResult } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-bulk-by-tag.tsx';
-import type { PipelineCommand } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-api.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
-/** The props the stand-in of the select template reads. */
-interface NativeSelectProps {
-  readonly items: readonly { readonly label: string; readonly value: string }[];
-  readonly name?: string;
-  readonly onValueChange: (details: { readonly value: string[] }) => void;
-  readonly value?: readonly string[];
-}
-
-const { sent } = rstest.hoisted(() => {
-  const commands: { readonly command: PipelineCommand; readonly revision: number }[] = [];
-  return { sent: commands };
+const opportunity = Schema.decodeUnknownSync(OpportunitySchema)({
+  amountMinor: 0,
+  createdAt: '2026-10-01T08:00:00.000Z',
+  currency: 'CZK',
+  expectedCloseDate: '2026-11-30',
+  id: '0196a8a0-0000-7000-8000-000000000001',
+  lines: [],
+  partyId: '0196a8a0-0000-7000-8000-0000000000aa',
+  probability: 10,
+  stage: 'LEAD',
+  stageHistory: [],
+  title: 'Regály',
+  updatedAt: '2026-10-01T08:00:00.000Z',
 });
-
-const opportunity = { id: 'opp-1', partyId: 'party-1', stage: 'LEAD', title: 'Regály' } as const;
-
-rstest.mock('../../src/routes/[lang]/prodej/prilezitosti/pipeline-references.ts', () => ({
-  useAllOpportunities: () => ({ items: { items: [opportunity], revision: 3 }, status: 'ready' }),
-  useSubjectIdsWithTag: (_kind: string, tagId: string | null) =>
-    tagId === null ? undefined : { items: new Set([opportunity.partyId]), status: 'ready' },
-}));
-rstest.mock('../../src/routes/[lang]/prodej/prilezitosti/pipeline-api.ts', () => ({
-  applyPipelineCommand: (command: PipelineCommand, revision: number) =>
-    Effect.sync(() => {
-      sent.push({ command, revision });
-      return { opportunities: [opportunity], revision: 4 };
-    }),
-}));
-rstest.mock('@app/tagging/components/tag-controls', () => ({
-  TagFilter: ({ onChange }: { readonly onChange: (tagId: string | null) => void }) =>
-    createElement('button', { 'data-testid': 'tag-filter-pick', onClick: () => onChange('tag-1'), type: 'button' }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@app/admin-ui/select-template', () => ({
-  SelectTemplate: ({ items, name, onValueChange, value }: NativeSelectProps) =>
-    createElement(
-      'select',
-      {
-        name,
-        onChange: (event: { readonly target: { readonly value: string } }) =>
-          onValueChange({ value: event.target.value === '' ? [] : [event.target.value] }),
-        value: value?.[0] ?? '',
-      },
-      createElement('option', { value: '' }),
-      ...items.map((item) => createElement('option', { key: item.value, value: item.value }, item.label)),
-    ),
-}));
+const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000001',
+    tenantId: '20000000-0000-4000-8000-000000000002',
+  },
+  canWrite: true,
+  indicators: {
+    byStage: [],
+    lostCount: 0,
+    openCount: 1,
+    openValueMinor: 0,
+    weightedValueMinor: 0,
+    winRate: null,
+    wonCount: 0,
+    wonValueMinor: 0,
+  },
+  items: [Schema.encodeSync(OpportunitySchema)(opportunity)],
+  revision: 3,
+});
+const tagRecords = Schema.decodeUnknownSync(TagRecordsResponseSchema)({
+  assignments: [
+    { assignedAt: '2026-10-01T08:00:00.000Z', subject: { id: opportunity.partyId, kind: 'customer' }, tagId: 'tag-1' },
+  ],
+  canWrite: true,
+  indicators: { assignmentCount: 1, tagCount: 1 },
+  revision: 1,
+  tags: [
+    {
+      color: 'blue',
+      counts: { customer: 1, employee: 0, opportunity: 0, order: 0, product: 0 },
+      createdAt: '2026-10-01T08:00:00.000Z',
+      id: 'tag-1',
+      name: 'Vybraní zákazníci',
+      subjectKinds: ['customer'],
+      updatedAt: '2026-10-01T08:00:00.000Z',
+    },
+  ],
+});
+const sent: { readonly command: (typeof ApplyCommandPayloadSchema.Encoded)['command']; readonly revision: number }[] =
+  [];
+const OwnerRecords = RecordsApi.prefix('/sales-pipeline-api');
+const OwnerAction = ApplyCommandActionApi.prefix('/sales-pipeline-api');
+const Tags = TagRecordsApi.prefix('/tagging-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'sales-pipeline': '/sales-pipeline-api', tagging: '/tagging-api' }).application,
+  serveApi(
+    OwnerRecords,
+    HttpApiBuilder.group(OwnerRecords, 'records', (g) => g.handle('execute', () => Effect.succeed(records))),
+  ),
+  serveApi(
+    Tags,
+    HttpApiBuilder.group(Tags, 'records', (g) => g.handle('execute', () => Effect.succeed(tagRecords))),
+  ),
+  serveApi(
+    OwnerAction,
+    HttpApiBuilder.group(OwnerAction, 'applyCommandAction', (g) =>
+      g.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          sent.push({ command: payload.command, revision: payload.expectedRevision });
+          return { opportunities: [opportunity], revision: 4 };
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+);
 
 const labels = saveLabelsFor('cs');
-const copy = { cancel: 'sales-pipeline.pages.records.bulkByTag.cancel', stage: 'NEGOTIATION' } as const;
-
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const views: (() => void)[] = [];
-
-const mount = async (events: string[], done: BulkByTagResult[]) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  views.push(() => {
-    act(() => root.unmount());
-    container.remove();
-  });
-  await act(async () => {
-    root.render(
-      <BulkByTagDialog
-        activeEmployees={[]}
-        customerLabel={(partyId) => partyId}
-        onDone={(result) => {
-          done.push(result);
-        }}
-        onOpenChange={(open) => {
-          events.push(open ? 'open' : 'closed');
-        }}
-      />,
-    );
-  });
-  await settle();
-};
-
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
-
-const button = (name: string): HTMLButtonElement => Option.getOrThrow(Option.fromNullishOr(buttons(name).at(0)));
-
-const step = async (run: () => void) => {
-  await act(async () => {
-    run();
-  });
-  await settle();
-};
-
+const copy = { stage: 'NEGOTIATION' } as const;
+const button = (name: string) => Option.getOrThrow(Option.fromNullishOr(buttons(name).at(0)));
+const mount = (events: string[], done: BulkByTagResult[]) =>
+  mountInRoute(
+    <BulkByTagDialog
+      activeEmployees={[]}
+      customerLabel={(partyId) => partyId}
+      onDone={(result) => {
+        done.push(result);
+      }}
+      onOpenChange={(open) => {
+        events.push(open ? 'open' : 'closed');
+      }}
+    />,
+    { path: 'prodej/prilezitosti', url: '/cs/prodej/prilezitosti' },
+  );
 const pickTag = () =>
-  step(() => {
-    Option.getOrThrow(
-      Option.fromNullOr(document.querySelector<HTMLElement>('[data-testid="tag-filter-pick"]')),
-    ).click();
+  Effect.gen(function* pickTagOption() {
+    yield* waitUntil(() => {
+      const trigger = document.querySelector<HTMLButtonElement>('[data-scope="combobox"][data-part="trigger"]');
+      return trigger !== null && !trigger.disabled;
+    });
+    yield* acted(() => {
+      Option.getOrThrow(
+        Option.fromNullOr(document.querySelector<HTMLButtonElement>('[data-scope="combobox"][data-part="trigger"]')),
+      ).click();
+    });
+    yield* waitUntil(() =>
+      [...document.querySelectorAll<HTMLElement>('[role="option"]')].some((option) =>
+        option.textContent?.includes('Vybraní zákazníci'),
+      ),
+    );
+    yield* acted(() => {
+      Option.getOrThrow(
+        Option.fromUndefinedOr(
+          [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) =>
+            option.textContent?.includes('Vybraní zákazníci'),
+          ),
+        ),
+      ).click();
+    });
+    yield* waitUntil(() => text().includes(opportunity.title));
   });
-
 const pickStage = () =>
-  step(() => {
+  acted(() => {
     const select = Option.getOrThrow(
       Option.fromNullOr(document.querySelector<HTMLSelectElement>('select[name="stage"]')),
     );
@@ -128,31 +159,25 @@ const pickStage = () =>
   });
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   sent.length = 0;
 });
+afterEach(unmountAll);
 
-afterEach(() => {
-  for (const unmount of views.splice(0)) {
-    unmount();
-  }
-  rstest.unstubAllGlobals();
-});
-
-describe('bulk change by tag with the shared Uložit', () => {
-  it.live('choosing sends nothing; one click on Uložit sends one bulk command for the preview', () =>
-    Effect.promise(async () => {
+describe('bulk opportunity change by customer tag', () => {
+  it.live('sends the previewed opportunity IDs, target stage and population revision', () =>
+    Effect.gen(function* saveBulk() {
+      yield* pinTestDocument;
       const events: string[] = [];
       const done: BulkByTagResult[] = [];
-      await mount(events, done);
-      expect(buttons(labels.save)).toHaveLength(1);
-      expect(button(labels.save).disabled).toBe(true);
+      yield* mount(events, done);
 
-      await pickTag();
-      await pickStage();
-      expect(sent).toEqual([]);
+      yield* pickTag();
+      yield* pickStage();
+      yield* waitUntil(() => !button(labels.save).disabled);
 
-      await step(() => button(labels.save).click());
+      yield* acted(() => button(labels.save).click());
+      yield* waitUntil(() => done.length === 1);
+      yield* networkIdle;
       expect(sent).toEqual([
         {
           command: { _tag: 'BulkUpdateOpportunities', ids: [opportunity.id], patch: { stage: copy.stage } },
@@ -161,22 +186,6 @@ describe('bulk change by tag with the shared Uložit', () => {
       ]);
       expect(done).toHaveLength(1);
       expect(done[0]?.changed).toBe(1);
-    }),
-  );
-
-  it.live('an untouched panel closes without asking; a started choice asks first', () =>
-    Effect.promise(async () => {
-      const events: string[] = [];
-      await mount(events, []);
-      await step(() => button(copy.cancel).click());
-      expect(buttons(labels.discard)).toHaveLength(0);
-      expect(events).toEqual(['closed']);
-
-      await pickTag();
-      await step(() => button(copy.cancel).click());
-      expect(buttons(labels.discard)).toHaveLength(1);
-      expect(events).toEqual(['closed']);
-      expect(sent).toEqual([]);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

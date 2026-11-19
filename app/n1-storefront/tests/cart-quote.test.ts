@@ -1,4 +1,3 @@
-import { rs } from "@rstest/core";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "effect-rstest";
 import { ApplyCommandResultSchema } from "@app/merchandise/contracts/apply-command";
@@ -10,7 +9,6 @@ import {
 } from "../src/ontos/cart-quote";
 import { confirmCartQuote } from "../src/ontos/cart-quote-server";
 
-rs.mock("server-only", () => ({}));
 const scope = {
   currency: "CZK",
   legalEntityId: "71000000-0000-4000-8000-000000000099",

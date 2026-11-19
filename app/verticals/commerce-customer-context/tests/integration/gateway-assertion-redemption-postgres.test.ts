@@ -9,15 +9,16 @@ import {
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
-import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { decodeSupportedGatewayContextClaims } from '@app/shared-contracts';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { decodeJwt, SignJWT } from 'jose';
 import { defineRelations, eq, sql } from 'drizzle-orm';
 import {
@@ -37,7 +38,7 @@ import {
   Stream,
 } from 'effect';
 import { ChildProcess } from 'effect/process';
-import { expect, it, rs } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { gatewayAssertionRedemptions } from '../../src/database/schema.ts';
@@ -184,18 +185,27 @@ it.live('serves an authorized owner Read through the unchanged default API and r
       const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: randomUUID() }, snapshot.composition.revision);
       const realm = yield* makeCounterpartyInvitationRealm(fixture);
       const gateway = yield* makeAcceptanceGatewayIssuer('https://ccc-default-redemption.ontos.test', 'ccc-redemption');
+      // The default API reads its active composition over its actual fetch transport from a loopback
+      // source owned by this case's scope.
+      const snapshotDocument = yield* Schema.encodeEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(snapshot);
+      const sourceContext = yield* Layer.build(NodeHttpServer.layerTest);
+      const source = Context.get(sourceContext, HttpServer.HttpServer);
+      yield* source.serve(
+        Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })),
+      );
+      const sourceAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(source.address);
       const gatewayTrust = ConfigProvider.layer(
         ConfigProvider.orElse(
           ConfigProvider.fromUnknown({
-            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://composition.ccc-redemption.test/active',
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `http://127.0.0.1:${sourceAddress.port}/active-composition`,
             ONTOS_GATEWAY_ISSUER: gateway.issuer,
             ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [gateway.publicJwk] }),
           }),
           ConfigProvider.fromEnv(),
         ),
       );
-      rs.stubGlobal('fetch', async () => Response.json(snapshot));
-      yield* Effect.addFinalizer(() => Effect.sync(() => rs.unstubAllGlobals()));
       yield* fixture.admin.execute(
         sql`insert into commerce_customer_context.counterparty_commerce_access_grants
       (tenant_id, legal_entity_id, counterparty_purchasing_profile_id, lifecycle, permission_code, principal_id, revision, action_invocation_id, actor_principal_id)

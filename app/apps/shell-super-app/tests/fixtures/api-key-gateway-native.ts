@@ -52,7 +52,6 @@ import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-r
 import { OwnedAuthRuntimeContract, OwnedAuthRuntimeContractLive } from '../support/api-key-gateway-auth-runtime.ts';
 import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-runtime.ts';
 import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
-import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
 import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
@@ -80,23 +79,19 @@ const releaseDiagnosticsTag = 'release-diagnostics';
 const marketAppId = 'commerce-market-catalog';
 const customerContextAppId = 'commerce-customer-context';
 export interface ApiKeyGatewayNativeFixtureOptions {
-  readonly additionalRelaySources?: readonly Pick<
-    typeof ShellNativeAdditionalRelaySourceSchema.Type,
-    'registeredWorkloads' | 'sourceAppId'
-  >[];
+  readonly additionalRelaySources?: readonly Pick<typeof ShellNativeAdditionalRelaySourceSchema.Type, 'sourceAppId'>[];
   readonly ownedDatabase: ShellNativeOwnedDatabase;
   readonly priceReadProjectionJson?: string;
   /** Exercise the actual Core/SpiceDB gate and both production Shell prefixes. */
   readonly productionGate?: true;
   readonly regionsProjectionJson?: string;
-  readonly relaySource?: Pick<typeof ShellNativeRelaySourceSchema.Type, 'registeredWorkloads' | 'sourceAppId'>;
+  readonly relaySource?: Pick<typeof ShellNativeRelaySourceSchema.Type, 'sourceAppId'>;
   /** Seconds one dispatched request may take under the production gate; 20 by default, 60 at most. */
   readonly requestDeadlineSeconds?: number;
   readonly snapshotJson: string;
 }
 export const ShellNativeRelaySourceSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-  registeredWorkloads: GatewayModuleBindingSchema.fields.registeredWorkloads,
   sourceAppId: Schema.Literals([customerContextAppId, marketAppId, 'symmy-integration']),
   sourceBuildMarker: Schema.String.check(Schema.isMinLength(1)),
 });
@@ -201,7 +196,6 @@ export const ShellNativeGatewayDiagnosticsResponseSchema = Schema.TaggedStruct(g
 });
 export const ShellNativeIssuerCauseTagSchema = Schema.Literals([
   'InstalledModuleCatalogUnavailableError',
-  'InstalledModuleCatalogInvalidError',
   'ActiveApplicationCompositionUnavailableError',
   'ActiveApplicationCompositionSourceReadError',
   'ApplicationCompositionValidationError',
@@ -669,7 +663,6 @@ const resolveAdditionalRelaySources = Effect.fn('ApiKeyGatewayNativeFixture.reso
     const additionalInputs = yield* Schema.decodeUnknownEffect(
       Schema.Array(
         Schema.Struct({
-          registeredWorkloads: ShellNativeAdditionalRelaySourceSchema.fields.registeredWorkloads,
           sourceAppId: ShellNativeModuleAppIdSchema,
         }),
       ),

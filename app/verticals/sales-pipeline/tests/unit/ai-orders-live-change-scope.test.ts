@@ -1,71 +1,51 @@
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import type { ReactNode } from 'react';
+// @rstest-environment happy-dom
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { it } from 'effect-rstest';
 import { aiOrders } from '../../src/routes/[lang]/prodej/schvalovani-ai/page.tsx';
+import { RecordsApi, RecordsResponseSchema } from '@app/merchandise/apis/records';
 
-const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: mocks.records }));
-rstest.mock('@modern-js/runtime/head', () => ({ Helmet: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: String }),
-}));
-
-const events = new EventTarget();
-const globals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(globals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(globals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
+const response = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '11111111-1111-4111-8111-111111111111',
+  },
+  aiChanges: { batches: [], changes: [], log: [] },
+  canWrite: true,
+  indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
+  movements: [],
+  orders: [],
+  products: [],
+  revision: 3,
 });
 
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  events.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
+const reads: unknown[] = [];
+const OwnerApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return response;
+        }),
+      ),
+    ),
+  ),
+);
 
-beforeEach(() => {
-  rstest.resetAllMocks();
-  aiOrders.invalidate();
-  mocks.records.mockReturnValue(
-    Effect.succeed({ aiChanges: { batches: [], changes: [], log: [] }, canWrite: false, revision: 1 }),
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('aiOrders reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
+      input: 'company-a',
+      reads: () => reads.length,
+      reloadsOn: ['merchandise'],
+      store: aiOrders,
+    }),
   );
 });
-
-it.live('live changes of apps the order proposals do not show read nothing', () =>
-  Effect.gen(function* unrelatedChange() {
-    yield* aiOrders.preload('company-a');
-    const unsubscribe = aiOrders.subscribe(() => {
-      aiOrders.snapshot('company-a');
-    }, 'company-a');
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-    dispatchChange(['party-registry']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-    unsubscribe();
-  }),
-);
-
-it.live('a live change of merchandise reloads the mounted order proposals', () =>
-  Effect.gen(function* orderChange() {
-    yield* aiOrders.preload('company-a');
-    const unsubscribe = aiOrders.subscribe(() => {
-      aiOrders.snapshot('company-a');
-    }, 'company-a');
-    dispatchChange(['merchandise']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.records).toHaveBeenCalledTimes(2);
-    unsubscribe();
-  }),
-);

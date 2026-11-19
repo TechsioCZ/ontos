@@ -2,7 +2,10 @@ import { once } from 'node:events';
 
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime/modules/active-application-composition';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Exit, Fiber, Redacted, Schema } from 'effect';
@@ -112,9 +115,12 @@ const portal =
       Effect.provideService(CustomerOwnConsentUpdateExchange, { deliver: () => Effect.void, sessionRef: SESSION_REF }),
       // The late verdict of a change that completes past the call budget does reach a composition read, so this
       // service answers with a real snapshot and the test needs no composition snapshot in the environment.
-      Effect.provideService(ActiveApplicationCompositionService, {
-        load: provider.composition === undefined ? compositionSnapshot : Effect.succeed(provider.composition),
-      }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(
+          provider.composition === undefined ? compositionSnapshot : Effect.succeed(provider.composition),
+        ),
+      ),
       Effect.provideService(CommerceEnrollmentOwnerTransactionRunner, Schema.decodeUnknownSync(Schema.Any)({})),
       Effect.provide(NodeCrypto.layer),
     );

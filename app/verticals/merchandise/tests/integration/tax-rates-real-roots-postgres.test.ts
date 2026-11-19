@@ -57,7 +57,7 @@ import {
   Redacted,
   Schema,
 } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { createLocalJWKSet, importJWK, jwtVerify, SignJWT } from 'jose';
 
@@ -572,13 +572,9 @@ const serveRoots = <E>(
       }).createHandler();
       rootHandlers.set('merchandise', merchandise);
       rootHandlers.set('tax', tax);
-      rs.stubGlobal('fetch', fetchThroughRoots);
       return { merchandise, route, tax };
     }),
-    ({ merchandise, tax }) =>
-      Effect.promise(() => Promise.all([merchandise.dispose(), tax.dispose()])).pipe(
-        Effect.ensuring(Effect.sync(() => rs.unstubAllGlobals())),
-      ),
+    ({ merchandise, tax }) => Effect.promise(() => Promise.all([merchandise.dispose(), tax.dispose()])),
   );
 
 it.live(

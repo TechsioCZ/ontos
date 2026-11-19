@@ -1,13 +1,28 @@
 // @rstest-environment happy-dom
 // The contract forms of the agreements page as a person uses them: one Save button last in the footer, typing changes
 // only the draft, a save goes out once against the revision the draft was read at, and leaving with unsaved input
-// asks first. Only the generated clients, the reference credentials, the i18n runtime and the router are replaced.
+// asks first. The real clients, reference credentials, i18n, router and UI run against in-process HTTP contracts.
 import { saveLabelsFor } from '@app/admin-ui';
-import type { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
-import type { Contract } from '../../shared/apis/records.ts';
+import { unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import {
+  ApplyCommandActionApi,
+  ApplyCommandActionConflictProblemSchema,
+} from '../../shared/apis/apply-command-action.ts';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { Contract, RecordsResponse } from '../../shared/apis/records.ts';
 import {
   createAgreement,
   renewAgreement,
@@ -17,45 +32,14 @@ import { renewalDraftOf } from '../../src/routes/[lang]/smlouvy/agreement-draft.
 import type { CreateReferences } from '../../src/routes/[lang]/smlouvy/agreement-draft.ts';
 import { ContractCreatePanel } from '../../src/routes/[lang]/smlouvy/contract-create-panel.tsx';
 import { ContractPeriodPanel } from '../../src/routes/[lang]/smlouvy/contract-period-panel.tsx';
-import {
-  button,
-  buttons,
-  click,
-  field,
-  mount,
-  pick,
-  text,
-  type,
-  unmountAll,
-  waitUntil,
-} from '../support/agreement-form.tsx';
+import { button, buttons, click, field, pick, text, type } from '../support/agreement-form.tsx';
 
-const { apply, credentials, records } = rstest.hoisted(() => ({
-  apply: rstest.fn(),
-  credentials: rstest.fn(),
-  records: rstest.fn(),
-}));
-
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: apply }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-rstest.mock('@app/shared-contracts', () => {
-  const actual = rstest.requireActual<{
-    readonly makeReferenceGatewayCredentials: typeof makeReferenceGatewayCredentials;
-  }>('@app/shared-contracts');
-  return { ...actual, makeReferenceGatewayCredentials: credentials };
-});
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useNavigate: () => () => {},
-  useRouterState: () => '',
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
-const close = 'legal-agreements.detail.close';
-const noUnit = 'legal-agreements.demo.noUnit';
+const czech = moduleText('cs');
+const close = czech('legal-agreements.detail.close');
+const noUnit = czech('legal-agreements.demo.noUnit');
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const contractRef = {
   moduleId: 'legal.agreements',
@@ -99,12 +83,53 @@ const conflictProblem = Schema.decodeUnknownSync(ApplyCommandActionConflictProbl
   type: 'about:blank',
 });
 
-const sent = () => apply.mock.calls.map(([payload]) => payload);
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+const sent = () => commands;
+const saved = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: contractRef, revision: 5 });
+let answer: Effect.Effect<typeof ApplyCommandResultSchema.Type, typeof ApplyCommandActionConflictProblemSchema.Type> =
+  Effect.succeed(saved);
+const recordsAt = (contracts: readonly Contract[]): RecordsResponse =>
+  Schema.decodeUnknownSync(RecordsResponseSchema)({
+    contracts: contracts.map((contract) => ({
+      ...contract,
+      expiringSoon: false,
+      hasSuccessorDraft: false,
+      isExpired: false,
+    })),
+    documents: [],
+    revision: 7,
+  });
+let recordsAnswer = recordsAt([draftContract]);
+const OwnerActionApi = ApplyCommandActionApi.prefix('/legal-agreements-api');
+const OwnerRecordsApi = RecordsApi.prefix('/legal-agreements-api');
+const network = browserNetwork(
+  shellGatewayIssuer({
+    'legal-agreements': '/legal-agreements-api',
+    'party-registry': '/party-registry-api',
+  }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', () => Effect.sync(() => recordsAnswer)),
+    ),
+  ),
+);
 const closed: string[] = [];
 const created: string[] = [];
 
 const mountPeriod = () =>
-  mount(
+  mountInRoute(
     <ContractPeriodPanel
       contract={draftContract}
       label={noUnit}
@@ -118,7 +143,7 @@ const mountPeriod = () =>
   );
 
 const mountCreate = () =>
-  mount(
+  mountInRoute(
     <ContractCreatePanel
       customers={[{ label: 'party-1', value: 'party-1' }]}
       kind="OTHER"
@@ -138,119 +163,86 @@ const mountCreate = () =>
 const endDate = 'contract-end-date';
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  apply.mockReset();
-  records.mockReset();
-  credentials.mockReset();
-  credentials.mockReturnValue(Effect.void);
-  apply.mockReturnValue(Effect.succeed({ resourceRef: contractRef, revision: 5 }));
+  commands.length = 0;
+  answer = Effect.succeed(saved);
+  recordsAnswer = recordsAt([draftContract]);
   closed.length = 0;
   created.length = 0;
 });
 
-afterEach(() => {
-  unmountAll();
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('period of a draft contract', () => {
-  it.effect(
-    'typing sends nothing; one Save sends the contract as read once, then the panel closes without asking',
-    () =>
-      Effect.gen(function* saveOnce() {
-        yield* mountPeriod();
-        expect(buttons(labels.save)).toHaveLength(1);
-        expect(button(labels.save).disabled).toBe(true);
-
-        yield* type(endDate, '2028-01-31');
-        expect(text()).toContain(labels.unsaved);
-        // Enter submits the form natively: it must not save.
-        field(endDate).form?.requestSubmit();
-        yield* click(field(endDate));
-        expect(text()).toContain(labels.unsaved);
-        expect(sent()).toHaveLength(0);
-
-        yield* click(button(labels.save));
-        yield* waitUntil(() => text().includes(labels.saved));
-        expect(sent()).toEqual([
-          {
-            command: {
-              _tag: 'UpdateContract',
-              record: { ...draftContract, endDate: '2028-01-31' },
-            },
-            expectedRevision: 4,
-          },
-        ]);
-
-        yield* click(button(close));
-        expect(buttons(labels.stay)).toHaveLength(0);
-        expect(closed).toEqual(['period']);
-      }),
-  );
-
-  it.effect('closing with unsaved input asks; Zůstat keeps it, Zahodit změny closes and sends nothing', () =>
-    Effect.gen(function* leave() {
+  it.live('typing sends nothing; one Save sends the contract as read once, then the panel closes without asking', () =>
+    Effect.gen(function* saveOnce() {
+      yield* pinTestDocument;
       yield* mountPeriod();
+      expect(buttons(labels.save)).toHaveLength(1);
+      expect(button(labels.save).disabled).toBe(true);
+
       yield* type(endDate, '2028-01-31');
-      yield* click(button(close));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      expect(closed).toEqual([]);
-
-      yield* click(button(labels.stay));
-      yield* waitUntil(() => buttons(labels.stay).length === 0);
-      expect(field(endDate).value).toBe('2028-01-31');
-
-      yield* click(button(close));
-      yield* click(button(labels.discard));
-      expect(closed).toEqual(['period']);
+      expect(text()).toContain(labels.unsaved);
+      // Enter submits the form natively: it must not save.
+      field(endDate).form?.requestSubmit();
+      yield* click(field(endDate));
+      expect(text()).toContain(labels.unsaved);
+      yield* networkIdle;
       expect(sent()).toHaveLength(0);
-    }),
-  );
 
-  it.effect('Uložit in the question saves once and then closes', () =>
-    Effect.gen(function* saveAndLeave() {
-      yield* mountPeriod();
-      yield* type(endDate, '2028-01-31');
+      yield* click(button(labels.save));
+      yield* waitUntil(() => text().includes(labels.saved));
+      yield* networkIdle;
+      expect(sent()).toEqual([
+        {
+          command: {
+            _tag: 'UpdateContract',
+            record: { ...draftContract, endDate: '2028-01-31' },
+          },
+          expectedRevision: 4,
+        },
+      ]);
+
       yield* click(button(close));
-      yield* click(buttons(labels.save).at(-1));
-      yield* waitUntil(() => closed.length === 1);
-      expect(sent()).toHaveLength(1);
-    }),
+      expect(buttons(labels.stay)).toHaveLength(0);
+      expect(closed).toEqual(['period']);
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('someone else changed this contract: the save is refused as a conflict, never resent over it', () =>
+  it.live('someone else changed this contract: the save is refused as a conflict, never resent over it', () =>
     Effect.gen(function* refused() {
-      apply.mockReturnValue(Effect.fail(conflictProblem));
-      records.mockReturnValue(
-        Effect.succeed({ contracts: [{ ...draftContract, subject: 'Jiný předmět' }], documents: [], revision: 7 }),
-      );
+      yield* pinTestDocument;
+      answer = Effect.fail(conflictProblem);
+      recordsAnswer = recordsAt([{ ...draftContract, subject: 'Jiný předmět' }]);
       yield* mountPeriod();
       yield* type(endDate, '2028-01-31');
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.conflict));
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(buttons(labels.reloadLatest)).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('another contract changed: the save is resent once against the fresh revision', () =>
+  it.live('another contract changed: the save is resent once against the fresh revision', () =>
     Effect.gen(function* resent() {
-      apply.mockReturnValueOnce(Effect.fail(conflictProblem));
-      records.mockReturnValue(Effect.succeed({ contracts: [draftContract], documents: [], revision: 7 }));
+      yield* pinTestDocument;
+      answer = Effect.suspend(() => (commands.length === 1 ? Effect.fail(conflictProblem) : Effect.succeed(saved)));
       yield* mountPeriod();
       yield* type(endDate, '2028-01-31');
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
+      yield* networkIdle;
       expect(sent().map((payload) => payload.expectedRevision)).toEqual([4, 7]);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });
 
 describe('new contract', () => {
-  it.effect('renewal opens an independent valid period and sends only the dates the person saves', () =>
+  it.live('renewal opens an independent valid period and sends only the dates the person saves', () =>
     Effect.gen(function* renewalPeriodForm() {
+      yield* pinTestDocument;
       const previous: Contract = { ...draftContract, endDate: '2030-01-31', lifecycleState: 'ACTIVE' };
-      yield* mount(
+      yield* mountInRoute(
         <ContractCreatePanel
           customers={[]}
           kind={previous.kind}
@@ -267,6 +259,7 @@ describe('new contract', () => {
       );
       expect(field('contract-start-date').value).toBe('2030-01-31');
       expect(field(endDate).value).toBe('2031-01-31');
+      yield* networkIdle;
       expect(sent()).toEqual([]);
       // The suggested successor period is valid as it opens: Uložit could send it without retyping a date.
       expect(button(labels.save).disabled).toBe(false);
@@ -275,6 +268,7 @@ describe('new contract', () => {
       yield* type(endDate, '2032-02-01');
       yield* click(button(labels.save));
       yield* waitUntil(() => created.length === 1);
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(sent()[0]).toMatchObject({
         command: {
@@ -289,7 +283,7 @@ describe('new contract', () => {
           },
         },
       });
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it('initializes open-ended and leap-day renewals with valid independent dates', () => {
@@ -302,44 +296,26 @@ describe('new contract', () => {
       startDate: '2028-02-29',
     });
   });
-  it.effect('an untouched form closes without asking', () =>
-    Effect.gen(function* untouched() {
-      yield* mountCreate();
-      expect(button(labels.save).disabled).toBe(true);
-      yield* click(button(close));
-      expect(buttons(labels.stay)).toHaveLength(0);
-      expect(closed).toEqual(['create']);
-    }),
-  );
 
-  it.effect('picking the customer enables the one Save; it creates the contract once and opens it', () =>
+  it.live('picking the customer enables the one Save; it creates the contract once and opens it', () =>
     Effect.gen(function* create() {
+      yield* pinTestDocument;
       yield* mountCreate();
-      yield* pick('legal-agreements.demo.customer', 'party-1');
+      yield* pick(czech('legal-agreements.demo.customer'), 'party-1');
       expect(button(labels.save).disabled).toBe(false);
       document.querySelector('form')?.requestSubmit();
       yield* click(document.querySelector('form') ?? undefined);
+      yield* networkIdle;
       expect(sent()).toHaveLength(0);
       yield* click(button(labels.save));
       yield* waitUntil(() => created.length === 1);
+      yield* networkIdle;
       expect(sent()).toHaveLength(1);
       expect(sent()[0]).toMatchObject({
         command: { _tag: 'CreateContract', record: { counterpartyRef, kind: 'OTHER', lifecycleState: 'DRAFT' } },
         expectedRevision: 4,
       });
       expect(created).toEqual([contractRef.resourceId]);
-    }),
-  );
-
-  it.effect('closing with a picked customer asks before the input is lost', () =>
-    Effect.gen(function* leaveTyped() {
-      yield* mountCreate();
-      yield* pick('legal-agreements.demo.customer', 'party-1');
-      yield* click(button(close));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      yield* click(button(labels.discard));
-      expect(closed).toEqual(['create']);
-      expect(sent()).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

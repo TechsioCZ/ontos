@@ -65,7 +65,6 @@ import {
   RemoveCatalogMediaPayloadSchema,
 } from '../../shared/actions/catalog-media.ts';
 import {
-  ReorderCatalogMediaActionAlreadyCommittedProblemSchema,
   ReorderCatalogMediaActionAuthenticationProblemSchema,
   ReorderCatalogMediaActionConflictProblemSchema,
   ReorderCatalogMediaActionForbiddenProblemSchema,
@@ -1110,32 +1109,13 @@ it.layer(mediaOrderingSuiteServices, { excludeTestServices: true })((suite) => {
             { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
           ),
         ).toEqual(moved);
-        // A committed replay advertises recovery of its original invocation after subsequent mutations.
-        const replayFailure = yield* executeReorderCatalogMediaWithAuthorization(
-          reorder,
-          yield* native.authority.issue(yield* DateTime.now),
-          yield* nextId,
-          replayOptions,
-        ).pipe(Effect.flip);
-        const alreadyCommitted = yield* Schema.decodeUnknownEffect(
-          ReorderCatalogMediaActionAlreadyCommittedProblemSchema,
-        )(replayFailure);
-        expect(alreadyCommitted).toMatchObject({
-          code: 'action_already_committed',
-          invocationId,
-          resolution: 'RECOVER_REORDER_CATALOG_MEDIA',
-          retryCommand: false,
-          status: 409,
-        });
-        const recoveryInvocationId = yield* Schema.decodeUnknownEffect(ProductActionInvocationIdSchema)(
-          alreadyCommitted.invocationId,
-        );
+        // A same-key replay answers the saved original result after subsequent mutations and runs nothing again.
         expect(
-          yield* executeReorderCatalogMediaRecoveryWithAuthorization(
-            { invocationId: recoveryInvocationId },
+          yield* executeReorderCatalogMediaWithAuthorization(
+            reorder,
             yield* native.authority.issue(yield* DateTime.now),
             yield* nextId,
-            { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
+            replayOptions,
           ),
         ).toEqual(moved);
         expect(yield* observeMedia(native)).toEqual(afterNoOp);

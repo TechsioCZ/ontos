@@ -8,6 +8,7 @@ import {
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -225,25 +226,28 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
     reconcile: () => Effect.die('No reconciliation should run in the release admission tests'),
   };
   const dependencies = Layer.mergeAll(
-    Layer.succeed(ActiveApplicationCompositionService, {
-      load: Effect.sync(() => {
-        calls.loads += 1;
-      }).pipe(
-        Effect.andThen(Ref.get(source)),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new ActiveApplicationCompositionUnavailableError({
-                  cause: 'No approved release has been published',
-                  reason: 'The release source is missing',
-                }),
-              ),
-            onSome: Effect.succeed,
-          }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        Effect.sync(() => {
+          calls.loads += 1;
+        }).pipe(
+          Effect.andThen(Ref.get(source)),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new ActiveApplicationCompositionUnavailableError({
+                    cause: 'No approved release has been published',
+                    reason: 'The release source is missing',
+                  }),
+                ),
+              onSome: Effect.succeed,
+            }),
+          ),
         ),
       ),
-    }),
+    ),
     Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, runner),
     Layer.succeed(CommerceEnrollmentOwnerEffectRegistry, {
       resolve: () =>
@@ -777,7 +781,10 @@ it.effect('reconciles admitted owner work without treating current verification 
           return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
         });
       const dependencies = Layer.mergeAll(
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(release) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(release)),
+        ),
         Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
           run: (_scope, operation) => operation({ invoke }),
           runWorker: () => Effect.die('This owner-local test does not list due work'),

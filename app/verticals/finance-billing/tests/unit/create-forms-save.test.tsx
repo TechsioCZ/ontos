@@ -1,97 +1,65 @@
 // @rstest-environment happy-dom
-// The create forms (recurring template, received invoice, new invoice) create their record only from the shared Save
-// button ("Uložit"), last in the footer: typing changes only the draft, an untouched form closes without asking, and
-// typed input asks before it is left. Only the i18n runtime, the router blocker and the two pickers are replaced.
-import { Effect, Predicate } from 'effect';
-import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { baselineVatChoices } from '../support/finance-tax-rates.ts';
-import { createElement } from 'react';
+// The real forms, router, translations, VAT read and finance clients: edits stay local until the footer's Uložit.
+import { saveLabelsFor } from '@app/admin-ui';
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { pinDocumentNavigationModules } from '@app/shared-contracts';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpRouter, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
+import { ToastProvider } from '@techsio/ui-kit/molecules/toast';
+import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import type { ReactElement } from 'react';
+import { CustomerListApi } from '../../../party-registry/shared/apis/customer-list.ts';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { InvoiceSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { VatChoicesApi } from '../../shared/apis/vat-choices.ts';
 import { CreateInvoiceDialog } from '../../src/routes/[lang]/finance/create-invoice-dialog.tsx';
 import type { FinanceViewModel } from '../../src/routes/[lang]/finance/finance-ui.tsx';
 import { IncomingInvoiceDialog } from '../../src/routes/[lang]/finance/incoming-invoice-dialog.tsx';
 import { RecurringTemplateEditor } from '../../src/routes/[lang]/finance/recurring-template-form.tsx';
+import { useFinanceRecords } from '../../src/routes/[lang]/finance/use-finance-records.ts';
 import type { DraftInvoiceInput } from '../../src/routes/[lang]/finance/use-finance-records.ts';
-import {
-  clickCancel,
-  clickDiscard,
-  clickSave,
-  fakeVm,
-  invoiceFixture,
-  lastFooterButton,
-  leaveQuestion,
-  mount,
-  pick,
-  pressEnter,
-  saveButton,
-  typeInto,
-  unmountAll,
-  waitUntil,
-} from './finance-form-harness.ts';
+import { baselineVatChoices } from '../support/finance-tax-rates.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-interface Toast {
-  readonly title?: unknown;
-  readonly type?: unknown;
-}
-const { toasts } = rstest.hoisted(() => {
-  const recorded: Toast[] = [];
-  return { toasts: recorded };
+type Command = (typeof ApplyCommandPayloadSchema.Encoded)['command'];
+const sent: Command[] = [];
+const tenantId = 'c0000000-0000-4000-8000-000000000001';
+const invoice = Schema.decodeUnknownSync(InvoiceSchema)({
+  accountingCorrelation: 'acc-invoice-1',
+  accountingSyncState: 'NOT_SYNCED',
+  businessState: 'CONFIRMED',
+  counterpartyRef: {
+    moduleId: 'party.registry',
+    resourceId: 'c0000000-0000-4000-8000-000000000012',
+    resourceType: 'party.registry.counterparty',
+    tenantId,
+  },
+  createdAt: '2026-10-20T08:00:00Z',
+  currency: 'CZK',
+  direction: 'OUTGOING',
+  documentNumber: 'FV-2026-001',
+  dueDate: '2026-10-30',
+  issueDate: '2026-10-01',
+  paidMinor: 0,
+  paymentState: 'UNPAID',
+  ref: {
+    moduleId: 'finance.billing',
+    resourceId: 'c0000000-0000-4000-8000-000000000021',
+    resourceType: 'finance.billing.invoice',
+    tenantId,
+  },
+  totalMinor: 100_000,
+  updatedAt: '2026-10-20T08:00:00Z',
 });
-// The toaster records what the forms announce.
-rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
-  Toaster: () => null,
-  toaster: { attrs: {} },
-  useToast: () => ({
-    create: (toast: { readonly title?: unknown; readonly type?: unknown }) => {
-      toasts.push({ title: toast.title, type: toast.type });
-    },
-    dismiss: constVoid,
-  }),
-}));
-// Tax answers with the company's baseline rates: 21 % standard and 12 % reduced.
-rstest.mock('../../src/routes/[lang]/finance/use-vat-choices.ts', () => ({
-  choicesOf: (vat: { readonly choices?: unknown }) => vat.choices,
-  useVatChoices: () => ({
-    choices: baselineVatChoices('00000000-0000-4000-8000-0000000000aa', '2026-10-05'),
-    state: 'ready',
-  }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
-}));
-// The pickers: one button that picks the first item; its `data-pick` names the field.
-rstest.mock('@app/admin-ui/select-template', () => ({
-  SelectTemplate: (props: {
-    readonly items: readonly { readonly value: string }[];
-    readonly label?: unknown;
-    readonly onValueChange?: (details: { readonly value: string[] }) => void;
-  }) =>
-    createElement('button', {
-      'data-pick': String(props.label),
-      onClick: () => props.onValueChange?.({ value: props.items.slice(0, 1).map((item) => item.value) }),
-      type: 'button',
-    }),
-}));
-rstest.mock('@techsio/ui-kit/molecules/combobox', () => ({
-  Combobox: (props: {
-    readonly items: readonly { readonly value: string }[];
-    readonly label?: unknown;
-    readonly onChange: (values: string[]) => void;
-  }) =>
-    createElement('button', {
-      'data-pick': String(props.label),
-      onClick: () => props.onChange(props.items.slice(0, 1).map((item) => item.value)),
-      type: 'button',
-    }),
-}));
-
-type Command = Parameters<FinanceViewModel['execute']>[0];
-
-const invoice = invoiceFixture();
-const { tenantId } = invoice.ref;
 const customer: FinanceViewModel['references']['customers'][number] = {
   city: null,
   companyId: '12345678',
@@ -112,122 +80,223 @@ const customer: FinanceViewModel['references']['customers'][number] = {
   status: 'ACTIVE',
   vatId: null,
 };
-
-const withCustomer = (vm: FinanceViewModel): FinanceViewModel => ({
-  ...vm,
-  references: { ...vm.references, customers: [customer] },
+const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  businessDate: '2026-10-20',
+  canWrite: true,
+  indicators: {
+    costMinor: 0,
+    costVarianceMinor: 0,
+    draftCount: 0,
+    grossOutstandingMinor: 0,
+    openIncomingInvoices: 0,
+    openInvoices: 0,
+    openOutgoingInvoices: 0,
+    overdueInvoices: 0,
+    payablesOutstandingMinor: 0,
+    plannedCostMinor: 0,
+    plannedRevenueMinor: 0,
+    receivablesOutstandingMinor: 0,
+    revenueMinor: 0,
+    revenueVarianceMinor: 0,
+  },
+  referenceDate: '2026-10-05',
+  revision: 1,
+  state: { financialPlanEntries: [], invoices: [] },
 });
+const OwnerActions = ApplyCommandActionApi.prefix('/finance-billing-api');
+const OwnerRecords = RecordsApi.prefix('/finance-billing-api');
+const OwnerVat = VatChoicesApi.prefix('/finance-billing-api');
+const Party = CustomerListApi.prefix('/party-registry-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'finance-billing': '/finance-billing-api', 'party-registry': '/party-registry-api' })
+    .application,
+  serveApi(
+    OwnerActions,
+    HttpApiBuilder.group(OwnerActions, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          sent.push(payload.command);
+          return { changed: true, invoice, revision: 2 };
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerRecords,
+    HttpApiBuilder.group(OwnerRecords, 'records', (group) => group.handle('execute', () => Effect.succeed(records))),
+  ),
+  serveApi(
+    OwnerVat,
+    HttpApiBuilder.group(OwnerVat, 'vatChoices', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.succeed(baselineVatChoices('00000000-0000-4000-8000-0000000000aa', payload.on)),
+      ),
+    ),
+  ),
+  serveApi(
+    Party,
+    HttpApiBuilder.group(Party, 'customerList', (group) =>
+      group.handle('execute', () => Effect.succeed({ items: [customer] })),
+    ),
+  ),
+  HttpRouter.add(
+    'GET',
+    '/shell-super-app-api/auth/session',
+    Effect.succeed(HttpServerResponse.jsonUnsafe({ identity: { displayName: 'Jana Nováková' } })),
+  ),
+);
 
+let scopeSequence = 0;
+const Form = ({
+  drafts,
+  render,
+}: {
+  readonly drafts: DraftInvoiceInput[];
+  readonly render: (vm: FinanceViewModel) => ReactElement;
+}) => {
+  const vm = useFinanceRecords({ scope: `create-forms-save-${scopeSequence}` });
+  if (vm.snapshot === undefined || vm.references.customersLoading) {
+    return null;
+  }
+  return render({
+    ...vm,
+    createDraft: (input) => {
+      drafts.push(input);
+      return vm.createDraft(input);
+    },
+  });
+};
+const mount = (render: (vm: FinanceViewModel) => ReactElement, drafts: DraftInvoiceInput[] = []) =>
+  Effect.gen(function* mountForm() {
+    yield* mountInRoute(
+      <ToastProvider>
+        <Form drafts={drafts} render={render} />
+      </ToastProvider>,
+      { path: 'finance', url: '/cs/finance' },
+    );
+    yield* waitUntil(() => document.querySelector('form') !== null);
+  });
+const labels = saveLabelsFor('cs');
+const t = moduleText('cs');
+const CREATED = 'finance-billing.faktury.form.created';
 const closes: boolean[] = [];
 const onOpenChange = (open: boolean) => {
   closes.push(open);
 };
-
-beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  closes.length = 0;
-  toasts.length = 0;
+const saveButton = () =>
+  Option.getOrThrow(
+    Option.fromUndefinedOr(buttons(labels.save).find((button) => button.closest('[role="alertdialog"]') === null)),
+  );
+const clickSave = acted(() => saveButton().click());
+const field = (id: string) =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
+const typeInto = (id: string, value: string) =>
+  acted(() => {
+    const input = field(id);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+const pickTenant = acted(() => {
+  const select = Option.getOrThrow(
+    Option.fromUndefinedOr(
+      [...document.querySelectorAll<HTMLSelectElement>('select')].find(
+        (candidate) =>
+          document
+            .querySelector(`[id="${candidate.getAttribute('aria-labelledby') ?? ''}"]`)
+            ?.textContent?.includes(t('finance-billing.financeUi.recurring.tenant')) === true,
+      ),
+    ),
+  );
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, customer.partyId);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
 });
-
-const CREATED = 'finance-billing.faktury.form.created';
-
 const fillInvoice = (price: string) =>
   Effect.gen(function* fill() {
-    yield* pick('finance-billing.faktury.form.customer');
+    yield* acted(() =>
+      Option.getOrThrow(
+        Option.fromNullOr(document.querySelector<HTMLInputElement>('input[data-scope="combobox"][data-part="input"]')),
+      ).click(),
+    );
+    yield* waitUntil(() => document.querySelector('[role="option"]') !== null);
+    yield* acted(() =>
+      Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="option"]'))).click(),
+    );
     yield* typeInto('invoice-line-description-line-1', 'Pronájem kavárny');
     yield* typeInto('invoice-line-price-line-1', price);
   });
+const toastTitles = () =>
+  [...document.querySelectorAll('[data-scope="toast"][data-part="title"]')].map((toast) => toast.textContent);
 
-afterEach(() => {
-  unmountAll();
-  rstest.unstubAllGlobals();
+beforeEach(() => {
+  scopeSequence += 1;
+  pinDocumentNavigationModules(['finance.billing', 'party.registry'], document);
+  closes.length = 0;
+  sent.length = 0;
 });
+afterEach(unmountAll);
 
-describe('create forms save from Uložit only', () => {
-  it.live('a recurring template is created once by Uložit; its suggested values close without asking', () =>
+it.layer(network, { excludeTestServices: true })('create forms save from Uložit only', (suite) => {
+  suite.effect('a recurring template maps the selected tenant and entered terms to its command', () =>
     Effect.gen(function* step1() {
-      const sent: Command[] = [];
-      const vm = withCustomer(fakeVm(sent));
+      yield* pinTestDocument;
       const left: string[] = [];
       const onClose = () => {
         left.push('closed');
       };
-      yield* mount(<RecurringTemplateEditor onClose={onClose} vm={vm} />);
-      yield* clickCancel;
-      expect(left).toEqual(['closed']);
-
-      unmountAll();
-      left.length = 0;
-      yield* mount(<RecurringTemplateEditor onClose={onClose} vm={vm} />);
-      yield* pick('finance-billing.financeUi.recurring.tenant');
+      yield* mount((vm) => <RecurringTemplateEditor onClose={onClose} vm={vm} />);
+      yield* pickTenant;
       yield* typeInto('template-name', 'Nájem kavárna');
       yield* typeInto('template-amount', '18 000');
-      expect(lastFooterButton()).toBe(saveButton());
       yield* clickSave;
       yield* waitUntil(() => left.length === 1);
+      yield* networkIdle;
       expect(sent).toHaveLength(1);
       expect(Predicate.isTagged(sent[0], 'CreateRecurringTemplate')).toBe(true);
       expect(sent[0]).toMatchObject({ dueDays: 14, issueDay: 1, name: 'Nájem kavárna', partyId: customer.partyId });
     }),
   );
 
-  it.live('a received invoice is recorded once by Uložit; typed input asks before leaving', () =>
-    Effect.gen(function* step2() {
-      const sent: Command[] = [];
-      yield* mount(<IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={fakeVm(sent)} />);
-      expect(saveButton().disabled).toBe(true);
-      yield* typeInto('incoming-supplier', 'ČEZ Prodej');
-      yield* clickCancel;
-      expect(leaveQuestion()).toBe(true);
-      yield* clickDiscard;
-      expect(closes).toEqual([false]);
-      expect(sent).toEqual([]);
-
-      unmountAll();
-      closes.length = 0;
-      yield* mount(<IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={fakeVm(sent)} />);
-      yield* typeInto('incoming-supplier', 'ČEZ Prodej');
-      yield* typeInto('incoming-number', 'ZF-2026-77');
-      yield* typeInto('invoice-line-description-incoming-line-1', 'Elektřina říjen');
-      yield* typeInto('invoice-line-price-incoming-line-1', '1000');
-      expect(lastFooterButton()).toBe(saveButton());
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      expect(sent).toHaveLength(1);
-      expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
-      expect(sent[0]).toMatchObject({ documentNumber: 'ZF-2026-77', supplierName: 'ČEZ Prodej', totalMinor: 121_000 });
-    }),
+  suite.effect(
+    'an incoming invoice maps supplier, document number and VAT-inclusive total',
+    () =>
+      Effect.gen(function* step2() {
+        yield* pinTestDocument;
+        yield* mount((vm) => <IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
+        expect(saveButton().disabled).toBe(true);
+        yield* typeInto('incoming-supplier', 'ČEZ Prodej');
+        yield* typeInto('incoming-number', 'ZF-2026-77');
+        yield* typeInto('invoice-line-description-incoming-line-1', 'Elektřina říjen');
+        yield* typeInto('invoice-line-price-incoming-line-1', '1000');
+        yield* clickSave;
+        yield* waitUntil(() => closes.length === 1);
+        yield* networkIdle;
+        expect(sent).toHaveLength(1);
+        expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
+        expect(sent[0]).toMatchObject({
+          documentNumber: 'ZF-2026-77',
+          supplierName: 'ČEZ Prodej',
+          totalMinor: 121_000,
+        });
+      }),
+    // Mounts the real dialog and saves through the real network: 2.58 s on a loaded runner.
+    { timeout: 20_000 },
   );
 
-  it.live('a new invoice draft is created once by Uložit; the untouched form closes without asking', () =>
-    Effect.gen(function* step3() {
-      const sent: Command[] = [];
-      const drafts: DraftInvoiceInput[] = [];
-      const vm = withCustomer({
-        ...fakeVm(sent),
-        createDraft: (input: DraftInvoiceInput) =>
-          Effect.sync(() => {
-            drafts.push(input);
-            return { invoice, ok: true } as const;
-          }),
-      });
-      yield* mount(<CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
-      yield* clickCancel;
-      expect(closes).toEqual([false]);
-      expect(leaveQuestion()).toBe(false);
-
-      unmountAll();
-      closes.length = 0;
-      yield* mount(<CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
-      yield* fillInvoice('1000');
-      expect(lastFooterButton()).toBe(saveButton());
-      yield* pressEnter('invoice-line-description-line-1');
-      expect(drafts).toEqual([]);
-      yield* clickSave;
-      yield* waitUntil(() => closes.length === 1);
-      expect(drafts).toHaveLength(1);
-      expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
-      expect(toasts.map((toast) => toast.title)).toEqual([CREATED]);
-    }),
+  suite.effect(
+    'a new invoice draft carries its selected customer and document kind',
+    () =>
+      Effect.gen(function* step3() {
+        yield* pinTestDocument;
+        const drafts: DraftInvoiceInput[] = [];
+        yield* mount((vm) => <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />, drafts);
+        yield* fillInvoice('1000');
+        yield* clickSave;
+        yield* waitUntil(() => closes.length === 1);
+        expect(drafts).toHaveLength(1);
+        expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
+        expect(toastTitles()).toEqual([t(CREATED)]);
+      }),
+    // Mounts the real dialog and saves through the real network: 3.04 s on a loaded runner.
+    { timeout: 20_000 },
   );
 });

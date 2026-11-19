@@ -5,6 +5,7 @@ import {
   getVerticalRuntimeOutboxWorkers,
   OutboxRuntime,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type {
   AnyOutboxWorkerRegistration,
@@ -628,7 +629,10 @@ const makeAdmittedInventoryOutbox = (
         expectedDeployment,
         layer: Layer.mergeAll(
           Layer.succeedContext(services),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           Layer.succeed(OutboxRuntime, {
             ...outbox,
             // Delegate the exact original native cycle; the public entry supplies receiving admission.

@@ -25,6 +25,7 @@ import {
   ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   makeDatabaseIdentityEnrollmentLive,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemptionInput, OperationalScope } from '@app/core-runtime';
 import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
@@ -610,7 +611,10 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
         Layer.succeed(GatewayDelegationExchangeLedger, makeGatewayDelegationExchangeLedger(auth.executor)),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
         Layer.succeed(OperationalScopeResolver, scopes),
         Layer.succeed(AccessDecisionGate, gate),
         // Both module keys were issued by a host of exactly this release; the Shell derives their bindings from that.
@@ -664,7 +668,12 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(selected) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(selected)),
+            ),
+          );
       const runtimeServices = yield* Layer.build(
         OutboxRuntimeLive.pipe(
           Layer.provide(OutboxRepositoryLive),
@@ -713,7 +722,12 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+          .pipe(
+            Effect.provideService(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          );
         const scope = yield* scopes
           .resolve({
             audience: 'privacy',
@@ -1371,7 +1385,10 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         expectedDeployment: { appId: 'symmy-integration', buildMarker: 'symmy-integration-build' },
         layer: Layer.mergeAll(
           Layer.succeed(OutboxRuntime, nativeRuntime),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
         ),
         ownerRegistration,
         registrations: [worker],

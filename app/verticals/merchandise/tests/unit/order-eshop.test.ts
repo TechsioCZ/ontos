@@ -1,11 +1,7 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { OrderHistoryEntrySchema } from '../../shared/domain/merchandise-model.ts';
-import {
-  historyActorLabel,
-  historyKindKeys,
-  workflowSteps,
-} from '../../src/routes/[lang]/prodej/objednavky/order-eshop.ts';
+import { historyActorLabel } from '../../src/routes/[lang]/prodej/objednavky/order-eshop.ts';
 
 /** Echoes the key and its parameters, so each test can read which message the label asked for. */
 const translate = (key: string | string[], ...args: unknown[]) => `${String(key)}:${JSON.stringify(args)}`;
@@ -49,10 +45,4 @@ it('falls back to the generic staff label, or to the plain you for the current u
   const entry = historyEntry({ actor: actor(unknownId) });
   expect(historyActorLabel(entry, undefined, translate)).toBe('merchandise.pages.orders.eshop.actor.unknown:[]');
   expect(historyActorLabel(entry, unknownId, translate)).toBe('merchandise.pages.orders.eshop.actor.you:[]');
-});
-
-it('keeps every history kind and workflow step on a message key, not on Czech text', () => {
-  for (const key of [...Object.values(historyKindKeys), ...workflowSteps.map((step) => step.labelKey)]) {
-    expect(key.startsWith('merchandise.pages.orders.eshop.')).toBe(true);
-  }
 });

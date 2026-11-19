@@ -33,7 +33,10 @@ import { DateTime, Effect, Match, Predicate, Ref, Schema } from 'effect';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
-import type { InstalledModuleCatalogError, ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
+import type {
+  InstalledModuleCatalogUnavailableError,
+  ShellInstalledCatalog,
+} from '../modules/installed-module-catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import {
   GatewayIssuer,
@@ -131,7 +134,9 @@ const moduleCallSubject = (
   );
 
 /** The bindings could not be derived: the enrolment or the installed release could not be read. */
-export const bindingsUnavailable = (cause: GatewayDelegationPolicyUnavailable | InstalledModuleCatalogError) =>
+export const bindingsUnavailable = (
+  cause: GatewayDelegationPolicyUnavailable | InstalledModuleCatalogUnavailableError,
+) =>
   Schema.is(GatewayDelegationPolicyUnavailable)(cause)
     ? delegationUnavailable('module_enrolment_unavailable')(cause)
     : delegationUnavailable('installed_release_unavailable')(cause);

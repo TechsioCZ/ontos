@@ -1,23 +1,17 @@
-import { PgClient as actualPgClient, PgTypes as actualPgTypes } from '@effect/sql-pg' with { rstest: 'importActual' };
+import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Exit, Order, Redacted, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { SqlClient, Statement } from 'effect/sql';
 import type { SqlConnection } from 'effect/sql';
 import { AuthenticationError, SqlError } from 'effect/sql/SqlError';
-import { afterEach, expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 import type { DatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import { ensureDatabaseLoginRole } from '../postgres/database-login-roles.mts';
 import { DATABASE_ROLE_GRANT_MANIFEST } from '../postgres/database-role-manifest.mts';
 import { bootstrapRuntimeRoles, explicitEntries, grantExplicitRole } from '../postgres/runtime-role-bootstrap.mts';
-import type { ExplicitManifestEntry } from '../postgres/runtime-role-bootstrap.mts';
-
-rstest.mock('@effect/sql-pg', () => ({
-  PgClient: { ...actualPgClient, makeClient: rstest.fn() },
-  PgTypes: actualPgTypes,
-}));
-const { PgClient } = await import('@effect/sql-pg');
+import type { ExplicitManifestEntry, ProtectedLoginConnect } from '../postgres/runtime-role-bootstrap.mts';
 
 const TEST_CREDENTIAL = 'unit-test-password';
 const PRIVATE_DRIVER_DETAIL = 'private-driver-detail';
@@ -83,7 +77,7 @@ const makeClient = (statements: string[], respond: Respond) => {
       driver: 'pg',
       spanAttributes: [],
     });
-    const client: actualPgClient.PgClient = Object.assign(sql, {
+    const client: PgClient.PgClient = Object.assign(sql, {
       config: {},
       json: () => Statement.fragment([]),
       listen: () => Effect.die('Unexpected LISTEN in bootstrap'),
@@ -125,9 +119,15 @@ const reconciledRows: Respond = (text, values) => {
 };
 
 const mutations = (statements: readonly string[]) => statements.filter((text) => !text.startsWith('select'));
-afterEach(() => {
-  rstest.resetAllMocks();
-});
+/** The role a protected login URL authenticates as. */
+const loginRole = (url: Redacted.Redacted) => new URL(Redacted.value(url)).username;
+/** A preflight connector that records every login it is asked to open and must never be used. */
+const unusedConnector =
+  (opened: string[]): ProtectedLoginConnect =>
+  (url) => {
+    opened.push(loginRole(url));
+    return Effect.die('No protected login may be opened here');
+  };
 
 const probeEntry = (tables: ExplicitManifestEntry['grants']['tables']): ExplicitManifestEntry => {
   const [entry] = explicitEntries;
@@ -244,11 +244,17 @@ for (const { identity: protectedIdentity } of explicitEntries) {
           ? [{ exists: values[0] !== protectedIdentity.role }]
           : reconciledRows(text, values),
       );
-      const connect = rstest.mocked(PgClient.makeClient);
-      const failure = yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile').pipe(Effect.flip);
+      const opened: string[] = [];
+      const failure = yield* bootstrapRuntimeRoles(
+        client,
+        connections,
+        passwords,
+        'reconcile',
+        unusedConnector(opened),
+      ).pipe(Effect.flip);
       expect(failure.reason).toContain(protectedIdentity.role);
       expect(mutations(statements)).toEqual([]);
-      expect(connect).not.toHaveBeenCalled();
+      expect(opened).toEqual([]);
     }).pipe(Effect.provide(Reactivity.layer)),
   );
 
@@ -256,8 +262,8 @@ for (const { identity: protectedIdentity } of explicitEntries) {
     Effect.gen(function* mismatchedProtectedPassword() {
       const statements: string[] = [];
       const client = yield* makeClient(statements, reconciledRows);
-      rstest.mocked(PgClient.makeClient).mockImplementation(({ url }) => {
-        const role = new URL(Redacted.value(url ?? Redacted.make(''))).username;
+      const connect: ProtectedLoginConnect = (url) => {
+        const role = loginRole(url);
         return role === protectedIdentity.role
           ? Effect.fail(
               new SqlError({
@@ -265,8 +271,10 @@ for (const { identity: protectedIdentity } of explicitEntries) {
               }),
             )
           : makeClient([], () => [{ database: 'unit_test', role }]);
-      });
-      const failure = yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile').pipe(Effect.flip);
+      };
+      const failure = yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile', connect).pipe(
+        Effect.flip,
+      );
       expect(failure.reason).toContain(protectedIdentity.urlKey);
       expect(JSON.stringify(failure)).not.toContain(TEST_CREDENTIAL);
       expect(JSON.stringify(failure)).not.toContain(PRIVATE_DRIVER_DETAIL);
@@ -283,8 +291,8 @@ it.effect(
       const client = yield* makeClient(statements, reconciledRows);
       const authenticated: string[] = [];
       const assertNoMutations = Effect.sync(() => expect(mutations(statements)).toEqual([]));
-      rstest.mocked(PgClient.makeClient).mockImplementation(({ url }) => {
-        const role = new URL(Redacted.value(url ?? Redacted.make(''))).username;
+      const connect: ProtectedLoginConnect = (url) => {
+        const role = loginRole(url);
         return Effect.acquireRelease(
           assertNoMutations.pipe(
             Effect.andThen(
@@ -297,8 +305,8 @@ it.effect(
           ),
           () => assertNoMutations,
         );
-      });
-      yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile');
+      };
+      yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile', connect);
       expect(authenticated).toEqual(explicitEntries.map(({ identity }) => identity.role));
       expect(mutations(statements)[0]).toBe('BEGIN');
       expect(statements.at(-1)).toBe('COMMIT');
@@ -328,8 +336,9 @@ for (const session of [
     Effect.gen(function* wrongProtectedTarget() {
       const statements: string[] = [];
       const client = yield* makeClient(statements, reconciledRows);
-      rstest.mocked(PgClient.makeClient).mockImplementation(() => makeClient([], () => [session]));
-      yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile').pipe(Effect.flip);
+      yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile', () =>
+        makeClient([], () => [session]),
+      ).pipe(Effect.flip);
       expect(mutations(statements)).toEqual([]);
     }).pipe(Effect.provide(Reactivity.layer)),
   );
@@ -355,9 +364,9 @@ it.effect(
       const client = yield* makeClient(statements, (text, values) =>
         text.startsWith(ROLE_EXISTS_QUERY_PREFIX) ? [{ exists: false }] : reconciledRows(text, values),
       );
-      const connect = rstest.mocked(PgClient.makeClient);
-      yield* bootstrapRuntimeRoles(client, connections, passwords, INITIALIZE_LOCAL);
-      expect(connect).not.toHaveBeenCalled();
+      const opened: string[] = [];
+      yield* bootstrapRuntimeRoles(client, connections, passwords, INITIALIZE_LOCAL, unusedConnector(opened));
+      expect(opened).toEqual([]);
       for (const { role } of DATABASE_IDENTITIES) {
         expect(statements.some((text) => text.startsWith(`create role "${role}" login password `))).toBe(true);
       }

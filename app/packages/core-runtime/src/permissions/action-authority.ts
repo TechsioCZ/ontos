@@ -12,7 +12,7 @@ import { withOptional } from '../access/decision/optional.ts';
 import { coreActionCatalog } from '../modules/actions/catalog.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import type { InstalledModuleCatalog } from '../modules/catalog.ts';
@@ -237,8 +237,7 @@ export const ActionAuthorityLive: Layer.Layer<
     const withDeclared = <Value, Failure, Requirements>(
       body: (declared: ReadonlyMap<string, DeclaredActionAuthority>) => Effect.Effect<Value, Failure, Requirements>,
     ) =>
-      composition.load.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+      loadActiveApplicationComposition(composition).pipe(
         Effect.flatMap((snapshot) => buildApplicationCompositionCatalog(snapshot.composition)),
         Effect.mapError(authorityUnavailable),
         Effect.flatMap((catalog) => body(declaredActionAuthorities(catalog))),

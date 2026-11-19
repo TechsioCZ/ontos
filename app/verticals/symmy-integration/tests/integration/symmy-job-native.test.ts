@@ -13,6 +13,7 @@ import {
   runAction,
   setManagedApiKeyBindingStatusAction,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -307,7 +308,7 @@ it.live(
             ],
             adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
             allowedAudiences: [audience],
-            applicationComposition: { load: Effect.succeed(snapshot) },
+            applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             authenticationSubjectTypes: ['user', 'api_key'],
             compositionRevision: snapshot.composition.revision,

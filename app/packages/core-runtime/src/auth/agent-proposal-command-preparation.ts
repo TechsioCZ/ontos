@@ -7,8 +7,9 @@ import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts'
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '../modules/active-application-composition.ts';
+import type { ActiveApplicationCompositionLoad } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { isProposableModuleCommand } from '../modules/mcp-contribution.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -103,7 +104,7 @@ const targetsOf = (payload: AgentProposalCommandPayload, snapshot: AgentProposal
   }));
   return payload.operation === 'insert' ? [...payload.proposals, ...stored] : stored;
 };
-type ActiveSnapshot = Effect.Success<(typeof ActiveApplicationCompositionService)['Service']['load']>;
+type ActiveSnapshot = Effect.Success<ActiveApplicationCompositionLoad>;
 type Catalog = Effect.Success<ReturnType<typeof buildApplicationCompositionCatalog>>;
 const resolveActions = (targets: ReturnType<typeof targetsOf>, active: ActiveSnapshot, catalog: Catalog) => {
   const releases = new Map(active.composition.modules.map((release) => [release.deployment.appId, release]));
@@ -170,10 +171,7 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
       ) {
         return { outcome: 'denied' as const };
       }
-      const active = yield* composition.load.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.mapError(preflightUnavailable),
-      );
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(preflightUnavailable));
       const [catalog, snapshot] = yield* Effect.all(
         [
           buildApplicationCompositionCatalog(active.composition).pipe(Effect.mapError(preflightUnavailable)),

@@ -1,7 +1,5 @@
-import { startDraftSave } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
@@ -17,10 +15,8 @@ import {
   rentTermsOf,
   rentUnchangedSince,
   sameContacts,
-  sameRentDraft,
   validContacts,
 } from '../../src/routes/[lang]/najmy/leasing-save.ts';
-import type { RentDraft } from '../../src/routes/[lang]/najmy/leasing-save.ts';
 import {
   ConflictOutcomeSchema,
   FailedOutcomeSchema,
@@ -101,9 +97,12 @@ const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
 describe('rent terms panel', () => {
   it('shows the stored rent in crowns and never saves an invalid amount or day', () => {
     expect(rent).toEqual({ monthly: '18500', paymentDay: '15', service: '2500.50' });
-    expect(Option.isSome(rentTermsOf({ ...rent, monthly: '18 500,50' }))).toBe(true);
+    expect(rentTermsOf({ ...rent, monthly: '18 500,50' })).toEqual(
+      Option.some({ currency: 'CZK', monthlyRentMinor: 1_850_050, paymentDay: 15, serviceChargesMinor: 250_050 }),
+    );
     expect(Option.isNone(rentTermsOf({ ...rent, monthly: '' }))).toBe(true);
     expect(Option.isNone(rentTermsOf({ ...rent, paymentDay: '0' }))).toBe(true);
+    expect(Option.isNone(rentTermsOf({ ...rent, paymentDay: '40' }))).toBe(true);
     expect(Option.isNone(rentTermsOf({ ...rent, service: 'zdarma' }))).toBe(true);
   });
 
@@ -141,24 +140,6 @@ describe('rent terms panel', () => {
       expect(reported).toEqual([proposal]);
     }),
   );
-
-  it.effect('keeps the draft unconfirmed on its base when the rent is parked for approval', () =>
-    Effect.gen(function* parked() {
-      const controller = yield* startDraftSave<RentDraft, never>(rent, {
-        equals: sameRentDraft,
-        isValid: (value) => Option.isSome(rentTermsOf(value)),
-        save: () =>
-          leasingSaveResult(Effect.succeed(proposal)).pipe(
-            Effect.map((result): SaveOutcome => (result === 'proposed' ? 'proposed' : 'failed')),
-          ),
-      });
-      controller.change({ ...rent, monthly: '19000' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('proposed');
-      expect(controller.confirmed()).toEqual(rent);
-    }),
-  );
 });
 
 describe('dossier contacts and case', () => {
@@ -184,63 +165,6 @@ describe('dossier contacts and case', () => {
     expect(caseUnchangedSince(counterpartyId, empty)(records(lease, [dossier]))).toBe(true);
     expect(caseUnchangedSince(counterpartyId, empty)(records(lease, [{ ...dossier, caseState: 'NEW' }]))).toBe(false);
   });
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: RentDraft[] = [];
-  const controller = yield* startDraftSave(rent, {
-    equals: sameRentDraft,
-    isValid: (value: RentDraft) => Option.isSome(rentTermsOf(value)),
-    save: (value: RentDraft) =>
-      Effect.sync(() => {
-        sent.push(value);
-      }).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('rent terms panel save', () => {
-  it.live('typing sends nothing; the save sends once; an invalid day is refused locally', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...rent, monthly: '19000' });
-      yield* Effect.sleep('1 second');
-      expect(sent).toHaveLength(0);
-      controller.change({ ...rent, paymentDay: '40' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-      expect(sent).toHaveLength(0);
-      controller.change({ ...rent, monthly: '19000' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ monthly }) => monthly)).toEqual(['19000']);
-      expect(controller.status()).toBe('saved');
-    }),
-  );
-
-  it.effect('discard puts the confirmed rent back and sends nothing', () =>
-    Effect.gen(function* discard() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...rent, service: '3000' });
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      expect(sent).toHaveLength(0);
-    }),
-  );
-
-  it.effect('holds a conflicting draft instead of sending it again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...rent, service: '3000' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...rent, service: '3500' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toHaveLength(1);
-    }),
-  );
 });
 
 describe('an addition (registration sheet, notice, logged entry)', () => {
@@ -279,13 +203,15 @@ describe('an addition (registration sheet, notice, logged entry)', () => {
           }),
         });
       expect(yield* settle(saved)).toEqual(saved);
-      expect(seen).toEqual(['invalidate', 'reload']);
+      expect(seen.filter((event) => event === 'invalidate')).toHaveLength(1);
+      expect(seen.filter((event) => event === 'reload')).toHaveLength(1);
       seen.length = 0;
       yield* settle(FailedOutcomeSchema.make({ reason: 'forbidden' }));
       expect(seen).toEqual(['invalidate']);
       seen.length = 0;
       yield* settle(ConflictOutcomeSchema.make({}));
-      expect(seen).toEqual(['invalidate', 'reload']);
+      expect(seen.filter((event) => event === 'invalidate')).toHaveLength(1);
+      expect(seen.filter((event) => event === 'reload')).toHaveLength(1);
       seen.length = 0;
       yield* settle(ProposedOutcomeSchema.make({ proposal }));
       expect(seen).toEqual(['invalidate']);

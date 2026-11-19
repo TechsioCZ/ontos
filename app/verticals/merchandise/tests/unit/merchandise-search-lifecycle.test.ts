@@ -3,7 +3,10 @@ import { cleanupDemoAction } from '../../src/actions/cleanup-demo.action.ts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { ContextAccess } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { HttpClient, HttpServerRequest } from 'effect/http';
 import { Effect, Layer, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -18,7 +21,10 @@ import { outboxWorkers } from '../../src/workers/index.ts';
 /** Substituted owner services never use these. Any accidental remote call fails the test. */
 const unusedRuntimeDependencies = Layer.mergeAll(
   Layer.mock(ContextAccess, {}),
-  Layer.mock(ActiveApplicationCompositionService, {}),
+  Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+  ),
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die('Unexpected reference HTTP call')),

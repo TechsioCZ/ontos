@@ -1,7 +1,17 @@
-import { Effect, Option } from 'effect';
+import { Effect, Option, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { LegalEntityIdSchema, RecordKeySchema, TenantIdSchema } from '../../src/access/ids.ts';
+import type { ActionMandateDispatch, MandatePrepared } from '../../src/access/approvals/action-mandate-dispatch.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import {
+  AccessScopeIdSchema,
+  CapabilityKeySchema,
+  LegalEntityIdSchema,
+  ProposalIdSchema,
+  RecordKeySchema,
+  TenantIdSchema,
+} from '../../src/access/ids.ts';
+import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { defineActionGoverningRead, getActionGoverningRead } from '../../src/actions/governing-read.ts';
 import { makeActionTestHarness } from '../../src/testing/actions.ts';
 import { makeOwnerApplicationCompositionFixture } from '../../src/testing/module-contract.ts';
@@ -300,6 +310,185 @@ for (const registered of [true, false]) {
           expect(harness.snapshot().committed).toEqual([]);
           expect(harness.snapshot().transactionCount).toBe(0);
         }
+      }),
+  );
+}
+
+/**
+ * The canonical gate of the native governing-Read lifecycle whose record-field read can be revoked between two
+ * requests while the Action's own run, propose and approve grants stay.
+ */
+const revocableGoverningGate = Effect.fn('GoverningReadFixture.revocable')(function* revocableGoverningGate() {
+  const legalEntityScope = {
+    _tag: 'LegalEntity' as const,
+    legalEntityId: LegalEntityIdSchema.make(principal.legalEntityId ?? ''),
+    tenantId: TenantIdSchema.make(principal.tenantId),
+  };
+  const gateFor = (readField: boolean) => {
+    const spec: AuthoritySpec = {
+      cells: [
+        ...(['run', 'propose', 'approve'] as const).map((mode) =>
+          cell({ capability: `${ownerKey}.record.change`, mode }),
+        ),
+        cell({ capability: `${ownerKey}.record.read` }),
+        ...(readField ? [cell({ capability: `${ownerKey}.record.read-salary` })] : []),
+      ],
+      legalEntityScope,
+    };
+    const authority = makeAuthority(spec).port;
+    return makeCanonicalActionTestAccessGate({
+      candidates: { listCandidateIds: () => Effect.succeed([]) },
+      check: makeCheck({ authority: spec }).port,
+      currentness: { read: () => Effect.succeed([{ revision: 1, scopeId: 'governing-read-replay-revision' }]) },
+      decisionLog: { record: () => Effect.void },
+      intent: { authorityFor: () => authority, joined: () => ({ authorityFor: () => authority }) },
+      principalKinds: { readKind: () => Effect.succeed(Option.some('human' as const)) },
+    });
+  };
+  const granted = yield* gateFor(true);
+  const revoked = yield* gateFor(false);
+  let readRevoked = false;
+  const current = () => (readRevoked ? revoked : granted);
+  const bound: BoundAccessGate = {
+    ...granted,
+    decide: (question, transaction) => current().decide(question, transaction),
+    list: (question, transaction) => current().list(question, transaction),
+    prepare: (question) => {
+      const { prepare } = current();
+      return prepare === undefined ? Effect.die('The canonical gate prepares its decisions') : prepare(question);
+    },
+  };
+  return {
+    bound,
+    revokeRead: () =>
+      Effect.sync(() => {
+        readRevoked = true;
+      }),
+  };
+});
+
+/** An approvals adapter whose one mandate carries exactly the committed request's command. */
+const mandateFor = (action: ReturnType<typeof actionFor>, ids: readonly string[]): ActionMandateDispatch => ({
+  claim: () => Effect.void,
+  commit: () => Effect.void,
+  loadParkedProposal: () => Effect.succeed(Option.none()),
+  parkProposal: () => Effect.die('A replay never parks a proposal'),
+  prepare: (input) =>
+    resolveActionCommandV2({
+      payload: { ids: ids.map((id) => RecordKeySchema.make(id)) },
+      registration: action,
+      scope: input.scope,
+    }).pipe(
+      Effect.map(
+        (command) =>
+          ({
+            approverId: input.scope.principalId,
+            command: { capabilityKey: CapabilityKeySchema.make(input.capabilityKey), payload: command },
+            commandDigest: Result.getOrThrow(freezeActionCommandV2(command)),
+            mandateId: input.mandateId,
+            proposalId: ProposalIdSchema.make('00000000-0000-4000-8000-0000000000b2'),
+            scopeId: AccessScopeIdSchema.make('00000000-0000-4000-8000-0000000000a1'),
+          }) satisfies MandatePrepared,
+      ),
+    ),
+});
+
+const replayMandateId = '00000000-0000-4000-8000-000000000123';
+
+/** The transport of a same-key retry: an ordinary run, an explicit propose intent, or a mandate execution. */
+const retryTransport = (retry: 'run' | 'propose' | 'approve', correlationId: string, idempotencyKey: string) => {
+  if (retry === 'propose') {
+    return { correlationId, idempotencyKey, intent: 'propose' as const };
+  }
+  if (retry === 'approve') {
+    return { correlationId, idempotencyKey, mandateId: replayMandateId };
+  }
+  return { correlationId, idempotencyKey };
+};
+
+for (const retry of ['run', 'propose', 'approve'] as const) {
+  for (const readRevoked of [false, true]) {
+    it.effect(
+      `a same-key ${retry} retry of a committed run answers its saved result only while the governing Read is granted, revoked=${readRevoked}`,
+      () =>
+        Effect.gen(function* governingReadReplay() {
+          const read = readFor();
+          const action = actionFor(read);
+          const owner = makeTestOperationOwner({ actions: [action], moduleId: ownerKey, reads: [read] });
+          const gate = yield* revocableGoverningGate();
+          const ids = ['first', 'second'];
+          const harness = yield* makeActionTestHarness({
+            accessDecision: gate.bound,
+            mandateDispatch: mandateFor(action, ids),
+            ownerRegistration: owner.ownerRegistration,
+          });
+          const key = `governing-replay-${retry}-${readRevoked}`;
+          const committed = yield* harness.runtime.runAction({
+            payload: { ids: ids.map((id) => RecordKeySchema.make(id)) },
+            principal,
+            registration: action,
+            savedReply: 'answer',
+            successContract: 'result-or-proposal',
+            transport: { correlationId: `${key}-run`, idempotencyKey: key },
+          });
+          expect(committed).toBe(2);
+          if (readRevoked) {
+            yield* gate.revokeRead();
+          }
+          const replayed = yield* Effect.result(
+            harness.runtime.runAction({
+              payload: retry === 'approve' ? undefined : { ids: ids.map((id) => RecordKeySchema.make(id)) },
+              principal,
+              registration: action,
+              savedReply: 'answer',
+              successContract: 'result-or-proposal',
+              transport: retryTransport(retry, `${key}-retry`, key),
+            }),
+          );
+          if (retry === 'approve') {
+            // A mandate executes its own invocation, never the run's saved reply: it gets every check of a first run.
+            expect(replayed).toMatchObject(
+              readRevoked ? { failure: { _tag: 'ActionPermissionDenied' } } : { success: 2 },
+            );
+            expect(harness.snapshot().committed).toHaveLength(readRevoked ? 1 : 2);
+            return;
+          }
+          // A revoked governing Read refuses the replay exactly as it refuses an ordinary retry: no saved result.
+          expect(replayed).toMatchObject(
+            readRevoked ? { failure: { _tag: 'ActionAlreadyCommitted' } } : { success: 2 },
+          );
+          expect(harness.snapshot().committed).toHaveLength(1);
+        }),
+    );
+  }
+}
+
+for (const ids of [['first'], ['second', 'first'], ['first', 'second', 'third']]) {
+  it.effect(
+    `a same-key retry whose target set differs in shape never gets the saved result, ids=${ids.join(',')}`,
+    () =>
+      Effect.gen(function* otherTargetSetRetry() {
+        const read = readFor();
+        const action = actionFor(read);
+        const owner = makeTestOperationOwner({ actions: [action], moduleId: ownerKey, reads: [read] });
+        const gate = yield* revocableGoverningGate();
+        const harness = yield* makeActionTestHarness({
+          accessDecision: gate.bound,
+          ownerRegistration: owner.ownerRegistration,
+        });
+        const key = `governing-replay-shape-${ids.join('-')}`;
+        const request = (recordIds: readonly string[], correlationId: string) => ({
+          payload: { ids: recordIds.map((id) => RecordKeySchema.make(id)) },
+          principal,
+          registration: action,
+          savedReply: 'answer' as const,
+          transport: { correlationId, idempotencyKey: key },
+        });
+        expect(yield* harness.runtime.runAction(request(['first', 'second'], `${key}-run`))).toBe(2);
+        const otherTargets = yield* Effect.result(harness.runtime.runAction(request(ids, `${key}-retry`)));
+        expect(Result.isFailure(otherTargets)).toBe(true);
+        expect(otherTargets).not.toMatchObject({ failure: { _tag: 'ActionAlreadyCommitted' } });
+        expect(harness.snapshot().committed).toHaveLength(1);
       }),
   );
 }

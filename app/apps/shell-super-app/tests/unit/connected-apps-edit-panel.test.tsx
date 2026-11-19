@@ -1,71 +1,31 @@
-import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
-import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
-import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
+// @rstest-environment happy-dom
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   AgentAccessClientIdSchema,
   AgentAccessGrantIdSchema,
   ConnectionSummarySchema,
 } from '@app/shared-contracts/agent-access';
-import type { ConnectionLimits, ConnectionSummary } from '@app/shared-contracts/agent-access';
+import type { ConnectionLimits, ConnectionSummary, ConnectionUpdateRequest } from '@app/shared-contracts/agent-access';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
-import { cleanup, render as renderView, screen, waitFor } from '@testing-library/react';
+import { browserNetwork, networkIdle, serveApi } from '@app/shared-contracts/testing/http-double';
+import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { cleanup, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
-import { afterEach, beforeAll, expect, it, rstest } from 'effect-rstest';
-import type { PropsWithChildren, ReactElement } from 'react';
+import { afterEach, expect, it } from 'effect-rstest';
+import type { ComponentProps } from 'react';
 
-import csResource from '../../locales/cs/shell.json';
+import {
+  ShellAuthenticationApi,
+  shellAuthenticationApiContract,
+  ShellPolicyConflictProblemSchema,
+} from '../../shared/browser-api.ts';
 import { ConnectedAppsEditPanel } from '../../src/routes/[lang]/profile/connected-apps-edit-panel.tsx';
+import { shellLocaleCopy } from '../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 
-let i18nInstance: I18nInstance;
-beforeAll(async () => {
-  i18nInstance = await createModernI18n();
-  await i18nInstance.init({
-    defaultNS: 'shell',
-    lng: 'cs',
-    ns: ['shell'],
-    resources: { cs: { shell: csResource } },
-    supportedLngs: ['cs', 'en'],
-  });
-});
-const I18nProvider = ({ children }: PropsWithChildren) => (
-  <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>{children}</ModernI18nProvider>
-);
-const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
 afterEach(cleanup);
-
-const { update } = rstest.hoisted(() => ({ update: rstest.fn() }));
-rstest.mock('../../src/routes/[lang]/profile/connected-apps-client.ts', () => ({
-  updateConnectionAccess: update,
-}));
-
-/** The router's blocker: `shouldBlock` is what the panel asks it to block on, `status` what the router answers. */
-interface Navigation {
-  readonly proceed: () => void;
-  readonly reset: () => void;
-  shouldBlock: () => boolean;
-  status: 'blocked' | 'idle';
-}
-const { navigation } = rstest.hoisted(() => {
-  const state: Navigation = {
-    proceed: rstest.fn<() => void>(),
-    reset: rstest.fn<() => void>(),
-    shouldBlock: () => false,
-    status: 'idle',
-  };
-  return { navigation: state };
-});
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
-    navigation.shouldBlock = options.shouldBlockFn;
-    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
-  },
-}));
-afterEach(() => {
-  navigation.status = 'idle';
-  rstest.mocked(navigation.proceed).mockReset();
-  rstest.mocked(navigation.reset).mockReset();
-});
 
 const warehouse = AgentModuleKeySchema.make('warehouse');
 const limits: ConnectionLimits = {
@@ -102,6 +62,70 @@ const connection: ConnectionSummary = Schema.decodeUnknownSync(ConnectionSummary
   writePolicy: 'approval',
 });
 
+/** Serve the production update endpoint, including its request, response and Problem Details codecs. */
+const UpdateApi = HttpApi.make('connectionEditTest')
+  .add(
+    HttpApiGroup.make('oauthConnectionsAdmin').add(
+      ShellAuthenticationApi.groups.oauthConnectionsAdmin.endpoints.updateConnectionAccess,
+    ),
+  )
+  .prefix(shellAuthenticationApiContract.apiPrefix);
+
+const connectionBff = (revoked = false) => {
+  const requests: ConnectionUpdateRequest[] = [];
+  const handlers = HttpApiBuilder.group(UpdateApi, 'oauthConnectionsAdmin', (group) =>
+    group.handle('updateConnectionAccess', ({ payload }) =>
+      Effect.suspend(() => {
+        requests.push(payload);
+        return revoked
+          ? Effect.fail(
+              ShellPolicyConflictProblemSchema.make({
+                detail: 'Připojení bylo odvoláno.',
+                status: 409,
+                title: 'Connection revoked',
+                type: 'https://ontos.dev/problems/connection-revoked',
+              }),
+            )
+          : Effect.succeed({ grantId: connection.grantId, status: 'active' as const });
+      }),
+    ),
+  );
+  return { network: browserNetwork(serveApi(UpdateApi, handlers)), requests };
+};
+
+const callbacks = () => {
+  const closed: true[] = [];
+  const saved: string[] = [];
+  const stale: string[] = [];
+  return {
+    closed,
+    props: {
+      onClose: () => {
+        closed.push(true);
+      },
+      onSaved: (name: string) => {
+        saved.push(name);
+      },
+      onStale: (notice: string) => {
+        stale.push(notice);
+      },
+    },
+    saved,
+    stale,
+  };
+};
+
+const renderPanel = (props: Omit<ComponentProps<typeof ConnectedAppsEditPanel>, 'connection'>) =>
+  Effect.gen(function* mountPanel() {
+    const router = makeShellRouter({
+      page: { component: () => <ConnectedAppsEditPanel connection={connection} {...props} />, path: 'profile' },
+      url: '/cs/profile',
+    });
+    yield* renderShellRoute(router, shellLocaleCopy('cs'));
+    yield* settle;
+    return router;
+  });
+
 /** The panel footer's Zavřít; the dialog's own close trigger carries the same label. */
 const closeButton = (): HTMLElement => {
   const last = screen.getAllByRole('button', { name: 'Zavřít' }).at(-1);
@@ -114,83 +138,78 @@ const closeButton = (): HTMLElement => {
 const click = (element: HTMLElement) =>
   Effect.promise(async () => {
     await userEvent.setup().click(element);
-  });
+  }).pipe(Effect.andThen(settle));
 
-const ok = Effect.succeed({ status: 'ok', value: {} });
+const saveButton = (): HTMLElement => screen.getByRole('button', { name: 'Uložit' });
 
-const saveButton = (): HTMLElement => {
-  const button = screen.getByRole('button', { name: 'Uložit' });
-  return button;
-};
-
-it.live('changing the access writes nothing until Uložit, which writes once', () =>
-  Effect.gen(function* editThenSave() {
-    update.mockReturnValue(ok);
-    const onClose = rstest.fn<() => void>();
-    const onSaved = rstest.fn<(name: string) => void>();
-    const onStale = rstest.fn<(notice: string) => void>();
-    render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
+it.live('changing the access writes nothing until Uložit, which writes once', () => {
+  const bff = connectionBff();
+  return Effect.gen(function* editThenSave() {
+    yield* renderPanel(callbacks().props);
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    yield* Effect.sleep('1 second');
-    expect(update).not.toHaveBeenCalled();
+    yield* networkIdle;
+    expect(bff.requests).toHaveLength(0);
     yield* click(saveButton());
-    yield* Effect.promise(async () => {
-      await waitFor(() => expect(update).toHaveBeenCalledTimes(1), { timeout: 4000 });
-    });
-    expect(update.mock.calls[0]?.[0]).toMatchObject({ grantId: 'g1', writePolicy: 'read_only' });
-  }),
-);
+    yield* waitUntil(() => document.querySelector('[data-save-state="saved"]') !== null);
+    yield* networkIdle;
+    expect(bff.requests).toHaveLength(1);
+    expect(bff.requests[0]).toMatchObject({ grantId: 'g1', writePolicy: 'read_only' });
+  }).pipe(Effect.provide(bff.network));
+});
 
-it.effect('leaving with unsaved changes asks first, and Zahodit změny sends nothing', () =>
-  Effect.gen(function* leaveAsks() {
-    update.mockReturnValue(ok);
-    const onClose = rstest.fn<() => void>();
-    const onSaved = rstest.fn<(name: string) => void>();
-    const onStale = rstest.fn<(notice: string) => void>();
-    render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
+it.live('leaving with unsaved changes asks first, and Zahodit změny sends nothing', () => {
+  const bff = connectionBff();
+  return Effect.gen(function* leaveAsks() {
+    const events = callbacks();
+    yield* renderPanel(events.props);
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
     yield* click(closeButton());
-    expect(onClose).not.toHaveBeenCalled();
+    expect(events.closed).toHaveLength(0);
     yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
-    expect(update).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledTimes(1);
-  }),
-);
+    yield* networkIdle;
+    expect(bff.requests).toHaveLength(0);
+    expect(events.closed).toHaveLength(1);
+  }).pipe(Effect.provide(bff.network));
+});
 
-it.effect('says so and closes when the connection was revoked elsewhere', () =>
-  Effect.gen(function* revokedElsewhere() {
-    update.mockReturnValue(Effect.succeed({ detail: null, reason: 'conflict', status: 'failed' }));
-    const onClose = rstest.fn<() => void>();
-    const onSaved = rstest.fn<(name: string) => void>();
-    const onStale = rstest.fn<(notice: string) => void>();
-    render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
+it.live('says so and closes when the connection was revoked elsewhere', () => {
+  const bff = connectionBff(true);
+  return Effect.gen(function* revokedElsewhere() {
+    const events = callbacks();
+    yield* renderPanel(events.props);
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
     yield* click(saveButton());
-    yield* Effect.promise(async () => {
-      await waitFor(() => expect(onStale).toHaveBeenCalled(), { timeout: 4000 });
-    });
-  }),
-);
+    yield* waitUntil(() => events.stale.length > 0);
+    expect(events.stale.length).toBeGreaterThan(0);
+    expect(events.closed).toHaveLength(1);
+  }).pipe(Effect.provide(bff.network));
+});
 
-it.effect('a route change with unsaved changes asks first, and Zahodit změny lets it go without saving', () =>
-  Effect.gen(function* routeChangeAsks() {
-    update.mockReturnValue(ok);
-    const onClose = rstest.fn<() => void>();
-    const onSaved = rstest.fn<(name: string) => void>();
-    const onStale = rstest.fn<(notice: string) => void>();
-    const panel = () => (
-      <ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />
-    );
-    const view = render(panel());
-    expect(navigation.shouldBlock()).toBe(false);
+it.live('a route change with unsaved changes asks first, and Zahodit změny lets it go without saving', () => {
+  const bff = connectionBff();
+  return Effect.gen(function* routeChangeAsks() {
+    const router = yield* renderPanel(callbacks().props);
+    // An unchanged panel permits a real route navigation without asking.
+    yield* acted(() => {
+      void router.navigate({ search: { clean: 1 }, to: '/cs/profile' });
+    });
+    expect(router.state.location.href).toBe('/cs/profile?clean=1');
+    expect(screen.queryByRole('button', { name: 'Zahodit změny' })).toBeNull();
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    expect(navigation.shouldBlock()).toBe(true);
-    // The router holds the navigation (a Shell link, browser Back) and the panel asks.
-    navigation.status = 'blocked';
-    view.rerender(panel());
-    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: 'Zahodit změny' }));
-    yield* click(discard);
-    expect(navigation.proceed).toHaveBeenCalledTimes(1);
-    expect(update).not.toHaveBeenCalled();
-  }),
-);
+    const navigations: string[] = [];
+    const unsubscribe = router.history.subscribe(({ location }: { readonly location: { readonly href: string } }) => {
+      navigations.push(location.href);
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+    yield* acted(() => {
+      void router.navigate({ to: '/cs' });
+    });
+    yield* waitUntil(() => screen.queryByRole('button', { name: 'Zahodit změny' }) !== null);
+    expect(router.state.location.href).toBe('/cs/profile?clean=1');
+    yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
+    expect(router.state.location.pathname).toBe('/cs');
+    expect(navigations).toEqual(['/cs']);
+    yield* networkIdle;
+    expect(bff.requests).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(bff.network));
+});

@@ -13,10 +13,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Effect, Result, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { parseCiMatrices } from '../ci/ci-matrices.mts';
+import { knownTask, parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
 import {
   CiTemplatesSchema,
   filterPaths,
@@ -65,10 +65,13 @@ const CATALOG_DIRECTORY = 'verticals/catalog';
 const PRIVACY_DIRECTORY = 'verticals/privacy';
 const PRIVACY = '@app/privacy';
 const SHELL_DIRECTORY = 'apps/shell-super-app';
-const packages = [
+/** The task selector of the Shell's integration suite. */
+const SHELL_TASK = `./${SHELL_DIRECTORY}`;
+const PRICING_DIRECTORY = 'verticals/pricing';
+const owners = [
   // The fixture's changed catalog file is one its exports map names: other packages consume it.
   { dependencies: [], directory: CATALOG_DIRECTORY, exportTargets: ['src/service.ts'], name: CATALOG },
-  { dependencies: [CATALOG], directory: 'verticals/pricing', name: PRICING },
+  { dependencies: [CATALOG], directory: PRICING_DIRECTORY, name: PRICING },
   { dependencies: [], directory: PRIVACY_DIRECTORY, name: PRIVACY },
   { dependencies: [], directory: SHELL_DIRECTORY, name: SHELL },
   { dependencies: [], directory: 'verticals/party-registry', name: '@app/party-registry' },
@@ -77,6 +80,27 @@ const packages = [
   { dependencies: [], directory: 'verticals/commerce-market-catalog', name: '@app/commerce-market-catalog' },
   { dependencies: [], directory: 'verticals/commerce-customer-context', name: CUSTOMER_CONTEXT },
 ];
+/** The owners above plus every other directory a template task runs in: each task names a package, as on this trunk. */
+const packages = [
+  ...owners,
+  ...[
+    ...new Set(templates.integration.flatMap(({ tasks }) => tasks ?? []).flatMap((task) => taskDirectory(task) ?? [])),
+  ]
+    .filter((directory) => !owners.some((owner) => owner.directory === directory))
+    .map((directory) => ({ dependencies: [], directory, name: `@app/${path.basename(directory)}` })),
+];
+/** The workspace directories whose integration files a row's tasks run. */
+const taskDirectories = (row: { readonly tasks?: readonly string[] | undefined }) => [
+  ...new Set((row.tasks ?? []).flatMap((task) => taskDirectory(task) ?? [])),
+];
+/** Every task an integration matrix runs, sorted. */
+const allTasks = (entries: readonly { readonly tasks?: readonly string[] | undefined }[]) =>
+  EffectArray.sort(
+    entries.flatMap((entry) => entry.tasks ?? []),
+    Order.String,
+  );
+const preproposalRow = (entry: { readonly tasks?: readonly string[] | undefined }) =>
+  (entry.tasks ?? []).some((task) => task.startsWith('whole:preproposal-'));
 
 it('selects owner and transitive consumer tests without selecting an unrelated owner', () => {
   const plan = planCiChecks({
@@ -87,11 +111,20 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   });
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
-  expect(plan.integration.map(({ name }) => name)).toEqual([
-    'Pricing and Inventory Integration',
-    'Catalog Integration',
-    'Native Preproposal Basis and Approval Proof',
-  ]);
+  // The bootstrap row stays; ordinary package tasks are restricted to the affected owner and its consumers.
+  expect(plan.integration.some(({ suite }) => suite === 'bootstrap')).toBe(true);
+  const ordinaryTasks = allTasks(plan.integration).filter((task) => task.startsWith('./'));
+  expect(ordinaryTasks.length).toBeGreaterThan(0);
+  expect(
+    ordinaryTasks.every((task) => task.startsWith('./verticals/catalog#') || task.startsWith('./verticals/pricing#')),
+  ).toBe(true);
+  expect(
+    EffectArray.sort(
+      [...new Set(plan.integration.filter(({ suite }) => suite === 'integration').flatMap(taskDirectories))],
+      Order.String,
+    ),
+  ).toEqual([CATALOG_DIRECTORY, PRICING_DIRECTORY]);
+  expect(plan.integration.filter(preproposalRow)).toHaveLength(2);
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
   );
@@ -126,7 +159,7 @@ const FINANCE_BILLING = '@app/finance-billing';
 const FINANCE_DIRECTORY = 'verticals/finance-billing';
 const FACILITY_OPERATIONS = '@app/facility-operations';
 const narrowPackages = [
-  ...packages.filter(({ name }) => name !== SHELL),
+  ...packages.filter(({ name }) => ![SHELL, FINANCE_BILLING, FACILITY_OPERATIONS].includes(name)),
   {
     dependencies: [],
     directory: FINANCE_DIRECTORY,
@@ -144,21 +177,29 @@ const narrowPackages = [
 ];
 const narrowPlan = (changedPath: string) =>
   planCiChecks({ applyAffected: true, changedPaths: [changedPath], packages: narrowPackages, templates });
-const SHELL_OR_ROOT = (entry: { readonly 'package-filters'?: string; readonly 'root-suite'?: boolean }) =>
-  (entry['package-filters'] ?? '').includes('./apps/shell-super-app') || entry['root-suite'] === true;
+const SHELL_OR_ROOT = (entry: { readonly tasks?: readonly string[] | undefined }) =>
+  (entry.tasks ?? []).some((task) => task.startsWith(SHELL_TASK) || task.startsWith('root:'));
+
+/** A task that runs root integration files, sharded or whole. */
+const rootWork = (task: string) =>
+  task.startsWith('root:') ||
+  ['whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-routes'].includes(task);
+/** A shard of the Shell's integration suite. */
+const shellShard = (task: string) => task.startsWith(`${SHELL_TASK}#`);
+/** A shard of Customer Context's integration suite. */
+const customerContext = (task: string) => task.startsWith('./verticals/commerce-customer-context#');
 
 it('narrows a change inside one vertical to its own rows and the source gates', () => {
   const plan = narrowPlan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([FINANCE_BILLING]);
-  const ordinary = plan.integration.filter((entry) => entry['fresh-database-tests'] !== 'only');
-  expect(ordinary.map(({ name }) => name)).toEqual(['Database, Migration, RLS, Authorization, and Outbox Integration']);
-  expect(ordinary[0]?.['package-filters']).toBe(`--filter ./${FINANCE_DIRECTORY}`);
+  const ordinary = plan.integration.filter(({ suite }) => suite === 'integration');
+  expect(allTasks(ordinary).filter((task) => task.startsWith('./'))).toEqual([`./${FINANCE_DIRECTORY}`]);
   // Neither the Shell nor a root suite consumes a vertical's internals; only its public surface.
   expect(ordinary.some(SHELL_OR_ROOT)).toBe(false);
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(false);
-  // This diff names none of the seed inputs the gates' integration seed key hashes, so the fresh-database rows stay out.
-  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(0);
+  // The deployment bootstrap reads no matrix input, so every plan with integration work keeps it.
+  expect(plan.integration.filter(({ suite }) => suite === 'bootstrap')).toHaveLength(1);
   expect(plan.source).toEqual(templates.source);
   expect(plan.unit.map(({ name }) => name)).toEqual(['Unit and Component Tests (every other package)']);
   // Its tests are its own as well.
@@ -191,19 +232,19 @@ it('selects the Shell rows and the browser checks for a change inside the Shell'
   const plan = narrowPlan(`app/${SHELL_DIRECTORY}/src/routes/home.tsx`);
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([SHELL]);
-  expect(
-    plan.integration
-      .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
-      .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
+  const shellTasks = templates.integration
+    .flatMap((entry) => entry.tasks ?? [])
+    .filter((task) => task.startsWith(SHELL_TASK));
+  expect(shellTasks.length).toBeGreaterThan(1);
+  expect(allTasks(plan.integration).filter((task) => task.startsWith(SHELL_TASK))).toEqual(
+    EffectArray.sort(shellTasks, Order.String),
+  );
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
-  expect(
-    plan.integration.some((entry) => entry['root-suite'] === true && entry['fresh-database-tests'] !== 'only'),
-  ).toBe(false);
+  expect(allTasks(plan.integration).some((task) => task.startsWith('root:'))).toBe(false);
 });
 
-it('retains the native preproposal proof for each runtime owner even without ordinary package-filter matches', () => {
-  const native = templates.integration.find((entry) => entry['native-preproposal'] === true);
+it('retains the native preproposal proof for each runtime owner even without ordinary package matches', () => {
+  const native = templates.integration.find(preproposalRow);
   expect(native?.['proof-packages']).toHaveLength(8);
   for (const owner of native?.['proof-packages'] ?? []) {
     const workspacePackage = packages.find(({ name }) => name === owner);
@@ -214,11 +255,14 @@ it('retains the native preproposal proof for each runtime owner even without ord
       templates,
     });
     expect(plan.mode).toBe('affected');
-    expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
+    expect(plan.integration.filter(preproposalRow)).toHaveLength(2);
     if (owner === PRICING) {
       expect(plan.affectedPackages).toEqual([PRICING]);
-      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters']).toBe('');
-      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['root-suite']).toBe(false);
+      for (const row of plan.integration.filter(preproposalRow)) {
+        // Only the proof itself and the affected owner's own files remain; no root file rides along.
+        expect(taskDirectories(row).every((directory) => directory === PRICING_DIRECTORY)).toBe(true);
+        expect((row.tasks ?? []).some((task) => task.startsWith('root:'))).toBe(false);
+      }
     }
   }
 });
@@ -232,7 +276,11 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
       templates,
     });
   expect(plan(packages).mode).toBe('affected');
-  expect(plan(packages).integration.some((entry) => entry['native-preproposal'] === true)).toBe(false);
+  expect(
+    plan(packages)
+      .integration.flatMap((entry) => entry.tasks ?? [])
+      .some((task) => task.startsWith('whole:preproposal-')),
+  ).toBe(false);
   expect(plan(packages.filter(({ name }) => name !== PRICING)).mode).toBe('full');
   expect(
     Schema.is(CiTemplatesSchema)({
@@ -245,12 +293,14 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
 it('gives each matrix job only its own rows and plans a job without rows as skipped', () => {
   const full = planCiChecks({ applyAffected: false, changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(full.jobs.browser.map(({ suite }) => suite)).toEqual(['browser']);
-  expect(full.jobs.services.every(({ suite }) => suite === 'integration')).toBe(true);
-  expect(full.jobs.services.length + full.jobs.browser.length).toBe(templates.integration.length);
-  // The Fresh Database rows run the files that migrate their own database and never restore the seed.
-  const fresh = full.jobs.services.filter((entry) => entry['fresh-database-tests'] === 'only');
-  expect(fresh.length).toBeGreaterThan(0);
-  expect(fresh.some((entry) => entry.seed === true)).toBe(false);
+  expect(full.jobs.topology.map(({ suite }) => suite)).toEqual(['bootstrap']);
+  expect(full.jobs.owners.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(full.jobs.owners.length + full.jobs.browser.length + full.jobs.topology.length).toBe(
+    templates.integration.length,
+  );
+  // One database producer prepares the run's database for every owner row; no owner row migrates its own.
+  expect(full.jobs.database).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
+  expect(templates.integration.some(({ suite }) => suite === 'database')).toBe(false);
   expect(full.jobs.unitArtifacts.every((entry) => entry['node-artifacts'] === true)).toBe(true);
   expect(full.jobs.unitPlain.some((entry) => entry['node-artifacts'] === true)).toBe(false);
   expect(full.jobs.unitArtifacts.length + full.jobs.unitPlain.length).toBe(templates.unit.length);
@@ -258,12 +308,23 @@ it('gives each matrix job only its own rows and plans a job without rows as skip
   const affected = planCiChecks({ applyAffected: true, changedPaths: [CATALOG_SOURCE], packages, templates });
   // Catalog and Pricing unit rows read built outputs, and no browser row consumes them.
   expect(affected.expected['workspace-unit-artifacts']).toBe('success');
-  expect(affected.expected['browser-integration']).toBe('skipped');
-  expect(affected.expected['node-artifact-proof']).toBe('success');
+  expect(affected.jobs.browser).toEqual([]);
   expect(affected.expected['node-artifact-build']).toBe('success');
-  // The seed producer runs whenever an integration row does, also on an affected round; no row waits for it.
-  expect(affected.expected['integration-seed-proof']).toBe('success');
-  expect(affected.jobs.services.map(({ name }) => name)).toContain('Catalog Integration');
+  // The database producer and the bootstrap row run whenever integration work does, also on an affected round.
+  expect(affected.expected['service-integration']).toBe('success');
+  expect(affected.jobs.database).toHaveLength(1);
+  expect(affected.jobs.topology).toHaveLength(1);
+  expect(affected.jobs.owners.flatMap((row) => row.tasks ?? [])).toContain('./verticals/catalog#1/4');
+  // The gates the plan names are exactly the ones app/scripts/check-ci-gates.sh requires.
+  expect(Object.keys(affected.expected).toSorted()).toEqual([
+    'format-and-lint',
+    'node-artifact-build',
+    'service-integration',
+    'static-contracts',
+    'workspace-gate',
+    'workspace-unit',
+    'workspace-unit-artifacts',
+  ]);
   // A sharded single-package row whose package is affected runs exactly as planned.
   const shell = planCiChecks({
     applyAffected: true,
@@ -325,30 +386,92 @@ it('widens broken dependency metadata rather than silently dropping its consumer
   }
 });
 
-it('rejects incomplete full matrices and widens unsupported package-selector syntax', () => {
+it('rejects incomplete full matrices and widens an unrunnable task form', () => {
   expect(
     Schema.is(CiTemplatesSchema)({
       ...templates,
-      integration: [{ name: 'Missing package selection', suite: 'integration' }],
+      integration: [{ name: 'Missing task list', suite: 'integration' }],
     }),
   ).toBe(false);
   expect(
-    planCiChecks({
+    Schema.is(CiTemplatesSchema)({
+      ...templates,
+      integration: [{ name: 'Unrunnable task', suite: 'integration', tasks: ['@app/pricing...'] }],
+    }),
+  ).toBe(false);
+  // A runnable form naming a directory that is no workspace package widens too, instead of matching nothing.
+  for (const task of [
+    '@app/pricing...',
+    './verticals/catalog#one',
+    'whole:invented',
+    './sites/missing#1/2',
+    './verticals/missing',
+  ]) {
+    expect(
+      planCiChecks({
+        applyAffected: true,
+        changedPaths: [CATALOG_SOURCE],
+        packages,
+        templates: { ...templates, integration: [{ name: 'Unproven task', suite: 'integration', tasks: [task] }] },
+      }).mode,
+      task,
+    ).toBe('full');
+  }
+});
+
+it('keeps the bootstrap row in every affected plan and prepares no database that no owner row restores', () => {
+  const proof = { name: 'Node Artifact Proof', suite: 'bootstrap' } as const;
+  expect(Schema.is(CiTemplatesSchema)({ ...templates, integration: [proof] })).toBe(true);
+  const alone = planCiChecks({
+    applyAffected: true,
+    changedPaths: [CATALOG_SOURCE],
+    packages,
+    templates: { ...templates, integration: [proof] },
+  });
+  expect(alone.mode).toBe('affected');
+  expect(alone.integration).toEqual([proof]);
+  // The bootstrap row migrates its own cluster; the database producer only serves owner rows.
+  expect(alone.expected['service-integration']).toBe('skipped');
+});
+
+it('selects extracted root conformance tasks only with root impact, on their original rows', () => {
+  const rootConformance = ['whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-routes'];
+  const assignments = (entries: typeof templates.integration) =>
+    entries.flatMap((entry) =>
+      (entry.tasks ?? []).filter((task) => rootConformance.includes(task)).map((task) => ({ name: entry.name, task })),
+    );
+  for (const rootAffected of [false, true]) {
+    const plan = planCiChecks({
       applyAffected: true,
       changedPaths: [CATALOG_SOURCE],
-      packages,
-      templates: {
-        ...templates,
-        integration: [
-          {
-            name: 'Unproven selector',
-            'package-filters': '--filter ./verticals/catalog --filter @app/pricing...',
-            suite: 'integration',
-          },
-        ],
-      },
-    }).mode,
-  ).toBe('full');
+      packages: [...packages, { dependencies: rootAffected ? [CATALOG] : [], directory: '.', name: 'app' }],
+      templates,
+    });
+    expect(plan.mode).toBe('affected');
+    expect(plan.affectedPackages.includes('app')).toBe(rootAffected);
+    expect(assignments(plan.integration)).toEqual(rootAffected ? assignments(templates.integration) : []);
+  }
+  expect(assignments(templates.integration)).toHaveLength(rootConformance.length);
+});
+
+it('does not start an integration row after its selected tasks move to another row', () => {
+  for (const owner of workspacePackages) {
+    const plan = planCiChecks({
+      applyAffected: true,
+      changedPaths: [`app/${owner.directory}/src/service.ts`],
+      packages: workspacePackages,
+      templates,
+    });
+    for (const row of plan.integration) {
+      if (row.tasks !== undefined) {
+        expect(row.tasks.length, `${owner.name}: ${row.name}`).toBeGreaterThan(0);
+      }
+    }
+    const owns = (task: string) => task === `./${owner.directory}` || task.startsWith(`./${owner.directory}#`);
+    const expected = templates.integration.flatMap((row) => row.tasks ?? []).filter(owns);
+    const selected = plan.integration.flatMap((row) => row.tasks ?? []).filter(owns);
+    expect(EffectArray.sort(selected, Order.String), owner.name).toEqual(EffectArray.sort(expected, Order.String));
+  }
 });
 
 it('selects browser checks, all root integration shards and every Shell shard when they consume a changed package', () => {
@@ -362,28 +485,13 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     templates,
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
-  const roots = plan.integration.filter(
-    (entry) => entry['root-suite'] === true && entry['fresh-database-tests'] !== 'only',
-  );
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
-  expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
-  // The Shell suite runs in its own shards, so the root-suite shard names no package here.
-  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
-  expect(
-    plan.integration
-      .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
-      .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
-});
-
-it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
-  const plan = planCiChecks({
-    applyAffected: true,
-    changedPaths: [CATALOG_SOURCE],
-    packages: [...packages, { dependencies: [CATALOG], directory: '.', name: 'app' }],
-    templates,
-  });
-  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
+  // Every root file runs, including those listed in rows that hold no other root work.
+  expect(allTasks(plan.integration).filter(rootWork)).toEqual(allTasks(templates.integration).filter(rootWork));
+  // And every Shell shard, in the rows that hold them.
+  expect(allTasks(plan.integration).filter(shellShard)).toEqual(allTasks(templates.integration).filter(shellShard));
+  const directories = new Set(plan.integration.flatMap(taskDirectories));
+  expect(directories.has(SHELL_DIRECTORY)).toBe(true);
+  expect(directories.has(CATALOG_DIRECTORY)).toBe(true);
 });
 
 it('follows topology-only Shell and vertical remote references to browser tests', () => {
@@ -443,21 +551,17 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
   }
 });
 
-it('uses every customer-context shard for any selected customer-context package change', () => {
+it('uses every customer-context shard and its native proof for any selected customer-context package change', () => {
   const plan = planCiChecks({
     applyAffected: true,
     changedPaths: ['app/verticals/commerce-customer-context/src/service.ts'],
     packages,
     templates,
   });
-  expect(
-    plan.integration
-      .filter((entry) => entry['rstest-shard'] !== undefined && entry['fresh-database-tests'] !== 'only')
-      .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/7', '2/7', '3/7', '4/7', '5/7', '6/7', '7/7']);
-  // A source change names no seed input, so the Fresh Database rows stay out; its own scripts/** tree selects them.
-  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(0);
-  expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
+  const shards = allTasks(templates.integration).filter(customerContext);
+  expect(shards.length).toBeGreaterThan(1);
+  expect(allTasks(plan.integration).filter(customerContext)).toEqual(shards);
+  expect(plan.integration.filter(preproposalRow)).toHaveLength(2);
 });
 
 it('widens changed shared infrastructure, unknown paths and package metadata to the complete suite', () => {
@@ -562,12 +666,14 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
 /** The workflow id and run id of the recorded push run that plans; the lookup reads only this workflow. */
 const PUSH_WORKFLOW_ID = 342_952_200;
 const PUSH_RUN_ID = 44_400_000_000;
-const PUSH_BRANCH = 'trunk';
+/** A branch name that would end the query parameter early if pasted into the URL. */
+const PUSH_BRANCH = 'release/fix&docs';
 const RUN_LOOKUP = `api repos/TechsioCZ/ontos/actions/runs/${PUSH_RUN_ID} --jq .workflow_id`;
-const RUNS_LIST = `api repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs?branch=${PUSH_BRANCH}&event=push&per_page=100`;
+const RUNS_LIST = `api --method GET repos/TechsioCZ/ontos/actions/workflows/${PUSH_WORKFLOW_ID}/runs -f branch=${PUSH_BRANCH} -f event=push -f per_page=100`;
 /** One recorded workflow run as the list endpoint returns it, newest first; only the fields the lookup reads. */
 interface RecordedRun {
   readonly conclusion: string | null;
+  readonly created_at?: string;
   readonly event: string;
   readonly head_branch: string;
   readonly head_sha: string;
@@ -577,7 +683,12 @@ interface RecordedRun {
 const recordedRuns = (runs: readonly RecordedRun[]) =>
   JSON.stringify({
     total_count: runs.length,
-    workflow_runs: runs.map((run, index) => ({ id: PUSH_RUN_ID - index - 1, workflow_id: PUSH_WORKFLOW_ID, ...run })),
+    workflow_runs: runs.map((run, index) => ({
+      created_at: new Date(Date.UTC(2026, 10, 18, 12) - index * 60_000).toISOString().replace('.000', ''),
+      id: PUSH_RUN_ID - index - 1,
+      workflow_id: PUSH_WORKFLOW_ID,
+      ...run,
+    })),
   });
 const greenPush = (sha: string): RecordedRun => ({
   conclusion: 'success',
@@ -650,8 +761,8 @@ it.live('compares a push without a merge queue with its newest green push, and r
           GITHUB_REPOSITORY: 'TechsioCZ/ontos',
           GITHUB_RUN_ID: String(PUSH_RUN_ID),
           HEAD_SHA: git('rev-parse', 'HEAD'),
+          NEWEST_GREEN_BASE: 'true',
           PATH: `${bin}:/usr/bin:/bin`,
-          QUEUE_PROOF: 'skipped',
           ...environment,
         },
         stdio: 'pipe',
@@ -700,6 +811,16 @@ it.live('compares a push without a merge queue with its newest green push, and r
       expect(mixed.paths).toEqual(unproven);
       expect(mixed.log).toContain(`Comparing with ${green},`);
 
+      // Of two eligible green pushes the newer one by creation time is the base, whatever order the list has.
+      const newest = plan(
+        listed([
+          { ...greenPush(green), created_at: '2026-11-18T11:00:00Z' },
+          { ...greenPush(cancelled), created_at: '2026-11-18T12:00:00Z' },
+        ]),
+      );
+      expect(newest.log).toContain(`Comparing with ${cancelled},`);
+      expect(newest.paths).toEqual(['pushed.ts']);
+
       // (c) A green commit that is no ancestor of this push, or absent from the checkout, is passed over.
       const passedOver = plan(listed([greenPush(sibling), greenPush(absent), greenPush(green)]));
       expect(passedOver.mode).toBe('affected');
@@ -731,14 +852,20 @@ it.live('compares a push without a merge queue with its newest green push, and r
         expect(failed.log).toContain('::warning title=Complete suite::');
       }
 
-      // A push the queue-proof job looked at (main, behind its merge queue) never enters the lookup: it compares
-      // with the commit before the push as it always did, whatever the proof found, and calls no API.
-      for (const result of ['success', 'failure']) {
-        const queued = plan(listed([greenPush(green)]), { QUEUE_PROOF: result });
-        expect(queued.calls, result).toEqual([]);
-        expect(queued.paths, result).toEqual(['pushed.ts']);
+      // A push to main (behind its merge queue) never enters the lookup: it compares with the commit before the push
+      // as it always did, and calls no API.
+      for (const value of ['false', '']) {
+        const queued = plan(listed([greenPush(green)]), { NEWEST_GREEN_BASE: value });
+        expect(queued.calls, value).toEqual([]);
+        expect(queued.paths, value).toEqual(['pushed.ts']);
       }
-      expect(plan({}, { QUEUE_PROOF: '' }).calls).toEqual([]);
+      // A commit the queue-proof job proved plans no gate and names the proving run; force-ci-full never skips.
+      const proof = 'https://github.com/TechsioCZ/ontos/actions/runs/44490000000';
+      const proven = plan({}, { PROOF_RUN: proof, QUEUE_PROVEN: 'true' });
+      expect(proven.mode).toBe('proven');
+      expect(proven.calls).toEqual([]);
+      expect(proven.log).toContain(`Run ${proof} already proved this exact commit.`);
+      expect(plan({}, { FORCE_FULL: 'true', NEWEST_GREEN_BASE: 'false', QUEUE_PROVEN: 'true' }).mode).toBe('full');
       // Nor does any other event without a queue proof.
       for (const event of ['merge_group', 'pull_request', 'schedule', 'workflow_dispatch']) {
         expect(plan({}, { GITHUB_EVENT_NAME: event }).calls, event).toEqual([]);
@@ -750,12 +877,13 @@ it.live('compares a push without a merge queue with its newest green push, and r
 );
 
 it('keeps every unit and integration template resolvable so one glob cannot disable affected selection', () => {
-  for (const command of [
-    ...templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean)),
-    ...templates.integration.map((entry) => entry['package-filters'] ?? ''),
-  ]) {
+  for (const command of templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean))) {
     expect(unknownFilters(command)).toBe(false);
     expect(filterPaths(command).filter(({ path: selected }) => !knownSelectors.has(selected ?? ''))).toEqual([]);
+  }
+  for (const task of templates.integration.flatMap((entry) => entry.tasks ?? [])) {
+    expect(knownTask(task), task).toBe(true);
+    expect(knownSelectors.has(taskDirectory(task) ?? '.'), task).toBe(true);
   }
 });
 
@@ -800,11 +928,7 @@ it('runs every unit and component suite of every workspace package exactly once 
 });
 
 it('runs the integration suite of every workspace package that declares one in some integration row', () => {
-  const covered = new Set(
-    templates.integration.flatMap((entry) =>
-      matchingPackages(entry['package-filters'] ?? '', workspacePackages).map(({ directory }) => directory),
-    ),
-  );
+  const covered = new Set(templates.integration.flatMap(taskDirectories));
   expect(
     workspacePackages
       .filter(({ scripts }) => scripts['test:integration'] !== undefined)

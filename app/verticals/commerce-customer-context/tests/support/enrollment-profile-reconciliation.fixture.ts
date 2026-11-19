@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActionRuntime, ActiveApplicationCompositionService } from '@app/core-runtime';
+import {
+  ActionRuntime,
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
@@ -141,7 +145,7 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
         allowedAudiences: [ownerAudience],
         // The registered Actions resolve module requirements against the installed composition and
         // their own registration; both are the deployment's, not the fixture's.
-        applicationComposition: { load: Effect.succeed(snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         authenticationSubjectTypes: ['user', 'api_key'],
         compositionRevision,
@@ -221,7 +225,10 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
         Layer.provide(profileReconfirmationPolicyUnavailableLive),
       ),
       commerceCustomerContextOwnerAuthorizationOverlayLive,
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
     );
     const ambient = yield* Effect.context<Crypto.Crypto | Scope.Scope>();
     const context = Context.merge(ambient, yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners))));
@@ -293,7 +300,10 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
         ONTOS_SHELL_GATEWAY_BASE_URL: `${origin}${shellGatewayContextContract.apiPrefix}`,
       }),
     );
-    const composition = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+    const composition = Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    );
     const consumed = new Set<string>();
     const api = HttpApi.make('CommerceCustomerContextApi')
       .addHttpApi(EnrollmentCommandRecoveryApi)

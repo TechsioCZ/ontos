@@ -20,6 +20,14 @@ const operatorTests = [
   'scripts/integration/siampark-demo-http.test.mts',
 ];
 
+// Migration equivalence creates its own databases and fixture roles on a PostgreSQL 18 cluster its job owns and
+// names (MIGRATION_EQUIVALENCE_TEST_DATABASE_URL). An integration lane's cluster holds the shared baseline and no
+// such endpoint, so the deployment bootstrap row runs this project on the cluster it migrates itself.
+const ownedClusterTests = ['scripts/integration/migration-equivalence.test.mts'];
+// Negated include patterns, not `exclude`: a command-line --exclude (the root tasks of
+// scripts/ci/run-integration-suites.sh) replaces a project's exclude list, so these files would rejoin the suite.
+const elsewhere = [...operatorTests, ...ownedClusterTests].map((file) => `!${file}`);
+
 export default defineConfig({
   projects: [
     {
@@ -30,8 +38,7 @@ export default defineConfig({
     },
     {
       ...shared,
-      exclude: operatorTests,
-      include: ['scripts/integration/**/*.test.mts'],
+      include: ['scripts/integration/**/*.test.mts', ...elsewhere],
       name: 'integration',
       setupFiles: ['./scripts/ci/integration-worker-setup.mts'],
     },
@@ -39,6 +46,11 @@ export default defineConfig({
       ...shared,
       include: operatorTests,
       name: 'operator',
+    },
+    {
+      ...shared,
+      include: ownedClusterTests,
+      name: 'owned-cluster',
     },
     {
       ...shared,

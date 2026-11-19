@@ -5,7 +5,10 @@ import { guardedPgClientLayer } from '../db/client.ts';
 import { loadDatabaseConfig } from '../db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 import { DRIVER_DEFAULT_MAX_CONNECTIONS, configureDatabasePool } from '../db/pool-configuration.ts';
-import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+} from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
@@ -82,8 +85,11 @@ export const nodeHostBootWarmUp = Effect.fn('BootWarmUp.nodeHost')(function* nod
   const steps: readonly BootWarmUpStep[] = [
     databasePoolWarmUp(sharedRuntimePool(processScope)),
     spiceDbWarmUp(spiceDbClient),
-    compositionWarmUp(composition.load, buildApplicationCompositionCatalog),
+    compositionWarmUp(loadActiveApplicationComposition(composition), buildApplicationCompositionCatalog),
     importsWarmUp(registeredImports),
   ];
-  return yield* runBootWarmUp({ serving: asBootWarmUpStep('serving')(composition.load), steps }, options.budget);
+  return yield* runBootWarmUp(
+    { serving: asBootWarmUpStep('serving')(loadActiveApplicationComposition(composition)), steps },
+    options.budget,
+  );
 });

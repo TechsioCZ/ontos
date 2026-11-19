@@ -13,7 +13,7 @@ import type {
 } from '@app/core-runtime';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { executeCommittedOrderApprovalEvidenceWithAuthorization } from '@app/commerce-order-contracts/committed-order-approval-evidence/client';
 import {
@@ -239,10 +239,7 @@ export const prepareOrderApprovalConsumptionService = Effect.fn('OrderApprovalCo
       return yield* denied();
     }
     // Installation is the module-state gate's fact, not a second permission check (O62).
-    const active = yield* composition.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-      Effect.mapError(unavailable),
-    );
+    const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
     const assertion = yield* acquireDelegatedGatewayContext(
       {
         audience: 'commerce-order',

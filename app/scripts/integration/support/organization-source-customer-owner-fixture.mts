@@ -650,9 +650,19 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       runtimes.set(app, runtime);
       return runtime;
     });
-    for (const app of appIds) {
-      yield* start(app);
+    // Initial receivers have distinct ports, artifacts and already-bound module credentials.
+    // Their local readiness does not call peers. Later policy restarts remain ordered with their writes.
+    const symmyContract = contracts.find((value) => value.deployment.appId === symmyApp);
+    if (symmyContract === undefined) {
+      return yield* unavailable('The actual Symmy worker contract is missing');
     }
+    const [, workerArtifact] = yield* Effect.all(
+      [
+        Effect.forEach(appIds, (app) => start(app), { concurrency: 3, discard: true }),
+        buildProductWorker(symmyContract),
+      ],
+      { concurrency: 2 },
+    );
     let workerDiagnostic = Effect.succeed('Worker has not started');
     const writeDiagnostics = Effect.fn('OrganizationSourceCustomerOwner.diagnostics')(function* writeDiagnostics() {
       for (const [app, runtime] of runtimes) {
@@ -795,61 +805,65 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         },
       },
     ];
-    const prepared = [];
-    for (const input of inputs) {
-      const governanceSelector = yield* Schema.decodeUnknownEffect(
-        SymmySourceOrganizationFactsGovernanceSelectorSchema,
-      )({
-        effectKey: input.effectKey,
-        execution: { jobId: accepted.jobId, kind: 'JOB' },
-        purpose: 'GOVERNANCE',
-        sourceReference,
-      });
-      const intent = yield* Schema.decodeUnknownEffect(OrganizationBusinessSourceIntentSchema)(input.intent);
-      prepared.push(
-        yield* seedOrganizationBusinessSourceNativeFixture({
-          callers: [
-            { authMethod: 'session', principalId: integration.issuerPrincipalId },
-            { authMethod: 'system', principalId: systemId },
-          ],
-          connections: isolated.connections,
-          governancePrincipalId: integration.issuerPrincipalId,
-          governanceSelector,
-          intent,
-          legalEntityId,
-          ownedDatabase: isolated,
-          purpose,
-          tenantId,
+    // Each source policy has its own purpose/policy/decision UUIDs; no native worker runs until all are recorded.
+    const prepared = yield* Effect.forEach(
+      inputs,
+      (input) =>
+        Effect.gen(function* prepareSourcePolicy() {
+          const governanceSelector = yield* Schema.decodeUnknownEffect(
+            SymmySourceOrganizationFactsGovernanceSelectorSchema,
+          )({
+            effectKey: input.effectKey,
+            execution: { jobId: accepted.jobId, kind: 'JOB' },
+            purpose: 'GOVERNANCE',
+            sourceReference,
+          });
+          const intent = yield* Schema.decodeUnknownEffect(OrganizationBusinessSourceIntentSchema)(input.intent);
+          return yield* seedOrganizationBusinessSourceNativeFixture({
+            callers: [
+              { authMethod: 'session', principalId: integration.issuerPrincipalId },
+              { authMethod: 'system', principalId: systemId },
+            ],
+            connections: isolated.connections,
+            governancePrincipalId: integration.issuerPrincipalId,
+            governanceSelector,
+            intent,
+            legalEntityId,
+            ownedDatabase: isolated,
+            purpose,
+            tenantId,
+          });
         }),
-      );
-    }
+      { concurrency: 2 },
+    );
     yield* start('privacy', {
       ONTOS_PRIVACY_ORGANIZATION_BUSINESS_CONTEXTS: yield* json(prepared.flatMap((value) => value.contexts)),
     });
-    for (const decision of prepared) {
-      if (Option.isSome((yield* decision.observe()).decision)) {
-        return yield* unavailable('Source policy setup unexpectedly created a governance decision');
-      }
-      const gateway = yield* shell.issueFixtureSetupGateway({ audience: 'privacy', legalEntityId });
-      yield* executeRecordPrivacyApplicabilityWithAuthorization(
-        decision.recordPayload,
-        `Bearer ${gateway.token}`,
-        randomUUID(),
-        {
-          baseUrl: new URL(prefixes.privacy, `http://127.0.0.1:${ports.get('privacy')}/`),
-          compositionRevision: snapshot.composition.revision,
-          idempotencyKey: randomUUID(),
-        },
-      ).pipe(Effect.tapCause(() => writeDiagnostics()));
-      if (Option.isNone((yield* decision.observe()).decision)) {
-        return yield* unavailable('Actual source governance did not persist through the public Action');
-      }
-    }
-    const symmyContract = contracts.find((value) => value.deployment.appId === symmyApp);
-    if (symmyContract === undefined) {
-      return yield* unavailable('The actual Symmy worker contract is missing');
-    }
-    const workerArtifact = yield* buildProductWorker(symmyContract);
+    yield* Effect.forEach(
+      prepared,
+      (decision) =>
+        Effect.gen(function* recordSourcePolicy() {
+          if (Option.isSome((yield* decision.observe()).decision)) {
+            return yield* unavailable('Source policy setup unexpectedly created a governance decision');
+          }
+          const gateway = yield* shell.issueFixtureSetupGateway({ audience: 'privacy', legalEntityId });
+          yield* executeRecordPrivacyApplicabilityWithAuthorization(
+            decision.recordPayload,
+            `Bearer ${gateway.token}`,
+            randomUUID(),
+            {
+              baseUrl: new URL(prefixes.privacy, `http://127.0.0.1:${ports.get('privacy')}/`),
+              compositionRevision: snapshot.composition.revision,
+              idempotencyKey: randomUUID(),
+            },
+          ).pipe(Effect.tapCause(() => writeDiagnostics()));
+          if (Option.isNone((yield* decision.observe()).decision)) {
+            return yield* unavailable('Actual source governance did not persist through the public Action');
+          }
+          return yield* Effect.void;
+        }),
+      { concurrency: 2, discard: true },
+    );
     const startWorker = Effect.fn('OrganizationSourceCustomerOwner.startWorker')(function* startWorker() {
       const started = yield* startProductWorker(
         workerArtifact,
@@ -984,13 +998,17 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         headers: { 'x-api-key': Redacted.value(key.secret) },
       });
     });
-    const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
-      function* originalReceipt(input: {
+    /**
+     * The real Shell's recovery authority for one Symmy write the worker delivered: it seals that exact original
+     * invocation for the current reader, or refuses when Symmy's manifest declares no call recovering that write by
+     * that read.
+     */
+    const issueOriginalRecovery = Effect.fn('OrganizationSourceCustomerOwner.originalRecovery')(
+      function* originalRecovery(input: {
         readonly actionInvocationId: string;
         readonly actionKey: string;
-        readonly body: Schema.Json;
+        readonly audience: typeof commerceApp | typeof partyApp;
         readonly declarationKey: string;
-        readonly endpoint: string;
         readonly readKey: string;
         readonly requestHash: string;
       }) {
@@ -1002,7 +1020,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
               actionInvocationId: Schema.String.check(Schema.isUUID()).pipe(
                 Schema.brand('OrganizationOriginalInvocationId'),
               ),
-              actionKey: Schema.Literals([MEMBERSHIP_WRITE_KEY, ASSIGN_ACTION]),
+              actionKey: Schema.String.pipe(Schema.brand('OrganizationOriginalActionKey')),
               authContextRef: Schema.String,
               idempotencyKey: Schema.String.pipe(Schema.brand('OrganizationOriginalIdempotencyKey')),
               principalId: TrustedPrincipalContextSchema.fields.principalId,
@@ -1041,7 +1059,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         );
         const issued = yield* issueDelegatedGatewayContext(
           {
-            audience: commerceApp,
+            audience: input.audience,
             compositionRevision: snapshot.composition.revision,
             exchangeId: randomUUID(),
             legalEntityScope: 'subject',
@@ -1068,6 +1086,20 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
             'Shell must independently seal the exact original native invocation and current reader',
           );
         }
+        return issued;
+      },
+    );
+    const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
+      function* originalReceipt(input: {
+        readonly actionInvocationId: string;
+        readonly actionKey: string;
+        readonly body: Schema.Json;
+        readonly declarationKey: string;
+        readonly endpoint: string;
+        readonly readKey: string;
+        readonly requestHash: string;
+      }) {
+        const issued = yield* issueOriginalRecovery({ ...input, audience: commerceApp });
         return yield* client.post(`${new URL(issued.apiBaseUrl, shell.baseUrl)}/reads/${input.endpoint}`, {
           body: yield* HttpBody.json(input.body),
           headers: {
@@ -1088,6 +1120,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       groupSource,
       integration,
       isolated,
+      issueOriginalRecovery,
       key,
       ledgerFor,
       legalEntityId,

@@ -1,5 +1,9 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { ActiveApplicationCompositionService, ReadRuntime } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ReadRuntime,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
@@ -290,7 +294,10 @@ const makeFixture = (mode: Mode) =>
       Layer.succeed(CommercePortalAuthRecoveryRateLimitService, {
         consume: () => Effect.die('GET must not spend a budget'),
       }),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
       makeGatewayPrincipalVerifierLayer(
         ConfigProvider.fromUnknown({

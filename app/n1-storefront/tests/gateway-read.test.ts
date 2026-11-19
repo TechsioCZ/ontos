@@ -1,11 +1,9 @@
-import { describe, expect, rs } from "@rstest/core";
+import { describe, expect } from "@rstest/core";
 import { Effect, Fiber, Logger, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { TestClock } from "effect/testing";
 import { it } from "effect-rstest";
 import { readOwner } from "../src/ontos/gateway";
-
-rs.mock("server-only", () => ({}));
 
 const config = {
   apiKey: "test-only-service-credential",

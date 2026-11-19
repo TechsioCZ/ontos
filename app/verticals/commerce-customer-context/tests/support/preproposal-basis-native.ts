@@ -28,6 +28,7 @@ import {
   loadDatabaseConfig,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { DecisionLogIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
@@ -1630,7 +1631,10 @@ const makeAdmittedPreproposalOutbox = (
         expectedDeployment,
         layer: Layer.mergeAll(
           Layer.succeedContext(services),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           Layer.succeed(OutboxRuntime, {
             ...outbox,
             // Delegate the exact original native cycle; the public entry supplies receiving admission.
@@ -2442,9 +2446,24 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: randomBytes(32).toString('hex'),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.origin}/shell-super-app-api`,
     };
-    for (const owner of owners) {
-      yield* startNativeOwner(owner, environment, moduleCredentialOf);
-    }
+    // Module keys go only on each hosted owner's private channel; the environment carries none.
+    const environmentFor = (appId: string): Readonly<Record<string, string>> =>
+      appId === pricingAudience
+        ? {
+            ...environment,
+            // A Quotation 503 carries no cause: Pricing reports which authority refused it, innermost first, and when.
+            ONTOS_PREPROPOSAL_PRICING_FAILURE_SPANS: [
+              'makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.verifyPurchaseSingleton',
+              'ManageQuotationFreshCurrentAuthority.resolveFresh',
+              'ManageQuotationAction.apply',
+            ].join(','),
+          }
+        : environment;
+    // Receivers bind distinct placements and do no peer calls during local readiness.
+    yield* Effect.forEach(owners, (owner) => startNativeOwner(owner, environmentFor(owner.appId), moduleCredentialOf), {
+      concurrency: 3,
+      discard: true,
+    });
     const storefrontId = `native-preproposal-${randomUUID()}`;
     const intent = `native-preproposal:${randomUUID()}`;
     const scopeGrantArtifact = yield* buildOwnerExecutable(
@@ -2801,7 +2820,10 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       gateway,
       resolver,
       staffAuthenticationNamespaceRegistryLayer([contextAudience]),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       access,
       overlay,
     );
@@ -2821,7 +2843,12 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const redemption = Context.get(yield* Layer.build(redemptionLayer), GatewayAssertionRedemptionService);
     const authenticatedOperator = yield* bindGatewayPrincipalVerifier(contextAudience, ownDeployment)
       .verifyAndRedeem(yield* signBuyer(contextAudience, true, false), { environment, redemption })
-      .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+      .pipe(
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
+      );
     const administerCurrencyPolicy = (
       label: string,
       expectedGeneration: number,
@@ -3190,6 +3217,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
                 ['pricingQuantityPreparation', 'quantityPreparation'].includes(step),
                 false,
               ).pipe(Effect.map((credential) => [step, Redacted.value(credential)])),
+            { concurrency: 3 },
           ),
         );
         const stage = `catalog-registered-producer:${ordinal}`;
@@ -3401,7 +3429,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       );
       return price;
     });
-    const prices = [yield* definePrice(products[0], '100', 1), yield* definePrice(products[1], '250', 2)] as const;
+    const prices = yield* Effect.all([definePrice(products[0], '100', 1), definePrice(products[1], '250', 2)], {
+      concurrency: 2,
+    });
     const { entries } = cart.observed.cart;
     const sameSelection = Schema.toEquivalence(CatalogSelectionSchema);
     yield* requireProtocol(

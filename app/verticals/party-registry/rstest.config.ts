@@ -45,8 +45,9 @@ export default defineConfig({
         '../../scripts/ci/integration-worker-setup.mts',
         './tests/integration/application-composition.setup.ts',
       ],
-      include: ['tests/integration/**/*.test.ts'],
-      exclude: [workerCycleIntegrationTest],
+      // A negated include pattern, not `exclude`: a command-line --exclude (the shard tasks of
+      // scripts/ci/run-integration-suites.sh) replaces a project's exclude list, so this file would rejoin the suite.
+      include: ['tests/integration/**/*.test.ts', `!${workerCycleIntegrationTest}`],
       testTimeout: 30_000,
       tools: { swc },
     },

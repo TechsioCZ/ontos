@@ -6,6 +6,7 @@ import {
   ReadRuntime,
   TenantModuleStateService,
   TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
@@ -220,7 +221,7 @@ const runResource = Effect.fn('ResourcePresentationTest.run')(
     const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
     const harness = yield* makeReadTestHarness({
       access: 'allowed',
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       compositionRevision: catalog.composition.revision,
       executeOwnerQuery: neverCalled,
       expectedDeployment: catalog.composition.shell.deployment,

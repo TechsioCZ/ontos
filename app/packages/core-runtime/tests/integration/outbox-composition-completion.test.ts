@@ -17,6 +17,7 @@ import {
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
 } from '../../src/modules/application-composition-authority.ts';
+import { loadActiveApplicationComposition } from '../../src/modules/active-application-composition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
@@ -56,7 +57,7 @@ const fixture = Effect.gen(function* completionFixture() {
   });
   yield* isolated.migrateCoreSchema();
   const claimFixture = makeNativeOutboxWorkerFixture(workers);
-  const snapshot = yield* claimFixture.authority.load;
+  const snapshot = yield* loadActiveApplicationComposition(claimFixture.authority);
   yield* isolated.publishInitialComposition(snapshot);
   const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
   const { executor: runtime } = yield* makeCoreDatabase(isolated.connections.runtime);

@@ -1,14 +1,11 @@
-import { auth, Client, discoverAuthorizationServerMetadata, refreshAuthorization } from '@modelcontextprotocol/client';
-import type { StoredOAuthTokens } from '@modelcontextprotocol/client';
+import { Client } from '@modelcontextprotocol/client';
+import type { FetchLike, StoredOAuthTokens } from '@modelcontextprotocol/client';
 import { Cause, Effect, Exit, FiberSet, Option, Redacted, Schema, Scope } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 import { rotateRefreshToken, runOAuthFlow } from '../demo/mcp-oauth-e2e/flow.mts';
 import { callJson } from '../demo/mcp-oauth-e2e/mcp.mts';
 import { E2eOAuthProvider } from '../demo/mcp-oauth-e2e/provider.mts';
 import type { E2eOAuthProviderRuntime } from '../demo/mcp-oauth-e2e/provider.mts';
-
-// Keep the native Client and content guards; only the OAuth network operations are replaced below.
-rs.mock('@modelcontextprotocol/client', { spy: true });
 
 const providerOptions = {
   clientMetadataUrl: 'https://client.example/metadata.json',
@@ -68,10 +65,17 @@ it.live('rejects a verifier callback after its owner Scope closes instead of lea
   }),
 );
 
+/** The S256 code challenge of `verifier` (RFC 7636 §4.2). */
+const s256 = (verifier: string) =>
+  Effect.promise(async () => await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).pipe(
+    Effect.map((digest) => Buffer.from(digest).toString('base64url')),
+  );
+
 it.live('keeps the returned flow provider alive for refresh until the caller Scope closes', () =>
   Effect.gen(function* flowOwnerLifetime() {
     const authorizationEndpoint = 'https://issuer.example/authorize';
     const issuerUrl = 'https://issuer.example';
+    const resourceUrl = 'https://resource.example/mcp';
     const initialTokens: StoredOAuthTokens = {
       access_token: 'initial-access-token',
       refresh_token: 'initial-refresh-token',
@@ -82,45 +86,60 @@ it.live('keeps the returned flow provider alive for refresh until the caller Sco
       refresh_token: 'rotated-refresh-token',
       token_type: 'Bearer',
     };
-    const authorize = rs
-      .mocked(auth)
-      .mockReset()
-      .mockImplementation(async (provider, options) => {
-        if (options.authorizationCode === undefined) {
-          await provider.saveCodeVerifier('flow-verifier');
-          await provider.redirectToAuthorization(new URL(authorizationEndpoint));
-          return 'REDIRECT';
+    /** What the authorization server's token endpoint received, one form per grant. */
+    const grants: URLSearchParams[] = [];
+    /** The verifier the flow's provider held while the refresh grant was being answered. */
+    const verifiersDuringRefresh: string[] = [];
+    let flowProvider = Option.none<E2eOAuthProvider>();
+    const metadata = {
+      authorization_endpoint: authorizationEndpoint,
+      authorization_response_iss_parameter_supported: true,
+      client_id_metadata_document_supported: true,
+      code_challenge_methods_supported: ['S256'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      issuer: issuerUrl,
+      response_types_supported: ['code'],
+      token_endpoint: 'https://issuer.example/token',
+      token_endpoint_auth_methods_supported: ['none'],
+    };
+    const tokenAnswer = (form: URLSearchParams) =>
+      Effect.gen(function* answerGrant() {
+        grants.push(form);
+        if (form.get('grant_type') === 'refresh_token') {
+          const provider = yield* Effect.fromOption(flowProvider);
+          verifiersDuringRefresh.push(yield* Effect.tryPromise(async () => await provider.codeVerifier()));
+          return Response.json(nextTokens);
         }
-        expect(options.authorizationCode).toBe('callback-code');
-        expect(await provider.codeVerifier()).toBe('flow-verifier');
-        await provider.saveTokens(initialTokens);
-        return 'AUTHORIZED';
+        return Response.json(initialTokens);
       });
-    const discovery = rs
-      .mocked(discoverAuthorizationServerMetadata)
-      .mockReset()
-      .mockResolvedValue({
-        authorization_endpoint: authorizationEndpoint,
-        issuer: issuerUrl,
-        response_types_supported: ['code'],
-        token_endpoint: 'https://issuer.example/token',
+    /** The resource and authorization server as the SDK reaches them through its fetch. */
+    const answer = (url: string | URL, init?: RequestInit) =>
+      Effect.gen(function* serve() {
+        const target = new URL(String(url));
+        if (target.pathname.startsWith('/.well-known/oauth-protected-resource')) {
+          return Response.json({ authorization_servers: [issuerUrl], resource: resourceUrl });
+        }
+        if (target.origin === issuerUrl && target.pathname.startsWith('/.well-known/')) {
+          return Response.json(metadata);
+        }
+        if (target.href === metadata.token_endpoint) {
+          const form = yield* Effect.promise(async () => await new Request(target, init).text());
+          return yield* tokenAnswer(new URLSearchParams(form));
+        }
+        return new Response(null, { status: 404 });
       });
-    const refresh = rs.mocked(refreshAuthorization).mockReset();
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        authorize.mockReset();
-        discovery.mockReset();
-        refresh.mockReset();
-      }),
-    );
+    const run = yield* FiberSet.makeRuntimePromise<never, Response, Cause.NoSuchElementError | Cause.UnknownError>();
+    const fetchFn: FetchLike = (url, init) => run(answer(url, init));
+
     const owner = yield* Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void));
-    const approvals: string[] = [];
+    const approvals: URL[] = [];
     const callbackTimeouts: number[] = [];
     const result = yield* runOAuthFlow({
       approve: (url) =>
         Effect.sync(() => {
-          approvals.push(url.href);
+          approvals.push(url);
         }),
+      fetchFn,
       loopback: {
         close: Effect.void,
         redirectUrl: providerOptions.redirectUrl,
@@ -130,32 +149,40 @@ it.live('keeps the returned flow provider alive for refresh until the caller Sco
             return new URLSearchParams({
               code: 'callback-code',
               iss: issuerUrl,
-              state: 'callback-state',
+              state: approvals[0]?.searchParams.get('state') ?? 'callback-state',
             });
           }),
       },
       providerOptions,
-      serverUrl: 'https://resource.example/mcp',
+      serverUrl: resourceUrl,
     }).pipe(Scope.provide(owner));
-    expect(approvals).toEqual([authorizationEndpoint]);
+    flowProvider = Option.some(result.provider);
+    // One consent at the authorization endpoint, for this client and its PKCE challenge.
+    expect(approvals.map((url) => `${url.origin}${url.pathname}`)).toEqual([authorizationEndpoint]);
+    expect(approvals[0]?.searchParams.get('client_id')).toBe(providerOptions.clientMetadataUrl);
+    expect(approvals[0]?.searchParams.get('code_challenge_method')).toBe('S256');
     expect(callbackTimeouts).toEqual([180_000]);
-    expect(authorize).toHaveBeenCalledTimes(2);
+    // The code was redeemed once, with the verifier the provider saved when it redirected.
+    const [exchange] = grants;
+    expect(grants).toHaveLength(1);
+    expect(exchange?.get('grant_type')).toBe('authorization_code');
+    expect(exchange?.get('code')).toBe('callback-code');
+    expect(yield* s256(exchange?.get('code_verifier') ?? '')).toBe(approvals[0]?.searchParams.get('code_challenge'));
+    expect(Redacted.value(result.accessToken)).toBe('initial-access-token');
     // This executes after runOAuthFlow has returned, when an inner Scope would already be closed.
     result.provider.saveCodeVerifier('verifier-after-flow-return');
-    refresh.mockImplementation(async (_issuer, options) => {
-      expect(await result.provider.codeVerifier()).toBe('verifier-after-flow-return');
-      expect(options.refreshToken).toBe('initial-refresh-token');
-      expect(options.clientInformation.client_id).toBe(providerOptions.clientMetadataUrl);
-      return nextTokens;
-    });
     const rotated = yield* rotateRefreshToken({
+      fetchFn,
       issuer: issuerUrl,
       provider: result.provider,
-      resource: 'https://resource.example/mcp',
+      resource: resourceUrl,
     });
+    expect(verifiersDuringRefresh).toEqual(['verifier-after-flow-return']);
+    expect(grants).toHaveLength(2);
+    expect(grants[1]?.get('refresh_token')).toBe('initial-refresh-token');
+    expect(grants[1]?.get('client_id')).toBe(providerOptions.clientMetadataUrl);
     expect(Redacted.value(rotated.accessToken)).toBe('refreshed-access-token');
-    expect(yield* result.provider.currentTokens()).toBe(nextTokens);
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(yield* result.provider.currentTokens()).toMatchObject(nextTokens);
     yield* Scope.close(owner, Exit.void);
     const rejected = yield* Effect.tryPromise(async () => await result.provider.codeVerifier()).pipe(
       Effect.flip,

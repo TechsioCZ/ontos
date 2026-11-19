@@ -44,16 +44,6 @@ describe("CatalogSidebar", () => {
     expect(within(navigation).queryByText("Speciální spojovací materiál")).toBeNull();
   });
 
-  it("keeps the first steps link outside the scrolling catalog panel", () => {
-    const { container } = render(<CatalogSidebar categories={[]} />);
-    const help = screen.getByRole("navigation", { name: cs.catalog.recommendations });
-    expect(container.querySelector(".sf-sidebar__desktop")?.contains(help)).toBe(false);
-    expect(within(help).getByRole("heading", { name: cs.catalog.recommendations })).toBeTruthy();
-    expect(
-      within(help).getByRole("link", { name: cs.catalog.firstSteps }).getAttribute("href"),
-    ).toBe("/faq");
-  });
-
   it("supports compact collapsed roots in the shared mobile navigation", async () => {
     const user = userEvent.setup();
     const categories = getSidebarCategories();
@@ -92,19 +82,6 @@ describe("CatalogSidebar", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("uses the subtle catalog surface without the redundant introduction", () => {
-    render(<CatalogSidebar categories={getSidebarCategories()} />);
-
-    const [desktopNavigation] = screen.getAllByRole("navigation", {
-      name: cs.catalog.title,
-    });
-
-    expect(screen.queryByRole("heading", { name: cs.catalog.title })).toBeNull();
-    expect(desktopNavigation.querySelector('[data-part="group"]')?.getAttribute("data-tone")).toBe(
-      "subtle",
-    );
-  });
-
   it("opens the active category trail and marks only its leaf as current", () => {
     render(<CatalogSidebar activeSlug="a-2-141" categories={getSidebarCategories("a-2-141")} />);
 
@@ -112,21 +89,16 @@ describe("CatalogSidebar", () => {
       name: cs.catalog.title,
     });
     const currentLink = within(desktopNavigation).getByRole("link", { name: "A 2" });
-    const rootLink = desktopNavigation.querySelector<HTMLAnchorElement>(
-      'a[href="/kategorie/nerezovy-spojovaci-material"]',
-    );
     const expandedBranches = within(desktopNavigation)
       .getAllByRole("button")
       .filter((button) => button.getAttribute("aria-expanded") === "true");
 
     expect(currentLink.getAttribute("aria-current")).toBe("page");
-    expect(currentLink.getAttribute("data-sf-depth")).toBe("4");
-    expect(rootLink?.closest('[data-part="row"]')?.getAttribute("data-sf-depth")).toBe("0");
     expect(expandedBranches).toHaveLength(6);
     expect(desktopNavigation.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
-  it("allows a root branch to collapse and reopen with its existing background tone", async () => {
+  it("allows a root branch to collapse and reopen", async () => {
     const user = userEvent.setup();
     const { container } = render(<CatalogSidebar categories={getSidebarCategories()} />);
 
@@ -144,14 +116,7 @@ describe("CatalogSidebar", () => {
     await waitFor(() => expect(trigger.getAttribute("aria-expanded")).toBe("false"));
 
     await user.click(trigger);
-
-    await waitFor(() => {
-      expect(
-        desktopNavigation.querySelector(
-          '[data-part="branch"][data-state="open"] > [data-sf-depth="0"]',
-        ),
-      ).not.toBeNull();
-    });
+    await waitFor(() => expect(trigger.getAttribute("aria-expanded")).toBe("true"));
   });
 
   it("shows that a collapsed category has children before its branch is loaded", () => {

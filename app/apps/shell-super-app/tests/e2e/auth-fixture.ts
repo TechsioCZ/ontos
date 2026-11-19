@@ -73,8 +73,12 @@ const e2ePoolDeadlines = {
 
 class E2eAuthorizationFixtureError extends Schema.TaggedError<E2eAuthorizationFixtureError>()(
   'E2eAuthorizationFixtureError',
-  { reason: Schema.String },
-) {}
+  { cause: Schema.optionalKey(Schema.Unknown), reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 interface FixtureTenant {
   readonly legalEntityId: string;
@@ -380,9 +384,22 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         ),
       );
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(Object.values(e2eTenants), (tenant) => retireTenant(coreDatabase, tenant), {
-        discard: true,
-      }).pipe(Effect.provideContext(access), Effect.orDie),
+      Effect.forEach(
+        Object.values(e2eTenants),
+        (tenant) =>
+          retireTenant(coreDatabase, tenant).pipe(
+            Effect.mapError(
+              (cause) =>
+                new E2eAuthorizationFixtureError({
+                  cause,
+                  reason: `retire tenant ${tenant.tenantId} during worker teardown`,
+                }),
+            ),
+          ),
+        {
+          discard: true,
+        },
+      ).pipe(Effect.provideContext(access), Effect.orDie),
     );
     const bootstrap = Context.get(access, TenantAccessBootstrap);
     const bootstrapE2eTenant = (tenant: FixtureTenant) =>

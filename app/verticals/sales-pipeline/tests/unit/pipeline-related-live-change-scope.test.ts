@@ -1,100 +1,119 @@
-import { pageDataScopeKey, moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
+// @rstest-environment happy-dom
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { it } from 'effect-rstest';
+import { pinDocumentNavigationModules } from '@app/shared-contracts';
+import {
+  RecordsApi as TaskRecordsApi,
+  RecordsResponseSchema as TaskResponseSchema,
+} from '@app/work-tasks/contracts/records';
+import { RecordsApi as AgreementsRecordsApi } from '@app/legal-agreements/contracts/records';
+import {
+  RecordsApi as MerchandiseRecordsApi,
+  RecordsResponseSchema as MerchandiseResponseSchema,
+} from '@app/merchandise/apis/records';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import { opportunityRelatedData } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-related.ts';
 
-const mocks = rstest.hoisted(() => ({
-  contracts: rstest.fn(),
-  orders: rstest.fn(),
-  tasks: rstest.fn(),
-}));
-rstest.mock('@app/shared-contracts', () => ({
-  ...rstest.requireActual<object>('@app/shared-contracts'),
-  documentNavigationModules: () => new Set(['work.tasks', 'demo.merchandise', 'legal.agreements']),
-}));
-rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: mocks.orders }));
-rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: mocks.contracts }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: mocks.tasks }));
-
-const events = new EventTarget();
-const globals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(globals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(globals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
-
-const context = { legalEntityId: 'company-a', principalId: 'principal-a', tenantId: 'tenant-a' };
-const opportunity = Schema.decodeSync(OpportunitySchema)({
-  amountMinor: 100,
-  createdAt: '2026-11-03T00:00:00Z',
-  currency: 'CZK',
-  expectedCloseDate: '2026-11-03',
-  id: '10000000-0000-4000-8000-000000000001',
-  lines: [],
-  partyId: '10000000-0000-4000-8000-000000000002',
-  probability: 10,
-  stage: 'LEAD',
-  stageHistory: [],
-  title: 'Visible case',
-  updatedAt: '2026-11-03T00:00:00Z',
-});
-const input = {
-  counterpartyId: 'customer-a',
-  opportunity,
-  revision: 7,
-  scope: pageDataScopeKey(context, 'demo.sales-pipeline') ?? '',
-};
-
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  events.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
-const reads = () => [mocks.contracts, mocks.orders, mocks.tasks].reduce((sum, mock) => sum + mock.mock.calls.length, 0);
-
-beforeEach(() => {
-  rstest.resetAllMocks();
-  opportunityRelatedData.invalidate();
-  mocks.contracts.mockReturnValue(Effect.succeed({ contracts: [] }));
-  mocks.orders.mockReturnValue(Effect.succeed({ orders: [] }));
-  mocks.tasks.mockReturnValue(Effect.succeed({ items: [] }));
+const tasks = Schema.decodeUnknownSync(TaskResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  assignablePrincipals: [],
+  canWrite: true,
+  collection: {
+    properties: {
+      dueDate: { locked: true, type: 'DATE' },
+      ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+      status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+      title: { locked: true, type: 'TEXT' },
+    },
+    ref: {
+      moduleId: 'work.tasks',
+      resourceId: 'default',
+      resourceType: 'work.tasks.task-collection',
+      tenantId: '20000000-0000-4000-8000-000000000001',
+    },
+    title: 'Tasks',
+  },
+  indicators: { open: 0, openByAssignee: [], overdue: 0 },
+  items: [],
+  lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+  principalNames: [],
+  referenceDate: '2026-11-04',
+  revision: 1,
 });
 
-it.live('live changes of apps the related sections do not show read nothing', () =>
-  Effect.gen(function* unrelatedChange() {
-    yield* opportunityRelatedData.preload(input);
-    const unsubscribe = opportunityRelatedData.subscribe(() => {
-      opportunityRelatedData.snapshot(input);
-    }, input);
-    const before = reads();
-    dispatchChange(['party-registry']);
-    yield* Effect.sleep('10 millis');
-    expect(reads()).toBe(before);
-    unsubscribe();
-  }),
+const merchandise = Schema.decodeUnknownSync(MerchandiseResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '11111111-1111-4111-8111-111111111111',
+  },
+  aiChanges: { batches: [], changes: [], log: [] },
+  canWrite: true,
+  indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
+  movements: [],
+  orders: [],
+  products: [],
+  revision: 3,
+});
+
+const reads: unknown[] = [];
+const TasksApi = TaskRecordsApi.prefix('/work-tasks-api');
+const AgreementsApi = AgreementsRecordsApi.prefix('/legal-agreements-api');
+const OrdersApi = MerchandiseRecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({
+    'legal-agreements': '/legal-agreements-api',
+    merchandise: '/merchandise-api',
+    'work-tasks': '/work-tasks-api',
+  }).application,
+  serveApi(
+    TasksApi,
+    HttpApiBuilder.group(TasksApi, 'records', (group) => group.handle('execute', () => Effect.sync(() => tasks))),
+  ),
+  serveApi(
+    AgreementsApi,
+    HttpApiBuilder.group(AgreementsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return { contracts: [], documents: [], revision: 1 };
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OrdersApi,
+    HttpApiBuilder.group(OrdersApi, 'records', (group) =>
+      group.handle('execute', () => Effect.sync(() => merchandise)),
+    ),
+  ),
 );
 
-it.live('a live change of work-tasks reloads the mounted related sections', () =>
-  Effect.gen(function* taskChange() {
-    yield* opportunityRelatedData.preload(input);
-    const unsubscribe = opportunityRelatedData.subscribe(() => {
-      opportunityRelatedData.snapshot(input);
-    }, input);
-    const before = reads();
-    dispatchChange(['work-tasks']);
-    yield* Effect.sleep('10 millis');
-    expect(reads()).toBeGreaterThan(before);
-    unsubscribe();
-  }),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect(
+    'opportunityRelatedData reloads on a live change of the data it reads and ignores an unrelated app',
+    () =>
+      Effect.gen(function* relatedApps() {
+        pinDocumentNavigationModules(['work.tasks', 'demo.merchandise', 'legal.agreements'], document);
+        yield* assertLiveChangeReload({
+          ignores: 'tax',
+          input: {
+            counterpartyId: '30000000-0000-4000-8000-000000000001',
+            opportunity: Schema.decodeUnknownSync(
+              Schema.Struct({ id: OpportunitySchema.fields.id, partyId: OpportunitySchema.fields.partyId }),
+            )({ id: '10000000-0000-4000-8000-000000000001', partyId: '10000000-0000-4000-8000-000000000002' }),
+            revision: 7,
+            scope: 'company-a',
+          },
+          reads: () => reads.length,
+          reloadsOn: ['legal-agreements', 'merchandise', 'work-tasks'],
+          store: opportunityRelatedData,
+        });
+      }),
+  );
+});

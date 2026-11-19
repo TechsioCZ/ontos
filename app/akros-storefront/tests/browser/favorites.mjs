@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 const base = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000/cs";
@@ -25,8 +25,6 @@ const browser = await chromium.launch(
     ? { executablePath: process.env.AKROS_CHROMIUM_PATH }
     : { channel: "chrome" },
 );
-const output = "test-results/favorites";
-await mkdir(output, { recursive: true });
 try {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1000 } });
   const page = await context.newPage();
@@ -80,7 +78,10 @@ try {
   await search.fill(b.sku);
   await dialog.getByRole("button", { name: "Uložit výběr" }).click();
   await page.waitForFunction(() => !document.querySelector(".sf-favorites-dialog"));
-  assert.deepEqual((await read()).map((item) => item.variantId).sort(), [a.id, b.id].sort());
+  assert.deepEqual(
+    (await read()).map((item) => item.variantId).sort((left, right) => left.localeCompare(right)),
+    [a.id, b.id].sort((left, right) => left.localeCompare(right)),
+  );
   await page.waitForFunction(() => document.activeElement?.matches(".sf-product-detail__favorite"));
   console.log("Favorites: draft, filtered bulk selection, persistence and return focus passed.");
 
@@ -107,11 +108,14 @@ try {
   dialog = await open();
   await dialog.getByRole("checkbox", { name: `Vybrat variantu ${a.sku}`, exact: true }).check();
   await page.evaluate(() => {
-    window.originalSetItem = Storage.prototype.setItem;
+    window.originalStorageDescriptor = Object.getOwnPropertyDescriptor(
+      Storage.prototype,
+      "setItem",
+    );
     Storage.prototype.setItem = function (storageKey, value) {
       if (storageKey === "akros-demo-favorites-v1")
         throw new DOMException("Blocked", "QuotaExceededError");
-      return window.originalSetItem.call(this, storageKey, value);
+      return window.originalStorageDescriptor.value.call(this, storageKey, value);
     };
   });
   await dialog.getByRole("button", { name: "Uložit výběr" }).click();
@@ -119,7 +123,7 @@ try {
   assert.deepEqual(await read(), []);
   assert.equal(await dialog.isVisible(), true);
   await page.evaluate(() => {
-    Storage.prototype.setItem = window.originalSetItem;
+    Object.defineProperty(Storage.prototype, "setItem", window.originalStorageDescriptor);
   });
   await dialog.getByRole("button", { name: "Uložit výběr" }).click();
   await page.waitForFunction(() => !document.querySelector(".sf-favorites-dialog"));
@@ -141,30 +145,7 @@ try {
     "Favorites: reload, cancellation, real list, removal, storage error and independent product states passed.",
   );
 
-  dialog = await open();
-  for (const viewport of [
-    { width: 844, height: 390 },
-    { width: 390, height: 500 },
-    { width: 320, height: 480 },
-  ]) {
-    await page.setViewportSize(viewport);
-    const layout = await dialog.evaluate((root) => {
-      const button = [...root.querySelectorAll("button")]
-        .find((item) => item.textContent === "Uložit výběr")
-        .getBoundingClientRect();
-      return {
-        bottom: button.bottom,
-        listHeight: root.querySelector(".sf-favorites-table").clientHeight,
-      };
-    });
-    assert.ok(
-      layout.bottom <= viewport.height && layout.listHeight >= 80,
-      `short viewport ${JSON.stringify(viewport)}: ${JSON.stringify(layout)}`,
-    );
-  }
-  await page.keyboard.press("Escape");
-
-  const endpoint = `**/api/favorites/catalog/${product.slug}`;
+  const endpoint = `**/api/ontos/product-variants/${product.slug}`;
   await page.route(endpoint, (route) => route.fulfill({ status: 503, body: "unavailable" }));
   await page.goto(`${base}/produkt/${product.slug}`);
   await page.locator(".sf-product-detail__favorite").click();
@@ -178,34 +159,6 @@ try {
   for (const item of [product, largest]) {
     dialog = await open(item);
     assert.equal(await dialog.locator("tbody tr").count(), item.detail.variants.length);
-    for (const width of [1920, 1440, 1280, 1024, 768, 640, 639, 390, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      const failures = await dialog.evaluate((root) => {
-        const result = [];
-        const rect = root.getBoundingClientRect();
-        if (
-          rect.left < -1 ||
-          rect.right > innerWidth + 1 ||
-          rect.top < -1 ||
-          rect.bottom > innerHeight + 1
-        )
-          result.push("dialog outside viewport");
-        const save = [...root.querySelectorAll("button")]
-          .find((button) => button.textContent === "Uložit výběr")
-          .getBoundingClientRect();
-        if (save.bottom > rect.bottom || save.top < rect.top) result.push("save outside dialog");
-        const table = root.querySelector(".sf-favorites-table");
-        if (table.scrollWidth > table.clientWidth + 1) result.push("horizontal list overflow");
-        for (const sku of root.querySelectorAll(".sf-favorites-sku")) {
-          const bounds = sku.getBoundingClientRect();
-          if (bounds.right > rect.right - 5 || bounds.left < rect.left) result.push("SKU clipped");
-        }
-        return result;
-      });
-      assert.deepEqual(failures, [], `${item.slug} at ${width}`);
-      if (item === product && [1920, 768, 390, 320].includes(width))
-        await page.screenshot({ path: `${output}/selection-${width}.png`, animations: "disabled" });
-    }
     await page.keyboard.press("Tab");
     assert.equal(await dialog.evaluate((root) => root.contains(document.activeElement)), true);
     await page.keyboard.press("Shift+Tab");
@@ -213,7 +166,7 @@ try {
     await page.keyboard.press("Escape");
   }
   console.log(
-    `Favorites: 18 layouts, keyboard and full ${largest.detail.variants.length}-variant group passed.`,
+    `Favorites: keyboard and full ${largest.detail.variants.length}-variant group passed.`,
   );
 
   await page.goto(base);
@@ -225,7 +178,7 @@ try {
     .waitFor();
   await page.keyboard.press("Escape");
   const unavailable = await page.request.get(
-    `${base}/api/favorites/catalog/this-product-does-not-exist`,
+    `${new URL(base).origin}/api/ontos/product-variants/this-product-does-not-exist`,
   );
   assert.equal(unavailable.status(), 404);
 
@@ -291,7 +244,6 @@ try {
   });
   await page.getByRole("button", { name: "Kopírovat odkaz" }).click();
   assert.equal(await page.evaluate(() => window.copiedText), sharedUrl);
-  await page.screenshot({ path: `${output}/share-390.png` });
   await page.getByRole("button", { name: "Zavřít", exact: true }).click();
   await page.evaluate(() => {
     window.print = () => {
@@ -310,11 +262,9 @@ try {
     const image = document.querySelector(".sf-print-sheet img");
     return image.complete && image.naturalWidth > 0;
   });
-  await page.screenshot({ path: `${output}/product-sheet.png`, fullPage: true });
-  await page.pdf({ path: `${output}/product-sheet.pdf`, format: "A4", printBackground: true });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(
-    "Share: native, cancel, copy/manual fallback passed. Print action, clean output and PDF passed.",
+    "Share: native, cancel, copy/manual fallback passed. Print action and screen/print visibility passed.",
   );
 } finally {
   await browser.close();

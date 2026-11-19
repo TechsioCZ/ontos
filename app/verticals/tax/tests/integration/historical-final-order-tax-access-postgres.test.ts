@@ -26,6 +26,7 @@ import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   trustVerifiedGatewayPrincipalContext,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   ActionPermission,
@@ -326,7 +327,10 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessGate.layer)),
   );
   const dependencies = Layer.mergeAll(CorePersistenceLive, ContextAccessLive, gateway, resolver, accessGate.layer);
-  const compositionSource = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  const compositionSource = Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+  );
   // Keep the declared scripted gate already bound: a live authority preparation cannot rebind a double.
   // The production runner still owns the real module gates, composition lock and access fence.
   const actionRuntime = Layer.effect(

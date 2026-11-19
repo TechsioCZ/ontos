@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { makeActiveApplicationCompositionService } from '@app/core-runtime';
 
 import type { RegisteredActionOwnerV2 } from '../../../packages/core-runtime/src/access/approvals/registered-action-source-v2.ts';
 import type { CoreDatabaseExecutor } from '../../../packages/core-runtime/src/db/types.ts';
@@ -29,7 +30,7 @@ export const publishActualCatalogOwnerComposition = Effect.fn('IntegrationFixtur
     const snapshot: ActiveApplicationCompositionSnapshot = yield* deriveActualCatalogCompositionSnapshot(APP_ROOT);
     yield* publishTestApplicationCompositionAuthority(executor, snapshot);
     const owner: RegisteredActionOwnerV2 = {
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       expectedDeployment: ultramodernDeliveryUnit,
       ownerRegistration: catalogBackendRegistration,
     };

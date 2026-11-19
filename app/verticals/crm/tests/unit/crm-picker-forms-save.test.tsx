@@ -1,73 +1,55 @@
 // @rstest-environment happy-dom
 // The CRM picker forms (transfer a client, pair an order, approve a source customer link) send their one command only
-// from the shared Save button ("Uložit"); picking and typing change only the draft. The i18n runtime, the router
-// blocker and the select template (by a native select) are replaced.
-import { Effect, Schema } from 'effect';
+// from the shared Save button ("Uložit"); picking and typing change only the draft. The forms run with the real
+// module i18n, router blocker and select template; submit is the explicit owner feature port.
+import { acted, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { pinTestDocument } from '@app/shared-contracts/testing/http-double';
+import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
-import { createElement } from 'react';
+import { afterEach, describe, expect, it } from 'effect-rstest';
 import type { CrmCommandInput } from '../../shared/actions/apply-command.ts';
 import { ClientSchema } from '../../shared/domain/clients.ts';
+import { crmI18nResources } from '../../src/crm/i18n.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 import { PairingForm } from '../../src/routes/[lang]/crm/importy/pairing-form.tsx';
 import { AssignDialog } from '../../src/routes/[lang]/crm/klienti/assign-dialog.tsx';
 import { NewLinkPanel } from '../../src/routes/[lang]/crm/parovani/new-link-panel.tsx';
-import {
-  akros,
-  brano,
-  click,
-  copy,
-  mount,
-  order,
-  pick,
-  records,
-  recording,
-  saveButton,
-  typeInto,
-  unmountAll,
-} from './crm-form-fixture.tsx';
+import { akros, brano, copy, order, records, recording, saveButton } from './crm-form-fixture.tsx';
 
-/** The props the native stand-in of the select template reads. */
-interface NativeSelectProps {
-  readonly items: readonly { readonly label: string; readonly value: string }[];
-  readonly name?: string;
-  readonly onValueChange: (details: { readonly value: string[] }) => void;
-  readonly value?: readonly string[];
-}
+/** Drive the real UI kit select's native form control. */
+const pick = (name: string, value: string) =>
+  acted(() => {
+    const select = Option.getOrThrow(
+      Option.fromNullOr(document.querySelector<HTMLSelectElement>(`select[name="${name}"]`)),
+    );
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 
-rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@app/admin-ui/select-template', () => ({
-  SelectTemplate: ({ items, name, onValueChange, value }: NativeSelectProps) =>
-    createElement(
-      'select',
-      {
-        name,
-        onChange: (event: { readonly target: { readonly value: string } }) =>
-          onValueChange({ value: event.target.value === '' ? [] : [event.target.value] }),
-        value: value?.[0] ?? '',
-      },
-      createElement('option', { value: '' }),
-      ...items.map((item) => createElement('option', { key: item.value, value: item.value }, item.label)),
-    ),
-}));
+const typeInto = (id: string, value: string) =>
+  acted(() => {
+    const input = Option.getOrThrow(
+      Option.fromNullOr(document.querySelector<HTMLTextAreaElement>(`textarea[id="${id}"]`)),
+    );
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+const click = (target: HTMLElement) => acted(() => target.click());
 
 afterEach(unmountAll);
 
 describe('CRM pickers save from Uložit only', () => {
   it.live('transferring a client sends one AssignClient after picking, the reason and Uložit', () =>
     Effect.gen(function* transferClient() {
+      yield* pinTestDocument;
       const sent: CrmCommandInput[] = [];
       const closed: string[] = [];
       const owned = Schema.decodeSync(ClientSchema)({
         ...Schema.encodeSync(ClientSchema)(akros),
         ownerSalespersonId: 'sp-1',
       });
-      yield* mount(
+      yield* mountInRoute(
         <AssignDialog
           client={owned}
           onClose={() => {
@@ -76,6 +58,7 @@ describe('CRM pickers save from Uložit only', () => {
           records={records}
           submit={recording(sent)}
         />,
+        { resources: crmI18nResources },
       );
       expect(saveButton().disabled).toBe(true);
       yield* pick('assign-target', 'none');
@@ -92,9 +75,10 @@ describe('CRM pickers save from Uložit only', () => {
 
   it.live('pairing an order sends one PairOrder with the typed reason', () =>
     Effect.gen(function* pairOrder() {
+      yield* pinTestDocument;
       const sent: CrmCommandInput[] = [];
       const saved: string[] = [];
-      yield* mount(
+      yield* mountInRoute(
         <PairingForm
           onCancel={constVoid}
           onSaved={() => {
@@ -104,6 +88,7 @@ describe('CRM pickers save from Uložit only', () => {
           records={records}
           submit={recording(sent)}
         />,
+        { resources: crmI18nResources },
       );
       expect(saveButton().disabled).toBe(true);
       yield* typeInto(`pairing-reason-${order.id}`, copy.reason);
@@ -115,9 +100,10 @@ describe('CRM pickers save from Uložit only', () => {
 
   it.live('a new approved link sends one LinkExternalCustomer after the pickers and Uložit', () =>
     Effect.gen(function* approveLink() {
+      yield* pinTestDocument;
       const sent: CrmCommandInput[] = [];
       const closed: string[] = [];
-      yield* mount(
+      yield* mountInRoute(
         <NewLinkPanel
           onClose={() => {
             closed.push('closed');
@@ -125,6 +111,7 @@ describe('CRM pickers save from Uložit only', () => {
           records={records}
           submit={recording(sent)}
         />,
+        { resources: crmI18nResources },
       );
       yield* pick('externalCustomerId', 'C-77');
       yield* pick('link-client', brano.id);

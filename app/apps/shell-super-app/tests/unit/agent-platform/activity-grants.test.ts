@@ -1,10 +1,19 @@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
-import { ContextAccess, OAuthGrantRegistry, ReadRuntime, TenantModuleStateService } from '@app/core-runtime';
+import {
+  ContextAccess,
+  OAuthGrantRegistry,
+  OntosActionContractSchema,
+  ReadRuntime,
+  TenantModuleStateService,
+} from '@app/core-runtime';
 import type { OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
-import { Data, Effect, Layer, Option, Schema } from 'effect' with { rstest: 'importActual' };
-import { expect, it, rs } from 'effect-rstest';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { makeModuleContractFixture } from '../../../../../packages/core-runtime/src/testing/module-contract.ts';
 import type { AgentPlatformCaller } from '../../../api/agent-platform/caller.ts';
@@ -16,14 +25,6 @@ import { CompanyDirectory } from '../../../api/oauth-connections-admin/company-d
 import type { CompanyDirectorySnapshot } from '../../../api/oauth-connections-admin/ports.ts';
 import type { GrantListFilter } from '../../../api/oauth-connections/types.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
-
-rs.mock('../../../api/agent-platform/caller.ts', () => ({
-  AgentPlatformForbidden: Data.TaggedError('AgentPlatformForbidden'),
-  callerModuleAccess: () => Effect.succeed({ access: new Set(['fixture.notes']), write: new Set(['fixture.notes']) }),
-}));
-rs.mock('../../../api/auth/demo-accounts.ts', () => ({
-  peopleAdministrationCapability: () => Effect.succeed({ canManage: true }),
-}));
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const legalEntityId = '00000000-0000-4000-8000-000000000002';
@@ -100,6 +101,32 @@ const fixture = Effect.gen(function* activityGrantsFixture() {
         ...contract.manifest,
         publicSurface: {
           ...contract.manifest.publicSurface,
+          actions: [
+            Schema.decodeUnknownSync(OntosActionContractSchema)({
+              accessDeclaration: {
+                key: 'fixture.notes.apply-command.run',
+                kind: 'action',
+                modes: ['run'],
+                placement: { group: 'actions', level: 'extended' },
+                risk: 'routine',
+                selectors: [],
+              },
+              actionKey: 'fixture.notes.apply-command',
+              auditProfile: 'standard',
+              entrypoint: {
+                access: 'write',
+                authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+                entrypointKey: 'fixture.notes.apply-command',
+                moduleKey: 'fixture.notes',
+                role: 'action',
+                scope: 'tenant',
+              },
+              idempotency: 'required',
+              legalEntityScope: 'required',
+              owningModuleId: 'fixture.notes',
+              schemaVersion: '1',
+            }),
+          ],
           mcp: {
             approvals: true,
             description: { cs: 'Poznámky', en: 'Notes' },
@@ -160,11 +187,44 @@ const fixture = Effect.gen(function* activityGrantsFixture() {
         Layer.mock(CompanyDirectory, {
           snapshot: Effect.succeed(directory),
         }),
-        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
+        Layer.succeed(
+          AccessDecisionGate,
+          makeTestAccessDecision({
+            answers: {
+              'core.identity.people-directory.list': { outcome: 'ALLOWED' },
+              'fixture.notes.apply-command.run': { outcome: 'ALLOWED' },
+            },
+          }),
+        ),
         Layer.mock(ContextAccess, {}),
-        Layer.mock(TenantModuleStateService, {}),
-        Layer.mock(ActionAuthority, {}),
-        Layer.mock(ActiveApplicationCompositionService, {}),
+        Layer.succeed(TenantModuleStateService, {
+          getTenantModuleStates: (_tenantId, moduleKeys) =>
+            Effect.succeed(
+              moduleKeys
+                .filter((moduleKey) => moduleKey === 'fixture.notes')
+                .map((moduleKey) => ({
+                  moduleKey,
+                  state: 'active' as const,
+                })),
+            ),
+          listActiveTenantModules: () => Effect.die('Unexpected active module listing'),
+          listTenantModuleStates: () => Effect.die('Unexpected module state listing'),
+        }),
+        Layer.succeed(ActionAuthority, {
+          checkActionAuthorities: ({ actionKeys }) =>
+            Effect.succeed(
+              actionKeys.map((actionKey) => ({
+                actionKey,
+                execute: 'allowed' as const,
+                propose: 'allowed' as const,
+              })),
+            ),
+          checkActionProposalPermission: () => Effect.die('Unexpected proposal permission check'),
+        }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.die('Unexpected active composition read')),
+        ),
         Layer.mock(GatewayIssuer, {}),
       ),
     ),

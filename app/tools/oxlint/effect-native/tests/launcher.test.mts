@@ -1,17 +1,12 @@
-import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import nodePath from 'node:path';
 
-import { expect, it, rstest } from 'effect-rstest';
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
-
-rstest.mock('node:child_process', () => {
-  const original = process.getBuiltinModule('node:child_process');
-  return { ...original, spawnSync: rstest.fn(original.spawnSync) };
-});
 
 it('Oxlint launches through the effect-tsgo JavaScript entry point on Node without a platform shim', () => {
   withTemporaryWorkspace((directory) => {
@@ -19,21 +14,28 @@ it('Oxlint launches through the effect-tsgo JavaScript entry point on Node witho
     const input = 'source with spaces.ts';
     writeFileSync(config, JSON.stringify({ categories: { correctness: 'off' } }));
     writeFileSync(nodePath.join(directory, input), 'export const value = 1;');
-    const spawn = rstest.mocked(spawnSync);
-    spawn.mockClear();
+    const trace = nodePath.join(directory, 'node-argv.jsonl');
+    const preload = nodePath.join(directory, 'record-argv.mjs');
+    writeFileSync(
+      preload,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv) + '\\n');
+`,
+    );
+    const previousNodeOptions = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${JSON.stringify(preload)}`].filter(Boolean).join(' ');
     try {
       const run = runOxlint(config, [input], directory);
       expect(run.exitCode).toBe(0);
       expect(run.numberOfFiles).toBe(1);
       expect(run.diagnostics).toEqual([]);
-      expect(spawn.mock.calls.length).toBe(1);
-      const args: readonly unknown[] = spawn.mock.calls[0];
-      expect(args[0]).toBe(process.execPath);
-      expect(Array.isArray(args[1])).toBe(true);
-      if (!Array.isArray(args[1])) {
-        throw new TypeError('Expected spawn arguments array');
-      }
-      expect(args[1].slice(0, 3)).toEqual([
+      const launches = readFileSync(trace, 'utf-8')
+        .trim()
+        .split('\n')
+        .map((line) => Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)))(line));
+      const args = launches.find((argv) => argv.includes('oxlint'));
+      expect(args?.[0]).toBe(process.execPath);
+      expect(args?.slice(1, 4)).toEqual([
         nodePath.join(
           nodePath.dirname(createRequire(import.meta.url).resolve('@effect/tsgo/package.json')),
           'dist/effect-tsgo.cjs',
@@ -41,10 +43,14 @@ it('Oxlint launches through the effect-tsgo JavaScript entry point on Node witho
         '--tsrs-lint',
         'oxlint',
       ]);
-      expect(args[1].includes(input)).toBe(true);
-      expect(args[1].includes(config)).toBe(true);
+      expect(args?.includes(input)).toBe(true);
+      expect(args?.includes(config)).toBe(true);
     } finally {
-      spawn.mockClear();
+      if (previousNodeOptions === undefined) {
+        delete process.env.NODE_OPTIONS;
+      } else {
+        process.env.NODE_OPTIONS = previousNodeOptions;
+      }
     }
   });
 });

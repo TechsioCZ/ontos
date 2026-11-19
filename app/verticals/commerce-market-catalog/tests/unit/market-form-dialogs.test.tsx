@@ -1,38 +1,36 @@
 // @rstest-environment happy-dom
-// The market dialogs with a form: typing changes only the dialog's draft, the one Save sends once, and leaving with
-// unsaved input asks first. Only the Market Action clients, the i18n runtime and the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
+// Real market dialogs, i18n, router and Action clients; the owner's HTTP contracts answer in process.
+import { acted, buttons, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
 import { StorefrontApplicationSummarySchema } from '@app/storefront-registry/api/storefront-applications';
-import { Effect, Option, Schema } from 'effect';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import type { ReactElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { associateStorefrontActionSchemaErrorLive } from '../../api/associate-storefront-action-problems.ts';
+import { createMarketActionSchemaErrorLive } from '../../api/create-market-action-problems.ts';
+import { reviseMarketDefinitionActionSchemaErrorLive } from '../../api/revise-market-definition-action-problems.ts';
 import { AssociateStorefrontResultSchema } from '../../shared/actions/associate-storefront.ts';
 import { CreateMarketResultSchema } from '../../shared/actions/create-market.ts';
 import { ReviseMarketDefinitionResultSchema } from '../../shared/actions/revise-market-definition.ts';
+import { AssociateStorefrontActionApi } from '../../shared/apis/associate-storefront-action.ts';
+import type { AssociateStorefrontPayloadSchema } from '../../shared/apis/associate-storefront-action.ts';
+import { CreateMarketActionApi } from '../../shared/apis/create-market-action.ts';
+import type { CreateMarketPayloadSchema } from '../../shared/apis/create-market-action.ts';
+import { ReviseMarketDefinitionActionApi } from '../../shared/apis/revise-market-definition-action.ts';
+import type { ReviseMarketDefinitionPayloadSchema } from '../../shared/apis/revise-market-definition-action.ts';
 import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
-import { executeAssociateStorefront } from '../../src/api/associate-storefront-action-client.ts';
-import { executeCreateMarket } from '../../src/api/create-market-action-client.ts';
-import { executeReviseMarketDefinition } from '../../src/api/revise-market-definition-action-client.ts';
 import { EditMarketDialog } from '../../src/market-admin/market-dialogs.tsx';
 import { NewMarketDialog } from '../../src/market-admin/new-market-dialog.tsx';
+import type { NewMarketDialogProps } from '../../src/market-admin/new-market-dialog.tsx';
 import { StorefrontsSection } from '../../src/market-admin/storefronts-section.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/associate-storefront-action-client.ts');
-rstest.mock('../../src/api/create-market-action-client.ts');
-rstest.mock('../../src/api/revise-market-definition-action-client.ts');
-rstest.mock('@app/merchandise/apis/manage-markets-action/client');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '30000000-0000-4000-8000-000000000001';
@@ -106,32 +104,51 @@ const storefront = Schema.decodeUnknownSync(StorefrontApplicationSummarySchema)(
   },
 });
 
-const writes = (mock: { mock: { calls: unknown[] } }) => mock.mock.calls.length;
+const revisions: (typeof ReviseMarketDefinitionPayloadSchema.Encoded)[] = [];
+const creations: (typeof CreateMarketPayloadSchema.Encoded)[] = [];
+const associations: (typeof AssociateStorefrontPayloadSchema.Encoded)[] = [];
+const RevisionApi = ReviseMarketDefinitionActionApi.prefix('/commerce-market-catalog-api');
+const CreationApi = CreateMarketActionApi.prefix('/commerce-market-catalog-api');
+const AssociationApi = AssociateStorefrontActionApi.prefix('/commerce-market-catalog-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'commerce-market-catalog': '/commerce-market-catalog-api' }).application,
+  serveApi(
+    RevisionApi,
+    HttpApiBuilder.group(RevisionApi, 'reviseMarketDefinitionAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          revisions.push(payload);
+          return revised;
+        }),
+      ),
+    ).pipe(Layer.provide(reviseMarketDefinitionActionSchemaErrorLive)),
+  ),
+  serveApi(
+    CreationApi,
+    HttpApiBuilder.group(CreationApi, 'createMarketAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          creations.push(payload);
+          return created;
+        }),
+      ),
+    ).pipe(Layer.provide(createMarketActionSchemaErrorLive)),
+  ),
+  serveApi(
+    AssociationApi,
+    HttpApiBuilder.group(AssociationApi, 'associateStorefrontAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          associations.push(payload);
+          return associated;
+        }),
+      ),
+    ).pipe(Layer.provide(associateStorefrontActionSchemaErrorLive)),
+  ),
+);
 
-const settle = async (): Promise<void> => {
-  await act(async () => {
-    await browserRuntime.runPromise(Effect.yieldNow);
-  });
-};
-
-const mounted: { container: HTMLElement; root: Root }[] = [];
-
-const mountTree = async (element: ReactElement) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  mounted.push({ container, root });
-  await act(async () => {
-    root.render(element);
-  });
-  await settle();
-};
-
-/** The mocked i18n returns the key; the vertical's keys are prefixed with its namespace. */
-const keyOf = (path: string) => `commerce-market-catalog.${path}`;
-
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
+const czech = moduleText('cs');
+const keyOf = (path: string) => czech(`commerce-market-catalog.${path}`);
 
 const buttonNamed = (name: string): HTMLButtonElement => {
   const [found] = buttons(name);
@@ -143,139 +160,141 @@ const fieldById = (id: string): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
 
 /** Types like a user: React sees a native input event. */
-const typeInto = async (id: string, value: string) => {
-  await act(async () => {
+const typeInto = (id: string, value: string) =>
+  acted(() => {
     const field = fieldById(id);
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await settle();
-};
 
-const clickButton = async (name: string) => {
-  await act(async () => {
-    buttonNamed(name).click();
-  });
-  await settle();
-};
-
+const clickButton = (name: string) => acted(() => buttonNamed(name).click());
 const isOpen = (text: string) => buttons(text).length > 0;
 
 beforeEach(() => {
-  rstest.mocked(executeReviseMarketDefinition).mockReset();
-  rstest.mocked(executeCreateMarket).mockReset();
-  rstest.mocked(executeAssociateStorefront).mockReset();
-  rstest.mocked(executeManageMarkets).mockReset();
+  revisions.length = 0;
+  creations.length = 0;
+  associations.length = 0;
 });
-
-afterEach(() => {
-  for (const { container, root } of mounted.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-});
+afterEach(unmountAll);
 
 describe('edit market dialog', () => {
   it.live('typing changes only the draft; Save revises the market once and reports it', () =>
     Effect.gen(function* editTypingSendsNothing() {
-      rstest.mocked(executeReviseMarketDefinition).mockReturnValue(Effect.succeed(revised));
-      const onDone = rstest.fn(constVoid);
-      yield* Effect.promise(() =>
-        mountTree(
-          <EditMarketDialog market={market} onAwaitingApproval={constVoid} onClose={constVoid} onDone={onDone} />,
-        ),
+      yield* pinTestDocument;
+      const done: string[] = [];
+      const onDone = (message: string) => {
+        done.push(message);
+      };
+      yield* mountInRoute(
+        <EditMarketDialog market={market} onAwaitingApproval={constVoid} onClose={constVoid} onDone={onDone} />,
       );
-      yield* Effect.promise(() => typeInto('edit-market-purpose', 'Nový účel'));
+      yield* typeInto('edit-market-purpose', 'Nový účel');
       yield* Effect.sleep('1 second');
-      expect(writes(rstest.mocked(executeReviseMarketDefinition))).toBe(0);
+      yield* networkIdle;
+      expect(revisions.length).toBe(0);
       expect(buttonNamed('Uložit').disabled).toBe(true);
 
-      yield* Effect.promise(() => typeInto('edit-market-reason', 'Oprava názvu'));
+      yield* typeInto('edit-market-reason', 'Oprava názvu');
       expect(buttonNamed('Uložit').disabled).toBe(false);
-      expect(writes(rstest.mocked(executeReviseMarketDefinition))).toBe(0);
+      yield* networkIdle;
+      expect(revisions.length).toBe(0);
 
-      yield* Effect.promise(() => clickButton('Uložit'));
-      expect(writes(rstest.mocked(executeReviseMarketDefinition))).toBe(1);
-      expect(onDone).toHaveBeenCalledTimes(1);
-    }),
+      yield* clickButton('Uložit');
+      yield* waitUntil(() => revisions.length > 0);
+      yield* networkIdle;
+      expect(revisions.length).toBe(1);
+      yield* waitUntil(() => done.length > 0);
+      expect(done).toHaveLength(1);
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('leaving with unsaved input asks first and sends nothing', () =>
     Effect.gen(function* editLeaveAsks() {
-      const onClose = rstest.fn(constVoid);
-      yield* Effect.promise(() =>
-        mountTree(
-          <EditMarketDialog market={market} onAwaitingApproval={constVoid} onClose={onClose} onDone={constVoid} />,
-        ),
+      yield* pinTestDocument;
+      const closed: true[] = [];
+      const onClose = () => {
+        closed.push(true);
+      };
+      yield* mountInRoute(
+        <EditMarketDialog market={market} onAwaitingApproval={constVoid} onClose={onClose} onDone={constVoid} />,
       );
-      yield* Effect.promise(() => typeInto('edit-market-purpose', 'Nový účel'));
-      yield* Effect.promise(() => clickButton(keyOf('form.cancel')));
+      yield* typeInto('edit-market-purpose', 'Nový účel');
+      yield* clickButton(keyOf('form.cancel'));
       expect(isOpen('Zůstat')).toBe(true);
       expect(isOpen('Zahodit změny')).toBe(true);
-      expect(onClose).not.toHaveBeenCalled();
-      expect(writes(rstest.mocked(executeReviseMarketDefinition))).toBe(0);
+      expect(closed).toHaveLength(0);
+      yield* networkIdle;
+      expect(revisions.length).toBe(0);
 
-      yield* Effect.promise(() => clickButton('Zůstat'));
-      expect(onClose).not.toHaveBeenCalled();
-    }),
+      yield* clickButton('Zůstat');
+      expect(closed).toHaveLength(0);
+      yield* networkIdle;
+      expect(revisions.length).toBe(0);
+    }).pipe(Effect.provide(network)),
   );
 });
 
 describe('new market dialog', () => {
   it.live('typing changes only the draft; Save creates the market once', () =>
     Effect.gen(function* newMarketTypingSendsNothing() {
-      rstest.mocked(executeCreateMarket).mockReturnValue(Effect.succeed(created));
-      const onCreated = rstest.fn(constVoid);
-      yield* Effect.promise(() =>
-        mountTree(
-          <NewMarketDialog
-            canConfigurePricing={false}
-            legalEntityId="33333333-3333-4333-8333-333333333333"
-            merchandiseRevision={3}
-            onClose={constVoid}
-            onCreated={onCreated}
-            tenantId={tenantId}
-          />,
-        ),
+      yield* pinTestDocument;
+      const createdResults: Parameters<NewMarketDialogProps['onCreated']>[0][] = [];
+      const onCreated: NewMarketDialogProps['onCreated'] = (result) => {
+        createdResults.push(result);
+      };
+      yield* mountInRoute(
+        <NewMarketDialog
+          canConfigurePricing={false}
+          legalEntityId="33333333-3333-4333-8333-333333333333"
+          merchandiseRevision={3}
+          onClose={constVoid}
+          onCreated={onCreated}
+          tenantId={tenantId}
+        />,
       );
-      yield* Effect.promise(() => typeInto('new-market-code', 'NEW_TRH'));
-      yield* Effect.promise(() => typeInto('new-market-purpose', 'Nový trh'));
-      yield* Effect.promise(() => typeInto('new-market-jurisdictions', 'CZ'));
-      yield* Effect.promise(() => typeInto('new-market-locales', 'cs-CZ'));
-      yield* Effect.promise(() => typeInto('new-market-valid-from', '2026-11-10'));
+      yield* typeInto('new-market-code', 'NEW_TRH');
+      yield* typeInto('new-market-purpose', 'Nový trh');
+      yield* typeInto('new-market-jurisdictions', 'CZ');
+      yield* typeInto('new-market-locales', 'cs-CZ');
+      yield* typeInto('new-market-valid-from', '2026-11-10');
       yield* Effect.sleep('1 second');
-      expect(writes(rstest.mocked(executeCreateMarket))).toBe(0);
+      yield* networkIdle;
+      expect(creations.length).toBe(0);
       expect(buttonNamed('Uložit').disabled).toBe(false);
 
-      yield* Effect.promise(() => clickButton('Uložit'));
-      expect(writes(rstest.mocked(executeCreateMarket))).toBe(1);
-      expect(onCreated).toHaveBeenCalledTimes(1);
-    }),
+      yield* clickButton('Uložit');
+      yield* waitUntil(() => creations.length > 0);
+      yield* networkIdle;
+      expect(creations.length).toBe(1);
+      yield* waitUntil(() => createdResults.length > 0);
+      expect(createdResults).toHaveLength(1);
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('leaving with unsaved input asks first', () =>
     Effect.gen(function* newMarketLeaveAsks() {
-      const onClose = rstest.fn(constVoid);
-      yield* Effect.promise(() =>
-        mountTree(
-          <NewMarketDialog
-            canConfigurePricing={false}
-            legalEntityId="33333333-3333-4333-8333-333333333333"
-            merchandiseRevision={3}
-            onClose={onClose}
-            onCreated={constVoid}
-            tenantId={tenantId}
-          />,
-        ),
+      yield* pinTestDocument;
+      const closed: true[] = [];
+      const onClose = () => {
+        closed.push(true);
+      };
+      yield* mountInRoute(
+        <NewMarketDialog
+          canConfigurePricing={false}
+          legalEntityId="33333333-3333-4333-8333-333333333333"
+          merchandiseRevision={3}
+          onClose={onClose}
+          onCreated={constVoid}
+          tenantId={tenantId}
+        />,
       );
-      yield* Effect.promise(() => typeInto('new-market-code', 'NEW_TRH'));
-      yield* Effect.promise(() => clickButton(keyOf('form.cancel')));
+      yield* typeInto('new-market-code', 'NEW_TRH');
+      yield* clickButton(keyOf('form.cancel'));
       expect(isOpen('Zůstat')).toBe(true);
-      expect(onClose).not.toHaveBeenCalled();
-      expect(writes(rstest.mocked(executeCreateMarket))).toBe(0);
-    }),
+      expect(closed).toHaveLength(0);
+      yield* networkIdle;
+      expect(creations.length).toBe(0);
+    }).pipe(Effect.provide(network)),
   );
 });
 
@@ -293,43 +312,54 @@ const section = (onDone: (message: string) => void) => (
 describe('storefront association dialog', () => {
   it.live('typing changes only the draft; Save associates the e-shop once', () =>
     Effect.gen(function* associationTypingSendsNothing() {
-      rstest.mocked(executeAssociateStorefront).mockReturnValue(Effect.succeed(associated));
-      const onDone = rstest.fn(constVoid);
-      yield* Effect.promise(() => mountTree(section(onDone)));
-      yield* Effect.promise(() => clickButton(keyOf('detail.storefronts.associate')));
-      yield* Effect.promise(() => typeInto('association-valid-from', '2026-11-10'));
+      yield* pinTestDocument;
+      const done: string[] = [];
+      const onDone = (message: string) => {
+        done.push(message);
+      };
+      yield* mountInRoute(section(onDone));
+      yield* clickButton(keyOf('detail.storefronts.associate'));
+      yield* typeInto('association-valid-from', '2026-11-10');
       yield* Effect.sleep('1 second');
-      expect(writes(rstest.mocked(executeAssociateStorefront))).toBe(0);
+      yield* networkIdle;
+      expect(associations.length).toBe(0);
 
-      yield* Effect.promise(() => clickButton('Uložit'));
-      expect(writes(rstest.mocked(executeAssociateStorefront))).toBe(1);
-      expect(onDone).toHaveBeenCalledTimes(1);
-    }),
+      yield* clickButton('Uložit');
+      yield* waitUntil(() => associations.length > 0);
+      yield* networkIdle;
+      expect(associations.length).toBe(1);
+      yield* waitUntil(() => done.length > 0);
+      expect(done).toHaveLength(1);
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('the pre-selected e-shop saves without typing; leaving untouched asks nothing', () =>
     Effect.gen(function* associationDefaultsSave() {
-      rstest.mocked(executeAssociateStorefront).mockReturnValue(Effect.succeed(associated));
-      yield* Effect.promise(() => mountTree(section(constVoid)));
-      yield* Effect.promise(() => clickButton(keyOf('detail.storefronts.associate')));
+      yield* pinTestDocument;
+      yield* mountInRoute(section(constVoid));
+      yield* clickButton(keyOf('detail.storefronts.associate'));
       expect(buttonNamed('Uložit').disabled).toBe(false);
-      yield* Effect.promise(() => clickButton(keyOf('form.cancel')));
+      yield* clickButton(keyOf('form.cancel'));
       expect(isOpen('Zůstat')).toBe(false);
 
-      yield* Effect.promise(() => clickButton(keyOf('detail.storefronts.associate')));
-      yield* Effect.promise(() => clickButton('Uložit'));
-      expect(writes(rstest.mocked(executeAssociateStorefront))).toBe(1);
-    }),
+      yield* clickButton(keyOf('detail.storefronts.associate'));
+      yield* clickButton('Uložit');
+      yield* waitUntil(() => associations.length > 0);
+      yield* networkIdle;
+      expect(associations.length).toBe(1);
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('leaving with unsaved input asks first', () =>
     Effect.gen(function* associationLeaveAsks() {
-      yield* Effect.promise(() => mountTree(section(constVoid)));
-      yield* Effect.promise(() => clickButton(keyOf('detail.storefronts.associate')));
-      yield* Effect.promise(() => typeInto('association-valid-from', '2026-11-10'));
-      yield* Effect.promise(() => clickButton(keyOf('form.cancel')));
+      yield* pinTestDocument;
+      yield* mountInRoute(section(constVoid));
+      yield* clickButton(keyOf('detail.storefronts.associate'));
+      yield* typeInto('association-valid-from', '2026-11-10');
+      yield* clickButton(keyOf('form.cancel'));
       expect(isOpen('Zůstat')).toBe(true);
-      expect(writes(rstest.mocked(executeAssociateStorefront))).toBe(0);
-    }),
+      yield* networkIdle;
+      expect(associations.length).toBe(0);
+    }).pipe(Effect.provide(network)),
   );
 });

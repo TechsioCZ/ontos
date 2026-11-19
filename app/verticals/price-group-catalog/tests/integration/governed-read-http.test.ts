@@ -13,9 +13,11 @@ import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
   ReadRuntime,
+  loadActiveApplicationComposition,
   loadDatabaseConnectionPair,
   makeActiveApplicationCompositionLayer,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
@@ -352,7 +354,7 @@ const GatewayPrivateJwkSchema = Schema.Struct({
 const makeProductionAssertion = (audience = 'price-group-catalog') =>
   Effect.gen(function* signConfiguredPriceGroupReadAssertion() {
     const snapshot = yield* ActiveApplicationCompositionService.pipe(
-      Effect.flatMap((service) => service.load),
+      Effect.flatMap(loadActiveApplicationComposition),
       Effect.provide(
         ActiveApplicationCompositionConfigLive.pipe(
           Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
@@ -408,7 +410,10 @@ const unusedOwnerApprovals = Effect.fn('GovernedReadHttp.unusedOwnerApprovals')(
           harness.ownerServices,
           Layer.succeedContext(accessServices),
           Layer.succeedContext(cryptoContext),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
         ),
       ),
     ),

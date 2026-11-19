@@ -39,6 +39,7 @@ import {
   TrustedPrincipalContextSchema,
   parseDatabaseConfig,
   makeContextPermissionRelationshipMutationLive,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
@@ -1811,7 +1812,7 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
         ],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['catalog', 'pricing'],
-        applicationComposition: { load: Effect.succeed(composition) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: composition.composition.revision,
         expectedDeployment: ultramodernDeliveryUnit,

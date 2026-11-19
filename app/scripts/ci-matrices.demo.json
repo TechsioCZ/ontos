@@ -131,18 +131,6 @@
     "reviewed-people-apply.test.ts": 23,
     "shell-member-baseline-real-gate.test.ts": 29
   },
-  "fresh-database-tests": [
-    "scripts/integration/migration-equivalence.test.mts",
-    "scripts/integration/stage-recovery-lifecycle.test.mts",
-    "scripts/integration/vat-deploy-sequence.test.mts",
-    "packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts",
-    "packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts",
-    "verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts",
-    "verticals/work-tasks/tests/integration/assignment-migration.test.mts",
-    "verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts",
-    "verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts",
-    "verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts"
-  ],
   "source": [
     {
       "name": "Storefront Typecheck (AKROS and N1)",

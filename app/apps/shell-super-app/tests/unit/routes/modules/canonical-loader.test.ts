@@ -1,50 +1,31 @@
 import { createMemoryHistory, createRouter, isNotFound, isRedirect } from '@modern-js/plugin-tanstack/runtime';
 import type { AnyRedirect } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
-import { beforeEach, expect, it, rstest } from 'effect-rstest';
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
+import {
+  ResolvedModuleTargetSchema,
+  ShellTargetForbiddenProblemSchema,
+  ShellTargetNotFoundProblemSchema,
+} from '../../../../shared/browser-api.ts';
 import {
   canonicalPathFromRequest,
   legacyCanonicalRedirects,
   loader,
 } from '../../../../src/routes/[lang]/canonical-page-model.ts';
 import { routeTree } from '../../../../src/modern-tanstack/index/router.gen.ts';
+import {
+  adaSignedIn,
+  makeShellBff,
+  shellCompositionRevision,
+  signedInShellReads,
+} from '../../../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
-const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
-  loadHomePageModelMock: rstest.fn(),
-  resolveModuleTargetMock: rstest.fn(),
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  resolveModuleTarget: resolveModuleTargetMock,
-}));
-
-rstest.mock('../../../../src/routes/[lang]/home-page-model.ts', () => ({
-  loadHomePageModel: loadHomePageModelMock,
-}));
-
-const authenticatedShell = {
-  compositionRevision: 'c'.repeat(64),
-  contextState: 'authenticated' as const,
-  identity: {
-    displayName: 'Ada Lovelace',
-    email: 'ada@example.test',
-    legalEntityId: 'legal-1',
-    legalName: 'Alpha company',
-    principalId: 'principal-1',
-    tenantId: 'tenant-1',
-  },
-  legalEntities: { items: [], state: 'available' as const },
-  navigation: { items: [], state: 'available' as const },
-  selectedLegalEntityId: 'legal-1',
-  state: 'authenticated' as const,
-  tenants: { items: [], state: 'available' as const },
-};
-
-const target = {
+const target = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   appId: 'future-module',
   componentKey: 'future.module.order-detail',
-  compositionRevision: 'c'.repeat(64),
+  compositionRevision: shellCompositionRevision,
   entrypointKey: 'future.module.page.order-detail',
   federation: {
     expose: './OrderDetail',
@@ -54,7 +35,19 @@ const target = {
   moduleId: 'future.module',
   routeParameters: { orderId: 'order 42' },
   writable: false,
-};
+});
+
+const problem = { detail: 'redacted', title: 'redacted', type: 'about:blank' } as const;
+const targetForbidden = Schema.decodeUnknownSync(ShellTargetForbiddenProblemSchema)({
+  ...problem,
+  _tag: 'ShellTargetForbiddenProblem',
+  status: 403,
+});
+const targetNotFound = Schema.decodeUnknownSync(ShellTargetNotFoundProblemSchema)({
+  ...problem,
+  _tag: 'ShellTargetNotFoundProblem',
+  status: 404,
+});
 
 const requestFor = (pathname: string) =>
   new Request(`https://shell.example.test${pathname}`, { headers: { cookie: 'session=test-session' } });
@@ -70,10 +63,15 @@ const resolveRedirectResponse = (redirect: AnyRedirect, request: Request): Respo
   return router.resolveRedirect(redirect);
 };
 
-beforeEach(() => {
-  loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShell));
-  resolveModuleTargetMock.mockReturnValue(Effect.succeed(target));
-});
+/** The Shell BFF of a signed-in Ada that approves the future module target unless a test scripts otherwise. */
+const canonicalBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    ...signedInShellReads(adaSignedIn),
+    resolveModuleTarget: () => Effect.succeed(target),
+    ...overrides,
+  });
+const targetRequests = (bff: ReturnType<typeof canonicalBff>) =>
+  bff.requests.filter((received) => received.endpoint === 'resolveModuleTarget').map((received) => received.body);
 
 it.each([
   ['/en/future/orders/order%2042/?moduleId=attacker#identity', 'en', '/future/orders/order%2042'],
@@ -83,58 +81,59 @@ it.each([
   expect(canonicalPathFromRequest(requestFor(pathname), language)).toBe(expected);
 });
 
-it.effect('resolves a newly admitted canonical page without a generated Shell connector', () =>
-  Effect.gen(function* resolvesNewCanonicalPage() {
+it.live('resolves a newly admitted canonical page without a generated Shell connector', () => {
+  const bff = canonicalBff();
+  return Effect.gen(function* resolvesNewCanonicalPage() {
     const model = yield* Effect.tryPromise({
       catch: isNotFound,
       try: () =>
         loader({ params: { lang: 'cs' }, request: requestFor('/cs/future/orders/order%2042/?moduleId=attacker') }),
     });
 
-    expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-      { canonicalPath: '/future/orders/order%2042', compositionRevision: 'c'.repeat(64) },
-      expect.any(Object),
-    );
+    expect(targetRequests(bff)).toEqual([
+      { canonicalPath: '/future/orders/order%2042', compositionRevision: shellCompositionRevision },
+    ]);
     expect(model).toMatchObject({ routeParams: { orderId: 'order 42' }, state: 'resolved', target });
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.effect('retains denial and never exposes a remote target for a canonical path', () =>
-  Effect.gen(function* retainsDeniedCanonicalPage() {
-    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetForbiddenProblem' }));
+it.live('retains denial and never exposes a remote target for a canonical path', () => {
+  const bff = canonicalBff({ resolveModuleTarget: () => Effect.fail(targetForbidden) });
+  return Effect.gen(function* retainsDeniedCanonicalPage() {
     const model = yield* Effect.tryPromise({
       catch: isNotFound,
       try: () => loader({ params: { lang: 'en' }, request: requestFor('/en/future/orders/private') }),
     });
     expect(model).toMatchObject({ state: 'forbidden' });
     expect(model).not.toHaveProperty('target');
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.effect.each(['/cs/previously-unknown/page', '/cs/sprava/lide'])(
+it.live.each(['/cs/previously-unknown/page', '/cs/sprava/lide'])(
   'keeps Shell not-found recovery for an unregistered canonical target %s',
-  (pathname) =>
-    Effect.gen(function* reportsShellNotFound() {
-      resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
+  (pathname) => {
+    const bff = canonicalBff({ resolveModuleTarget: () => Effect.fail(targetNotFound) });
+    return Effect.gen(function* reportsShellNotFound() {
       const model = yield* Effect.promise(() => loader({ params: { lang: 'cs' }, request: requestFor(pathname) }));
-      expect(model).toMatchObject({ shell: authenticatedShell, state: 'not_found' });
+      expect(model).toMatchObject({ shell: { state: 'authenticated' }, state: 'not_found' });
       expect(model).not.toHaveProperty('target');
-      expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-        { canonicalPath: pathname.slice(3), compositionRevision: authenticatedShell.compositionRevision },
-        expect.any(Object),
-      );
-    }),
+      expect(targetRequests(bff)).toEqual([
+        { canonicalPath: pathname.slice(3), compositionRevision: shellCompositionRevision },
+      ]);
+    }).pipe(Effect.provide(bff.browser));
+  },
 );
 
-it.effect.each([
+it.live.each([
   ['/xx/future/orders/private', 'xx'],
   ['/cs/future/orders/private', 'en'],
   ['/cs/favicon.ico', 'cs'],
   ['/en/favicon.ico', 'en'],
 ] as const)(
   'rejects non-page assets and unsupported localized prefixes %s before target resolution',
-  ([pathname, language]) =>
-    Effect.gen(function* rejectsUntrustedLocalePrefix() {
+  ([pathname, language]) => {
+    const bff = canonicalBff();
+    return Effect.gen(function* rejectsUntrustedLocalePrefix() {
       expect(
         yield* Effect.flip(
           Effect.tryPromise({
@@ -143,14 +142,15 @@ it.effect.each([
           }),
         ),
       ).toBe(true);
-      expect(loadHomePageModelMock).not.toHaveBeenCalled();
-      expect(resolveModuleTargetMock).not.toHaveBeenCalled();
-    }),
+      // Neither the session behind the Shell model nor a target was read.
+      expect(bff.requests).toEqual([]);
+    }).pipe(Effect.provide(bff.browser));
+  },
 );
 
-it.effect('the generated catchall renders shell recovery for an unknown target', () =>
-  Effect.gen(function* reportsGeneratedRouteNotFound() {
-    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
+it.live('the generated catchall renders shell recovery for an unknown target', () => {
+  const bff = canonicalBff({ resolveModuleTarget: () => Effect.fail(targetNotFound) });
+  return Effect.gen(function* reportsGeneratedRouteNotFound() {
     const pathname = '/cs/previously-unknown/page';
     const router = createRouter({
       context: { request: requestFor(pathname) },
@@ -160,15 +160,14 @@ it.effect('the generated catchall renders shell recovery for an unknown target',
     });
     yield* Effect.promise(() => router.load());
 
-    expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-      { canonicalPath: '/previously-unknown/page', compositionRevision: 'c'.repeat(64) },
-      expect.any(Object),
-    );
+    expect(targetRequests(bff)).toEqual([
+      { canonicalPath: '/previously-unknown/page', compositionRevision: shellCompositionRevision },
+    ]);
     expect(router._serverResult).toMatchObject({ status: 200, type: 'render' });
-  }),
-);
+  }).pipe(Effect.provide(bff.browser));
+});
 
-it.effect.each([
+it.live.each([
   ['/siampark/overview', '/nemovitosti/prehled'],
   ['/siampark/properties', '/nemovitosti'],
   ['/siampark/occupancy', '/najmy'],
@@ -185,8 +184,9 @@ it.effect.each([
   ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
   ['/provoz/ukoly', '/ukoly'],
   ['/profil', '/profile'],
-] as const)('redirects the legacy path %s to %s and keeps the query string', ([legacyPath, domainPath]) =>
-  Effect.gen(function* redirectsLegacyPath() {
+] as const)('redirects the legacy path %s to %s and keeps the query string', ([legacyPath, domainPath]) => {
+  const bff = canonicalBff();
+  return Effect.gen(function* redirectsLegacyPath() {
     const request = requestFor(`/cs${legacyPath}/?resourceId=abc%20123&tab=detail`);
     const thrown = yield* Effect.flip(
       Effect.tryPromise({
@@ -201,9 +201,9 @@ it.effect.each([
     const response = resolveRedirectResponse(thrown, request);
     expect(response.status).toBe(307);
     expect(response.headers.get('Location')).toBe(`/cs${domainPath}?resourceId=abc%20123&tab=detail`);
-    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
-  }),
-);
+    expect(bff.requests).toEqual([]);
+  }).pipe(Effect.provide(bff.browser));
+});
 
 it('maps every legacy path exactly once', () => {
   expect(legacyCanonicalRedirects.get('/siampark/work')).toBe('/ukoly');
@@ -211,8 +211,9 @@ it('maps every legacy path exactly once', () => {
   expect(legacyCanonicalRedirects.has('/siampark/integrations')).toBe(false);
 });
 
-it.effect('redirects a legacy path without a query string to the bare domain path', () =>
-  Effect.gen(function* redirectsBareLegacyPath() {
+it.live('redirects a legacy path without a query string to the bare domain path', () => {
+  const bff = canonicalBff();
+  return Effect.gen(function* redirectsBareLegacyPath() {
     const request = requestFor('/en/siampark/finance');
     const thrown = yield* Effect.flip(
       Effect.tryPromise({
@@ -226,5 +227,6 @@ it.effect('redirects a legacy path without a query string to the bare domain pat
     const response = resolveRedirectResponse(thrown, request);
     expect(response.status).toBe(307);
     expect(response.headers.get('Location')).toBe('/en/finance');
-  }),
-);
+    expect(bff.requests).toEqual([]);
+  }).pipe(Effect.provide(bff.browser));
+});

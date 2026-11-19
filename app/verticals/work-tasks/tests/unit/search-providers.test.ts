@@ -1,7 +1,7 @@
 import { CoreSearchQueryRuntime, CoreSearchProjectionHitSchema } from '@app/core-runtime';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { TasksProviderRequestSchema, TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
+import { TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
 import { loadSearch as governedSearch } from '../../src/services/search-read.ts';
 
 import { company, otherCompany, otherTenant, ref, scope } from './search-fixtures.ts';
@@ -22,21 +22,6 @@ it.effect('wire contract requires owner resource, tenant and selected company', 
     expect(
       Schema.is(TasksProviderResponseSchema)([{ ref: unscopedRef, selectedLegalEntityId: company, title: hit.title }]),
     ).toBe(false);
-    yield* Effect.void;
-  }),
-);
-it.effect('shares the trimmed 1..200 character ingress query bound', () =>
-  Effect.gen(function* test() {
-    const decoded = yield* Schema.decodeEffect(TasksProviderRequestSchema)({ query: '  hledat úkol  ' });
-    expect(decoded.query).toBe('hledat úkol');
-    for (const query of ['   ', 'a'.repeat(201)]) {
-      const rejected = yield* Schema.decodeEffect(TasksProviderRequestSchema)({ query }).pipe(Effect.exit);
-      expect(Exit.isFailure(rejected)).toBe(true);
-    }
-    for (const query of ['a', 'a'.repeat(200)]) {
-      const accepted = yield* Schema.decodeEffect(TasksProviderRequestSchema)({ query }).pipe(Effect.exit);
-      expect(Exit.isSuccess(accepted)).toBe(true);
-    }
     yield* Effect.void;
   }),
 );

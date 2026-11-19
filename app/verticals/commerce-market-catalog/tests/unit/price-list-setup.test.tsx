@@ -1,29 +1,25 @@
 // @rstest-environment happy-dom
-// "Nastavit ceník" of a market without a price list: it puts the whole catalogue on the market's e-shops, so it asks
-// first, naming the market, and sends one ConfigureMarket only after the confirmation. Only the merchandise client,
-// the i18n runtime and the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
-import { Effect, Schema } from 'effect';
+// The real i18n/router and merchandise client drive the confirmation. The Shell gateway and the owner's
+// Action endpoint answer in process, recording the commands the browser actually sends.
+import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { ManageMarketsActionApi } from '@app/merchandise/apis/manage-markets-action';
+import type { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
+import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { manageMarketsActionSchemaErrorLive } from '../../../merchandise/api/manage-markets-action-problems.ts';
 import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
 import { PriceListSetup } from '../../src/market-admin/price-list-setup.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('@app/merchandise/apis/manage-markets-action/client');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, values?: Record<string, string>) => [key, ...Object.values(values ?? {})].join(' '),
-  }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '30000000-0000-4000-8000-000000000001';
@@ -57,99 +53,87 @@ const market = Schema.decodeUnknownSync(MarketDefinitionSchema)({
   supportedLocales: ['cs-CZ'],
 });
 
-/** The locale keys the stubbed i18n runtime shows as text. */
+const czech = moduleText('cs');
 const copy = {
-  confirm: 'commerce-market-catalog.detail.assortment.configureConfirm',
-  description: 'commerce-market-catalog.detail.assortment.configureDescription',
-  title: 'commerce-market-catalog.detail.assortment.configureTitle',
+  confirm: czech('commerce-market-catalog.detail.assortment.configureConfirm'),
+  description: czech('commerce-market-catalog.detail.assortment.configureDescription', {
+    code: 'CZ_B2C',
+    currency: 'CZK',
+  }),
+  title: czech('commerce-market-catalog.detail.assortment.configureTitle', { code: 'CZ_B2C' }),
 };
 
-const commands = () => rstest.mocked(executeManageMarkets).mock.calls.length;
+const commands: (typeof ManageMarketsPayloadSchema.Encoded)[] = [];
+const result = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: [], marketRevision: 1, revision: 4 });
+const OwnerApi = ManageMarketsActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'manageMarketsAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return result;
+        }),
+      ),
+    ).pipe(Layer.provide(manageMarketsActionSchemaErrorLive)),
+  ),
+);
 
-const settle = async (): Promise<void> => {
-  await act(async () => {
-    await browserRuntime.runPromise(Effect.yieldNow);
-  });
-};
-
-const mounted: { container: HTMLElement; root: Root }[] = [];
-
-const mount = async (onDone: (message: string) => void = constVoid) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  mounted.push({ container, root });
-  await act(async () => {
-    root.render(
-      <PriceListSetup editable market={market} onAwaitingApproval={constVoid} onDone={onDone} revision={3} />,
-    );
-  });
-  await settle();
-};
+const mount = (onDone: (message: string) => void = constVoid) =>
+  mountInRoute(<PriceListSetup editable market={market} onAwaitingApproval={constVoid} onDone={onDone} revision={3} />);
 
 const setupButton = () => document.querySelector<HTMLButtonElement>('[data-testid="market-price-list-setup"]');
 const confirmButton = () =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+  [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
     (button) => button.textContent?.trim() === copy.confirm,
   );
 
 const click = (button: HTMLButtonElement | null | undefined) =>
-  Effect.promise(() =>
-    act(async () => {
-      expect(button).toBeDefined();
-      button?.click();
-    }),
-  );
+  acted(() => {
+    expect(button).toBeDefined();
+    button?.click();
+  });
 
 beforeEach(() => {
-  rstest.mocked(executeManageMarkets).mockReset();
+  commands.length = 0;
 });
 
-afterEach(() => {
-  for (const { container, root } of mounted.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-});
+afterEach(unmountAll);
 
 describe('setting up the price list of a market', () => {
   it.live('asks first, naming the market and the currency, and sends nothing until confirmed', () =>
     Effect.gen(function* asksFirst() {
-      rstest
-        .mocked(executeManageMarkets)
-        .mockReturnValue(Effect.succeed({ entityIds: [], marketRevision: 1, revision: 4 }));
-      yield* Effect.promise(() => mount());
+      yield* pinTestDocument;
+      yield* mount();
       yield* click(setupButton());
-      yield* Effect.promise(settle);
-      expect(commands()).toBe(0);
-      expect(document.body.textContent).toContain(`${copy.title} CZ_B2C`);
-      expect(document.body.textContent).toContain(`${copy.description} CZ_B2C CZK`);
+      yield* networkIdle;
+      yield* settle;
+      expect(commands).toHaveLength(0);
+      expect(document.body.textContent).toContain(copy.title);
+      expect(document.body.textContent).toContain(copy.description);
       expect(confirmButton()).toBeDefined();
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('sends one ConfigureMarket after the confirmation and reports it done', () =>
     Effect.gen(function* confirmed() {
       const done: string[] = [];
-      rstest
-        .mocked(executeManageMarkets)
-        .mockReturnValue(Effect.succeed({ entityIds: [], marketRevision: 1, revision: 4 }));
-      yield* Effect.promise(() =>
-        mount((message) => {
-          done.push(message);
-        }),
-      );
+      yield* pinTestDocument;
+      yield* mount((message) => {
+        done.push(message);
+      });
       yield* click(setupButton());
-      yield* Effect.promise(settle);
+      yield* settle;
       yield* click(confirmButton());
-      yield* Effect.promise(settle);
-      yield* Effect.sleep('100 millis');
-      yield* Effect.promise(settle);
-      expect(commands()).toBe(1);
+      yield* settle;
+      yield* waitUntil(() => done.length === 1);
+      yield* networkIdle;
+      yield* settle;
+      expect(commands).toHaveLength(1);
       expect(done).toHaveLength(1);
       expect(confirmButton()).toBeUndefined();
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

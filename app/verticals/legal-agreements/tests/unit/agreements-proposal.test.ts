@@ -1,24 +1,24 @@
+// @rstest-environment happy-dom
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { Effect, Option, Schema } from 'effect';
-import { beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { beforeEach, expect, it } from 'effect-rstest';
+
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/apis/apply-command-action.ts';
 
 import { termsCommandOf, termsDraftOf } from '../../src/routes/[lang]/smlouvy/contract-terms-draft.ts';
 import { saveTerms } from '../../src/routes/[lang]/smlouvy/use-agreements-records.ts';
 import type { Contract } from '../../shared/apis/records.ts';
-
-const { apply, records } = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
-
-rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: apply }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
-  executeCounterpartyRead: rstest.fn(),
-}));
-rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
-  listCustomers: rstest.fn(),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useNavigate: () => () => {}, useRouterState: () => '' }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({ useModernI18n: () => ({ language: 'cs', t: String }) }));
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const contractRef = {
@@ -57,15 +57,34 @@ const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
   proposalId: '77777777-7777-4777-8777-777777777777',
 });
 
+const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+const OwnerActionApi = ApplyCommandActionApi.prefix('/legal-agreements-api');
+/** What the owner answers the next command with; each test sets it. */
+let answer: ActionProposalAccepted | typeof ApplyCommandResultSchema.Type = proposal;
+const network = browserNetwork(
+  shellGatewayIssuer({ 'legal-agreements': '/legal-agreements-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+);
+
 beforeEach(() => {
-  apply.mockReset();
-  records.mockReset();
+  commands.length = 0;
+  answer = proposal;
 });
 
-describe('contract terms save with approval', () => {
-  it.effect('keeps terms parked for approval unsaved and reports the proposal', () =>
+it.layer(network, { excludeTestServices: true })('contract terms save with approval', (suite) => {
+  suite.effect('keeps terms parked for approval unsaved and reports the proposal', () =>
     Effect.gen(function* parked() {
-      apply.mockReturnValue(Effect.succeed(proposal));
+      yield* pinTestDocument;
       const reported: ActionProposalAccepted[] = [];
       const result = yield* saveTerms(
         command,
@@ -77,13 +96,14 @@ describe('contract terms save with approval', () => {
       );
       expect(result).toBe('proposed');
       expect(reported).toEqual([proposal]);
-      expect(apply).toHaveBeenCalledTimes(1);
+      expect(commands).toHaveLength(1);
     }),
   );
 
-  it.effect('adopts the committed revision and reports no proposal', () =>
+  suite.effect('adopts the committed revision and reports no proposal', () =>
     Effect.gen(function* committed() {
-      apply.mockReturnValue(Effect.succeed({ resourceRef: contractRef, revision: 5 }));
+      yield* pinTestDocument;
+      answer = yield* Schema.decodeUnknownEffect(ApplyCommandResultSchema)({ resourceRef: contractRef, revision: 5 });
       const reported: ActionProposalAccepted[] = [];
       const result = yield* saveTerms(
         command,

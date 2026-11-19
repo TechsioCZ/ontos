@@ -1,81 +1,47 @@
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import React from 'react';
-import type { ReactNode } from 'react';
+// @rstest-environment happy-dom
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { it } from 'effect-rstest';
 import { activities } from '../../src/routes/[lang]/aktivity/page.tsx';
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
-const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: rstest.fn() }));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-  useRouterState: () => '',
-}));
-rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: String }),
-}));
-
-const events = new EventTarget();
-const globals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  // The owner's Node-only test config compiles TSX with the classic React runtime.
-  rstest.stubGlobal('React', React);
-  for (const [key, value] of Object.entries(globals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  rstest.unstubAllGlobals();
-  for (const key of Object.keys(globals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
+const response = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  canWrite: true,
+  items: [],
+  revision: 1,
 });
 
-// An empty resource id keys the same entry as an unfiltered read; the test counts reads only.
-const input = { legalEntityId: 'company-a', resourceId: '' };
-
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  events.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
-
-beforeEach(() => {
-  rstest.resetAllMocks();
-  activities.invalidate();
-  mocks.records.mockReturnValue(Effect.fail('offline'));
-});
-
-it.live('live changes of apps the activities do not show read nothing', () =>
-  Effect.gen(function* unrelatedChange() {
-    yield* activities.preload(input);
-    const unsubscribe = activities.subscribe(() => {
-      activities.snapshot(input);
-    }, input);
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-    dispatchChange(['work-tasks']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.records).toHaveBeenCalledTimes(1);
-    unsubscribe();
-  }),
+const reads: unknown[] = [];
+const OwnerApi = RecordsApi.prefix('/crm-activities-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'crm-activities': '/crm-activities-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return response;
+        }),
+      ),
+    ),
+  ),
 );
 
-it.live('a live change of crm-activities reloads the mounted activities', () =>
-  Effect.gen(function* ownChange() {
-    yield* activities.preload(input);
-    const unsubscribe = activities.subscribe(() => {
-      activities.snapshot(input);
-    }, input);
-    dispatchChange(['crm-activities']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.records).toHaveBeenCalledTimes(2);
-    unsubscribe();
-  }),
-);
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('activities reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
+      input: { legalEntityId: 'company-a', resourceId: '10000000-0000-4000-8000-000000000001' },
+      reads: () => reads.length,
+      reloadsOn: ['crm-activities'],
+      store: activities,
+    }),
+  );
+});

@@ -27,7 +27,10 @@ import {
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ownModuleCredential } from '@app/core-runtime/auth/owner-module-credential';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { NodeCrypto, NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -156,7 +159,7 @@ const main = Effect.scoped(
     const context = yield* Layer.build(live);
     const line = yield* Effect.gen(function* invokeActualOwnerAction() {
       const composition = yield* ActiveApplicationCompositionService;
-      const snapshot = yield* composition.load;
+      const snapshot = yield* loadActiveApplicationComposition(composition);
       if (snapshot.composition.revision !== request.compositionRevision) {
         return yield* unavailable();
       }

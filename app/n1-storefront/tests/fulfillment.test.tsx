@@ -1,14 +1,32 @@
-import { describe, expect, rs } from "@rstest/core";
+import { describe, expect } from "@rstest/core";
 import { it } from "effect-rstest";
 import { FetchHttpClient } from "effect/http";
 import { readFulfillment } from "../src/ontos/fulfillment";
 import { Effect, Result, Schema } from "effect";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { FulfillmentSnapshotSchema, projectFulfillment } from "../src/ontos/fulfillment-model";
 import { FulfillmentView } from "../src/features/fulfillment-view";
 import { getDictionary } from "../src/i18n";
 
-rs.mock("next/navigation", () => ({ useRouter: () => ({ refresh: rs.fn() }) }));
+const serverNavigation = () => {
+  throw new Error("Navigation must not run during server rendering");
+};
+const router = {
+  back: serverNavigation,
+  bfcacheId: "fulfillment",
+  forward: serverNavigation,
+  prefetch: serverNavigation,
+  push: serverNavigation,
+  refresh: serverNavigation,
+  replace: serverNavigation,
+} satisfies AppRouterInstance;
+const render = (children: ReactNode) =>
+  renderToStaticMarkup(
+    <AppRouterContext.Provider value={router}>{children}</AppRouterContext.Provider>,
+  );
 
 const marketId = "83f5c73d-8e38-5d55-b4f6-8081a512cad9";
 const snapshot = {
@@ -171,7 +189,7 @@ describe("market-scoped fulfillment information", () => {
   it.effect("renders actual delivery prices without fixture carriers or payment promises", () =>
     Effect.gen(function* actualPage() {
       const info = yield* project(snapshot);
-      const html = renderToStaticMarkup(
+      const html = render(
         <FulfillmentView
           dictionary={getDictionary("cs")}
           kind="shipping"
@@ -190,7 +208,7 @@ describe("market-scoped fulfillment information", () => {
     Effect.gen(function* noProvider() {
       const info = yield* project(snapshot);
       const d = getDictionary("en");
-      const html = renderToStaticMarkup(
+      const html = render(
         <FulfillmentView
           dictionary={d}
           kind="payment"

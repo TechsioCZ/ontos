@@ -1,7 +1,7 @@
 import { stableRevision } from '../stable-revision.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-candidate/client';
@@ -373,10 +373,7 @@ const orderApprovalFinalizationRemote = Effect.fn('OrderApprovalFinalization.rem
     return yield* admitted ? Effect.void : rejected();
   });
   const activeRevision = Effect.fn('OrderApprovalFinalization.activeRevision')(function* activeRevision() {
-    const active = yield* composition.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-      Effect.mapError(unavailable),
-    );
+    const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
     if (compositionRevision !== undefined && compositionRevision !== active.composition.revision) {
       return yield* unavailable('The request composition is no longer active');
     }

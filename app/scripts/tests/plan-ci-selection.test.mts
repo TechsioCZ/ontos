@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { parseCiMatrices } from '../ci/ci-matrices.mts';
+import { parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
 import type { CiWorkspacePackage } from '../plan-ci-checks.mts';
-import { integrationSeedInputs, planCiChecks } from '../plan-ci-checks.mts';
+import { planCiChecks } from '../plan-ci-checks.mts';
 
 /** The demo trunk's matrices: the shared file with the overlay its gates workflow names. */
 const templates = Result.getOrThrow(
@@ -26,36 +26,41 @@ const FINANCE_BILLING = '@app/finance-billing';
 const FINANCE_DIRECTORY = 'verticals/finance-billing';
 
 /**
- * The storefronts are leaves with no integration suite, the root package owns `app/scripts`, and the Shell and the
+ * The storefronts are leaves with no integration task, the root package owns `app/scripts`, and the Shell and the
  * root consume the verticals through their public surface.
  */
-const packages: readonly CiWorkspacePackage[] = [
-  { dependencies: [], directory: AKROS, integrationSuite: false, name: AKROS },
-  { dependencies: [CUSTOMER_CONTEXT], directory: N1, integrationSuite: false, name: N1 },
-  {
-    dependencies: [],
-    directory: 'verticals/commerce-customer-context',
-    integrationSuite: true,
-    name: CUSTOMER_CONTEXT,
-  },
-  { dependencies: [], directory: WORK_TASKS_DIRECTORY, integrationSuite: false, name: WORK_TASKS },
+const named: readonly CiWorkspacePackage[] = [
+  { dependencies: [], directory: AKROS, name: AKROS },
+  { dependencies: [CUSTOMER_CONTEXT], directory: N1, name: N1 },
+  { dependencies: [], directory: 'verticals/commerce-customer-context', name: CUSTOMER_CONTEXT },
+  { dependencies: [], directory: WORK_TASKS_DIRECTORY, name: WORK_TASKS },
   {
     dependencies: [],
     directory: FINANCE_DIRECTORY,
     exportTargets: ['src/worker-host/entry.ts'],
-    integrationSuite: true,
     name: FINANCE_BILLING,
   },
-  { dependencies: [FINANCE_BILLING], directory: 'apps/shell-super-app', integrationSuite: true, name: SHELL },
-  { dependencies: [SHELL], directory: '.', integrationSuite: true, name: 'app' },
-  // The native preproposal proof names its runtime owners; an unknown one widens every run.
-  ...['party-registry', 'commerce-cart', 'catalog', 'storefront-registry', 'commerce-market-catalog', 'pricing'].map(
-    (unit): CiWorkspacePackage => ({
-      dependencies: [],
-      directory: `verticals/${unit}`,
-      integrationSuite: true,
-      name: `@app/${unit}`,
-    }),
+  { dependencies: [FINANCE_BILLING], directory: 'apps/shell-super-app', name: SHELL },
+  { dependencies: [SHELL], directory: '.', name: 'app' },
+];
+/**
+ * Every other owner a task or the native preproposal proof names, as a vertical named after its directory; a task
+ * outside the workspace or an unknown proof package widens every run.
+ */
+const owners = [
+  ...templates.integration.flatMap(({ tasks }) => (tasks ?? []).map(taskDirectory)),
+  ...templates.integration.flatMap((entry) =>
+    (entry['proof-packages'] ?? []).map((name) => `verticals/${name.replace('@app/', '')}`),
+  ),
+]
+  .filter((directory): directory is string => directory !== undefined)
+  .map((directory) => ({ dependencies: [], directory, name: `@app/${directory.split('/').at(-1) ?? directory}` }));
+const packages: readonly CiWorkspacePackage[] = [
+  ...named,
+  ...owners.filter(
+    (owner, index) =>
+      owners.findIndex(({ directory }) => directory === owner.directory) === index &&
+      !named.some(({ directory, name }) => directory === owner.directory || name === owner.name),
   ),
 ];
 
@@ -69,11 +74,8 @@ const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
 const TOOLING_ROWS = [1, 2, 3].map((shard) => `Repository Tooling Tests (${shard}/3)`);
 /** A scoped plan builds no unit, starts no service and always runs its source rows, the static contracts and lint. */
 const SCOPED = {
-  'browser-integration': 'skipped',
   'format-and-lint': 'success',
-  'integration-seed-proof': 'skipped',
   'node-artifact-build': 'skipped',
-  'node-artifact-proof': 'skipped',
   'service-integration': 'skipped',
   'static-contracts': 'success',
   'workspace-gate': 'success',
@@ -81,8 +83,13 @@ const SCOPED = {
   'workspace-unit-artifacts': 'skipped',
 };
 const SCOPED_WITH_UNIT = { ...SCOPED, 'workspace-unit': 'success' };
-const fresh = (entries: readonly { readonly 'fresh-database-tests'?: string }[]) =>
-  entries.filter((entry) => entry['fresh-database-tests'] === 'only');
+const BOOTSTRAP = templates.integration.filter(({ suite }) => suite === 'bootstrap');
+const BOOTSTRAP_NAME = 'Deployment Bootstrap and Node Federation Proof';
+const CORE_RUNTIME_MIGRATIONS = 'whole:core-runtime-migrations';
+const CUSTOMER_CONTEXT_MIGRATIONS = 'whole:customer-context-migrations';
+const PARTY_MIGRATIONS = 'whole:party-migrations';
+const ownerTasks = (entries: typeof templates.integration) => entries.flatMap(({ tasks }) => tasks ?? []);
+const sorted = (values: readonly string[]) => values.toSorted((left, right) => left.localeCompare(right));
 
 it('runs only the storefront scope for a change confined to the storefronts', () => {
   for (const directory of rootLevelPackageDirectories) {
@@ -93,7 +100,7 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
     expect(names(storefront.source), directory).toEqual([...TOOLING_ROWS, STOREFRONT_TYPECHECK]);
     expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
     expect(storefront.unit[0]?.commands, directory).toContain(`--filter ./${directory} run test:unit`);
-    // A storefront is in no unit build: no build, Node proof, service, seed or browser job is paid for.
+    // A storefront is in no unit build: no build, Node proof, service, database or browser job is paid for.
     expect(storefront.integration, directory).toEqual([]);
     expect(storefront.expected, directory).toEqual(SCOPED_WITH_UNIT);
   }
@@ -205,21 +212,25 @@ it('selects the root suites for a change confined to app/scripts and keeps the r
   const scripts = plan(ROOT_TOOLING_FILE);
   expect(scripts.mode).toBe('affected');
   expect(scripts.affectedPackages).toEqual(['app']);
-  // The repository tooling tests are source rows; the root integration shards prove the rest.
+  // The repository tooling tests are source rows; the root integration tasks prove the rest, next to the bootstrap
+  // row every affected plan keeps.
   expect(names(scripts.source).filter((name) => name.startsWith('Repository Tooling Tests'))).toHaveLength(3);
-  expect(names(scripts.integration)).toEqual([
-    'Root Integration (1/4)',
-    'Root Integration (2/4)',
-    'Root Integration (3/4)',
-    'Root Integration (4/4)',
-  ]);
+  const rootTasks = ownerTasks(templates.integration).filter(
+    (task) => task.startsWith('root:') || ['whole:customer-readback', 'whole:customer-roundtrip'].includes(task),
+  );
+  expect(rootTasks.length).toBeGreaterThan(20);
+  expect(scripts.integration.filter(({ suite }) => suite === 'bootstrap')).toEqual(BOOTSTRAP);
+  expect(scripts.integration.filter(({ suite }) => suite === 'browser')).toEqual([]);
+  const selected = ownerTasks(scripts.integration);
+  expect(selected).toEqual(expect.arrayContaining(rootTasks));
+  expect(selected.every((task) => task.startsWith('root:') || task.startsWith('whole:'))).toBe(true);
+  expect(selected.some((task) => task.startsWith('whole:privacy') || task === 'whole:pricing')).toBe(false);
   // The root package is in no unit row (`--filter '!.'`), and app/scripts/check-ci-gates.sh requires the workspace
   // unit gate to have run in an affected plan, so the unit matrix stays complete; the integration matrix narrows.
   expect(scripts.unit).toEqual(templates.unit);
   expect(scripts.expected['workspace-unit']).toBe('success');
   expect(scripts.expected['workspace-unit-artifacts']).toBe('success');
-  expect(scripts.expected['browser-integration']).toBe('skipped');
-  expect(scripts.integration).toHaveLength(4);
+  expect(scripts.expected['service-integration']).toBe('success');
   // The shared, authority and configuration rules still apply inside app/scripts.
   for (const file of ['authorization/catalog.mts', 'ci/cache-entry-key.config.ts', 'ops/grant-stage-access.mts']) {
     expect(plan(`app/scripts/${file}`).mode, file).toBe('full');
@@ -236,78 +247,179 @@ it('selects the root suites for a change confined to app/scripts and keeps the r
   }
 });
 
-it('runs the fresh-database rows only for a diff that names a new integration seed', () => {
-  // A diff that touches no seed input cannot change what they prove.
-  expect(fresh(plan(`app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`).integration)).toEqual([]);
-  expect(fresh(plan(`app/${AKROS}/src/app/page.tsx`).integration)).toEqual([]);
-  expect(fresh(plan(ROOT_TOOLING_FILE).integration)).toEqual([]);
-  // Every seed input the narrowing rules can reach in affected mode selects both rows and the seed producer.
+/** Migration equivalence runs on the bootstrap row, in app/rstest.config.ts's owned-cluster project. */
+const MIGRATION_EQUIVALENCE_TEST = 'scripts/integration/migration-equivalence.test.mts';
+/**
+ * The demo trunk's Fresh Database rows (9d6c775b4), read from its planner and matrices: every changed path that
+ * named a new integration seed (`integrationSeedInputs` of scripts/plan-ci-checks.mts) or one of the
+ * fresh-database tests (`fresh-database-tests` of both matrices files) selected them, and they ran these files. The owner rows must still run every one of them for
+ * those paths, never fewer tests than that planner.
+ */
+const BASE_FRESH_DATABASE_INPUTS: readonly string[] = [
+  'app/**/drizzle*/**',
+  'app/**/drizzle*.config.ts',
+  'app/database/**',
+  'app/scripts/postgres/**',
+  'app/scripts/run-zerops-migrator.mjs',
+  'app/scripts/migration-convergence*',
+  'app/scripts/access-release-activation*',
+  'app/scripts/activate-access-catalog-release.mts',
+  'app/scripts/application-migration-pending.mts',
+  'app/verticals/commerce-customer-context/scripts/**',
+  'app/scripts/run-optional-commerce-portal-auth-db.mts',
+  'app/scripts/verify-application-db-schema.mts',
+  'app/scripts/audit-database-trust-boundaries.mts',
+  'app/scripts/prove-zerops-migrator-artifact.sh',
+  'app/scripts/ci/integration-seed*.mts',
+  // The fresh-database tests: a change to that list changes which rows may restore the seed.
+  'app/scripts/ci-matrices*.json',
+  'app/scripts/ci/ci-matrices.mts',
+  'app/packages/core-runtime/spicedb/**',
+  'app/packages/core-runtime/src/install/**',
+  'app/packages/core-runtime/src/access/**',
+  'app/packages/core-runtime/src/permissions/**',
+  'app/packages/core-runtime/src/db/**',
+  'app/topology/**',
+  'app/docker-compose.yml',
+  'app/zerops.yaml',
+  'app/package.json',
+  'app/pnpm-lock.yaml',
+  'app/.mise.toml',
+  '!app/**/node_modules/**',
+  '!app/tools/**',
+];
+const BASE_FRESH_DATABASE_TESTS = [
+  'scripts/integration/migrator-runtime-owner-access.test.mts',
+  'packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts',
+  'packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts',
+  'packages/core-runtime/tests/integration/auth-namespace-migration.test.ts',
+  'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
+  'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
+  'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
+  'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
+  MIGRATION_EQUIVALENCE_TEST,
+  'scripts/integration/stage-recovery-lifecycle.test.mts',
+  'scripts/integration/vat-deploy-sequence.test.mts',
+  'packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts',
+  'packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts',
+  'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
+  'verticals/work-tasks/tests/integration/assignment-migration.test.mts',
+  'verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts',
+  'verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts',
+  'verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts',
+];
+/**
+ * The files those rows ran, their fresh-database tests of the root suite, Core Runtime, Customer Context and Party, by
+ * the task that runs each alone (scripts/ci/run-integration-suites.sh); migration equivalence runs on the bootstrap
+ * row (app/rstest.config.ts, owned-cluster project).
+ */
+const BASE_FRESH_ROW_TASKS = new Map([
+  [MIGRATION_EQUIVALENCE_TEST, BOOTSTRAP_NAME],
+  ['scripts/integration/migrator-runtime-owner-access.test.mts', 'whole:migrator-owner-access'],
+  ['scripts/integration/stage-recovery-lifecycle.test.mts', 'whole:stage-recovery'],
+  ['scripts/integration/vat-deploy-sequence.test.mts', 'whole:vat-deploy-sequence'],
+  ['packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts', CORE_RUNTIME_MIGRATIONS],
+  [
+    'packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts',
+    CORE_RUNTIME_MIGRATIONS,
+  ],
+  [
+    'packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts',
+    CORE_RUNTIME_MIGRATIONS,
+  ],
+  ['packages/core-runtime/tests/integration/auth-namespace-migration.test.ts', CORE_RUNTIME_MIGRATIONS],
+  ['packages/core-runtime/tests/integration/contacts-identity-migration.test.ts', CORE_RUNTIME_MIGRATIONS],
+  ['packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts', CORE_RUNTIME_MIGRATIONS],
+  [
+    'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
+    CUSTOMER_CONTEXT_MIGRATIONS,
+  ],
+  [
+    'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
+    CUSTOMER_CONTEXT_MIGRATIONS,
+  ],
+  ['verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts', PARTY_MIGRATIONS],
+  ['verticals/party-registry/tests/integration/verification-removal-migration.test.ts', PARTY_MIGRATIONS],
+]);
+/** A concrete changed path a glob of that list matches. */
+const samplePath = (glob: string) => glob.replaceAll('**', 'sample').replaceAll('*', 'sample');
+/** What the base planned beside those rows for a migration input the root package owns: the root suite. */
+const ROOT_TASKS = [
+  ...Array.from({ length: 27 }, (_, index) => `root:${index + 1}/27`),
+  'whole:customer-readback',
+  'whole:customer-roundtrip',
+  'whole:organization',
+  'whole:organization-identity',
+  'whole:pricing-routes',
+];
+const MIGRATION_PROOF_TASKS = [
+  'whole:migrator-owner-access',
+  'whole:stage-recovery',
+  'whole:vat-deploy-sequence',
+  CORE_RUNTIME_MIGRATIONS,
+  CUSTOMER_CONTEXT_MIGRATIONS,
+  PARTY_MIGRATIONS,
+];
+
+it('runs every file of the former Fresh Database rows for every path that selected them', () => {
+  const inputs = [
+    ...BASE_FRESH_DATABASE_INPUTS.filter((glob) => !glob.startsWith('!')).map(samplePath),
+    ...BASE_FRESH_DATABASE_TESTS.map((testFile) => `app/${testFile}`),
+  ];
+  for (const changedPath of inputs) {
+    const selected = plan(changedPath);
+    const planned = new Set([...ownerTasks(selected.integration), ...names(selected.integration)]);
+    const missing = [...BASE_FRESH_ROW_TASKS].filter(([, task]) => !planned.has(task));
+    expect(missing, changedPath).toEqual([]);
+  }
+  // The tasks are real: each runs once on an owner row, beside the bootstrap row.
+  for (const task of MIGRATION_PROOF_TASKS) {
+    expect(
+      ownerTasks(templates.integration).filter((candidate) => candidate === task),
+      task,
+    ).toHaveLength(1);
+  }
+  expect(names(BOOTSTRAP)).toEqual([BOOTSTRAP_NAME]);
+  // A migration input the root package owns runs those tasks beside the root suite, as the base ran those rows beside
+  // its root rows, and never the complete suite.
   for (const changedPath of [
-    'app/scripts/ci/integration-seed-model.mts',
-    'app/scripts/postgres/roles.sql',
     'app/scripts/run-zerops-migrator.mjs',
-    'app/scripts/migration-convergence-plan.mts',
     'app/scripts/verify-application-db-schema.mts',
     'app/scripts/prove-zerops-migrator-artifact.sh',
-    'app/verticals/commerce-customer-context/scripts/seed-portal.mts',
-    // The fresh-database tests live in the matrices; editing that list must run the rows that prove it.
-    'app/scripts/ci-matrices.json',
-    'app/scripts/ci-matrices.demo.json',
-    'app/scripts/ci/ci-matrices.mts',
   ]) {
-    const seeded = plan(changedPath);
-    expect(seeded.mode, changedPath).toBe('affected');
-    expect(fresh(seeded.integration), changedPath).toHaveLength(2);
-    expect(seeded.expected['integration-seed-proof'], changedPath).toBe('success');
+    const selected = plan(changedPath);
+    expect(selected.mode, changedPath).toBe('affected');
+    expect(sorted(ownerTasks(selected.integration)), changedPath).toEqual(
+      sorted([...ROOT_TASKS, ...MIGRATION_PROOF_TASKS]),
+    );
+    expect(names(selected.integration.filter(({ suite }) => suite !== 'integration')), changedPath).toEqual(
+      names(templates.integration.filter(({ suite }) => suite === 'database' || suite === 'bootstrap')),
+    );
   }
-  // A change to one of the very files these rows run selects them as well.
-  const freshTest = templates['fresh-database-tests']?.find((file) => file.startsWith(`${WORK_TASKS_DIRECTORY}/`));
-  expect(freshTest).toBeDefined();
-  expect(fresh(plan(`app/${freshTest ?? ''}`).integration)).toHaveLength(2);
-  // Full mode is unchanged: the complete suite always contains them.
-  expect(
-    fresh(
-      planCiChecks({ applyAffected: false, changedPaths: ['app/pnpm-lock.yaml'], packages, templates }).integration,
-    ),
-  ).toHaveLength(2);
-  // The seed input list is the gates' own cache key, glob for glob.
-  const seedKey = /integration-seed-v1-[^\n]*hashFiles\((?<globs>[^)]*)\)/u.exec(
-    readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
-  )?.groups?.globs;
-  expect(seedKey?.split(', ').map((glob) => glob.slice(1, -1))).toEqual(integrationSeedInputs);
-  expect(integrationSeedInputs.filter((glob) => glob.startsWith('!'))).toEqual([
-    '!app/**/node_modules/**',
-    '!app/tools/**',
-  ]);
-  expect(integrationSeedInputs.every((glob) => glob.replace(/^!/u, '').startsWith('app/'))).toBe(true);
 });
 
-it('leaves an integration row out for a package whose manifest declares no integration suite', () => {
-  // The exclusion-only row runs `pnpm -r --if-present … run test:integration`: a package without that script makes
-  // no suite run, so its services are never started.
+it('starts no owner row for a package with no integration task', () => {
+  // A package without `test:integration` has no task in the matrices: no owner row and no database is paid for,
+  // only the bootstrap row every affected plan keeps.
   const taskState = plan(`app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`);
   expect(taskState.mode).toBe('affected');
   expect(taskState.affectedPackages).toEqual([WORK_TASKS]);
-  expect(taskState.integration).toEqual([]);
-  // A package that does declare one still selects it.
+  expect(taskState.integration).toEqual(BOOTSTRAP);
+  expect(taskState.expected['service-integration']).toBe('skipped');
+  // A package that has one selects exactly its own task, on the row that holds it.
   const invoices = plan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
-  expect(names(invoices.integration)).toEqual(['Database, Migration, RLS, Authorization, and Outbox Integration']);
-  expect(invoices.integration[0]?.['package-filters']).toBe(`--filter ./${FINANCE_DIRECTORY}`);
+  expect(ownerTasks(invoices.integration)).toEqual([`./${FINANCE_DIRECTORY}`]);
+  expect(invoices.integration.filter(({ suite }) => suite === 'integration')).toHaveLength(1);
+  expect(invoices.expected['service-integration']).toBe('success');
 });
 
 it('satisfies the gate aggregator for every narrowed plan it can produce', () => {
   // app/scripts/check-ci-gates.sh: in an affected plan every gate outside its optional list must be 'success', and
   // at least one of the two workspace unit gates must have run. A plan that skips them is rejected, not green.
-  const optional = new Set([
-    'workspace-unit',
-    'workspace-unit-artifacts',
-    'service-integration',
-    'integration-seed-proof',
-    'browser-integration',
-  ]);
+  const optional = new Set(['workspace-unit', 'workspace-unit-artifacts', 'service-integration']);
   for (const changedPath of [
     ROOT_TOOLING_FILE,
-    'app/scripts/ci/integration-seed-model.mts',
+    'app/scripts/ci/build-units.sh',
     `app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`,
     `app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`,
   ]) {

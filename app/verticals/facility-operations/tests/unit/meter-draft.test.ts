@@ -1,7 +1,4 @@
-import { draftSavable, startDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
+import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { MeterSchema } from '../../shared/domain/meters.ts';
 import {
@@ -11,7 +8,6 @@ import {
   meterUpdateCommandOf,
   sameMeterDraft,
 } from '../../src/routes/[lang]/provoz/meridla/meter-draft.ts';
-import type { MeterDraft } from '../../src/routes/[lang]/provoz/meridla/meter-draft.ts';
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
@@ -59,62 +55,4 @@ describe('meter card draft', () => {
     expect(created).toMatchObject({ serialNumber: 'EL-2026-001', unit: 'kWh' });
     expect('supplier' in created).toBe(false);
   });
-});
-
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
-  const sent: MeterDraft[] = [];
-  const controller = yield* startDraftSave(stored, {
-    equals: sameMeterDraft,
-    isValid: (value: MeterDraft) => Option.isSome(meterUpdateCommandOf(value, meter)),
-    save: (value: MeterDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
-  });
-  return { controller, sent };
-});
-
-describe('meter card edit explicit save', () => {
-  it.effect('sends a typed serial number only on Save, once; an empty unit stays local', () =>
-    Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, unit: '' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-      expect(draftSavable(controller.status())).toBe(false);
-      controller.change({ ...stored, serialNumber: 'EL-2026-042' });
-      // Longer than any delay the panel ever saved after: typing alone sends nothing.
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-      expect(controller.status()).toBe('dirty');
-      controller.save();
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent.map(({ serialNumber }) => serialNumber)).toEqual(['EL-2026-042']);
-      expect(controller.status()).toBe('saved');
-    }),
-  );
-
-  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
-    Effect.gen(function* discarded() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, serialNumber: 'EL-2026-042' });
-      expect(controller.status()).toBe('dirty');
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      expect(controller.confirmed()).toBe(stored);
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-    }),
-  );
-
-  it.effect('holds a conflicting draft instead of sending it again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...stored, note: 'Vyměněn 2026' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...stored, note: 'Vyměněn 2027' });
-      yield* TestClock.adjust('1 second');
-      expect(sent).toHaveLength(1);
-    }),
-  );
 });

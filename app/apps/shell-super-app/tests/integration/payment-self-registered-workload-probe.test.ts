@@ -19,6 +19,7 @@ import {
   makeTenantModuleStateService,
   registerSystemWorkload,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import {
@@ -483,7 +484,10 @@ it.live(
           Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),
           Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
           Layer.succeed(GatewayDelegationExchangeLedger, makeGatewayDelegationExchangeLedger(auth.executor)),
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
           enrolledModuleCredentials([
             {
               appId: paymentApp,
@@ -562,7 +566,12 @@ it.live(
                 environment: { ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks },
                 redemption,
               })
-              .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+              .pipe(
+                Effect.provideService(
+                  ActiveApplicationCompositionService,
+                  makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+                ),
+              );
             const scope = yield* scopeResolver.resolve({
               audience: paymentApp,
               correlationId: 'payment-self-registered-workload',

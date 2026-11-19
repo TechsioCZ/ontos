@@ -51,6 +51,12 @@ const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
 const pricingModule = 'commerce.pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
+// Current-read controls must cross the real start boundary, so each caller waits this long once per
+// scheduled Group. In queue run 44367482839, job 135026610683, one create answered `conflict` instead of
+// `accepted_change` while a second heavy task shared the runner; the largest request then took 5.3s. Whether
+// that create reached the owner after its own start is not proven, so the lead stays at the 15s that every
+// other run met, and a refusal now fails with the owner's native reason instead of a bare status.
+export const internalC14CurrentGroupLeadTime = { seconds: 15 } as const;
 /** One authority-only enrollment: an owner operation the route may use, never an intent. */
 const enrolled = (
   entityKind: 'PRICE' | 'PRICE_GROUP',
@@ -102,11 +108,30 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     assert.isOk(market);
     assert.isOk(symmy);
     assert.isOk(group);
-    const isolated = yield* makeIsolatedNativeDatabaseFixture({
-      compositionSnapshot: snapshot,
-      mode: 'schema-only',
-      purpose: 'implementation-1096-registered-workload-gateway',
-    });
+    const [
+      isolated,
+      [groupArtifacts, symmyArtifacts, workerArtifact, catalogArtifacts, pricingArtifacts, marketArtifacts],
+    ] = yield* Effect.all(
+      [
+        makeIsolatedNativeDatabaseFixture({
+          compositionSnapshot: snapshot,
+          mode: 'schema-only',
+          purpose: 'implementation-1096-registered-workload-gateway',
+        }),
+        Effect.all(
+          [
+            buildProductOwner(group),
+            buildProductOwner(symmy),
+            buildProductWorker(symmy),
+            buildProductOwner(catalog),
+            buildProductOwner(pricing),
+            buildProductOwner(market),
+          ],
+          { concurrency: 3 },
+        ),
+      ],
+      { concurrency: 2 },
+    );
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const tenantId = randomUUID();
     const legalEntityId = randomUUID();
@@ -220,18 +245,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       tenantId,
       writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     });
-    const [groupArtifacts, symmyArtifacts, workerArtifact, catalogArtifacts, pricingArtifacts, marketArtifacts] =
-      yield* Effect.all(
-        [
-          buildProductOwner(group),
-          buildProductOwner(symmy),
-          buildProductWorker(symmy),
-          buildProductOwner(catalog),
-          buildProductOwner(pricing),
-          buildProductOwner(market),
-        ],
-        { concurrency: 3 },
-      );
     // A public price list code is 1 to 80 characters of letters, digits, dot, underscore and hyphen.
     const firstRecordId = 'CZ-wholesale_A.1';
     const secondRecordId = `CZ-wholesale_${'B'.repeat(60)}`;
@@ -320,45 +333,54 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
       ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
     };
-    const groupOwner = yield* startProductOwner({
-      artifacts: groupArtifacts,
-      contract: group,
-      environment,
-      port: groupPort,
-      prefix: '/price-group-catalog-api',
-    });
-    const symmyOwner = yield* startProductOwner({
-      artifacts: symmyArtifacts,
-      contract: symmy,
-      environment,
-      moduleKey: moduleKey.secret,
-      port: symmyPort,
-      prefix: '/symmy-integration-api',
-    });
-    yield* startProductOwner({
-      artifacts: catalogArtifacts,
-      contract: catalog,
-      environment,
-      moduleKey: catalogKey.secret,
-      port: catalogPort,
-      prefix: '/catalog-api',
-    });
-    yield* startProductOwner({
-      artifacts: marketArtifacts,
-      contract: market,
-      environment,
-      moduleKey: marketKey.secret,
-      port: marketPort,
-      prefix: '/commerce-market-catalog-api',
-    });
-    const pricingOwner = yield* startProductOwner({
-      artifacts: pricingArtifacts,
-      contract: pricing,
-      environment,
-      moduleKey: pricingKey.secret,
-      port: pricingPort,
-      prefix: '/pricing-api',
-    });
+    // Receiver readiness binds the local HTTP listener; no peer operation runs until a request arrives.
+    // Every calling owner's module key is already provisioned above and goes on its own private channel.
+    // Acquire in the parent scope so every receiver closes before Shell and the database.
+    const { groupOwner, pricingOwner, symmyOwner } = yield* Effect.all(
+      {
+        catalogOwner: startProductOwner({
+          artifacts: catalogArtifacts,
+          contract: catalog,
+          environment,
+          moduleKey: catalogKey.secret,
+          port: catalogPort,
+          prefix: '/catalog-api',
+        }),
+        groupOwner: startProductOwner({
+          artifacts: groupArtifacts,
+          contract: group,
+          environment,
+          port: groupPort,
+          prefix: '/price-group-catalog-api',
+        }),
+        marketOwner: startProductOwner({
+          artifacts: marketArtifacts,
+          contract: market,
+          environment,
+          moduleKey: marketKey.secret,
+          port: marketPort,
+          prefix: '/commerce-market-catalog-api',
+        }),
+        pricingOwner: startProductOwner({
+          artifacts: pricingArtifacts,
+          contract: pricing,
+          environment,
+          moduleKey: pricingKey.secret,
+          port: pricingPort,
+          prefix: '/pricing-api',
+        }),
+        symmyOwner: startProductOwner({
+          artifacts: symmyArtifacts,
+          contract: symmy,
+          environment,
+          moduleKey: moduleKey.secret,
+          port: symmyPort,
+          prefix: '/symmy-integration-api',
+        }),
+      },
+      { concurrency: 3 },
+    );
+    // The worker dispatches to these HTTP receivers; acquire it last so it also stops first.
     const worker = yield* startProductWorker(
       workerArtifact,
       { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES' },

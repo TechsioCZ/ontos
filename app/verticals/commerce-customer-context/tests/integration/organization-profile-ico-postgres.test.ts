@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
 import { changeOrganizationCustomerProfileIcoRequestIdentity } from '../../shared/domain/native-action-request-identity.ts';
-import { ContextAccessLive, ReadRuntime, runAction } from '@app/core-runtime';
+import { ContextAccessLive, ReadRuntime, runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -95,7 +95,7 @@ it.live(
             additionalLegalEntity: 'same-tenant',
             adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
             allowedAudiences: ['commerce-customer-context'],
-            applicationComposition: { load: Effect.succeed(snapshot) },
+            applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
             authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: snapshot.composition.revision,
             expectedDeployment: ultramodernApiMarker,

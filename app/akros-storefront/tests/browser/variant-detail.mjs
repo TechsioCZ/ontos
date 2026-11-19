@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 const base = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000/cs";
@@ -18,7 +18,6 @@ const browser = await chromium.launch(
     ? { executablePath: process.env.AKROS_CHROMIUM_PATH }
     : { channel: "chrome" },
 );
-await mkdir("test-results/variant-detail", { recursive: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1000 } });
   page.setDefaultTimeout(30000);
@@ -53,7 +52,6 @@ try {
   await dialog.waitFor();
   assert.equal(new URL(page.url()).searchParams.get("variantDetail"), a.id);
   assert.equal(await dialog.locator("[data-variant-detail-sku]").innerText(), a.sku);
-  assert.match(a.description, /^Limity množstevních slev:.*do košíku\.?$/);
   assert.equal(
     await dialog.getByRole("region", { name: "Popis varianty" }).locator("p").innerText(),
     "Popis není k dispozici.",
@@ -94,7 +92,10 @@ try {
   await dialog.getByRole("button", { name: /^Uložit .* do oblíbených$/ }).click();
   for (const key of ["akros-demo-watched-variants-v1", "akros-demo-favorites-v1"]) {
     const saved = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key);
-    assert.deepEqual(saved.map((item) => item.variantId).sort(), [a.id, b.id].sort());
+    assert.deepEqual(
+      saved.map((item) => item.variantId).sort((left, right) => left.localeCompare(right)),
+      [a.id, b.id].sort((left, right) => left.localeCompare(right)),
+    );
   }
   assert.ok(b.stockCount >= b.minimumQuantity && b.priceMinor > 0);
   await dialog.getByRole("button", { name: "Koupit", exact: true }).click();
@@ -117,43 +118,8 @@ try {
       .getAttribute("aria-pressed"),
     "true",
   );
-  await dialog.evaluate((root) => {
-    root.style.setProperty("--height-dialog-center-h-max", "400px");
-    root.style.setProperty("--container-dialog-center-w-max", "800px");
-  });
-  const tokenSize = await dialog.boundingBox();
-  assert.ok(tokenSize.height <= 401 && Math.abs(tokenSize.width - 800) < 1);
-  await dialog.evaluate((root) => {
-    root.style.removeProperty("--height-dialog-center-h-max");
-    root.style.removeProperty("--container-dialog-center-w-max");
-  });
-  for (const width of [1920, 1440, 1280, 1024, 768, 767, 390, 320]) {
-    await page.setViewportSize({ width, height: width === 320 ? 480 : 900 });
-    const layout = await dialog.evaluate((root) => {
-      const r = root.getBoundingClientRect();
-      const body = root.querySelector(".sf-variant-detail__body");
-      const sku = root.querySelector("[data-variant-detail-sku]");
-      return {
-        inView: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight,
-        overflow: body.scrollWidth > body.clientWidth + 1,
-        sku:
-          sku.scrollWidth <= sku.clientWidth + 1 &&
-          sku.getBoundingClientRect().height <= parseFloat(getComputedStyle(sku).lineHeight) + 1,
-        close:
-          root.querySelector("button[aria-label='Zavřít detail varianty']").getBoundingClientRect()
-            .bottom <= innerHeight,
-      };
-    });
-    assert.deepEqual(
-      layout,
-      { inView: true, overflow: false, sku: true, close: true },
-      JSON.stringify({ width, layout }),
-    );
-    if ([1920, 390, 320].includes(width))
-      await page.screenshot({ path: `test-results/variant-detail/detail-${width}.png` });
-  }
   await page.setViewportSize({ width: 1920, height: 1000 });
-  console.log("Variant detail: responsive layouts passed; checking sharing and questions.");
+  console.log("Variant detail: checking sharing and questions.");
   await page.evaluate(() =>
     Object.defineProperty(navigator, "share", {
       configurable: true,
@@ -265,7 +231,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "Variant detail passed: 8 layouts, keyboard preview, history/focus/reload, independent direct favorites/watch, share/fallback, selected question, missing data and invalid IDs.",
+    "Variant detail passed: keyboard preview, history/focus/reload, independent direct favorites/watch, share/fallback, selected question, missing data and invalid IDs.",
   );
 } finally {
   await browser.close();

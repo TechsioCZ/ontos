@@ -1,10 +1,10 @@
-import { Effect, Predicate, Redacted } from 'effect';
-import { afterAll, expect, it, rs } from 'effect-rstest';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Path, Predicate, Redacted, Schema } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import { expect, it } from 'effect-rstest';
 
 import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import type { LoadDatabaseConfigOptions, LoadDatabaseConnectionPairOptions } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
-import { environmentTestAccessTarget } from '../../src/testing/tenant-access.ts';
 import type { TestTenantAccessTarget } from '../../src/testing/tenant-access.ts';
 
 /** No dotenv file, so each test sees only the environment it passes. */
@@ -18,75 +18,79 @@ const fixtureTarget: TestTenantAccessTarget = {
   writerConnectionString: Redacted.make(runtimeUrl),
 };
 
-// Only the environment boundary is substituted; the real config decoders and identity checks run.
-rs.mock('../../src/db/config.ts', () => {
-  const actual = rs.requireActual<{
-    loadDatabaseConfig: typeof loadDatabaseConfig;
-    loadDatabaseConnectionPair: typeof loadDatabaseConnectionPair;
-  }>('../../src/db/config.ts');
-  return {
-    ...actual,
-    loadDatabaseConfig: (options: LoadDatabaseConfigOptions) =>
-      actual.loadDatabaseConfig({
-        ...options,
-        environment: options.environment ?? { DATABASE_URL: runtimeUrl },
-        envPath: missingEnvPath,
-      }),
-    loadDatabaseConnectionPair: (options?: LoadDatabaseConnectionPairOptions) =>
-      actual.loadDatabaseConnectionPair({
-        ...options,
-        environment: options?.environment ?? { DATABASE_URL: runtimeUrl },
-        envPath: missingEnvPath,
-      }),
-  };
-});
-rs.mock('../../src/permissions/config.ts', () => ({
-  ...rs.requireActual('../../src/permissions/config.ts'),
-  loadSpiceDbConfig: () => Effect.succeed(fixtureTarget.spiceDb),
-}));
+const PreSharedKeySchema = Schema.String.pipe(Schema.brand('TestSpiceDbPreSharedKey'));
 
-afterAll(() => {
-  rs.doUnmock('../../src/db/config.ts');
-  rs.doUnmock('../../src/permissions/config.ts');
-  rs.resetModules();
-});
-
-it('a fixture target carries a writer credential and no administrative one', () => {
-  const hasAdminKey: 'adminConnectionString' extends keyof TestTenantAccessTarget ? true : false = false;
-  expect(hasAdminKey).toBe(false);
-  expect(Redacted.value(fixtureTarget.writerConnectionString)).toBe(runtimeUrl);
-});
-
-it.effect('the environment target selects the shared runtime credential and never the admin login', () =>
-  Effect.gen(function* writerCredentialBoundary() {
-    const target = yield* environmentTestAccessTarget;
-    expect(Redacted.value(target.writerConnectionString)).toBe(runtimeUrl);
-    expect(target.spiceDb).toEqual(fixtureTarget.spiceDb);
-    // The shared runtime login the target now selects needs no administrative configuration.
-    const writer = yield* loadDatabaseConfig({
-      environment: { DATABASE_URL: runtimeUrl },
-      envPath: missingEnvPath,
-      identity: SHARED_RUNTIME_IDENTITY,
-    });
-    expect(writer.connectionString).toBe(runtimeUrl);
-    expect(writer.expectedRole).toBe('ontos_runtime');
-
-    // The administrative pair the target used to require is no longer consulted.
-    const withoutAdmin = yield* Effect.flip(
-      loadDatabaseConnectionPair({ environment: { DATABASE_URL: runtimeUrl }, envPath: missingEnvPath }),
-    );
-    expect(Predicate.isTagged(withoutAdmin, 'DatabaseConfigError')).toBe(true);
-    expect(withoutAdmin.reason).toContain('DATABASE_ADMIN_URL');
-
-    // An administrative login cannot stand in for the writer credential.
-    const adminAsWriter = yield* Effect.flip(
-      loadDatabaseConfig({
-        environment: { DATABASE_URL: adminUrl },
-        envPath: missingEnvPath,
-        identity: SHARED_RUNTIME_IDENTITY,
-      }),
-    );
-    expect(Predicate.isTagged(adminAsWriter, 'DatabaseConfigError')).toBe(true);
-    expect(adminAsWriter.reason).toBe('DATABASE_URL must connect as the ontos_runtime role');
+const TargetOutput = Schema.fromJsonString(
+  Schema.Struct({
+    spiceDb: Schema.Struct({ endpoint: Schema.String, preSharedKey: PreSharedKeySchema }),
+    writerConnectionString: Schema.RedactedFromValue(Schema.String),
   }),
 );
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('tenant access target', (suite) => {
+  suite.effect('the environment target selects the shared runtime credential and never the admin login', () =>
+    Effect.gen(function* writerCredentialBoundary() {
+      const path = yield* Path.Path;
+      const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // A fresh process supplies the real environment boundary without changing this test worker's globals.
+      const output = yield* spawner.string(
+        ChildProcess.make(
+          process.execPath,
+          [
+            '--experimental-strip-types',
+            '--input-type=module',
+            '--eval',
+            `import { Effect, Redacted } from 'effect';
+import { environmentTestAccessTarget } from './src/testing/tenant-access.ts';
+const target = await Effect.runPromise(environmentTestAccessTarget);
+console.log(JSON.stringify({
+  spiceDb: target.spiceDb,
+  writerConnectionString: Redacted.value(target.writerConnectionString),
+}));`,
+          ],
+          {
+            cwd: root,
+            env: {
+              APP_ENV_PATH: missingEnvPath,
+              DATABASE_URL: runtimeUrl,
+              SPICEDB_ENDPOINT: fixtureTarget.spiceDb.endpoint,
+              SPICEDB_PRESHARED_KEY: fixtureTarget.spiceDb.preSharedKey,
+            },
+            extendEnv: false,
+            stderr: 'inherit',
+          },
+        ),
+      );
+      const target = yield* Schema.decodeUnknownEffect(TargetOutput)(output);
+      expect(Redacted.value(target.writerConnectionString)).toBe(runtimeUrl);
+      expect(target.spiceDb).toEqual(fixtureTarget.spiceDb);
+      // The shared runtime login the target now selects needs no administrative configuration.
+      const writer = yield* loadDatabaseConfig({
+        environment: { DATABASE_URL: runtimeUrl },
+        envPath: missingEnvPath,
+        identity: SHARED_RUNTIME_IDENTITY,
+      });
+      expect(writer.connectionString).toBe(runtimeUrl);
+      expect(writer.expectedRole).toBe('ontos_runtime');
+
+      // The administrative pair the target used to require is no longer consulted.
+      const withoutAdmin = yield* Effect.flip(
+        loadDatabaseConnectionPair({ environment: { DATABASE_URL: runtimeUrl }, envPath: missingEnvPath }),
+      );
+      expect(Predicate.isTagged(withoutAdmin, 'DatabaseConfigError')).toBe(true);
+      expect(withoutAdmin.reason).toContain('DATABASE_ADMIN_URL');
+
+      // An administrative login cannot stand in for the writer credential.
+      const adminAsWriter = yield* Effect.flip(
+        loadDatabaseConfig({
+          environment: { DATABASE_URL: adminUrl },
+          envPath: missingEnvPath,
+          identity: SHARED_RUNTIME_IDENTITY,
+        }),
+      );
+      expect(Predicate.isTagged(adminAsWriter, 'DatabaseConfigError')).toBe(true);
+      expect(adminAsWriter.reason).toBe('DATABASE_URL must connect as the ontos_runtime role');
+    }),
+  );
+});

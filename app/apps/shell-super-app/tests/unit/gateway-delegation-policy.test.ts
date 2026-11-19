@@ -245,7 +245,7 @@ it.effect('copies the calls of the attested calling contract that its receivers 
   }),
 );
 
-it.effect('drops a call its receiver does not declare: workload, declaration, version, scope, receiver', () =>
+it.effect('drops a call its receiver does not declare: workload, declaration, version, operation, scope', () =>
   Effect.gen(function* droppedCalls() {
     expect(yield* keptOf([privacyReceiver(declaredPrivacy)])).toEqual([sourceProcessing.entrypointKey]);
     expect(
@@ -257,6 +257,11 @@ it.effect('drops a call its receiver does not declare: workload, declaration, ve
       yield* keptOf([partyReceiver({ ...declaredAction, accessDeclaration: { key: 'party.registry.party.update' } })]),
     ).toEqual([]);
     expect(yield* keptOf([partyReceiver({ ...declaredAction, schemaVersion: '2' })])).toEqual([]);
+    expect(
+      yield* keptOf([
+        partyReceiver({ ...declaredAction, entrypoint: { entrypointKey: 'party.registry.update-party' } }),
+      ]),
+    ).toEqual([]);
     expect(yield* keptOf([partyReceiver(undeclaredAction)])).toEqual([]);
     // The Shell runs an action call only for the action's own workloads, never for an actor subject workload alone.
     expect(yield* keptOf([partyReceiver(subjectOnlyAction)])).toEqual([]);

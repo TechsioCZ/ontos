@@ -2,7 +2,7 @@ import type { OrderFinalizationCall } from './order-module-call.ts';
 import { delegationSubject } from './order-module-call.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   OrderServiceApprovalEvidenceRequestSchema,
@@ -280,10 +280,7 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
       if (Option.isNone(configured)) {
         return yield* unavailable();
       }
-      const active = yield* composition.load.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.mapError(unavailable),
-      );
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
       const assertion = yield* acquireDelegatedGatewayContext(
         {
           audience: 'commerce-customer-context',

@@ -21,7 +21,10 @@ import {
   RoleIdSchema,
   RoleRevisionIdSchema,
 } from '@app/core-runtime/access/ids';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import {
   makeModuleContractFixture,
   makePublishedApplicationCompositionSnapshotFixture,
@@ -106,7 +109,12 @@ export const pageCarrierCatalog = (moduleIds: readonly string[], selectors: read
     const installed = yield* installedModuleCatalog.pipe(
       Effect.provide(
         ShellInstalledModuleCatalogLive.pipe(
-          Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) })),
+          Layer.provide(
+            Layer.succeed(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
+          ),
         ),
       ),
     );
@@ -277,12 +285,15 @@ export const subjectInspectionFixture = (input: {
   const inspectionLayer = SubjectAccessInspectionLive.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(ActiveApplicationCompositionService, {
-          load: Effect.sync(() => {
-            compositionLoads += 1;
-            return input.loadedSnapshot?.(compositionLoads) ?? input.snapshot;
-          }),
-        }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(
+            Effect.sync(() => {
+              compositionLoads += 1;
+              return input.loadedSnapshot?.(compositionLoads) ?? input.snapshot;
+            }),
+          ),
+        ),
         Layer.succeed(AccessIntent, intent),
         Layer.succeed(AccessPrincipalKindSource, {
           readKind: ({ principalId, scope, tenantId }) => {

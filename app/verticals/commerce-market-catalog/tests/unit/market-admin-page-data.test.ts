@@ -1,18 +1,30 @@
+// @rstest-environment happy-dom
+// The market screens' writes to Merchandise: narrow Market/Catalog payloads under one fresh correlation that is also
+// the idempotency key, a committed answer or a 202 proposal receipt passed back as Merchandise sent it, and malformed
+// input refused before anything is sent. The generated Merchandise client runs for real; the Shell's gateway issuer
+// and Merchandise's Action endpoints answer in process through their HttpApi contracts.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import type { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
-import { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
-import { Effect, Schema } from 'effect';
-import { beforeEach, expect, it, rstest } from 'effect-rstest';
+import {
+  ManageCatalogActionApi,
+  ManageCatalogActionInvalidProblemSchema,
+  ManageCatalogActionSchemaErrorMiddleware,
+  ManageCatalogPayloadSchema,
+} from '@app/merchandise/apis/manage-catalog-action';
+import { ManageMarketsActionApi, ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
+import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpApiMiddleware, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Schema } from 'effect';
+import { beforeEach, expect, it } from 'effect-rstest';
 
+import { manageMarketsActionSchemaErrorLive } from '../../../merchandise/api/manage-markets-action-problems.ts';
 import { merchandiseCommand, saveStorefrontCatalog } from '../../src/market-admin/page-data.ts';
-import { ManageCatalogPayloadSchema } from '@app/merchandise/apis/manage-catalog-action';
-import type { executeManageCatalog } from '@app/merchandise/apis/manage-catalog-action/client';
 import type { MarketCommandInput } from '../../src/market-admin/page-data.ts';
-
-const manageMarkets = rstest.hoisted(() => rstest.fn<typeof executeManageMarkets>());
-rstest.mock('@app/merchandise/apis/manage-markets-action/client', () => ({ executeManageMarkets: manageMarkets }));
-const manageCatalog = rstest.hoisted(() => rstest.fn<typeof executeManageCatalog>());
-rstest.mock('@app/merchandise/apis/manage-catalog-action/client', () => ({ executeManageCatalog: manageCatalog }));
 
 const command: MarketCommandInput = {
   _tag: 'ConfigureMarket',
@@ -25,23 +37,99 @@ const command: MarketCommandInput = {
   roundingMinor: 100,
 };
 /** A committed ManageMarkets answer (the client's non-proposal success). */
-const committed: Effect.Success<ReturnType<typeof executeManageMarkets>> = {
+const committed = Schema.decodeUnknownSync(ApplyCommandResultSchema)({
   entityIds: [],
   marketRevision: 4,
   revision: 17,
-};
-
-beforeEach(() => {
-  manageMarkets.mockReset();
-  manageCatalog.mockReset();
+});
+const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2030-01-01T00:00:00.000Z',
+  proposalId: '22222222-2222-4222-8222-222222222222',
 });
 
-it.effect('saves one e-shop preference with catalogue authority, revision and idempotency', () =>
+/** One ManageMarkets request as Merchandise received it. */
+interface Received {
+  readonly correlation: string | undefined;
+  readonly idempotencyKey: string | undefined;
+  readonly payload: typeof ManageMarketsPayloadSchema.Encoded;
+}
+const received: Received[] = [];
+interface CatalogReceived {
+  readonly correlation: string | undefined;
+  readonly idempotencyKey: string | undefined;
+  readonly payload: typeof ManageCatalogPayloadSchema.Encoded;
+}
+const catalogReceived: CatalogReceived[] = [];
+/** What Merchandise answers the next Action request with; each test scripts it. */
+let answer: typeof committed | typeof proposal = committed;
+
+const OwnerApi = ManageMarketsActionApi.prefix('/merchandise-api');
+const CatalogApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'manageMarketsAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        HttpServerRequest.HttpServerRequest.pipe(
+          Effect.map(({ headers }) => {
+            received.push({
+              correlation: headers['x-correlation-id'],
+              idempotencyKey: headers['idempotency-key'],
+              payload,
+            });
+            return answer;
+          }),
+        ),
+      ),
+    ).pipe(Layer.provide(manageMarketsActionSchemaErrorLive)),
+  ),
+  serveApi(
+    CatalogApi,
+    HttpApiBuilder.group(CatalogApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        HttpServerRequest.HttpServerRequest.pipe(
+          Effect.map(({ headers }) => {
+            catalogReceived.push({
+              correlation: headers['x-correlation-id'],
+              idempotencyKey: headers['idempotency-key'],
+              payload,
+            });
+            return answer;
+          }),
+        ),
+      ),
+    ).pipe(
+      Layer.provide(
+        HttpApiMiddleware.layerSchemaErrorTransform(ManageCatalogActionSchemaErrorMiddleware, () =>
+          Effect.fail(
+            ManageCatalogActionInvalidProblemSchema.make({
+              detail: 'The test endpoint received an invalid request.',
+              status: 400,
+              title: 'Invalid request',
+              type: 'https://ontos.dev/problems/action-invalid',
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+beforeEach(() => {
+  received.length = 0;
+  catalogReceived.length = 0;
+  answer = committed;
+});
+
+it.live('saves one e-shop preference with catalogue authority, revision and idempotency', () =>
   Effect.gen(function* storefrontCatalogSetting() {
-    manageCatalog.mockReturnValue(Effect.succeed(committed));
+    yield* pinTestDocument;
     expect(yield* saveStorefrontCatalog('akros-storefront', false, 17)).toEqual({ ok: true, value: committed });
-    const [payload, correlation, options] = yield* Effect.fromNullishOr(manageCatalog.mock.calls[0]);
-    expect(payload).toEqual(
+    expect(catalogReceived).toHaveLength(1);
+    const [request] = catalogReceived;
+    expect(Schema.decodeUnknownSync(ManageCatalogPayloadSchema)(request?.payload)).toEqual(
       Schema.decodeUnknownSync(ManageCatalogPayloadSchema)({
         command: {
           _tag: 'ConfigureStorefrontCatalog',
@@ -51,59 +139,57 @@ it.effect('saves one e-shop preference with catalogue authority, revision and id
         expectedRevision: 17,
       }),
     );
-    expect(options).toEqual({ idempotencyKey: correlation });
-    expect(manageMarkets).not.toHaveBeenCalled();
-  }),
+    expect(request?.correlation).toMatch(/^commerce-market-catalog:/u);
+    expect(request?.idempotencyKey).toBe(request?.correlation);
+    expect(received).toEqual([]);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('retains proposal receipts and rejects malformed storefront ids without a write', () =>
+it.live('retains proposal receipts and rejects malformed storefront ids without a write', () =>
   Effect.gen(function* storefrontCatalogProposal() {
-    const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
-      _tag: 'ActionProposalAccepted',
-      expiresAt: '2030-01-01T00:00:00.000Z',
-      proposalId: '22222222-2222-4222-8222-222222222222',
-    });
-    manageCatalog.mockReturnValue(Effect.succeed(proposal));
+    yield* pinTestDocument;
+    answer = proposal;
     expect(yield* saveStorefrontCatalog('akros-storefront', true, 17)).toEqual({ ok: true, value: proposal });
-    manageCatalog.mockClear();
+    expect(catalogReceived).toHaveLength(1);
+    catalogReceived.length = 0;
     expect(yield* saveStorefrontCatalog('../invalid', true, 17)).toEqual({ ok: false, reason: 'invalid' });
-    expect(manageCatalog).not.toHaveBeenCalled();
-  }),
+    expect(catalogReceived).toEqual([]);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('uses the narrow ManageMarkets payload and one fresh correlation/idempotency identity', () =>
+it.live('uses the narrow ManageMarkets payload and one fresh correlation/idempotency identity', () =>
   Effect.gen(function* currentMarketCommand() {
-    manageMarkets.mockReturnValue(Effect.succeed(committed));
-    expect(yield* merchandiseCommand(command, 17)).toBe(committed);
-    const [payload, correlation, options] = yield* Effect.fromNullishOr(manageMarkets.mock.calls[0]);
-    expect(payload).toEqual(Schema.decodeUnknownSync(ManageMarketsPayloadSchema)({ command, expectedRevision: 17 }));
-    expect(correlation).toMatch(/^commerce-market-catalog:/u);
-    expect(options).toEqual({ idempotencyKey: correlation });
-    expect(manageMarkets).toHaveBeenCalledTimes(1);
-  }),
+    yield* pinTestDocument;
+    expect(yield* merchandiseCommand(command, 17)).toEqual(committed);
+    const [request] = received;
+    expect(received).toHaveLength(1);
+    expect(Schema.decodeUnknownSync(ManageMarketsPayloadSchema)(request?.payload)).toEqual(
+      Schema.decodeUnknownSync(ManageMarketsPayloadSchema)({ command, expectedRevision: 17 }),
+    );
+    expect(request?.correlation).toMatch(/^commerce-market-catalog:/u);
+    expect(request?.idempotencyKey).toBe(request?.correlation);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('preserves the original successful 202 proposal receipt without inventing a committed revision', () =>
+it.live('preserves the original successful 202 proposal receipt without inventing a committed revision', () =>
   Effect.gen(function* acceptedMarketProposal() {
-    const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
-      _tag: 'ActionProposalAccepted',
-      expiresAt: '2030-01-01T00:00:00.000Z',
-      proposalId: '22222222-2222-4222-8222-222222222222',
-    });
-    manageMarkets.mockReturnValue(Effect.succeed(proposal));
+    yield* pinTestDocument;
+    answer = proposal;
     const result = yield* merchandiseCommand(command, 17);
-    expect(result).toBe(proposal);
+    expect(result).toEqual(proposal);
     expect(Schema.is(ActionProposalAcceptedSchema)(result)).toBe(true);
     expect(result).not.toHaveProperty('entityIds');
     expect(result).not.toHaveProperty('marketRevision');
     expect(result).not.toHaveProperty('revision');
-    expect(manageMarkets).toHaveBeenCalledTimes(1);
-  }),
+    expect(received).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('rejects malformed market input before calling Merchandise', () =>
+it.live('rejects malformed market input before calling Merchandise', () =>
   Effect.gen(function* invalidMarketCommand() {
+    yield* pinTestDocument;
+    // The command settles here, so a request it had sent would already have been received.
     expect(yield* merchandiseCommand({ ...command, marketId: '' }, 17).pipe(Effect.flip)).toBe('invalid');
-    expect(manageMarkets).not.toHaveBeenCalled();
-  }),
+    expect(received).toEqual([]);
+  }).pipe(Effect.provide(network)),
 );

@@ -1,7 +1,13 @@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
 // @rstest-environment node
-import { ContextAccess, ReadRuntime, TenantModuleStateService, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  ContextAccess,
+  ReadRuntime,
+  TenantModuleStateService,
+  TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import type { ContextAccessDecision, ContextAccessService, TenantModuleStateRecord } from '@app/core-runtime';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
@@ -295,7 +301,7 @@ const fixture = Effect.fn('OAuthHostAdmission.fixture')(function* fixture(
   const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
   harness = yield* makeReadTestHarness({
     access: 'allowed',
-    applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+    applicationComposition: makeActiveApplicationCompositionService(makeCompositionSnapshot(catalog.contracts)),
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
     expectedDeployment: catalog.composition.shell.deployment,

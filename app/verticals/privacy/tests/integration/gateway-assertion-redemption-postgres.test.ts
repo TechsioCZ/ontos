@@ -5,6 +5,7 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   loadDatabaseConnectionPair,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
@@ -116,7 +117,10 @@ it.live('rejects a correctly signed wrong-audience assertion without redeeming i
         verifyActionPrincipal(Redacted.make(`Bearer ${bearer}`), { environment, redemption }).pipe(
           Effect.provide(GatewayPrincipalVerifierLive),
           Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
         );
       const failure = yield* verification(token).pipe(Effect.flip);
       expect(Schema.is(ActionPrincipalScopeErrorSchema)(failure)).toBe(true);

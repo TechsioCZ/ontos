@@ -6,6 +6,7 @@ import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 
@@ -49,7 +50,9 @@ it.layer(NodeHttpServer.layerTest, { excludeTestServices: true })('purchase fixt
         Layer.provide(sourceConfiguration),
       );
       const compositionContext = yield* Layer.build(compositionLayer);
-      const loaded = yield* Context.get(compositionContext, ActiveApplicationCompositionService).load;
+      const loaded = yield* loadActiveApplicationComposition(
+        Context.get(compositionContext, ActiveApplicationCompositionService),
+      );
       expect(loaded.composition.revision).toBe(snapshot.composition.revision);
       const catalogResponse = yield* Effect.promise(() =>
         fetch(`http://127.0.0.1:${sourcePort}/reads/current-payment-terms`, {

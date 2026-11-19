@@ -817,7 +817,7 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
     return yield* Option.match(violations, {
       onNone: () => fenceRefusalError(write.failure),
       onSome: (failures) =>
-        projectionWriteViolation('access_projection_write_unavailable', failures.map(violationText)),
+        projectionWriteViolation('access_projection_write_unavailable', failures.map(violationText), failures[0]),
     });
   }
   const written = Option.match(yield* Ref.get(report), {

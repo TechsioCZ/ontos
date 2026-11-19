@@ -114,6 +114,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-effect-run-in-tests': 'error',
   'effect-native/no-environment-record-type': 'error',
   'effect-native/no-failure-discarding-error-callback': 'error',
+  'effect-native/no-focused-tests': 'error',
+  'effect-native/no-global-test-replacements': 'error',
   'effect-native/no-hand-built-http-server-in-tests': 'error',
   'effect-native/no-hand-built-problem-details': 'error',
   'effect-native/no-hand-parsed-environment-value': 'error',
@@ -200,6 +202,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-unbranded-identifier-schema': 'error',
   'effect-native/no-unjustified-file-wide-lint-suppression': 'error',
   'effect-native/no-unmanaged-mutable-state': 'error',
+  'effect-native/no-unsignaled-spy-poll': 'error',
   'effect-native/no-unredacted-secret-field': 'error',
   'effect-native/no-wide-factory-signature': 'error',
   'effect-native/prefer-effect-fn-for-operations': 'error',
@@ -273,7 +276,7 @@ export default defineConfig({
       },
     },
     {
-      files: ['**/*.{test,spec}.{ts,tsx,mts}'],
+      files: ['**/*.{test,spec}.{ts,tsx,mts}', '**/tests/support/**/*.{ts,tsx}'],
       rules: {
         // Sonar's hard-coded runner APIs do not recognize it.effect/it.live/it.layer.
         'sonarjs/no-empty-test-file': 'off',
@@ -1428,6 +1431,34 @@ export default defineConfig({
         'typescript/strict-void-return': 'off',
       },
     },
+    // Test-integrity baseline, recorded at the merge of main #1507. Main's rules arrived with main's own tests
+    // already rewritten; the demo-only tests were rewritten after it. These few still replace a module or a global,
+    // each for a reason its test names. The lists only shrink: no test is added to one.
+    {
+      // Demo-only tests that replace an imported module.
+      files: [
+        'apps/shell-super-app/tests/unit/agent-entities-replay.test.ts',
+        'apps/shell-super-app/tests/unit/auth-document-context.test.ts',
+        'apps/shell-super-app/tests/unit/native-protocol-response-bytes.test.ts',
+        'apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts',
+        'apps/shell-super-app/tests/unit/routes/browser-request-cache-reauthorization.test.ts',
+        'verticals/crm-activities/tests/unit/activity-form-save.test.ts',
+      ],
+      rules: { 'anti-slop/no-module-mocking': 'off' },
+    },
+    {
+      // Demo-only tests that replace a browser or process global.
+      files: [
+        'apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts',
+        'apps/shell-super-app/tests/unit/routes/browser-request-cache-reauthorization.test.ts',
+      ],
+      rules: { 'effect-native/no-global-test-replacements': 'off' },
+    },
+    {
+      // Demo-only tests that wait by polling a spy.
+      files: ['apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts'],
+      rules: { 'effect-native/no-unsignaled-spy-poll': 'off' },
+    },
     // Demo exceptions recorded at the main→demo merge. Each block names the approved exception or the
     // fence whose behaviour a rewrite would change. The code stays as reviewed; only the named rules are off.
     {
@@ -1540,6 +1571,7 @@ export default defineConfig({
   rules: {
     '@nkzw/require-use-effect-arguments': 'error',
     'effect-native/no-instanceof': 'error',
+    'eslint/no-useless-assignment': 'error',
     // Ultracite core already enforces these policies through Unicorn and Promise rules.
     'github/array-foreach': 'off',
     'github/no-then': 'off',

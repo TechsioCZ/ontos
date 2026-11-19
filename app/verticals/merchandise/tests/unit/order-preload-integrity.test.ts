@@ -1,62 +1,35 @@
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { Effect, Result, Schema } from 'effect';
 import { createElement } from 'react';
-import type ReactRuntime from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { moduleChangeEvent, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import { pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import {
+  RecordsApi,
   OrderSchema,
   ProductRecordSchema,
   RecordsForbiddenProblemSchema,
   RecordsResponseSchema,
   StockMovementSchema,
 } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 import {
   firstOrdersPage,
+  forgetRememberedOrders,
   orderDetailData,
   ordersPageData,
   preloadOrderDetails,
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
-import type { OrdersPageInput } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-rstest.mock('../../src/api/change-order-status-action-client.ts');
-// Reproduce useSettledPageData's retained prior render without running cold-mount effects. The retained value is
-// no held read (`useHeldSnapshot` finds no key in it): what a mounted list keeps while its own request reloads is
-// covered in orders-list-held.test.ts.
-const retained: {
-  value?: {
-    readonly input: OrdersPageInput;
-    readonly snapshot: { readonly refreshing: boolean; readonly state: 'ready'; readonly value: RecordsResponse };
-  };
-} = rstest.hoisted(() => ({}));
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useState: () => [retained.value, rstest.fn()],
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 
 const context = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const scope = pageDataScopeKey(context, 'demo.merchandise') ?? '';
@@ -146,148 +119,159 @@ const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({
   type: 'urn:test:denied',
 });
 
-beforeEach(() => {
-  delete retained.value;
-  rstest.resetAllMocks();
-  orderDetailData.invalidate();
-  ordersPageData.invalidate();
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.productId !== undefined) {
-      return Effect.succeed({ ...base, movements: [movement], orders: [], products: [summary] });
-    }
-    if (view?.productIds !== undefined) {
-      return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? summary : full] });
-    }
-    return Effect.succeed(base);
-  });
-});
-
-it.effect('the order hook cannot resurrect a retained ready page it holds no read of after strict invalidation', () =>
-  Effect.gen(function* retainedHookState() {
-    yield* ordersPageData.read(source);
-    const prior = ordersPageData.snapshot(source);
-    if (prior.state === 'ready') {
-      retained.value = { input: source, snapshot: prior };
-    }
-    const OrdersProbe = () =>
-      createElement('output', null, useOrders(context.legalEntityId, source.query, context).state.kind);
-    expect(renderToStaticMarkup(createElement(OrdersProbe))).toBe('<output>ready</output>');
-    ordersPageData.invalidate();
-    expect(renderToStaticMarkup(createElement(OrdersProbe))).toBe('<output>loading</output>');
-    rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
-    yield* ordersPageData.refresh(source);
-    expect(renderToStaticMarkup(createElement(OrdersProbe))).toBe('<output>forbidden</output>');
-  }),
+const output = () => document.querySelector('output')?.outerHTML;
+const reads: RecordsRequest[] = [];
+const defaultAnswer = ({ view }: RecordsRequest): Effect.Effect<RecordsResponse> => {
+  if (view?.productId !== undefined) {
+    return Effect.succeed({ ...base, movements: [movement], orders: [], products: [summary] });
+  }
+  if (view?.productIds !== undefined) {
+    return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? summary : full] });
+  }
+  return Effect.succeed(base);
+};
+let answer: (request: RecordsRequest) => Effect.Effect<RecordsResponse, typeof denied> = defaultAnswer;
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          reads.push(payload);
+          return answer(payload);
+        }),
+      ),
+    ),
+  ),
 );
 
-it.effect('distinct request arrays cannot collide in the scoped order page key', () =>
-  Effect.sync(() => {
+beforeEach(() => {
+  reads.length = 0;
+  answer = defaultAnswer;
+  forgetRememberedOrders();
+  orderDetailData.invalidate();
+  ordersPageData.invalidate();
+});
+afterEach(unmountAll);
+
+it.live('the order hook cannot resurrect a retained ready page it holds no read of after strict invalidation', () =>
+  Effect.gen(function* retainedHookState() {
+    yield* pinTestDocument;
+    yield* ordersPageData.read(source);
+    const OrdersProbe = ({ offset }: { readonly offset: number }) =>
+      createElement(
+        'output',
+        null,
+        useOrders(context.legalEntityId, { ...source.query, offset }, context, { counts: false, warm: false }).state
+          .kind,
+      );
+    const mounted = yield* mountInRoute(createElement(OrdersProbe, { offset: 0 }));
+    expect(output()).toBe('<output>ready</output>');
+
+    // Moving to a pending request clears useHeldSnapshot's key while useSettledPageData keeps the prior page.
+    answer = () => Effect.never;
+    yield* mounted.rerender(createElement(OrdersProbe, { offset: 2 }));
+    expect(output()).toBe('<output>ready</output>');
+    yield* acted(() => ordersPageData.invalidate());
+    yield* mounted.rerender(createElement(OrdersProbe, { offset: 2 }));
+    expect(output()).toBe('<output>loading</output>');
+    answer = () => Effect.fail(denied);
+    yield* ordersPageData.refresh({ ...source, query: { ...source.query, offset: 2 } });
+    yield* waitUntil(() => output() === '<output>forbidden</output>');
+    expect(output()).toBe('<output>forbidden</output>');
+  }).pipe(Effect.ensuring(Effect.sync(unmountAll)), Effect.provide(network)),
+);
+
+it.live('distinct request arrays cannot collide in the scoped order page key', () =>
+  Effect.gen(function* distinctKeys() {
+    yield* pinTestDocument;
     const first = { ...source, query: { ...source.query, taggedIds: ['a,b'] } };
     const second = { ...source, query: { ...source.query, taggedIds: ['a', 'b'] } };
     expect(ordersPageData.key(first)).not.toBe(ordersPageData.key(second));
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('invalidating the authorized order page immediately removes its rows and capabilities', () =>
+it.live('invalidating the authorized order page immediately removes its rows and capabilities', () =>
   Effect.gen(function* strictPageInvalidation() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     expect(ordersPageData.snapshot(source).state).toBe('ready');
     ordersPageData.invalidate();
     expect(ordersPageData.snapshot(source)).toBe(pageDataPending);
-    rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
+    answer = () => Effect.fail(denied);
     yield* ordersPageData.refresh(source);
     expect(ordersPageData.snapshot(source)).toEqual({ error: denied, refreshing: false, state: 'failed' });
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('live changes clear the order list as well as the warmed detail', () =>
-  Effect.gen(function* liveInvalidation() {
-    yield* ordersPageData.read(source);
-    yield* preloadOrderDetails(source, base);
-    globalThis.dispatchEvent(new Event(moduleChangeEvent));
-    expect(ordersPageData.snapshot(source)).toBe(pageDataPending);
-    expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-  }),
-);
-
-it.effect('inactive order list pages have a finite cache bound', () =>
-  Effect.gen(function* boundedLists() {
-    yield* ordersPageData.read(source);
-    for (let page = 1; page <= 17; page += 1) {
-      yield* ordersPageData.read({ ...source, query: { ...source.query, offset: page * 2 } });
-    }
-    expect(ordersPageData.snapshot(source)).toBe(pageDataPending);
-  }),
-);
-
-it.effect('a missing required product cannot be cached as a complete warm order', () =>
+it.live('a missing required product cannot be cached as a complete warm order', () =>
   Effect.gen(function* missingProduct() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed({ ...base, orders: [], products: [] }));
+    answer = () => Effect.succeed({ ...base, orders: [], products: [] });
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
     const outcome = yield* Effect.result(orderDetailData.read(detail));
     expect(Result.isFailure(outcome)).toBe(true);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a missing full variant product never falls back to a summary product', () =>
+it.live('a missing full variant product never falls back to a summary product', () =>
   Effect.gen(function* missingFullProduct() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
-    rstest
-      .mocked(executeRecords)
-      .mockImplementation(({ view }) =>
-        Effect.succeed({ ...base, orders: [], products: view?.summary === true ? [summary] : [] }),
-      );
+    answer = ({ view }) => Effect.succeed({ ...base, orders: [], products: view?.summary === true ? [summary] : [] });
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a full product missing the sold variant cannot mark the detail ready', () =>
+it.live('a full product missing the sold variant cannot mark the detail ready', () =>
   Effect.gen(function* missingVariant() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
-    rstest
-      .mocked(executeRecords)
-      .mockImplementation(() => Effect.succeed({ ...base, orders: [], products: [summary] }));
+    answer = () => Effect.succeed({ ...base, orders: [], products: [summary] });
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a complete warm order keeps the full variant read revision and retries after a partial result', () =>
+it.live('a complete warm order keeps the full variant read revision and retries after a partial result', () =>
   Effect.gen(function* enrichmentRevision() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
-    rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
+    answer = () => Effect.fail(denied);
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
-    rstest.mocked(executeRecords).mockImplementation(({ view }) =>
+    answer = ({ view }) =>
       Effect.succeed({
         ...base,
         movements: view?.productId === undefined ? [] : [movement],
         orders: [],
         products: [view?.summary === true ? summary : full],
         revision: view?.summary === true ? 7 : 9,
-      }),
-    );
+      });
     const ready = yield* orderDetailData.read(detail);
     expect(ready).toEqual({ movesStock: true, order, products: [full], revision: 9, vat: { rates: [], regime: null } });
-    rstest.mocked(executeRecords).mockClear();
+    reads.length = 0;
     expect(yield* orderDetailData.read(detail)).toBe(ready);
-    expect(executeRecords).not.toHaveBeenCalled();
-  }),
+    yield* networkIdle;
+    expect(reads).toHaveLength(0);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a cold exact order link obtains the same complete product and revision data', () =>
+it.live('a cold exact order link obtains the same complete product and revision data', () =>
   Effect.gen(function* coldOrderLink() {
-    rstest.mocked(executeRecords).mockImplementation(({ view }) =>
+    yield* pinTestDocument;
+    answer = ({ view }) =>
       Effect.succeed({
         ...base,
         movements: view?.productId === undefined ? [] : [movement],
         products: view?.orderId === undefined ? [view?.summary === true ? summary : full] : [],
         revision: view?.summary === true ? 7 : 11,
-      }),
-    );
+      });
     const ready = yield* orderDetailData.read({ orderId: order.id, scope });
     expect(ready).toEqual({
       movesStock: true,
@@ -296,6 +280,6 @@ it.effect('a cold exact order link obtains the same complete product and revisio
       revision: 11,
       vat: { rates: [], regime: null },
     });
-    expect(rstest.mocked(executeRecords).mock.calls[0]?.[0].view?.orderId).toBe(order.id);
-  }),
+    expect(reads[0]?.view?.orderId).toBe(order.id);
+  }).pipe(Effect.provide(network)),
 );

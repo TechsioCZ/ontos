@@ -1,41 +1,18 @@
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { afterAll, beforeAll, expect, it, rstest } from 'effect-rstest';
-import type { Contract } from '../../shared/apis/records.ts';
+// @rstest-environment happy-dom
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { it } from 'effect-rstest';
+import {
+  CounterpartyReadApi,
+  CounterpartyReadResponseSchema,
+} from '../../../party-registry/shared/apis/counterparty-read.ts';
+import { ContractSchema } from '../../shared/apis/records.ts';
 import { agreementCustomerData } from '../../src/routes/[lang]/smlouvy/agreements-data.ts';
 
-const mocks = rstest.hoisted(() => ({ counterparty: rstest.fn() }));
-
-rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
-  executeCounterpartyRead: mocks.counterparty,
-}));
-rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.fail('unused') }));
-rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: () => Effect.fail('unused') }));
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: () => Effect.fail('unused') }));
-
-// The store only works in a document; Node gets the few window members it uses.
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-
-beforeAll(() => {
-  for (const [name, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, name, value);
-  }
-});
-
-afterAll(() => {
-  for (const name of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, name);
-  }
-});
-
 const tenantId = '11111111-1111-4111-8111-111111111111';
-const contract: Contract = {
+const contract = Schema.decodeUnknownSync(ContractSchema)({
   contractRef: {
     moduleId: 'legal.agreements',
     resourceId: '55555555-5555-4555-8555-555555555555',
@@ -62,30 +39,62 @@ const contract: Contract = {
   subject: 'Nájem kanceláře',
   supersedesContractRef: null,
   unitRef: null,
-};
+});
 const input = { contract, revision: 1, scope: 'live-change-scope-test' };
 
-const liveChange = (apps: readonly string[]) =>
-  Effect.sync(() => globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps } })));
-
-it.live('a counterparty name reloads only when a module it shows changed', () =>
-  Effect.gen(function* counterpartyScope() {
-    mocks.counterparty.mockImplementation(() => Effect.succeed({ party: { displayName: 'Acme' } }));
-    yield* agreementCustomerData.read(input).pipe(Effect.ignore);
-    // The page's hook reads the snapshot on every notification, which is what makes the key observed.
-    const unsubscribe = agreementCustomerData.subscribe(() => {
-      agreementCustomerData.snapshot(input);
-    }, input);
-    const before = mocks.counterparty.mock.calls.length;
-
-    yield* liveChange(['property-leasing', 'merchandise']);
-    yield* Effect.sleep('10 millis');
-    expect(mocks.counterparty.mock.calls.length).toBe(before);
-
-    yield* liveChange(['party-registry']);
-    yield* Effect.sleep('100 millis');
-    expect(mocks.counterparty.mock.calls.length).toBe(before + 1);
-
-    unsubscribe();
-  }),
+const response = Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
+  counterpartyRef: contract.counterpartyRef,
+  createdAt: '2026-10-15T10:00:00.000Z',
+  currentRoles: [],
+  legalEntityRef: {
+    moduleId: 'core.identity',
+    resourceId: '60000000-0000-4000-8000-000000000001',
+    resourceType: 'core.identity.legal-entity',
+    tenantId,
+  },
+  party: {
+    archived: false,
+    canonicalPartyRef: {
+      moduleId: 'party.registry',
+      resourceId: '40000000-0000-4000-8000-000000000001',
+      resourceType: 'party.registry.party',
+      tenantId,
+    },
+    displayName: 'Acme',
+    partyType: 'ORGANIZATION',
+    storedPartyRef: {
+      moduleId: 'party.registry',
+      resourceId: '40000000-0000-4000-8000-000000000001',
+      resourceType: 'party.registry.party',
+      tenantId,
+    },
+  },
+});
+const reads: unknown[] = [];
+const OwnerApi = CounterpartyReadApi.prefix('/party-registry-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'party-registry': '/party-registry-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'counterpartyRead', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return response;
+        }),
+      ),
+    ),
+  ),
 );
+
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('agreementCustomerData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
+      input,
+      reads: () => reads.length,
+      reloadsOn: ['party-registry'],
+      store: agreementCustomerData,
+    }),
+  );
+});

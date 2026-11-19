@@ -3333,10 +3333,22 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
+  // `defineRead` also takes the handler written as `{ load: handler }`. When that object holds exactly the
+  // one `load` entry naming a handler, the named handler is judged by the rule a bare handler gets. Any other
+  // object (a `prepare` or `finish` step, an inline phase, an extra key, a spread) is a staged pipeline and is
+  // judged only by the demo exception below, which proves each phase, its bindings and its Effect import.
+  let loadHandler = handler;
+  if (handler !== undefined && topLevelObjectEntries(handler) !== undefined) {
+    const named = objectPropertyValue(handler, 'load');
+    loadHandler =
+      topLevelObjectEntries(handler)?.length === 1 && named !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(named)
+        ? named
+        : undefined;
+  }
   // Demo-only exception 3: a staged prepare/load/finish read is proven by the ported staged-read proof.
   const phaseOwner: ReadPhaseOwner = { ownerPath, readFile, sources };
   return (
-    (isReadHandlerCallback(handler, source) ||
+    (isReadHandlerCallback(loadHandler, source) ||
       hasNativeReadPipeline(
         source,
         handler,
@@ -3347,7 +3359,7 @@ const hasReadCallbacks = (
           '() => Effect.succeed({})',
         ),
       ) ||
-      isOwnerLocalImportedFactoryResult(handler)) &&
+      isOwnerLocalImportedFactoryResult(loadHandler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are
@@ -16182,8 +16194,8 @@ const hasNativeRemoteReadCaptures = (source: string, body: string): boolean =>
   ) &&
   hasRuntimeNamedSourceImport(
     source,
-    'validateActiveApplicationCompositionSnapshot',
-    'validateActiveApplicationCompositionSnapshot',
+    'loadActiveApplicationComposition',
+    'loadActiveApplicationComposition',
     ACTIVE_COMPOSITION_MODULE,
   ) &&
   body.trimStart().startsWith('const composition = yield* ActiveApplicationCompositionService;') &&
@@ -16248,7 +16260,7 @@ const hasNativeAuthorizedRemoteReadFactory = (owner: ReadPhaseOwner, source: str
     hasExactSourceTokens(
       tokenizeGovernedClient(revision),
       `
-      const active = yield* composition.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot), Effect.mapError(unavailable));
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
       if (compositionRevision !== undefined && compositionRevision !== active.composition.revision) {
         return yield* unavailable('The request composition is no longer active');
       }

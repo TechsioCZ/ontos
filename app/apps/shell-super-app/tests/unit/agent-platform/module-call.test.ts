@@ -1,27 +1,30 @@
 // @rstest-environment node
 /**
  * Which owner Action a stored or module-supplied command runs as, and with which body. The module's published
- * command unions (`commandActions` of its MCP contribution) decide; the Shell names no module, Action or tag.
+ * command unions (`commandActions` of its MCP contribution) decide; the Shell names no module, Action or tag. The
+ * command reaches a real owner release through the Shell's native module transport.
  */
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect';
-import { beforeEach, expect, it, rs } from 'effect-rstest';
+import { beforeEach, expect, it } from 'effect-rstest';
 
-import {
-  commandRevisionFrom,
-  composedModulesOf,
-  revisionQueryOf,
-} from '../../../api/agent-platform/composed-modules.ts' with { rstest: 'importActual' };
 import { applyModuleCommand, commandTargetOf } from '../../../api/agent-platform/module-call.ts';
 import type { ModuleCommandAction } from '../../../api/agent-platform/module-call.ts';
 import { AgentReadRequestIdentity } from '../../../api/auth/agent-request-identity.ts';
 import { GatewayIssuer } from '../../../api/auth/gateway-issuer.ts';
-import { buildMcpModules } from '../../../api/mcp/catalog.ts';
-import { ShellInstalledModuleCatalog } from '../../../api/modules/installed-module-catalog.ts';
-import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
-import { FIXTURE_APP_ID, FIXTURE_MODULE_ID, fixtureComposition, fixtureModule } from '../mcp/fixture-vertical.ts';
+import {
+  makeInstalledModuleCatalogLoader,
+  ShellInstalledModuleCatalog,
+} from '../../../api/modules/installed-module-catalog.ts';
+import { makeCompositionSnapshot, sealComposition } from '../../fixtures/application-composition.ts';
+import { startNativeHttpServer } from '../../support/native-http-server.ts';
+import { FIXTURE_APP_ID, FIXTURE_CONTRACT_DOCUMENT, FIXTURE_MODULE_ID } from '../mcp/fixture-vertical.ts';
 
 /** A module whose catch-all `apply-command` was split: creation stays, catalog changes and reviews moved. */
 const commandActions = {
@@ -31,50 +34,60 @@ const commandActions = {
   CreateProduct: ['apply-command'],
   UpdateProduct: ['manage-catalog'],
 };
-const actionsPath = `/${FIXTURE_APP_ID}/actions`;
+const BUILD = 'build';
+const API_BASE = `/module-api/${FIXTURE_APP_ID}/${BUILD}/${FIXTURE_APP_ID}-api`;
+/** The owner release's own API root, where the Shell's relay delivers the module path. */
+const OWNER_BASE = `/${FIXTURE_APP_ID}-api`;
+const actionsPath = `${OWNER_BASE}/${FIXTURE_APP_ID}/actions`;
 const JsonText = Schema.fromJsonString(Schema.Json);
+const FixtureContract = Schema.fromJsonString(
+  Schema.Struct({ manifest: Schema.Struct({ publicSurface: Schema.Struct({ mcp: Schema.JsonObject }) }) }),
+);
+/** The fixture module's MCP contribution, as its release publishes it. */
+const { mcp: contribution } =
+  Schema.decodeUnknownSync(FixtureContract)(FIXTURE_CONTRACT_DOCUMENT).manifest.publicSurface;
 
-const state = rs.hoisted(() => {
-  const sent: { readonly body: Schema.Json; readonly path: string }[] = [];
-  return { published: true, sent };
-});
-
-rs.mock('../../../src/module-api/transport.ts', () => ({
-  dispatchModuleApiRequest: (request: Request) =>
-    Effect.promise(() => request.text()).pipe(
-      Effect.flatMap(Schema.decodeEffect(JsonText)),
-      Effect.orDie,
-      Effect.map((body) => {
-        const path = new URL(request.url).pathname;
-        state.sent.push({ body, path });
-        return Response.json(path.endsWith('/reads/records') ? { revision: 7 } : { applied: true });
-      }),
-    ),
-}));
-rs.mock('../../../api/agent-platform/composed-modules.ts', () => ({
-  commandRevisionFrom,
-  composedModulesOf,
-  // The module's contract publishes its command unions only when `state.published`.
-  get loadComposedModules() {
-    const source = composedModulesOf(buildMcpModules(fixtureComposition)).byAppId(FIXTURE_APP_ID);
-    const mcp = state.published ? { ...source, approvals: true, commandActions } : { ...source, approvals: true };
-    const contract = { manifest: { publicSurface: { mcp } } };
-    return Effect.succeed(
-      composedModulesOf(
-        buildMcpModules({
-          modules: [fixtureModule(FIXTURE_MODULE_ID, FIXTURE_APP_ID, JSON.stringify(contract), 'http://127.0.0.1:9')],
-          revision: fixtureComposition.revision,
-        }),
-      ),
-    );
-  },
-  revisionQueryOf,
-}));
+/** What the owner release received: the path and the JSON body of each request. */
+const sent: { readonly body: Schema.Json; readonly path: string }[] = [];
 
 beforeEach(() => {
-  state.sent.length = 0;
-  state.published = true;
+  sent.length = 0;
 });
+
+/**
+ * The fixture module installed at a real owner release. With `published`, its contract publishes the command
+ * unions; without, it publishes none. The owner answers its records read with revision 7 and every Action with
+ * `{ applied: true }`.
+ */
+const installedModule = (published: boolean) =>
+  Effect.gen(function* installFixtureModule() {
+    const server = yield* startNativeHttpServer(async (request) => {
+      const path = new URL(request.url).pathname;
+      const body = Schema.decodeUnknownSync(JsonText)(await request.text());
+      sent.push({ body, path });
+      return Response.json(path.endsWith('/reads/records') ? { revision: 7 } : { applied: true });
+    });
+    const fixture = makeModuleContractFixture({
+      appId: FIXTURE_APP_ID,
+      buildMarker: BUILD,
+      moduleId: FIXTURE_MODULE_ID,
+    });
+    const mcp = published ? { ...contribution, commandActions } : contribution;
+    const original = yield* makeCompositionSnapshot([
+      { ...fixture, manifest: { ...fixture.manifest, publicSurface: { ...fixture.manifest.publicSurface, mcp } } },
+    ]);
+    const snapshot = {
+      ...original,
+      composition: sealComposition({
+        ...original.composition,
+        modules: original.composition.modules.map((module) => ({
+          ...module,
+          backend: { baseUrl: `${server.origin}/`, transport: 'node-http' as const },
+        })),
+      }),
+    };
+    return snapshot;
+  });
 
 const principal: TrustedPrincipalContext = {
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -85,102 +98,102 @@ const principal: TrustedPrincipalContext = {
   tenantId: '00000000-0000-4000-8000-000000000001',
 };
 
-const run = (command: AgentCommand, action: ModuleCommandAction) =>
+const run = (command: AgentCommand, action: ModuleCommandAction, published = true) =>
   Effect.gen(function* runCommand() {
-    const snapshot = yield* makeCompositionSnapshot([]);
+    const snapshot = yield* installedModule(published);
+    const load = Effect.succeed(snapshot);
     return yield* applyModuleCommand(principal, FIXTURE_APP_ID, command, { action, idempotencyKey: 'key-1' }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(ActiveApplicationCompositionService, makeActiveApplicationCompositionService(load)),
           Layer.succeed(AgentReadRequestIdentity, { correlationId: 'module-call' }),
           Layer.mock(GatewayIssuer, {
             issue: () =>
               Effect.succeed({
-                apiBaseUrl: '/fixture-api',
+                apiBaseUrl: API_BASE,
                 compositionRevision: snapshot.composition.revision,
                 expiresAt: 0,
                 token: 't',
               }),
           }),
-          Layer.mock(ShellInstalledModuleCatalog, {}),
+          Layer.mock(ShellInstalledModuleCatalog, { load: makeInstalledModuleCatalogLoader(load) }),
         ),
       ),
     );
-  });
+  }).pipe(Effect.scoped);
 
-it.effect('approves a split command on its own Action with the envelope and the revision read just now', () =>
+it.live('approves a split command on its own Action with the envelope and the revision read just now', () =>
   Effect.gen(function* splitApproval() {
     const command = { _tag: 'ChangePrice', id: 'p-1', priceMinor: 12_300 };
     const outcome = yield* run(command, { exact: 'manage-catalog' });
     expect(outcome).toEqual({ body: { applied: true }, ok: true });
-    expect(state.sent).toEqual([
-      { body: {}, path: '/fixture-api/reads/records' },
-      { body: { command, expectedRevision: 7 }, path: `/fixture-api${actionsPath}/manage-catalog` },
+    expect(sent).toEqual([
+      { body: {}, path: `${OWNER_BASE}/reads/records` },
+      { body: { command, expectedRevision: 7 }, path: `${actionsPath}/manage-catalog` },
     ]);
   }),
 );
 
-it.effect('keeps an unsplit apply-command owner on apply-command with the envelope and revision', () =>
+it.live('keeps an unsplit apply-command owner on apply-command with the envelope and revision', () =>
   Effect.gen(function* unsplitApproval() {
     const command = { _tag: 'CreateProduct', name: 'Mug' };
     expect((yield* run(command, { exact: 'apply-command' })).ok).toBe(true);
-    expect(state.sent.at(-1)).toEqual({
+    expect(sent.at(-1)).toEqual({
       body: { command, expectedRevision: 7 },
-      path: `/fixture-api${actionsPath}/apply-command`,
+      path: `${actionsPath}/apply-command`,
     });
   }),
 );
 
-it.effect('never runs an approved command as another Action than the one it was authorized for', () =>
+it.live('never runs an approved command as another Action than the one it was authorized for', () =>
   Effect.gen(function* noSubstitution() {
     const outcome = yield* run({ _tag: 'ChangePrice', id: 'p-1', priceMinor: 1 }, { exact: 'apply-command' });
     expect(outcome).toMatchObject({ ok: false, status: 400 });
     // Not even a revision read: nothing is posted to any Action.
-    expect(state.sent).toEqual([]);
+    expect(sent).toEqual([]);
   }),
 );
 
-it.effect('posts a named Action payload as stored, without envelope or revision read', () =>
+it.live('posts a named Action payload as stored, without envelope or revision read', () =>
   Effect.gen(function* namedApproval() {
     const command = { name: 'Acme', partyId: 'party-1' };
     expect((yield* run(command, { exact: 'update-party' })).ok).toBe(true);
-    expect(state.sent).toEqual([{ body: command, path: `/fixture-api${actionsPath}/update-party` }]);
+    expect(sent).toEqual([{ body: command, path: `${actionsPath}/update-party` }]);
   }),
 );
 
-it.effect('runs an AI change decision of the module engine on the Action that owns it', () =>
+it.live('runs an AI change decision of the module engine on the Action that owns it', () =>
   Effect.gen(function* legacyDecision() {
     const command = { _tag: 'AiDecideChanges', changeIds: ['c-1'], decision: 'approve' };
     expect((yield* run(command, {})).ok).toBe(true);
-    expect(state.sent.at(-1)).toEqual({
+    expect(sent.at(-1)).toEqual({
       body: { command, expectedRevision: 7 },
-      path: `/fixture-api${actionsPath}/review-changes`,
+      path: `${actionsPath}/review-changes`,
     });
   }),
 );
 
-it.effect('runs a module undo command on its owning Action, not the approved one', () =>
+it.live('runs a module undo command on its owning Action, not the approved one', () =>
   Effect.gen(function* undo() {
     const command = { _tag: 'UpdateProduct', id: 'p-1', patch: { active: false } };
     expect((yield* run(command, { preferred: 'apply-command' })).ok).toBe(true);
-    expect(state.sent.at(-1)?.path).toBe(`/fixture-api${actionsPath}/manage-catalog`);
+    expect(sent.at(-1)?.path).toBe(`${actionsPath}/manage-catalog`);
   }),
 );
 
-it.effect('refuses every command, tagged or named, when the module contract publishes no command map', () =>
+it.live('refuses every command, tagged or named, when the module contract publishes no command map', () =>
   Effect.gen(function* staleContract() {
-    state.published = false;
     for (const [command, exact] of [
       [{ _tag: 'CreateProduct', name: 'Mug' }, 'apply-command'],
       [{ name: 'Acme', partyId: 'party-1' }, 'update-party'],
     ] as const) {
-      expect(yield* run(command, { exact })).toMatchObject({ ok: false, status: 400 });
+      expect(yield* run(command, { exact }, false)).toMatchObject({ ok: false, status: 400 });
     }
-    expect(state.sent).toEqual([]);
+    expect(sent).toEqual([]);
   }),
 );
 
-it.effect('never posts a self-wrapped command envelope as a named Action payload', () =>
+it.live('never posts a self-wrapped command envelope as a named Action payload', () =>
   Effect.gen(function* selfWrapped() {
     const decision = { _tag: 'AiDecideChanges', changeIds: ['c-1'], decision: 'approve' };
     for (const [command, exact] of [
@@ -193,7 +206,7 @@ it.effect('never posts a self-wrapped command envelope as a named Action payload
       expect(yield* run(command, { exact })).toMatchObject({ ok: false, status: 400 });
       expect(yield* run(command, { preferred: exact })).toMatchObject({ ok: false, status: 400 });
     }
-    expect(state.sent).toEqual([]);
+    expect(sent).toEqual([]);
   }),
 );
 

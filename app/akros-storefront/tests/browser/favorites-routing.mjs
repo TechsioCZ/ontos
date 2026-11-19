@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 const base = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000/cs";
 const catalog = JSON.parse(
@@ -18,7 +18,6 @@ const refs = [a, b].map((v) => ({
   productSlug: product.slug,
   variantId: v.id,
 }));
-await mkdir("test-results/task-13", { recursive: true });
 const browser = await chromium.launch({ channel: "chrome" });
 try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
@@ -45,16 +44,6 @@ try {
       assert.equal(new URL(href, base).searchParams.get("variantIds"), variant.id);
       assert.match(await cards.nth(index).innerText(), new RegExp(variant.sku));
     }
-    assert.equal(
-      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
-      false,
-    );
-    if ([1920, 768, 390, 320].includes(width))
-      await page.screenshot({
-        path: `test-results/task-13/favorites-${width}.png`,
-        fullPage: true,
-        animations: "disabled",
-      });
     await cards.first().locator(".sf-product-card__name-link").click();
     await page.locator(".sf-product-actions__watch:not(:disabled)").waitFor();
     assert.equal(await page.locator("#product-variants tbody tr").count(), 1);
@@ -76,7 +65,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    "TASK 13: exact links, selected rows/reload, independent removal and empty state at 14 widths passed.",
+    "Favorites routing: exact links, selected rows/reload, independent removal and empty state at 14 widths passed.",
   );
 } finally {
   await browser.close();

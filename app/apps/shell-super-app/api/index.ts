@@ -59,7 +59,6 @@ import {
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
-  ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
   OperationalScopeResolver,
@@ -395,11 +394,14 @@ import {
   submitAgentProposals,
 } from './agent-platform/service-queue.ts';
 import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
-import type { ShellInstalledCatalog, InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
+import type {
+  ShellInstalledCatalog,
+  InstalledModuleCatalogUnavailableError,
+} from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
 import { logRequestServicesFailure } from './request-service-diagnostics.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
-import { CapturedShellCompositionCatalog, capturedShellCatalog } from './modules/captured-shell-catalog.ts';
+import { CapturedShellCompositionCatalog, narrowToCapturedRelease } from './modules/captured-shell-catalog.ts';
 import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
 import {
   ShellGovernedReads,
@@ -1516,7 +1518,6 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   const authority = yield* ShellInstalledModuleCatalog;
   const catalog = yield* authority.load.pipe(
     Effect.catchTags({
-      InstalledModuleCatalogInvalidError: () => failShellProblem(shellCapabilityUnavailableProblem()),
       InstalledModuleCatalogUnavailableError: () => failShellProblem(shellCapabilityUnavailableProblem()),
     }),
   );
@@ -2588,13 +2589,6 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
   const catalog = yield* authority.load.pipe(
     observeGatewayPhase('gateway-release'),
     Effect.catchTags({
-      InstalledModuleCatalogInvalidError: () =>
-        withShellGatewayReleaseDiagnostic(
-          'catalog_invalid',
-          failGatewayProblem(
-            withRefusalReason(gatewayAuthenticationUnavailableProblem(), 'installed_release_unavailable'),
-          ),
-        ),
       InstalledModuleCatalogUnavailableError: () =>
         withShellGatewayReleaseDiagnostic(
           'catalog_unavailable',
@@ -4035,7 +4029,7 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   authenticationLayer: ShellAuthenticationLayer,
   issuerLayer: ShellGatewayIssuerLayer,
   moduleStateLayer?: ShellModuleStateLayer,
-  loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError> | undefined,
+  loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError> | undefined,
   enableInstalledOutboxMatcher?: boolean,
   contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>>,
   resourceGateways?: ShellResourceGateways,
@@ -4250,29 +4244,7 @@ export const makeShellAuthenticationApiRuntime = (
           Effect.gen(function* makeShellHostedReadRuntime() {
             const registrations = yield* ShellGovernedReadDefinitions;
             const authority = yield* ActiveApplicationCompositionService;
-            const capturedAuthority = {
-              load: authority.load.pipe(
-                Effect.flatMap((snapshot) =>
-                  capturedShellCatalog.pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ActiveApplicationCompositionUnavailableError({
-                          cause,
-                          reason: 'The Shell request release is unavailable',
-                        }),
-                    ),
-                    Effect.filterOrFail(
-                      (catalog) => catalog.composition.revision === snapshot.composition.revision,
-                      () =>
-                        new ActiveApplicationCompositionUnavailableError({
-                          reason: 'The Shell request release changed',
-                        }),
-                    ),
-                    Effect.as(snapshot),
-                  ),
-                ),
-              ),
-            };
+            const capturedAuthority = narrowToCapturedRelease(authority);
             return createShellGovernedReadsLayer(registrations).pipe(
               Layer.provide(
                 makeReadRuntimeLive(ultramodernDeliveryUnit, { shellSystemReads: registrations }).pipe(

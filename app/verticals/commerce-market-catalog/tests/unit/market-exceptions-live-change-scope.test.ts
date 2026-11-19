@@ -1,14 +1,11 @@
 // @rstest-environment happy-dom
-// The market exceptions store reloads on a live change only when merchandise or this vertical changed.
-import { executeRecords } from '@app/merchandise/apis/records/client';
-import { RecordsResponseSchema } from '@app/merchandise/apis/records';
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { expect, it, rstest } from 'effect-rstest';
-
+import { it } from 'effect-rstest';
 import { marketExceptionsData } from '../../src/market-admin/page-data.ts';
-
-rstest.mock('@app/merchandise/apis/records/client');
+import { RecordsApi, RecordsResponseSchema } from '@app/merchandise/apis/records';
 
 const legalEntityId = '33333333-3333-4333-8333-333333333333';
 const marketId = '30000000-0000-4000-8000-000000000001';
@@ -25,22 +22,31 @@ const response = Schema.decodeUnknownSync(RecordsResponseSchema)({
   revision: 3,
 });
 
-it.live('live changes of modules the market exceptions do not show read nothing', () =>
-  Effect.gen(function* unrelatedChange() {
-    rstest.mocked(executeRecords).mockReset();
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(response));
-    const input = { legalEntityId, marketId, offset: 0, tenantId };
-    yield* marketExceptionsData.preload(input);
-    const before = rstest.mocked(executeRecords).mock.calls.length;
-    const unsubscribe = marketExceptionsData.subscribe(() => {
-      marketExceptionsData.snapshot(input);
-    }, input);
-    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['party-registry'] } }));
-    yield* Effect.sleep('10 millis');
-    expect(rstest.mocked(executeRecords).mock.calls.length).toBe(before);
-    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['merchandise'] } }));
-    yield* Effect.sleep('10 millis');
-    expect(rstest.mocked(executeRecords).mock.calls.length).toBe(before + 1);
-    unsubscribe();
-  }),
+const reads: unknown[] = [];
+const OwnerApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return response;
+        }),
+      ),
+    ),
+  ),
 );
+
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('marketExceptionsData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
+      input: { legalEntityId, marketId, offset: 0, tenantId },
+      reads: () => reads.length,
+      reloadsOn: ['merchandise'],
+      store: marketExceptionsData,
+    }),
+  );
+});

@@ -1,18 +1,17 @@
-import { readFileSync } from 'node:fs';
-import { Schema } from 'effect';
-import { beforeAll, describe, expect, it, rstest } from 'effect-rstest';
-import React, { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+// @rstest-environment happy-dom
+import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { Effect, Schema } from 'effect';
+import { afterEach, describe, expect, it } from 'effect-rstest';
+import { createElement } from 'react';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   OpportunityDetailNotice,
   opportunityDetailState,
 } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-detail-panel.tsx';
 import type { OpportunityDetailNoticeStatus } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-detail-panel.tsx';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
+const czech = moduleText('cs');
 
 const idOf = (suffix: number) => `0196a8a0-0000-7000-8000-${String(suffix).padStart(12, '0')}`;
 const partyId = '0196a8a0-0000-7000-8000-0000000000aa';
@@ -42,52 +41,65 @@ const completedRead = (items: readonly ReturnType<typeof opportunity>[]) => ({
 });
 
 const noticeText = (status: OpportunityDetailNoticeStatus) =>
-  renderToStaticMarkup(createElement(OpportunityDetailNotice, { status })).replaceAll(/<[^>]*>/gu, '');
-
-describe('opportunity detail availability', () => {
-  // The owner's Node-only test config compiles TSX with the classic React runtime.
-  beforeAll(() => {
-    rstest.stubGlobal('React', React);
+  Effect.gen(function* notice() {
+    yield* mountInRoute(createElement(OpportunityDetailNotice, { status }));
+    const content = text();
+    unmountAll();
+    return content;
   });
 
+afterEach(unmountAll);
+
+describe('opportunity detail availability', () => {
   it('keeps the panel closed until a record is requested', () => {
     expect(opportunityDetailState({ hasResponse: true, items: [], pending: false })).toEqual({ status: 'closed' });
   });
 
-  it('keeps a requested record loading while the authorized read is pending', () => {
-    expect(opportunityDetailState({ ...completedRead([]), hasResponse: false, pending: true })).toEqual({
-      status: 'pending',
-    });
-    // A missing response without a terminal failure is still a pending read, never a missing record.
-    expect(opportunityDetailState({ ...completedRead([]), hasResponse: false, pending: false })).toEqual({
-      status: 'pending',
-    });
-    expect(noticeText('pending')).toBe('sales-pipeline.loading');
-    expect(noticeText('pending')).not.toContain('sales-pipeline.detail.missing');
-  });
+  it.live('keeps a requested record loading while the authorized read is pending', () =>
+    Effect.gen(function* pendingRead() {
+      expect(opportunityDetailState({ ...completedRead([]), hasResponse: false, pending: true })).toEqual({
+        status: 'pending',
+      });
+      // A missing response without a terminal failure is still a pending read, never a missing record.
+      expect(opportunityDetailState({ ...completedRead([]), hasResponse: false, pending: false })).toEqual({
+        status: 'pending',
+      });
+      const pending = yield* noticeText('pending');
+      expect(pending).toBe(czech('sales-pipeline.loading'));
+      expect(pending).not.toContain(czech('sales-pipeline.detail.missing'));
+    }),
+  );
 
-  it('distinguishes a denied read from a failed read and a missing record', () => {
-    expect(
-      opportunityDetailState({ ...completedRead([]), hasResponse: false, loadError: 'forbidden', pending: true }),
-    ).toEqual({ status: 'denied' });
-    expect(opportunityDetailState({ ...completedRead([]), hasResponse: false, loadError: 'unavailable' })).toEqual({
-      status: 'unavailable',
-    });
-    expect(noticeText('denied')).toBe('sales-pipeline.pages.records.forbidden');
-    expect(noticeText('denied')).not.toContain('unavailable');
-    expect(noticeText('unavailable')).toBe('sales-pipeline.pages.records.unavailable');
-  });
+  it.live('distinguishes a denied read from a failed read and a missing record', () =>
+    Effect.gen(function* deniedRead() {
+      expect(
+        opportunityDetailState({ ...completedRead([]), hasResponse: false, loadError: 'forbidden', pending: true }),
+      ).toEqual({ status: 'denied' });
+      expect(opportunityDetailState({ ...completedRead([]), hasResponse: false, loadError: 'unavailable' })).toEqual({
+        status: 'unavailable',
+      });
+      const denied = yield* noticeText('denied');
+      expect(denied).toBe(czech('sales-pipeline.pages.records.forbidden'));
+      expect(denied).not.toContain('unavailable');
+      expect(denied).not.toContain(czech('sales-pipeline.pages.records.unavailable'));
+      expect(yield* noticeText('unavailable')).toBe(czech('sales-pipeline.pages.records.unavailable'));
+    }),
+  );
 
-  it('reports a requested record missing only after a completed authorized read, without naming another record', () => {
-    const other = opportunity(2, 'Jiná příležitost');
-    expect(opportunityDetailState(completedRead([other]))).toEqual({ status: 'missing' });
-    const missing = noticeText('missing');
-    expect(missing).toBe('sales-pipeline.detail.missing');
-    expect(missing).not.toContain(other.title);
-    expect(missing).not.toContain('neexistuje');
-    expect(missing).not.toEqual(noticeText('denied'));
-    expect(missing).not.toEqual(noticeText('unavailable'));
-  });
+  it.live(
+    'reports a requested record missing only after a completed authorized read, without naming another record',
+    () =>
+      Effect.gen(function* missingRead() {
+        const other = opportunity(2, 'Jiná příležitost');
+        expect(opportunityDetailState(completedRead([other]))).toEqual({ status: 'missing' });
+        const missing = yield* noticeText('missing');
+        expect(missing).toBe(czech('sales-pipeline.detail.missing'));
+        expect(missing).not.toContain(other.title);
+        expect(missing).not.toContain('neexistuje');
+        expect(missing).not.toEqual(yield* noticeText('denied'));
+        expect(missing).not.toEqual(yield* noticeText('unavailable'));
+      }),
+  );
 
   it('shows exactly the requested record when the completed read contains it', () => {
     const target = opportunity(1);
@@ -98,18 +110,5 @@ describe('opportunity detail availability', () => {
       return;
     }
     expect(state.opportunity).toBe(target);
-  });
-
-  it('passes the requested id and the authorized read state to the detail panel', () => {
-    const source = readFileSync(
-      new URL('../../src/routes/[lang]/prodej/prilezitosti/page.tsx', import.meta.url),
-      'utf-8',
-    );
-    expect(source).toContain('hasResponse={response !== undefined}');
-    expect(source).toContain('items={items}');
-    expect(source).toContain('loadError={loadError}');
-    expect(source).toContain('pending={pending}');
-    expect(source).toContain('requestedId={detailId}');
-    expect(source).not.toContain('items.find((item) => item.id === detailId)');
   });
 });

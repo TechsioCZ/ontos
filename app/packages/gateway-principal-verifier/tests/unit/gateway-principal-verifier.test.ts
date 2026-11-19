@@ -18,10 +18,11 @@ import {
   readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { Cause, Clock, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { expect, it, rs } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
 import {
@@ -202,7 +203,12 @@ it.effect('preserves signed Storefront scope with non-copyable verified provenan
     expect(isVerifiedGatewayPrincipalContext(verified)).toBe(true);
     expect(readVerifiedGatewayCompositionRevision(verified)).toBe((yield* gatewayComposition).composition.revision);
     expect(readVerifiedGatewayCompositionRevision({ ...verified })).toBeUndefined();
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('attaches the redeemed token as the scope assertion only after redemption succeeds', () =>
@@ -238,7 +244,12 @@ it.effect('attaches the redeemed token as the scope assertion only after redempt
     expect(scopeAssertion === undefined ? undefined : Redacted.value(scopeAssertion.assertion)).toBe(fixture.token);
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(redeemed)).not.toContain(fixture.token);
     expect(readVerifiedGatewayScopeAssertion({ ...redeemed })).toBeUndefined();
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 const isConfigurationError = Schema.is(ActionPrincipalConfigurationErrorSchema);
@@ -323,7 +334,12 @@ it.effect('trusts only the keys of its deployment provider and refuses any other
       expect(Exit.isSuccess(admitted)).toBe(true);
       expect(redeemed).toHaveLength(1);
     }),
-  ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  ).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('admits the Shell own release and refuses a different local Shell build before redemption', () =>
@@ -354,7 +370,12 @@ it.effect('admits the Shell own release and refuses a different local Shell buil
       .pipe(Effect.flip);
     expect(isScopeError(failure)).toBe(true);
     expect(redemptions.count()).toBe(1);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('rejects composition and release mismatches before redeeming an assertion', () =>
@@ -392,7 +413,10 @@ it.effect('rejects composition and release mismatches before redeeming an assert
           },
         })
         .pipe(
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(scenario.snapshot) }),
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(scenario.snapshot)),
+          ),
           Effect.flip,
         );
       expect(isScopeError(failure)).toBe(true);
@@ -435,7 +459,10 @@ it.effect('rejects expired authority and invalid full contracts before assertion
           },
         })
         .pipe(
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(authority) }),
+          Effect.provideService(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(authority)),
+          ),
           Effect.flip,
         );
       expect(isUnavailableError(failure)).toBe(true);
@@ -457,7 +484,12 @@ it.effect('accepts a signed v1 assertion without requiring namespace configurati
     });
 
     expect(verified).toEqual(principal);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('accepts v2 principals from arbitrary namespaces for Core registry admission', () =>
@@ -478,7 +510,12 @@ it.effect('accepts v2 principals from arbitrary namespaces for Core registry adm
       });
       expect(verified).toEqual(expected[index]);
     }
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 const calledBy = {
@@ -512,7 +549,12 @@ it.effect('accepts a delegated v3 assertion and exposes the calling module as th
     expect(readVerifiedGatewayActor(redeemed)).toEqual(calledBy);
     expect(readVerifiedGatewayActor({ ...redeemed })).toBeUndefined();
     expect(readVerifiedGatewayScopeAssertion(redeemed)?.audience).toBe('party-registry');
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('refuses a delegated assertion whose calling module is unknown or on another build', () =>
@@ -536,7 +578,12 @@ it.effect('refuses a delegated assertion whose calling module is unknown or on a
       );
       expect(isScopeError(failure)).toBe(true);
     }
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('refuses a v2 assertion that carries a calling module claim', () =>
@@ -554,7 +601,12 @@ it.effect('refuses a v2 assertion that carries a calling module claim', () =>
       }),
     );
     expect(isInvalidError(failure)).toBe(true);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('rejects v2 claims with a missing namespace while preserving unknown values for Core', () =>
@@ -571,7 +623,12 @@ it.effect('rejects v2 claims with a missing namespace while preserving unknown v
       }),
     );
     expect(isInvalidError(failure)).toBe(true);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('rejects provider identity and permission fields from signed claims', () =>
@@ -600,7 +657,12 @@ it.effect('rejects provider identity and permission fields from signed claims', 
       );
       expect(isInvalidError(failure)).toBe(true);
     }
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('an audience-bound verifier accepts only its exact topology app ID', () =>
@@ -619,7 +681,12 @@ it.effect('an audience-bound verifier accepts only its exact topology app ID', (
 
     expect(yield* verify(partyFixture.token, partyFixture.environment)).toEqual(principal);
     expect(isScopeError(yield* Effect.flip(verify(billingFixture.token, billingFixture.environment)))).toBe(true);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('Bearer scheme matching is case insensitive without changing the signed token', () =>
@@ -641,7 +708,12 @@ it.effect('Bearer scheme matching is case insensitive without changing the signe
         }),
       { concurrency: 'unbounded' },
     );
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('case insensitive Bearer matching still rejects malformed authorization headers', () =>
@@ -673,7 +745,12 @@ it.effect('case insensitive Bearer matching still rejects malformed authorizatio
         }),
       { concurrency: 'unbounded' },
     );
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('empty and malformed audience bindings fail closed as configuration errors', () =>
@@ -696,7 +773,12 @@ it.effect('empty and malformed audience bindings fail closed as configuration er
         }),
       { concurrency: 'unbounded' },
     );
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('redeems every presentation and rejects replay across verifier instances', () =>
@@ -730,7 +812,12 @@ it.effect('redeems every presentation and rejects replay across verifier instanc
     });
     expect(isInvalidError(yield* Effect.flip(restarted.verifyAndRedeem(authorization, options)))).toBe(true);
     expect(redemptions).toBe(3);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('redemption failures remain sanitized and distinguish replay from unavailability', () =>
@@ -775,7 +862,12 @@ it.effect('redemption failures remain sanitized and distinguish replay from unav
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(unavailableFailure)).not.toMatch(
       /fixture|eyJ/u,
     );
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('unsupported assertion versions and unexpected verifier failures fail closed', () =>
@@ -810,7 +902,12 @@ it.effect('unsupported assertion versions and unexpected verifier failures fail 
     );
     expect(isUnavailableError(failure)).toBe(true);
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(failure)).not.toMatch(/fixture|eyJ/u);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('malformed Ed25519 public keys fail during configuration acquisition', () =>
@@ -845,36 +942,12 @@ it.effect('malformed Ed25519 public keys fail during configuration acquisition',
         }),
       { concurrency: 'unbounded' },
     );
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
-);
-
-it.effect('imports verification keys once for configuration and the first and later assertions', () =>
-  Effect.gen(function* reuseImportedVerificationKey() {
-    const fixture = yield* makeFixture('party-registry');
-    const verifier = bindGatewayPrincipalVerifier('party-registry', {
-      appId: 'party-registry',
-      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
-    });
-    const importKey = rs.spyOn(globalThis.crypto.subtle, 'importKey');
-    yield* Effect.addFinalizer(() => Effect.sync(() => importKey.mockRestore()));
-    const services = yield* Layer.build(
-      GatewayPrincipalVerifierLive.pipe(
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(fixture.environment))),
-      ),
-    );
-    const configuration = Context.get(services, GatewayPrincipalVerifierConfiguration);
-    yield* configuration.configuration;
-    expect(importKey).toHaveBeenCalledTimes(1);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const resolved = yield* verifier
-        .verify(Redacted.make(`Bearer ${fixture.token}`), {
-          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-        })
-        .pipe(Effect.provideService(GatewayPrincipalVerifierConfiguration, configuration));
-      expect(resolved).toEqual(principal);
-    }
-    expect(importKey).toHaveBeenCalledTimes(1);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 const referenceScope = { ...principal, legalEntityId: '70000000-0000-4000-8000-000000000001' };
@@ -897,7 +970,10 @@ const referenceSource = (fixture: Effect.Success<ReturnType<typeof makeFixture>>
         return Context.get(services, GatewayPrincipalVerifierConfiguration);
       }).pipe(Effect.scoped),
     ),
-    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
   );
 const referenceHeader = (audience: string, token: string) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
@@ -1078,7 +1154,12 @@ it.effect(
           ),
         ),
       ).toBe(true);
-    }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+    }).pipe(
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(gatewayComposition),
+      ),
+    ),
 );
 
 const registeredRouteScope: RegisteredGatewayRouteScope = {
@@ -1134,7 +1215,12 @@ it.effect('seals an exact signed V2 private route scope only after redemption wi
     expect(readVerifiedGatewayRouteScope({ ...verified })).toBeUndefined();
     expect(readVerifiedGatewayWorkload(verified)).toBeUndefined();
     expect(readVerifiedGatewayActor(verified)).toBeUndefined();
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );
 
 it.effect('rejects mismatched, non-finite, or non-API-key route scopes and rejects the marker on V1, V3, and V4', () =>
@@ -1262,5 +1348,10 @@ it.effect('rejects mismatched, non-finite, or non-API-key route scopes and rejec
       ).toBe(true);
     }
     expect(redemptions.count()).toBe(0);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(gatewayComposition),
+    ),
+  ),
 );

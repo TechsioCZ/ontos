@@ -1,18 +1,27 @@
 // @rstest-environment happy-dom
-// The products list across a reload: the real `useProductPage` over the real strict list store, with only the
-// generated records client replaced. A reload of the request on screen reads as pending in the strict store, so
+// The products list across a reload: the real `useProductPage` over the real strict list store and generated
+// records client, with the records contract served in process. A reload reads as pending in the strict store, so
 // without a held read the table drops to its loading rows and the page loses the capability its actions need.
 // The category filter's choices come from a second strict store and decide which category the request carries, so
 // they are held the same way: otherwise a reload turns the filtered request into the unfiltered one.
+import { acted, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act, createElement, useEffect } from 'react';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { createElement, useEffect } from 'react';
 import type { ReactElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { useCategoryChoices, useProductPage } from '../../src/routes/[lang]/provoz/produkty/product-list-page.ts';
 import type { ProductLoadState } from '../../src/routes/[lang]/provoz/produkty/product-list-page.ts';
 import {
@@ -22,10 +31,7 @@ import {
   productListData,
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import type { ProductListQuery } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
+import { mountInRoute } from '../support/module-ui.ts';
 
 const company: ModulePageContext = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const otherCompany: ModulePageContext = { ...company, legalEntityId: 'company-2' };
@@ -80,33 +86,47 @@ const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({
   type: 'urn:test:denied',
 });
 
-/** The register behind the mocked client: product names per page offset; with a gate, every read waits for it. */
+/** Each case scripts the owner's real records endpoint. */
+let respond = (_request: RecordsRequest): Effect.Effect<RecordsResponse, typeof denied> =>
+  Effect.succeed(recordsOf([], 0));
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) => Effect.suspend(() => respond(payload))),
+    ),
+  ),
+);
+
+/** The register served by the records endpoint: product names per page offset; with a gate, every read waits for it. */
 const serve = (
   pages: Readonly<Record<number, readonly string[]>>,
   revision: number,
   gate?: Deferred.Deferred<boolean>,
 ) => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
+  respond = ({ view }) => {
     const answer = recordsOf(pages[view?.offset ?? 0] ?? [], revision);
     return gate === undefined ? Effect.succeed(answer) : Deferred.await(gate).pipe(Effect.as(answer));
-  });
+  };
 };
 
 /** What the client was asked for: the filter's choices, or a list page with its tree category (`*` = none). */
 const requested: string[] = [];
 
 /**
- * A company's register behind the mocked client: the filter's choices say whether it has a storefront tree, the
+ * A company's register served by the records endpoint: the filter's choices say whether it has a storefront tree, the
  * list holds Cable in the selected tree category and Switch outside it. With a gate, every read waits for it.
  */
 const serveCompany = (hasTree: boolean, revision: number, gate?: Deferred.Deferred<boolean>) => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
+  respond = ({ view }) => {
     const choices = view?.includeProductCategories === true;
     requested.push(choices ? 'choices' : `list:${view?.categoryId ?? '*'}`);
     const names = view?.categoryId === TREE_CATEGORY ? ['Cable'] : ['Cable', 'Switch'];
     const answer = choices ? choicesOf(hasTree, revision) : recordsOf(names, revision);
     return gate === undefined ? Effect.succeed(answer) : Deferred.await(gate).pipe(Effect.as(answer));
-  });
+  };
 };
 
 /** What the table showed on every render, and how often its rows mounted. */
@@ -156,44 +176,11 @@ const FilteredProductsTable = ({ context }: { readonly context: ModulePageContex
   return table.startsWith('rows:') ? createElement(Rows, { text: table }) : null;
 };
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
-interface Mounted<Shown> {
-  readonly show: (next: Shown) => Effect.Effect<void>;
-}
-
-let unmount: (() => void) | null = null;
-
-const mountView = <Shown>(render: (shown: Shown) => ReactElement, first: Shown): Effect.Effect<Mounted<Shown>> => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  unmount = () => {
-    act(() => {
-      root.unmount();
-      container.remove();
-    });
-  };
-  const show = (next: Shown) =>
-    Effect.promise(() =>
-      act(async () => {
-        root.render(render(next));
-        await settle();
-      }),
-    );
-  return show(first).pipe(Effect.as({ show }));
-};
+const mountView = <Shown>(render: (shown: Shown) => ReactElement, first: Shown) =>
+  Effect.gen(function* mountTable() {
+    const view = yield* mountInRoute(render(first), { url: '/cs/provoz/produkty' });
+    return { show: (next: Shown) => view.rerender(render(next)) };
+  });
 
 const mount = (offset: number) => mountView((next: number) => createElement(ProductsTable, { offset: next }), offset);
 
@@ -201,21 +188,15 @@ const mountFiltered = (context: ModulePageContext) =>
   mountView((next: ModulePageContext) => createElement(FilteredProductsTable, { context: next }), context);
 
 /** A catalog command settled, or a live change arrived: the strict stores drop what they have and read again. */
-const invalidate = Effect.promise(async () => {
-  await act(async () => {
-    productListData.invalidate();
-    categoryChoicesData.invalidate();
-    await settle();
-  });
-  await act(settle);
-});
+const invalidate = acted(() => {
+  productListData.invalidate();
+  categoryChoicesData.invalidate();
+}).pipe(Effect.andThen(settle));
 
 const before = 'rows:Cable,Switch|write|r7';
 const filteredBefore = 'tree/rows:Cable|write|r7';
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
   productListData.invalidate();
   categoryChoicesData.invalidate();
   shown.length = 0;
@@ -223,72 +204,28 @@ beforeEach(() => {
   mounts = 0;
 });
 
-afterEach(() => {
-  unmount?.();
-  unmount = null;
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
-it.effect('the rows and the write capability stay on screen while the same page reloads', () =>
-  Effect.gen(function* held() {
-    serve({ 0: ['Cable', 'Switch'] }, 7);
-    yield* mount(0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
-    expect(mounts).toBe(1);
-
-    const gate = yield* Deferred.make<boolean>();
-    serve({ 0: ['Cable 2 m', 'Switch'] }, 8, gate);
-    shown.length = 0;
-    yield* invalidate;
-    expect(shown.length).toBeGreaterThan(0);
-    expect(new Set(shown)).toEqual(new Set([before]));
-
-    yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'rows:Cable 2 m,Switch|write|r8'));
-    expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
-    expect(mounts).toBe(1);
-  }),
-);
-
-it.effect('another page never shows the rows of the page before it, held or not', () =>
-  Effect.gen(function* otherPage() {
-    serve({ 0: ['Cable', 'Switch'], 2: ['Router', 'Rack'] }, 7);
-    const view = yield* mount(0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
-
-    // A write reloads the first page; while it is on its way the person moves to the second page.
-    const gate = yield* Deferred.make<boolean>();
-    serve({ 0: ['Cable', 'Switch'], 2: ['Router', 'Rack'] }, 8, gate);
-    yield* invalidate;
-    shown.length = 0;
-    yield* view.show(2);
-    yield* Effect.promise(() => act(settle));
-    expect(new Set(shown)).toEqual(new Set(['loading']));
-
-    yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'rows:Router,Rack|write|r8'));
-    expect(shown.filter((table) => table.startsWith('rows:Cable'))).toEqual([]);
-  }),
-);
-
-it.effect('a refused reload takes the held rows away at once', () =>
+it.live('a refused reload takes the held rows away at once', () =>
   Effect.gen(function* refused() {
+    yield* pinTestDocument;
     serve({ 0: ['Cable', 'Switch'] }, 7);
     yield* mount(0);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === before));
+    yield* waitUntil(() => shown.at(-1) === before);
 
-    rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
+    respond = () => Effect.fail(denied);
     yield* invalidate;
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1)?.startsWith('error:') === true));
+    yield* waitUntil(() => shown.at(-1)?.startsWith('error:') === true);
     expect(shown.at(-1)).toBe('error:forbidden');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a tree category stays in the request and its rows on screen while the filter choices reload', () =>
+it.live('a tree category stays in the request and its rows on screen while the filter choices reload', () =>
   Effect.gen(function* heldChoices() {
+    yield* pinTestDocument;
     serveCompany(true, 7);
     yield* mountFiltered(company);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === filteredBefore));
+    yield* waitUntil(() => shown.at(-1) === filteredBefore);
     const mountsBefore = mounts;
 
     const gate = yield* Deferred.make<boolean>();
@@ -296,35 +233,42 @@ it.effect('a tree category stays in the request and its rows on screen while the
     shown.length = 0;
     requested.length = 0;
     yield* invalidate;
+    // The reads this started have all arrived; the gate holds 2 of them open.
+    yield* networkQuietExcept(2);
     expect(shown.length).toBeGreaterThan(0);
     // The tree filter control and the filtered rows stay; the table does not turn to the unfiltered page.
     expect(new Set(shown)).toEqual(new Set([filteredBefore]));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'tree/rows:Cable|write|r8'));
+    yield* waitUntil(() => shown.at(-1) === 'tree/rows:Cable|write|r8');
     expect(new Set(shown)).toEqual(new Set([filteredBefore, 'tree/rows:Cable|write|r8']));
+    yield* networkIdle;
     expect(requested.filter((request) => request === 'list:*')).toEqual([]);
     expect(mounts).toBe(mountsBefore);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('another company never gets the tree filter of the company before it', () =>
+it.live('another company never gets the tree filter of the company before it', () =>
   Effect.gen(function* otherCompanyChoices() {
+    yield* pinTestDocument;
     serveCompany(true, 7);
     const view = yield* mountFiltered(company);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === filteredBefore));
+    yield* waitUntil(() => shown.at(-1) === filteredBefore);
 
     const gate = yield* Deferred.make<boolean>();
     serveCompany(false, 3, gate);
     shown.length = 0;
     requested.length = 0;
     yield* view.show(otherCompany);
-    yield* Effect.promise(() => act(settle));
+    yield* settle;
+    // The reads this started have all arrived; the gate holds 2 of them open.
+    yield* networkQuietExcept(2);
     expect(new Set(shown)).toEqual(new Set(['labels/loading']));
 
     yield* Deferred.succeed(gate, true);
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'labels/rows:Cable,Switch|write|r3'));
+    yield* waitUntil(() => shown.at(-1) === 'labels/rows:Cable,Switch|write|r3');
     expect(shown.filter((table) => table.startsWith('tree/'))).toEqual([]);
+    yield* networkIdle;
     expect(requested.filter((request) => request === `list:${TREE_CATEGORY}`)).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );

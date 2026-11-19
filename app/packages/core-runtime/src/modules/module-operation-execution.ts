@@ -31,11 +31,10 @@ import {
 } from '../auth/system-principal-context-provenance.ts';
 import { coreActionCatalog } from './actions/catalog.ts';
 import {
-  validateActiveApplicationCompositionSnapshot,
+  loadCheckedActiveApplicationComposition,
   loadInstalledModuleCatalogForRevision,
 } from './active-application-composition.ts';
 import type { ActiveApplicationCompositionServiceContract } from './active-application-composition.ts';
-import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
 import { copyOntosModuleRequirements } from './manifest.ts';
 import type { OntosDeploymentIdentitySchema } from './manifest.ts';
 import {
@@ -613,8 +612,7 @@ export const loadModuleOperationAdmission = Effect.fn('ModuleOperation.loadAdmis
   hostRegistration?: VerticalRuntimeRegistration,
   shellSystemReads?: Readonly<ShellSystemReadRegistrations>,
 ): Effect.fn.Return<ModuleOperationAdmission, ModuleOperationRequirementError> {
-  const snapshot = yield* authority.load.pipe(
-    Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+  const { catalog: checkedCatalog, snapshot } = yield* loadCheckedActiveApplicationComposition(authority).pipe(
     Effect.mapError(unavailable),
   );
   const shellSystemRead = isBoundShellSystemRead(registration, shellSystemReads);
@@ -650,7 +648,7 @@ export const loadModuleOperationAdmission = Effect.fn('ModuleOperation.loadAdmis
   if (selectedCore) {
     return Object.freeze({ revision: snapshot.composition.revision });
   }
-  const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(Effect.mapError(unavailable));
+  const catalog = checkedCatalog;
   if (genuineCore) {
     if (host === undefined) {
       return yield* unavailable();

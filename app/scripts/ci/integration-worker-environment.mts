@@ -14,20 +14,29 @@ export const isIntegrationWorkerEndpoint = (input: {
   readonly isolatedWorkers: string;
   readonly port: number;
 }) =>
-  input.isolatedWorkers === '4' &&
-  workerSlots.some((worker) => input.container === `ontos-ci-db-${worker}` && input.port === 5540 + Number(worker));
+  ['2', '4'].includes(input.isolatedWorkers) &&
+  workerSlots
+    .filter((worker) => Number(worker) <= Number(input.isolatedWorkers))
+    .some((worker) => input.container === `ontos-ci-db-${worker}` && input.port === 5540 + Number(worker));
 export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({ ONTOS_CI_ISOLATED_WORKERS: Schema.optionalKey(Schema.Undefined) }),
   Schema.Struct({
     DATABASE_ADMIN_URL: LocalDatabaseUrl,
     DATABASE_URL: LocalDatabaseUrl,
-    ONTOS_CI_ISOLATED_WORKERS: Schema.Literal('4'),
-    ONTOS_CI_WORKER_SLOT: Schema.optionalKey(WorkerSlotSchema),
+    ONTOS_CI_ISOLATED_WORKERS: Schema.Literals(['2', '4']),
+    // run-integration-suites.sh assigns every lane its slot. Rstest worker ids grow past the provisioned
+    // clusters when one process runs many files, so they never select a cluster.
+    ONTOS_CI_WORKER_SLOT: WorkerSlotSchema,
     PARTY_REGISTRY_DATABASE_URL: LocalDatabaseUrl,
     PARTY_REGISTRY_WORKER_DATABASE_URL: LocalDatabaseUrl,
-    RSTEST_WORKER_ID: WorkerSlotSchema,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: LocalDatabaseUrl,
-  }),
+  }).check(
+    Schema.makeFilter((settings) =>
+      Number(settings.ONTOS_CI_WORKER_SLOT) <= Number(settings.ONTOS_CI_ISOLATED_WORKERS)
+        ? undefined
+        : 'CI integration worker slot is not provisioned',
+    ),
+  ),
 ]);
 type IntegrationWorkerSettings = typeof IntegrationWorkerSettingsSchema.Type;
 
@@ -37,12 +46,12 @@ const retargetDatabase = (original: URL, worker: string) => {
   return url.href;
 };
 
-/** Each Rstest slot owns a whole cluster: ALTER ROLE is not database-local. */
+/** Each scheduler lane owns a whole cluster: ALTER ROLE is not database-local. */
 export const integrationWorkerEnvironment = (settings: IntegrationWorkerSettings) => {
   if (settings.ONTOS_CI_ISOLATED_WORKERS === undefined) {
     return Option.none();
   }
-  const worker = settings.ONTOS_CI_WORKER_SLOT ?? settings.RSTEST_WORKER_ID;
+  const worker = settings.ONTOS_CI_WORKER_SLOT;
   return Option.some({
     DATABASE_ADMIN_URL: retargetDatabase(settings.DATABASE_ADMIN_URL, worker),
     DATABASE_URL: retargetDatabase(settings.DATABASE_URL, worker),

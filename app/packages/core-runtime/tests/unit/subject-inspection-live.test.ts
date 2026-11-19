@@ -13,7 +13,10 @@ import {
   SubjectInspectionIdentitySource,
   SubjectInspectionUnavailable,
 } from '../../src/access/enforcement/index.ts';
-import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '../../src/modules/active-application-composition.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import { coreActionCatalog } from '../../src/modules/actions/catalog.ts';
 import { declaredActionAuthorities } from '../../src/permissions/action-authority.ts';
@@ -72,7 +75,10 @@ const live = Effect.fn('SubjectInspectionTest.live')(function* live(snapshot: Ac
             return Effect.succeed(Option.some({ principalStatus: 'active', tenantStatus: 'active' }));
           },
         }),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
       ),
     ),
   );

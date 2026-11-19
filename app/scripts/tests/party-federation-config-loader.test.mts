@@ -11,11 +11,6 @@ import { ChildProcess } from 'effect/process';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
-rstest.mock('@modern-js/app-tools-extensions/config', () => ({
-  getBuildConfigEnvironment: rstest.fn<(name: string) => string | undefined>(),
-  resolveDeployTarget: () => ({ explicit: true, target: 'node' }),
-}));
-
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyDirectory = 'verticals/party-registry';
 const configFiles = ['module-federation.config.ts', 'backend-federation.config.ts'];

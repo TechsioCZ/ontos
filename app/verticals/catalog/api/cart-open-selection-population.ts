@@ -1,4 +1,7 @@
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+} from '@app/core-runtime/modules/active-application-composition';
 import type { OperationalScope } from '@app/core-runtime';
 import {
   OpenSelectionPopulationEntrySchema,
@@ -43,7 +46,7 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         const payload = yield* Schema.decodeUnknownEffect(OpenSelectionPopulationRequestSchema)({
           tenantId: input.tenantId,
         }).pipe(Effect.mapError(unavailableBecause('The requested Cart population Tenant is invalid')));
-        const snapshot = yield* composition.load.pipe(
+        const snapshot = yield* loadActiveApplicationComposition(composition).pipe(
           Effect.mapError(unavailableBecause('The active Cart population composition is unavailable')),
         );
         const requestCorrelation = yield* crypto

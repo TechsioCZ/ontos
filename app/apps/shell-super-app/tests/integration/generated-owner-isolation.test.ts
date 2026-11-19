@@ -18,6 +18,7 @@ import {
   makeActiveApplicationCompositionLayer,
   publishApplicationCompositionAuthority,
   readVerifiedGatewayCompositionRevision,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type {
   ActiveApplicationCompositionService,
@@ -674,7 +675,7 @@ it.live(
       generatedRegistrationExports['isolationOwnerRegistration'],
     );
     const ownerAdmission = {
-      applicationComposition: { load: Effect.succeed(approvedSnapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(approvedSnapshot)),
       databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
       expectedDeployment: contract.deployment,
       ownerRegistration,
@@ -1204,8 +1205,8 @@ it.live(
         const definitions = yield* ShellGovernedReadDefinitions;
         const shellReadRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
           accessDecision: accessGate.bound,
-          applicationComposition: {
-            load: capturedShellCatalog.pipe(
+          applicationComposition: makeActiveApplicationCompositionService(
+            capturedShellCatalog.pipe(
               Effect.mapError(
                 (cause) =>
                   new ActiveApplicationCompositionUnavailableError({
@@ -1219,7 +1220,7 @@ it.live(
               ),
               Effect.as(approvedSnapshot),
             ),
-          },
+          ),
           databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
           expectedDeployment: ultramodernDeliveryUnit,
           shellSystemReads: definitions,

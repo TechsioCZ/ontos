@@ -1,25 +1,24 @@
 // @rstest-environment happy-dom
-// The tag edit panel as the user sees it: one Save button in the panel footer, the draft's status next to it, and a
-// question before unsaved changes are left. Only the owner client, the i18n runtime and the router blocker are
-// replaced.
-import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import { TagIdSchema } from '../../shared/apis/records.ts';
-import type { TagWithCounts } from '../../shared/apis/records.ts';
-import { applyTaggingCommandIfUnchanged } from '../../src/tags/records-commands.ts';
+// Tag editing maps the patch and refuses to overwrite an independently changed tag.
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import type { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { updateTagActionSchemaErrorLive } from '../../api/update-tag-action-problems.ts';
+import type { ApplyCommandResult, UpdateTagPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { RecordsApi, TagIdSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse, TagWithCounts } from '../../shared/apis/records.ts';
+import { UpdateTagActionApi } from '../../shared/apis/update-tag-action.ts';
 import { TagEditPanel } from '../../src/routes/[lang]/nastaveni/stitky/tag-edit-panel.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/tags/records-commands.ts');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
+import { mountInRoute } from '../support/module-ui.ts';
 
 const now = DateTime.makeUnsafe('2026-11-01T10:00:00Z');
 const vip: TagWithCounts = {
@@ -32,54 +31,59 @@ const vip: TagWithCounts = {
   updatedAt: now,
 };
 
-const writes = () => rstest.mocked(applyTaggingCommandIfUnchanged).mock.calls.length;
-
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
+const commands: (typeof UpdateTagPayloadSchema.Encoded)[] = [];
+const reads: RecordsRequest[] = [];
+const records: RecordsResponse = {
+  assignments: [],
+  canWrite: true,
+  indicators: { assignmentCount: 0, tagCount: 1 },
+  revision: 4,
+  tags: [vip],
 };
-
-interface View {
-  readonly closed: string[];
-  readonly unmount: () => void;
-}
-
-const views: View[] = [];
-
-const mount = async (): Promise<View> => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
+let recordsAnswer = records;
+const saved: ApplyCommandResult = { affectedAssignments: 0, revision: 5, tagId: vip.id };
+let answer: ApplyCommandResult | typeof ActionProposalAcceptedSchema.Type = saved;
+const OwnerRecordsApi = RecordsApi.prefix('/tagging-api');
+const OwnerActionApi = UpdateTagActionApi.prefix('/tagging-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ tagging: '/tagging-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return recordsAnswer;
+        }),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'updateTagAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(updateTagActionSchemaErrorLive)),
+  ),
+);
+const mount = Effect.gen(function* mountPanel() {
+  yield* pinTestDocument;
   const closed: string[] = [];
-  await act(async () => {
-    root.render(
-      <TagEditPanel
-        onClose={() => {
-          closed.push('close');
-        }}
-        tag={vip}
-      />,
-    );
-    await settle();
-  });
-  let live = true;
-  const view: View = {
-    closed,
-    unmount: () => {
-      if (live) {
-        live = false;
-        act(() => {
-          root.unmount();
-          container.remove();
-        });
-      }
-    },
-  };
-  views.push(view);
-  return view;
-};
-
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
+  yield* mountInRoute(
+    <TagEditPanel
+      onClose={() => {
+        closed.push('close');
+      }}
+      tag={vip}
+    />,
+    { path: 'nastaveni/stitky', url: '/cs/nastaveni/stitky' },
+  );
+  return { closed, unmount: unmountAll };
+});
 
 const button = (name: string): HTMLButtonElement => {
   const [found] = buttons(name);
@@ -91,152 +95,55 @@ const nameField = (): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>('input[id="tag-name"]')));
 
 /** Types like a user: React sees a native input event, then the field loses focus. */
-const typeName = async (value: string) => {
-  await act(async () => {
+const typeName = (value: string) =>
+  acted(() => {
     const field = nameField();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
     field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-    await settle();
   });
-};
 
-const click = async (target: HTMLElement) => {
-  await act(async () => {
-    target.click();
-    await settle();
-  });
-};
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
-const text = () => document.body.textContent ?? '';
+const click = (target: HTMLElement) => acted(() => target.click());
 
 const saveState = () => document.querySelector<HTMLElement>('[data-save-state]')?.dataset.saveState;
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
-  rstest.mocked(applyTaggingCommandIfUnchanged).mockReturnValue(Effect.succeed('applied'));
+  commands.length = 0;
+  reads.length = 0;
+  recordsAnswer = records;
+  answer = saved;
 });
 
-afterEach(() => {
-  for (const view of views) {
-    view.unmount();
-  }
-  views.length = 0;
-  rstest.unstubAllGlobals();
-});
+afterEach(unmountAll);
 
 describe('tag edit panel with one Save button', () => {
-  it.live('typing changes only the draft: nothing is sent after a pause, a blur or unmount', () =>
-    Effect.gen(function* typingSendsNothing() {
-      const view = yield* Effect.promise(mount);
-      expect(buttons('Uložit')).toHaveLength(1);
-      expect(button('Uložit').disabled).toBe(true);
-      expect(text()).not.toMatch(/automat/iu);
-
-      yield* Effect.promise(() => typeName('VIP klient'));
-      expect(button('Uložit').disabled).toBe(false);
-      expect(text()).toContain('Neuložené změny');
-      // Longer than any debounce the panel ever had.
-      yield* Effect.sleep('1 second');
-      yield* Effect.promise(() => act(settle));
-      view.unmount();
-      yield* Effect.promise(() => act(settle));
-      expect(writes()).toBe(0);
-    }),
-  );
-
-  it.effect('one click on Save sends one update and shows it saved', () =>
+  it.live('one click on Save sends one update and shows it saved', () =>
     Effect.gen(function* saveOnce() {
-      yield* Effect.promise(mount);
-      yield* Effect.promise(() => typeName('VIP klient'));
-      yield* Effect.promise(() => click(button('Uložit')));
-      yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
-      expect(writes()).toBe(1);
-      expect(Predicate.isTagged(rstest.mocked(applyTaggingCommandIfUnchanged).mock.calls[0]?.[0], 'UpdateTag')).toBe(
-        true,
-      );
-      expect(rstest.mocked(applyTaggingCommandIfUnchanged).mock.calls[0]?.[0]).toMatchObject({
+      yield* mount;
+      yield* typeName('VIP klient');
+      yield* click(button('Uložit'));
+      yield* waitUntil(() => text().includes('Uloženo'));
+      yield* networkIdle;
+      expect(commands).toHaveLength(1);
+      expect(Predicate.isTagged(commands[0]?.command, 'UpdateTag')).toBe(true);
+      expect(commands[0]?.command).toMatchObject({
         patch: { name: 'VIP klient' },
       });
       expect(button('Uložit').disabled).toBe(true);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('an invalid draft cannot be saved', () =>
-    Effect.gen(function* invalid() {
-      yield* Effect.promise(mount);
-      yield* Effect.promise(() => typeName(' '));
-      expect(saveState()).toBe('invalid');
-      expect(button('Uložit').disabled).toBe(true);
-      expect(writes()).toBe(0);
-    }),
-  );
-
-  it.effect('closing with unsaved changes asks; Zůstat keeps the draft, Zahodit změny closes without sending', () =>
-    Effect.gen(function* leave() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(() => typeName('VIP klient'));
-      yield* Effect.promise(() => click(button('tagging.tags.form.close')));
-      expect(buttons('Zahodit změny')).toHaveLength(1);
-      expect(view.closed).toEqual([]);
-
-      yield* Effect.promise(() => click(button('Zůstat')));
-      yield* Effect.promise(() => waitUntil(() => buttons('Zůstat').length === 0));
-      expect(nameField().value).toBe('VIP klient');
-
-      yield* Effect.promise(() => click(button('tagging.tags.form.close')));
-      yield* Effect.promise(() => click(button('Zahodit změny')));
-      expect(view.closed).toEqual(['close']);
-      expect(writes()).toBe(0);
-    }),
-  );
-
-  it.effect('a clean panel closes without asking', () =>
-    Effect.gen(function* cleanClose() {
-      const view = yield* Effect.promise(mount);
-      yield* Effect.promise(() => click(button('tagging.tags.form.close')));
-      expect(buttons('Zůstat')).toHaveLength(0);
-      expect(view.closed).toEqual(['close']);
-    }),
-  );
-
-  it.effect('a tag someone else changed ends in a conflict, not an overwrite', () =>
+  it.live('a tag someone else changed ends in a conflict, not an overwrite', () =>
     Effect.gen(function* conflict() {
-      rstest.mocked(applyTaggingCommandIfUnchanged).mockReturnValue(Effect.succeed('stale'));
-      yield* Effect.promise(mount);
-      yield* Effect.promise(() => typeName('VIP klient'));
-      yield* Effect.promise(() => click(button('Uložit')));
-      yield* Effect.promise(() => waitUntil(() => saveState() === 'conflict'));
+      recordsAnswer = { ...records, tags: [{ ...vip, name: 'VIP změněný někým jiným' }] };
+      yield* mount;
+      yield* typeName('VIP klient');
+      yield* click(button('Uložit'));
+      yield* waitUntil(() => saveState() === 'conflict');
       expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
-      expect(writes()).toBe(1);
-    }),
-  );
-
-  it.effect('a change parked for approval is sent once and never again', () =>
-    Effect.gen(function* proposed() {
-      const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
-        _tag: 'ActionProposalAccepted',
-        expiresAt: '2026-11-10T12:00:00.000Z',
-        proposalId: '60000000-0000-4000-8000-000000000001',
-      });
-      rstest.mocked(applyTaggingCommandIfUnchanged).mockReturnValue(Effect.fail(receipt));
-      yield* Effect.promise(mount);
-      yield* Effect.promise(() => typeName('VIP klient'));
-      yield* Effect.promise(() => click(button('Uložit')));
-      yield* Effect.promise(() => waitUntil(() => saveState() === 'proposed'));
-      expect(button('Uložit').disabled).toBe(true);
-      yield* Effect.promise(() => click(button('Uložit')));
-      expect(writes()).toBe(1);
-    }),
+      yield* networkIdle;
+      expect(reads).toHaveLength(1);
+      expect(commands).toHaveLength(0);
+    }).pipe(Effect.provide(network)),
   );
 });

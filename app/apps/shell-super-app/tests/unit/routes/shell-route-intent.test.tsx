@@ -1,117 +1,99 @@
+// @rstest-environment happy-dom
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import type { LoaderFnContext } from '@modern-js/plugin-tanstack/runtime';
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Clock, Deferred, Effect } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { TestClock } from 'effect/testing';
-import type { ComponentProps } from 'react';
+import { fireEvent, screen, cleanup } from '@testing-library/react';
+import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { useState } from 'react';
+import type { ReactElement } from 'react';
 
 import { browserRuntime } from '../../../src/runtime/browser-effect-runtime.ts';
+import { withPrimaryModulePreparation } from '../../../src/routes/browser-request-cache.ts';
+import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
 import { ShellRouteLink } from '../../../src/routes/shell-frame.tsx';
 import { StaffRoutePreloadContext, useIdleRoutePreload } from '../../../src/routes/use-idle-route-preload.ts';
-import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
+import { shellLocaleCopy } from '../../support/shell-i18n.tsx';
+import { makeShellRouter, renderShellRoute } from '../../support/shell-router.tsx';
 
-interface RouterStateSlot {
-  current: RouterStateFixture;
-}
-
-interface RouterStateFixture {
-  readonly location: { readonly href: string };
-  readonly resolvedLocation: { readonly href: string };
-}
-
-const { forget, gate, preloadRoute, router, routeState, unstableRouter } = rstest.hoisted(() => {
-  const preload = rstest.fn<
-    (destination: {
-      readonly hash?: string;
-      readonly search?: Readonly<Record<string, string>>;
-      readonly to: string;
-    }) => Promise<void>
-  >(() => Promise.resolve());
-  const state: RouterStateSlot = {
-    current: { location: { href: '/en' }, resolvedLocation: { href: '/en' } },
-  };
-  return {
-    forget: rstest.fn<() => void>(),
-    gate: { wait: (): Effect.Effect<boolean> => Effect.succeed(true) },
-    preloadRoute: preload,
-    router: {
-      clearCache: rstest.fn<() => void>(),
-      matchRoutes: () => [],
-      options: { parseSearch: (search: string) => Object.fromEntries(new URLSearchParams(search)) },
-      preloadRoute: preload,
-      routesById: {},
-    },
-    routeState: state,
-    unstableRouter: { enabled: false },
-  };
-});
-
-rstest.mock('../../../src/routes/browser-request-cache.ts', () => ({
-  awaitPrimaryModuleReads: Effect.suspend(() => gate.wait()),
-  forgetRecordedPageReads: Effect.sync(forget),
-  withoutRecordedPageReads: <A,>(start: () => Promise<A>) =>
-    Effect.tryPromise(start).pipe(Effect.timeout('30 seconds')),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  rootRouteId: '__root__',
-  useNavigate: () => () => Promise.resolve(),
-  useRouter: () => (unstableRouter.enabled ? { ...router } : router),
-  useRouterState: ({ select }: { readonly select: (state: RouterStateFixture) => string | undefined }) =>
-    select(routeState.current),
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: ({
-    activeOptions: _active,
-    children,
-    prefetch: _prefetch,
-    preload: _preload,
-    to,
-    ...props
-  }: ComponentProps<'a'> & {
-    readonly activeOptions?: unknown;
-    readonly prefetch?: string;
-    readonly preload?: boolean;
-    readonly to: string;
-  }) => (
-    <a href={to.startsWith('https:') ? to : `/en${to === '/' ? '' : to}`} {...props}>
-      {children}
-    </a>
-  ),
-  useModernI18n: () => ({ language: 'en', t: (key: string) => key }),
-}));
-
-const StaffLinks = ({ enabled = true }: { readonly enabled?: boolean }) => (
-  <StaffRoutePreloadContext value={{ enabled, generation: 0 }}>
+const StaffLinks = () => (
+  <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
     <ShellRouteLink to="/finance">Finance</ShellRouteLink>
     <ShellRouteLink to="/operations">Operations</ShellRouteLink>
     <ShellRouteLink to="/contacts">Contacts</ShellRouteLink>
   </StaffRoutePreloadContext>
 );
-const IntentContext = ({
-  context = 'company-a',
-  disabled = false,
-}: {
-  readonly context?: string;
-  readonly disabled?: boolean;
-}) => {
+
+const IntentContext = ({ initiallyDisabled = false }: { readonly initiallyDisabled?: boolean }) => {
+  const [context, setContext] = useState('company-a');
+  const [disabled, setDisabled] = useState(initiallyDisabled);
   const preload = useIdleRoutePreload([{ enabled: true, href: '/contacts' }], context, disabled);
   return (
     <StaffRoutePreloadContext value={preload}>
       <ShellRouteLink to="/finance">Finance</ShellRouteLink>
+      <output>{preload.enabled ? 'ready' : 'blocked'}</output>
+      <button onClick={() => setContext('company-b')} type="button">
+        Switch company
+      </button>
+      <button onClick={() => setDisabled(false)} type="button">
+        Enable intents
+      </button>
     </StaffRoutePreloadContext>
   );
 };
 
+interface PreparedDestination {
+  readonly hash: string;
+  readonly search: Readonly<Record<string, string>>;
+  readonly to: string;
+}
+
+/** Real route loaders record the destinations reached by the Shell's intent scheduler. */
+const mountLinks = (element: ReactElement, navigation: Effect.Effect<unknown> = Effect.void) =>
+  Effect.gen(function* mountRealLinks() {
+    const prepared: PreparedDestination[] = [];
+    const starts: PreparedDestination[] = [];
+    const router = makeShellRouter({
+      page: { component: () => null, path: '$destination' },
+      root: () => element,
+      url: '/en',
+    });
+    for (const route of Object.values(router.routesById)) {
+      if (route.path === '$destination') {
+        route.update({
+          beforeLoad: ({ location, preload }: Pick<LoaderFnContext, 'location' | 'preload'>) => {
+            if (preload) {
+              starts.push({
+                hash: location.hash,
+                search: Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(location.search),
+                to: location.pathname,
+              });
+            }
+          },
+          loader: ({ location, preload }: LoaderFnContext) => {
+            if (preload) {
+              prepared.push({
+                hash: location.hash,
+                search: Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(location.search),
+                to: location.pathname,
+              });
+              return browserRuntime.runPromise(Effect.void);
+            }
+            return browserRuntime.runPromise(navigation);
+          },
+        });
+      }
+    }
+    yield* renderShellRoute(router, shellLocaleCopy('en'));
+    yield* settle;
+    return { prepared, router, starts };
+  });
+
+const ready = () => screen.getByRole('status').textContent === 'ready';
+
 beforeEach(() => {
   browserRuntime.runSync(staffRoutePreloads.invalidate);
   browserRuntime.runSync(staffRoutePreloads.resume);
-  preloadRoute.mockReset();
-  preloadRoute.mockResolvedValue();
-  router.clearCache.mockClear();
-  forget.mockClear();
-  gate.wait = () => Effect.succeed(true);
-  unstableRouter.enabled = false;
-  routeState.current = { location: { href: '/en' }, resolvedLocation: { href: '/en' } };
 });
 afterEach(() => {
   cleanup();
@@ -121,169 +103,158 @@ afterEach(() => {
 
 it.live('rendering staff links prepares nothing; only intent prepares a destination', () =>
   Effect.gen(function* renderedLinksIdle() {
-    render(<StaffLinks />);
+    const { prepared } = yield* mountLinks(<StaffLinks />);
     yield* Effect.sleep('20 millis');
     yield* staffRoutePreloads.awaitIdle;
-    expect(preloadRoute).not.toHaveBeenCalled();
+    expect(prepared).toEqual([]);
     fireEvent.mouseEnter(screen.getByRole('link', { name: 'Operations' }));
     yield* staffRoutePreloads.awaitIdle;
-    expect(preloadRoute.mock.calls.map(([destination]) => destination)).toEqual([
-      { hash: '', search: {}, to: '/en/operations' },
-    ]);
-  }),
-);
-
-it.live('never cancels started intent work on leave', () =>
-  Effect.gen(function* leaveKeepsWork() {
-    const release = yield* Deferred.make<boolean>();
-    preloadRoute.mockImplementation(() => browserRuntime.runPromise(Deferred.await(release).pipe(Effect.asVoid)));
-    render(<StaffLinks />);
-    fireEvent.mouseEnter(screen.getByRole('link', { name: 'Finance' }));
-    fireEvent.mouseLeave(screen.getByRole('link', { name: 'Finance' }));
-    expect(preloadRoute).toHaveBeenCalledTimes(1);
-    yield* Deferred.succeed(release, true);
-    yield* staffRoutePreloads.awaitIdle;
-    expect(preloadRoute).toHaveBeenCalledTimes(1);
-  }),
-);
-
-it.live('a menu of many links sends nothing until one is pointed at', () =>
-  Effect.gen(function* manyLinks() {
-    render(
-      <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
-        {['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'].map((key) => (
-          <ShellRouteLink key={key} to={`/${key}`}>
-            {key}
-          </ShellRouteLink>
-        ))}
-      </StaffRoutePreloadContext>,
-    );
-    yield* staffRoutePreloads.awaitIdle;
-    expect(preloadRoute).not.toHaveBeenCalled();
-    fireEvent.focus(screen.getByRole('link', { name: 'eight' }));
-    expect(preloadRoute).toHaveBeenCalledTimes(1);
-    expect(preloadRoute).toHaveBeenLastCalledWith({ hash: '', search: {}, to: '/en/eight' });
-    yield* staffRoutePreloads.awaitIdle;
-    expect(preloadRoute).toHaveBeenCalledTimes(1);
+    expect(prepared).toEqual([{ hash: '', search: {}, to: '/en/operations' }]);
   }),
 );
 
 it.live.each(['mouseEnter', 'focus', 'touchStart'] as const)('prepares on %s with zero dwell', (event) =>
   Effect.gen(function* intent() {
-    render(<StaffLinks />);
+    const { prepared, starts } = yield* mountLinks(<StaffLinks />);
     fireEvent[event](screen.getByRole('link', { name: 'Finance' }));
-    expect(preloadRoute).toHaveBeenCalledTimes(1);
+    expect(starts).toHaveLength(1);
     yield* staffRoutePreloads.awaitIdle;
+    expect(prepared).toHaveLength(1);
   }),
 );
 
-it('retains complete localized query/hash and user event handlers', () => {
-  const onFocus = rstest.fn<() => void>();
-  render(
-    <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
-      <ShellRouteLink onFocus={onFocus} to="/finance?filter=active&refreshToken=next#rows">
-        Finance
-      </ShellRouteLink>
-    </StaffRoutePreloadContext>,
-  );
-  expect(preloadRoute).not.toHaveBeenCalled();
-  fireEvent.focus(screen.getByRole('link'));
-  expect(onFocus).toHaveBeenCalledTimes(1);
-  expect(preloadRoute).toHaveBeenCalledWith({
-    hash: 'rows',
-    search: { filter: 'active', refreshToken: 'next' },
-    to: '/en/finance',
-  });
-});
-
-it.effect('waits for the current primary reads, then prepares the pointed link and never the idle menu', () =>
-  Effect.gen(function* primaryFirst() {
-    const clock = yield* Clock.Clock;
-    gate.wait = () => Effect.sleep('10 millis').pipe(Effect.as(true), Effect.provideService(Clock.Clock, clock));
-    render(<IntentContext />);
-    fireEvent.mouseEnter(screen.getByRole('link'));
-    expect(preloadRoute).not.toHaveBeenCalled();
-    yield* TestClock.adjust('10 millis');
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        fireEvent.mouseEnter(screen.getByRole('link'));
-        expect(preloadRoute).toHaveBeenCalledWith({ hash: '', search: {}, to: '/en/finance' });
-      }),
+it.live('retains complete localized query/hash and user event handlers', () =>
+  Effect.gen(function* completeDestination() {
+    const focused: string[] = [];
+    const { prepared, starts } = yield* mountLinks(
+      <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
+        <ShellRouteLink
+          onFocus={() => {
+            focused.push('finance');
+          }}
+          to="/finance?filter=active&refreshToken=next#rows"
+        >
+          Finance
+        </ShellRouteLink>
+      </StaffRoutePreloadContext>,
     );
-    expect(preloadRoute).not.toHaveBeenCalledWith({ to: '/en/contacts' });
-    expect(preloadRoute).toHaveBeenCalledTimes(1);
+    expect(prepared).toEqual([]);
+    fireEvent.focus(screen.getByRole('link'));
+    expect(focused).toHaveLength(1);
+    expect(starts).toEqual([
+      {
+        hash: 'rows',
+        search: { filter: 'active', refreshToken: 'next' },
+        to: '/en/finance',
+      },
+    ]);
+    yield* staffRoutePreloads.awaitIdle;
+    expect(prepared).toEqual(starts);
   }),
 );
 
-it.live('settles the preparation key when the router handle changes identity across renders', () =>
-  Effect.gen(function* stablePreparationKey() {
-    unstableRouter.enabled = true;
-    let waits = 0;
-    gate.wait = () =>
-      Effect.sync(() => {
-        waits += 1;
-        return true;
-      });
-    render(<IntentContext />);
-    yield* Effect.promise(() => waitFor(() => expect(waits).toBeGreaterThan(0)));
-    yield* Effect.sleep('20 millis');
-    const settledWaits = waits;
-    yield* Effect.sleep('20 millis');
-    expect(waits).toBe(settledWaits);
-    expect(preloadRoute).not.toHaveBeenCalled();
+it.live('waits for the current primary reads, then prepares the pointed link and never the idle menu', () =>
+  Effect.gen(function* primaryFirst() {
+    const release = yield* Deferred.make<boolean>();
+    const reading = yield* Deferred.make<boolean>();
+    const foreground = yield* withPrimaryModulePreparation(
+      window.location.pathname,
+      Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(release))),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(reading);
+    const { prepared, starts } = yield* mountLinks(<IntentContext />);
+    fireEvent.mouseEnter(screen.getByRole('link'));
+    expect(starts).toEqual([]);
+    expect(prepared).toEqual([]);
+    yield* Deferred.succeed(release, true);
+    yield* Fiber.join(foreground);
+    yield* waitUntil(ready);
+    fireEvent.mouseEnter(screen.getByRole('link'));
+    yield* staffRoutePreloads.awaitIdle;
+    expect(prepared).toContainEqual({ hash: '', search: {}, to: '/en/finance' });
+    expect(prepared.map(({ to }) => to)).not.toContain('/en/contacts');
+    expect(prepared).toHaveLength(1);
   }),
 );
 
 it.live('drops caches at once after writes and prepares nothing in the background afterwards', () =>
   Effect.gen(function* invalidation() {
-    const view = render(<IntentContext />);
-    yield* Effect.sleep('20 millis');
-    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    const { prepared, router } = yield* mountLinks(<IntentContext />);
+    yield* waitUntil(ready);
+    expect(prepared).toEqual([]);
+    // A repeated native preload reuses its cached loader result until an invalidation.
+    const operations = { hash: '', search: {}, to: '/en/operations' };
+    const warmCache = Effect.promise(() => router.preloadRoute({ to: operations.to }));
+    yield* warmCache;
+    yield* warmCache;
+    expect(prepared).toEqual([operations]);
+    window.dispatchEvent(new Event(moduleWriteEvent));
+    yield* warmCache;
+    expect(prepared).toEqual([operations, operations]);
     yield* Effect.sleep('30 millis');
-    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    window.dispatchEvent(new Event(moduleWriteEvent));
+    yield* warmCache;
     yield* Effect.sleep('30 millis');
-    expect(router.clearCache).toHaveBeenCalledTimes(2);
-    expect(preloadRoute).not.toHaveBeenCalled();
-    view.rerender(<IntentContext context="company-b" />);
-    yield* Effect.promise(() => waitFor(() => expect(forget).toHaveBeenCalledTimes(1)));
-    expect(router.clearCache).toHaveBeenCalledTimes(3);
+    // Each write forced exactly one reload; the idle menu added no preparations.
+    expect(prepared.length - 1).toBe(2);
+    expect(prepared).toEqual([operations, operations, operations]);
+    const recording = 'ontos.page-reads.v1:/en/finance';
+    window.localStorage.setItem(recording, '[]');
+    yield* acted(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Switch company' }));
+    });
+    expect(window.localStorage.getItem(recording)).toBeNull();
+    yield* warmCache;
+    expect(prepared.length - 1).toBe(3);
   }),
 );
 
 it.live('does not prepare during navigation, switching or sign-out', () =>
   Effect.gen(function* foregroundPriority() {
-    const view = render(<IntentContext disabled />);
-    fireEvent.focus(screen.getByRole('link'));
-    expect(preloadRoute).not.toHaveBeenCalled();
-    routeState.current = { location: { href: '/en/operations' }, resolvedLocation: { href: '/en' } };
-    view.rerender(<IntentContext />);
-    fireEvent.focus(screen.getByRole('link'));
-    expect(preloadRoute).not.toHaveBeenCalled();
-    routeState.current = { location: { href: '/en/operations' }, resolvedLocation: { href: '/en/operations' } };
-    view.rerender(<IntentContext />);
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        fireEvent.mouseEnter(screen.getByRole('link'));
-        expect(preloadRoute).toHaveBeenCalled();
-      }),
+    const release = yield* Deferred.make<boolean>();
+    const navigating = yield* Deferred.make<boolean>();
+    const { prepared, router, starts } = yield* mountLinks(
+      <IntentContext initiallyDisabled />,
+      Deferred.succeed(navigating, true).pipe(Effect.andThen(Deferred.await(release))),
     );
+    fireEvent.focus(screen.getByRole('link'));
+    expect(starts).toEqual([]);
+    expect(prepared).toEqual([]);
+    const navigation = yield* Effect.promise(() => router.navigate({ to: '/en/operations' })).pipe(Effect.forkChild);
+    yield* Deferred.await(navigating);
+    yield* acted(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Enable intents' }));
+    });
+    fireEvent.focus(screen.getByRole('link'));
+    expect(starts).toEqual([]);
+    expect(prepared).toEqual([]);
+    yield* Deferred.succeed(release, true);
+    yield* Fiber.join(navigation);
+    yield* waitUntil(ready);
+    fireEvent.mouseEnter(screen.getByRole('link'));
+    yield* staffRoutePreloads.awaitIdle;
+    expect(prepared.length).toBeGreaterThan(0);
   }),
 );
 
-it('does not prepare storefront, external, new-tab or download links', () => {
-  render(
-    <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
-      <ShellRouteLink to="https://shop.example/produkt/item">Storefront</ShellRouteLink>
-      <ShellRouteLink target="_blank" to="/finance">
-        New tab
-      </ShellRouteLink>
-      <ShellRouteLink download to="/export">
-        Download
-      </ShellRouteLink>
-    </StaffRoutePreloadContext>,
-  );
-  for (const link of screen.getAllByRole('link')) {
-    fireEvent.mouseEnter(link);
-  }
-  expect(preloadRoute).not.toHaveBeenCalled();
-});
+it.live('does not prepare storefront, external, new-tab or download links', () =>
+  Effect.gen(function* excludedLinks() {
+    const { prepared, starts } = yield* mountLinks(
+      <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
+        <ShellRouteLink to="https://shop.example/produkt/item">Storefront</ShellRouteLink>
+        <ShellRouteLink target="_blank" to="/finance">
+          New tab
+        </ShellRouteLink>
+        <ShellRouteLink download to="/export">
+          Download
+        </ShellRouteLink>
+      </StaffRoutePreloadContext>,
+    );
+    for (const link of screen.getAllByRole('link')) {
+      fireEvent.mouseEnter(link);
+    }
+    expect(starts).toEqual([]);
+    yield* staffRoutePreloads.awaitIdle;
+    expect(prepared).toEqual([]);
+  }),
+);

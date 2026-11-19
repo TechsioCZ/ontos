@@ -1,90 +1,88 @@
 // @rstest-environment happy-dom
-// Creating a product, as staff see it: the VAT select starts on the first classification the company has a rate for,
-// the chosen classification travels in the CreateProduct payload, and a company without any rate in force is told why
-// the product cannot be created instead of being offered a disabled default. Only the generated clients, the i18n
-// runtime and the router blocker are replaced.
+// Staff create a product through the real form, router, translations and generated Action client. The Shell gateway
+// issuer and merchandise Action endpoint answer in process, recording the classification that reaches the owner.
 import { saveLabelsFor } from '@app/admin-ui';
+import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import { executeApplyCommand } from '../../src/api/apply-command-action-client.ts';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadEncoded } from '../../shared/actions/apply-command.ts';
+import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { CreateProductDialog } from '../../src/routes/[lang]/provoz/produkty/product-forms.tsx';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-import { translateTaxCs } from './merchandise-translate.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/apply-command-action-client.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, values?: Record<string, number | string>) => translateTaxCs(key, values),
-  }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
-}));
+import { mountInRoute } from '../support/module-ui.ts';
 
 const rate = Schema.decodeSync(TaxRateViewSchema);
 const standardRate = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 21 });
 const reducedRate = rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 });
 const payerWith = (...rates: (typeof standardRate)[]): CompanyVat => ({ rates, regime: 'VAT_PAYER' });
 const labels = saveLabelsFor('cs');
+const created = Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 4 });
+const commands: ApplyCommandPayloadEncoded[] = [];
+const OwnerApi = ApplyCommandActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'applyCommandAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return created;
+        }),
+      ),
+    ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
+  ),
+);
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-const unmounts: (() => void)[] = [];
-const mount = async (vat: CompanyVat) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  await act(async () => {
-    root.render(
-      <CreateProductDialog
-        onCommitted={constVoid}
-        onOpenChange={constVoid}
-        onReload={constVoid}
-        open
-        revision={3}
-        vat={vat}
-      />,
-    );
-    await settle();
-  });
-  unmounts.push(() => {
-    act(() => {
-      root.unmount();
-      container.remove();
-    });
-  });
-};
+const mount = (vat: CompanyVat) =>
+  mountInRoute(
+    <CreateProductDialog
+      onCommitted={constVoid}
+      onOpenChange={constVoid}
+      onReload={constVoid}
+      open
+      revision={3}
+      vat={vat}
+    />,
+    { path: 'provoz/produkty', url: '/cs/provoz/produkty' },
+  );
 
 const fieldById = (id: string): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${id}"]`)));
-const typeInto = async (id: string, value: string) => {
-  await act(async () => {
+const typeInto = (id: string, value: string) =>
+  acted(() => {
     const field = fieldById(id);
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
     field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-    await settle();
   });
-};
 const vatSelect = (): HTMLSelectElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLSelectElement>('select[name="taxClassification"]')));
-const pickVat = async (value: string) => {
-  await act(async () => {
-    const select = vatSelect();
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-    await settle();
+const pickVat = (value: string) =>
+  Effect.gen(function* pickVisibleVatOption() {
+    yield* acted(() => {
+      const root = Option.getOrThrow(Option.fromNullOr(vatSelect().parentElement));
+      Option.getOrThrow(Option.fromNullOr(root.querySelector<HTMLButtonElement>('[data-part="trigger"]'))).click();
+    });
+    yield* waitUntil(() => document.querySelector(`[role="option"][data-value="${value}"]`) !== null);
+    yield* acted(() => {
+      Option.getOrThrow(
+        Option.fromNullOr(document.querySelector<HTMLElement>(`[role="option"][data-value="${value}"]`)),
+      ).click();
+    });
   });
-};
 const saveButton = (): HTMLButtonElement =>
   Option.getOrThrow(
     Option.fromUndefinedOr(
@@ -93,69 +91,56 @@ const saveButton = (): HTMLButtonElement =>
       ),
     ),
   );
-const fillRequired = async () => {
-  await typeInto('product-sku', 'KAVA-500');
-  await typeInto('product-name', 'Káva 500 g');
-  await typeInto('product-category', 'Káva');
-  await typeInto('product-price', '250');
-};
-const sentClassifications = () =>
-  rstest
-    .mocked(executeApplyCommand)
-    .mock.calls.flatMap(([payload]) =>
-      Predicate.isTagged(payload.command, 'CreateProduct') ? [payload.command.taxClassificationCode] : [],
-    );
+const fillRequired = Effect.gen(function* fillRequiredFields() {
+  yield* typeInto('product-sku', 'KAVA-500');
+  yield* typeInto('product-name', 'Káva 500 g');
+  yield* typeInto('product-category', 'Káva');
+  yield* typeInto('product-price', '250');
+});
+const sentClassifications = () => commands.map(({ command }) => command.taxClassificationCode);
 const text = () => (document.body.textContent ?? '').replaceAll(' ', ' ');
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
-  rstest.mocked(executeApplyCommand).mockReturnValue(Effect.succeed({ entityIds: [], revision: 4 }));
+  commands.length = 0;
 });
+afterEach(unmountAll);
 
-afterEach(() => {
-  for (const unmount of unmounts.splice(0)) {
-    unmount();
-  }
-  rstest.unstubAllGlobals();
-});
-
-it.effect('sends the classification staff picked in the CreateProduct payload', () =>
-  Effect.promise(async () => {
-    await mount(payerWith(standardRate, reducedRate));
+it.live('sends the classification staff picked in the CreateProduct payload', () =>
+  Effect.gen(function* pickedClassification() {
+    yield* pinTestDocument;
+    yield* mount(payerWith(standardRate, reducedRate));
     expect(vatSelect().value).toBe(CZ_VAT_STANDARD);
-    await fillRequired();
-    await pickVat(CZ_VAT_REDUCED);
-    await act(async () => {
-      saveButton().click();
-      await settle();
-    });
+    yield* fillRequired;
+    yield* pickVat(CZ_VAT_REDUCED);
+    yield* acted(() => saveButton().click());
+    yield* waitUntil(() => commands.length > 0);
+    yield* networkIdle;
     expect(sentClassifications()).toEqual([CZ_VAT_REDUCED]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('starts on the first classification with a rate when the standard one has none', () =>
-  Effect.promise(async () => {
-    await mount(payerWith(reducedRate));
+it.live('starts on the first classification with a rate when the standard one has none', () =>
+  Effect.gen(function* firstPricedClassification() {
+    yield* pinTestDocument;
+    yield* mount(payerWith(reducedRate));
     expect(vatSelect().value).toBe(CZ_VAT_REDUCED);
-    await fillRequired();
-    await act(async () => {
-      saveButton().click();
-      await settle();
-    });
+    yield* fillRequired;
+    yield* acted(() => saveButton().click());
+    yield* waitUntil(() => commands.length > 0);
+    yield* networkIdle;
     expect(sentClassifications()).toEqual([CZ_VAT_REDUCED]);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a company without any rate in force is told why, and nothing is sent', () =>
-  Effect.promise(async () => {
-    await mount(payerWith());
+it.live('a company without any rate in force is told why, and nothing is sent', () =>
+  Effect.gen(function* noRateInForce() {
+    yield* pinTestDocument;
+    yield* mount(payerWith());
     expect(text()).toContain('Firma zatím nemá v modulu Daně platnou sazbu DPH, produkt proto nelze založit.');
-    await fillRequired();
-    await act(async () => {
-      saveButton().click();
-      await settle();
-    });
+    yield* fillRequired;
+    yield* acted(() => saveButton().click());
+    // A wrong send (gateway context, then the Action) has reached the owner by the time the network is idle.
+    yield* networkIdle;
     expect(sentClassifications()).toEqual([]);
-  }),
+  }).pipe(Effect.provide(network)),
 );

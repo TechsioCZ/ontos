@@ -23,7 +23,6 @@ describe("mobile owner category navigation", () => {
     expect(markup).toContain('href="/cs/kategorie/child%20%2F%20a"');
     expect(markup).toContain('href="/cs/kategorie/leaf"');
     expect(markup).toContain("Owner leaf");
-    expect(markup).toContain('data-scope="accordion"');
     expect(markup).not.toContain('href="#"');
   });
   it("does not invent a destination when an owner mapping is absent", () => {

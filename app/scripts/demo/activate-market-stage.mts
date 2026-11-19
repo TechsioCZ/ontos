@@ -7,14 +7,16 @@ import {
   InstalledModuleCatalogService,
   OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  loadCheckedActiveApplicationComposition,
+} from '@app/core-runtime/modules/active-application-composition';
 import { NodeServices } from '@effect/platform-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Result, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { tenantModuleStates } from '../../packages/core-runtime/src/db/schema.ts';
-import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { TenantModuleStateValidationUnavailableError } from '../../packages/core-runtime/src/modules/tenant-module-state-validation-unavailable-error.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
@@ -98,8 +100,9 @@ const main = (
     ) {
       return yield* fail('Module activation requires a tenant-only operator session of a Tenant allowed this module');
     }
-    const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
-    const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+    const { catalog, snapshot } = yield* loadCheckedActiveApplicationComposition(
+      yield* ActiveApplicationCompositionService,
+    );
     const preparedCatalog = yield* (yield* InstalledModuleCatalogService).loadForRevision(
       snapshot.composition.revision,
     );
@@ -205,12 +208,8 @@ export const StageMarketOperatorLive = Layer.effect(
     const composition = yield* ActiveApplicationCompositionService;
     // The Core handler consumes this service inside guarded SQL. Materialize the genuine
     // composition before entering the Action, never an HTTP-backed catalog loader.
-    const { catalog, revision } = yield* composition.load.pipe(
-      Effect.flatMap((snapshot) =>
-        buildApplicationCompositionCatalog(snapshot.composition).pipe(
-          Effect.map((prepared) => ({ catalog: prepared, revision: snapshot.composition.revision })),
-        ),
-      ),
+    const { catalog, revision } = yield* loadCheckedActiveApplicationComposition(composition).pipe(
+      Effect.map((checked) => ({ catalog: checked.catalog, revision: checked.snapshot.composition.revision })),
       Effect.mapError(
         () =>
           new TenantModuleStateValidationUnavailableError({

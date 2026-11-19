@@ -3,7 +3,10 @@ import { defineDatabaseIdentityEnrollment, ActionRuntime, ReadRuntime } from '@a
 import { randomUUID } from 'node:crypto';
 
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
-import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionSnapshotSchema,
+  loadActiveApplicationComposition,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -434,7 +437,7 @@ it.live(
   () =>
     native(
       Effect.gen(function* unresolvedTaskHoldsDrain() {
-        const payment = yield* isolatedPayment(yield* registeredWorkers.authority.load);
+        const payment = yield* isolatedPayment(yield* loadActiveApplicationComposition(registeredWorkers.authority));
         const { evidence } = payment;
         const owners = yield* makeLifecycleOwnerContractFixture({
           enabledBindings: [GOPAY_ACCOUNT],
@@ -568,7 +571,7 @@ it.live(
   () =>
     native(
       Effect.gen(function* gatewayDispatchHoldsDrain() {
-        const payment = yield* isolatedPayment(yield* registeredWorkers.authority.load);
+        const payment = yield* isolatedPayment(yield* loadActiveApplicationComposition(registeredWorkers.authority));
         const owners = yield* makeLifecycleOwnerContractFixture({
           enabledBindings: [GOPAY_ACCOUNT],
           gatewayAvailable: true,

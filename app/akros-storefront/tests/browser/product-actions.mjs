@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 const base = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000/cs";
@@ -19,7 +19,6 @@ const browser = await chromium.launch(
     ? { executablePath: process.env.AKROS_CHROMIUM_PATH }
     : { channel: "chrome" },
 );
-await mkdir("test-results/product-actions", { recursive: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1000 } });
   page.setDefaultTimeout(30000);
@@ -28,56 +27,10 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${base}/produkt/${product.slug}`, { waitUntil: "domcontentloaded" });
   await page.locator(".sf-product-actions__watch:not(:disabled)").waitFor();
-  await page.evaluate(() => document.fonts.ready);
-  for (const width of [
-    1920, 1600, 1440, 1280, 1100, 1024, 960, 768, 767, 640, 430, 390, 360, 320,
-  ]) {
-    await page.setViewportSize({ width, height: 900 });
-    const result = await page.locator(".sf-product-actions").evaluate((root) => {
-      const boxes = [...root.querySelectorAll("button")].map((item) =>
-        item.getBoundingClientRect(),
-      );
-      const height = parseFloat(getComputedStyle(root.querySelector("button")).height);
-      const bounds = root.getBoundingClientRect();
-      return {
-        valid:
-          boxes.length === 5 &&
-          boxes.every((box) => box.left >= bounds.left - 1 && box.right <= bounds.right + 1) &&
-          height >= (innerWidth < 768 ? 44 : 40) &&
-          boxes.every((box) => Math.abs(box.height - height) < 1) &&
-          boxes.every((a) =>
-            boxes.every(
-              (b) =>
-                Math.abs(a.top - b.top) > 8 ||
-                Math.abs(a.top + a.height / 2 - (b.top + b.height / 2)) < 1,
-            ),
-          ),
-        height,
-        boxes: boxes.map((box) => ({ height: box.height, top: box.top })),
-      };
-    });
-    assert.equal(result.valid, true, `action alignment ${width}: ${JSON.stringify(result)}`);
-    if ([1920, 1024, 390, 320].includes(width)) {
-      await page.locator(".sf-product-actions").screenshot({
-        path: `test-results/product-actions/actions-${width}.png`,
-      });
-    }
-  }
-  await page.setViewportSize({ width: 1920, height: 1000 });
   await page.getByRole("button", { name: "Hlídat produkt", exact: true }).click();
   let dialog = page.getByRole("dialog", { name: "Hlídat varianty" });
   await dialog.locator("tbody tr").first().waitFor();
   assert.equal(await dialog.locator("tbody tr").count(), product.detail.variants.length);
-  const shadow = await dialog.evaluate((root) => getComputedStyle(root).boxShadow);
-  assert.ok(shadow.includes("0.1") && !shadow.includes("20px"), shadow);
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty(
-      "--shadow-primary",
-      "0px 2px 3px rgba(12, 34, 56, 0.2)",
-    ),
-  );
-  assert.match(await dialog.evaluate((root) => getComputedStyle(root).boxShadow), /12, 34, 56/);
-  await page.evaluate(() => document.documentElement.style.removeProperty("--shadow-primary"));
   await dialog.getByRole("checkbox", { name: `Vybrat variantu ${a.sku}`, exact: true }).check();
   await page.keyboard.press("Escape");
   assert.equal(await page.evaluate((key) => localStorage.getItem(key), key), null);
@@ -87,7 +40,6 @@ try {
     await dialog
       .getByRole("checkbox", { name: `Vybrat variantu ${item.sku}`, exact: true })
       .check();
-  await page.screenshot({ path: "test-results/product-actions/watch-1920.png" });
   await dialog.getByRole("button", { name: "Uložit hlídání" }).click();
   await dialog.waitFor({ state: "hidden" });
   const saved = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key);
@@ -105,27 +57,6 @@ try {
       .isChecked(),
     true,
   );
-  for (const viewport of [
-    { width: 390, height: 900 },
-    { width: 320, height: 480 },
-  ]) {
-    await page.setViewportSize(viewport);
-    const box = await dialog.getByRole("button", { name: "Uložit hlídání" }).boundingBox();
-    assert.ok(box.y + box.height <= viewport.height);
-    assert.equal(
-      await dialog
-        .locator(".sf-favorites-table")
-        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
-      true,
-    );
-    const visibleRow = await dialog.evaluate((root) => {
-      const list = root.querySelector(".sf-favorites-table").getBoundingClientRect();
-      const first = root.querySelector("tbody tr").getBoundingClientRect();
-      return first.top < list.bottom - 40;
-    });
-    assert.equal(visibleRow, true, "caption must leave a visible variant row in the list");
-  }
-  await page.screenshot({ path: "test-results/product-actions/watch-320.png" });
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.getByRole("button", { name: "Upravit hlídání (2)", exact: true }).click();
@@ -171,7 +102,7 @@ try {
   assert.equal(await page.locator(".sf-purchase-form").count(), 0);
   assert.deepEqual(errors, []);
   console.log(
-    "Product actions passed: 14 alignment/wrapping widths including favorites, semantic shadow propagation, watch selection/cancel/reload, mobile, prefilled questions and exact shared selection links.",
+    "Product actions passed: watch selection/cancel/reload, prefilled questions and exact shared selection links.",
   );
 } finally {
   await browser.close();

@@ -277,7 +277,9 @@ const submitWith = (crypto: Crypto.Crypto, store: ProviderEvidenceStoreContract)
               ),
         ),
         Effect.catchTags({
-          // Our own key already committed this statement on an earlier, uncertain attempt: it is recorded.
+          // Our own key already committed this statement on an earlier, uncertain attempt. Core answers such a
+          // retry with the saved reply (decided above); this 409 remains only for an invocation committed before
+          // Core saved replies, and the statement is recorded either way.
           AcceptPaymentObservationActionAlreadyCommittedProblem: () => Effect.succeed(decided('DUPLICATE')),
           AcceptPaymentObservationActionConflictProblem: ({ code }) => conflictDecision(submission, code),
           AcceptPaymentObservationActionForbiddenProblem: ({ code }) => forbiddenDecision(submission, code),

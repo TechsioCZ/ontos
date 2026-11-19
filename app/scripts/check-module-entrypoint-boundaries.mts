@@ -960,8 +960,10 @@ interface BoundaryCheckState {
   readonly canonicalPaths: ReadonlyMap<string, string>;
   readonly completeModuleApiSeams: Map<string, Map<string | undefined, CompleteModuleApiSeam>>;
   readonly graph: ReturnType<typeof createModuleGraph>;
+  readonly immutableContractRuntimes: Map<string, Map<SchemaNode | undefined, boolean>>;
   readonly inventoryEntries: ProtectedEntrypointInventoryEntry[];
   readonly owners: ReadonlyMap<string, string>;
+  readonly ownershipOrigins: Map<string, ReadonlyMap<string, readonly string[]>>;
   readonly ownershipPackages: ReadonlyMap<string, OwnershipPackage>;
   readonly root: string;
   readonly routeEntrypoints: RouteEntrypointRecord[];
@@ -1033,6 +1035,10 @@ const ownershipDeclarationTarget = (
 };
 
 const nativeOwnershipOrigins = (state: BoundaryCheckState, file: string): ReadonlyMap<string, readonly string[]> => {
+  const cached = state.ownershipOrigins.get(file);
+  if (cached !== undefined) {
+    return cached;
+  }
   const origins = new Map<string, readonly string[]>();
   const module = state.graph.module(nodePath.join(state.root, file));
   for (const statement of module.file.program.body) {
@@ -1050,6 +1056,7 @@ const nativeOwnershipOrigins = (state: BoundaryCheckState, file: string): Readon
     }
     origins.set(statement.source.value, paths);
   }
+  state.ownershipOrigins.set(file, origins);
   return origins;
 };
 
@@ -2158,6 +2165,18 @@ const hasImmutableContractRuntime = (
   checkSource: ImmutableContractCheck,
   approvedApiRoot?: SchemaNode,
 ): boolean => {
+  // Runtime traversal depends on whole-file versus dormant-function mode, not which
+  // schema export was selected. A native API root has its own allowed-call identity.
+  const runtimeRoot = selected === undefined ? undefined : (approvedApiRoot ?? module.file);
+  let proofs = state.immutableContractRuntimes.get(file);
+  if (proofs === undefined) {
+    proofs = new Map();
+    state.immutableContractRuntimes.set(file, proofs);
+  }
+  const cached = proofs.get(runtimeRoot);
+  if (cached !== undefined) {
+    return cached;
+  }
   const typeNodes = new Set<SchemaNode>();
   const dormantNodes = new Set<SchemaNode>();
   traverseFast(module.file, (node) => {
@@ -2183,6 +2202,7 @@ const hasImmutableContractRuntime = (
       paths.some((path) => privateImplementationPath.test(path)),
     )
   ) {
+    proofs.set(runtimeRoot, false);
     return false;
   }
   const dormantFactories =
@@ -2212,6 +2232,7 @@ const hasImmutableContractRuntime = (
       immutable = false;
     }
   });
+  proofs.set(runtimeRoot, immutable);
   return immutable;
 };
 
@@ -3993,10 +4014,14 @@ const publicComponentImportViolationsFor = (
   });
 };
 
-const validateResolvedOwnerImports = (state: BoundaryCheckState, file: string, source: string) =>
+const validateResolvedOwnerImports = (
+  state: BoundaryCheckState,
+  file: string,
+  importedModuleSpecifiers: readonly string[],
+) =>
   Effect.gen(function* validateResolvedOwnerImportsEffect() {
     const consumerOwner = deploymentOwner(state, file);
-    const specifiers = readImportedModuleSpecifiers(source).filter((specifier) => {
+    const specifiers = importedModuleSpecifiers.filter((specifier) => {
       const direct = ownershipDeclarationTarget(state, file, specifier);
       const owner = direct === undefined ? undefined : deploymentOwner(state, direct);
       if (owner !== undefined && owner !== consumerOwner) {
@@ -4025,13 +4050,12 @@ const validateResolvedOwnerImports = (state: BoundaryCheckState, file: string, s
         yield* fail(file, `public component ${specifier}: ${violation}`);
       }
     }
-    const origins = nativeOwnershipOrigins(state, file);
     for (const specifier of specifiers.filter((candidate) => !componentImports.has(candidate))) {
       const direct = ownershipDeclarationTarget(state, file, specifier);
       if (direct !== undefined && isApprovedOwnerContract(state, file, direct, specifier)) {
         continue;
       }
-      const resolvedOrigins = origins.get(specifier) ?? [];
+      const resolvedOrigins = nativeOwnershipOrigins(state, file).get(specifier) ?? [];
       const targets = [
         ...resolvedOrigins.filter((origin) => privateImplementationPath.test(origin)),
         ...(direct === undefined ? [] : [direct]),
@@ -4736,7 +4760,7 @@ const validateProductionSource = (state: BoundaryCheckState, file: string, sourc
     yield* validateRouteSource(state, file, source);
     const importedModuleSpecifiers = readImportedModuleSpecifiers(source);
     if (SOURCE_EXTENSIONS.has(nodePath.extname(file))) {
-      yield* validateResolvedOwnerImports(state, file, source);
+      yield* validateResolvedOwnerImports(state, file, importedModuleSpecifiers);
     }
     yield* validateVerticalSource(state, file, source, importedModuleSpecifiers);
     yield* validateGeneralSource(file, source, importedModuleSpecifiers);
@@ -5104,8 +5128,10 @@ const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>
       canonicalPaths,
       completeModuleApiSeams: new Map(),
       graph: createModuleGraph(),
+      immutableContractRuntimes: new Map(),
       inventoryEntries: [],
       owners,
+      ownershipOrigins: new Map(),
       ownershipPackages,
       root,
       routeEntrypoints: [],

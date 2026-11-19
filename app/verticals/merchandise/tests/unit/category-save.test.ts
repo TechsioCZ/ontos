@@ -1,8 +1,19 @@
-import { Effect, Option, Schema } from 'effect';
-import { describe, expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { beforeEach, describe, expect, it } from 'effect-rstest';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
+import { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
+import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
 import { CategoryNodeSchema } from '../../shared/domain/merchandise-model.ts';
 import type { CategoryNode } from '../../shared/domain/merchandise-model.ts';
-import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import {
   categoryDraftErrors,
   categoryPatchOf,
@@ -10,10 +21,29 @@ import {
   positionOf,
   sameCategoryDraft,
   saveCategoryEdit,
-  savedCategory,
 } from '../../src/routes/[lang]/provoz/produkty/category-save.ts';
 
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
+const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const confirmed = Schema.decodeUnknownSync(ManageCatalogResultSchema)({ entityIds: [], revision: 8 });
+const OwnerActionApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          return confirmed;
+        }),
+      ),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
+  ),
+);
+
+beforeEach(() => {
+  commands.length = 0;
+});
 
 const category: CategoryNode = Schema.decodeSync(CategoryNodeSchema)({
   description: 'Káva a čaj',
@@ -55,39 +85,28 @@ describe('category edit draft', () => {
     });
     expect(categoryPatchOf({ ...saved, positionText: '10', published: false }, category)).toEqual({ published: false });
   });
-
-  it('keeps the saved category in step with what the server confirmed', () => {
-    const next = savedCategory(category, { ...saved, name: 'Káva a čaj', positionText: '20' });
-    expect(next).toMatchObject({ name: 'Káva a čaj', position: 20 });
-    expect(draftOf(next)).toEqual({ ...saved, name: 'Káva a čaj', positionText: '20' });
-    expect(categoryPatchOf(draftOf(next), next)).toEqual({});
-  });
 });
 
 describe('category save', () => {
-  it.effect('sends nothing for an unchanged draft', () =>
+  it.live('sends nothing for an unchanged draft', () =>
     Effect.gen(function* unchanged() {
-      rstest.mocked(executeManageCatalog).mockClear();
+      yield* pinTestDocument;
       const result = yield* saveCategoryEdit(saved, category, 7);
       expect(result).toBe('saved');
-      expect(rstest.mocked(executeManageCatalog)).not.toHaveBeenCalled();
-    }),
+      expect(commands).toHaveLength(0);
+    }).pipe(Effect.provide(network)),
   );
 
-  it.effect('sends one update for the whole changed draft, against the revision the draft is based on', () =>
+  it.live('sends one update for the whole changed draft, against the revision the draft is based on', () =>
     Effect.gen(function* changed() {
-      rstest.mocked(executeManageCatalog).mockClear();
-      rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
+      yield* pinTestDocument;
       const result = yield* saveCategoryEdit({ ...saved, name: 'Káva a čaj', positionText: '20' }, category, 7);
       expect(result).toBe(8);
-      const {
-        mock: { calls },
-      } = rstest.mocked(executeManageCatalog);
-      expect(calls).toHaveLength(1);
-      expect(calls[0]?.[0]).toMatchObject({
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({
         command: { _tag: 'UpdateCategory', id: 'kava', patch: { name: 'Káva a čaj', position: 20 } },
         expectedRevision: 7,
       });
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

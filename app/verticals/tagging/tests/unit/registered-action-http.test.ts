@@ -16,14 +16,19 @@ for (const { command, slug } of cases) {
         const { harness, request, writes } = yield* makeFixture();
         const response = yield* request(`/tagging/actions/${slug}`, command, slug);
         expect(response.status).toBe(200);
-        expect(yield* Effect.promise(() => response.json())).toMatchObject({ revision: 2 });
+        const reply: unknown = yield* Effect.promise(() => response.json());
+        expect(reply).toMatchObject({ revision: 2 });
         expect(harness.snapshot().committed).toHaveLength(1);
         expect(harness.snapshot().invocations[0]?.actionKey).toBe(`demo.tagging.${slug}`);
         expect(harness.snapshot().committed[0]?.actionKey).toBe(`demo.tagging.${slug}`);
         expect(writes.at(-1)).toEqual(command);
+        const writesBeforeReplay = writes.length;
+        // A same-key retry over HTTP answers the reply Core saved with the commit, and nothing runs again.
         const replay = yield* request(`/tagging/actions/${slug}`, command, slug);
-        expect(replay.status).toBe(409);
+        expect(replay.status).toBe(200);
+        expect(yield* Effect.promise(() => replay.json())).toEqual(reply);
         expect(harness.snapshot().committed).toHaveLength(1);
+        expect(writes).toHaveLength(writesBeforeReplay);
         if (slug !== 'apply-command') {
           const rejected = yield* request('/tagging/actions/apply-command', command, `${slug}-old`);
           expect(rejected.status).toBe(400);
@@ -45,7 +50,7 @@ it.effect(
           expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-10T12:00:00.000Z')),
           proposalId: ProposalIdSchema.make('60000000-0000-4000-8000-000000000001'),
         };
-        const { compositionRevision, harness, requestContext, router } = yield* makeFixture({
+        const { authorization, compositionRevision, harness, requestContext, router } = yield* makeFixture({
           access: 'needs_approval',
           mandateDispatch: {
             claim: () => Effect.die('A proposal cannot claim a mandate'),
@@ -62,7 +67,7 @@ it.effect(
         const statuses: number[] = [];
         const receipt = yield* executeUpdateTagWithAuthorization(
           Schema.decodeUnknownSync(UpdateTagPayloadSchema)({ command, expectedRevision: 1 }),
-          'Bearer fixture',
+          yield* authorization,
           'pending-update',
           {
             baseUrl: 'https://owner.test',

@@ -1,4 +1,4 @@
-import { Crypto, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Result } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Option, Predicate, Redacted, Result } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { executeActivateMarketWithAuthorization } from '../../src/api/activate-market-action-client.ts';
@@ -80,14 +80,33 @@ it.layer(nativeOwnerServices, { excludeTestServices: true, timeout: '120 seconds
         );
         assert(!Predicate.isTagged(created, actionProposalAcceptedTag), committedActionRequired);
         expect(created).toMatchObject({ created: true, marketRef: owner.marketRef, revision: 1 });
+        const beforeCreationRetry = yield* owner.evidence();
+        // The same caller resending the same creation with its committed key gets the original answer back,
+        // and nothing is written again: one invocation, one success audit, no new outbox message.
         const creationRetry = yield* admit('native-create-retry', 'native-create');
         const repeatedCreation = yield* executeCreateMarketWithAuthorization(
           createPayload,
           creationRetry.authorization,
           creationRetry.requestCorrelation,
           creationRetry.options,
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(repeatedCreation)).toBe(true);
+        );
+        expect(repeatedCreation).toEqual(created);
+        const afterCreationRetry = yield* owner.evidence();
+        expect(afterCreationRetry.invocations).toEqual(beforeCreationRetry.invocations);
+        expect(afterCreationRetry.outboxCount).toBe(beforeCreationRetry.outboxCount);
+        const createInvocations = afterCreationRetry.invocations.filter(
+          (value) => value.actionKey === 'commerce.market-catalog.create-market' && value.status === 'succeeded',
+        );
+        expect(createInvocations).toHaveLength(1);
+        expect(
+          afterCreationRetry.audits.filter(
+            (audit) =>
+              audit.outcome === 'succeeded' &&
+              createInvocations.some((invocation) =>
+                Option.contains(audit.actionInvocationId, invocation.actionInvocationId),
+              ),
+          ),
+        ).toHaveLength(1);
 
         const associationPayload = {
           associationId: owner.associationRef.resourceId,

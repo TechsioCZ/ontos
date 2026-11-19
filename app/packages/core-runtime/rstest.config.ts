@@ -21,8 +21,9 @@ export default defineConfig({
       testTimeout: 2856,
     },
     {
-      exclude: operatorTests,
-      include: ['tests/integration/**/*.test.ts'],
+      // Negated include patterns, not `exclude`: a command-line --exclude (the shard tasks of
+      // scripts/ci/run-integration-suites.sh) replaces a project's exclude list, so these files would rejoin the suite.
+      include: ['tests/integration/**/*.test.ts', ...operatorTests.map((file) => `!${file}`)],
       name: 'integration',
       setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',

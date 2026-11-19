@@ -1,7 +1,7 @@
 import { admitEnrollmentAttempt } from '../../../src/enrollment/attempts/attempt-persistence.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -525,8 +525,7 @@ const readEnrollmentForCurrentComposition = Effect.fn('CommercePortalAuthEnrollm
   ) {
     const current = yield* store.read(identity);
     const authority = yield* ActiveApplicationCompositionService;
-    const active = yield* authority.load.pipe(
-      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    const active = yield* loadActiveApplicationComposition(authority).pipe(
       Effect.mapError((cause) =>
         attemptUnavailable(
           'The resumed enrollment requires current composition authority',
@@ -870,6 +869,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       payload: actionPayload,
       registration,
       requestHeaders: actionRequestHeaders(request),
+      // The start signs up a provider account after its claim Action, which only the request that
+      // committed the claim may do: a same-key retry keeps ActionAlreadyCommitted, never the saved CLAIMED.
+      savedReply: 'withhold',
     });
 
   const continuation = yield* CommerceEnrollmentContinuation;
@@ -896,6 +898,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
         recoverAlreadyCommitted: () => null,
         registration: startPortalEnrollmentAction,
         requestHeaders: actionRequestHeaders(request),
+        // A repeated restart reuses its deterministic key and must continue from the Attempt as it is now: the
+        // committed start is reread below, never answered from the saved reply of the first restart.
+        savedReply: 'withhold',
       }).pipe(
         Effect.filterOrElse(
           (result) => result !== null,

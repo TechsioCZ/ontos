@@ -110,6 +110,8 @@ it('keeps every stage-delivery file out of everything a scoped plan skips', () =
           referrer !== 'app/scripts/ci-matrices.demo.json' &&
           // `pnpm quality:audit:test` runs tooling tests, exactly as the tooling rows do.
           !(referrer === 'app/package.json' && toolingTest(file)) &&
+          // The lint configuration names tooling tests in its override lists; every scope lints the files it changes.
+          !(referrer === 'app/oxlint.config.ts' && toolingTest(file)) &&
           // The Zerops build and start commands run in the deploy, never in a gate.
           referrer !== 'app/zerops.yaml' &&
           // The deploy planner names its stage workflow and delivery action as delivery roots: paths it classifies a

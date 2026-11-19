@@ -1,28 +1,26 @@
 // @rstest-environment happy-dom
-// The price list of a market as the user sees it: edits change only the draft, one Save button sends one
-// ConfigureMarket, and a change parked for approval stays unsaved. Only the merchandise client, the i18n runtime and
-// the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
-import { MarketSettingsSchema } from '@app/merchandise/domain/market-offers';
+// The price list editor runs with its real i18n, router and merchandise Action client.
+import { acted, buttons, settle, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Effect, Option, Schema } from 'effect';
+import { MarketSettingsSchema } from '@app/merchandise/domain/market-offers';
+import {
+  browserNetwork,
+  networkIdle,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
-
+import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { manageMarketsActionSchemaErrorLive } from '../../../merchandise/api/manage-markets-action-problems.ts';
+import { ManageMarketsResultSchema } from '../../../merchandise/shared/actions/manage-markets.ts';
+import { ManageMarketsActionApi } from '../../../merchandise/shared/apis/manage-markets-action.ts';
+import type { ManageMarketsPayloadSchema } from '../../../merchandise/shared/apis/manage-markets-action.ts';
 import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
 import { PriceListEditor } from '../../src/market-admin/assortment-section.tsx';
-import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('@app/merchandise/apis/manage-markets-action/client');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
-  useBlocker: () => ({ status: 'idle' }),
-}));
+import { mountInRoute } from '../support/module-ui.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '30000000-0000-4000-8000-000000000001';
@@ -68,131 +66,118 @@ const market = Schema.decodeUnknownSync(MarketDefinitionSchema)({
   supportedLocales: ['cs-CZ'],
 });
 
-const commands = () => rstest.mocked(executeManageMarkets).mock.calls.length;
+const saved = Schema.decodeUnknownSync(ManageMarketsResultSchema)({
+  entityIds: [],
+  marketRevision: 4,
+  revision: 9,
+});
+const commands: (typeof ManageMarketsPayloadSchema.Encoded)[] = [];
+let answer: Effect.Effect<typeof saved | typeof ActionProposalAcceptedSchema.Type> = Effect.succeed(saved);
+const OwnerActionApi = ManageMarketsActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerActionApi,
+    HttpApiBuilder.group(OwnerActionApi, 'manageMarketsAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(Layer.provide(manageMarketsActionSchemaErrorLive)),
+  ),
+);
 
-const settle = async (): Promise<void> => {
-  await act(async () => {
-    await browserRuntime.runPromise(Effect.yieldNow);
-  });
-};
-
-const mounted: { container: HTMLElement; root: Root }[] = [];
-
-const mount = async (onAwaitingApproval: () => void = constVoid) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  mounted.push({ container, root });
-  await act(async () => {
-    root.render(
-      <PriceListEditor
-        canManage
-        market={market}
-        onAwaitingApproval={onAwaitingApproval}
-        refresh={Effect.void}
-        revision={3}
-        settings={settings}
-      />,
-    );
-  });
-  await settle();
-};
-
-const buttons = (name: string): HTMLButtonElement[] =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
+const mount = (onAwaitingApproval: () => void = constVoid) =>
+  mountInRoute(
+    <PriceListEditor
+      canManage
+      market={market}
+      onAwaitingApproval={onAwaitingApproval}
+      refresh={Effect.void}
+      revision={3}
+      settings={settings}
+    />,
+  );
 
 const saveButton = (): HTMLButtonElement => {
   const [found] = buttons('Uložit');
   expect(found).toBeDefined();
-  return found ?? document.createElement('button');
+  return Option.getOrThrow(Option.fromNullOr(found));
 };
 
 const rateField = (): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>('input[id="market-pricing-rate"]')));
 
 /** Types like a user: React sees a native input event. */
-const typeRate = async (value: string) => {
-  await act(async () => {
+const typeRate = (value: string) =>
+  acted(() => {
     const field = rateField();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await settle();
-};
 
 beforeEach(() => {
-  rstest.mocked(executeManageMarkets).mockReset();
+  commands.length = 0;
+  answer = Effect.succeed(saved);
 });
 
-afterEach(() => {
-  for (const { container, root } of mounted.splice(0)) {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  }
-});
+afterEach(unmountAll);
 
 describe('price list editor', () => {
   it.live('typing changes only the draft: nothing is sent while the user types or waits', () =>
     Effect.gen(function* typingSendsNothing() {
-      rstest
-        .mocked(executeManageMarkets)
-        .mockReturnValue(Effect.succeed({ entityIds: [], marketRevision: 4, revision: 9 }));
-      yield* Effect.promise(() => mount());
+      yield* pinTestDocument;
+      yield* mount();
       expect(saveButton().disabled).toBe(true);
 
-      yield* Effect.promise(() => typeRate('24,5'));
+      yield* typeRate('24,5');
       expect(saveButton().disabled).toBe(false);
       yield* Effect.sleep('1 second');
-      yield* Effect.promise(settle);
-      expect(commands()).toBe(0);
-    }),
+      yield* networkIdle;
+      yield* settle;
+      expect(commands).toHaveLength(0);
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('one click on Uložit sends exactly one ConfigureMarket', () =>
     Effect.gen(function* oneSave() {
-      rstest
-        .mocked(executeManageMarkets)
-        .mockReturnValue(Effect.succeed({ entityIds: [], marketRevision: 4, revision: 9 }));
-      yield* Effect.promise(() => mount());
-      yield* Effect.promise(() => typeRate('24,5'));
-      yield* Effect.promise(() =>
-        act(async () => {
-          saveButton().click();
-        }),
-      );
-      yield* Effect.promise(settle);
-      yield* Effect.sleep('100 millis');
-      yield* Effect.promise(settle);
-      expect(commands()).toBe(1);
-    }),
+      yield* pinTestDocument;
+      yield* mount();
+      yield* typeRate('24,5');
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length > 0);
+      // A second send the click started has reached the owner by the time the network is idle.
+      yield* networkIdle;
+      yield* settle;
+      expect(commands).toHaveLength(1);
+    }).pipe(Effect.provide(network)),
   );
 
   it.live('a change parked for approval is not sent again and asks the screen to say so', () =>
     Effect.gen(function* parked() {
+      yield* pinTestDocument;
       let awaiting = 0;
+      const announced = yield* Deferred.make<true>();
       const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
         _tag: 'ActionProposalAccepted',
         expiresAt: '2026-11-14T10:00:00.000Z',
         proposalId: '77777777-7777-4777-8777-777777777777',
       });
-      rstest.mocked(executeManageMarkets).mockReturnValue(Effect.succeed(proposal));
-      yield* Effect.promise(() =>
-        mount(() => {
-          awaiting += 1;
-        }),
-      );
-      yield* Effect.promise(() => typeRate('24,5'));
-      yield* Effect.promise(() =>
-        act(async () => {
-          saveButton().click();
-        }),
-      );
-      yield* Effect.sleep('100 millis');
-      yield* Effect.promise(settle);
-      expect(commands()).toBe(1);
+      answer = Effect.succeed(proposal);
+      yield* mount(() => {
+        awaiting += 1;
+        Deferred.doneUnsafe(announced, Effect.succeed(true));
+      });
+      yield* typeRate('24,5');
+      yield* acted(() => saveButton().click());
+      yield* Deferred.await(announced);
+      // A second send the click started has reached the owner by the time the network is idle.
+      yield* networkIdle;
+      yield* settle;
+      expect(commands).toHaveLength(1);
       expect(awaiting).toBe(1);
-    }),
+    }).pipe(Effect.provide(network)),
   );
 });

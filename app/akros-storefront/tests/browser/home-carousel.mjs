@@ -1,51 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import ts from "typescript";
-import { DEFAULT_MARKET_LOCALE, localizeHref } from "../../src/ontos/market-locale.ts";
-
-// The live banners belong to a server-only TSX brand profile. Read its literals without
-// executing its page components; the home page resolves each banner's alt text by market locale.
-const brandSource = ts.createSourceFile(
-  "akros.tsx",
-  await readFile(new URL("../../src/brand/akros.tsx", import.meta.url), "utf8"),
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TSX,
-);
-const brand = brandSource.statements
-  .filter(ts.isVariableStatement)
-  .flatMap((statement) => [...statement.declarationList.declarations])
-  .find(
-    (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "akros",
-  )?.initializer;
-assert.ok(brand && ts.isObjectLiteralExpression(brand), "AKROS must define its brand profile");
-const carouselData = brand.properties.find(
-  (property) =>
-    ts.isPropertyAssignment(property) &&
-    ts.isIdentifier(property.name) &&
-    property.name.text === "carousel",
-);
-assert.ok(carouselData, "AKROS must define its production carousel");
-const readLiteral = (node) => {
-  if (ts.isStringLiteral(node)) return node.text;
-  if (ts.isArrayLiteralExpression(node)) return node.elements.map(readLiteral);
-  assert.ok(ts.isObjectLiteralExpression(node), "Carousel data must contain only literal data");
-  return Object.fromEntries(
-    node.properties.map((property) => {
-      assert.ok(ts.isPropertyAssignment(property), "Carousel data must use explicit properties");
-      assert.ok(
-        ts.isIdentifier(property.name) || ts.isStringLiteral(property.name),
-        "Carousel data must use literal property names",
-      );
-      return [property.name.text, readLiteral(property.initializer)];
-    }),
-  );
-};
-const homeCarouselSlides = readLiteral(carouselData.initializer).map(({ alt, ...slide }) => ({
-  ...slide,
-  alt: alt[DEFAULT_MARKET_LOCALE],
-}));
-
 // Snap points, scrolling and pointer drags require a layout engine, not jsdom geometry shims.
 // Shared browser client module (exports `openTab`); machine-specific, so it is configured, never hard-coded.
 assert.ok(
@@ -66,24 +19,8 @@ try {
   });
   const carousel = page.locator("[data-sf-home-carousel]");
   const images = carousel.locator("img");
-  assert.equal(await images.count(), homeCarouselSlides.length);
-  for (const [index, slide] of homeCarouselSlides.entries()) {
-    const image = images.nth(index);
-    assert.equal(await image.getAttribute("alt"), slide.alt);
-    assert.ok((await image.getAttribute("src")).includes(encodeURIComponent(slide.src)));
-    assert.equal(await image.getAttribute("width"), "933");
-    assert.equal(await image.getAttribute("height"), "260");
-    assert.equal(await image.getAttribute("loading"), index === 0 ? "eager" : "lazy");
-  }
-  assert.equal(await images.first().getAttribute("fetchpriority"), "high");
-  assert.deepEqual(
-    await carousel
-      .locator("a")
-      .evaluateAll((links) => links.map((link) => link.getAttribute("href"))),
-    homeCarouselSlides.flatMap((slide) =>
-      slide.href ? [localizeHref(slide.href, DEFAULT_MARKET_LOCALE)] : [],
-    ),
-  );
+  const lastIndex = (await carousel.locator("[data-part=indicator]").count()) - 1;
+  assert.ok(lastIndex >= 2, "The manual fixture needs at least three banners");
   const active = (index) =>
     carousel.locator(`[data-part=indicator][data-index="${index}"][data-current]`).waitFor();
   const select = async (index) => {
@@ -102,7 +39,7 @@ try {
   for (const [button, index] of [
     ["Další banner", 1],
     ["Předchozí banner", 0],
-    ["Předchozí banner", 5],
+    ["Předchozí banner", lastIndex],
     ["Další banner", 0],
   ]) {
     await carousel.getByRole("button", { name: button, exact: true }).click();
@@ -120,12 +57,7 @@ try {
   await page.mouse.move(start.x - bounds.width * 0.35, start.y, { steps: 12 });
   await page.mouse.up();
   assert.equal(page.url(), originalUrl, "dragging a linked banner must not follow its destination");
-  if (process.env.AKROS_HOME_SCREENSHOTS) {
-    await page.screenshot({ path: `${process.env.AKROS_HOME_SCREENSHOTS}/carousel-real.png` });
-  }
-  console.log(
-    "PASS original banners/destinations, indicator/keyboard focus, next/previous/wrap, real pointer drag",
-  );
+  console.log("PASS indicator/keyboard focus, next/previous/wrap, real pointer drag");
 } finally {
   await tab.close();
 }

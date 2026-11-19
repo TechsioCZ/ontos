@@ -1,30 +1,25 @@
+// @rstest-environment happy-dom
+import {
+  inProcessFetch,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+  testCompositionRevision,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/http';
-import { expect, it, rstest } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 
+import { ReadProjectApi } from '../../shared/apis/read-project.ts';
 import { ProjectSchema, ProjectUuidSchema } from '../../shared/domain/project.ts';
 import { executeFreshReadProject } from '../../src/api/projects-client.ts';
 import { executeReadProject } from '../../src/api/read-project-client.ts';
 
-rstest.mock('../../src/api/action-gateway.ts', () => ({
-  operationGateway: {
-    invoke: <Success, Failure>(
-      attempt: (
-        authorization: string,
-        target: { readonly apiBaseUrl: string; readonly compositionRevision: string },
-      ) => Effect.Effect<Success, Failure>,
-    ) =>
-      attempt('Bearer test-transport-credential', {
-        apiBaseUrl: 'https://owner.example/projects-api',
-        compositionRevision: 'a'.repeat(64),
-      }),
-  },
-}));
-
-it.effect(
+it.live(
   'the actual generated owner client forwards fresh-read transport policy without changing the request or ordinary reads',
   () =>
     Effect.gen(function* targetReadTransport() {
+      yield* pinTestDocument;
       const projectId = Schema.decodeUnknownSync(ProjectUuidSchema)('30000000-0000-4000-8000-000000000001');
       const response = {
         createdAt: '2026-09-03T12:00:00.000Z',
@@ -40,25 +35,34 @@ it.effect(
       };
       const decoded = Schema.decodeUnknownSync(ProjectSchema)(response);
       expect(decoded.projectId).toBe(projectId);
-      const requests: Request[] = [];
-      const fakeFetch: typeof fetch = (input, init) => {
-        requests.push(new Request(input, init));
-        return Promise.resolve(Response.json(response));
-      };
-      yield* executeReadProject({ projectId }, 'ordinary-project').pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      const requests: { readonly body: unknown; readonly headers: Headers; readonly url: string }[] = [];
+      const issuer = shellGatewayIssuer({ projects: '/projects-api' });
+      const OwnerReadProjectApi = ReadProjectApi.prefix('/projects-api');
+      const owner = serveApi(
+        OwnerReadProjectApi,
+        HttpApiBuilder.group(OwnerReadProjectApi, 'readProject', (group) =>
+          group.handle('execute', () =>
+            Effect.gen(function* receiveReadProject() {
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              const body = yield* request.json;
+              requests.push({ body, headers: new Headers(request.headers), url: request.originalUrl });
+              return decoded;
+            }).pipe(Effect.orDie),
+          ),
+        ),
       );
-      yield* executeFreshReadProject({ projectId }, 'current-target').pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-      );
+      yield* Effect.gen(function* readProjectThroughGateway() {
+        yield* executeReadProject({ projectId }, 'ordinary-project');
+        yield* executeFreshReadProject({ projectId }, 'current-target');
+      }).pipe(Effect.provide(inProcessFetch(issuer.application, owner)));
       expect(requests.map(({ headers }) => headers.get('cache-control'))).toEqual([null, 'no-store']);
       expect(requests.map(({ headers }) => headers.get('authorization'))).toEqual([
-        'Bearer test-transport-credential',
-        'Bearer test-transport-credential',
+        'Bearer projects-assertion-1',
+        'Bearer projects-assertion-2',
       ]);
       expect(requests.map(({ headers }) => headers.get('x-ontos-composition-revision'))).toEqual([
-        'a'.repeat(64),
-        'a'.repeat(64),
+        testCompositionRevision,
+        testCompositionRevision,
       ]);
       expect(requests.map(({ headers }) => headers.get('x-correlation-id'))).toEqual([
         'ordinary-project',
@@ -66,11 +70,11 @@ it.effect(
       ]);
       expect(requests.map(({ headers }) => headers.get('idempotency-key'))).toEqual([null, null]);
       expect(requests.map(({ url }) => url)).toEqual([
-        'https://owner.example/projects-api/reads/read-project',
-        'https://owner.example/projects-api/reads/read-project',
+        new URL('/projects-api/reads/read-project', window.location.href).href,
+        new URL('/projects-api/reads/read-project', window.location.href).href,
       ]);
       for (const request of requests) {
-        expect(yield* Effect.promise(() => request.json())).toEqual({ projectId });
+        expect(request.body).toEqual({ projectId });
       }
     }),
 );

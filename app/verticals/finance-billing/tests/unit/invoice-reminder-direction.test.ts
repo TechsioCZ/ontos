@@ -1,46 +1,48 @@
-import { beforeAll, expect, it, rstest } from 'effect-rstest';
-import { DateTime, Schema } from 'effect';
+// @rstest-environment happy-dom
+import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
+import { settle, text, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { browserNetwork, pinTestDocument, serveApi } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { afterEach, expect, it } from 'effect-rstest';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
-import React, { createElement } from 'react';
+import { createElement } from 'react';
 import type { ComponentProps } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { Invoice, InvoiceReminder } from '../../shared/apis/records.ts';
 import { InvoiceReminderSchema } from '../../shared/apis/records.ts';
-import {
-  InvoiceReminders,
-  invoiceReminderDraftKey,
-  invoiceReminderEligible,
-} from '../../src/routes/[lang]/finance/invoice-extras.tsx';
+import { InvoiceReminders, invoiceReminderDraftKey } from '../../src/routes/[lang]/finance/invoice-extras.tsx';
+import { InvoiceIssuerSessionSchema } from '../../src/routes/[lang]/finance/use-invoice-issuer.ts';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-// The reminders section must render without the records runtime, the e-mail dispatcher or the shell session.
-rstest.mock('../../src/routes/[lang]/finance/reminder-email-receipts.tsx', () => ({
-  ReminderEmailStatus: () => null,
-  useEmailProvider: () => ({ kind: 'ready', provider: { configured: true, label: null } }),
-  useReminderEmailReceipts: () => ({ byReminderId: new Map(), kind: 'ready' }),
-}));
-rstest.mock('../../src/routes/[lang]/finance/use-invoice-issuer.ts', () => ({
-  useInvoiceIssuer: () => 'OntOS Demo s.r.o.',
-}));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    t: (key: string) => {
-      const labels = new Map([
-        ['finance-billing.financeUi.reminders.emailExample', 'fakturace@example.cz'],
-        ['finance-billing.financeUi.reminders.message', 'Text upomínky'],
-        ['finance-billing.financeUi.reminders.recipient', 'Příjemce'],
-        ['finance-billing.financeUi.reminders.title', 'Upomínky'],
-        ['finance-billing.financeUi.reminders.empty', 'K faktuře zatím nebyla odeslána žádná upomínka.'],
-        ['finance-billing.financeUi.reminders.incoming', 'K přijaté faktuře se upomínky neposílají.'],
-        [
-          'finance-billing.financeUi.reminders.ineligible',
-          'Upomínka se připravuje jen k neuhrazené potvrzené faktuře.',
-        ],
-      ]);
-      return labels.get(key) ?? key;
-    },
-  }),
-}));
+const czech = moduleText('cs');
+const ReceiptsApi = EmailReceiptsApi.prefix('/shell-super-app-api');
+const receipts = HttpApiBuilder.group(ReceiptsApi, 'emailReceipts', (group) =>
+  group
+    .handle('provider', () => Effect.succeed({ configured: true, label: Option.none() }))
+    .handle('list', () => Effect.succeed({ deliveries: [] })),
+);
+const IssuerApi = HttpApi.make('FinanceReminderIssuerTestApi')
+  .add(
+    HttpApiGroup.make('authentication').add(
+      HttpApiEndpoint.get('currentSession', '/auth/session', { success: InvoiceIssuerSessionSchema }),
+    ),
+  )
+  .prefix('/shell-super-app-api');
+const issuer = HttpApiBuilder.group(IssuerApi, 'authentication', (group) =>
+  group.handle('currentSession', () =>
+    Effect.succeed(
+      Schema.decodeUnknownSync(InvoiceIssuerSessionSchema)({
+        identity: { legalEntityId: 'company-a', legalName: 'OntOS Demo s.r.o.' },
+        state: 'authenticated',
+      }),
+    ),
+  ),
+);
+const network = browserNetwork(serveApi(ReceiptsApi, receipts), serveApi(IssuerApi, issuer));
+
+afterEach(unmountAll);
 
 type RemindersModel = ComponentProps<typeof InvoiceReminders>['vm'];
 
@@ -178,70 +180,76 @@ const model = (reminders: readonly InvoiceReminder[]): RemindersModel => ({
 });
 
 const renderReminders = (shown: Invoice, reminders: readonly InvoiceReminder[] = []) =>
-  renderToStaticMarkup(
-    createElement(InvoiceReminders, {
-      counterpartyName: 'Dodavatel Materiál s.r.o.',
-      invoice: shown,
-      vm: model(reminders),
-    }),
-  );
+  Effect.gen(function* render() {
+    yield* pinTestDocument;
+    yield* mountInRoute(
+      createElement(InvoiceReminders, {
+        counterpartyName: 'Dodavatel Materiál s.r.o.',
+        invoice: shown,
+        vm: model(reminders),
+      }),
+      { path: 'finance', url: '/cs/finance' },
+    );
+    yield* settle;
+    return text();
+  });
 
 const outgoingConfirmed = invoice('invoice-outgoing');
 const incomingConfirmed = invoice('invoice-incoming', { direction: 'INCOMING' });
 
-// This owner's Node test config compiles TSX with the classic React runtime.
-beforeAll(() => {
-  rstest.stubGlobal('React', React);
-});
-
-it('never offers prepare/send on an incoming supplier invoice while keeping its reminder history', () => {
-  const html = renderReminders(incomingConfirmed, [reminder(incomingConfirmed.ref.resourceId)]);
-  expect(html).toContain('Upomínky');
-  expect(html).not.toContain('Připravit upomínku');
-  expect(html).not.toContain('reminder-recipient');
-  expect(html).not.toContain('Odeslat e-mailem');
-  expect(html).toContain('odberatel@example.cz');
-});
-
-it('keeps the prepare action on an outgoing confirmed unpaid invoice', () => {
-  const html = renderReminders(outgoingConfirmed);
-  expect(html).toContain('Připravit upomínku');
-  expect(html).toContain('K faktuře zatím nebyla odeslána žádná upomínka.');
-});
-
-it('refuses the action for draft, voided and settled documents', () => {
-  for (const overrides of [
-    { businessState: 'DRAFT' as const },
-    { businessState: 'VOIDED' as const },
-    { paidMinor: 100_000, paymentState: 'PAID' as const },
-  ]) {
-    const html = renderReminders(invoice('invoice-ineligible', overrides));
-    expect(html).toContain('Upomínky');
-    expect(html).not.toContain('Připravit upomínku');
-  }
-});
-
-it('explains that incoming invoices get no reminders when they have no history', () => {
-  expect(renderReminders(incomingConfirmed)).toContain('K přijaté faktuře se upomínky neposílají.');
-});
-
-it('gates eligibility on direction, business state and a remaining amount', () => {
-  expect(invoiceReminderEligible(outgoingConfirmed)).toBe(true);
-  expect(invoiceReminderEligible(incomingConfirmed)).toBe(false);
-  expect(invoiceReminderEligible(invoice('invoice-draft', { businessState: 'DRAFT' }))).toBe(false);
-  expect(invoiceReminderEligible(invoice('invoice-paid', { paidMinor: 100_000, paymentState: 'PAID' }))).toBe(false);
-});
-
-it('keys the reminder card per tenant, document and direction so retained editing state cannot cross invoices', () => {
-  const id = 'invoice-same-id';
-  expect(invoiceReminderDraftKey(invoice(id))).not.toBe(
-    invoiceReminderDraftKey(invoice(id, { direction: 'INCOMING' })),
+it.layer(network, { excludeTestServices: true })('invoice reminder direction', (suite) => {
+  suite.effect('never offers prepare/send on an incoming supplier invoice while keeping its reminder history', () =>
+    Effect.gen(function* incomingHistory() {
+      const content = yield* renderReminders(incomingConfirmed, [reminder(incomingConfirmed.ref.resourceId)]);
+      expect(content).toContain(czech('finance-billing.financeUi.reminders.title'));
+      expect(content).not.toContain('Připravit upomínku');
+      expect(document.querySelectorAll('#reminder-recipient')).toHaveLength(0);
+      expect(content).not.toContain('Odeslat e-mailem');
+      expect(content).toContain('odberatel@example.cz');
+    }),
   );
-  const otherTenant = invoice(id, {
-    ref: { ...invoice(id).ref, tenantId: 'c0000000-0000-4000-8000-000000000002' },
+
+  suite.effect('keeps the prepare action on an outgoing confirmed unpaid invoice', () =>
+    Effect.gen(function* outgoingUnpaid() {
+      const content = yield* renderReminders(outgoingConfirmed);
+      expect(content).toContain('Připravit upomínku');
+      expect(content).toContain(czech('finance-billing.financeUi.reminders.empty'));
+    }),
+  );
+
+  suite.effect('refuses the action for draft, voided and settled documents', () =>
+    Effect.gen(function* ineligibleDocuments() {
+      for (const overrides of [
+        { businessState: 'DRAFT' as const },
+        { businessState: 'VOIDED' as const },
+        { paidMinor: 100_000, paymentState: 'PAID' as const },
+      ]) {
+        const content = yield* renderReminders(invoice('invoice-ineligible', overrides));
+        expect(content).toContain(czech('finance-billing.financeUi.reminders.title'));
+        expect(content).not.toContain('Připravit upomínku');
+        unmountAll();
+      }
+    }),
+  );
+
+  suite.effect('explains that incoming invoices get no reminders when they have no history', () =>
+    Effect.gen(function* incomingEmpty() {
+      const content = yield* renderReminders(incomingConfirmed);
+      expect(content).toContain(czech('finance-billing.financeUi.reminders.incoming'));
+    }),
+  );
+
+  it('keys the reminder card per tenant, document and direction so retained editing state cannot cross invoices', () => {
+    const id = 'invoice-same-id';
+    expect(invoiceReminderDraftKey(invoice(id))).not.toBe(
+      invoiceReminderDraftKey(invoice(id, { direction: 'INCOMING' })),
+    );
+    const otherTenant = invoice(id, {
+      ref: { ...invoice(id).ref, tenantId: 'c0000000-0000-4000-8000-000000000002' },
+    });
+    expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(otherTenant));
+    expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(invoice('invoice-other-id')));
+    // The same document keeps its draft across snapshot updates instead of remounting the section.
+    expect(invoiceReminderDraftKey(invoice(id))).toBe(invoiceReminderDraftKey(invoice(id)));
   });
-  expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(otherTenant));
-  expect(invoiceReminderDraftKey(invoice(id))).not.toBe(invoiceReminderDraftKey(invoice('invoice-other-id')));
-  // The same document keeps its draft across snapshot updates instead of remounting the section.
-  expect(invoiceReminderDraftKey(invoice(id))).toBe(invoiceReminderDraftKey(invoice(id)));
 });

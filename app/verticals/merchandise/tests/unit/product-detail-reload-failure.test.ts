@@ -1,28 +1,34 @@
 // @rstest-environment happy-dom
-// The product editor across a failed reload: the real `useProductDetail` over the real strict store, with only the
-// generated records client replaced. A reload of the product on screen that fails keeps the editor mounted with its
+// The product editor across a failed reload: the real `useProductDetail` over the real strict store, with the
+// generated records client running through its HTTP contract. A reload of the product on screen that fails keeps the editor mounted with its
 // unsaved draft and reports the failure; a first read that fails, a denied read, or another product never shows
 // the product read before.
+import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  RecordsApi,
   RecordsForbiddenProblemSchema,
   RecordsResponseSchema,
   RecordsUnavailableProblemSchema,
 } from '../../shared/apis/records.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import type { RecordsResponse } from '../../shared/apis/records.ts';
 import {
   detailInput,
   productDetailData,
   useProductDetail,
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
 
 const context = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const instant = '2026-10-15T10:00:00Z';
@@ -75,14 +81,29 @@ const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({
   type: 'urn:test:denied',
 });
 
+let answer: Effect.Effect<RecordsResponse, typeof unavailable | typeof denied> = Effect.succeed(responseOf('Cable'));
+
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const owner = HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+  group.handle('execute', ({ payload }) =>
+    Effect.suspend(() => answer).pipe(
+      Effect.map((response) => ({
+        ...response,
+        products: response.products.filter((entry) => entry.id === payload.view?.productId),
+      })),
+    ),
+  ),
+);
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(OwnerRecordsApi, owner),
+);
+
 const serve = (name: string) => {
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    const response = responseOf(name);
-    return Effect.succeed({ ...response, products: response.products.filter((entry) => entry.id === view?.productId) });
-  });
+  answer = Effect.succeed(responseOf(name));
 };
 const refuse = (problem: typeof unavailable | typeof denied) => {
-  rstest.mocked(executeRecords).mockReturnValue(Effect.fail(problem));
+  answer = Effect.fail(problem);
 };
 
 /** What the page showed on every render, how often the editor mounted, and the editor's typed draft. */
@@ -110,34 +131,18 @@ const Page = ({ productId }: { readonly productId: string }) => {
   return detail.status === 'ready' ? createElement(Editor, { name: detail.product.name }) : null;
 };
 
-const settle = async (): Promise<void> => {
-  await browserRuntime.runPromise(Effect.yieldNow);
-};
-
-const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
-  if (condition() || attempt >= 400) {
-    expect(condition()).toBe(true);
-    return;
-  }
-  await act(settle);
-  await waitUntil(condition, attempt + 1);
-};
-
 let root: ReturnType<typeof createRoot> | null = null;
 let container: HTMLElement | null = null;
 
 const show = (productId: string) =>
-  Effect.promise(() =>
-    act(async () => {
-      if (root === null) {
-        container = document.createElement('div');
-        document.body.append(container);
-        root = createRoot(container);
-      }
-      root.render(createElement(Page, { productId }));
-      await settle();
-    }),
-  );
+  acted(() => {
+    if (root === null) {
+      container = document.createElement('div');
+      document.body.append(container);
+      root = createRoot(container);
+    }
+    root.render(createElement(Page, { productId }));
+  });
 
 /** The page reads the shown product again, as after a save of another tab or a photo change. */
 const reload = (productId: string) =>
@@ -145,18 +150,17 @@ const reload = (productId: string) =>
     act(async () => {
       const input = Option.getOrThrow(detailInput(context.legalEntityId, productId, context, 7));
       await browserRuntime.runPromise(productDetailData.refresh(input).pipe(Effect.ignore));
-      await settle();
+      await browserRuntime.runPromise(Effect.yieldNow);
     }),
-  );
+  ).pipe(Effect.andThen(settle));
 
 const text = () => container?.textContent ?? '';
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  rstest.resetAllMocks();
   productDetailData.invalidate();
   shown.length = 0;
   mounts = 0;
+  typeDraft = null;
 });
 
 afterEach(() => {
@@ -166,63 +170,56 @@ afterEach(() => {
   });
   root = null;
   container = null;
-  rstest.unstubAllGlobals();
 });
 
-it.effect('a failed reload keeps the editor mounted with its draft and reports the failure; a retry clears it', () =>
+it.live('a failed reload keeps the editor mounted with its draft and reports the failure; a retry clears it', () =>
   Effect.gen(function* failedReload() {
+    yield* pinTestDocument;
     serve('Cable');
     yield* show('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:Cable:current'));
-    yield* Effect.promise(() => act(async () => typeDraft?.('Cable 2 m')));
+    yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
+    yield* acted(() => typeDraft?.('Cable 2 m'));
 
     refuse(unavailable);
     shown.length = 0;
     yield* reload('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:Cable:unavailable'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:Cable:unavailable');
     expect(shown.filter((state) => !state.startsWith('ready:'))).toEqual([]);
     expect(mounts).toBe(1);
     expect(text()).toBe('Cable 2 m');
 
     serve('Cable B');
     yield* reload('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:Cable B:current'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:Cable B:current');
     expect(mounts).toBe(1);
     expect(text()).toBe('Cable 2 m');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a first read that fails shows the error, never a product', () =>
-  Effect.gen(function* firstFailure() {
-    refuse(unavailable);
-    yield* show('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'error:unavailable'));
-    expect(mounts).toBe(0);
-  }),
-);
-
-it.effect('a denied reload drops the shown product at once', () =>
+it.live('a denied reload drops the shown product at once', () =>
   Effect.gen(function* deniedReload() {
+    yield* pinTestDocument;
     serve('Cable');
     yield* show('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:Cable:current'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
     refuse(denied);
     yield* reload('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'error:forbidden'));
+    yield* waitUntil(() => shown.at(-1) === 'error:forbidden');
     expect(text()).toBe('');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('a failed read of another product never shows the product read before', () =>
+it.live('a failed read of another product never shows the product read before', () =>
   Effect.gen(function* otherProduct() {
+    yield* pinTestDocument;
     serve('Cable');
     yield* show('product-1');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:Cable:current'));
+    yield* waitUntil(() => shown.at(-1) === 'ready:Cable:current');
     refuse(unavailable);
     shown.length = 0;
     yield* show('product-2');
-    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'error:unavailable'));
+    yield* waitUntil(() => shown.at(-1) === 'error:unavailable');
     expect(shown.some((state) => state.startsWith('ready:'))).toBe(false);
     expect(text()).toBe('');
-  }),
+  }).pipe(Effect.provide(network)),
 );

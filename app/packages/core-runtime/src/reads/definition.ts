@@ -1278,6 +1278,54 @@ type AnyReadPipeline<
     >
   | ReadLoadPipeline<Input, Result, Services, Prepared, Failure, Requirements, PrepareError, PrepareRequirements>;
 
+/** The steps a Read pipeline may name; `load` is the one it must. */
+const ReadPipelineStep = Schema.Literals(['finish', 'load', 'prepare']);
+const isReadPipelineStep = Schema.is(ReadPipelineStep);
+
+/**
+ * The pipeline a Read is defined with, read once. It must be a plain object whose own keys are `load` and
+ * optionally `prepare` and `finish`, each an enumerable data property holding a function: a step on a
+ * prototype, behind a getter, under any other key or swapped between two reads of it is refused. The returned
+ * copy holds exactly the functions this check saw, so the registration never reads the authored object again.
+ */
+const readPipelineOf = <
+  Pipeline extends { readonly finish?: unknown; readonly load: unknown; readonly prepare?: unknown },
+>(
+  readKey: string,
+  authored: Pipeline,
+): Pipeline => {
+  const refuse = () =>
+    failReadDefinition(
+      `Read ${readKey}: a pipeline is a plain object of load and optional prepare and finish steps, each an own enumerable data property holding a function`,
+    );
+  const prototype: unknown = Object.getPrototypeOf(authored);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return refuse();
+  }
+  const keys = Reflect.ownKeys(authored);
+  if (!keys.includes('load')) {
+    return refuse();
+  }
+  const steps: [typeof ReadPipelineStep.Type, unknown][] = [];
+  for (const key of keys) {
+    const step = isReadPipelineStep(key) ? Object.getOwnPropertyDescriptor(authored, key) : undefined;
+    if (
+      !isReadPipelineStep(key) ||
+      step === undefined ||
+      step.enumerable !== true ||
+      !('value' in step) ||
+      !Predicate.isFunction(step.value) ||
+      // One read of the property, and it has to give the function the descriptor showed.
+      authored[key] !== step.value
+    ) {
+      return refuse();
+    }
+    steps.push([key, step.value]);
+  }
+  // The copy carries the same own keys with the same function values the check above verified.
+  return Object.freeze(Object.fromEntries(steps)) as Pipeline;
+};
+
 /**
  * Defines a governed Read. Its owner pipeline runs in three steps around one short transaction:
  * `prepare` (SpiceDB and other remote calls, no database), `load` (scoped database reads only), and
@@ -1529,44 +1577,41 @@ export function defineRead<
     PrepareRequirements,
     FinishError,
     FinishRequirements
-  > = Predicate.isFunction(ownerWork) ? { load: ownerWork } : ownerWork;
-  if (
-    !Predicate.isFunction(pipeline.load) ||
-    !(pipeline.prepare === undefined || Predicate.isFunction(pipeline.prepare))
-  ) {
-    return failReadDefinition('Read pipeline steps must be functions');
-  }
+  > = Predicate.isFunction(ownerWork) ? { load: ownerWork } : readPipelineOf(descriptor.readKey, ownerWork);
   const stages = pipeline.finish === undefined ? loadPipelineStages(pipeline) : finishPipelineStages(pipeline);
-  // The composed owner steps of a staged Read, and the single-step handler of a Read whose owner work is
-  // one scoped database step. A staged Read keeps `prepare`/`finish` around the transaction (D14).
+  // A Read whose owner work is one scoped database step registers that very function as its handler, written
+  // bare or as `{ load }`. A staged Read registers its composed owner steps: `prepare`/`finish` stay around the
+  // transaction (D14).
   const handler: ReadHandler<
     InputSchema,
     ResultSchema,
     Services,
     ReadPipelineFailure<Failure, PrepareError, FinishError>,
     ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements>
-  > = (input, context) =>
-    Effect.suspend(() =>
-      stages(
-        input,
-        withOptional(
-          withOptional(
-            {
-              readKey: context.readKey,
-              scope: context.scope,
-              transaction: noOwnerTransaction,
-            },
-            'deniedFieldPaths',
-            context.deniedFieldPaths,
+  > = pipeline.prepare === undefined && pipeline.finish === undefined
+    ? pipeline.load
+    : (input, context) =>
+        Effect.suspend(() =>
+          stages(
+            input,
+            withOptional(
+              withOptional(
+                {
+                  readKey: context.readKey,
+                  scope: context.scope,
+                  transaction: noOwnerTransaction,
+                },
+                'deniedFieldPaths',
+                context.deniedFieldPaths,
+              ),
+              'listAccess',
+              context.listAccess,
+            ),
           ),
-          'listAccess',
-          context.listAccess,
-        ),
-      ),
-    ).pipe(
-      Effect.flatMap((load) => load(context.services)),
-      Effect.flatten,
-    );
+        ).pipe(
+          Effect.flatMap((load) => load(context.services)),
+          Effect.flatten,
+        );
   const carriers = declaredAccessCarrier(descriptor);
   const fieldGroupIssue = fieldReadGroupSchemaIssue(carriers.accessFieldGroups ?? [], descriptor.resultSchema);
   if (fieldGroupIssue !== undefined) {

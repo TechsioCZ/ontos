@@ -1,15 +1,21 @@
-import { insideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
-import type { OwnerGatewayConnectionInput } from '../../src/integrations/owner-gateway-connection.ts';
-import { getVerticalRuntimeActions, IoInsideDatabaseTransaction } from '@app/core-runtime';
+import {
+  getVerticalRuntimeActions,
+  IoInsideDatabaseTransaction,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { PricingCommercialFeeProductTargetSnapshotSchema } from '@app/pricing-contracts/domain/commercial-fee';
-import { Cause, DateTime, Effect, Exit, Match, Schema, Redacted } from 'effect';
+import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Match, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
+
+import { insideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
-  prepareCommercialFeeCatalogTargets,
   assertPreparedPricingScope,
+  prepareCommercialFeeCatalogTargets,
 } from '../../src/integrations/commercial-fee-catalog-target-evidence.ts';
 
 import {
@@ -42,23 +48,7 @@ import {
 } from '../../src/services/commercial-fee-persistence.service.ts';
 import { pricingManifest } from '../../vertical.manifest.ts';
 import { pricingRegistration } from '../../vertical.registration.ts';
-
-// The Catalog owner credential is acquired at the Shell wire boundary; the preflight and its
-// snapshot reads run as shipped.
-const gatewayAcquisitions = rs.hoisted(() => {
-  const inputs: OwnerGatewayConnectionInput[] = [];
-  return { inputs };
-});
-rs.mock('../../src/integrations/owner-gateway-connection.ts', () => ({
-  ...rs.requireActual('../../src/integrations/owner-gateway-connection.ts'),
-  acquireOwnerGatewayConnection: (input: OwnerGatewayConnectionInput) => {
-    gatewayAcquisitions.inputs.push(input);
-    return Effect.succeed({
-      baseUrl: new URL('https://catalog.test'),
-      credential: Redacted.make('Bearer exact-preparation'),
-    });
-  },
-}));
+import { makeOwnerTransport, ownerBearer, ownerTransportConfiguration } from './support/owner-transport.fixture.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -710,34 +700,60 @@ describe('Product Commercial Fee bulk management (#797)', () => {
   );
 });
 
-it.layer(NodeCrypto.layer)('Catalog preparation', (suite) =>
+// The actual delegated Shell client and Catalog HTTP client run; only their peers are fakes, and Pricing holds its
+// own key the way the host hands it over.
+const catalogSnapshotPath = '/reads/product-variant-snapshot';
+const catalogTransport = makeOwnerTransport(trusted.compositionRevision, [
+  {
+    path: catalogSnapshotPath,
+    respond: () => Response.json(Schema.encodeSync(PricingCommercialFeeProductTargetSnapshotSchema)(snapshot)),
+  },
+]);
+// The request scope as Core verified it from the redeemed Shell assertion; only that scope may act for the requester.
+const verifiedScope = trustVerifiedGatewayPrincipalContext(
+  {
+    ...Schema.decodeSync(TrustedPrincipalContextSchema)(trusted.principalContext),
+    correlationId: trusted.principalContext.correlationId,
+  },
+  trusted.compositionRevision,
+  { assertion: Redacted.make('verified-fee-source-assertion'), audience: 'commerce-pricing' },
+);
+
+it.layer(
+  Layer.mergeAll(
+    NodeCrypto.layer,
+    Layer.effectDiscard(holdTestModuleCredentials({ pricing: 'pricing-unit-module-key' })),
+    ConfigProvider.layer(ownerTransportConfiguration),
+    Layer.succeed(FetchHttpClient.Fetch, (input, init) => Promise.resolve(catalogTransport.answer(input, init))),
+  ),
+)('Catalog preparation', (suite) =>
   suite.effect('prepares real Catalog HTTP outside SQL and refuses selectors and scopes it did not verify', () =>
     Effect.gen(function* preparedCatalogEvidence() {
       yield* TestClock.setTime(trusted.trustedOperationAt.getTime());
-      let requests = 0;
       const context = {
         actionInvocationId: trusted.actionInvocationId,
         compositionRevision: trusted.compositionRevision,
-        scope: trusted.principalContext,
+        scope: verifiedScope,
         transaction: () => Effect.die('Immutable payload selectors must not create a SQL snapshot'),
       };
-      const fetch: typeof globalThis.fetch = () => {
-        requests += 1;
-        return Promise.resolve(Response.json(snapshot));
-      };
-      const prepared = yield* prepareCommercialFeeCatalogTargets([firstIntent.catalogTargetEvidence], context).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fetch),
-      );
-      expect(gatewayAcquisitions.inputs).toMatchObject([
+      const catalogReads = () => catalogTransport.requestsTo(catalogSnapshotPath).length;
+      const prepared = yield* prepareCommercialFeeCatalogTargets([firstIntent.catalogTargetEvidence], context);
+      // Pricing asked the Shell for a tenant-scoped Catalog credential acting for the verified request.
+      expect(catalogTransport.delegations).toMatchObject([
         {
           audience: 'catalog',
           compositionRevision: trusted.compositionRevision,
           legalEntityScope: 'tenant',
-          requestCorrelation: trusted.principalContext.correlationId,
-          scope: { legalEntityId, tenantId },
+          subject: { _tag: 'Assertion', sourceAssertion: 'verified-fee-source-assertion' },
         },
       ]);
-      expect(requests).toBe(1);
+      expect(
+        catalogTransport
+          .requestsTo('/auth/delegated/gateway-context')
+          .map((sent) => sent.headers.get('x-correlation-id')),
+      ).toEqual([trusted.principalContext.correlationId]);
+      expect(catalogReads()).toBe(1);
+      expect(catalogTransport.requestsTo(catalogSnapshotPath)[0]?.headers.get('authorization')).toBe(ownerBearer);
       expect(
         yield* prepared
           .validate(firstIntent.catalogTargetEvidence)
@@ -754,7 +770,7 @@ it.layer(NodeCrypto.layer)('Catalog preparation', (suite) =>
       expect(
         yield* assertPreparedPricingScope(context, context.scope, 'different-composition').pipe(Effect.isFailure),
       ).toBe(true);
-      expect(requests).toBe(1);
+      expect(catalogReads()).toBe(1);
       // The negative control proves this is an enforced transaction mark, not just a cached counter.
       const forbidden = yield* prepareCommercialFeeCatalogTargets([firstIntent.catalogTargetEvidence], context).pipe(
         insideDatabaseTransaction('pricing.illegal-fee-target-http'),
@@ -764,7 +780,7 @@ it.layer(NodeCrypto.layer)('Catalog preparation', (suite) =>
         expect.unreachable('Live Catalog HTTP must refuse an open owner transaction');
       }
       expect(Cause.squash(forbidden.cause)).toBeInstanceOf(IoInsideDatabaseTransaction);
-      expect(requests).toBe(1);
+      expect(catalogReads()).toBe(1);
     }),
   ),
 );

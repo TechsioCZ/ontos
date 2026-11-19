@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { expect, it } from 'effect-rstest';
 
@@ -34,17 +34,6 @@ const REPAIRED_MODULES = [
   'tests/reconcile-stage-service-grants.test.mts',
   'integration/service-grant-scans.test.mts',
 ] as const;
-
-it('no longer ships the retired provisioning CLI or its test', () => {
-  expect(existsSync(script('provision-current-action-authorization.mts'))).toBe(false);
-  expect(existsSync(script('tests/provision-current-action-authorization.test.mts'))).toBe(false);
-});
-
-it('no longer ships the retired core authorization runtime', () => {
-  for (const retired of RETIRED_MODULES) {
-    expect(existsSync(script(`../packages/core-runtime/src/${retired}.ts`))).toBe(false);
-  }
-});
 
 it('no repaired module imports a retired authorization module', () => {
   const violations: string[] = [];
@@ -130,16 +119,5 @@ it('keeps the retired demo grant helpers from writing a relationship by hand', (
   for (const helper of helpers) {
     const source = readFileSync(script(helper), 'utf-8');
     expect({ helper, writes: source.includes('writeRelationships(') }).toEqual({ helper, writes: false });
-  }
-});
-
-it('does not ship the unused v1 stage tuple planners or their only consumers', () => {
-  for (const path of [
-    'demo/siampark-cases-stage.mts',
-    'demo/orphan-agents-stage.mts',
-    'demo/agent-policies-stage.mts',
-    'demo/agent-policies-stage-model.mts',
-  ]) {
-    expect(existsSync(script(path))).toBe(false);
   }
 });

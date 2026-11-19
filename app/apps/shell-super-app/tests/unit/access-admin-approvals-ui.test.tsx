@@ -3,12 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 import { createInstance } from 'i18next';
+import type { i18n } from 'i18next';
+import type { ReactNode } from 'react';
 
 import cs from '../../locales/cs/shell.json';
 import en from '../../locales/en/shell.json';
 import { AccessApprovalSchema, AccessRecordKeySchema } from '../../shared/access-admin-api.ts';
+import { CurrentSessionSchema } from '../../shared/browser-api.ts';
 import type { AccessAdminProblem, AccessApproval } from '../../shared/access-admin-api.ts';
-import type { decideAccessApproval, executeAccessApproval, listAccessApprovals } from '../../src/api/auth-client.ts';
 import { approvalsClient } from '../../src/routes/access-admin/approvals/approvals-client.ts';
 import {
   approvalsViewModel,
@@ -22,28 +24,35 @@ import { ApprovalClientFailure } from '../../src/routes/access-admin/approvals/a
 import type { ApprovalsClient } from '../../src/routes/access-admin/approvals/approvals-contract.ts';
 import { ApprovalsFeature } from '../../src/routes/access-admin/approvals/approvals-feature.tsx';
 import { ApprovalsInbox } from '../../src/routes/access-admin/approvals/approvals-inbox.tsx';
-import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
+import { adaSelectingCompany, makeShellBff, signedInShellReads } from '../support/shell-bff-double.ts';
+import type { ShellBffScript } from '../support/shell-bff-double.ts';
+import { ShellI18n } from '../support/shell-i18n.tsx';
 
-const { loadShell, nativeDecide, nativeExecute, nativeList, translate } = rstest.hoisted(() => ({
-  loadShell: rstest.fn(),
-  nativeDecide: rstest.fn<typeof decideAccessApproval>(),
-  nativeExecute: rstest.fn<typeof executeAccessApproval>(),
-  nativeList: rstest.fn<typeof listAccessApprovals>(),
-  translate: rstest.fn(),
-}));
-rstest.mock('../../src/api/auth-client.ts', () => ({
-  decideAccessApproval: nativeDecide,
-  executeAccessApproval: nativeExecute,
-  listAccessApprovals: nativeList,
-}));
-rstest.mock('../../src/routes/[lang]/home-page-model.ts', () => ({ loadHomePageModel: loadShell }));
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({ useModernI18n: () => ({ t: translate }) }));
-
-const translations = createInstance();
-const setCopy = (copy: typeof en | typeof cs) => {
+/** Every key the views asked for that the P13 copy does not hold; each test must end with none. */
+const missingKeys: string[] = [];
+const copyOf = (copy: typeof en | typeof cs): i18n => {
   const language = copy === cs ? 'cs' : 'en';
-  return translations.init({ initAsync: false, lng: language, resources: { [language]: { translation: copy } } });
+  const instance = createInstance();
+  void instance.init({
+    initAsync: false,
+    lng: language,
+    missingKeyHandler: (_languages, _namespace, key) => {
+      missingKeys.push(key);
+    },
+    resources: { [language]: { translation: copy } },
+    saveMissing: true,
+  });
+  return instance;
 };
+const translations = { current: copyOf(en) };
+const setCopy = (copy: typeof en | typeof cs) => {
+  translations.current = copyOf(copy);
+};
+/** The Shell's real i18n context over the copy the test selected. */
+const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
+  <ShellI18n translations={translations.current}>{children}</ShellI18n>
+);
+const renderCopy = (ui: Parameters<typeof render>[0]) => render(ui, { wrapper: ShellCopy });
 
 const proposal = (overrides: Partial<AccessApproval> = {}): AccessApproval => ({
   ...Schema.decodeUnknownSync(AccessApprovalSchema)({
@@ -90,29 +99,34 @@ const mockClient = (overrides: Partial<ApprovalsClient> = {}): ApprovalsClient =
 });
 const commandKey = '50000000-0000-4000-8000-000000000001';
 
-beforeEach(() => {
-  translate.mockImplementation((key: string, options?: { readonly count?: number }) => {
-    expect(translations.exists(key, options ?? {}), `Missing P13 key: ${key}`).toBe(true);
-    return translations.t(key, options ?? {});
+/**
+ * The Shell BFF of a person signed in to the Tenant without a selected company, whose approval
+ * inbox, decisions and executions the native client reaches over HTTP.
+ */
+const approvalsBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    ...signedInShellReads(adaSelectingCompany),
+    decideAccessApproval: () => Effect.succeed(proposal()),
+    executeAccessApproval: () => Effect.succeed(proposal({ status: 'executed' })),
+    listAccessApprovals: () => Effect.succeed(list()),
+    ...overrides,
   });
-  nativeList.mockReturnValue(Effect.succeed(list()));
-  nativeDecide.mockReturnValue(Effect.succeed(proposal()));
-  nativeExecute.mockReturnValue(Effect.succeed(proposal({ status: 'executed' })));
-  const { selectedLegalEntityId: _selectedLegalEntityId, ...tenantShell } = authenticatedShellFixture();
-  loadShell.mockReturnValue(Effect.succeed({ ...tenantShell, contextState: 'selection_required' }));
-  void setCopy(en);
+
+beforeEach(() => {
+  setCopy(en);
+  missingKeys.length = 0;
 });
 afterEach(() => {
   cleanup();
-  rstest.clearAllMocks();
+  expect(missingKeys, 'Missing P13 keys').toEqual([]);
 });
 
 for (const copy of [cs, en]) {
   it.effect(`renders P13 approval copy and disables execution in ${copy.shell.accessAdmin.approvals.title}`, () =>
     Effect.gen(function* rendersLocalizedApproval() {
-      yield* Effect.promise(() => setCopy(copy));
+      setCopy(copy);
       const handlers = callbacks();
-      render(<ApprovalsInbox model={approvalsViewModel(list())} {...handlers} />);
+      renderCopy(<ApprovalsInbox model={approvalsViewModel(list())} {...handlers} />);
       expect(screen.getByRole('region', { name: copy.shell.accessAdmin.approvals.title })).toBeDefined();
       expect(screen.getByText('Invoice 42')).toBeDefined();
       expect(screen.getByText('100 CZK')).toBeDefined();
@@ -134,7 +148,7 @@ for (const copy of [cs, en]) {
 
 for (const status of ['approved', 'rejected', 'expired', 'lapsed', 'executed'] as const) {
   test(`renders ${status} without offering approval or rejection`, () => {
-    render(<ApprovalsInbox model={approvalsViewModel(list(proposal({ status })))} {...callbacks()} />);
+    renderCopy(<ApprovalsInbox model={approvalsViewModel(list(proposal({ status })))} {...callbacks()} />);
     expect(screen.getByText(en.shell.accessAdmin.approvals.status[status])).toBeDefined();
     expect(screen.queryByRole('button', { name: en.shell.accessAdmin.approvals.actions.approve })).toBeNull();
     expect(screen.queryByRole('button', { name: en.shell.accessAdmin.approvals.actions.reject })).toBeNull();
@@ -146,7 +160,7 @@ for (const status of ['approved', 'rejected', 'expired', 'lapsed', 'executed'] a
 
 test('agent proposals cannot be approved even if server eligibility says true', () => {
   const item = proposal();
-  render(
+  renderCopy(
     <ApprovalsInbox
       model={approvalsViewModel(list(proposal({ requester: { ...item.requester, kind: 'agent' } })))}
       {...callbacks()}
@@ -161,7 +175,7 @@ it.effect('requester withdraw is distinct from approval and rejection; pending d
       permitted: { approval: { allowed: false }, rejection: { allowed: false }, withdrawal: { allowed: true } },
     });
     const handlers = callbacks();
-    const { rerender } = render(<ApprovalsInbox model={approvalsViewModel(list(item))} {...handlers} />);
+    const { rerender } = renderCopy(<ApprovalsInbox model={approvalsViewModel(list(item))} {...handlers} />);
     expect(screen.queryByRole('button', { name: en.shell.accessAdmin.approvals.actions.approve })).toBeNull();
     expect(screen.queryByRole('button', { name: en.shell.accessAdmin.approvals.actions.reject })).toBeNull();
     yield* Effect.promise(() =>
@@ -177,7 +191,7 @@ it.effect('requester withdraw is distinct from approval and rejection; pending d
 
 test('redacted target never becomes a guessed link or an exposed record identifier', () => {
   const item = proposal();
-  render(
+  renderCopy(
     <ApprovalsInbox
       model={approvalsViewModel(
         list(
@@ -196,7 +210,7 @@ test('redacted target never becomes a guessed link or an exposed record identifi
 
 for (const state of ['loading', 'unauthenticated', 'forbidden', 'conflict', 'invalid', 'unavailable'] as const) {
   test(`renders explicit ${state} state without stale proposal data`, () => {
-    render(<ApprovalsInbox model={{ state }} {...callbacks()} />);
+    renderCopy(<ApprovalsInbox model={{ state }} {...callbacks()} />);
     expect(screen.queryByText('Invoice 42')).toBeNull();
     expect(screen.queryByRole('button', { name: en.shell.accessAdmin.approvals.actions.approve })).toBeNull();
     const refresh = screen.queryByRole('button', { name: en.shell.accessAdmin.common.refresh });
@@ -207,7 +221,7 @@ for (const state of ['loading', 'unauthenticated', 'forbidden', 'conflict', 'inv
 it.effect('empty and paginated lists are distinct and next page emits only a semantic callback', () =>
   Effect.gen(function* paginatedList() {
     const handlers = callbacks();
-    render(<ApprovalsInbox model={approvalsViewModel({ items: [], nextCursor: 'next-cursor' })} {...handlers} />);
+    renderCopy(<ApprovalsInbox model={approvalsViewModel({ items: [], nextCursor: 'next-cursor' })} {...handlers} />);
     expect(screen.getByText(en.shell.accessAdmin.approvals.empty)).toBeDefined();
     yield* Effect.promise(() =>
       userEvent.click(screen.getByRole('button', { name: en.shell.accessAdmin.approvals.nextPage })),
@@ -216,20 +230,24 @@ it.effect('empty and paginated lists are distinct and next page emits only a sem
   }),
 );
 
-it.effect('tenant-only loader reads the inbox without a selected company', () =>
-  Effect.gen(function* tenantOnlyLoader() {
+it.effect('tenant-only loader reads the inbox without a selected company', () => {
+  const bff = approvalsBff();
+  return Effect.gen(function* tenantOnlyLoader() {
     const read = rstest.fn(() => Effect.succeed(list()));
     const client = mockClient({ list: read });
     const model = yield* loadApprovalsPage(request(), client);
+    expect(model.shell).toMatchObject({ contextState: 'selection_required', state: 'authenticated' });
     expect(model.content.state).toBe('ready');
     expect(read).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(model)).not.toContain('commandDigest');
-  }),
-);
+  }).pipe(Effect.provide(bff.layer));
+});
 
-it.effect('anonymous loader never reads approval data and unavailable reads never fabricate a ready list', () =>
-  Effect.gen(function* failsClosed() {
-    loadShell.mockReturnValue(Effect.succeed({ state: 'anonymous' }));
+it.effect('anonymous loader never reads approval data and unavailable reads never fabricate a ready list', () => {
+  const bff = approvalsBff({
+    currentSession: () => Effect.succeed(Schema.decodeUnknownSync(CurrentSessionSchema)({ state: 'anonymous' })),
+  });
+  return Effect.gen(function* failsClosed() {
     const read = rstest.fn(() => Effect.succeed(list()));
     const model = yield* loadApprovalsPage(request(), mockClient({ list: read }));
     expect(model.content.state).toBe('unauthenticated');
@@ -240,8 +258,8 @@ it.effect('anonymous loader never reads approval data and unavailable reads neve
         mockClient({ list: () => Effect.fail(new ApprovalClientFailure({ reason: 'unavailable' })) }),
       ),
     ).toEqual({ state: 'unavailable' });
-  }),
-);
+  }).pipe(Effect.provide(bff.layer));
+});
 
 it.effect('approval sends only revision-bound decision, then re-reads; never sends preview or executes', () =>
   Effect.gen(function* approvalOnly() {
@@ -300,16 +318,13 @@ it.effect('forbidden local affordance and terminal states cannot dispatch comman
   }),
 );
 
-it.effect('native client uses the owning BFF and bounded pagination; decisions use idempotency', () =>
-  Effect.gen(function* nativeAdapter() {
+it.effect('native client uses the owning BFF and bounded pagination; decisions use idempotency', () => {
+  const bff = approvalsBff();
+  return Effect.gen(function* nativeAdapter() {
     const req = new Request('https://shell.example.test/cs/access/approvals', {
       headers: { cookie: 'test-session=opaque' },
     });
     yield* approvalsClient.list(req, 'cursor-2');
-    expect(nativeList).toHaveBeenCalledExactlyOnceWith(
-      { cursor: 'cursor-2', limit: 25 },
-      expect.objectContaining({ baseUrl: new URL('https://shell.example.test/shell-super-app-api') }),
-    );
     const command = {
       decision: 'approve' as const,
       expectedStatus: 'pending' as const,
@@ -317,15 +332,25 @@ it.effect('native client uses the owning BFF and bounded pagination; decisions u
       revision: 'revision-1',
     };
     yield* approvalsClient.decide(command, req, commandKey);
-    expect(nativeDecide).toHaveBeenCalledExactlyOnceWith(
-      command,
-      expect.objectContaining({
-        baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
-        idempotencyKey: commandKey,
-      }),
-    );
-  }),
-);
+    expect(bff.requests).toMatchObject([
+      {
+        body: { cursor: 'cursor-2', limit: 25 },
+        endpoint: 'listAccessApprovals',
+        url: 'https://shell.example.test/shell-super-app-api/shell/access/approvals/list',
+      },
+      {
+        body: command,
+        endpoint: 'decideAccessApproval',
+        url: 'https://shell.example.test/shell-super-app-api/shell/access/approvals/decide',
+      },
+    ]);
+    // Neither request carries a language, and only the decision carries an idempotency key.
+    expect(bff.requests.map(({ acceptLanguage, idempotencyKey }) => ({ acceptLanguage, idempotencyKey }))).toEqual([
+      {},
+      { idempotencyKey: commandKey },
+    ]);
+  }).pipe(Effect.provide(bff.layer));
+});
 
 const nativeFailures: readonly {
   readonly error: AccessAdminProblem;
@@ -372,17 +397,17 @@ const nativeFailures: readonly {
   },
 ];
 for (const { error, state } of nativeFailures) {
-  it.effect(`native ${error.status} maps to ${state} without rendering server diagnostics`, () =>
-    Effect.gen(function* nativeFailure() {
-      nativeList.mockReturnValue(Effect.fail(error));
+  it.effect(`native ${error.status} maps to ${state} without rendering server diagnostics`, () => {
+    const bff = approvalsBff({ listAccessApprovals: () => Effect.fail(error) });
+    return Effect.gen(function* nativeFailure() {
       expect(yield* refreshApprovals(request(), approvalsClient)).toEqual({ state });
-    }),
-  );
+    }).pipe(Effect.provide(bff.layer));
+  });
 }
 
 test('unknown execution refusal is sanitized instead of exposing raw backend diagnostics', () => {
   const item = proposal({ execution: { available: false, reason: 'private backend diagnosis' }, status: 'approved' });
-  render(<ApprovalsInbox model={approvalsViewModel(list(item))} {...callbacks()} />);
+  renderCopy(<ApprovalsInbox model={approvalsViewModel(list(item))} {...callbacks()} />);
   expect(screen.queryByText('private backend diagnosis', { exact: false })).toBeNull();
   expect(screen.getByText(en.shell.accessAdmin.common.unavailable, { exact: false })).toBeDefined();
 });
@@ -468,7 +493,7 @@ it.effect('feature fences two same-tick execute clicks before React pending rend
     const finished = yield* Deferred.make<boolean>();
     const execute = rstest.fn(() => Deferred.await(finished).pipe(Effect.asVoid));
     const client = mockClient({ execute, list: () => Effect.succeed(list(proposal({ status: 'executed' }))) });
-    render(
+    renderCopy(
       <ApprovalsFeature
         client={client}
         createKey={Effect.succeed(commandKey)}
@@ -496,7 +521,7 @@ it.effect('503 refresh and explicit retry retain the same execution idempotency 
       .mockReturnValue(Effect.void);
     const makeKey = rstest.fn(() => commandKey);
     const client = mockClient({ execute, list: () => Effect.succeed(list(executableProposal())) });
-    render(
+    renderCopy(
       <ApprovalsFeature
         client={client}
         createKey={Effect.sync(makeKey)}
@@ -520,17 +545,17 @@ it.effect('503 refresh and explicit retry retain the same execution idempotency 
   }),
 );
 
-it.effect('native execute uses only the stored proposal reference, revision and stable idempotency header', () =>
-  Effect.gen(function* nativeExecution() {
+it.effect('native execute uses only the stored proposal reference, revision and stable idempotency header', () => {
+  const bff = approvalsBff();
+  return Effect.gen(function* nativeExecution() {
     const item = executableProposal();
     const command = { expectedStatus: 'approved' as const, proposalId: item.proposalId, revision: item.revision };
     yield* approvalsClient.execute(command, request(), commandKey);
-    expect(nativeExecute).toHaveBeenCalledExactlyOnceWith(
-      command,
-      expect.objectContaining({ idempotencyKey: commandKey }),
-    );
-  }),
-);
+    expect(bff.requests.map(({ body, endpoint, idempotencyKey }) => ({ body, endpoint, idempotencyKey }))).toEqual([
+      { body: command, endpoint: 'executeAccessApproval', idempotencyKey: commandKey },
+    ]);
+  }).pipe(Effect.provide(bff.layer));
+});
 
 test('route is protected, tenant-context administration and never public/indexable', () => {
   expect(routeMeta.entrypoint.authorization.kind).toBe('protected');

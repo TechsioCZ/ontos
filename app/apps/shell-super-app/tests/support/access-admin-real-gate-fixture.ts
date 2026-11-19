@@ -10,6 +10,7 @@ import {
   makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type {
   AccessDeclaration,
@@ -1727,7 +1728,9 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     undefined,
     undefined,
     undefined,
-    serves === 'frame' && installed !== undefined ? { load: Effect.succeed(installed) } : undefined,
+    serves === 'frame' && installed !== undefined
+      ? makeActiveApplicationCompositionService(Effect.succeed(installed))
+      : undefined,
     accessCase.databases,
   );
   const { apiPrefix } = api.shellAuthenticationApiContract;

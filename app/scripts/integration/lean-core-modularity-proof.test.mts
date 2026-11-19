@@ -579,7 +579,6 @@ it.live(
     const email = `lean-core-modularity-${randomUUID()}@example.test`;
     const password = randomUUID();
     // T27: a second staff principal used to exercise support/impersonation recovery.
-    let supportTargetUserId = '';
     const supportTargetPrincipalId = randomUUID();
     const supportTargetAuthBindingId = randomUUID();
     const supportTargetEmail = `lean-core-support-target-${randomUUID()}@example.test`;
@@ -797,7 +796,7 @@ it.live(
 
     // T27: staff support recovery (the support/impersonation contract exercised in
     // identity-modes-runtime.test.ts) still works for a Shell runtime composed without Commerce.
-    supportTargetUserId = yield* authentication.createFixtureUser(
+    const supportTargetUserId = yield* authentication.createFixtureUser(
       supportTargetEmail,
       'Lean Core Support Target',
       randomUUID(),

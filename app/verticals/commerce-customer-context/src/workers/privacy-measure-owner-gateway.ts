@@ -70,6 +70,8 @@ const OwnerGatewayFailureSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   resolution: Schema.optionalKey(Schema.String),
 });
+// A same-key retry normally gets the saved outcome from Core. Only an outcome committed before Core
+// saved replies still answers 409 action_already_committed, which is equally a durable report.
 const AlreadyRecordedFailureSchema = OwnerGatewayFailureSchema.check(
   Schema.makeFilter(({ code }) =>
     code === 'action_already_committed' ? undefined : 'Outcome was not already recorded',

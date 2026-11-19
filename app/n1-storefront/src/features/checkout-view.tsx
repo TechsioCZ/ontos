@@ -9,6 +9,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import type { Dictionary } from "@/i18n";
 import type { CheckoutOptions } from "@/ontos/checkout-server";
+import type { CheckoutLockManager } from "./checkout-guard";
 import { CheckoutFields } from "./checkout-fields";
 import { CheckoutItems, CheckoutShipping, CheckoutTotals } from "./checkout-panels";
 import { EmptyCartView } from "./empty-cart-view";
@@ -348,13 +349,15 @@ const CheckoutActions = ({
 const ReadyCheckout = ({
   dictionary: d,
   locale,
+  locks,
   options,
 }: {
   dictionary: Dictionary;
   locale: string;
+  locks?: CheckoutLockManager | undefined;
   options: ReadyOptions;
 }) => {
-  const checkout = useCheckout(options, locale);
+  const checkout = useCheckout(options, locale, locks);
   const [shippingId, setShippingId] = useState<string | null>(
     options.shippingMethods[0]?.id ?? null,
   );
@@ -508,15 +511,18 @@ const ReadyCheckout = ({
 export const CheckoutView = ({
   dictionary: d,
   locale,
+  locks,
   options,
 }: {
   dictionary: Dictionary;
   locale: string;
+  /** The tabs' Web Locks; the browser's `navigator.locks` when absent. */
+  locks?: CheckoutLockManager | undefined;
   options: CheckoutOptions;
 }) => {
   const router = useRouter();
   if (options.state === "ready") {
-    return <ReadyCheckout dictionary={d} locale={locale} options={options} />;
+    return <ReadyCheckout dictionary={d} locale={locale} locks={locks} options={options} />;
   }
   return (
     <article className="mx-auto flex max-w-n1-product-content flex-col items-start gap-5 p-5">

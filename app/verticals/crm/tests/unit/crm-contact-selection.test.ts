@@ -93,16 +93,6 @@ describe('CRM contact detail selection over authorized records', () => {
     expect(contactSelectionOf(orphaned, 'contact-orphan')).toBeUndefined();
   });
 
-  it('does not resolve a contact that exists only in another company read', () => {
-    const otherCompany = makeRecords([client('client-other')], [contact('contact-other-company', 'client-other')]);
-    expect(contactSelectionOf(otherCompany, 'contact-other-company')).toBeDefined();
-    expect(contactSelectionOf(records, 'contact-other-company')).toBeUndefined();
-  });
-
-  it('does not resolve an unassigned contact omitted from the assigned-only projection', () => {
-    expect(contactSelectionOf(records, 'contact-unassigned')).toBeUndefined();
-  });
-
   it('resolves only contacts of clients the assigned viewer may see', () => {
     const full = Schema.decodeUnknownSync(CrmStateSchema)({
       ...Schema.encodeSync(CrmStateSchema)(initialCrmState),

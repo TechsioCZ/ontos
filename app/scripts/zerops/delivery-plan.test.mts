@@ -119,7 +119,7 @@ it.effect('uses the last verified input base across skipped commits rather than 
 for (const filepath of [
   '.github/workflows/ultramodern-workspace-gates.yml',
   '.github/workflows/quality-audit.yml',
-  'app/scripts/ci/integration-seed.mts',
+  'app/scripts/ci/run-integration-suites.sh',
   'app/scripts/tests/ci-workflows.test.mts',
   'app/scripts/zerops/delivery-plan.test.mts',
   'app/scripts/lint-suppression-ratchet.mts',

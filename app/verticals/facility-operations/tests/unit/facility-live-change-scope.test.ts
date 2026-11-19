@@ -1,53 +1,47 @@
-import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import type { ModuleChangeDetail } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
-import { afterAll, beforeAll, expect, it, rstest } from 'effect-rstest';
+// @rstest-environment happy-dom
+import { browserNetwork, serveApi, shellGatewayIssuer } from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Schema } from 'effect';
+import { it } from 'effect-rstest';
+import { assertLiveChangeReload } from '@app/shared-contracts/testing/live-change-reload';
 
+import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { agendaRecordsData } from '../../src/ui/use-agenda.ts';
 
-const { records } = rstest.hoisted(() => ({ records: rstest.fn() }));
-
-rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-
-// The store only works in a document; Node gets the few window members it uses.
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [name, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, name, value);
-  }
+const reads: RecordsRequest[] = [];
+const emptyRecords = Schema.decodeUnknownSync(RecordsResponseSchema)({
+  access: [],
+  actorPrincipalRef: {
+    principalId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  agendas: {},
 });
-afterAll(() => {
-  for (const name of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, name);
-  }
-});
-
-const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
-  globalThis.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
-};
-
-it.live('agenda records ignore a live change from another vertical', () =>
-  Effect.gen(function* unrelatedChange() {
-    records.mockReset();
-    records.mockReturnValue(Effect.succeed({ access: [], agendas: {} }));
-    const agendas = ['assets'] as const;
-    const unsubscribe = agendaRecordsData.subscribe(() => {
-      agendaRecordsData.snapshot(agendas);
-    }, agendas);
-    yield* agendaRecordsData.preload(agendas);
-    expect(records).toHaveBeenCalledTimes(1);
-    dispatchChange(['work-tasks']);
-    yield* Effect.sleep('10 millis');
-    expect(records).toHaveBeenCalledTimes(1);
-    dispatchChange(['facility-operations']);
-    yield* Effect.sleep('10 millis');
-    expect(records).toHaveBeenCalledTimes(2);
-    unsubscribe();
-  }),
+const OwnerRecordsApi = RecordsApi.prefix('/facility-operations-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ 'facility-operations': '/facility-operations-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+          return emptyRecords;
+        }),
+      ),
+    ),
+  ),
 );
+
+it.layer(network, { excludeTestServices: true })('store app contract', (suite) => {
+  suite.effect('agendaRecordsData reloads on a live change of the data it reads and ignores an unrelated app', () =>
+    assertLiveChangeReload({
+      ignores: 'tax',
+      input: ['assets'],
+      reads: () => reads.length,
+      reloadsOn: ['facility-operations'],
+      store: agendaRecordsData,
+    }),
+  );
+});

@@ -31,6 +31,7 @@ import { presentedShellNavigationItems } from '../../../shared/shell-platform-na
 import { homeContributionCandidates, isHomeRequest, resolveHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
+import { reportHomeLoaderFailure } from '../../api/loader-diagnostics.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
 import { registerSessionScopedReset } from '../session-scope.ts';
@@ -733,10 +734,19 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       ? readServerDocument(request, options).pipe(Effect.map(serverHomePageModel))
       : loadBrowserHomePageModel(request, options, onCompanyReady);
   },
-  Effect.matchEffect({
-    onFailure: (error) => Effect.succeed(homePageModelOfFailure(error)),
-    onSuccess: Effect.succeed,
-  }),
+  (effect, ...[request]: readonly [request: Request, onCompanyReady?: BrowserCompanyReady]) =>
+    effect.pipe(
+      Effect.matchEffect({
+        onFailure: Effect.fn('HomePageModel.reportUnavailableHome')(function* reportUnavailableHome(problem) {
+          const model = homePageModelOfFailure(problem);
+          if (model.state === 'unavailable') {
+            yield* reportHomeLoaderFailure(problem, request);
+          }
+          return model;
+        }),
+        onSuccess: Effect.succeed,
+      }),
+    ),
 );
 
 export interface ServerModuleDocument {

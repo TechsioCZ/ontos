@@ -6,127 +6,45 @@ import {
   OAuthConnectionCompanies,
 } from '@app/core-runtime';
 import {
-  ConnectionDescriptionSchema,
   ConnectApproveRequestSchema,
   ConnectDenyRequestSchema,
   OAUTH_GRANT_CLAIM,
 } from '@app/shared-contracts/oauth-connections';
+import { getTableColumns } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
 import { scriptedPgClientLayer } from '../../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { authRelations } from '../../../api/auth/db/schema.ts';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { NodeCrypto } from '@effect/platform-node';
 
 import { CoreDatabase } from '../../../../../packages/core-runtime/src/db/client.ts';
-import { coreRelations } from '../../../../../packages/core-runtime/src/db/schema.ts';
+import {
+  coreRelations,
+  oauthConnectionGrants,
+  principals,
+} from '../../../../../packages/core-runtime/src/db/schema.ts';
 import { OAuthGrantRegistryLive } from '../../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { AuthDatabase } from '../../../api/auth/db/client.ts';
 import { OAuthCredentialsLive } from '../../../api/auth/db/oauth-credentials-live.ts';
 import { AuthenticationService } from '../../../api/auth/service.ts';
-import { ShellInstalledModuleCatalog } from '../../../api/modules/installed-module-catalog.ts';
+import { makeInstalledModuleCatalogLayer } from '../../../api/modules/installed-module-catalog.ts';
 import { authenticateMcpRequest, OAuthAccessTokensLive } from '../../../api/mcp/connection.ts';
-import type { LiveConnection } from '../../../api/oauth-connections/connection-service.ts';
 import { approve, deny, draftSummary } from '../../../api/oauth-connections/connect-service.ts';
 import type { ConnectSession } from '../../../api/oauth-connections/connect-service.ts';
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
 import { ConnectionUnauthorized, ConnectionUnavailable } from '../../../api/oauth-connections/errors.ts';
 import type { GrantRow } from '../../../api/oauth-connections/types.ts';
-import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
-import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { pageCarrierCatalog, subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 import { agentConnectionStoreDouble, unusedPeopleCommandsLayer } from '../../support/agent-connection-store-double.ts';
 
 type OAuthAuthenticationObservation = Parameters<(typeof OAuthAuthenticationAudit)['Service']['record']>[0];
 const unexpectedAuthentication = () => Effect.die('MCP must not authenticate through a browser session');
-
-interface ConsumerControls {
-  active?: GrantRow;
-  denied?: GrantRow;
-  grant?: GrantRow;
-  live?: LiveConnection;
-  touchCalls: string[];
-  touchUpdates: boolean[];
-}
-const controls = rs.hoisted(() => {
-  const state: ConsumerControls = { touchCalls: [], touchUpdates: [] };
-  return state;
-});
-rs.mock('../../../api/oauth-connections/grant-store.ts', () => ({
-  approveDraftGrant: () =>
-    Effect.succeed(controls.active === undefined ? undefined : { active: controls.active, superseded: [] }),
-  findGrant: () => Effect.succeed(controls.grant),
-  findSessionGrant: () => Effect.succeed(controls.grant),
-  setGrantStatus: () => Effect.succeed(controls.denied),
-  touchGrantLastUsed: (grantId: string) =>
-    Effect.sync(() => {
-      controls.touchCalls.push(grantId);
-      return controls.touchUpdates.shift() ?? true;
-    }),
-}));
-rs.mock('../../../api/oauth-connections/connection-service.ts', () => ({
-  checkLiveGrant: () =>
-    controls.live === undefined
-      ? Effect.die('Live connection is not configured')
-      : Effect.succeed({ grant: controls.live.grant, names: new Map() }),
-  loadActingAuthority: () =>
-    Effect.succeed({
-      labelOf: (moduleId: string | null | undefined) => moduleId ?? '',
-      live: { read: new Set<string>(['crm']), write: new Set<string>() },
-      // One offered module: a draft for `all` is within authority only while something is offered.
-      offered: [{ label: 'CRM', moduleId: 'crm', read: true, write: false }],
-      policyCap: 'direct',
-    }),
-  loadLiveConnection: () =>
-    controls.live === undefined ? Effect.die('Live connection is not configured') : Effect.succeed(controls.live),
-}));
-const scriptedDatabase = scriptedPgClientLayer(
-  Effect.succeed(testSqlConnection(() => Effect.die('OAuth consumer tests must not execute SQL'))),
-).pipe(Layer.provide(Reactivity.layer));
-const authDatabase = Layer.effect(
-  AuthDatabase,
-  makeWithDefaults({ relations: authRelations }).pipe(
-    Effect.map((executor) => ({
-      adapter: () => {
-        throw new Error('OAuth consumer tests must not open Better Auth');
-      },
-      executor,
-    })),
-  ),
-).pipe(Layer.provide(scriptedDatabase));
-const coreDatabase = Layer.effect(
-  CoreDatabase,
-  makeWithDefaults({ relations: coreRelations }).pipe(Effect.map((executor) => ({ executor }))),
-).pipe(Layer.provide(scriptedDatabase));
-const unusedCollaborators = Layer.mergeAll(
-  agentConnectionStoreDouble().layer,
-  unusedPeopleCommandsLayer,
-  Layer.unwrap(
-    makeCompositionSnapshot([]).pipe(
-      Effect.map((snapshot) => subjectInspectionFixture({ snapshot, subjects: [] }).layer),
-    ),
-  ),
-  Layer.mock(ActionAuthority, {}),
-  authDatabase,
-  OAuthCredentialsLive.pipe(Layer.provide(authDatabase)),
-  OAuthGrantRegistryLive.pipe(Layer.provide(coreDatabase)),
-  Layer.mock(ContextAccess, {}),
-  Layer.mock(OAuthConnectionCompanies, {}),
-  Layer.mock(OAuthFlow, {}),
-  Layer.mock(ShellInstalledModuleCatalog, {}),
-).pipe(Layer.provide(NodeCrypto.layer));
-rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
-  get loadOAuthServerConfig() {
-    return Effect.succeed({
-      issuer: 'http://localhost:3020/shell-super-app-api/oauth',
-      resource: 'http://localhost:3020/mcp',
-    });
-  },
-}));
 
 const principalId = '20000000-0000-4000-8000-000000000001';
 const session: ConnectSession = {
@@ -148,6 +66,124 @@ const session: ConnectSession = {
   tenantId: '10000000-0000-4000-8000-000000000001',
   userId: 'connector-user',
 };
+
+interface ConsumerControls {
+  active?: GrantRow;
+  denied?: GrantRow;
+  grant?: GrantRow;
+  touchCalls: string[];
+  touchUpdates: boolean[];
+}
+const controls: ConsumerControls = { touchCalls: [], touchUpdates: [] };
+
+// The native registry executes its real SQL and decodes retained facts through Drizzle. Only the driver answers
+// are scripted, including whether the conditional last-used update returned a row.
+const grantRows = (row: GrantRow | undefined) => {
+  if (row === undefined) {
+    return [];
+  }
+  const retained = new Map(Object.entries({ ...row, modulesJson: row.modules }));
+  return [
+    Object.fromEntries(
+      Object.entries(getTableColumns(oauthConnectionGrants)).map(([key]) => {
+        const value = retained.get(key);
+        return [key, Schema.is(Schema.Date)(value) ? value.toISOString() : value];
+      }),
+    ),
+  ];
+};
+const scriptedDatabase = scriptedPgClientLayer(
+  Effect.succeed(
+    testSqlConnection((sql, params) =>
+      Effect.suspend((): ReturnType<Parameters<typeof testSqlConnection>[0]> => {
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.includes('pg_advisory_xact_lock')) {
+          return Effect.succeed([]);
+        }
+        if (sql.includes('"oauth_connection_grants"')) {
+          if (sql.startsWith('select')) {
+            return Effect.succeed(grantRows(controls.grant));
+          }
+          if (sql.startsWith('update')) {
+            if (sql.includes('"last_used_at" = now()')) {
+              controls.touchCalls.push(Schema.decodeUnknownSync(Schema.String)(params[0]));
+              return Effect.succeed(grantRows((controls.touchUpdates.shift() ?? true) ? controls.grant : undefined));
+            }
+            if (params.includes('superseded')) {
+              return Effect.succeed([]);
+            }
+            return Effect.succeed(grantRows(params.includes('active') ? controls.active : controls.denied));
+          }
+        }
+        if (sql.startsWith('select') && sql.includes('"principals"')) {
+          // The approval locks whole principal rows; live checks select only these four fields.
+          if (sql.includes('for share')) {
+            const principal = new Map(
+              Object.entries({
+                displayName: session.displayName,
+                kind: 'human',
+                principalId,
+                status: 'active',
+                tenantId: session.tenantId,
+              }),
+            );
+            return Effect.succeed([
+              Object.fromEntries(Object.keys(getTableColumns(principals)).map((key) => [key, principal.get(key)])),
+            ]);
+          }
+          return Effect.succeed([{ displayName: session.displayName, kind: 'human', principalId, status: 'active' }]);
+        }
+        if (sql.includes('"principal_auth_bindings"')) {
+          return Effect.succeed(sql.startsWith('select') ? [{ status: 'active' }] : []);
+        }
+        if (sql.startsWith('select') && sql.includes('"user"')) {
+          return Effect.succeed([{ banned: false, emailVerified: true, name: session.displayName }]);
+        }
+        return Effect.die(`Unexpected OAuth consumer SQL: ${sql}`);
+      }),
+    ),
+  ),
+).pipe(Layer.provide(Reactivity.layer));
+const authDatabase = Layer.effect(
+  AuthDatabase,
+  makeWithDefaults({ relations: authRelations }).pipe(
+    Effect.map((executor) => ({
+      adapter: () => {
+        throw new Error('OAuth consumer tests must not open Better Auth');
+      },
+      executor,
+    })),
+  ),
+).pipe(Layer.provide(scriptedDatabase));
+const coreDatabase = Layer.effect(
+  CoreDatabase,
+  makeWithDefaults({ relations: coreRelations }).pipe(Effect.map((executor) => ({ executor }))),
+).pipe(Layer.provide(scriptedDatabase));
+const collaborators = Layer.mergeAll(
+  agentConnectionStoreDouble().layer,
+  unusedPeopleCommandsLayer,
+  Layer.unwrap(
+    pageCarrierCatalog(['work.tasks']).pipe(
+      Effect.map(({ snapshot }) =>
+        Layer.merge(
+          subjectInspectionFixture({
+            capabilities: [{ key: 'work.tasks.page.open', modes: ['run'] }],
+            snapshot,
+            subjects: [{ legalEntityId: session.activeLegalEntityId ?? '', principalId, tenantId: session.tenantId }],
+          }).layer,
+          makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
+        ),
+      ),
+    ),
+  ),
+  Layer.mock(ActionAuthority, {}),
+  authDatabase,
+  OAuthCredentialsLive.pipe(Layer.provide(authDatabase)),
+  OAuthGrantRegistryLive.pipe(Layer.provide(coreDatabase)),
+  Layer.mock(ContextAccess, {}),
+  Layer.mock(OAuthConnectionCompanies, {}),
+  Layer.mock(OAuthFlow, {}),
+).pipe(Layer.provide(NodeCrypto.layer));
+
 const grant = (): GrantRow => ({
   actingKind: 'human',
   actingPrincipalId: principalId,
@@ -248,7 +284,7 @@ it.effect('records fixed creation and denial observations through the Core obser
         principalId,
       },
     ]);
-  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
+  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(collaborators)),
 );
 
 it.effect('fails approval and denial with ConnectionUnavailable retaining the observer cause', () =>
@@ -275,7 +311,7 @@ it.effect('fails approval and denial with ConnectionUnavailable retaining the ob
   }).pipe(
     Effect.provideService(OAuthFlow, flow),
     Effect.provideService(OAuthAuthenticationAudit, { record: () => Effect.fail(unavailable) }),
-    Effect.provide(unusedCollaborators),
+    Effect.provide(collaborators),
   ),
 );
 
@@ -302,7 +338,7 @@ it.effect('loads draft company names from Core and preserves company lookup fail
       expect(failed.failure).toBeInstanceOf(ConnectionUnavailable);
       expect(failed.failure).toMatchObject({ cause: unavailable });
     }
-  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
+  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(collaborators)),
 );
 
 it.effect('rejects a foreign retained draft before reading its company label or projecting requester authority', () =>
@@ -316,35 +352,12 @@ it.effect('rejects a foreign retained draft before reading its company label or 
     );
     expect(failure).toBeInstanceOf(ConnectionUnavailable);
     expect(failure).toMatchObject({ cause: 'Retained connection scope differs from original requester' });
-  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
+  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(collaborators)),
 );
 
 it.effect('audits MCP use only when last-used is updated and preserves observer failures', () =>
   Effect.gen(function* throttledMcpObservation() {
     const active = { ...grant(), authBindingId: session.authBindingId ?? null, status: 'active' as const };
-    const live: LiveConnection = {
-      description: yield* Schema.decodeEffect(ConnectionDescriptionSchema)({
-        acting: { displayName: session.displayName, kind: 'human', principalId },
-        client: {
-          clientId: active.clientId,
-          host: active.clientHost,
-          kind: active.clientKind,
-          logoUri: null,
-          name: active.clientName,
-        },
-        compositionRevision: 'test',
-        delegatedBy: null,
-        grantId: active.grantId,
-        legalEntityId: active.legalEntityId,
-        legalName: 'Core company name',
-        modules: [],
-        profileId: active.profileId,
-        status: 'active',
-        tenantId: active.tenantId,
-        writePolicy: 'read_only',
-      }),
-      grant: active,
-    };
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('EdDSA'));
     const key = yield* Effect.promise(() => exportJWK(publicKey));
     const issuer = 'http://localhost:3020/shell-super-app-api/oauth';
@@ -357,7 +370,7 @@ it.effect('audits MCP use only when last-used is updated and preserves observer 
         .setExpirationTime('5m')
         .sign(privateKey),
     );
-    controls.live = live;
+    controls.grant = active;
     controls.touchCalls = [];
     controls.touchUpdates = [false, true];
     const observations: OAuthAuthenticationObservation[] = [];
@@ -454,5 +467,5 @@ it.effect('audits MCP use only when last-used is updated and preserves observer 
     }
     expect(controls.touchCalls).toEqual([active.grantId, active.grantId, active.grantId]);
     expect(signingKeyLoads).toBe(5);
-  }).pipe(Effect.scoped, Effect.provide(unusedCollaborators)),
+  }).pipe(Effect.scoped, Effect.provide(collaborators)),
 );

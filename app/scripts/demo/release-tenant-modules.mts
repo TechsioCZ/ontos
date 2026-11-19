@@ -34,6 +34,7 @@ import type { ReleaseTenantModulesReport } from '../../packages/core-runtime/src
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
@@ -101,7 +102,7 @@ export const reportProblems = (report: ReleaseTenantModulesReport): readonly str
 
 /** Installs the declared modules against the active composition; the caller supplies the release runtime. */
 export const installDeclaredModules = Effect.gen(function* installDeclaredModulesProgram() {
-  const snapshot = yield* (yield* ActiveApplicationCompositionService).load.pipe(
+  const snapshot = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService).pipe(
     Effect.mapError(() => failure('the active composition could not be loaded')),
   );
   const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(

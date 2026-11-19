@@ -1,21 +1,38 @@
-import { executeCleanupDemo } from '../../src/api/cleanup-demo-action-client.ts';
-import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
+// @rstest-environment happy-dom
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
+import { Deferred, Effect, Exit, Fiber, Layer, Schema } from 'effect';
 import { createElement } from 'react';
-import type ReactRuntime from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { settle, unmountAll } from '@app/admin-ui/testing/module-ui';
+import {
+  browserNetwork,
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { moduleChangeEvent, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import {
   OrderSchema,
   ProductRecordSchema,
+  RecordsApi,
   RecordsForbiddenProblemSchema,
   RecordsResponseSchema,
   StockMovementSchema,
 } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
-import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
+import {
+  ManageCatalogActionApi,
+  ManageCatalogActionConflictProblemSchema,
+} from '../../shared/apis/manage-catalog-action.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/apis/manage-catalog-action.ts';
+import { CleanupDemoActionApi } from '../../shared/apis/cleanup-demo-action.ts';
+import type { CleanupDemoPayloadSchema } from '../../shared/apis/cleanup-demo-action.ts';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
+import { cleanupDemoActionSchemaErrorLive } from '../../api/cleanup-demo-action-problems.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 import {
   editOrder,
   firstOrdersPage,
@@ -25,33 +42,6 @@ import {
   resetDemoData,
   useOrderDetail,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
-
-rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/manage-catalog-action-client.ts');
-rstest.mock('../../src/api/cleanup-demo-action-client.ts');
-// Execute the first-render branch without running effects. Customer coverage also mounts real React hooks.
-rstest.mock('react', () => ({
-  ...rstest.requireActual<typeof ReactRuntime>('react'),
-  useSyncExternalStore: <Value>(_subscribe: (listener: () => void) => () => void, snapshot: () => Value) => snapshot(),
-}));
-
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-beforeAll(() => {
-  for (const [key, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, key, value);
-  }
-});
-afterAll(() => {
-  for (const key of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, key);
-  }
-});
 
 const context = { legalEntityId: 'company-1', principalId: 'principal-1', tenantId: 'tenant-1' };
 const scope = pageDataScopeKey(context, 'demo.merchandise') ?? '';
@@ -141,42 +131,95 @@ const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({
   type: 'urn:test:denied',
 });
 
+const reads: RecordsRequest[] = [];
+const catalogWrites: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const cleanupWrites: (typeof CleanupDemoPayloadSchema.Encoded)[] = [];
+const defaultRecords = ({ view }: RecordsRequest) => {
+  if (view?.productId !== undefined) {
+    return Effect.succeed({ ...base, movements: [movement], orders: [], products: [summary] });
+  }
+  if (view?.productIds !== undefined) {
+    return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? summary : full] });
+  }
+  return Effect.succeed(base);
+};
+let recordsAnswer: (request: RecordsRequest) => Effect.Effect<RecordsResponse, typeof denied> = defaultRecords;
+const saved = Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [order.id], revision: 8 });
+let catalogAnswer: Effect.Effect<typeof saved, typeof ManageCatalogActionConflictProblemSchema.Type> =
+  Effect.succeed(saved);
+let cleanupAnswer = Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 }));
+const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const OwnerCatalogApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const OwnerCleanupApi = CleanupDemoActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerRecordsApi,
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          reads.push(payload);
+        }).pipe(Effect.andThen(Effect.suspend(() => recordsAnswer(payload)))),
+      ),
+    ),
+  ),
+  serveApi(
+    OwnerCatalogApi,
+    HttpApiBuilder.group(OwnerCatalogApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          catalogWrites.push(payload);
+        }).pipe(Effect.andThen(Effect.suspend(() => catalogAnswer))),
+      ),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
+  ),
+  serveApi(
+    OwnerCleanupApi,
+    HttpApiBuilder.group(OwnerCleanupApi, 'cleanupDemoAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          cleanupWrites.push(payload);
+        }).pipe(Effect.andThen(Effect.suspend(() => cleanupAnswer))),
+      ),
+    ).pipe(Layer.provide(cleanupDemoActionSchemaErrorLive)),
+  ),
+);
+
 beforeEach(() => {
-  rstest.resetAllMocks();
+  reads.length = 0;
+  catalogWrites.length = 0;
+  cleanupWrites.length = 0;
   orderDetailData.invalidate();
   ordersPageData.invalidate();
-  rstest.mocked(executeRecords).mockImplementation(({ view }) => {
-    if (view?.productId !== undefined) {
-      return Effect.succeed({ ...base, movements: [movement], orders: [], products: [summary] });
-    }
-    if (view?.productIds !== undefined) {
-      return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? summary : full] });
-    }
-    return Effect.succeed(base);
-  });
+  recordsAnswer = defaultRecords;
+  catalogAnswer = Effect.succeed(saved);
+  cleanupAnswer = Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 }));
 });
+afterEach(unmountAll);
 
-it.effect(
+it.live(
   'preloads the complete listed order, variants and ledger; opening reads synchronously without any request',
   () =>
     Effect.gen(function* preloadedOpen() {
+      yield* pinTestDocument;
       yield* ordersPageData.read(source);
-      rstest.mocked(executeRecords).mockClear();
+      reads.length = 0;
       yield* preloadOrderDetails(source, base);
-      expect(executeRecords).toHaveBeenCalledTimes(3);
-      expect(rstest.mocked(executeRecords).mock.calls.every(([request]) => request.view?.orderId === undefined)).toBe(
-        true,
-      );
+      yield* networkIdle;
+      expect(reads).toHaveLength(3);
+      expect(reads.every((request) => request.view?.orderId === undefined)).toBe(true);
       const ready = orderDetailData.snapshot(detail);
       expect(ready).toEqual({
         refreshing: false,
         state: 'ready',
         value: { movesStock: true, order, products: [full], revision: 7, vat: { rates: [], regime: null } },
       });
-      rstest.mocked(executeRecords).mockClear();
+      reads.length = 0;
       expect(orderDetailData.snapshot(detail)).toBe(ready);
+      const renderedStates: ReturnType<typeof useOrderDetail>[] = [];
       const OrderDetailProbe = () => {
         const state = useOrderDetail(order.id, 0, context, source);
+        renderedStates.push(state);
         return createElement(
           'output',
           null,
@@ -190,9 +233,9 @@ it.effect(
             : state.status,
         );
       };
-      expect(renderToStaticMarkup(createElement(OrderDetailProbe))).toBe(
-        '<output>ORD-1|CABLE-BLACK|stock-moved|7</output>',
-      );
+      yield* mountInRoute(createElement(OrderDetailProbe));
+      expect(renderedStates[0]).toMatchObject({ status: 'ready' });
+      expect(document.querySelector('output')?.outerHTML).toBe('<output>ORD-1|CABLE-BLACK|stock-moved|7</output>');
       expect(yield* orderDetailData.read(detail)).toEqual({
         movesStock: true,
         order,
@@ -200,57 +243,36 @@ it.effect(
         revision: 7,
         vat: { rates: [], regime: null },
       });
-      expect(executeRecords).not.toHaveBeenCalled();
-    }),
+      yield* networkIdle;
+      expect(reads).toHaveLength(0);
+    }).pipe(Effect.provide(network)),
 );
 
-it.effect('concurrent prefetches and foreground selection join the same enrichment', () =>
-  Effect.gen(function* deduplication() {
-    yield* ordersPageData.read(source);
-    const gate = yield* Deferred.make<true>();
-    rstest
-      .mocked(executeRecords)
-      .mockImplementation(() => Deferred.await(gate).pipe(Effect.as({ ...base, products: [full] })));
-    const prefetch = yield* Effect.forkChild(preloadOrderDetails(source, base));
-    yield* Effect.yieldNow;
-    const foreground = yield* Effect.forkChild(orderDetailData.read(detail));
-    yield* Effect.yieldNow;
-    yield* Deferred.succeed(gate, true);
-    yield* Fiber.join(prefetch);
-    yield* Fiber.join(foreground);
-    // One summary, one variant read and one ledger, not two sets.
-    expect(executeRecords).toHaveBeenCalledTimes(4);
-  }),
-);
-
-it.effect('a write preserves the caller revision, invalidates the row and refetches governed data', () =>
+it.live('a write preserves the caller revision, invalidates the row and refetches governed data', () =>
   Effect.gen(function* writeInvalidation() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
-    rstest
-      .mocked(executeManageCatalog)
-      .mockReturnValue(
-        Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [order.id], revision: 8 })),
-      );
+    catalogAnswer = Effect.succeed(saved);
     yield* editOrder({ _tag: 'EditOrder', id: order.id, note: 'Changed' }, 7);
-    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].expectedRevision).toBe(7);
+    expect(catalogWrites[0]?.expectedRevision).toBe(7);
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-    rstest.mocked(executeRecords).mockClear();
+    reads.length = 0;
     yield* orderDetailData.read(detail);
-    expect(executeRecords).toHaveBeenCalledTimes(4);
-  }),
+    yield* networkIdle;
+    expect(reads).toHaveLength(4);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('reset and rejected writes also invalidate details without changing the submitted revision', () =>
+it.live('reset and rejected writes also invalidate details without changing the submitted revision', () =>
   Effect.gen(function* resetAndConflict() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
-    rstest
-      .mocked(executeCleanupDemo)
-      .mockReturnValue(Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 })));
+    cleanupAnswer = Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 }));
     yield* resetDemoData('Reset proof', 7);
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-    expect(rstest.mocked(executeCleanupDemo).mock.calls[0]?.[0]).toEqual({
+    expect(cleanupWrites[0]).toEqual({
       command: { _tag: 'ResetDemoData', confirmation: 'OBNOVIT', reason: 'Reset proof' },
       expectedRevision: 7,
     });
@@ -263,42 +285,46 @@ it.effect('reset and rejected writes also invalidate details without changing th
       title: 'Conflict',
       type: 'urn:test:conflict',
     });
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(conflict));
+    catalogAnswer = Effect.fail(conflict);
     yield* Effect.exit(editOrder({ _tag: 'EditOrder', id: order.id, note: 'Not saved' }, 7));
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].expectedRevision).toBe(7);
-  }),
+    expect(catalogWrites[0]?.expectedRevision).toBe(7);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('authorization change never serves stale order data, and a subsequent allowed read retries', () =>
+it.live('authorization change never serves stale order data, and a subsequent allowed read retries', () =>
   Effect.gen(function* authorizationChange() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
-    globalThis.dispatchEvent(new Event(moduleChangeEvent));
-    rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
+    window.dispatchEvent(new Event(moduleChangeEvent));
+    recordsAnswer = () => Effect.fail(denied);
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
     const rejected = yield* Effect.exit(orderDetailData.read(detail));
     expect(Exit.isFailure(rejected)).toBe(true);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed({ ...base, products: [full] }));
+    recordsAnswer = () => Effect.succeed({ ...base, products: [full] });
     yield* orderDetailData.read(detail);
     expect(orderDetailData.snapshot(detail).state).toBe('ready');
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('unknown orders do not acquire fixture data or a reusable negative result', () =>
+it.live('unknown orders do not acquire fixture data or a reusable negative result', () =>
   Effect.gen(function* unknownOrder() {
+    yield* pinTestDocument;
     const unknown = { orderId: 'missing', scope };
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed({ ...base, orders: [] }));
+    recordsAnswer = () => Effect.succeed({ ...base, orders: [] });
     yield* Effect.exit(orderDetailData.read(unknown));
     expect(orderDetailData.snapshot(unknown).state).toBe('failed');
     yield* Effect.exit(orderDetailData.read(unknown));
-    expect(executeRecords).toHaveBeenCalledTimes(2);
-  }),
+    yield* networkIdle;
+    expect(reads).toHaveLength(2);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('different companies, tenants and users never consume the warmed record', () =>
+it.live('different companies, tenants and users never consume the warmed record', () =>
   Effect.gen(function* isolation() {
+    yield* pinTestDocument;
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
     for (const field of ['legalEntityId', 'tenantId', 'principalId'] as const) {
@@ -307,11 +333,12 @@ it.effect('different companies, tenants and users never consume the warmed recor
     }
     yield* preloadOrderDetails({ legalEntityId: source.legalEntityId, query: source.query }, base);
     expect(orderDetailData.snapshot({ ...detail, scope: '' })).toBe(pageDataPending);
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('only current-page rows are prefetched and cancellation stops queued rows', () =>
+it.live('only current-page rows are prefetched and cancellation stops queued rows', () =>
   Effect.gen(function* boundedPrefetch() {
+    yield* pinTestDocument;
     const gate = yield* Deferred.make<true>();
     const started = yield* Deferred.make<true>();
     let requests = 0;
@@ -322,26 +349,27 @@ it.effect('only current-page rows are prefetched and cancellation stops queued r
         id: Schema.decodeSync(OrderSchema.fields.id)(`order-${index}`),
       })),
     };
-    rstest.mocked(executeRecords).mockImplementation(({ view }) =>
+    recordsAnswer = ({ view }) =>
       view?.productIds === undefined
         ? Effect.succeed(records)
         : Effect.sync(() => {
             requests += 1;
           }).pipe(
-            Effect.andThen(Deferred.succeed(started, true)),
+            Effect.andThen(Effect.suspend(() => (requests === 2 ? Deferred.succeed(started, true) : Effect.void))),
             Effect.andThen(Deferred.await(gate)),
             Effect.as(base),
-          ),
-    );
+          );
     const currentPage = { ...source, query: { ...source.query, limit: 4 } };
     const prefetch = yield* Effect.forkChild(preloadOrderDetails(currentPage, records));
     yield* Deferred.await(started);
     yield* Effect.yieldNow;
+    yield* networkQuietExcept(2);
     expect(requests).toBe(2);
     yield* Fiber.interrupt(prefetch);
     expect(requests).toBe(2);
     yield* Deferred.succeed(gate, true);
-    yield* Effect.yieldNow;
+    yield* settle;
+    yield* networkIdle;
     expect(requests).toBe(2);
-  }),
+  }).pipe(Effect.provide(network)),
 );

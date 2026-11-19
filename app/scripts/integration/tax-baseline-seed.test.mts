@@ -33,6 +33,7 @@ import {
   makeReadRuntimeLive,
   parseDatabaseConfig,
   trustVerifiedGatewayPrincipalContext,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   AccessDecisionGate,
@@ -302,7 +303,10 @@ const fixture = Effect.fn('TaxBaselineSeed.fixture')(function* fixtureEffect() {
     Layer.provide(Layer.mergeAll(persistence, contextAccess, gate.layer)),
   );
   const dependencies = Layer.mergeAll(persistence, contextAccess, entrypoints, stateGate, resolver, gate.layer);
-  const compositionSource = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  const compositionSource = Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+  );
   const runtimes = Layer.mergeAll(
     dependencies,
     makeReadRuntimeLive(deployment, taxRegistration).pipe(

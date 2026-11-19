@@ -333,6 +333,9 @@ describe('Catalog-to-Stock Binding Actions', () => {
           const events = collector.snapshot();
 
           expect(result.revision).toBe(2);
+          // Core saves this result as its JSON form for a same-key retry and decodes it back.
+          const replyCodec = Schema.toCodecJson(correctCatalogToStockBindingAction.descriptor.resultSchema);
+          expect(Schema.decodeUnknownSync(replyCodec)(Schema.encodeUnknownSync(replyCodec)(result))).toEqual(result);
           if (useReplacementIntent) {
             expect(events.auditEvidence).toMatchObject({
               replacedStockItemRef: stockItem.stockItemRef,

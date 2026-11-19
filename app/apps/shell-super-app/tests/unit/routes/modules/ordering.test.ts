@@ -1,21 +1,10 @@
+// @rstest-environment happy-dom
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Cause, Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { TestClock } from 'effect/testing';
+import { Cause, ConfigProvider, Deferred, Effect, Exit, Fiber, FiberSet, Layer, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
+import { beforeEach, expect, it } from 'effect-rstest';
 
-import {
-  documentContext,
-  executeLegalEntityDetail,
-  issueDocumentGatewayContexts,
-} from '../../../../src/api/auth-client.ts' with { rstest: 'importActual' };
-import type {
-  availableLegalEntities,
-  availableTenants,
-  canManageDemoAccounts,
-  currentSession,
-  resolveModuleTarget,
-  shellComposition,
-} from '../../../../src/api/auth-client.ts';
 import {
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
@@ -28,22 +17,8 @@ import {
 } from '../../../../shared/browser-api.ts';
 import { resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { loader, loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
-
-const mocks = rstest.hoisted(() => ({
-  availableLegalEntities: rstest.fn<typeof availableLegalEntities>(),
-  availableTenants: rstest.fn<typeof availableTenants>(),
-  canManageDemoAccounts: rstest.fn<typeof canManageDemoAccounts>(),
-  currentSession: rstest.fn<typeof currentSession>(),
-  resolveModuleTarget: rstest.fn<typeof resolveModuleTarget>(),
-  shellComposition: rstest.fn<typeof shellComposition>(),
-}));
-
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  documentContext,
-  executeLegalEntityDetail,
-  issueDocumentGatewayContexts,
-  ...mocks,
-}));
+import { makeShellBff } from '../../../support/shell-bff-double.ts';
+import type { ShellBffEndpoint, ShellBffScript } from '../../../support/shell-bff-double.ts';
 
 const revision = 'a'.repeat(64);
 const identity = {
@@ -89,7 +64,6 @@ const target = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
 });
 
 let sequence = 0;
-let originalDocument: PropertyDescriptor | undefined;
 let origin: string;
 const request = () => new Request(`${origin}/en/contacts`);
 const load = (input = request()) =>
@@ -99,26 +73,29 @@ const load = (input = request()) =>
 
 beforeEach(() => {
   sequence += 1;
-  // A new origin also makes the native immutable target cache cold without exposing a new reset API.
   origin = `https://ordering-${sequence}.example.test`;
-  originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
-  Object.defineProperty(globalThis, 'document', {
-    configurable: true,
-    value: document.implementation.createHTMLDocument(),
-  });
-  mocks.currentSession.mockReturnValue(Effect.succeed(session));
-  mocks.shellComposition.mockReturnValue(Effect.succeed(composition));
-  mocks.canManageDemoAccounts.mockReturnValue(Effect.succeed(false));
-  mocks.availableLegalEntities.mockReturnValue(Effect.succeed(companies));
-  mocks.availableTenants.mockReturnValue(Effect.succeed(tenants));
-  mocks.resolveModuleTarget.mockReturnValue(Effect.succeed(target));
 });
 
-afterEach(() => {
-  if (originalDocument !== undefined) {
-    Object.defineProperty(globalThis, 'document', originalDocument);
-  }
-});
+const moduleBff = (overrides: ShellBffScript = {}) =>
+  makeShellBff({
+    availableLegalEntities: () => Effect.succeed(companies),
+    availableTenants: () => Effect.succeed(tenants),
+    currentSession: () => Effect.succeed(session),
+    demoAccountCapability: () => Effect.succeed({ canManage: false }),
+    resolveModuleTarget: () => Effect.succeed(target),
+    shellComposition: () => Effect.succeed(composition),
+    ...overrides,
+  });
+const endpoints = [
+  'currentSession',
+  'shellComposition',
+  'demoAccountCapability',
+  'availableLegalEntities',
+  'availableTenants',
+  'resolveModuleTarget',
+] satisfies ShellBffEndpoint[];
+const reads = (bff: ReturnType<typeof moduleBff>, endpoint: ShellBffEndpoint) =>
+  bff.requests.filter((received) => received.endpoint === endpoint);
 
 const gate = <Value, Failure>(answer: Effect.Effect<Value, Failure>) =>
   Effect.gen(function* deferredTransport() {
@@ -135,13 +112,6 @@ const gate = <Value, Failure>(answer: Effect.Effect<Value, Failure>) =>
       release: Deferred.succeed(release, true),
       started: Deferred.await(started),
     };
-  });
-
-const elapsed = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
-  Effect.gen(function* measureVirtualElapsed() {
-    const start = yield* Clock.currentTimeMillis;
-    yield* operation;
-    return (yield* Clock.currentTimeMillis) - start;
   });
 
 const problemFields = { detail: 'Fixture failure', title: 'Fixture failure', type: 'about:blank' };
@@ -167,160 +137,208 @@ const tenantAuthenticationRequired = Schema.decodeUnknownSync(TenantAuthenticati
   status: 401,
 });
 
+type BrowserRequest = Parameters<
+  NonNullable<Window['happyDOM']['settings']['fetch']['interceptor']>['beforeAsyncRequest']
+>[0];
+
+const forwardBrowserRequest =
+  (send: typeof fetch) =>
+  ({ request: incoming, window: browser }: BrowserRequest) =>
+    Effect.gen(function* forwardRequest() {
+      const body =
+        incoming.method === 'GET' || incoming.method === 'HEAD'
+          ? null
+          : yield* Effect.promise(() => incoming.arrayBuffer());
+      const response = yield* Effect.promise(() =>
+        send(incoming.url, {
+          body,
+          headers: [...incoming.headers],
+          method: incoming.method,
+          signal: incoming.signal,
+        }),
+      );
+      const bytes = yield* Effect.promise(() => response.arrayBuffer());
+      return new browser.Response(bytes, {
+        headers: [...response.headers],
+        status: response.status,
+        statusText: response.statusText,
+      });
+    });
+
+// The shared browser transport omits Request.signal when forwarding. Preserve the real
+// browser signal here so this router-boundary case can observe server-side interruption.
+const abortableBrowserNetwork = (bff: ReturnType<typeof moduleBff>) =>
+  Layer.effectDiscard(
+    Effect.gen(function* interceptAbortableBrowserRequests() {
+      const send = yield* FetchHttpClient.Fetch;
+      const run = yield* FiberSet.makeRuntimePromise();
+      const forward = forwardBrowserRequest(send);
+      const { fetch: network } = window.happyDOM.settings;
+      const previous = network.interceptor;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          network.interceptor = { beforeAsyncRequest: (incoming) => run(forward(incoming)) };
+        }),
+        () =>
+          Effect.sync(() => {
+            network.interceptor = previous;
+          }),
+      );
+    }),
+  ).pipe(Layer.provide(bff.layer));
+
 const coldDocument = resetBrowserSessionCache.pipe(Effect.andThen(pinDocumentCompositionRevision(revision)));
 
-it.effect('starts all independent reads and target after identity, before composition or company lists finish', () =>
-  Effect.gen(function* deferredStartOrder() {
-    yield* coldDocument;
-    const auth = yield* gate(Effect.succeed(session));
-    const composed = yield* gate(Effect.succeed(composition));
-    const people = yield* gate(Effect.succeed(false));
-    const legal = yield* gate(Effect.succeed(companies));
-    const tenant = yield* gate(Effect.succeed(tenants));
-    const resolved = yield* gate(Effect.succeed(target));
-    mocks.currentSession.mockReturnValue(auth.read);
-    mocks.shellComposition.mockReturnValue(composed.read);
-    mocks.canManageDemoAccounts.mockReturnValue(people.read);
-    mocks.availableLegalEntities.mockReturnValue(legal.read);
-    mocks.availableTenants.mockReturnValue(tenant.read);
-    mocks.resolveModuleTarget.mockReturnValue(resolved.read);
-    const fiber = yield* Effect.forkChild(load());
-    yield* auth.started;
-    for (const read of Object.values(mocks).filter((mock) => mock !== mocks.currentSession)) {
-      expect(read).not.toHaveBeenCalled();
-    }
-    yield* auth.release;
-    yield* Effect.all([composed.started, people.started, legal.started, tenant.started, resolved.started]);
-    // The target may finish while Shell reads are still pending, but cannot reveal a page on its own.
-    yield* resolved.release;
-    yield* Effect.all([composed.release, people.release, legal.release, tenant.release]);
-    expect(yield* Fiber.join(fiber)).toMatchObject({ state: 'resolved', target });
-    for (const read of Object.values(mocks)) {
-      expect(read).toHaveBeenCalledTimes(1);
-    }
-    expect(mocks.resolveModuleTarget).toHaveBeenCalledWith(
-      { canonicalPath: '/contacts', compositionRevision: revision },
-      { baseUrl: new URL(`${origin}/shell-super-app-api`) },
-    );
-    yield* load();
-    for (const read of Object.values(mocks)) {
-      expect(read).toHaveBeenCalledTimes(1);
-    }
-  }),
-);
-
-it.effect(
-  'reduces the local cold critical path from 1500 to 600 virtual ms with identical successful request keys',
-  () =>
-    Effect.gen(function* deterministicCriticalPath() {
-      yield* coldDocument;
-      mocks.currentSession.mockReturnValue(Effect.delay(Effect.succeed(session), '100 millis'));
-      mocks.shellComposition.mockReturnValue(Effect.delay(Effect.succeed(composition), '400 millis'));
-      mocks.canManageDemoAccounts.mockReturnValue(Effect.delay(Effect.succeed(false), '300 millis'));
-      mocks.availableLegalEntities.mockReturnValue(Effect.delay(Effect.succeed(companies), '200 millis'));
-      mocks.availableTenants.mockReturnValue(Effect.delay(Effect.succeed(tenants), '150 millis'));
-      mocks.resolveModuleTarget.mockReturnValue(Effect.delay(Effect.succeed(target), '500 millis'));
-      const options = { baseUrl: new URL(`${origin}/shell-super-app-api`) };
-      // Local control reproduces the replaced successful dependency chain, not a live performance claim.
-      const serial = Effect.gen(function* serialControl() {
-        yield* mocks.currentSession(options);
-        yield* mocks.shellComposition({ compositionRevision: revision }, options);
-        yield* mocks.canManageDemoAccounts(options);
-        yield* Effect.all([mocks.availableLegalEntities(options), mocks.availableTenants(options)], { concurrency: 2 });
-        return yield* mocks.resolveModuleTarget({ canonicalPath: '/contacts', compositionRevision: revision }, options);
-      });
-      const control = yield* Effect.forkChild(elapsed(serial));
-      yield* TestClock.adjust('1500 millis');
-      expect(yield* Fiber.join(control)).toBe(1500);
-      const keys = Object.values(mocks).map((mock) => [...mock.mock.calls]);
-      for (const mock of Object.values(mocks)) {
-        mock.mockClear();
-      }
-      const candidate = yield* Effect.forkChild(elapsed(load()));
-      yield* TestClock.adjust('600 millis');
-      expect(yield* Fiber.join(candidate)).toBe(600);
-      expect(Object.values(mocks).map((mock) => [...mock.mock.calls])).toEqual(keys);
-    }),
-);
-
-it.effect('retains composition failure precedence during overlap and does not cache the failure', () =>
-  Effect.gen(function* failedComposition() {
-    yield* coldDocument;
-    const composed = yield* gate(Effect.fail(compositionUnavailable));
-    const resolved = yield* gate(Effect.succeed(target));
-    mocks.shellComposition.mockReturnValueOnce(composed.read);
-    mocks.resolveModuleTarget.mockReturnValueOnce(resolved.read);
-    const fiber = yield* Effect.forkChild(load());
-    yield* Effect.all([composed.started, resolved.started]);
-    yield* composed.release;
-    expect(yield* Fiber.join(fiber)).toMatchObject({ shell: { state: 'unavailable' }, state: 'unavailable' });
-    yield* resolved.interrupted;
-    // One speculative target, capability, company list and tenant list may start on a failing composition.
-    for (const read of Object.values(mocks)) {
-      expect(read).toHaveBeenCalledTimes(1);
-    }
-    expect(yield* load()).toMatchObject({ state: 'resolved' });
-    expect(mocks.shellComposition).toHaveBeenCalledTimes(2);
-    expect(mocks.resolveModuleTarget).toHaveBeenCalledTimes(2);
-  }),
-);
-
-it.effect('waits for a valid composition revision when the document has no revision', () =>
-  Effect.gen(function* missingRevision() {
-    yield* resetBrowserSessionCache;
-    const composed = yield* gate(Effect.succeed(composition));
-    mocks.shellComposition.mockReturnValueOnce(composed.read);
-    const fiber = yield* Effect.forkChild(load());
-    yield* composed.started;
-    expect(mocks.resolveModuleTarget).not.toHaveBeenCalled();
-    yield* composed.release;
-    expect(yield* Fiber.join(fiber)).toMatchObject({ state: 'resolved' });
-    expect(mocks.resolveModuleTarget.mock.calls[0]?.[0]).toEqual({
-      canonicalPath: '/contacts',
-      compositionRevision: revision,
-    });
-  }),
-);
-
-it.effect('rejects an invalid document revision without any target or composition read', () =>
-  Effect.gen(function* invalidRevision() {
+// These two document states must precede the first successful composition: a real document's pin is immutable.
+it.live('rejects an invalid document revision without any target or composition read', () => {
+  const bff = moduleBff();
+  return Effect.gen(function* invalidRevision() {
     yield* resetBrowserSessionCache;
     const meta = document.createElement('meta');
     meta.name = 'ontos-composition-revision';
     meta.content = 'invalid';
     document.head.append(meta);
-    expect(yield* load()).toMatchObject({ state: 'reload_required' });
-    expect(mocks.resolveModuleTarget).not.toHaveBeenCalled();
-    expect(mocks.shellComposition).not.toHaveBeenCalled();
+    yield* Effect.gen(function* rejectInvalidRevision() {
+      expect(yield* load()).toMatchObject({ state: 'reload_required' });
+      yield* networkIdle;
+      expect(reads(bff, 'resolveModuleTarget')).toHaveLength(0);
+      expect(reads(bff, 'shellComposition')).toHaveLength(0);
+    }).pipe(Effect.ensuring(Effect.sync(() => meta.remove())));
+  }).pipe(Effect.provide(bff.layer));
+});
+
+it.live('waits for a valid composition revision when the document has no revision', () =>
+  Effect.gen(function* missingRevision() {
+    yield* resetBrowserSessionCache;
+    const composed = yield* gate(Effect.succeed(composition));
+    const bff = moduleBff({ shellComposition: () => composed.read });
+    yield* Effect.gen(function* waitForRevision() {
+      const fiber = yield* Effect.forkChild(load());
+      yield* composed.started;
+      // Only the held composition read stays open: a target read sent too early has arrived by now.
+      yield* networkQuietExcept(1);
+      expect(reads(bff, 'resolveModuleTarget')).toHaveLength(0);
+      yield* composed.release;
+      expect(yield* Fiber.join(fiber)).toMatchObject({ state: 'resolved' });
+      expect(reads(bff, 'resolveModuleTarget')[0]?.body).toEqual({
+        canonicalPath: '/contacts',
+        compositionRevision: revision,
+      });
+    }).pipe(Effect.provide(bff.layer));
   }),
 );
 
-it.effect.each(['target', 'composition'] as const)('requires reload on an overlapping %s revision mismatch', (source) =>
-  Effect.gen(function* revisionMismatch() {
+it.live('starts all independent reads and target after identity, before composition or company lists finish', () =>
+  Effect.gen(function* deferredStartOrder() {
     yield* coldDocument;
-    if (source === 'target') {
-      mocks.resolveModuleTarget.mockReturnValueOnce(Effect.succeed({ ...target, compositionRevision: 'c'.repeat(64) }));
-    } else {
-      mocks.shellComposition.mockReturnValueOnce(
-        Effect.succeed({ ...composition, compositionRevision: 'c'.repeat(64) }),
-      );
-    }
-    expect(yield* load()).toMatchObject({ state: 'reload_required' });
+    const auth = yield* gate(Effect.succeed(session));
+    const composed = yield* gate(Effect.succeed(composition));
+    const people = yield* gate(Effect.succeed({ canManage: false }));
+    const legal = yield* gate(Effect.succeed(companies));
+    const tenant = yield* gate(Effect.succeed(tenants));
+    const resolved = yield* gate(Effect.succeed(target));
+    const bff = moduleBff({
+      availableLegalEntities: () => legal.read,
+      availableTenants: () => tenant.read,
+      currentSession: () => auth.read,
+      demoAccountCapability: () => people.read,
+      resolveModuleTarget: () => resolved.read,
+      shellComposition: () => composed.read,
+    });
+    yield* Effect.gen(function* startReadsAfterIdentity() {
+      const fiber = yield* Effect.forkChild(load());
+      yield* auth.started;
+      // Only the held identity read stays open: a read started before identity has arrived by now.
+      yield* networkQuietExcept(1);
+      for (const endpoint of endpoints.filter((candidate) => candidate !== 'currentSession')) {
+        expect(reads(bff, endpoint)).toHaveLength(0);
+      }
+      yield* auth.release;
+      yield* Effect.all([composed.started, people.started, legal.started, tenant.started, resolved.started]);
+      yield* resolved.release;
+      yield* Effect.all([composed.release, people.release, legal.release, tenant.release]);
+      expect(yield* Fiber.join(fiber)).toMatchObject({ state: 'resolved', target });
+      yield* networkIdle;
+      for (const endpoint of endpoints) {
+        expect(reads(bff, endpoint)).toHaveLength(1);
+      }
+      const [received] = reads(bff, 'resolveModuleTarget');
+      expect(received?.body).toEqual({ canonicalPath: '/contacts', compositionRevision: revision });
+      expect(new URL(received?.url ?? '', origin).origin).toBe(origin);
+      expect(new URL(received?.url ?? '', origin).pathname).toBe('/shell-super-app-api/shell/module-target');
+      yield* load();
+      yield* networkIdle;
+      for (const endpoint of endpoints) {
+        expect(reads(bff, endpoint)).toHaveLength(1);
+      }
+    }).pipe(Effect.provide(bff.layer));
   }),
 );
 
-it.effect('does not cache denied targets or infer their authority from navigation', () =>
-  Effect.gen(function* deniedTarget() {
+it.live('retains composition failure precedence during overlap and does not cache the failure', () =>
+  Effect.gen(function* failedComposition() {
     yield* coldDocument;
-    mocks.resolveModuleTarget.mockReturnValue(Effect.fail(targetForbidden));
+    const composed = yield* gate(Effect.fail(compositionUnavailable));
+    const resolved = yield* gate(Effect.succeed(target));
+    let compositionReads = 0;
+    let targetReads = 0;
+    const bff = moduleBff({
+      resolveModuleTarget: () => {
+        targetReads += 1;
+        return targetReads === 1 ? resolved.read : Effect.succeed(target);
+      },
+      shellComposition: () => {
+        compositionReads += 1;
+        return compositionReads === 1 ? composed.read : Effect.succeed(composition);
+      },
+    });
+    yield* Effect.gen(function* compositionFailurePrecedence() {
+      const fiber = yield* Effect.forkChild(load());
+      yield* Effect.all([composed.started, resolved.started]);
+      yield* composed.release;
+      expect(yield* Fiber.join(fiber)).toMatchObject({ shell: { state: 'unavailable' }, state: 'unavailable' });
+      yield* resolved.interrupted;
+      yield* networkIdle;
+      for (const endpoint of endpoints) {
+        expect(reads(bff, endpoint)).toHaveLength(1);
+      }
+      expect(yield* load()).toMatchObject({ state: 'resolved' });
+      yield* networkIdle;
+      expect(reads(bff, 'shellComposition')).toHaveLength(2);
+      expect(reads(bff, 'resolveModuleTarget')).toHaveLength(2);
+    }).pipe(Effect.provide(bff.layer));
+  }),
+);
+
+it.live.each(['target', 'composition'] as const)('requires reload on an overlapping %s revision mismatch', (source) => {
+  const bff = moduleBff(
+    source === 'target'
+      ? {
+          resolveModuleTarget: () => Effect.succeed({ ...target, compositionRevision: 'c'.repeat(64) }),
+        }
+      : {
+          shellComposition: () => Effect.succeed({ ...composition, compositionRevision: 'c'.repeat(64) }),
+        },
+  );
+  return Effect.gen(function* revisionMismatch() {
+    yield* coldDocument;
+    expect(yield* load()).toMatchObject({ state: 'reload_required' });
+  }).pipe(Effect.provide(bff.layer));
+});
+
+it.live('does not cache denied targets or infer their authority from navigation', () => {
+  const bff = moduleBff({ resolveModuleTarget: () => Effect.fail(targetForbidden) });
+  return Effect.gen(function* deniedTarget() {
+    yield* coldDocument;
     expect(yield* load()).toMatchObject({ state: 'forbidden' });
     expect(yield* load()).toMatchObject({ state: 'forbidden' });
-    expect(mocks.resolveModuleTarget).toHaveBeenCalledTimes(2);
-    expect(mocks.shellComposition).toHaveBeenCalledTimes(1);
-  }),
-);
+    yield* networkIdle;
+    expect(reads(bff, 'resolveModuleTarget')).toHaveLength(2);
+    expect(reads(bff, 'shellComposition')).toHaveLength(1);
+  }).pipe(Effect.provide(bff.layer));
+});
 
-it.effect.each(['tenant', 'target', 'composition'] as const)(
+it.live.each(['tenant', 'target', 'composition'] as const)(
   'discards overlapping data when the %s read ends the session',
   (source) =>
     Effect.gen(function* sessionEndsDuringOverlap() {
@@ -329,43 +347,47 @@ it.effect.each(['tenant', 'target', 'composition'] as const)(
         source === 'composition' ? Effect.fail(authenticationRequired) : Effect.succeed(composition),
       );
       const resolved = yield* gate(source === 'target' ? Effect.fail(authenticationRequired) : Effect.succeed(target));
-      mocks.shellComposition.mockReturnValueOnce(composed.read);
-      mocks.resolveModuleTarget.mockReturnValueOnce(resolved.read);
-      if (source === 'tenant') {
-        mocks.availableTenants.mockReturnValueOnce(Effect.fail(tenantAuthenticationRequired));
-      }
-      const fiber = yield* Effect.forkChild(load());
-      yield* Effect.all([composed.started, resolved.started]);
-      yield* Effect.all([resolved.release, composed.release]);
-      expect(yield* Fiber.join(fiber)).toMatchObject({
-        shell: { reason: 'session_ended', state: 'anonymous' },
-        state: 'selection_required',
+      const bff = moduleBff({
+        availableTenants: () =>
+          source === 'tenant' ? Effect.fail(tenantAuthenticationRequired) : Effect.succeed(tenants),
+        resolveModuleTarget: () => resolved.read,
+        shellComposition: () => composed.read,
       });
+      yield* Effect.gen(function* discardSessionReads() {
+        const fiber = yield* Effect.forkChild(load());
+        yield* Effect.all([composed.started, resolved.started]);
+        yield* Effect.all([resolved.release, composed.release]);
+        expect(yield* Fiber.join(fiber)).toMatchObject({
+          shell: { reason: 'session_ended', state: 'anonymous' },
+          state: 'selection_required',
+        });
+      }).pipe(Effect.provide(bff.layer));
     }),
 );
 
-it.effect.each(['anonymous', 'selection_required', 'tenant_authenticated'] as const)(
+it.live.each(['anonymous', 'selection_required', 'tenant_authenticated'] as const)(
   'does not issue restricted reads for %s, while keeping companyless choices',
-  (state) =>
-    Effect.gen(function* companySelectionGate() {
+  (state) => {
+    const { legalEntityId, legalName, ...tenantIdentity } = identity;
+    void legalEntityId;
+    void legalName;
+    const companylessSession = Schema.decodeUnknownSync(CurrentSessionSchema)(
+      state === 'anonymous'
+        ? { state }
+        : { availableLegalEntities: companies.legalEntities, identity: tenantIdentity, state },
+    );
+    const bff = moduleBff({
+      currentSession: () => Effect.succeed(companylessSession),
+      documentContext: () => Effect.succeed({ session: companylessSession }),
+    });
+    return Effect.gen(function* companySelectionGate() {
       yield* coldDocument;
-      const { legalEntityId, legalName, ...tenantIdentity } = identity;
-      void legalEntityId;
-      void legalName;
-      mocks.currentSession.mockReturnValueOnce(
-        Effect.succeed(
-          Schema.decodeUnknownSync(CurrentSessionSchema)(
-            state === 'anonymous'
-              ? { state }
-              : { availableLegalEntities: companies.legalEntities, identity: tenantIdentity, state },
-          ),
-        ),
-      );
       const model = yield* load();
       expect(model.state).toBe('selection_required');
-      expect(mocks.resolveModuleTarget).not.toHaveBeenCalled();
-      expect(mocks.shellComposition).not.toHaveBeenCalled();
-      expect(mocks.canManageDemoAccounts).not.toHaveBeenCalled();
+      yield* networkIdle;
+      expect(reads(bff, 'resolveModuleTarget')).toHaveLength(0);
+      expect(reads(bff, 'shellComposition')).toHaveLength(0);
+      expect(reads(bff, 'demoAccountCapability')).toHaveLength(0);
       if (state !== 'anonymous') {
         expect(model.shell).toMatchObject({
           contextState: state,
@@ -375,47 +397,56 @@ it.effect.each(['anonymous', 'selection_required', 'tenant_authenticated'] as co
         });
         expect(model.shell).not.toHaveProperty('selectedLegalEntityId');
       }
-    }),
+    }).pipe(Effect.provide(bff.layer));
+  },
 );
 
-it.effect('interrupts every pending transport when the caller fiber is interrupted', () =>
+it.live('interrupts every pending transport when the caller fiber is interrupted', () =>
   Effect.gen(function* callerInterruption() {
     yield* coldDocument;
     const composed = yield* gate(Effect.succeed(composition));
-    const people = yield* gate(Effect.succeed(false));
+    const people = yield* gate(Effect.succeed({ canManage: false }));
     const legal = yield* gate(Effect.succeed(companies));
     const tenant = yield* gate(Effect.succeed(tenants));
     const resolved = yield* gate(Effect.succeed(target));
-    mocks.shellComposition.mockReturnValueOnce(composed.read);
-    mocks.canManageDemoAccounts.mockReturnValueOnce(people.read);
-    mocks.availableLegalEntities.mockReturnValueOnce(legal.read);
-    mocks.availableTenants.mockReturnValueOnce(tenant.read);
-    mocks.resolveModuleTarget.mockReturnValueOnce(resolved.read);
-    const fiber = yield* Effect.forkChild(load());
-    const reads = [composed, people, legal, tenant, resolved];
-    yield* Effect.all(reads.map((read) => read.started));
-    yield* Fiber.interrupt(fiber);
-    yield* Effect.all(reads.map((read) => read.interrupted));
-    const exit = yield* Fiber.await(fiber);
-    expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true);
+    const bff = moduleBff({
+      availableLegalEntities: () => legal.read,
+      availableTenants: () => tenant.read,
+      demoAccountCapability: () => people.read,
+      resolveModuleTarget: () => resolved.read,
+      shellComposition: () => composed.read,
+    });
+    yield* Effect.gen(function* interruptAllReads() {
+      const fiber = yield* Effect.forkChild(load());
+      const pending = [composed, people, legal, tenant, resolved];
+      yield* Effect.all(pending.map((read) => read.started));
+      yield* Fiber.interrupt(fiber);
+      yield* Effect.all(pending.map((read) => read.interrupted));
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true);
+    }).pipe(Effect.provide(bff.layer));
   }),
 );
 
-it.effect('interrupts pending browser transports through the router Request.signal boundary', () =>
+it.live('interrupts pending browser transports through the router Request.signal boundary', () =>
   Effect.gen(function* requestSignalInterruption() {
     yield* coldDocument;
     const composed = yield* gate(Effect.succeed(composition));
     const resolved = yield* gate(Effect.succeed(target));
-    mocks.shellComposition.mockReturnValueOnce(composed.read);
-    mocks.resolveModuleTarget.mockReturnValueOnce(resolved.read);
-    const controller = new AbortController();
-    const input = new Request(`${origin}/en/contacts`, { signal: controller.signal });
-    const fiber = yield* Effect.forkChild(
-      Effect.tryPromise(() => loader({ canonicalPath: '/contacts', request: input })).pipe(Effect.exit),
-    );
-    yield* Effect.all([composed.started, resolved.started]);
-    controller.abort();
-    expect(Exit.isFailure(yield* Fiber.join(fiber))).toBe(true);
-    yield* Effect.all([composed.interrupted, resolved.interrupted]);
+    const bff = moduleBff({
+      resolveModuleTarget: () => resolved.read,
+      shellComposition: () => composed.read,
+    });
+    yield* Effect.gen(function* abortRouterRequest() {
+      const controller = new AbortController();
+      const input = new Request(`${origin}/en/contacts`, { signal: controller.signal });
+      const fiber = yield* Effect.forkChild(
+        Effect.tryPromise(() => loader({ canonicalPath: '/contacts', request: input })).pipe(Effect.exit),
+      );
+      yield* Effect.all([composed.started, resolved.started]);
+      controller.abort();
+      expect(Exit.isFailure(yield* Fiber.join(fiber))).toBe(true);
+      yield* Effect.all([composed.interrupted, resolved.interrupted]);
+    }).pipe(Effect.provide(abortableBrowserNetwork(bff)));
   }),
 );

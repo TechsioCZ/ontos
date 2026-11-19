@@ -31,6 +31,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
@@ -120,7 +121,7 @@ const operations = Layer.mergeAll(
 // The operator runs the approved Shell contract, not whichever marker happens to be in an unbuilt checkout.
 const actionRuntime = Layer.unwrap(
   Effect.gen(function* nativeRuntime() {
-    const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
+    const snapshot = yield* loadActiveApplicationComposition(yield* ActiveApplicationCompositionService);
     return makeActionRuntimeLive(snapshot.composition.shell.deployment).pipe(
       Layer.provide(Layer.mergeAll(operations, composition, ActionPermissionLive, ActionRepositoryLive)),
     );
