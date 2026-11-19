@@ -3,11 +3,11 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
-import { Predicate, Result, Schema } from 'effect';
+import { Match, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parseSync, Visitor } from 'oxc-parser';
 import type { Expression, ObjectExpression } from 'oxc-parser';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 import { parseCiMatrices } from '../ci/ci-matrices.mts';
 
@@ -15,9 +15,53 @@ const app = path.resolve(import.meta.dirname, '../..');
 const read = (file: string) => readFileSync(path.join(app, file), 'utf-8');
 const packageManifest = 'package.json';
 const matrixFile = 'scripts/ci-matrices.json';
+const workflowFile = '../.github/workflows/ultramodern-workspace-gates.yml';
+const checkoutProofFile = 'scripts/tests/stage-n1-checkout.test.mts';
+const topologyJob = 'node-topology-proof';
+const uncollectedCensus = 'Uncollected census files';
+const uncollectedBrowser = 'Uncollected executable browser tests';
+const wrongWorkingDirectory = 'app/scripts';
+const rstestConfig = 'rstest.config.ts';
+const sourceJob = 'workspace-gate';
+const lintJob = 'format-and-lint';
+const literalDirectoryMutation = 'changed literal working directory';
+const browserShardMutation = 'incomplete shard family';
+const browserTitleMutation = 'title filter';
+const browserInvertedTitleMutation = 'inverted title filter';
+const workspaceFile = 'pnpm-workspace.yaml';
+const runnerShardMutation = 'incomplete runner shard family';
+const newBrowserScriptMutation = 'new unlisted AKROS browser script';
+const unitJob = 'workspace-unit';
+const artifactUnitJob = 'workspace-unit-artifacts';
+const browserJob = 'browser-integration';
+const playwrightTestCommand = 'playwright test';
 const defaultInclude = ['**/*.{test,spec}.?(c|m)[jt]s?(x)'];
 const defaultExclude = ['**/node_modules/**', '**/dist/**', '**/.{idea,git,cache,output,temp}/**'];
+const akrosBrowserManualReason =
+  'Manual AKROS browser suite against an operator-prepared site and shared browser; no CI job invokes test:browser.';
 const manual = new Map([
+  ...[
+    'account-profile',
+    'address-autocomplete-live',
+    'favorites-routing',
+    'favorites',
+    'home-carousel',
+    'newsletter-consent',
+    'product-actions',
+    'search-routing',
+    'variant-detail',
+    'variant-filters',
+    'variant-list',
+  ].map((name): [string, string] => [
+    `akros-storefront/tests/browser/${name}.mjs`,
+    name === 'newsletter-consent'
+      ? 'Operator-run proof requiring CI runner variables and a prepared stage customer; no checked-in CI job invokes it.'
+      : akrosBrowserManualReason,
+  ]),
+  [
+    'akros-storefront/tests/browser/variant-filter-checks.mjs',
+    'Helper imported by the manual variant-filters suite; not a standalone runner and not invoked by CI.',
+  ],
   [
     'apps/shell-super-app/tests/integration/person-invitation-runtime.test.ts',
     'Operator acceptance requires a people_model_scratch database, Mailpit, and local SpiceDB.',
@@ -75,8 +119,8 @@ const initializer = (node: ObjectExpression, name: string) => {
 };
 
 // Read syntax, never import a config: Shell's config starts build plugins. Fail closed on unknown include syntax.
-const configProjects = (file: string) => {
-  const text = read(file);
+const configProjects = (file: string, readInput = read) => {
+  const text = readInput(file);
   const source = parseSync(file, text);
   expect(source.errors, file).toEqual([]);
   const variables = new Map<string, Expression>();
@@ -175,12 +219,19 @@ const integrationCommand = (executor: string, task: string) => {
           : (arrays.get(name) ?? []).join(' '),
       )
       .replaceAll(`"\${task%#*}"`, task.split('#')[0] ?? '')
-      .replaceAll('"$task"', task);
+      .replaceAll('"$task"', task)
+      .replaceAll(`"\${task#root:}"`, task.slice('root:'.length))
+      .replaceAll(`"\${task##*#}"`, task.split('#')[1] ?? '');
   const text = executor.replaceAll('\\\n', ' ');
   if (task.startsWith('whole:')) {
     const start = text.indexOf(`    ${task})`);
     expect(start, `missing executor for ${task}`).toBeGreaterThan(-1);
-    return expand(text.slice(start, text.indexOf(';;', start)), []);
+    const command = text
+      .slice(start, text.indexOf(';;', start))
+      .split('\n')
+      .find((line) => line.trim().startsWith('exec '));
+    expect(command, `missing executable command for ${task}`).toBeDefined();
+    return expand(command ?? '', []);
   }
   const start = text.indexOf('  esac');
   const lines = text.slice(start, text.indexOf('\nfi', start)).split('\n');
@@ -214,24 +265,292 @@ const PackageSchema = Schema.Struct({
   name: Schema.String,
   scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
+const ConditionSchema = Schema.Union([Schema.String, Schema.Boolean]);
+const DefaultsSchema = Schema.Struct({
+  run: Schema.optionalKey(Schema.Struct({ 'working-directory': Schema.optionalKey(Schema.String) })),
+});
 const WorkflowSchema = Schema.Struct({
+  defaults: Schema.optionalKey(DefaultsSchema),
   env: Schema.Struct({ CI_MATRICES_OVERLAY: Schema.String }),
   jobs: Schema.Record(
     Schema.String,
     Schema.Struct({
+      defaults: Schema.optionalKey(DefaultsSchema),
+      if: Schema.optionalKey(ConditionSchema),
       steps: Schema.optionalKey(
         Schema.Array(
           Schema.Struct({
-            if: Schema.optionalKey(Schema.String),
+            env: Schema.optionalKey(
+              Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
+            ),
+            if: Schema.optionalKey(ConditionSchema),
+            name: Schema.optionalKey(Schema.String),
             run: Schema.optionalKey(Schema.String),
             'working-directory': Schema.optionalKey(Schema.String),
           }),
         ),
       ),
+      strategy: Schema.optionalKey(
+        Schema.Struct({
+          matrix: Schema.Struct({
+            include: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.Unknown)])),
+          }),
+        }),
+      ),
     }),
   ),
 });
+type Workflow = typeof WorkflowSchema.Type;
+type WorkflowStep = NonNullable<Workflow['jobs'][string]['steps']>[number];
+const staticallyFalse = (condition: typeof ConditionSchema.Type | undefined) =>
+  condition === false ||
+  (Schema.is(Schema.String)(condition) && /^(?:false|\$\{\{\s*false\s*\}\})$/u.test(condition.trim()));
+const stepEnabled = (step: WorkflowStep, allowed: readonly string[] = []) => {
+  if (staticallyFalse(step.if)) {
+    return false;
+  }
+  if (step.if === undefined || step.if === true || step.if === 'true' || allowed.includes(String(step.if))) {
+    return true;
+  }
+  return expect.fail(`Unsupported test dispatch condition: ${String(step.if)}`);
+};
+// These conditions select known CI plan outputs, not arbitrary runtime expressions. A new condition needs review.
+const ciPlanReady = "!cancelled() && needs.ci-plan.result == 'success'";
+const nodeBuildReady = " && needs.node-artifact-build.result == 'success'";
+const expectedGate = (job: string) => ` && fromJSON(needs.ci-plan.outputs.expected)['${job}'] == 'success'`;
+const jobConditions = new Map([
+  [sourceJob, ciPlanReady + expectedGate(sourceJob)],
+  [unitJob, ciPlanReady + expectedGate(unitJob)],
+  [artifactUnitJob, ciPlanReady + nodeBuildReady + expectedGate(artifactUnitJob)],
+  [lintJob, ciPlanReady + expectedGate(lintJob)],
+  [topologyJob, `${ciPlanReady}${nodeBuildReady} && needs.ci-plan.outputs.integrationTopology != '[]'`],
+  [browserJob, `${ciPlanReady} && needs.ci-plan.outputs.integrationBrowser != '[]'`],
+  [
+    'owner-integration',
+    `${ciPlanReady}${nodeBuildReady} && needs.service-integration.result == 'success' && needs.ci-plan.outputs.integrationOwners != '[]'`,
+  ],
+]);
+const jobEnabled = (job: Workflow['jobs'][string], name: string) => {
+  const condition = jobConditions.get(name);
+  return stepEnabled({ if: job.if }, condition === undefined ? [] : [`\${{ ${condition} }}`]);
+};
+const stepDirectory = (workflow: Workflow, job: Workflow['jobs'][string], step: WorkflowStep) =>
+  path.posix.relative(
+    'app',
+    step['working-directory'] ??
+      job.defaults?.run?.['working-directory'] ??
+      workflow.defaults?.run?.['working-directory'] ??
+      '.',
+  );
 
+// This is a deliberately bounded shell grammar, not a search for runner-looking text inside arbitrary shell.
+// Quotes preserve one argument; only newline, && and ; sequence executable simple commands in these inputs.
+const shellCommands = (text: string) => {
+  const commands: string[][] = [];
+  let tokens: string[] = [];
+  let token = '';
+  let quoted = '';
+  let started = false;
+  const finishToken = () => {
+    if (started) {
+      tokens.push(token);
+    }
+    token = '';
+    started = false;
+  };
+  const finishCommand = () => {
+    finishToken();
+    if (tokens.length > 0) {
+      commands.push(tokens);
+    }
+    tokens = [];
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index] ?? '';
+    if (quoted !== '') {
+      if (char === quoted) {
+        quoted = '';
+      } else {
+        token += char;
+      }
+    } else if (char === "'" || char === '"') {
+      quoted = char;
+      started = true;
+    } else if (char === '\\' && text[index + 1] === '\n') {
+      index += 1;
+    } else if (char === '\n' || char === ';' || (char === '&' && text[index + 1] === '&')) {
+      finishCommand();
+      if (char === '&') {
+        index += 1;
+      }
+    } else if (/\s/u.test(char)) {
+      finishToken();
+    } else {
+      if (/[|&<>`]/u.test(char)) {
+        return expect.fail(`Unsupported CI command syntax: ${text}`);
+      }
+      token += char;
+      started = true;
+    }
+  }
+  expect(quoted, `Unterminated CI command quote: ${text}`).toBe('');
+  finishCommand();
+  return commands;
+};
+const matrixDispatcher = `failed=()
+while IFS= read -r command; do
+  [[ -n "$command" ]] || continue
+  echo "::group::$command"
+  started=$SECONDS
+  if ! mise exec -- bash -c "$command"; then
+    failed+=("$command")
+  fi
+  printf 'Command wall time: %ss — %s\\n' "$((SECONDS - started))" "$command"
+  echo '::endgroup::'
+done <<<"$COMMANDS"
+for command in "\${failed[@]}"; do
+  echo "::error title=Gate command failed::$command"
+done
+[[ \${#failed[@]} -eq 0 ]]`;
+const unwrapCommand = (input: readonly string[]) => {
+  let tokens = [...input];
+  while (/^[A-Z_][A-Z_0-9]*=[^$`]*$/u.test(tokens[0] ?? '')) {
+    tokens.shift();
+  }
+  if (tokens[0] === 'exec') {
+    tokens.shift();
+  }
+  if (tokens[0] === 'timeout') {
+    tokens.shift();
+    while (/^--(?:foreground|kill-after=\d+s)$/u.test(tokens[0] ?? '')) {
+      tokens.shift();
+    }
+    expect(tokens.shift(), 'Unsupported CI timeout wrapper').toMatch(/^\d+[sm]$/u);
+  }
+  if (tokens.slice(0, 3).join(' ') === `bash \${BASH_SOURCE[0]} --shell-shard`) {
+    tokens = tokens.slice(4);
+  }
+  if (tokens.slice(0, 3).join(' ') === 'mise exec --') {
+    tokens = tokens.slice(3);
+  }
+  return tokens;
+};
+const pnpmInvocation = (
+  directory: string,
+  args: readonly string[],
+  packages: ReadonlyMap<string, typeof PackageSchema.Type>,
+) => {
+  const tokens = [...args];
+  const selectors: string[] = [];
+  let recursive = false;
+  while (tokens[0]?.startsWith('-')) {
+    const option = tokens.shift();
+    if (option === '--filter') {
+      selectors.push(tokens.shift() ?? '');
+    } else if (option === '-r') {
+      recursive = true;
+    } else if (option !== '--no-sort' && option !== '--if-present') {
+      expect.fail(`Unsupported pnpm collection option: ${option}`);
+    }
+  }
+  const selected = (selector: string, target: string) =>
+    selector === packages.get(target)?.name || path.posix.normalize(path.posix.join(directory, selector)) === target;
+  const included = selectors.filter((selector) => !selector.startsWith('!'));
+  const excluded = selectors.filter((selector) => selector.startsWith('!')).map((selector) => selector.slice(1));
+  const targets =
+    selectors.length === 0 && !recursive
+      ? [directory]
+      : [...packages.keys()].filter(
+          (target) =>
+            target !== '.' &&
+            (included.length === 0 || included.some((selector) => selected(selector, target))) &&
+            !excluded.some((selector) => selected(selector, target)),
+        );
+  return { targets, tokens };
+};
+interface RunnerSelection {
+  excludes: string[];
+  filters: string[];
+  namePattern: string;
+  names: string[];
+  shard: string;
+}
+const runnerOption = (selection: RunnerSelection, option: string, value: string) =>
+  Match.value(option).pipe(
+    Match.when('--project', () => ({ ...selection, names: [...selection.names, value] })),
+    Match.when('--exclude', () => ({ ...selection, excludes: [...selection.excludes, value] })),
+    Match.whenOr('-t', '--testNamePattern', () => ({ ...selection, namePattern: value })),
+    Match.when('--config', () => {
+      expect(value, 'Unsupported runner config selector').toBe(rstestConfig);
+      return selection;
+    }),
+    Match.when('--shard', () => {
+      expect(value, 'Unsupported runner shard').toMatch(/^[1-9]\d*\/[1-9]\d*$/u);
+      return { ...selection, shard: value };
+    }),
+    Match.whenOr('--pool.maxWorkers', '--testTimeout', () => {
+      expect(value, `Unsupported runner option ${option}`).toMatch(/^[1-9]\d*$/u);
+      return selection;
+    }),
+    Match.orElse(() =>
+      expect.fail(
+        `Unsupported runner collection selector: ${option}. Extend the census parser before awarding execution credit.`,
+      ),
+    ),
+  );
+
+const completeRunnerShard = (
+  families: Map<string, { count: number; indices: Set<number> }>,
+  family: string,
+  shard: string,
+) => {
+  if (shard === '') {
+    return true;
+  }
+  const [index = 0, count = 0] = shard.split('/').map(Number);
+  expect(index, `Invalid runner shard ${shard}`).toBeLessThanOrEqual(count);
+  const existing = families.get(family) ?? { count, indices: new Set<number>() };
+  expect(existing.count, `Runner shard counts differ: ${family}`).toBe(count);
+  const duplicate = existing.indices.has(index);
+  existing.indices.add(index);
+  families.set(family, existing);
+  return !duplicate && existing.indices.size === count;
+};
+
+const runnerSelection = (input: readonly string[]) => {
+  if (input.includes('list')) {
+    return null;
+  }
+  const tokens = [...input];
+  const excludes: string[] = [];
+  const filters: string[] = [];
+  const names: string[] = [];
+  let selection: RunnerSelection = { excludes, filters, namePattern: '', names, shard: '' };
+  while (tokens.length > 0) {
+    const token = tokens.shift() ?? '';
+    if (token !== 'run') {
+      if (token.startsWith('-')) {
+        if (token.includes('=')) {
+          expect.fail(
+            `Unsupported runner collection selector: ${token}. Extend the census parser before awarding execution credit.`,
+          );
+        }
+        const value = tokens.shift();
+        if (value === undefined || value.startsWith('--')) {
+          expect.fail(`Missing runner option value: ${token}`);
+        }
+        selection = runnerOption(selection, token, value ?? '');
+      } else if (/^(?:tests|scripts|tools)\/[\w./*-]+$/u.test(token)) {
+        selection.filters.push(token);
+      } else {
+        expect.fail(
+          `Unsupported runner collection selector: ${token}. Extend the census parser before awarding execution credit.`,
+        );
+      }
+    }
+  }
+  return selection;
+};
 // Mirror the pinned Playwright FullProjectInternal precedence and createFileMatcher rules, without importing
 // the config (which reads operator environment). Unsupported discovery expressions fail closed.
 type PlaywrightPattern = string | RegExp;
@@ -324,27 +643,38 @@ const playwrightMatcher = (directory: string, patterns: readonly PlaywrightPatte
   // The pinned library owns the callable signature; check its observable result at this boundary too.
   return (file: string) => Schema.decodeUnknownSync(Schema.Boolean)(matcher(file));
 };
-const playwrightArguments = (args: string) => {
-  // Quoted grep values are one option value, never accidental file filters.
-  const tokens = [...args.matchAll(/'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>\S+)/gu)].map(
-    ({ groups }) => groups?.single ?? groups?.double ?? groups?.bare ?? '',
-  );
+const playwrightTitleOptions = new Set(['--grep', '--grep-invert']);
+const playwrightArguments = (tokens: readonly string[]) => {
   const names: string[] = [];
   const filters: RegExp[] = [];
+  let nameFiltered = false;
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? '';
     if (token === '--project') {
       index += 1;
-      names.push(tokens[index] ?? '');
-    } else if (['--grep', '--grep-invert', '--workers', '--retries', '--repeat-each', '--shard'].includes(token)) {
+      const name = tokens[index];
+      expect(name, 'Missing Playwright project').toBeDefined();
+      names.push(name ?? '');
+    } else if (playwrightTitleOptions.has(token) || ['--workers', '--retries', '--repeat-each'].includes(token)) {
+      if (playwrightTitleOptions.has(token)) {
+        nameFiltered = true;
+      }
       index += 1;
+      const value = tokens[index];
+      expect(value, `Missing Playwright option value: ${token}`).toBeDefined();
+      if (!playwrightTitleOptions.has(token)) {
+        expect(value, `Unsupported Playwright option value: ${token}`).toMatch(/^\d+$/u);
+        if (token !== '--retries') {
+          expect(Number(value), token).toBeGreaterThan(0);
+        }
+      }
     } else if (token.startsWith('-')) {
       return expect.fail(`Unsupported Playwright collection option: ${token}`);
     } else {
       filters.push(new RegExp(token, 'u'));
     }
   }
-  return { filters, names };
+  return { filters, nameFiltered, names };
 };
 interface BrowserInputs {
   appRoot: string;
@@ -354,30 +684,38 @@ interface BrowserInputs {
   tests: readonly string[];
   workflow: typeof WorkflowSchema.Type;
 }
-const browserInvocation = (command: string, directory: string, packages: BrowserInputs['packages']) => {
-  const invocation = /\bpnpm\s+--filter\s+(?<selector>[^\s]+)\s+(?<command>.+)/u.exec(command)?.groups;
-  if (invocation === undefined) {
+const browserInvocation = (input: readonly string[], directory: string, packages: BrowserInputs['packages']) => {
+  const [executable, filter, selector = '', ...command] = unwrapCommand(input);
+  if (executable !== 'pnpm' || filter !== '--filter') {
     return null;
   }
   const target = [...packages].find(
     ([root, manifest]) =>
-      manifest.name === invocation.selector ||
-      path.posix.normalize(path.posix.join(directory, invocation.selector ?? '')) === root,
+      manifest.name === selector || path.posix.normalize(path.posix.join(directory, selector)) === root,
   );
   if (target === undefined) {
-    return expect.fail(`Unknown browser package: ${invocation.selector ?? ''}`);
+    return expect.fail(`Unknown browser package: ${selector}`);
   }
   const [root, manifest] = target;
-  const script = /^(?:run\s+)?(?<name>test(?::[\w-]+)*)(?<extra>.*)$/u.exec(invocation.command ?? '')?.groups;
-  const executable =
-    script === undefined
-      ? (invocation.command ?? '')
-      : `${manifest.scripts?.[script.name ?? ''] ?? ''}${script.extra ?? ''}`;
-  const args = /^(?:exec\s+)?playwright\s+test(?<args>.*)$/u.exec(executable)?.groups?.args;
-  return args === undefined ? null : { root, ...playwrightArguments(args) };
+  let tokens = command[0] === 'run' ? command.slice(1) : command;
+  const [script = '', ...extra] = tokens;
+  if (/^test(?::[\w-]+)*$/u.test(script)) {
+    const parts = shellCommands(manifest.scripts?.[script] ?? '');
+    expect(parts.length, `Unsupported browser script chain: ${root}:${script}`).toBe(1);
+    tokens = [...(parts[0] ?? []), ...extra];
+  }
+  if (tokens[0] === 'exec') {
+    tokens = tokens.slice(1);
+  }
+  return tokens.slice(0, 2).join(' ') === playwrightTestCommand
+    ? { root, ...playwrightArguments(tokens.slice(2)) }
+    : null;
 };
 const collectPlaywright = (invocation: NonNullable<ReturnType<typeof browserInvocation>>, inputs: BrowserInputs) => {
   const { filters, names, root } = invocation;
+  if (invocation.nameFiltered) {
+    return [];
+  }
   const configFile = path.posix.join(root, 'playwright.config.ts');
   const projects = playwrightProjects(configFile, inputs.read(configFile));
   for (const name of names) {
@@ -409,12 +747,29 @@ const browserCollection = (inputs: BrowserInputs) => {
     return collected;
   }
   // Only this job receives integrationBrowser. Other jobs share its YAML-aliased steps but not its matrix.
-  for (const step of inputs.workflow.jobs['browser-integration']?.steps ?? []) {
-    if (step.if !== undefined && step.if !== "matrix.suite == 'browser'") {
+  const job = inputs.workflow.jobs[browserJob];
+  if (job === undefined || !jobEnabled(job, browserJob)) {
+    return collected;
+  }
+  expect(job.strategy?.matrix.include, 'browser matrix dispatcher').toBe(
+    `\${{ fromJSON(needs.ci-plan.outputs.integrationBrowser) }}`,
+  );
+  for (const step of job.steps ?? []) {
+    if (
+      ![
+        'Run parallel authenticated browser tests without retries',
+        'Verify browser recovery into a newly published release',
+      ].includes(step.name ?? '') ||
+      !stepEnabled(step, ["matrix.suite == 'browser'"])
+    ) {
       continue;
     }
-    const directory = path.posix.relative('app', step['working-directory'] ?? '.');
-    for (const command of (step.run ?? '').split(/\n|&&|;/u)) {
+    const directory = stepDirectory(inputs.workflow, job, step);
+    expect(
+      directory === '..' || directory.startsWith('../'),
+      `Browser working directory is outside the app workspace: ${directory}`,
+    ).toBe(false);
+    for (const command of shellCommands(step.run ?? '')) {
       const invocation = browserInvocation(command, directory, inputs.packages);
       if (invocation !== null) {
         for (const file of collectPlaywright(invocation, inputs)) {
@@ -462,18 +817,22 @@ const missingExecutableTests = (
   return tests.filter((file) => !collected.has(file) && !supporting.has(file));
 };
 
-it('collects every executable test in a CI job or names its manual environment', () => {
-  const files = walk('');
+const testFilename = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
+const censusScope = `filenames matching ${testFilename} (excluding tools/oxlint/effect-native/tests/fixtures/) and akros-storefront/tests/browser/*.mjs; directory names excluded at every depth: ${[...ignoredDirectories].join(', ')}; direct static relative imports without test declarations count as supporting modules`;
+const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>) => {
+  const readInput = (file: string) => readFileSync(path.join(root, file), 'utf-8');
+  const files = walk('', root);
   const tests = files.filter(
     (file) =>
-      /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file) && !file.startsWith('tools/oxlint/effect-native/tests/fixtures/'),
+      (testFilename.test(file) && !file.startsWith('tools/oxlint/effect-native/tests/fixtures/')) ||
+      /^akros-storefront\/tests\/browser\/[^/]+\.mjs$/u.test(file),
   );
-  const workflow = Schema.decodeUnknownSync(WorkflowSchema)(
-    parse(read('../.github/workflows/ultramodern-workspace-gates.yml')),
+  const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(readInput(workflowFile)));
+  const matrices = Result.getOrThrow(
+    parseCiMatrices(readInput(matrixFile), readInput(workflow.env.CI_MATRICES_OVERLAY)),
   );
-  const matrices = Result.getOrThrow(parseCiMatrices(read(matrixFile), read(workflow.env.CI_MATRICES_OVERLAY)));
   const workspace = Schema.decodeUnknownSync(Schema.Struct({ packages: Schema.Array(Schema.String) }))(
-    parse(read('pnpm-workspace.yaml')),
+    parse(readInput(workspaceFile)),
   );
   const packages = new Map(
     files
@@ -484,18 +843,18 @@ it('collects every executable test in a CI job or names its manual environment',
       )
       .map((file) => [
         path.posix.dirname(file),
-        Schema.decodeUnknownSync(Schema.fromJsonString(PackageSchema))(read(file)),
+        Schema.decodeUnknownSync(Schema.fromJsonString(PackageSchema))(readInput(file)),
       ]),
   );
   const projects = new Map(
     [...packages.keys()].map((directory) => {
-      const config = path.posix.join(directory, 'rstest.config.ts');
+      const config = path.posix.join(directory, rstestConfig);
       const vitest = path.posix.join(directory, 'vitest.config.ts');
-      if (existsSync(path.join(app, config))) {
-        return [directory, configProjects(config)];
+      if (existsSync(path.join(root, config))) {
+        return [directory, configProjects(config, readInput)];
       }
-      if (existsSync(path.join(app, vitest))) {
-        return [directory, configProjects(vitest)];
+      if (existsSync(path.join(root, vitest))) {
+        return [directory, configProjects(vitest, readInput)];
       }
       return [directory, [{ exclude: defaultExclude, include: defaultInclude, name: 'unit' }]];
     }),
@@ -504,6 +863,7 @@ it('collects every executable test in a CI job or names its manual environment',
   let checkoutCollections = 0;
   const n1Collections = new Map<string, number>();
   const weightedShards = new Map<string, string[]>();
+  const weightedSelections = new Map<string, string>();
   const collect = (
     directory: string,
     names: readonly string[],
@@ -528,87 +888,115 @@ it('collects every executable test in a CI job or names its manual environment',
         if (file.startsWith('n1-storefront/')) {
           n1Collections.set(file, (n1Collections.get(file) ?? 0) + 1);
         }
-        if (file === 'scripts/tests/stage-n1-checkout.test.mts') {
+        if (file === checkoutProofFile) {
           checkoutCollections += 1;
         }
       }
     }
   };
+  const nameFiltered = new Map<string, Set<string>>();
+  const runnerShards = new Map<string, { count: number; indices: Set<number> }>();
   const commands = {
     runCommand(directory: string, command: string, seen: readonly string[] = []) {
-      for (const part of command.split(/\n|&&|;/u)) {
-        commands.runPart(directory, part, seen);
+      for (const tokens of shellCommands(command)) {
+        commands.runTokens(directory, tokens, seen);
       }
     },
-    runPart(directory: string, part: string, seen: readonly string[]) {
-      const runner = /\b(?:rstest(?:\.js)?|vitest)\s+(?<args>.*)/u.exec(part)?.groups?.args;
-      if (runner !== undefined && !/^\s*list\b/u.test(runner)) {
-        commands.runRunner(directory, runner);
-      }
-      if (part.includes('rstest-weighted-shard.sh')) {
-        commands.runWeighted(directory, part);
+    runRunner(directory: string, input: readonly string[], awardCredit = true): void {
+      const selection = runnerSelection(input);
+      if (selection === null) {
         return;
       }
-      const invocation = /\b(?:run\s+)?(?<name>test(?::[\w-]+)*)\b/u.exec(part);
-      const script = invocation?.groups?.name;
-      const extra = invocation === null ? '' : part.slice(invocation.index + invocation[0].length);
-      if (runner !== undefined || script === undefined) {
+      const { excludes, filters, namePattern, names } = selection;
+      expect(projects.has(directory), `Unknown runner working directory: ${directory}`).toBe(true);
+      for (const name of names) {
+        expect(
+          projects.get(directory)?.some((project) => project.name === name),
+          `Unknown runner project ${directory}:${name}`,
+        ).toBe(true);
+      }
+      if (!awardCredit) {
         return;
       }
-      const selected = (selector: string, target: string) =>
-        selector.replace(/^\.\//u, '') === target || selector === packages.get(target)?.name;
-      const selectors = [...part.matchAll(/--filter\s+['"]?(?<selector>!?[^\s'"]+)/gu)].map(
-        (match) => match.groups?.selector ?? '',
-      );
-      const included = selectors.filter((selector) => !selector.startsWith('!'));
-      const excluded = selectors.filter((selector) => selector.startsWith('!')).map((selector) => selector.slice(1));
-      const targets =
-        selectors.length === 0
-          ? [directory]
-          : [...packages.keys()].filter(
-              (target) =>
-                target !== '.' &&
-                (included.length === 0 || included.some((selector) => selected(selector, target))) &&
-                !excluded.some((selector) => selected(selector, target)),
-            );
-      for (const target of targets) {
-        commands.runScript(target, script, extra, seen);
+      if (namePattern !== '') {
+        // Name-filtered commands do not prove a whole file. The repo's privacy pair is an exact regex complement;
+        // only both invocations with identical file/project/exclusion selection can collectively receive credit.
+        const key = JSON.stringify([directory, names, filters, excludes, selection.shard]);
+        const patterns = nameFiltered.get(key) ?? new Set<string>();
+        patterns.add(namePattern);
+        nameFiltered.set(key, patterns);
+        if (![...patterns].some((pattern) => pattern.startsWith('^') && patterns.has(`^(?!${pattern.slice(1)})`))) {
+          return;
+        }
+      }
+      if (completeRunnerShard(runnerShards, JSON.stringify([directory, names, filters, excludes]), selection.shard)) {
+        collect(directory, names, filters, excludes);
       }
     },
-    runRunner(directory: string, runner: string) {
-      const names = [...runner.matchAll(/--project\s+(?<name>[\w-]+)/gu)].map((match) => match.groups?.name ?? '');
-      const filters = [
-        ...runner.replaceAll(/--exclude\s+\S+/gu, '').matchAll(/(?:^|\s)(?<path>(?:tests|scripts|tools)\/[\w./*-]+)/gu),
-      ].map((match) => match.groups?.path ?? '');
-      const excludes = [...runner.matchAll(/--exclude\s+(?<path>\S+)/gu)].map((match) => match.groups?.path ?? '');
-      collect(directory, names, filters, excludes);
-    },
-    runScript(directory: string, name: string, extra = '', seen: readonly string[] = []) {
+    runScript(directory: string, name: string, extra: readonly string[], seen: readonly string[]) {
       const script = packages.get(directory)?.scripts?.[name];
       if (script === undefined) {
         return;
       }
-      expect(seen, `recursive script ${directory}:${name}`).not.toContain(name);
-      commands.runCommand(directory, `${script} ${extra}`, [...seen, name]);
-    },
-    runWeighted(directory: string, part: string) {
-      const shard = /\s(?<index>\d+)\/(?<count>\d+)\s+(?<project>[\w-]+)/u.exec(part)?.groups;
-      expect(shard, part).toBeDefined();
-      const selected = /--filter\s+(?<directory>\.\/\S+)/u.exec(part)?.groups?.directory;
-      const target = selected?.slice(2) ?? directory;
-      const family = `${target}:${shard?.project ?? ''}`;
-      weightedShards.set(family, [
-        ...(weightedShards.get(family) ?? []),
-        `${shard?.index ?? ''}/${shard?.count ?? ''}`,
-      ]);
-      // A complete weighted family collectively runs its project once, not once per shard.
-      if (weightedShards.get(family)?.length === 1) {
-        collect(target, [shard?.project ?? 'missing']);
+      const identity = `${directory}:${name}`;
+      expect(seen, `recursive script ${identity}`).not.toContain(identity);
+      const parts = shellCommands(script);
+      for (const [index, tokens] of parts.entries()) {
+        commands.runTokens(directory, index === parts.length - 1 ? [...tokens, ...extra] : tokens, [...seen, identity]);
       }
+    },
+    runTokens(directory: string, input: readonly string[], seen: readonly string[]): void {
+      const [executable, ...args] = unwrapCommand(input);
+      if (executable === 'pnpm') {
+        const { targets, tokens } = pnpmInvocation(directory, args, packages);
+        const [verb, ...extra] = tokens;
+        if (verb === 'exec') {
+          for (const target of targets) {
+            commands.runTokens(target, extra, seen);
+          }
+        } else {
+          const [script = '', ...scriptArgs] = verb === 'run' ? extra : tokens;
+          if (/^test(?::[\w-]+)*$/u.test(script)) {
+            for (const target of targets) {
+              commands.runScript(target, script, scriptArgs, seen);
+            }
+          }
+        }
+      } else if (executable === 'rstest' || executable === 'vitest') {
+        commands.runRunner(directory, args);
+      } else if (
+        executable === 'node' &&
+        args.slice(0, 3).join(' ') ===
+          '--import ../../scripts/ci/integration-worker-setup.mts ../../node_modules/@rstest/core/bin/rstest.js'
+      ) {
+        commands.runRunner(directory, args.slice(3));
+      } else if (
+        executable === 'bash' &&
+        ['scripts/ci/rstest-weighted-shard.sh', '$PWD/scripts/ci/rstest-weighted-shard.sh'].includes(args[0] ?? '')
+      ) {
+        commands.runWeighted(directory, args.slice(1));
+      } else if (executable === 'node' && /^tests\/browser\/[^/]+\.mjs$/u.test(args[0] ?? '')) {
+        expect(args.length, 'Unsupported browser script arguments').toBe(1);
+        collected.add(path.posix.join(directory, args[0] ?? ''));
+      }
+      // echo, non-test scripts and other executables never grant credit to runner-looking arguments.
+    },
+    runWeighted(directory: string, args: readonly string[]) {
+      const [shard = '', project = '', ...options] = args;
+      expect(shard, 'Unsupported weighted shard').toMatch(/^\d+\/\d+$/u);
+      const family = `${directory}:${project}`;
+      weightedShards.set(family, [...(weightedShards.get(family) ?? []), shard]);
+      const selection = JSON.stringify(options);
+      expect(weightedSelections.get(family) ?? selection, `Weighted shard selections differ: ${family}`).toBe(
+        selection,
+      );
+      weightedSelections.set(family, selection);
+      // Every shard must use the same understood selectors; the complete family runs its project once.
+      commands.runRunner(directory, ['--project', project, ...options], weightedShards.get(family)?.length === 1);
     },
   };
   const collectIntegration = () => {
-    const executor = read('scripts/ci/run-integration-suites.sh');
+    const executor = readInput('scripts/ci/run-integration-suites.sh');
     const tasks = matrices.integration.flatMap((row) => row.tasks ?? []);
     const families = new Map<string, number[]>();
     for (const task of tasks) {
@@ -627,14 +1015,68 @@ it('collects every executable test in a CI job or names its manual environment',
       ).toEqual(Array.from({ length: counts[0] ?? 0 }, (_, index) => index + 1));
     }
   };
-  for (const row of [...matrices.source, ...matrices.unit]) {
-    commands.runCommand('.', row.commands);
-  }
-  for (const job of Object.values(workflow.jobs)) {
-    for (const step of job.steps ?? []) {
-      commands.runCommand('.', step.run ?? '');
+  const dispatchRows = (jobName: string, matrixName: string, rows: typeof matrices.source) => {
+    if (rows.length === 0) {
+      return;
     }
-  }
+    const job = workflow.jobs[jobName];
+    expect(job, `Missing matrix dispatch job: ${jobName}`).toBeDefined();
+    if (job === undefined || !jobEnabled(job, jobName)) {
+      return;
+    }
+    expect(job.strategy?.matrix.include, `${jobName}: matrix binding`).toBe(
+      `\${{ fromJSON(needs.ci-plan.outputs.${matrixName}) }}`,
+    );
+    const dispatch = job.steps?.find((step) => step.name === `Run \${{ matrix.name }}`);
+    expect(dispatch, `Missing matrix dispatch step: ${jobName}`).toBeDefined();
+    if (dispatch === undefined || !stepEnabled(dispatch)) {
+      return;
+    }
+    expect(dispatch.env?.COMMANDS, `${jobName}: commands binding`).toBe(`\${{ matrix.commands }}`);
+    expect(dispatch.run?.trim(), `Unsupported matrix dispatcher body: ${jobName}`).toBe(matrixDispatcher);
+    const directory = stepDirectory(workflow, job, dispatch);
+    expect(directory, `${jobName}: matrix dispatch working directory must be app`).toBe('');
+    for (const row of rows) {
+      commands.runCommand('.', row.commands);
+    }
+  };
+  dispatchRows(sourceJob, 'source', matrices.source);
+  dispatchRows(
+    unitJob,
+    'unit',
+    matrices.unit.filter((row) => row['node-artifacts'] !== true),
+  );
+  dispatchRows(
+    artifactUnitJob,
+    'unit-artifacts',
+    matrices.unit.filter((row) => row['node-artifacts'] === true),
+  );
+  const collectLiteralSteps = () => {
+    // Only these literal test steps dispatch suites outside the command matrices. Never scan arbitrary jobs/steps.
+    for (const [jobName, stepName, conditions] of [
+      [
+        lintJob,
+        'Test the Effect lint rules',
+        [`\${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard <= 1 }}`],
+      ],
+      [topologyJob, 'Prove migration equivalence on the cluster this row migrated', ["matrix.suite == 'bootstrap'"]],
+    ] as const) {
+      const job = workflow.jobs[jobName];
+      if (
+        job === undefined ||
+        !jobEnabled(job, jobName) ||
+        (jobName === topologyJob && !matrices.integration.some((row) => row.suite === 'bootstrap'))
+      ) {
+        continue;
+      }
+      for (const step of job.steps ?? []) {
+        if (step.name === stepName && stepEnabled(step, conditions)) {
+          commands.runCommand(stepDirectory(workflow, job, step) || '.', step.run ?? '');
+        }
+      }
+    }
+  };
+  collectLiteralSteps();
   for (const [family, shards] of weightedShards) {
     const counts = shards.map((shard) => Number(shard.split('/')[1]));
     expect(new Set(counts).size, family).toBe(1);
@@ -642,29 +1084,302 @@ it('collects every executable test in a CI job or names its manual environment',
       Array.from({ length: counts[0] ?? 0 }, (_, index) => `${index + 1}/${counts[0] ?? 0}`).toSorted(),
     );
   }
-  collectIntegration();
+  const dispatchIntegration = () => {
+    if (matrices.integration.some((row) => row.tasks !== undefined)) {
+      const job = workflow.jobs['owner-integration'];
+      expect(job, 'Missing owner integration dispatch job').toBeDefined();
+      if (job !== undefined && jobEnabled(job, 'owner-integration')) {
+        expect(job.strategy?.matrix.include, 'owner matrix binding').toBe(
+          `\${{ fromJSON(needs.ci-plan.outputs.integrationOwners) }}`,
+        );
+        const dispatch = job.steps?.find(
+          (step) =>
+            step.name ===
+            'Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry',
+        );
+        expect(dispatch, 'Missing owner integration dispatch step').toBeDefined();
+        if (dispatch !== undefined && stepEnabled(dispatch, ["matrix.suite == 'integration'"])) {
+          expect(dispatch.run, 'Unsupported owner integration dispatcher').toBe(
+            'bash scripts/ci/run-integration-suites.sh',
+          );
+          expect(dispatch.env?.INTEGRATION_TASKS, 'owner tasks binding').toBe(`\${{ toJSON(matrix.tasks) }}`);
+          expect(stepDirectory(workflow, job, dispatch), 'owner dispatch working directory must be app').toBe('');
+          collectIntegration();
+        }
+      }
+    }
+  };
+  dispatchIntegration();
   for (const file of tests.filter((entry) => entry.startsWith('n1-storefront/'))) {
     expect(n1Collections.get(file), `N1 must run in exactly one CI row: ${file}`).toBe(1);
   }
-  expect(checkoutCollections, 'The checkout browser proof must run in exactly one CI job').toBe(1);
+  if (tests.includes(checkoutProofFile)) {
+    expect(checkoutCollections, 'The checkout browser proof must run in exactly one CI job').toBe(1);
+  }
   for (const file of browserCollection({
-    appRoot: app,
+    appRoot: root,
     browserEnabled: matrices.integration.some((row) => row.suite === 'browser'),
     packages,
-    read,
+    read: readInput,
     tests,
     workflow,
   })) {
     collected.add(file);
   }
-  for (const [file, reason] of manual) {
+  for (const [file, reason] of manualSuites) {
+    expect(tests, `Stale manual census entry: ${file}`).toContain(file);
     expect(reason.length).toBeGreaterThan(0);
     expect(collected.has(file), `manual suite unexpectedly runs in CI: ${file}`).toBe(false);
   }
   expect(
-    missingExecutableTests(tests, collected, read).filter((file) => !manual.has(file)),
-    'Uncollected executable tests: add a real CI invocation and matching runner include, not a blanket exception.',
+    missingExecutableTests(tests, collected, readInput).filter((file) => !manualSuites.has(file)),
+    `${uncollectedCensus} (${censusScope}): add a real CI invocation and matching runner include, or name the manual suite and its environment.`,
   ).toEqual([]);
+};
+
+it(`accounts for the bounded CI/manual census: ${censusScope}`, () => {
+  checkCollection(app, manual);
+});
+
+it.each([
+  ['echo-only package command', uncollectedCensus],
+  ['echo-only runner command', uncollectedCensus],
+  ['removed matrix dispatch step', 'Missing matrix dispatch step'],
+  ['echo-only matrix dispatcher', 'Unsupported matrix dispatcher body'],
+  ['disabled matrix dispatch step', uncollectedCensus],
+  ['disabled literal step', uncollectedCensus],
+  ['disabled boolean literal step', uncollectedCensus],
+  ['disabled expression literal step', uncollectedCensus],
+  ['disabled job', uncollectedCensus],
+  ['unsupported job condition', 'Unsupported test dispatch condition'],
+  ['equals project selector', 'Unsupported runner collection selector: --project=unit'],
+  ['equals test-name selector', 'Unsupported runner collection selector: --testNamePattern=one-case'],
+  ['test-name filtering', uncollectedCensus],
+  [runnerShardMutation, uncollectedCensus],
+  ['changed matrix working directory', 'matrix dispatch working directory must be app'],
+  [literalDirectoryMutation, uncollectedCensus],
+  [newBrowserScriptMutation, uncollectedCensus],
+])('fails closed on scratch inputs: %s; restores to green', (mutation, failure) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'ontos-dispatch-collection-'));
+  const root = path.join(scratch, 'app');
+  const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(read(workflowFile)));
+  const source = workflow.jobs[sourceJob];
+  const lint = workflow.jobs[lintJob];
+  expect(source).toBeDefined();
+  expect(lint).toBeDefined();
+  const dispatch = source?.steps?.find((step) => step.name === `Run \${{ matrix.name }}`);
+  const literal = lint?.steps?.find((step) => step.name === 'Test the Effect lint rules');
+  expect(dispatch).toBeDefined();
+  expect(literal).toBeDefined();
+  const literalCase = mutation.includes('literal step') || mutation === literalDirectoryMutation;
+  const fixtureWorkflow = {
+    defaults: workflow.defaults,
+    env: workflow.env,
+    jobs: {
+      [lintJob]: { ...lint, steps: literal === undefined || !literalCase ? [] : [{ ...literal }] },
+      [sourceJob]: { ...source, steps: dispatch === undefined || literalCase ? [] : [{ ...dispatch }] },
+    },
+  };
+  const matrices = {
+    integration: [],
+    source: literalCase ? [] : [{ commands: 'pnpm run test:unit', name: 'Scratch executable suite' }],
+    unit: [],
+  };
+  const write = (file: string, text: string) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  const originals = new Map([
+    [workflowFile, stringify(fixtureWorkflow)],
+    [matrixFile, JSON.stringify(matrices)],
+    [workflow.env.CI_MATRICES_OVERLAY, '{}'],
+    [workspaceFile, 'packages: []'],
+    [
+      'package.json',
+      JSON.stringify({
+        name: 'scratch',
+        scripts: { 'test:lint-rules': 'rstest run --project unit', 'test:unit': 'rstest run --project unit' },
+      }),
+    ],
+    [
+      rstestConfig,
+      "export default defineConfig({ projects: [{ name: 'unit', include: ['scripts/**/*.test.mts'] }] });",
+    ],
+    [
+      'scripts/tests/dispatch.test.mts',
+      "import { it } from 'effect-rstest'; it('one-case', () => {}); it('another-case', () => {});",
+    ],
+  ]);
+  try {
+    for (const [file, text] of originals) {
+      write(file, text);
+    }
+    checkCollection(root, new Map());
+    const setCommands = (commands: string) => {
+      const [row] = matrices.source;
+      if (row === undefined) {
+        expect.fail(`Missing scratch command row: ${mutation}`);
+      } else {
+        row.commands = commands;
+      }
+    };
+    const changeStep = (job: keyof typeof fixtureWorkflow.jobs, changes: Partial<WorkflowStep>) => {
+      const [step] = fixtureWorkflow.jobs[job].steps;
+      if (step === undefined) {
+        expect.fail(`Missing scratch step: ${mutation}`);
+      } else {
+        fixtureWorkflow.jobs[job].steps = [{ ...step, ...changes }];
+      }
+    };
+    const changes = new Map<string, () => void>([
+      [
+        'echo-only package command',
+        () => {
+          setCommands('echo pnpm run test:unit');
+        },
+      ],
+      [
+        'echo-only runner command',
+        () => {
+          setCommands('echo pnpm exec rstest run --project unit');
+        },
+      ],
+      [
+        'removed matrix dispatch step',
+        () => {
+          fixtureWorkflow.jobs[sourceJob].steps = [];
+        },
+      ],
+      [
+        'echo-only matrix dispatcher',
+        () => {
+          changeStep(sourceJob, { run: 'echo mise exec -- bash -c "$COMMANDS"' });
+        },
+      ],
+      [
+        'disabled matrix dispatch step',
+        () => {
+          changeStep(sourceJob, { if: 'false' });
+        },
+      ],
+      [
+        'disabled literal step',
+        () => {
+          changeStep(lintJob, { if: 'false' });
+        },
+      ],
+      [
+        'disabled boolean literal step',
+        () => {
+          changeStep(lintJob, { if: false });
+        },
+      ],
+      [
+        'disabled expression literal step',
+        () => {
+          changeStep(lintJob, { if: `\${{ false }}` });
+        },
+      ],
+      [
+        'disabled job',
+        () => {
+          fixtureWorkflow.jobs[sourceJob].if = 'false';
+        },
+      ],
+      [
+        'unsupported job condition',
+        () => {
+          fixtureWorkflow.jobs[sourceJob].if = '1 == 2';
+        },
+      ],
+      [
+        'equals project selector',
+        () => {
+          setCommands('pnpm exec rstest run --project=unit');
+        },
+      ],
+      [
+        'equals test-name selector',
+        () => {
+          setCommands('pnpm exec rstest run --project unit --testNamePattern=one-case');
+        },
+      ],
+      [
+        'test-name filtering',
+        () => {
+          setCommands('pnpm exec rstest run --project unit --testNamePattern one-case');
+        },
+      ],
+      [
+        runnerShardMutation,
+        () => {
+          setCommands('pnpm exec rstest run --project unit --shard 1/2');
+        },
+      ],
+      [
+        'changed matrix working directory',
+        () => {
+          changeStep(sourceJob, { 'working-directory': wrongWorkingDirectory });
+        },
+      ],
+      [
+        literalDirectoryMutation,
+        () => {
+          changeStep(lintJob, { 'working-directory': wrongWorkingDirectory });
+        },
+      ],
+      [
+        newBrowserScriptMutation,
+        () => {
+          write(
+            'akros-storefront/tests/browser/new-suite.mjs',
+            "import assert from 'node:assert/strict'; assert.ok(true);",
+          );
+        },
+      ],
+    ]);
+    const change = changes.get(mutation);
+    if (change === undefined) {
+      expect.fail(`Scratch mutation did not apply: ${mutation}`);
+    } else {
+      change();
+    }
+    write(workflowFile, stringify(fixtureWorkflow));
+    write(matrixFile, JSON.stringify(matrices));
+    expect(() => checkCollection(root, new Map())).toThrow(failure);
+    if (mutation === runnerShardMutation) {
+      setCommands('pnpm exec rstest run --project unit --shard 1/2\npnpm exec rstest run --project unit --shard 2/2');
+      write(matrixFile, JSON.stringify(matrices));
+      checkCollection(root, new Map());
+    }
+    if (mutation === newBrowserScriptMutation) {
+      const script = 'akros-storefront/tests/browser/new-suite.mjs';
+      checkCollection(root, new Map([[script, akrosBrowserManualReason]]));
+      write(workspaceFile, 'packages: [akros-storefront]');
+      write(
+        'akros-storefront/package.json',
+        JSON.stringify({
+          name: 'akros-storefront',
+          scripts: { 'test:browser': 'pnpm run test:new', 'test:new': 'node tests/browser/new-suite.mjs' },
+        }),
+      );
+      setCommands('pnpm run test:unit\npnpm --filter ./akros-storefront run test:browser');
+      write(matrixFile, JSON.stringify(matrices));
+      checkCollection(root, new Map());
+    }
+    // Prove the original inputs still pass after the precise defect is removed, including inventory restoration.
+    for (const [file, text] of originals) {
+      write(file, text);
+    }
+    for (const file of walk('', root)) {
+      if (!originals.has(file)) {
+        rmSync(path.join(root, file));
+      }
+    }
+    checkCollection(root, new Map());
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
 });
 
 it.each([
@@ -674,15 +1389,15 @@ it.each([
   'testMatch',
   'project selection',
   'URL-only reference',
+  browserShardMutation,
+  browserTitleMutation,
+  browserInvertedTitleMutation,
 ])('rejects a scratch CI input with %s, then accepts the restored inputs', (mutation) => {
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'ontos-browser-collection-'));
   const root = path.join(scratch, 'app');
-  const workflowFile = '../.github/workflows/ultramodern-workspace-gates.yml';
   const shell = 'apps/shell-super-app';
   const configFile = `${shell}/playwright.config.ts`;
-  const files = walk(shell).filter(
-    (file) => /\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(file) && file.includes('/tests/e2e/'),
-  );
+  const files = walk(shell).filter((file) => testFilename.test(file) && file.includes('/tests/e2e/'));
   const manifests = [`${shell}/package.json`];
   const write = (file: string, text: string) => {
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -697,7 +1412,7 @@ it.each([
   );
   const check = () => {
     const inventory = walk('', root);
-    const tests = inventory.filter((file) => /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file));
+    const tests = inventory.filter((file) => testFilename.test(file));
     const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(readInput(workflowFile)));
     const matrices = Result.getOrThrow(
       parseCiMatrices(readInput(matrixFile), readInput(workflow.env.CI_MATRICES_OVERLAY)),
@@ -717,7 +1432,7 @@ it.each([
       tests,
       workflow,
     });
-    expect(missingExecutableTests(tests, collected, readInput), 'Uncollected executable browser tests').toEqual([]);
+    expect(missingExecutableTests(tests, collected, readInput), uncollectedBrowser).toEqual([]);
   };
   try {
     for (const [file, text] of originals) {
@@ -739,7 +1454,7 @@ it.each([
       files.push(`${directory}/tests/e2e/uninvoked.spec.ts`);
       write(
         manifests.at(-1) ?? '',
-        JSON.stringify({ name: '@app/uninvoked-browser', scripts: { 'test:e2e': 'playwright test' } }),
+        JSON.stringify({ name: '@app/uninvoked-browser', scripts: { 'test:e2e': playwrightTestCommand } }),
       );
       write(`${directory}/playwright.config.ts`, "export default defineConfig({ testDir: './tests/e2e' });");
       write(files.at(-1) ?? '', "import { test } from '@playwright/test'; test('not invoked', () => {});");
@@ -768,6 +1483,26 @@ it.each([
         `${shell}/tests/unselected/unselected.spec.ts`,
         "import { test } from '@playwright/test'; test('unselected project', () => {});",
       );
+    } else if (
+      mutation === browserShardMutation ||
+      mutation === browserTitleMutation ||
+      mutation === browserInvertedTitleMutation
+    ) {
+      const option = new Map([
+        [browserShardMutation, '--shard 1/2'],
+        [browserTitleMutation, "--grep 'one-case'"],
+        [browserInvertedTitleMutation, "--grep-invert 'one-case'"],
+      ]).get(mutation);
+      const original = readInput(workflowFile);
+      const changed = original.replace('test:e2e', `test:e2e ${option ?? ''}`);
+      expect(changed).not.toBe(original);
+      const repeat = (text: string) =>
+        Schema.decodeUnknownSync(WorkflowSchema)(parse(text)).jobs[browserJob]?.steps?.find(
+          (step) => step.name === 'Verify browser recovery into a newly published release',
+        )?.run;
+      expect(repeat(original)).toContain(playwrightTestCommand);
+      expect(repeat(changed)).toBe(repeat(original));
+      write(workflowFile, changed);
     } else {
       const unexecuted = `${shell}/tests/not-in-testDir.spec.ts`;
       files.push(unexecuted);
@@ -775,7 +1510,9 @@ it.each([
       write(referrer, `${readInput(referrer)}\nnew URL('../not-in-testDir.spec.ts', import.meta.url);\n`);
       write(unexecuted, "import { test } from '@playwright/test'; test('URL is not execution', () => {});");
     }
-    expect(() => check()).toThrow('Uncollected executable browser tests');
+    expect(() => check()).toThrow(
+      mutation === browserShardMutation ? 'Unsupported Playwright collection option: --shard' : uncollectedBrowser,
+    );
     for (const [file, text] of originals) {
       write(file, text);
     }
