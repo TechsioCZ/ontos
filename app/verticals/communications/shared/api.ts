@@ -15,6 +15,7 @@ import { LanguagePolicyApi } from './apis/language-policy.ts';
 import { MessageHistoryDetailApi } from './apis/message-history-detail.ts';
 import { MessageHistoryListApi } from './apis/message-history-list.ts';
 import { PrepareTemplateRevisionActionApi } from './apis/prepare-template-revision-action.ts';
+import { PrivacyOwnerCoverageApi } from './apis/privacy-owner-coverage.ts';
 import { SetLanguagePolicyActionApi } from './apis/set-language-policy-action.ts';
 import { SubmitCommunicationRequestActionApi } from './apis/submit-communication-request-action.ts';
 // </generated-governed-http-api-imports>
@@ -49,6 +50,7 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(MessageHistoryDetailApi)
   .addHttpApi(MessageHistoryListApi)
   .addHttpApi(PrepareTemplateRevisionActionApi)
+  .addHttpApi(PrivacyOwnerCoverageApi)
   .addHttpApi(SetLanguagePolicyActionApi)
   .addHttpApi(SubmitCommunicationRequestActionApi)
   // </generated-governed-http-api-additions>

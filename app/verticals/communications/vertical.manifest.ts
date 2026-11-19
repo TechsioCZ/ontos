@@ -14,6 +14,8 @@ import { messageHistoryDetailRead } from './src/api/message-history-detail.read.
 import { MessageHistoryListApi } from './shared/apis/message-history-list.ts';
 import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
+import { PrivacyOwnerCoverageApi } from './shared/apis/privacy-owner-coverage.ts';
+import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-manifest-imports>
@@ -48,6 +50,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       'language-policy': LanguagePolicyApi,
       'message-history-detail': MessageHistoryDetailApi,
       'message-history-list': MessageHistoryListApi,
+      'privacy-owner-coverage': PrivacyOwnerCoverageApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -67,6 +70,11 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
         apiKey: 'message-history-list',
         operationKey: 'messageHistoryList.execute',
         registration: messageHistoryListRead,
+      },
+      {
+        apiKey: 'privacy-owner-coverage',
+        operationKey: 'privacyOwnerCoverage.execute',
+        registration: privacyOwnerCoverageRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],

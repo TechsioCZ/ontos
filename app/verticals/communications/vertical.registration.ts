@@ -12,6 +12,7 @@ import { messageHistoryDetailRead } from './src/api/message-history-detail.read.
 import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareMessageHandoffWorker } from './src/workers/prepare-message-handoff.worker.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
+import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-registration-imports>
@@ -33,6 +34,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
       'language-policy': () => import('./src/api/language-policy-client.ts'),
       'message-history-detail': () => import('./src/api/message-history-detail-client.ts'),
       'message-history-list': () => import('./src/api/message-history-list-client.ts'),
+      'privacy-owner-coverage': () => import('./src/api/privacy-owner-coverage-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -63,6 +65,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     languagePolicyRead,
     messageHistoryDetailRead,
     messageHistoryListRead,
+    privacyOwnerCoverageRead,
     // </generated-module-registration-reads>
   ],
 });

@@ -5,8 +5,13 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/communications-client.ts",
+    "./api/privacy-owner-coverage": "./shared/apis/privacy-owner-coverage.ts",
+    "./privacy-owner/coverage": "./shared/privacy-owner/coverage.ts",
+    "./privacy-owner/inventory": "./shared/privacy-owner/inventory.ts",
+    "./privacy-owner/outcome": "./shared/privacy-owner/outcome.ts",
     "./outbox/communications-core-message-intent-prepared-v1": "./shared/outbox/communications-core-message-intent-prepared-v1.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts"
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
+    "./testing/privacy-owner-native": "./tests/support/privacy-owner-native.ts"
   },
   "scripts": {
     "build": "ultramodern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical communications --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app communications --target dist && ultramodern deploy --skip-build --deploy-target node",

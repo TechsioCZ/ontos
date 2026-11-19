@@ -2,6 +2,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { communicationsApiContract } from '../../shared/api.ts';
 import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
+import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-coverage.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { communicationsManifest } from '../../vertical.manifest.ts';
 
@@ -34,11 +35,13 @@ describe('Communications module contract', () => {
       'language-policy',
       'message-history-detail',
       'message-history-list',
+      'privacy-owner-coverage',
     ]);
     expect(communicationsManifest.publicSurface.operationContracts?.map((contract) => contract.operationKey)).toEqual([
       'languagePolicy.execute',
       'messageHistoryDetail.execute',
       'messageHistoryList.execute',
+      'privacyOwnerCoverage.execute',
     ]);
     expect(communicationsRegistration.moduleId).toBe('communications.core');
   });
@@ -53,6 +56,19 @@ describe('Communications module contract', () => {
       },
       route: { path: '/reads/language-policy' },
     });
+  });
+
+  it('publishes the Privacy owner coverage Read as a typed operation of exactly this owner, and no Action that could dispose of data', () => {
+    expect(privacyOwnerCoverageOperation).toMatchObject({
+      kind: 'read',
+      provider: {
+        entrypointKey: 'communications.core.api.privacy-owner-coverage',
+        moduleId: 'communications.core',
+        schemaVersion: '1',
+      },
+    });
+    const actionKeys = communicationsManifest.publicSurface.actions.map((action) => action.descriptor.actionKey);
+    expect(actionKeys.filter((key) => /delete|purge|anonymi[sz]e|erase|shred|cleanup/iu.test(key))).toEqual([]);
   });
 
   it('serves its API below the deployment prefix', () => {
