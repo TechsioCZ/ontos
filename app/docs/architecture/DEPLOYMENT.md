@@ -910,6 +910,16 @@ check failed and cancels the run. `Workspace gates` still runs on the cancelled 
 queue removes the entry without waiting for the owner rows. Pull request runs still run every job, so
 their authors see every failure.
 
+A merge-group entry of one pull request skips its gates when that pull request's own run already
+tested the same tree on the same base. Each pull-request run records the tree, base, head and plan mode
+of the merge commit it tested (the `ci-comparison` artifact, kept 30 days). The entry's `queue-proof`
+job merges the pull request's current head onto the entry's base itself (`git merge-tree`). It accepts a
+record only when that merge is exactly the entry's tree, the run is a successful `pull_request` run of
+this workflow from a head in this repository, and its record names that tree, base and head with a full
+or affected plan. `Workspace gates` then passes on that proof and the plan summary names the run. A group
+of several pull requests, a moved base, a fork head or any failed lookup gives no proof, so the gates run
+(`app/scripts/ci/pull-request-proof.sh`).
+
 The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
 run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
 passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the

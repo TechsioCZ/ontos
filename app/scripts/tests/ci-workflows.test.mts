@@ -295,8 +295,6 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 it('selects work before gates and starts source checks without waiting for artifacts', () => {
   const proof = readTargetWorkflow().jobs[QUEUE_PROOF_JOB];
   expect(proof.if).toContain('inputs.force-ci-full != true');
-  expect(proof.permissions).toEqual({ actions: 'read' });
-  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven'));
   const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
@@ -322,6 +320,93 @@ it('selects work before gates and starts source checks without waiting for artif
   for (const [job, { needs }] of Object.entries(jobs)) {
     expect(needs ?? [], job).not.toContain('bootstrap-proof');
   }
+});
+
+const PULL_REQUEST_PROOF_SCRIPT = 'app/scripts/ci/pull-request-proof.sh';
+const PULL_REQUEST_RECORD = 'ci-comparison';
+const MERGE_GROUP_ONLY = "github.event_name == 'merge_group'";
+const PULL_REQUEST_ONLY = "github.event_name == 'pull_request'";
+const ProofWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      if: Schema.optional(Schema.String),
+      outputs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      steps: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+            id: Schema.optional(Schema.String),
+            if: Schema.optional(Schema.String),
+            run: Schema.optional(Schema.String),
+            uses: Schema.optional(Schema.String),
+            with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+const readProofJobs = () => Schema.decodeUnknownSync(ProofWorkflowSchema)(readGateWorkflow()).jobs;
+
+it('lets a merge queue entry stand on the pull request run that tested its exact tree, as a push stands on its entry', () => {
+  const proof = readProofJobs()[QUEUE_PROOF_JOB];
+  const steps = proof?.steps ?? [];
+  // A push or dispatch on main looks for its merge group run; a merge group looks for its pull request run. Both
+  // answer through the same outputs, which the planner and Workspace gates already honour.
+  expect(proof?.if).toBe(
+    `((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true) || ${MERGE_GROUP_ONLY}`,
+  );
+  // actions: read lists runs and downloads their records; contents: read fetches the pull request head.
+  expect(proof?.permissions).toEqual({ actions: 'read', contents: 'read' });
+  expect(proof?.outputs).toEqual({
+    proven: expression('steps.proof.outputs.proven || steps.pull-request-proof.outputs.proven'),
+    run: expression('steps.proof.outputs.run || steps.pull-request-proof.outputs.run'),
+  });
+  expect(steps.find(({ id }) => id === 'proof')?.if).toBe("github.event_name != 'merge_group'");
+  const checkout = steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true);
+  expect(checkout?.if).toBe(MERGE_GROUP_ONLY);
+  expect(checkout?.with).toEqual({
+    'fetch-depth': 0,
+    filter: 'blob:none',
+    'persist-credentials': false,
+    'sparse-checkout': 'app/scripts/ci',
+  });
+  const find = steps.find(({ id }) => id === 'pull-request-proof');
+  expect(find?.if).toBe(MERGE_GROUP_ONLY);
+  expect(find?.run).toBe(`bash ${PULL_REQUEST_PROOF_SCRIPT} find`);
+  expect(find?.env).toEqual({
+    BASE_SHA: expression('github.event.merge_group.base_sha'),
+    GH_TOKEN: GITHUB_TOKEN_EXPRESSION,
+  });
+});
+
+it("records what a pull request run tested only after its final plan, under the name the queue's finder reads", () => {
+  const jobs = readProofJobs();
+  const steps = jobs[CI_PLAN_JOB]?.steps ?? [];
+  const classify = steps.find(({ id }) => id === 'changes');
+  expect(classify?.env?.QUEUE_PROVEN).toBe(expression('needs.queue-proof.outputs.proven'));
+  expect(classify?.env?.QUEUE_PROOF_RUN).toBe(expression('needs.queue-proof.outputs.run'));
+  const record = steps.findIndex(({ run }) => run?.startsWith(`bash ${PULL_REQUEST_PROOF_SCRIPT} record`) === true);
+  expect(record).toBeGreaterThan(steps.findIndex(({ id }) => id === 'selection'));
+  expect(steps[record]?.if).toBe(PULL_REQUEST_ONLY);
+  expect(steps[record]?.env?.PLAN_MODE).toBe(expression('steps.selection.outputs.mode || steps.changes.outputs.mode'));
+  const publish = steps[record + 1];
+  expect(publish?.if).toBe(PULL_REQUEST_ONLY);
+  expect(publish?.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}$/u);
+  expect(publish?.with).toMatchObject({
+    'if-no-files-found': 'error',
+    name: PULL_REQUEST_RECORD,
+    path: `${RUNNER_TEMP_EXPRESSION}/ci-comparison/comparison.json`,
+  });
+  const writers = Object.entries(jobs).flatMap(([job, { steps: jobSteps = [] }]) =>
+    jobSteps.filter(({ with: inputs }) => inputs?.name === PULL_REQUEST_RECORD).map(() => job),
+  );
+  expect(writers).toEqual([CI_PLAN_JOB]);
+  const script = readFileSync(new URL('../ci/pull-request-proof.sh', import.meta.url), 'utf-8');
+  expect(script).toContain(`readonly RECORD_ARTIFACT=${PULL_REQUEST_RECORD}\n`);
+  expect(script).toContain('readonly RECORD_FILE=comparison.json\n');
 });
 
 const CANCEL_REPLACED_QUEUE_RUNS_JOB = 'cancel-replaced-queue-runs';
