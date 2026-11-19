@@ -124,6 +124,35 @@ it('materializes the access questions of a { load } read once, at definition', (
   );
 });
 
+it('reads each step of the definition once and registers the value it validated', () => {
+  const reads = { load: 0, run: 0 };
+  const laterHandler: typeof handler = (input, context) => handler(input, context);
+  const laterRun: typeof run = (input, context) => run(input, context);
+  const loadRegistration = defineRead(
+    descriptor(`${MODULE}.load-once`),
+    {
+      get load() {
+        reads.load += 1;
+        return reads.load === 1 ? handler : laterHandler;
+      },
+    },
+    services,
+  );
+  const runRegistration = defineRead(
+    { ...descriptor(`${MODULE}.run-once`), calls },
+    {
+      get run() {
+        reads.run += 1;
+        return reads.run === 1 ? run : laterRun;
+      },
+    },
+    services,
+  );
+  expect(reads).toEqual({ load: 1, run: 1 });
+  expect(getReadHandler(loadRegistration)).toBe(handler);
+  expect(getReadRun(runRegistration)).toBe(run);
+});
+
 /** Values the types admit (they are no fresh literals) that only the definition-time check refuses. */
 const runAndLoad = { load: handler, run };
 const runWithExtra = { extra: true, run };

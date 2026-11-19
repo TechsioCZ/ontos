@@ -1024,10 +1024,13 @@ const readStepOf = <
   if (unknown.length > 0) {
     return failReadDefinition(`Read ${readKey}: unknown key ${unknown.join(', ')}; ${READ_FORMS}`);
   }
-  if (Predicate.hasProperty(definition, 'run') && Predicate.isFunction(definition.run)) {
+  // Each step is read from the definition once: that one value is validated and stored, so a getter
+  // cannot hand the check one function and the registration another.
+  const run = Predicate.hasProperty(definition, 'run') ? definition.run : undefined;
+  if (Predicate.isFunction(run)) {
     // SAFETY: the authored union has exactly one member with a `run` key, and Core builds its context
     // from the same descriptor.
-    const run = definition.run as unknown as ReadRun<
+    const step = run as unknown as ReadRun<
       InputSchema,
       ResultSchema,
       Services,
@@ -1036,13 +1039,14 @@ const readStepOf = <
       Error,
       Requirements
     >;
-    return { spelling: 'run', step: { form: 'run', run } };
+    return { spelling: 'run', step: { form: 'run', run: step } };
   }
-  if (Predicate.hasProperty(definition, 'load') && Predicate.isFunction(definition.load)) {
+  const load = Predicate.hasProperty(definition, 'load') ? definition.load : undefined;
+  if (Predicate.isFunction(load)) {
     // SAFETY: a handler written for access answers receives `context.access` exactly when its descriptor
     // asks questions, which `defineRead` requires of it, so it runs as the one-transaction handler with
     // that optional field set.
-    const handler = definition.load as ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+    const handler = load as ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
     return { spelling: 'load', step: { form: 'handler', handler } };
   }
   return failReadDefinition(`Read ${readKey}: the read handler or run step must be a function; ${READ_FORMS}`);
