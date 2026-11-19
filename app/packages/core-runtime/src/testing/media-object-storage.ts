@@ -62,14 +62,12 @@ const statOf = (stored: StoredObject): ObjectStat =>
 const missing = () =>
   new ObjectStorageObjectMissing({ code: 'object_storage_object_missing', reason: 'Object not found' });
 
-const nextVersionRef = (versionRefs: boolean, stored: ReadonlyMap<string, StoredObject>) =>
-  versionRefs ? `v${stored.size + 1}` : undefined;
-
 /** Deterministic in-memory implementation of the port. A failed body stores nothing. */
 export const makeInMemoryObjectStorage = Effect.fn('MediaObjectStorageDouble.makeInMemory')(
   function* makeInMemoryObjectStorage(options: InMemoryObjectStorageOptions = {}) {
     const objects = yield* Ref.make<ReadonlyMap<string, StoredObject>>(new Map());
     const callLog = yield* Ref.make<readonly ObjectStorageCall[]>([]);
+    const versionCounter = yield* Ref.make(0);
     const record = (operation: ObjectStorageOperation, key: MediaStorageKey) =>
       Ref.update(callLog, (calls) => [...calls, { key, operation }]);
     const find = (key: MediaStorageKey) =>
@@ -79,15 +77,19 @@ export const makeInMemoryObjectStorage = Effect.fn('MediaObjectStorageDouble.mak
           return stored === undefined ? Effect.fail(missing()) : Effect.succeed(stored);
         }),
       );
-    const store = (key: MediaStorageKey, contentType: string, bytes: Uint8Array) =>
-      Ref.modify(objects, (all) => {
-        const next: StoredObject = {
-          bytes,
-          contentType,
-          versionRef: nextVersionRef(options.versionRefs ?? false, all),
-        };
-        return [next, new Map(all).set(key, next)] as const;
-      });
+    // Every stored version, including an overwrite of the same key, gets its own reference.
+    const nextVersionRef = Ref.updateAndGet(versionCounter, (count) => count + 1).pipe(
+      Effect.map((count) => (options.versionRefs === true ? `v${count}` : undefined)),
+    );
+    const store = Effect.fn('MediaObjectStorageDouble.store')(function* store(
+      key: MediaStorageKey,
+      contentType: string,
+      bytes: Uint8Array,
+    ) {
+      const next: StoredObject = { bytes, contentType, versionRef: yield* nextVersionRef };
+      yield* Ref.update(objects, (all) => new Map(all).set(key, next));
+      return next;
+    });
 
     const put: ObjectStorageService['put'] = Effect.fn('MediaObjectStorageDouble.put')(function* put(request) {
       yield* record('put', request.key);

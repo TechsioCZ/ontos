@@ -6,6 +6,7 @@ import { TrustedPrincipalContextSchema } from '../../src/actions/principal-conte
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import { MediaAssetNotFound, MediaUnavailable } from '../../src/media/errors.ts';
 import { MediaAssetIdSchema } from '../../src/media/identity.ts';
+import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { makeMediaAssetRepository } from '../../src/media/repository.ts';
 import type { MediaAssetRecord } from '../../src/media/repository.ts';
 import { MediaStorageKeySchema, deriveMediaStorageKey } from '../../src/media/storage-key.ts';
@@ -14,6 +15,8 @@ import { makeTestDatabase } from '../support/database.ts';
 const tenantId = '44444444-4444-4444-8444-444444444444';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
+const bytes = (count: number) => Schema.decodeUnknownSync(MediaByteSizeSchema)(count);
+const sha = (value: string) => Schema.decodeUnknownSync(MediaContentSha256Schema)(value);
 const mediaAssetId = Schema.decodeUnknownSync(MediaAssetIdSchema)('55555555-5555-4555-8555-555555555555');
 const trustedScope = (extra: { readonly legalEntityId?: string }) =>
   Object.freeze({
@@ -159,7 +162,7 @@ it.effect('reserves an uploaded asset with the trusted tenant and company and a 
     const expectedKey = deriveMediaStorageKey({ mediaAssetId, tenantId });
     const { repository, statements } = yield* fixture([[row({ legalEntityId })]], true);
     const reserved = yield* repository.reserve({
-      byteSize: 5,
+      byteSize: bytes(5),
       displayFilename: 'a.png',
       ingestionSource: 'user',
       mediaAssetId,
@@ -177,10 +180,10 @@ it.effect('reserves an uploaded asset with the trusted tenant and company and a 
 
 it.effect('moves uploaded to ready only through a guarded update that seals the confirmed bytes', () =>
   Effect.gen(function* readyTransition() {
-    const digest = 'b'.repeat(64);
+    const digest = sha('b'.repeat(64));
     const { repository, statements } = yield* fixture([[row({ contentSha256: digest, processingStatus: 'ready' })]]);
     const outcome = yield* repository.transition(mediaAssetId, {
-      confirmed: { byteSize: 7, contentSha256: digest, storageObjectVersionRef: 'v1' },
+      confirmed: { byteSize: bytes(7), contentSha256: digest, storageObjectVersionRef: 'v1' },
       to: 'ready',
     });
     expect(outcome.kind).toBe('applied');
