@@ -1,17 +1,13 @@
-import { beforeEach, describe, expect, rs } from "@rstest/core";
+import { describe, expect } from "@rstest/core";
 import { it } from "effect-rstest";
 import { Clock, Context, Deferred, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
-import { checkoutWeb } from "../src/ontos/checkout-http";
+import { makeCheckoutWeb } from "../src/ontos/checkout-http";
 import { CheckoutFailure } from "../src/ontos/checkout-context";
-import { recoverCheckout, submitCheckout } from "../src/ontos/checkout-server";
 import type { CheckoutRecoveryRequest, CheckoutRequest } from "../src/ontos/checkout";
 import type { PortalRequestContext } from "../src/ontos/portal-server";
 
-rs.mock("../src/ontos/checkout-server", () => ({
-  recoverCheckout: rs.fn(),
-  submitCheckout: rs.fn(),
-}));
+type CheckoutServices = Required<NonNullable<Parameters<typeof makeCheckoutWeb>[0]>>;
 
 const scope = {
   currency: "CZK",
@@ -43,22 +39,29 @@ const refuse = (
   return Effect.fail(new CheckoutFailure({ state: "forbidden" }));
 };
 
-beforeEach(() => {
-  rs.clearAllMocks();
-});
-
 describe("checkout Portal request boundary", () => {
   it.effect(
     "retains admission cookie deletion when later native dispatch exceeds its deadline",
     () =>
       Effect.gen(function* deadlineKeepsPortalCookieUpdate() {
         const admitted = yield* Deferred.make<null>();
-        rs.mocked(submitCheckout).mockImplementation((_input, context) => {
+        const submissions: CheckoutRequest[] = [];
+        const recoveries: CheckoutRecoveryRequest[] = [];
+        const submit: CheckoutServices["submit"] = (request, context) => {
+          submissions.push(request);
           context?.setCookies.push(
             "commerce-portal.session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
           );
           return Deferred.succeed(admitted, null).pipe(Effect.andThen(Effect.never));
-        });
+        };
+        const recover: CheckoutServices["recover"] = (request, context) => {
+          recoveries.push(request);
+          return refuse(request, context);
+        };
+        const checkoutWeb = yield* Effect.acquireRelease(
+          Effect.sync(() => makeCheckoutWeb({ recover, submit })),
+          (handler) => Effect.promise(() => handler.dispose()),
+        );
         const clock = yield* Clock.Clock;
         const fiber = yield* Effect.promise(() =>
           checkoutWeb.handler(
@@ -82,17 +85,29 @@ describe("checkout Portal request boundary", () => {
         expect(response.headers.get("set-cookie")).toContain("commerce-portal.session=");
         const body = yield* Effect.promise(() => response.json());
         expect(body.state).toBe("uncertain");
-        expect(submitCheckout).toHaveBeenCalledTimes(1);
-        expect(recoverCheckout).not.toHaveBeenCalled();
-      }),
+        expect(submissions).toHaveLength(1);
+        expect(recoveries).toHaveLength(0);
+      }).pipe(Effect.scoped),
   );
   for (const status of [false, true]) {
     it.effect(
       `preserves filtered Portal context and cookie deletion on ${status ? "status" : "execute"} refusal`,
       () =>
         Effect.gen(function* portalCookieBoundary() {
-          rs.mocked(submitCheckout).mockImplementation(refuse);
-          rs.mocked(recoverCheckout).mockImplementation(refuse);
+          const submissions: CheckoutRequest[] = [];
+          const recoveries: CheckoutRecoveryRequest[] = [];
+          const submit: CheckoutServices["submit"] = (request, context) => {
+            submissions.push(request);
+            return refuse(request, context);
+          };
+          const recover: CheckoutServices["recover"] = (request, context) => {
+            recoveries.push(request);
+            return refuse(request, context);
+          };
+          const checkoutWeb = yield* Effect.acquireRelease(
+            Effect.sync(() => makeCheckoutWeb({ recover, submit })),
+            (handler) => Effect.promise(() => handler.dispose()),
+          );
           const response = yield* Effect.promise(() =>
             checkoutWeb.handler(
               new Request(`https://n1.example/api/checkout${status ? "/status" : ""}`, {
@@ -114,8 +129,8 @@ describe("checkout Portal request boundary", () => {
           const body = yield* Effect.promise(() => response.json());
           expect(body.state).toBe("forbidden");
           expect(JSON.stringify(body)).not.toContain("customer-session");
-          expect(status ? recoverCheckout : submitCheckout).toHaveBeenCalledTimes(1);
-        }),
+          expect(status ? recoveries : submissions).toHaveLength(1);
+        }).pipe(Effect.scoped),
     );
   }
 });

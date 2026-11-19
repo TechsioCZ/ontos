@@ -1,86 +1,223 @@
-import { rs } from "@rstest/core";
-import { Schema } from "effect";
-import { beforeEach, describe, expect, it } from "effect-rstest";
-import { getCatalog } from "../src/ontos/catalog";
+// @rstest-environment happy-dom
+import { browserNetwork, networkIdle } from "@app/shared-contracts/testing/http-double";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "@modern-js/bff-effect/effect-edge";
+import { Effect, Schema } from "effect";
+import { describe, expect, it } from "effect-rstest";
+import type { getCatalog } from "../src/ontos/catalog";
+import type { CatalogResponseSchema } from "../src/ontos/catalog-model";
 import { projectCatalog } from "../src/ontos/catalog-model";
 import { readSearchSuggestions } from "../src/ontos/search-suggestions";
 import { SearchSuggestionsResponse } from "../src/ontos/search-contract";
 import { GET } from "../src/app/api/search-suggestions/route";
 
-rs.mock("../src/ontos/catalog", () => ({ getCatalog: rs.fn() }));
+const tenantId = "70000000-0000-4000-8000-000000000099";
+const legalEntityId = "71000000-0000-4000-8000-000000000099";
+const marketId = "72000000-0000-4000-8000-000000000099";
+const ownerCatalog: typeof CatalogResponseSchema.Type = {
+  market: { configured: true, currency: "CZK", marketId },
+  products: Array.from({ length: 10 }, (_, index) => ({
+    id: `owner-${index}`,
+    name: `Owner product ${index}`,
+    slug: `owner-${index}`,
+  })),
+};
+const catalog = projectCatalog(ownerCatalog, []);
+const empty: typeof getCatalog = async () => ({
+  catalog: { ...catalog, products: [] },
+  state: "ready",
+});
+const unavailable: typeof getCatalog = async () => ({
+  reason: "StorefrontReadUnavailable",
+  state: "unavailable",
+});
+const unconfigured: typeof getCatalog = async () => ({
+  catalog: { ...catalog, configured: false },
+  state: "ready",
+});
 
-const read = rs.mocked(getCatalog);
-const catalog = projectCatalog(
-  {
-    market: { configured: true, currency: "CZK", marketId: "test-market" },
-    products: Array.from({ length: 10 }, (_, index) => ({
-      id: `owner-${index}`,
-      name: `Owner product ${index}`,
-      slug: `owner-${index}`,
-    })),
-  },
-  [],
-);
+const marketCatalog = {
+  associations: [
+    {
+      channel: "B2C",
+      effectivePeriod: { startsAt: "2020-01-01T00:00:00Z" },
+      marketRef: { resourceId: marketId },
+      sellingLegalEntityRef: { resourceId: legalEntityId },
+      storefrontRef: { appId: "n1-storefront", tenantId },
+    },
+  ],
+  markets: [
+    {
+      effectivePeriod: { startsAt: "2020-01-01T00:00:00Z" },
+      lifecycle: "ACTIVE",
+      marketCode: "N1",
+      marketRef: { resourceId: marketId },
+      sellingLegalEntityRef: { resourceId: legalEntityId },
+      supportedLocales: ["cs-CZ", "en-GB"],
+    },
+  ],
+};
+const OwnerRequest = Schema.Struct({
+  audience: Schema.String,
+  legalEntityId: Schema.String,
+  query: Schema.Unknown,
+  readName: Schema.String,
+});
 
-describe("search suggestions read boundary", () => {
-  beforeEach(() => {
-    read.mockReset();
+const getPreview = (url: string) =>
+  Effect.gen(function* previewRequest() {
+    const requests: (typeof OwnerRequest.Type)[] = [];
+    const owner = HttpRouter.add(
+      "POST",
+      "/shell-super-app-api/auth/api-key/gateway-read",
+      Effect.gen(function* receiveOwnerRead() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const body = yield* Schema.decodeUnknownEffect(OwnerRequest)(yield* request.json);
+        requests.push(body);
+        return HttpServerResponse.jsonUnsafe(
+          body.readName === "current-market-catalog" ? marketCatalog : ownerCatalog,
+          {
+            headers: {
+              "x-ontos-gateway-context": JSON.stringify({
+                apiBaseUrl: "/shell-super-app-api/gateway/merchandise",
+                compositionRevision: "a".repeat(64),
+                expiresAt: 9_999_999_999,
+                token: "search-suggestions-read-assertion",
+              }),
+            },
+          },
+        );
+      }).pipe(Effect.orDie),
+    );
+    const environment = {
+      ONTOS_N1_STOREFRONT_API_KEY: "search-suggestions-service-key",
+      ONTOS_SHELL_URL: "https://shell.example",
+      ONTOS_STOREFRONT_LEGAL_ENTITY_ID: legalEntityId,
+      ONTOS_STOREFRONT_TENANT_ID: tenantId,
+    };
+    const previous = Object.keys(environment).map((key) => [key, process.env[key]] as const);
+    Object.assign(process.env, environment);
+    try {
+      return yield* Effect.gen(function* readPreview() {
+        const response = yield* Effect.promise(async () => await GET(new Request(url)));
+        const body: unknown = yield* Effect.promise(async () => await response.json());
+        yield* networkIdle;
+        return { body, requests, response };
+      }).pipe(Effect.provide(browserNetwork(owner)));
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) {
+          Reflect.deleteProperty(process.env, key);
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 
+describe("search suggestions read boundary", () => {
   it("does not call the owner for a blank query", async () => {
-    expect(await readSearchSuggestions("cs", "   ")).toEqual({ state: "idle" });
-    expect(read).not.toHaveBeenCalled();
+    const reads: Parameters<typeof getCatalog>[] = [];
+    const read: typeof getCatalog = async (...args) => {
+      reads.push(args);
+      return { catalog, state: "ready" };
+    };
+    expect(await readSearchSuggestions("cs", "   ", read)).toEqual({ state: "idle" });
+    expect(reads).toEqual([]);
   });
 
   it.each([
     ["invalid", "helmet"],
     ["cs", "x".repeat(201)],
   ])("rejects invalid locale or unbounded query before owner access: %s", async (locale, query) => {
-    expect(await readSearchSuggestions(locale, query)).toEqual({ state: "unavailable" });
-    expect(read).not.toHaveBeenCalled();
+    const reads: Parameters<typeof getCatalog>[] = [];
+    const read: typeof getCatalog = async (...args) => {
+      reads.push(args);
+      return { catalog, state: "ready" };
+    };
+    expect(await readSearchSuggestions(locale, query, read)).toEqual({ state: "unavailable" });
+    expect(reads).toEqual([]);
   });
 
   it("uses the same owner query as the results page and bounds only the preview", async () => {
-    read.mockResolvedValue({ catalog, state: "ready" });
-    expect(await readSearchSuggestions("cs", "  helmet  ")).toEqual({
+    const reads: Parameters<typeof getCatalog>[] = [];
+    const read: typeof getCatalog = async (...args) => {
+      reads.push(args);
+      return { catalog, state: "ready" };
+    };
+    expect(await readSearchSuggestions("cs", "  helmet  ", read)).toEqual({
       products: catalog.products.slice(0, 8),
       state: "ready",
     });
-    expect(read).toHaveBeenCalledExactlyOnceWith("cs", JSON.stringify({ q: "helmet" }));
+    expect(reads).toEqual([["cs", JSON.stringify({ q: "helmet" })]]);
   });
 
   it("keeps a successful empty catalogue distinct from an unavailable read", async () => {
-    read.mockResolvedValue({ catalog: { ...catalog, products: [] }, state: "ready" });
-    expect(await readSearchSuggestions("cs", "absent")).toEqual({ products: [], state: "ready" });
-    read.mockResolvedValue({ reason: "StorefrontReadUnavailable", state: "unavailable" });
-    expect(await readSearchSuggestions("cs", "helmet")).toEqual({ state: "unavailable" });
+    expect(await readSearchSuggestions("cs", "absent", empty)).toEqual({
+      products: [],
+      state: "ready",
+    });
+    expect(await readSearchSuggestions("cs", "helmet", unavailable)).toEqual({
+      state: "unavailable",
+    });
   });
 
   it("does not present an unconfigured market as a successful empty result", async () => {
-    read.mockResolvedValue({ catalog: { ...catalog, configured: false }, state: "ready" });
-    expect(await readSearchSuggestions("en", "helmet")).toEqual({ state: "unavailable" });
-  });
-
-  it("serves an uncached GET preview through the existing owner query", async () => {
-    read.mockResolvedValue({ catalog, state: "ready" });
-    const response = await GET(
-      new Request("https://shop.example/api/search-suggestions?locale=cs&q=helmet"),
-    );
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual({
-      products: catalog.products.slice(0, 8),
-      state: "ready",
+    expect(await readSearchSuggestions("en", "helmet", unconfigured)).toEqual({
+      state: "unavailable",
     });
-    expect(read).toHaveBeenCalledExactlyOnceWith("cs", JSON.stringify({ q: "helmet" }));
   });
 
-  it("rejects an invalid GET locale without accessing owner data", async () => {
-    const response = await GET(
-      new Request("https://shop.example/api/search-suggestions?locale=invalid&q=helmet"),
-    );
-    expect(await response.json()).toEqual({ state: "unavailable" });
-    expect(read).not.toHaveBeenCalled();
-  });
+  it.live("serves an uncached GET preview through the existing owner query", () =>
+    Effect.gen(function* verifyPreview() {
+      const { body, requests, response } = yield* getPreview(
+        "https://shop.example/api/search-suggestions?locale=cs&q=helmet",
+      );
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(body).toEqual({
+        products: catalog.products.slice(0, 8),
+        state: "ready",
+      });
+      expect(requests).toEqual([
+        {
+          audience: "commerce-market-catalog",
+          legalEntityId,
+          query: { at: expect.any(String) },
+          readName: "current-market-catalog",
+        },
+        {
+          audience: "merchandise",
+          legalEntityId,
+          query: {
+            view: {
+              storefront: true,
+              storefrontCatalog: {
+                fields: "card",
+                includeCategories: true,
+                marketId,
+                pageSize: 24,
+                q: "helmet",
+              },
+            },
+          },
+          readName: "records",
+        },
+      ]);
+    }),
+  );
+
+  it.live("rejects an invalid GET locale without accessing owner data", () =>
+    Effect.gen(function* verifyPreview() {
+      const { body, requests } = yield* getPreview(
+        "https://shop.example/api/search-suggestions?locale=invalid&q=helmet",
+      );
+      expect(body).toEqual({ state: "unavailable" });
+      expect(requests).toEqual([]);
+    }),
+  );
 
   it("rejects oversized or unknown transport results while accepting a real empty result", () => {
     const valid = Schema.is(SearchSuggestionsResponse);

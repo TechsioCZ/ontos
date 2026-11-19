@@ -6,6 +6,7 @@ import { Effect, Schema } from "effect";
 import type { CartScope, CartQuoteRequest } from "@/ontos/cart-quote";
 import { clientRuntime } from "@/ontos/client-runtime";
 import { clearSubmittedCart } from "./checkout-guard";
+import type { CheckoutGuardStorage } from "./checkout-guard";
 import {
   addCartEntry,
   cartLineKey,
@@ -44,11 +45,12 @@ const StateContext = createContext<CartState | null>(null);
 const DispatchContext = createContext<Dispatch<SetStateAction<CartState>> | null>(null);
 const ScopeContext = createContext<CartScope | null>(null);
 const ImagesContext = createContext<readonly string[]>([]);
+const StorageContext = createContext<CheckoutGuardStorage | undefined>(undefined);
 const emptyEntries: readonly CartEntry[] = [];
-const readSavedCart = (key: string, scope: CartScope) =>
+const readSavedCart = (key: string, scope: CartScope, storage?: CheckoutGuardStorage) =>
   Effect.try({
     catch: () => new CartStorageUnavailable(),
-    try: () => window.localStorage.getItem(key),
+    try: () => (storage ?? window.localStorage).getItem(key),
   }).pipe(
     Effect.flatMap((raw) =>
       raw === null
@@ -61,10 +63,12 @@ export const CartProvider = ({
   children,
   imageHosts,
   scope,
+  storage,
 }: {
   children: ReactNode;
   imageHosts: readonly string[];
   scope: CartScope | null;
+  storage?: CheckoutGuardStorage;
 }) => {
   const key = scope === null ? null : cartStorageKey(scope);
   const [state, setState] = useState<CartState>({
@@ -79,7 +83,7 @@ export const CartProvider = ({
         return;
       }
       const result = clientRuntime.runSync(
-        readSavedCart(key, scope).pipe(
+        readSavedCart(key, scope, storage).pipe(
           Effect.match({
             onFailure: () => ({ entries: emptyEntries, error: true }),
             onSuccess: (entries) => ({ entries, error: false }),
@@ -98,14 +102,16 @@ export const CartProvider = ({
     return () => {
       window.removeEventListener("storage", onStorage);
     };
-  }, [key, scope]);
+  }, [key, scope, storage]);
   return (
     <ScopeContext value={scope}>
-      <ImagesContext value={imageHosts}>
-        <StateContext value={state}>
-          <DispatchContext value={setState}>{children}</DispatchContext>
-        </StateContext>
-      </ImagesContext>
+      <StorageContext value={storage}>
+        <ImagesContext value={imageHosts}>
+          <StateContext value={state}>
+            <DispatchContext value={setState}>{children}</DispatchContext>
+          </StateContext>
+        </ImagesContext>
+      </StorageContext>
     </ScopeContext>
   );
 };
@@ -115,6 +121,7 @@ export const useCart = (): CartContextValue | null => {
   const setState = useContext(DispatchContext);
   const scope = useContext(ScopeContext);
   const imageHosts = useContext(ImagesContext);
+  const storage = useContext(StorageContext);
   if (state === null || setState === null) {
     return null;
   }
@@ -132,7 +139,7 @@ export const useCart = (): CartContextValue | null => {
           Effect.try({
             catch: () => new CartStorageUnavailable(),
             try: () => {
-              window.localStorage.setItem(
+              (storage ?? window.localStorage).setItem(
                 key,
                 JSON.stringify({ entries: updated, scope, version: 1 }),
               );
@@ -156,7 +163,7 @@ export const useCart = (): CartContextValue | null => {
     const success = clientRuntime.runSync(
       Effect.try({
         catch: () => new CartStorageUnavailable(),
-        try: () => window.localStorage.removeItem(key),
+        try: () => (storage ?? window.localStorage).removeItem(key),
       }).pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })),
     );
     setState((previous) =>
@@ -178,7 +185,7 @@ export const useCart = (): CartContextValue | null => {
         return false;
       }
       const success = clientRuntime.runSync(
-        clearSubmittedCart(scope, lines).pipe(
+        clearSubmittedCart(scope, lines, storage).pipe(
           Effect.match({ onFailure: () => false, onSuccess: (cleared) => cleared }),
         ),
       );

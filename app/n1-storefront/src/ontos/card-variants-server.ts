@@ -4,9 +4,12 @@ import { getCatalog } from "./catalog";
 import type { CardVariantsQuery, CardVariantsResult } from "./card-variants";
 
 /** Reuse the market-checked public full projection, bounded to one exact slug. */
-export const readCardVariants = (query: CardVariantsQuery): Effect.Effect<CardVariantsResult> =>
+export const readCardVariants = (
+  query: CardVariantsQuery,
+  readCatalog: typeof getCatalog = getCatalog,
+): Effect.Effect<CardVariantsResult> =>
   Effect.promise(
-    async () => await getCatalog(query.locale, JSON.stringify({ slug: query.slug })),
+    async () => await readCatalog(query.locale, JSON.stringify({ slug: query.slug })),
   ).pipe(
     Effect.map((result): CardVariantsResult => {
       if (result.state !== "ready" || !result.catalog.configured) {

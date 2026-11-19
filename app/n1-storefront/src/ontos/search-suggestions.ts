@@ -5,7 +5,11 @@ const localeSchema = Schema.Literals(["cs", "en"]);
 const querySchema = Schema.String.check(Schema.isMaxLength(200));
 
 /** Server read adapter; catalog's server-only boundary protects owner credentials. */
-export const readSearchSuggestions = async (locale: string, query: string) => {
+export const readSearchSuggestions = async (
+  locale: string,
+  query: string,
+  readCatalog: typeof getCatalog = getCatalog,
+) => {
   if (!Schema.is(localeSchema)(locale) || !Schema.is(querySchema)(query)) {
     return { state: "unavailable" as const };
   }
@@ -13,7 +17,7 @@ export const readSearchSuggestions = async (locale: string, query: string) => {
   if (q.length === 0) {
     return { state: "idle" as const };
   }
-  const result = await getCatalog(locale, JSON.stringify({ q }));
+  const result = await readCatalog(locale, JSON.stringify({ q }));
   if (result.state === "unavailable" || !result.catalog.configured) {
     return { state: "unavailable" as const };
   }

@@ -1,7 +1,13 @@
-import { afterEach, expect, it, rs } from "@rstest/core";
+// @rstest-environment happy-dom
+// @rstest-environment-options {"url":"https://shop.example.test"}
+import { afterEach, expect, it } from "@rstest/core";
+import type { ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProductView } from "../src/features/product-view";
-import { productShareOrigin } from "../src/features/product-share";
+import { CartProvider } from "../src/features/cart-provider";
 import { projectCatalog } from "../src/ontos/catalog-model";
 import { getDictionary } from "../src/i18n";
 
@@ -34,8 +40,32 @@ const {
   [],
 );
 
+let mounted: { container: HTMLDivElement; root: Root } | null = null;
+const mount = (view: ReactNode) => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  mounted = { container, root };
+  flushSync(() => {
+    root.render(
+      <CartProvider
+        imageHosts={[]}
+        scope={{ currency: "CZK", legalEntityId: "legal", marketId: "market", tenantId: "tenant" }}
+      >
+        {view}
+      </CartProvider>,
+    );
+  });
+  return container;
+};
+
 afterEach(() => {
-  rs.restoreAllMocks();
+  if (mounted !== null) {
+    const { container, root } = mounted;
+    flushSync(() => root.unmount());
+    container.remove();
+    mounted = null;
+  }
 });
 
 it.each(["cs", "en"])("renders a safe inactive share action during SSR in %s", (locale) => {
@@ -50,8 +80,7 @@ it.each(["cs", "en"])("renders a safe inactive share action during SSR in %s", (
 });
 
 it.each(["cs", "en"])("shares only the resolved variant and localized product in %s", (locale) => {
-  rs.spyOn(productShareOrigin, "getServerSnapshot").mockReturnValue("https://shop.example.test");
-  const html = renderToStaticMarkup(
+  const container = mount(
     <ProductView
       dictionary={getDictionary(locale)}
       locale={locale}
@@ -59,17 +88,17 @@ it.each(["cs", "en"])("shares only the resolved variant and localized product in
       variantId="owner-variant"
     />,
   );
-  expect(html).toContain(
+  const href = container.querySelector('a[href^="mailto:"]')?.getAttribute("href");
+  expect(href).toContain(
     encodeURIComponent(
       `https://shop.example.test/${locale}/produkt/owner-product?variantId=owner-variant`,
     ),
   );
-  expect(html).toContain("mailto:?subject=Owner%20product&amp;body=");
+  expect(href).toContain("mailto:?subject=Owner%20product&body=");
 });
 
 it("omits an invalid variant selector from the draft while the purchase remains blocked", () => {
-  rs.spyOn(productShareOrigin, "getServerSnapshot").mockReturnValue("https://shop.example.test");
-  const html = renderToStaticMarkup(
+  const container = mount(
     <ProductView
       dictionary={getDictionary("cs")}
       locale="cs"
@@ -77,9 +106,10 @@ it("omits an invalid variant selector from the draft while the purchase remains 
       variantId="unknown"
     />,
   );
-  expect(html).toContain(
+  const href = container.querySelector('a[href^="mailto:"]')?.getAttribute("href");
+  expect(href).toContain(
     `body=${encodeURIComponent("https://shop.example.test/cs/produkt/owner-product")}`,
   );
-  expect(html).not.toContain("variantId%3Dunknown");
-  expect(html).not.toContain('role="spinbutton"');
+  expect(href).not.toContain("variantId%3Dunknown");
+  expect(container.querySelector('[role="spinbutton"]')).toBeNull();
 });

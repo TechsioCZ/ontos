@@ -134,22 +134,23 @@ const profileChannel = (
       ),
     ),
   );
-const handlers = HttpApiBuilder.group(CustomerProfileApi, "customerProfile", (group) =>
-  group
-    .handle("read", ({ request }) => profileChannel(request, readCustomerProfile))
-    .handle("readAddresses", ({ request }) =>
-      channel(request, (context) =>
-        readCustomerAddresses(context).pipe(
-          Effect.flatMap((value) =>
-            HttpServerResponse.schemaJson(CustomerAddressesReadSchema)(value).pipe(Effect.orDie),
-          ),
-        ),
+const addressResponse = (value: typeof CustomerAddressesReadSchema.Type) =>
+  HttpServerResponse.schemaJson(CustomerAddressesReadSchema)(value).pipe(Effect.orDie);
+const makeHandlers = (
+  readAddresses: typeof readCustomerAddresses,
+  readProfile: typeof readCustomerProfile,
+  updateProfile: typeof updateCustomerProfile,
+) =>
+  HttpApiBuilder.group(CustomerProfileApi, "customerProfile", (group) =>
+    group
+      .handle("read", ({ request }) => profileChannel(request, readProfile))
+      .handle("readAddresses", ({ request }) =>
+        channel(request, (context) => readAddresses(context).pipe(Effect.flatMap(addressResponse))),
+      )
+      .handle("update", ({ payload, request }) =>
+        profileChannel(request, (context) => updateProfile(payload, context)),
       ),
-    )
-    .handle("update", ({ payload, request }) =>
-      profileChannel(request, (context) => updateCustomerProfile(payload, context)),
-    ),
-).pipe(Layer.provide(schemaErrors));
+  ).pipe(Layer.provide(schemaErrors));
 const responsePolicy = HttpRouter.middleware(
   (effect) =>
     effect.pipe(
@@ -178,39 +179,50 @@ const responsePolicy = HttpRouter.middleware(
     ),
   { global: true },
 );
-const application = Layer.merge(HttpApiBuilder.layer(CustomerProfileApi), responsePolicy).pipe(
-  Layer.provide(handlers),
-  Layer.provide(HttpServer.layerServices),
-  Layer.provideMerge(FetchHttpClient.layer),
-  Layer.provideMerge(
-    Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
-  ),
-  Layer.provideMerge(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBodyBytes))),
-);
-export const customerProfileWeb = HttpRouter.toWebHandler(application, {
-  disableLogger: true,
-  middleware: (effect) =>
-    Effect.gen(function* guardCustomerProfileRequest() {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      if (
-        (request.method !== "GET" || request.headers.origin !== undefined) &&
-        !isPortalOrigin(request.headers.origin, request.originalUrl)
-      ) {
-        return yield* responseForFailure("forbidden");
-      }
-      const url = new URL(request.originalUrl);
-      const length = request.headers["content-length"];
-      if (
-        url.search !== "" ||
-        (request.method !== "GET" &&
-          (!/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
-            (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))))
-      ) {
-        return yield* responseForFailure("invalid");
-      }
-      return yield* effect;
-    }).pipe(Effect.map(noStore)),
-});
+export const makeCustomerProfileWeb = ({
+  readAddresses = readCustomerAddresses,
+  readProfile = readCustomerProfile,
+  updateProfile = updateCustomerProfile,
+}: {
+  readAddresses?: typeof readCustomerAddresses;
+  readProfile?: typeof readCustomerProfile;
+  updateProfile?: typeof updateCustomerProfile;
+} = {}) => {
+  const application = Layer.merge(HttpApiBuilder.layer(CustomerProfileApi), responsePolicy).pipe(
+    Layer.provide(makeHandlers(readAddresses, readProfile, updateProfile)),
+    Layer.provide(HttpServer.layerServices),
+    Layer.provideMerge(FetchHttpClient.layer),
+    Layer.provideMerge(
+      Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
+    ),
+    Layer.provideMerge(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBodyBytes))),
+  );
+  return HttpRouter.toWebHandler(application, {
+    disableLogger: true,
+    middleware: (effect) =>
+      Effect.gen(function* guardCustomerProfileRequest() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        if (
+          (request.method !== "GET" || request.headers.origin !== undefined) &&
+          !isPortalOrigin(request.headers.origin, request.originalUrl)
+        ) {
+          return yield* responseForFailure("forbidden");
+        }
+        const url = new URL(request.originalUrl);
+        const length = request.headers["content-length"];
+        if (
+          url.search !== "" ||
+          (request.method !== "GET" &&
+            (!/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
+              (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))))
+        ) {
+          return yield* responseForFailure("invalid");
+        }
+        return yield* effect;
+      }).pipe(Effect.map(noStore)),
+  });
+};
+export const customerProfileWeb = makeCustomerProfileWeb();
 const edgeRuntime = ManagedRuntime.make(Layer.empty);
 export const customerProfileHandler = async (request: Request) =>
   await edgeRuntime.runPromise(

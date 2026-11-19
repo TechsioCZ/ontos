@@ -95,27 +95,24 @@ const channel = (
     );
     return response;
   });
-const handlers = HttpApiBuilder.group(CheckoutApi, "checkout", (group) =>
-  group
-    .handle("execute", ({ payload, request }) =>
-      channel(request, (context) =>
-        submitCheckout(payload, context).pipe(
-          Effect.flatMap((data) =>
-            HttpServerResponse.schemaJson(CheckoutResultSchema)(data).pipe(Effect.orDie),
-          ),
+const checkoutResultResponse = (data: typeof CheckoutResultSchema.Type) =>
+  HttpServerResponse.schemaJson(CheckoutResultSchema)(data).pipe(Effect.orDie);
+const checkoutRecoveryResponse = (data: typeof CheckoutRecoverySchema.Type) =>
+  HttpServerResponse.schemaJson(CheckoutRecoverySchema)(data).pipe(Effect.orDie);
+const makeHandlers = (submit: typeof submitCheckout, recover: typeof recoverCheckout) =>
+  HttpApiBuilder.group(CheckoutApi, "checkout", (group) =>
+    group
+      .handle("execute", ({ payload, request }) =>
+        channel(request, (context) =>
+          submit(payload, context).pipe(Effect.flatMap(checkoutResultResponse)),
+        ),
+      )
+      .handle("status", ({ payload, request }) =>
+        channel(request, (context) =>
+          recover(payload, context).pipe(Effect.flatMap(checkoutRecoveryResponse)),
         ),
       ),
-    )
-    .handle("status", ({ payload, request }) =>
-      channel(request, (context) =>
-        recoverCheckout(payload, context).pipe(
-          Effect.flatMap((data) =>
-            HttpServerResponse.schemaJson(CheckoutRecoverySchema)(data).pipe(Effect.orDie),
-          ),
-        ),
-      ),
-    ),
-).pipe(Layer.provide(schemaErrors));
+  ).pipe(Layer.provide(schemaErrors));
 const failureResponse = (state: "invalid" | "forbidden" | "uncertain") =>
   Match.value(state).pipe(
     Match.when("invalid", () =>
@@ -161,40 +158,49 @@ const responsePolicy = HttpRouter.middleware(
     ),
   { global: true },
 );
-const application = Layer.merge(HttpApiBuilder.layer(CheckoutApi), responsePolicy).pipe(
-  Layer.provide(handlers),
-  Layer.provide(HttpServer.layerServices),
-  Layer.provideMerge(FetchHttpClient.layer),
-  Layer.provideMerge(
-    Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
-  ),
-  Layer.provideMerge(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBodyBytes))),
-);
-export const checkoutWeb = HttpRouter.toWebHandler(application, {
-  disableLogger: true,
-  middleware: (effect) =>
-    Effect.gen(function* guardCheckoutRequest() {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const origin = URL.parse(request.headers.origin ?? "");
-      const actual = new URL(request.originalUrl);
-      if (origin === null || origin.origin !== actual.origin) {
-        return yield* failureResponse("forbidden");
-      }
-      const length = request.headers["content-length"];
-      if (
-        actual.search !== "" ||
-        !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
-        (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))
-      ) {
-        return yield* failureResponse("invalid");
-      }
-      return yield* effect;
-    }).pipe(
-      // A timeout may occur after native dispatch. Never imply that another order can safely be sent.
-      Effect.timeoutOrElse({ duration: "60 seconds", orElse: () => failureResponse("uncertain") }),
-      Effect.map(noStore),
+export const makeCheckoutWeb = ({
+  recover = recoverCheckout,
+  submit = submitCheckout,
+}: { recover?: typeof recoverCheckout; submit?: typeof submitCheckout } = {}) => {
+  const application = Layer.merge(HttpApiBuilder.layer(CheckoutApi), responsePolicy).pipe(
+    Layer.provide(makeHandlers(submit, recover)),
+    Layer.provide(HttpServer.layerServices),
+    Layer.provideMerge(FetchHttpClient.layer),
+    Layer.provideMerge(
+      Layer.succeed(FetchHttpClient.RequestInit, { cache: "no-store", redirect: "manual" }),
     ),
-});
+    Layer.provideMerge(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBodyBytes))),
+  );
+  return HttpRouter.toWebHandler(application, {
+    disableLogger: true,
+    middleware: (effect) =>
+      Effect.gen(function* guardCheckoutRequest() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const origin = URL.parse(request.headers.origin ?? "");
+        const actual = new URL(request.originalUrl);
+        if (origin === null || origin.origin !== actual.origin) {
+          return yield* failureResponse("forbidden");
+        }
+        const length = request.headers["content-length"];
+        if (
+          actual.search !== "" ||
+          !/^application\/json(?:\s*;|$)/iu.test(request.headers["content-type"] ?? "") ||
+          (length !== undefined && (!/^\d+$/u.test(length) || Number(length) > maxBodyBytes))
+        ) {
+          return yield* failureResponse("invalid");
+        }
+        return yield* effect;
+      }).pipe(
+        // A timeout may occur after native dispatch. Never imply that another order can safely be sent.
+        Effect.timeoutOrElse({
+          duration: "60 seconds",
+          orElse: () => failureResponse("uncertain"),
+        }),
+        Effect.map(noStore),
+      ),
+  });
+};
+export const checkoutWeb = makeCheckoutWeb();
 const edgeRuntime = ManagedRuntime.make(Layer.empty);
 export const checkoutHandler = async (request: Request) =>
   await edgeRuntime.runPromise(

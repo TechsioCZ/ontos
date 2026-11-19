@@ -1,33 +1,37 @@
-import { beforeEach, expect, rs } from "@rstest/core";
+import { expect } from "@rstest/core";
 import { it } from "effect-rstest";
 import { Clock, Context, Deferred, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
-import { customerProfileWeb } from "../src/ontos/customer-profile-http";
+import { makeCustomerProfileWeb } from "../src/ontos/customer-profile-http";
 import { CustomerProfileFailure } from "../src/ontos/customer-profile-server";
-import { readCustomerAddresses } from "../src/ontos/customer-addresses-server";
-
-rs.mock("../src/ontos/customer-addresses-server", () => ({ readCustomerAddresses: rs.fn() }));
+import type { readCustomerAddresses } from "../src/ontos/customer-addresses-server";
+import type { CustomerAddressesRead } from "../src/ontos/customer-addresses";
 
 const request = () =>
   new Request("https://n1.example/api/customer-addresses", {
     headers: { cookie: "staff.session=private; commerce-portal.session=customer-session" },
   });
 const deletion = "commerce-portal.session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax";
-beforeEach(() => {
-  rs.clearAllMocks();
-});
 
 it.effect("retains Portal cookie deletion on the typed address deadline response", () =>
   Effect.gen(function* addressDeadline() {
     const admitted = yield* Deferred.make<null>();
-    rs.mocked(readCustomerAddresses).mockImplementation((context) => {
-      expect(context.cookie).toBe("commerce-portal.session=customer-session");
-      context.setCookies.push(deletion);
-      return Deferred.succeed(admitted, null).pipe(Effect.andThen(Effect.never));
-    });
+    const cookies: string[] = [];
+    const readAddresses: typeof readCustomerAddresses = (context) =>
+      Effect.gen(function* stalledAddressRead() {
+        cookies.push(context.cookie);
+        expect(context.cookie).toBe("commerce-portal.session=customer-session");
+        context.setCookies.push(deletion);
+        yield* Deferred.succeed(admitted, null);
+        return yield* Effect.never;
+      });
+    const web = yield* Effect.acquireRelease(
+      Effect.sync(() => makeCustomerProfileWeb({ readAddresses })),
+      (handler) => Effect.promise(() => handler.dispose()),
+    );
     const clock = yield* Clock.Clock;
     const fiber = yield* Effect.promise(() =>
-      customerProfileWeb.handler(request(), Context.make(Clock.Clock, clock)),
+      web.handler(request(), Context.make(Clock.Clock, clock)),
     ).pipe(Effect.forkChild);
     yield* Deferred.await(admitted);
     yield* TestClock.adjust("55 seconds");
@@ -40,23 +44,28 @@ it.effect("retains Portal cookie deletion on the typed address deadline response
       state: "unavailable",
       status: 503,
     });
-    expect(readCustomerAddresses).toHaveBeenCalledTimes(1);
-  }),
+    expect(cookies).toEqual(["commerce-portal.session=customer-session"]);
+  }).pipe(Effect.scoped),
 );
 
 for (const state of ["anonymous", "forbidden"] as const) {
   it.effect(`preserves cookie deletion and no-store on ${state} address refusal`, () =>
     Effect.gen(function* addressRefusal() {
-      rs.mocked(readCustomerAddresses).mockImplementation((context) => {
-        context.setCookies.push(deletion);
-        return Effect.fail(new CustomerProfileFailure({ state }));
-      });
-      const response = yield* Effect.promise(() => customerProfileWeb.handler(request()));
+      const readAddresses: typeof readCustomerAddresses = (context) =>
+        Effect.gen(function* refusedAddressRead() {
+          context.setCookies.push(deletion);
+          return yield* Effect.fail(new CustomerProfileFailure({ state }));
+        });
+      const web = yield* Effect.acquireRelease(
+        Effect.sync(() => makeCustomerProfileWeb({ readAddresses })),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const response = yield* Effect.promise(() => web.handler(request()));
       expect(response.status).toBe(state === "anonymous" ? 401 : 403);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
       expect(yield* Effect.promise(() => response.json())).toMatchObject({ state });
-    }),
+    }).pipe(Effect.scoped),
   );
 }
 
@@ -78,18 +87,25 @@ it.effect(
             id: "address-a",
             isBillingDefault: false,
             isDeliveryDefault: true,
-            location: { address: postal, state: "available" as const },
-            purposes: ["DELIVERY" as const],
+            location: { address: postal, state: "available" },
+            purposes: ["DELIVERY"],
           },
         ],
-        state: "ready" as const,
+        state: "ready",
         viewerEmail: "owner@example.test",
-      };
-      rs.mocked(readCustomerAddresses).mockImplementation((context) => {
-        context.setCookies.push("commerce-portal.session=rotated; Path=/; HttpOnly; SameSite=Lax");
-        return Effect.succeed(result);
-      });
-      const response = yield* Effect.promise(() => customerProfileWeb.handler(request()));
+      } satisfies CustomerAddressesRead;
+      const readAddresses: typeof readCustomerAddresses = (context) =>
+        Effect.sync(() => {
+          context.setCookies.push(
+            "commerce-portal.session=rotated; Path=/; HttpOnly; SameSite=Lax",
+          );
+          return result;
+        });
+      const web = yield* Effect.acquireRelease(
+        Effect.sync(() => makeCustomerProfileWeb({ readAddresses })),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const response = yield* Effect.promise(() => web.handler(request()));
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("set-cookie")).toContain("commerce-portal.session=rotated");
@@ -97,5 +113,5 @@ it.effect(
       expect(body).toEqual(result);
       expect(JSON.stringify(body)).not.toContain("profileRef");
       expect(JSON.stringify(body)).not.toContain("partyRef");
-    }),
+    }).pipe(Effect.scoped),
 );

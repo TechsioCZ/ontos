@@ -1,17 +1,10 @@
-import { Effect, Cache, Layer, Result } from "effect";
-import { rs } from "@rstest/core";
-import { FetchHttpClient } from "effect/http";
-import { afterAll, beforeAll, describe, expect, it } from "effect-rstest";
+import { Effect, Cache, Result } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { describe, expect, it } from "effect-rstest";
 import { makeCardVariantsCache } from "../src/ontos/card-variants-client";
 
 const query = { locale: "cs", productId: "owner", slug: "owner" };
 describe("card variant HTTP boundary", () => {
-  beforeAll(() => {
-    rs.stubGlobal("location", new URL("https://n1.example/cs"));
-  });
-  afterAll(() => {
-    rs.unstubAllGlobals();
-  });
   it.effect("sends the exact product selector and decodes the owner's variant labels", () =>
     Effect.gen(function* readVariantLabels() {
       const requests: Request[] = [];
@@ -26,11 +19,13 @@ describe("card variant HTTP boundary", () => {
           }),
         );
       };
+      const client = (yield* HttpClient.HttpClient.pipe(
+        Effect.provide(FetchHttpClient.layer),
+      )).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://n1.example")));
       const cache = yield* makeCardVariantsCache();
       const result = yield* Cache.get(cache, JSON.stringify(query)).pipe(
-        Effect.provide(
-          FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
-        ),
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
       );
       expect(result).toEqual({
         productId: "owner",
@@ -56,11 +51,13 @@ describe("card variant HTTP boundary", () => {
         calls += 1;
         return Promise.resolve(Response.json({ variants: ["invented"] }));
       };
+      const client = (yield* HttpClient.HttpClient.pipe(
+        Effect.provide(FetchHttpClient.layer),
+      )).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://n1.example")));
       const cache = yield* makeCardVariantsCache();
       const failure = yield* Cache.get(cache, JSON.stringify(query)).pipe(
-        Effect.provide(
-          FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
-        ),
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
         Effect.result,
       );
       expect(Result.isFailure(failure)).toBe(true);
