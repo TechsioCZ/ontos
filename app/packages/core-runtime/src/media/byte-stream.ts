@@ -73,16 +73,47 @@ const matchesReservation = (
   (asset.contentSha256 === null || asset.contentSha256 === received.contentSha256);
 
 /**
+ * The body, counted and hashed in flight, that FAILS at its clean end unless it is exactly the reserved content.
+ * A body that is too long stops at the first chunk past the declared size; a body that ends short or hashes
+ * differently fails on its last pull. Because the failure is part of the stream the provider is reading, the
+ * `put` aborts and, by the port contract, leaves nothing readable under the key: a retry with wrong bytes
+ * cannot replace a correct object that is already stored, and the typed conflict reaches the client.
+ */
+const reservedContentStream = <BodyError>(
+  asset: MediaByteHopAsset,
+  body: Stream.Stream<Uint8Array, BodyError>,
+  tally: ContentTally,
+  differsFrom: string,
+) =>
+  tallyStream(body, tally, {
+    byteSize: Number(asset.byteSize),
+    onExceed: () => conflict('The body is longer than the declared size'),
+  }).pipe(
+    Stream.concat(
+      Stream.suspend(() =>
+        matchesReservation(asset, tally.finish()) ? Stream.empty : Stream.fail(conflict(differsFrom)),
+      ),
+    ),
+  );
+
+/**
  * Streams the bytes of one reserved asset into the provider, or, for a sealed asset, only compares them.
  *
  * - A request from another principal than the reserving one is refused before a byte is read.
  * - `uploaded`: the bytes go to the row's own key. A body longer than declared stops early; a body that ends
- *   short or hashes differently is a conflict, and the unconfirmed object under the key is left for the
- *   confirm step to judge or for a corrected retry to overwrite.
+ *   short or hashes differently fails at its end, so the put aborts and the typed conflict goes to the client.
+ *   An aborted put leaves nothing readable, so an earlier correct object under the key survives a bad retry and
+ *   the confirm step still judges it. `expectedSha256` is not sent: the port has no way to ask whether a
+ *   provider can verify it, and a provider that cannot would fail every upload as uncertain.
  * - `ready`: the stored object is never written again. The body is read once to compare: identical bytes are a
  *   harmless replay, different bytes are a conflict.
  * - `failed` and `scanning` accept no bytes.
  * - A provider failure is uncertain, never "nothing stored" and never "failed": the object may be there.
+ *
+ * Two cases stay provider-dependent and are not closed here, because closing them needs a create-only or
+ * version-pinned write that belongs to the deferred provider lane: a put that races a sealed `ready` after this
+ * hop read the row as `uploaded`, and a same-size overwrite between the verification and the ready commit when
+ * the provider reports no `versionRef`.
  */
 export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* streamMediaObject<BodyError>(
   input: MediaByteHopInput<BodyError>,
@@ -114,20 +145,25 @@ export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* stre
     Effect.mapError((cause) => mediaUnavailable('The asset storage key is not a Core Media key', cause)),
   );
   const tally = new ContentTally();
-  const counted = tallyStream(input.body, tally, {
-    byteSize: Number(asset.byteSize),
-    onExceed: () => conflict('The body is longer than the declared size'),
-  });
 
   if (asset.processingStatus === 'ready') {
-    yield* Stream.runDrain(counted);
-    const received = tally.finish();
-    if (!matchesReservation(asset, received)) {
-      return yield* conflict('The bytes differ from the content this asset was confirmed with');
-    }
-    return { ...received, kind: 'already_stored' } as const satisfies MediaByteHopResult;
+    yield* Stream.runDrain(
+      reservedContentStream(
+        asset,
+        input.body,
+        tally,
+        'The bytes differ from the content this asset was confirmed with',
+      ),
+    );
+    return { ...tally.finish(), kind: 'already_stored' } as const satisfies MediaByteHopResult;
   }
 
+  const counted = reservedContentStream(
+    asset,
+    input.body,
+    tally,
+    'The received bytes differ from the declared size or SHA-256',
+  );
   const stat = yield* storage.put({ body: counted, contentType: asset.mimeType, key }).pipe(
     Effect.catchIf(isObjectStorageFailure, (failure) =>
       Effect.fail(
@@ -138,9 +174,5 @@ export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* stre
       ),
     ),
   );
-  const received = tally.finish();
-  if (!matchesReservation(asset, received)) {
-    return yield* conflict('The received bytes differ from the declared size or SHA-256');
-  }
-  return { ...received, kind: 'stored', stat } as const satisfies MediaByteHopResult;
+  return { ...tally.finish(), kind: 'stored', stat } as const satisfies MediaByteHopResult;
 });
