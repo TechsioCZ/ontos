@@ -479,7 +479,7 @@ already registered for another company. It writes no Role, grant, membership or 
 ### Tenant-wide modules on stage: installed by every release
 
 `stage-tenant-modules.mts` holds the manual list and the release rules. The manual list (`activate-market-stage.mts`):
-the demo Tenant market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Tasks and `commerce.tax`; the
+the demo Tenant market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Customer Context, Tasks and `commerce.tax`; the
 AKROS playground `commerce.tax`. The release rules name a module and the modules that require it, never a Tenant:
 today one rule, `commerce.tax` wherever `demo.merchandise` or `finance.billing` is active. The Tenants are derived
 from Core's module states at every release, so any Tenant that sells or invoices gets Tax; the platform's own tenant
@@ -505,8 +505,8 @@ Outbox host. A failure is one loud `RELEASE MODULE INSTALLATION FAILED` line; th
 `ONTOS_AGENT_SETUP_PASSWORD`; on the app host also the Shell's `BETTER_AUTH_*`,
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`). Each Tenant has an explicit
 allowlist, the manual list above. The selling modules `commerce.tax` needs are part of the reviewed plan. It is
-the reviewed manual path for exactly the pairs a release installs; it needs the app host, so routine installs leave
-it to the release.
+the reviewed manual path for the listed Tenant/module pairs; it needs the app host. The release rules remain
+separate and do not activate Customer Context automatically.
 
 ```bash
 node scripts/demo/activate-market-stage.mts --module commerce.tax --plan "$WORK/plan.json"            # dry-run
@@ -518,6 +518,11 @@ node scripts/demo/activate-market-stage.mts --module commerce.tax --plan "$WORK/
 
 It refuses a module the active composition does not publish, a company-scoped or non-session operator, a changed
 composition, and any explicit lifecycle state other than inactive/active. A refusal prints its reason.
+
+For N1 portal registration, select `--module commerce.customer-context` and sign in as the N1 tenant-only operator.
+Run the dry-run first and review its exact plan before apply; then verify with the same plan fingerprint.
+This activates the module through the existing Core Action. It does not provision a Role, workload binding,
+API key or authentication provider, and those independent registration prerequisites still apply.
 
 ### VAT baseline (`commerce.tax`) on stage
 

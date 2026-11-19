@@ -41,7 +41,7 @@ it('accepts only a tenant-only session in a Tenant allowed the module', () => {
   }
   expect(marketActivationScopeAllowed(demoTenantId, market, session, akrosCompanyId)).toBe(false);
   expect(marketActivationScopeAllowed(localDevelopmentTenantId, market, session)).toBe(false);
-  // N1 may activate Tasks for its storefront inquiries, and nothing else; the demo tenant may not take Tasks here.
+  // N1 may activate Tasks for its storefront inquiries; the demo tenant may not take Tasks here.
   expect(marketActivationScopeAllowed(N1_TENANT_ID, tasks, session)).toBe(true);
   expect(marketActivationScopeAllowed(N1_TENANT_ID, 'projects.core', session)).toBe(false);
   expect(marketActivationScopeAllowed(demoTenantId, tasks, session)).toBe(false);
@@ -63,6 +63,20 @@ it('the reviewed plan names only an allowed module, its Core activation Action, 
   expect(validPlan({ ...plan, sellingModules: [tasks] })).toBe(false);
 });
 
+it('allows the N1 registration module only for an N1 tenant-only operator session', () => {
+  const customerContext = 'commerce.customer-context';
+  expect(validPlan({ ...plan, moduleKey: customerContext, tenantId: N1_TENANT_ID })).toBe(true);
+  expect(marketActivationScopeAllowed(N1_TENANT_ID, customerContext, session)).toBe(true);
+  for (const tenantId of [demoTenantId, AKROS_PLAYGROUND_TENANT_ID, localDevelopmentTenantId, verificationTenantId]) {
+    expect(marketActivationScopeAllowed(tenantId, customerContext, session)).toBe(false);
+  }
+  for (const method of ['api_key', 'system', 'oauth_connection', 'support_impersonation']) {
+    expect(marketActivationScopeAllowed(N1_TENANT_ID, customerContext, method)).toBe(false);
+  }
+  expect(marketActivationScopeAllowed(N1_TENANT_ID, customerContext, session, akrosCompanyId)).toBe(false);
+  expect(activationSellingEvidence(customerContext, [])).toEqual(Result.succeed([]));
+});
+
 it('commerce.tax may be installed in exactly the three stage Tenants that sell or invoice', () => {
   for (const tenantId of [demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID]) {
     expect(marketActivationScopeAllowed(tenantId, tax, session)).toBe(true);
@@ -75,7 +89,7 @@ it('commerce.tax may be installed in exactly the three stage Tenants that sell o
     expect(marketActivationScopeAllowed(tenantId, tax, session)).toBe(false);
     expect(validPlan({ ...plan, moduleKey: tax, sellingModules: [billing], tenantId })).toBe(false);
   }
-  // The playground gets tax only; N1 gets tax and Tasks only.
+  // The playground gets tax only; N1 cannot install Storefront Registry through this operator.
   expect(marketActivationScopeAllowed(AKROS_PLAYGROUND_TENANT_ID, market, session)).toBe(false);
   expect(marketActivationScopeAllowed(N1_TENANT_ID, storefrontRegistry, session)).toBe(false);
 });

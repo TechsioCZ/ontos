@@ -23,6 +23,7 @@ import { N1_TENANT_ID } from './n1-stage-grants.mts';
 
 export const taxModuleKey = 'commerce.tax';
 export const stageMarketModuleKeys = [
+  'commerce.customer-context',
   'commerce.market-catalog',
   'commerce.storefront-registry',
   taxModuleKey,
@@ -44,8 +45,8 @@ export const stageActivationScopes: readonly {
     moduleKeys: ['commerce.market-catalog', 'commerce.storefront-registry', taxModuleKey, 'projects.core'],
     tenantId: demoTenantId,
   },
-  // The N1 storefront files every contact and product inquiry as a Task, and sells through its catalogue.
-  { moduleKeys: [taxModuleKey, 'work.tasks'], tenantId: N1_TENANT_ID },
+  // N1 registers customers through Customer Context, files inquiries as Tasks, and sells through its catalogue.
+  { moduleKeys: ['commerce.customer-context', taxModuleKey, 'work.tasks'], tenantId: N1_TENANT_ID },
   // The AKROS playground storefront sells for its one company.
   { moduleKeys: [taxModuleKey], tenantId: AKROS_PLAYGROUND_TENANT_ID },
 ];
