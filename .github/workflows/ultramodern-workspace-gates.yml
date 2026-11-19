@@ -286,10 +286,10 @@ jobs:
   # no JavaScript source map is written, so these artifacts are never the ones shipped. A failure only the deploy's
   # build can hit (writing maps or origins) fails the stage deploy's own build: the runner build matrix, which runs
   # before deliver_app marks a deployment attempt, or the Zerops build, which deploys nothing when it fails.
-  # The units are dealt over the shards by the build seconds they take two at a time beside a real neighbour (run
-  # 44467964945) and listed heaviest first, so the two build lanes of a shard finish together: about 200 s of build per shard
-  # on top of about 100 s of setup, pack and upload. The Shell takes every core: 78 s alone, 167 s beside Privacy,
-  # so its shard builds it alone first (scripts/ci/build-units.sh) and gets fewer units. More shards do not shorten a
+  # The units are dealt over the shards by the build seconds they take two at a time beside a real neighbour (the mean
+  # of runs 44495231205 and 44498704633, which built every unit) and listed heaviest first, so the two build lanes of a
+  # shard finish together: 209 to 218 s of build per shard on top of about 100 s of setup, pack and upload. The Shell
+  # takes every core: 78 s alone, 167 s beside Privacy, so its shard builds it alone first (scripts/ci/build-units.sh) and gets fewer units. More shards do not shorten a
   # full run: the jobs that start after planning already fill the 20 shared runners (scripts/tests/ci-workflows.test.mts),
   # so a seventh shard would wait; five shards replay 44 to 60 s slower.
   node-artifact-build:
@@ -305,27 +305,27 @@ jobs:
         include:
           - {
               shard: 1,
-              units: apps/shell-super-app verticals/workforce verticals/sales-insights verticals/property-leasing verticals/storefront-registry,
+              units: apps/shell-super-app verticals/commerce-customer-context verticals/catalog,
             }
           - {
               shard: 2,
-              units: verticals/privacy verticals/commerce-customer-context verticals/symmy-integration verticals/projects,
+              units: verticals/legal-agreements verticals/sales-insights verticals/tagging verticals/merchandise verticals/payment-term-catalog verticals/availability,
             }
           - {
               shard: 3,
-              units: verticals/catalog verticals/finance-billing verticals/sales-pipeline verticals/inventory verticals/payment-term-catalog verticals/price-group-catalog,
+              units: verticals/pricing verticals/crm-activities verticals/facility-operations verticals/sales-pipeline verticals/projects verticals/payment,
             }
           - {
               shard: 4,
-              units: verticals/legal-agreements verticals/tagging verticals/crm verticals/work-tasks verticals/commerce-cart verticals/tax,
+              units: verticals/crm verticals/workforce verticals/commerce-market-catalog verticals/inventory verticals/tax verticals/price-group-catalog,
             }
           - {
               shard: 5,
-              units: verticals/party-registry verticals/pricing verticals/commerce-market-catalog verticals/commerce-order verticals/crm-activities verticals/availability,
+              units: verticals/party-registry verticals/property-leasing verticals/finance-billing verticals/property-portfolio verticals/commerce-cart verticals/promotion,
             }
           - {
               shard: 6,
-              units: verticals/merchandise verticals/facility-operations verticals/assortment verticals/property-portfolio verticals/promotion verticals/payment,
+              units: verticals/work-tasks verticals/commerce-order verticals/privacy verticals/symmy-integration verticals/assortment verticals/storefront-registry,
             }
     env:
       BUILD_JOBS: '2'
