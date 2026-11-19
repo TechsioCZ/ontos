@@ -863,3 +863,144 @@ it.effect('reports a replay through the post-attempt hook only when the saved re
     }
   }),
 );
+
+/**
+ * A first attempt held at its handler, so a same-key retry passes the first lookup and waits on the
+ * invocation lock; `release` lets the first attempt commit.
+ */
+const heldFirstAttempt = () => {
+  const firstEntered = Deferred.makeUnsafe<null>();
+  const releaseFirst = Deferred.makeUnsafe<null>();
+  return {
+    beforeReply: (run: number) =>
+      run === 1 ? Deferred.succeed(firstEntered, null).pipe(Effect.andThen(Deferred.await(releaseFirst))) : Effect.void,
+    entered: Deferred.await(firstEntered),
+    release: Deferred.succeed(releaseFirst, null),
+  };
+};
+
+it.effect('refuses the saved reply when the module state denies the Action while the retry waits', () =>
+  Effect.gen(function* moduleStateDeniedWhileWaiting() {
+    for (const changed of ['suspended', 'unavailable'] as const) {
+      const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+      const held = heldFirstAttempt();
+      const action = counterAction(probe, { beforeReply: held.beforeReply });
+      let moduleState: 'active' | typeof changed = 'active';
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        moduleState: () => moduleState,
+        ownerRegistration: fixtureOwner(action),
+      });
+      const runningStages = () => harness.snapshot().stages.filter((stage) => stage === 'invocation_running').length;
+
+      const first = yield* harness.runtime.runAction(request(action)).pipe(Effect.forkChild);
+      yield* held.entered;
+      const retry = yield* harness.runtime.runAction(request(action)).pipe(Effect.forkChild);
+      for (let turn = 0; turn < 1000 && runningStages() < 2; turn += 1) {
+        yield* Effect.yieldNow;
+      }
+      expect(runningStages()).toBe(2);
+      moduleState = changed;
+      yield* held.release;
+
+      const original = yield* Fiber.join(first);
+      const failure = yield* Fiber.join(retry).pipe(Effect.flip);
+
+      expect(original.run).toBe(1);
+      if (changed === 'suspended') {
+        // A definite denial refuses the replay: the bodyless ActionAlreadyCommitted, never the module error.
+        expect(Predicate.isTagged(failure, 'ActionAlreadyCommitted')).toBe(true);
+        expect(failure).toMatchObject({ invocationId: harness.snapshot().invocations[0]?.actionInvocationId });
+      } else {
+        // An unreadable module state stays the retryable failure a first attempt would get.
+        expect(Predicate.isTagged(failure, 'ModuleStateCheckUnavailableError')).toBe(true);
+      }
+      expect(probe.handlerRuns).toBe(1);
+      expect(harness.snapshot().committed).toHaveLength(1);
+
+      // With the module active again, the same retry answers the saved reply.
+      moduleState = 'active';
+      expect(yield* harness.runtime.runAction(request(action))).toEqual(original);
+    }
+  }),
+);
+
+it.effect('decides a permission denial that loses to a concurrent commit as a replay', () =>
+  Effect.gen(function* permissionDenialMeetsCommit() {
+    for (const asks of [true, false]) {
+      const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+      const held = heldFirstAttempt();
+      const firstCommitted = Deferred.makeUnsafe<null>();
+      const outcomes: string[] = [];
+      const counter = counterAction(probe, { protectedAccess: true });
+      const action = defineAction(
+        counter.descriptor,
+        (payload) =>
+          Effect.gen(function* heldHandler() {
+            probe.handlerRuns += 1;
+            const run = probe.handlerRuns;
+            yield* held.beforeReply(run);
+            return { at: DateTime.makeUnsafe(0), run, total: payload.amount };
+          }),
+        () => Effect.succeed({}),
+        undefined,
+        (context) =>
+          Effect.sync(() => {
+            outcomes.push(context.outcome._tag);
+            return { _tag: 'Settled' as const };
+          }),
+      );
+      // The retry's access decision is denied against the state before the first attempt commits: it
+      // lets that attempt commit before it answers. Every other decision allows.
+      const allowedGate = makeScriptedBoundAccessGate('allowed').bound;
+      const deniedGate = makeScriptedBoundAccessGate('denied').bound;
+      let firstHeld = false;
+      let raced = false;
+      const gate: BoundAccessGate = {
+        ...allowedGate,
+        decide: (gateInput, transaction) =>
+          Effect.suspend(() => {
+            if (!firstHeld || raced) {
+              return allowedGate.decide(gateInput, transaction);
+            }
+            raced = true;
+            return held.release.pipe(
+              Effect.andThen(Deferred.await(firstCommitted)),
+              Effect.andThen(deniedGate.decide(gateInput, transaction)),
+            );
+          }),
+      };
+      const harness = yield* makeActionTestHarness({
+        accessDecision: gate,
+        actionPermission: 'allowed',
+        ownerRegistration: fixtureOwner(action),
+      });
+
+      const first = yield* harness.runtime.runAction(request(action)).pipe(
+        Effect.tap(() => Deferred.succeed(firstCommitted, null)),
+        Effect.forkChild,
+      );
+      yield* held.entered;
+      firstHeld = true;
+      const retry = yield* harness.runtime
+        .runAction(asks ? request(action) : inProcessRequest(action))
+        .pipe(Effect.exit);
+      const original = yield* Fiber.join(first);
+      const snapshot = harness.snapshot();
+
+      expect(raced).toBe(true);
+      if (asks) {
+        expect(retry).toEqual(Exit.succeed(original));
+      } else {
+        const failure = yield* Effect.flip(retry);
+        expect(Predicate.isTagged(failure, 'ActionAlreadyCommitted')).toBe(true);
+      }
+      // The hook sees the commit, never an uncommitted attempt, and the denial is not recorded.
+      expect(outcomes).toEqual(['Committed', 'AlreadyCommitted']);
+      expect(snapshot.permissionDenials).toEqual([]);
+      expect(snapshot.invocations[0]?.status).toBe('succeeded');
+      expect(snapshot.committed).toHaveLength(1);
+      expect(probe.handlerRuns).toBe(1);
+    }
+  }),
+);

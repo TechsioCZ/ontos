@@ -1,7 +1,7 @@
 // @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
 import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Crypto, DateTime, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
+import { Crypto, DateTime, Deferred, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import type { Connection } from 'effect/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -34,6 +34,7 @@ import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
+import { ModuleStateCheckUnavailableError } from '../modules/module-state-gate-errors.ts';
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import type { BoundAccessGate } from '../operations/access-gate.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
@@ -139,7 +140,11 @@ export interface ActionTestHarnessOptions extends Pick<
   /** Test-only fence lock; defaults to an in-memory no-op because this database has no fence SQL. */
   readonly lockAccessExecutionFence?: NonNullable<ActionRuntimeOptions['lockAccessExecutionFence']>;
   readonly mandateDispatch?: ActionMandateDispatch;
-  readonly moduleState?: TenantModuleState;
+  /**
+   * The tenant's state of every owning module, or a function the harness asks at each module-state read
+   * (`'unavailable'` fails that read as an unreadable state would).
+   */
+  readonly moduleState?: TenantModuleState | (() => TenantModuleState | 'unavailable');
   /**
    * Observes the owner overlay input the runner builds inside the transaction and answers it (O70).
    * Omitting it keeps the fail-closed owner-neutral overlay.
@@ -264,38 +269,27 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         status: 'succeeded',
       });
     });
-    const recordRejection = <Input extends { readonly actionInvocationId: string }>(input: Input, denials: Input[]) =>
-      Effect.all([find(input.actionInvocationId), DateTime.nowAsDate], { concurrency: 1 }).pipe(
-        Effect.flatMap(([invocation, completedAt]) =>
-          Effect.sync(() => {
-            denials.push(input);
-            invocations.set(input.actionInvocationId, {
-              ...invocation,
-              completedAt,
-              status: 'rejected',
-            });
-            return Option.none<ActionRecordedRejection>();
-          }),
-        ),
-      );
+    // Like the repository: a Policy or permission denial meeting an invocation a same-key attempt already
+    // committed is not recorded; the request fails with ActionAlreadyCommitted.
+    const recordRejection = Effect.fn('ActionTestHarness.recordRejection')(function* recordTestRejection<
+      Input extends { readonly actionInvocationId: string },
+    >(input: Input, denials: Input[]) {
+      const invocation = yield* find(input.actionInvocationId);
+      if (invocation.status === 'succeeded') {
+        return yield* new ActionAlreadyCommitted({
+          code: 'action_already_committed',
+          invocationId: input.actionInvocationId,
+          reason: 'This idempotency key already committed successfully',
+        });
+      }
+      const completedAt = yield* DateTime.nowAsDate;
+      denials.push(input);
+      invocations.set(input.actionInvocationId, { ...invocation, completedAt, status: 'rejected' });
+      return Option.none<ActionRecordedRejection>();
+    });
     const repository: ActionRepositoryService = {
       createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
-      // Like the repository: a Policy denial meeting an invocation a same-key attempt already committed
-      // is not recorded; the request takes the replay path.
-      finalizePolicyDenial: Effect.fn('ActionTestHarness.finalizePolicyDenial')(function* finalizeTestPolicyDenial(
-        _executor,
-        input: FinalizeActionPolicyDenialInput,
-      ) {
-        const invocation = yield* find(input.actionInvocationId);
-        if (invocation.status === 'succeeded') {
-          return yield* new ActionAlreadyCommitted({
-            code: 'action_already_committed',
-            invocationId: input.actionInvocationId,
-            reason: 'This idempotency key already committed successfully',
-          });
-        }
-        return yield* recordRejection(input, policyDenials);
-      }),
+      finalizePolicyDenial: (_executor, input) => recordRejection(input, policyDenials),
       flushSuccess: (_transaction, input) =>
         Effect.sync(() => {
           pendingCommit.push(commitSuccess(input));
@@ -511,23 +505,31 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
     );
     const moduleStateGate: ModuleStateGateService = {
       check: checkModuleEntrypoint,
-      prepareSnapshot: (tenantId, entrypoints) =>
-        Effect.succeed(
-          makeModuleStateSnapshot(
-            tenantId,
-            entrypoints,
-            [
-              ...new Set(
-                entrypoints
-                  .filter((entrypoint) => entrypoint.scope === 'tenant')
-                  .map((entrypoint) => entrypoint.moduleKey),
+      prepareSnapshot: (tenantId, entrypoints) => {
+        const state = Predicate.isFunction(options.moduleState)
+          ? options.moduleState()
+          : (options.moduleState ?? 'active');
+        return state === 'unavailable'
+          ? Effect.fail(
+              new ModuleStateCheckUnavailableError({
+                code: 'module_state_check_unavailable',
+                reason: 'Module state could not be checked safely',
+              }),
+            )
+          : Effect.succeed(
+              makeModuleStateSnapshot(
+                tenantId,
+                entrypoints,
+                [
+                  ...new Set(
+                    entrypoints
+                      .filter((entrypoint) => entrypoint.scope === 'tenant')
+                      .map((entrypoint) => entrypoint.moduleKey),
+                  ),
+                ].map((moduleKey) => ({ moduleKey, state })),
               ),
-            ].map((moduleKey) => ({
-              moduleKey,
-              state: options.moduleState ?? 'active',
-            })),
-          ),
-        ),
+            );
+      },
       recheckWrite: () => Effect.void,
     };
     const bindings = new Map<object, unknown>();
