@@ -457,7 +457,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
         ? Option.getOrUndefined(Cause.findErrorOption(mixed.cause))
         : undefined;
       expect(Schema.is(ReadEvidencePersistenceError)(mixedFailure)).toBe(true);
-      expect(Option.map(findPostgresFailure(mixedFailure), ({ code }) => code)).toEqual(Option.some('23503'));
+      // The persistence error carries its own lower-case `code`; the SQLSTATE is the five-character one beneath it.
+      expect(
+        Option.map(
+          findPostgresFailure(mixedFailure, ({ code }) => /^[0-9A-Z]{5}$/u.test(code)),
+          ({ code }) => code,
+        ),
+      ).toEqual(Option.some('23503'));
       expect(yield* countEvidence(admin, tenantId)).toBe(0);
 
       const stale = yield* Effect.exit(evidence.settle({ admittedRevision: staleRevision, rows, scope }));

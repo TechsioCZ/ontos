@@ -8,7 +8,7 @@
 import { ModuleCallRoute, RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
 import type { CallRouteRequest, RouteAnswer } from '@app/core-runtime/execution/module-call-route';
 import { ModuleOperationRouteSchema } from '@app/core-runtime/sdk';
-import { Crypto, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Cause, Crypto, Effect, Layer, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { acquireDelegatedGatewayContext } from './gateway-context-server.ts';
@@ -99,6 +99,23 @@ const governedHeaders = (request: CallRouteRequest, credential: Redacted.Redacte
   'x-trace-id': request.execution.scope.traceId,
 });
 
+/**
+ * Why a module call got no answer, before the route folds it into `Unreachable`: the provider and the tag
+ * of each reason (a timeout, a transport failure, a refused delegation). Never headers, the credential,
+ * the request or a message.
+ */
+const logRouteFailure = <Failure>(message: string, request: CallRouteRequest, cause: Cause.Cause<Failure>) =>
+  Effect.logWarning(message, {
+    causes: cause.reasons.map((reason) => {
+      if (Cause.isFailReason(reason)) {
+        const { error } = reason;
+        return Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag) ? error._tag : 'Untagged';
+      }
+      return Cause.isDieReason(reason) ? 'Defect' : 'Interrupt';
+    }),
+    provider: request.requirement.providerAppId,
+  });
+
 /** The route over a given gateway delegation and the host's HTTP client. */
 export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* makeModuleCallRoute(
   delegation: GatewayDelegation,
@@ -121,6 +138,7 @@ export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* m
     const exchanged = yield* http.execute(httpRequest).pipe(
       Effect.flatMap((response) => response.text.pipe(Effect.map((text) => ({ status: response.status, text })))),
       Effect.timeout(PROVIDER_ANSWER_TIMEOUT),
+      Effect.tapCause((cause) => logRouteFailure('A module call did not reach its provider', request, cause)),
       Effect.option,
     );
     if (Option.isNone(exchanged)) {
@@ -150,7 +168,12 @@ export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* m
         requestCorrelation: request.execution.scope.correlationId,
         subject: subject.value,
       })
-      .pipe(Effect.option);
+      .pipe(
+        Effect.tapCause((cause) =>
+          logRouteFailure('The gateway delegated no credential for a module call', request, cause),
+        ),
+        Effect.option,
+      );
     if (Option.isNone(issued)) {
       return unreachable.make({ reason: 'The gateway did not delegate a credential for this call' });
     }
