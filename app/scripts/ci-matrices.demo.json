@@ -48,7 +48,7 @@
         "!app/akros-storefront/src/catalog-import/**"
       ],
       "source": [
-        "Storefront Typecheck (AKROS and N1)",
+        "Typecheck and OntOS API Boundary Rules",
         "Repository Tooling Tests (1/3)",
         "Repository Tooling Tests (2/3)",
         "Repository Tooling Tests (3/3)"
@@ -131,16 +131,10 @@
     "reviewed-people-apply.test.ts": 23,
     "shell-member-baseline-real-gate.test.ts": 29
   },
-  "source": [
-    {
-      "name": "Storefront Typecheck (AKROS and N1)",
-      "commands": "pnpm --filter akros-storefront --filter n1-storefront run typecheck\n"
-    }
-  ],
   "unit": [
     {
-      "name": "Unit and Component Tests (Merchandise)",
-      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/merchandise run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/merchandise run test:component\n"
+      "name": "Unit and Component Tests (Core Runtime, Merchandise, and Party Registry)",
+      "commands": "pnpm -r --no-sort --if-present --filter ./packages/core-runtime --filter ./verticals/merchandise --filter ./verticals/party-registry run test:unit\npnpm -r --no-sort --if-present --filter ./packages/core-runtime --filter ./verticals/merchandise --filter ./verticals/party-registry run test:component\n"
     },
     {
       "name": "Unit and Component Tests (every other package)",

@@ -29,10 +29,10 @@ served="$(node -e '
   console.log("shell-super-app");
 ')"
 export logs served UNIT_POST_BUILD="${UNIT_POST_BUILD:-}" UNIT_SERVED_ENTRY="${UNIT_SERVED_ENTRY:-}"
-# xargs bounds the parallel builds; each unit runs its own package `build` script, as pnpm -r run build does, from
-# clean outputs, then gets its post-build step when served and its cache receipt.
-status=0
-printf '%s\n' "${ids[@]}" | xargs -P "$BUILD_JOBS" -n 1 bash -c '
+# Each unit runs its own package `build` script, as pnpm -r run build does, from clean outputs, then gets its post-build
+# step when served and its cache receipt.
+# shellcheck disable=SC2016 # expanded by the bash -c that runs it for each unit
+build_unit='
   id="$1"
   unit="verticals/$id"
   [ "$id" != shell-super-app ] || unit=apps/shell-super-app
@@ -51,7 +51,20 @@ printf '%s\n' "${ids[@]}" | xargs -P "$BUILD_JOBS" -n 1 bash -c '
     echo "::error title=Unit build failed::$unit"
     exit 1
   fi
-' _ || status=$?
+'
+# The Shell takes every core of the runner: 78 s alone, 167 s beside Privacy in run 44467964945, where its rspack
+# compiles took twice as long. So a shard that holds it builds it alone first, then its other units BUILD_JOBS at
+# a time.
+first=()
+rest=()
+for id in "${ids[@]}"; do
+  if [ "$id" = shell-super-app ]; then first+=("$id"); else rest+=("$id"); fi
+done
+status=0
+{
+  { [ "${#first[@]}" -eq 0 ] || printf '%s\n' "${first[@]}" | xargs -P 1 -n 1 bash -c "$build_unit" _; } &&
+    { [ "${#rest[@]}" -eq 0 ] || printf '%s\n' "${rest[@]}" | xargs -P "$BUILD_JOBS" -n 1 bash -c "$build_unit" _; }
+} || status=$?
 for log in "$logs"/*.log; do
   echo "::group::$(basename "$log" .log)"
   cat "$log"
