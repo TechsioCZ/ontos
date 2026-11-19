@@ -171,22 +171,23 @@ const fence = (transaction: CoreTransaction, request: TransactionRequest) => {
  */
 const openerCause = (cause: Cause.Cause<unknown>): Cause.Cause<TransactionAborted> => {
   const reasons: Cause.Reason<TransactionAborted>[] = [];
-  let unavailable = false;
+  // The first failure that was not Core's own abort, kept as the `cause` of the abort that replaces it.
+  let unavailable: { readonly failure: unknown } | undefined;
   for (const reason of cause.reasons) {
     if (Cause.isFailReason(reason)) {
       if (Schema.is(TransactionAborted)(reason.error)) {
         reasons.push(Cause.makeFailReason(reason.error));
       } else {
-        unavailable = true;
+        unavailable ??= { failure: reason.error };
       }
     } else if (Cause.isDieReason(reason) && isSqlError(reason.defect)) {
-      unavailable = true;
+      unavailable ??= { failure: reason.defect };
     } else {
       reasons.push(reason);
     }
   }
-  if (unavailable && !reasons.some((reason) => Cause.isFailReason(reason))) {
-    reasons.push(Cause.makeFailReason(new TransactionAborted({ reason: 'database_unavailable' })));
+  if (unavailable !== undefined && !reasons.some((reason) => Cause.isFailReason(reason))) {
+    reasons.push(Cause.makeFailReason(abortedBy('database_unavailable')(unavailable.failure)));
   }
   return Cause.fromReasons(reasons);
 };

@@ -9,6 +9,7 @@
 import { Cause, Effect, Exit, Option, Predicate, Schema } from 'effect';
 
 import { withOptional } from '../access/decision/optional.ts';
+import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { OwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
 import { bindScopedWorkloadAdmission } from '../access/enforcement/workload-admission.ts';
 import { ExecutionRuleViolation, READ_EXECUTION_BUDGET } from '../execution/contract.ts';
@@ -120,6 +121,45 @@ const outcomeCodeOf = <Failure>(failure: Failure): string =>
     ? failure.code
     : 'read_handler_failed';
 
+/** A PostgreSQL SQLSTATE: five digits or upper-case letters (a Core error `code` is lower-case words). */
+const SQLSTATE = /^[0-9A-Z]{5}$/u;
+
+const decodeTagged = Schema.decodeUnknownOption(Schema.Struct({ _tag: Schema.String }));
+
+/**
+ * One reason of an unavailable answer, as the log names it: its tag, the abort reason or the broken
+ * rule, and the SQLSTATE of a database failure anywhere in what it preserved. Never a message, an input
+ * or a result value.
+ */
+const describeFailure = <Failure>(failure: Failure) => {
+  let detail: string | undefined;
+  if (isTransactionAborted(failure)) {
+    detail = failure.reason;
+  } else if (isExecutionRuleViolation(failure)) {
+    detail = failure.rule;
+  }
+  const sqlState = findPostgresFailure(failure, ({ code }) => SQLSTATE.test(code)).pipe(Option.map(({ code }) => code));
+  return {
+    ...withOptional(withOptional({}, 'detail', detail), 'sqlState', Option.getOrUndefined(sqlState)),
+    tag: decodeTagged(failure).pipe(Option.match({ onNone: () => 'Untagged', onSome: ({ _tag }) => _tag })),
+  };
+};
+
+/**
+ * The one warning of a `{ run }` read that answers unavailable: the read key and every reason of the
+ * preserved cause, described by `describeFailure`.
+ */
+const logUnavailable = <Failure>(readKey: string, cause: Cause.Cause<Failure>) =>
+  Effect.logWarning('A { run } Read answered unavailable', {
+    causes: cause.reasons.map((reason) => {
+      if (Cause.isFailReason(reason)) {
+        return describeFailure(reason.error);
+      }
+      return Cause.isDieReason(reason) ? describeFailure(reason.defect) : { tag: 'Interrupt' };
+    }),
+    readKey,
+  });
+
 /**
  * The read's answer for a failed `run` (or a failed session open) that is not a denial. An owner rule
  * that could not answer is permission unavailable, as on the one-transaction path; any other abort and
@@ -127,52 +167,37 @@ const outcomeCodeOf = <Failure>(failure: Failure): string =>
  * Defects and interruptions that are none of these pass unchanged.
  */
 const answerForFailure = <DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>, Failure>(
+  readKey: string,
   cause: Cause.Cause<Failure>,
   domainErrorSchema: DomainErrorSchema | undefined,
 ): Effect.Effect<Cause.Cause<DomainErrorSchema['Type'] | ReadCoreError>> => {
+  const unavailable = (failure: ReadHandlerUnavailable | ReadPermissionUnavailable) =>
+    logUnavailable(readKey, cause).pipe(Effect.as(Cause.fail(preserveFailureCause(failure, cause))));
   const aborts = abortReasonsOf(cause);
   if (aborts.has('owner_unavailable')) {
-    return Effect.succeed(
-      Cause.fail(
-        preserveFailureCause(
-          new ReadPermissionUnavailable({
-            code: 'read_permission_unavailable',
-            reason: 'Owner-local Read authorization is temporarily unavailable',
-          }),
-          cause,
-        ),
-      ),
+    return unavailable(
+      new ReadPermissionUnavailable({
+        code: 'read_permission_unavailable',
+        reason: 'Owner-local Read authorization is temporarily unavailable',
+      }),
     );
   }
   if (aborts.size > 0) {
-    return Effect.succeed(
-      Cause.fail(
-        preserveFailureCause(
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: aborts.has('budget_exhausted')
-              ? 'The Read spent its execution budget'
-              : 'The Read could not complete its owner transaction',
-          }),
-          cause,
-        ),
-      ),
+    return unavailable(
+      new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: aborts.has('budget_exhausted')
+          ? 'The Read spent its execution budget'
+          : 'The Read could not complete its owner transaction',
+      }),
     );
   }
-  const violations = ruleViolationsOf(cause);
-  if (violations.length > 0) {
-    return Effect.logError('A { run } Read broke an execution kernel rule', ...violations).pipe(
-      Effect.as(
-        Cause.fail(
-          preserveFailureCause(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'The Read broke an execution rule',
-            }),
-            cause,
-          ),
-        ),
-      ),
+  if (ruleViolationsOf(cause).length > 0) {
+    return unavailable(
+      new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'The Read broke an execution rule',
+      }),
     );
   }
   const [failure] = failuresOf(cause);
@@ -349,6 +374,9 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
             : failure,
         ),
       );
+  /** The evidence the answer depends on: when it cannot be written, that is the answer, and it is logged. */
+  const settleAnswer = (row: PersistReadEvidenceInput) =>
+    settle(row).pipe(Effect.tapCause((cause) => logUnavailable(descriptor.readKey, cause)));
   const failedRow = (outcomeCode: string) =>
     readRow({ outcome: 'failed', outcomeCode, outcomeStage: 'execution', resultCount: 0 });
   /** Best effort: an evidence failure is logged and never replaces the read's own failure. */
@@ -372,7 +400,7 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
   if (ownerDenied || moduleDenial !== undefined) {
     const denial = Schema.is(ReadPermissionDenied)(moduleDenial) ? moduleDenial : ownerDenial();
     const evidenceExit = yield* Effect.exit(
-      settle(
+      settleAnswer(
         readRow({ outcome: 'denied', outcomeCode: 'read_permission_denied', outcomeStage: 'authz', resultCount: 0 }),
       ),
     );
@@ -385,7 +413,7 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
 
   // 6. Every other failure: the read's answer, with its failed row and the call rows.
   if (Exit.isFailure(exit)) {
-    const answer = yield* answerForFailure(exit.cause, getReadDomainErrorSchema(registration));
+    const answer = yield* answerForFailure(descriptor.readKey, exit.cause, getReadDomainErrorSchema(registration));
     const [answerFailure] = failuresOf(answer);
     yield* settleFailure(answerFailure === undefined ? 'read_handler_defect' : outcomeCodeOf(answerFailure));
     return yield* Effect.failCause(answer);
@@ -412,7 +440,7 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
     ],
     { concurrency: 1 },
   ).pipe(Effect.tapError((validationFailure) => validationFailure.pipe(outcomeCodeOf, settleFailure)));
-  yield* settle(
+  yield* settleAnswer(
     readRow(
       withOptional(
         withOptional(
