@@ -8,6 +8,8 @@ import type {
 } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
+import { callAnswer } from '@app/core-runtime/sdk';
+import type { CallOutcome } from '@app/core-runtime/sdk';
 import { Crypto, Effect, Redacted } from 'effect';
 
 import { isPaymentTermDefinitionSupported } from '../../shared/domain/payment-term-contracts.ts';
@@ -121,9 +123,9 @@ const catalogDefinitions = Effect.fn('PaymentTermCatalog.catalogDefinitions')(fu
   return definitions;
 });
 
-export const paymentTermCatalogPort = (
-  requestCorrelation: string,
-  execute: CurrentPaymentTermsExecutor = executeCurrentPaymentTerms,
+/** The port over one source of Catalog answers: one request per instant and batch, one after another. */
+const catalogPortOver = <Failure>(
+  fetch: (payload: CurrentPaymentTermsRequest) => Effect.Effect<CurrentPaymentTermsResponse, Failure>,
 ): PaymentTermCatalogPort => ({
   resolveDefinitions: (requests) =>
     Effect.forEach(
@@ -132,7 +134,7 @@ export const paymentTermCatalogPort = (
         const [first, ...rest] = batch;
         return first === undefined
           ? Effect.succeed([])
-          : execute(requestPayload([first, ...rest]), requestCorrelation).pipe(
+          : fetch(requestPayload([first, ...rest])).pipe(
               Effect.mapError(unavailable),
               Effect.flatMap(catalogDefinitions),
             );
@@ -140,6 +142,22 @@ export const paymentTermCatalogPort = (
       { concurrency: 1 },
     ).pipe(Effect.map((definitions) => definitions.flat())),
 });
+
+export const paymentTermCatalogPort = (
+  requestCorrelation: string,
+  execute: CurrentPaymentTermsExecutor = executeCurrentPaymentTerms,
+): PaymentTermCatalogPort => catalogPortOver((payload) => execute(payload, requestCorrelation));
+
+/**
+ * The port over Core's `call` to the Catalog (a `{ run }` read). Core owns the credential, the route and
+ * the decoding; every outcome other than the Catalog's answer is unavailable, never an empty catalog.
+ */
+export const paymentTermCatalogPortFromCall = (
+  call: (payload: CurrentPaymentTermsRequest) => Effect.Effect<CallOutcome<CurrentPaymentTermsResponse>>,
+): PaymentTermCatalogPort =>
+  catalogPortOver((payload) =>
+    call(payload).pipe(Effect.flatMap((outcome) => Effect.fromOption(callAnswer(outcome), () => outcome))),
+  );
 
 export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatalog.portFromEnvironment')(
   function* paymentTermCatalogPortFromEnvironment(

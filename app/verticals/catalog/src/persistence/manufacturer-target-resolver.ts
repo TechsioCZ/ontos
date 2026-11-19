@@ -1,11 +1,14 @@
 import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { PartyDetailResponse } from '@app/party-registry/api/client';
+import type { PartyDetailRequest } from '@app/party-registry/api';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import type { LegalEntityRef } from '@app/core-runtime/resources/legal-entity';
 import { requireModuleOperation, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import type { CallOutcome } from '@app/core-runtime/sdk';
+import type { LegalEntityDetailResponseSchema } from '@app/core-runtime/sdk/core';
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import type { ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
@@ -126,69 +129,115 @@ const managedState = (status: ManagedLegalEntityDetail['status']): 'CURRENT' | '
   return status === 'suspended' ? 'SUSPENDED' : 'ARCHIVED';
 };
 
+type ManufacturerOwnerFailure = ManufacturerTargetAbsent | ManufacturerTargetForbidden | ManufacturerTargetUnavailable;
+
+/** The two owner reads, each already mapped to the resolver's absence, denial and unavailability. */
+interface ManufacturerOwnerReads {
+  readonly legalEntity:
+    | ((payload: { readonly legalEntityRef: LegalEntityRef }) => Effect.Effect<unknown, ManufacturerOwnerFailure>)
+    | undefined;
+  readonly party: (
+    payload: { readonly partyRef: Extract<ManufacturerTarget, { readonly kind: 'PARTY' }>['partyRef'] },
+    requestId: string,
+  ) => Effect.Effect<unknown, ManufacturerOwnerFailure>;
+}
+
 /** Read-only owner evidence; it never creates an identity or changes the Catalog relation. */
+const resolverOver = (owners: ManufacturerOwnerReads) => ({
+  resolve: (
+    target: ManufacturerTarget,
+    scope: ManufacturerTargetResolutionScope,
+  ): Effect.Effect<
+    ResolvedManufacturerTarget,
+    ManufacturerTargetInvalid | ManufacturerTargetAbsent | ManufacturerTargetForbidden | ManufacturerTargetUnavailable
+  > => {
+    if (
+      scope.tenantId.length === 0 ||
+      scope.requestId.length === 0 ||
+      (target.kind === 'PARTY' && target.partyRef.tenantId !== scope.tenantId) ||
+      (target.kind === 'LEGAL_ENTITY' && target.legalEntityRef.tenantId !== scope.tenantId)
+    ) {
+      return Effect.fail(
+        new ManufacturerTargetInvalid({ reason: 'A trusted matching Tenant and request identity are required' }),
+      );
+    }
+    if (target.kind === 'LEGAL_ENTITY') {
+      if (owners.legalEntity === undefined) {
+        return Effect.fail(new ManufacturerTargetUnavailable());
+      }
+      return owners.legalEntity({ legalEntityRef: target.legalEntityRef }).pipe(
+        Effect.filterOrFail(Schema.is(ManagedLegalEntityDetailSchema), () => new ManufacturerTargetUnavailable()),
+        Effect.filterOrFail(
+          (detail) =>
+            detail.legalEntityRef.tenantId === scope.tenantId &&
+            detail.legalEntityRef.resourceId === target.legalEntityRef.resourceId,
+          () => new ManufacturerTargetUnavailable(),
+        ),
+        Effect.map((detail) => ({
+          canonicalTarget: target,
+          kind: 'LEGAL_ENTITY' as const,
+          lifecycleStatus: detail.status,
+          requestedTarget: target,
+          state: managedState(detail.status),
+        })),
+      );
+    }
+    return owners.party({ partyRef: target.partyRef }, scope.requestId).pipe(
+      Effect.filterOrFail(Schema.is(PartyDetailResponseSchema), () => new ManufacturerTargetUnavailable()),
+      Effect.filterOrFail(
+        (detail) => validPartyDetail(detail, target, scope.tenantId),
+        () => new ManufacturerTargetUnavailable(),
+      ),
+      Effect.map((detail) => ({
+        canonicalTarget: { kind: 'PARTY' as const, partyRef: detail.resolution.canonicalPartyRef },
+        kind: 'PARTY' as const,
+        ownerRevision: detail.party.revision,
+        requestedTarget: target,
+        state: partyState(detail),
+      })),
+    );
+  },
+});
+
+/** Over owner ports whose failures are the owners' own tagged problems. */
 export const makeManufacturerTargetResolver = (configuredPorts?: ManufacturerTargetResolverPorts) => {
   const ports: ManufacturerTargetResolverPorts = configuredPorts ?? {
     readPartyDetail: () => Effect.fail(new ManufacturerTargetUnavailable()),
   };
-  return {
-    resolve: (
-      target: ManufacturerTarget,
-      scope: ManufacturerTargetResolutionScope,
-    ): Effect.Effect<
-      ResolvedManufacturerTarget,
-      ManufacturerTargetInvalid | ManufacturerTargetAbsent | ManufacturerTargetForbidden | ManufacturerTargetUnavailable
-    > => {
-      if (
-        scope.tenantId.length === 0 ||
-        scope.requestId.length === 0 ||
-        (target.kind === 'PARTY' && target.partyRef.tenantId !== scope.tenantId) ||
-        (target.kind === 'LEGAL_ENTITY' && target.legalEntityRef.tenantId !== scope.tenantId)
-      ) {
-        return Effect.fail(
-          new ManufacturerTargetInvalid({ reason: 'A trusted matching Tenant and request identity are required' }),
-        );
-      }
-      if (target.kind === 'LEGAL_ENTITY') {
-        if (ports.readManagedLegalEntity === undefined) {
-          return Effect.fail(new ManufacturerTargetUnavailable());
-        }
-        return ports.readManagedLegalEntity({ legalEntityRef: target.legalEntityRef }).pipe(
-          Effect.mapError(legalEntityReadFailure),
-          Effect.filterOrFail(Schema.is(ManagedLegalEntityDetailSchema), () => new ManufacturerTargetUnavailable()),
-          Effect.filterOrFail(
-            (detail) =>
-              detail.legalEntityRef.tenantId === scope.tenantId &&
-              detail.legalEntityRef.resourceId === target.legalEntityRef.resourceId,
-            () => new ManufacturerTargetUnavailable(),
-          ),
-          Effect.map((detail) => ({
-            canonicalTarget: target,
-            kind: 'LEGAL_ENTITY' as const,
-            lifecycleStatus: detail.status,
-            requestedTarget: target,
-            state: managedState(detail.status),
-          })),
-        );
-      }
-      return ports.readPartyDetail({ partyRef: target.partyRef }, scope.requestId).pipe(
-        Effect.mapError(partyReadFailure),
-        Effect.filterOrFail(Schema.is(PartyDetailResponseSchema), () => new ManufacturerTargetUnavailable()),
-        Effect.filterOrFail(
-          (detail) => validPartyDetail(detail, target, scope.tenantId),
-          () => new ManufacturerTargetUnavailable(),
-        ),
-        Effect.map((detail) => ({
-          canonicalTarget: { kind: 'PARTY' as const, partyRef: detail.resolution.canonicalPartyRef },
-          kind: 'PARTY' as const,
-          ownerRevision: detail.party.revision,
-          requestedTarget: target,
-          state: partyState(detail),
-        })),
-      );
-    },
-  };
+  const { readManagedLegalEntity } = ports;
+  return resolverOver({
+    legalEntity:
+      readManagedLegalEntity === undefined
+        ? undefined
+        : (payload) => readManagedLegalEntity(payload).pipe(Effect.mapError(legalEntityReadFailure)),
+    party: (payload, requestId) => ports.readPartyDetail(payload, requestId).pipe(Effect.mapError(partyReadFailure)),
+  });
 };
+
+/** Core's `call` outcome as owner evidence: not found is absence, forbidden is denial, anything else unavailability. */
+const ownerCallAnswer = <Output>(outcome: CallOutcome<Output>): Effect.Effect<Output, ManufacturerOwnerFailure> =>
+  Match.valueTags(outcome, {
+    Forbidden: () => Effect.fail(new ManufacturerTargetForbidden()),
+    NotFound: () => Effect.fail(new ManufacturerTargetAbsent()),
+    Ok: ({ value }) => Effect.succeed(value),
+    Rejected: () => Effect.fail(new ManufacturerTargetUnavailable()),
+    Unavailable: () => Effect.fail(new ManufacturerTargetUnavailable()),
+  });
+
+/** The owner reads a governed read makes through Core's `call`: Party detail and Core's Legal Entity detail. */
+interface ManufacturerOwnerCalls {
+  readonly legalEntityDetail: (payload: {
+    readonly legalEntityRef: LegalEntityRef;
+  }) => Effect.Effect<CallOutcome<typeof LegalEntityDetailResponseSchema.Type>>;
+  readonly partyDetail: (payload: PartyDetailRequest) => Effect.Effect<CallOutcome<PartyDetailResponse>>;
+}
+
+/** The same owner validation over Core's `call`: Core carries the caller identity, credential and route. */
+export const manufacturerTargetResolverForCalls = (calls: ManufacturerOwnerCalls) =>
+  resolverOver({
+    legalEntity: (payload) => calls.legalEntityDetail(payload).pipe(Effect.flatMap(ownerCallAnswer)),
+    party: (payload) => calls.partyDetail(payload).pipe(Effect.flatMap(ownerCallAnswer)),
+  });
 
 export const manufacturerTargetResolver = makeManufacturerTargetResolver();
 
@@ -200,8 +249,7 @@ export const manufacturerTargetResolverForCoreRead = (
   crypto: Crypto.Crypto,
   requirementKey?:
     | 'commerce.catalog.requirement.set-product-manufacturer-party'
-    | 'commerce.catalog.requirement.change-product-manufacturer-party'
-    | 'commerce.catalog.requirement.manufacturer-current-party',
+    | 'commerce.catalog.requirement.change-product-manufacturer-party',
 ) =>
   makeManufacturerTargetResolver({
     readManagedLegalEntity: ({ legalEntityRef }) =>

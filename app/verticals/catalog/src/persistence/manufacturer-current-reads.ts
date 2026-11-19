@@ -6,19 +6,13 @@ import { ManufacturerSubjectSchema } from '../../shared/domain/manufacturer-rela
 import type { ManufacturerSubject, ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import { manufacturerRelationRevisions, manufacturerRelations, productVariants, products } from '../database/schema.ts';
 import { ManufacturerPersistenceUnavailable } from './manufacturer-persistence.ts';
-import type { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
-import type { ManufacturerTargetForbidden } from './manufacturer-target-forbidden.ts';
-import type { ManufacturerTargetInvalid } from './manufacturer-target-invalid.ts';
-import type { ResolvedManufacturerTarget, manufacturerTargetResolver } from './manufacturer-target-resolver.ts';
-import type { ManufacturerTargetUnavailable } from './manufacturer-target-unavailable.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 type RelationRow = typeof manufacturerRelations.$inferSelect;
 type RevisionRow = typeof manufacturerRelationRevisions.$inferSelect;
-type TargetResolver = typeof manufacturerTargetResolver;
 
-/** The current Catalog assertion as its transaction reads it: the owner is resolved after commit. */
-interface ManufacturerStoredClaim {
+/** The Catalog's own current relation at one instant, before any owner resolution of its target. */
+interface ManufacturerCurrentClaim {
   readonly actingPrincipalId: string;
   readonly actionInvocationId: string;
   readonly effectiveFrom: string | undefined;
@@ -33,44 +27,21 @@ interface ManufacturerStoredClaim {
   readonly target: ManufacturerTarget;
 }
 
-interface ManufacturerCurrentClaim extends ManufacturerStoredClaim {
-  readonly owner: ResolvedManufacturerTarget;
-}
-
-export type ManufacturerStoredResult =
-  | { readonly kind: 'ABSENT' }
-  | { readonly claim: ManufacturerStoredClaim; readonly kind: 'CURRENT' };
-
 type ManufacturerCurrentResult =
   | { readonly kind: 'ABSENT' }
   | { readonly claim: ManufacturerCurrentClaim; readonly kind: 'CURRENT' };
 
 export interface ManufacturerCurrentReads {
-  /** Database only: the one current assertion and its revision evidence, in one transaction. */
-  readonly effective: (
+  /**
+   * The one current relation of the subject at `at`, its whole revision chain proven against its head. It
+   * makes no owner call: the read resolves the target's owner status outside this transaction and then
+   * calls this again to prove the same relation revision is still the current one.
+   */
+  readonly current: (
     subject: ManufacturerSubject,
     at: string,
-  ) => Effect.Effect<ManufacturerStoredResult, ManufacturerPersistenceUnavailable>;
+  ) => Effect.Effect<ManufacturerCurrentResult, ManufacturerPersistenceUnavailable>;
 }
-
-/**
- * After the Catalog transaction: the authoritative owner of the asserted target (a governed Legal Entity read
- * or a Party Registry read), so no owner round trip holds Catalog's connection.
- */
-export const resolveManufacturerCurrentOwner = (
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Owner-read port is bound by the governed read's finish step.
-  resolver: TargetResolver,
-  scope: Pick<OperationalScope, 'correlationId' | 'tenantId'>,
-  stored: ManufacturerStoredResult,
-): Effect.Effect<
-  ManufacturerCurrentResult,
-  ManufacturerTargetAbsent | ManufacturerTargetForbidden | ManufacturerTargetInvalid | ManufacturerTargetUnavailable
-> =>
-  stored.kind === 'ABSENT'
-    ? Effect.succeed(stored)
-    : resolver
-        .resolve(stored.claim.target, { requestId: scope.correlationId, tenantId: scope.tenantId })
-        .pipe(Effect.map((owner) => ({ claim: { ...stored.claim, owner }, kind: 'CURRENT' as const })));
 
 const unavailable = (cause?: unknown) => {
   const failure = new ManufacturerPersistenceUnavailable({
@@ -130,9 +101,9 @@ export const manufacturerCurrentReadsForScope = (
   scope: OperationalScope,
 ): ManufacturerCurrentReads => {
   const { tenantId } = scope;
-  const effective: ManufacturerCurrentReads['effective'] = Effect.fn('ManufacturerCurrentReads.effective')(
-    // oxlint-disable-next-line eslint/complexity -- One fail-closed read transaction validates subject, competing heads, revision evidence, and owner status together.
-    function* effective(subject, at) {
+  const current: ManufacturerCurrentReads['current'] = Effect.fn('ManufacturerCurrentReads.current')(
+    // oxlint-disable-next-line eslint/complexity -- One fail-closed read transaction validates subject, competing heads, and revision evidence together.
+    function* currentRelation(subject, at) {
       if (
         !Schema.is(ManufacturerSubjectSchema)(subject) ||
         subject.tenantId !== tenantId ||
@@ -177,15 +148,15 @@ export const manufacturerCurrentReadsForScope = (
       ) {
         return yield* unavailable();
       }
-      const current = heads.filter((row) => active(row, instant));
-      if (current.length === 0) {
+      const activeHeads = heads.filter((row) => active(row, instant));
+      if (activeHeads.length === 0) {
         return { kind: 'ABSENT' };
       }
       // A Product-wide and Variant assertion are not ordered overrides.
-      if (current.length !== 1) {
+      if (activeHeads.length !== 1) {
         return yield* unavailable();
       }
-      const [head] = current;
+      const [head] = activeHeads;
       if (head === undefined || head.currentRevision < 1 || !Number.isSafeInteger(head.currentRevision)) {
         return yield* unavailable();
       }
@@ -213,7 +184,6 @@ export const manufacturerCurrentReadsForScope = (
       ) {
         return yield* unavailable();
       }
-      const target = targetOf(head);
       return {
         claim: {
           actingPrincipalId: latest.actingPrincipalId,
@@ -239,11 +209,11 @@ export const manufacturerCurrentReadsForScope = (
                   resourceType: 'commerce.catalog.product',
                   tenantId,
                 },
-          target,
+          target: targetOf(head),
         },
         kind: 'CURRENT',
       };
     },
   );
-  return { effective };
+  return { current };
 };

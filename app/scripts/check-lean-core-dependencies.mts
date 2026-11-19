@@ -784,12 +784,6 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     specifier: `${commercePackageSpecifierPrefix}/api/purchase-proposal-basis/client`,
   },
   {
-    importer: 'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts',
-    reason:
-      'Market Catalog composes the narrow Customer Context current subject-restrictions owner client for eligibility resolution.',
-    specifier: `${commercePackageSpecifierPrefix}/api/market-subject-restrictions-current/client`,
-  },
-  {
     importer: 'verticals/pricing/src/integrations/commerce-price-group-resolution.ts',
     reason:
       'Pricing composes the narrow Customer Context price-group resolution owner client at its explicit integration boundary.',

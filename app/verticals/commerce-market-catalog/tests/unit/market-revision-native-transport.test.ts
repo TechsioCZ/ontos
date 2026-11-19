@@ -92,6 +92,29 @@ it.layer(NodeServices.layer)('owned Market Unix transport', (suite) => {
     ),
   );
 
+  suite.effect('names an oversized response frame in the failure the channel raises', () =>
+    Effect.scoped(
+      Effect.gen(function* rejectOversizedResponse() {
+        const channel = yield* openMarketRevisionNativeChannel();
+        const peer = yield* Effect.scoped(
+          Effect.gen(function* writeOversizedFrame() {
+            const socket = yield* NodeSocket.makeNet({ openTimeout: '2 seconds', path: channel.socketPath });
+            // The writer sends only while the socket's reader is open.
+            yield* Socket.readerBytes(socket);
+            const writer = yield* socket.writer;
+            yield* writer.write(new Uint8Array(marketRevisionNativeFrameLimit + 1).fill(120));
+          }),
+          // The channel closes its end on the oversized frame, so the rest of this write may fail.
+        ).pipe(Effect.ignore, Effect.forkChild);
+        const failure = yield* channel.next.pipe(Effect.flip);
+        expect(failure).toEqual(
+          new MarketRevisionNativeTransportError({ reason: 'Private Market frame exceeds its bound' }),
+        );
+        yield* Fiber.join(peer);
+      }),
+    ),
+  );
+
   suite.effect('fails an owned STOP handshake immediately when the peer closes without STOPPED', () =>
     Effect.scoped(
       Effect.gen(function* rejectUnacknowledgedStop() {

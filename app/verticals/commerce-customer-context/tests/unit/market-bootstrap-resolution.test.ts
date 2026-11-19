@@ -1,4 +1,5 @@
 import type {
+  EligibleMarketTuplesRequest,
   EligibleMarketTuplesResponse,
   ResolveCommerceMarketRequest,
   ResolveCommerceMarketResponse,
@@ -7,6 +8,9 @@ import {
   EligibleMarketTuplesResponseSchema,
   ResolveCommerceMarketResponseSchema,
 } from '@app/commerce-market-catalog/api/client';
+import { CallUnavailableSchema, RequestExecutionSchema } from '@app/core-runtime/sdk';
+import type { CallOutcome } from '@app/core-runtime/sdk';
+import { makeExecutionStandIn } from '@app/core-runtime/testing/sdk';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -18,8 +22,14 @@ import {
   MarketBootstrapResolutionRequestSchema,
   resolveMarketBootstrapPolicy,
 } from '../../shared/domain/market-bootstrap-resolution.ts';
-import { handleMarketBootstrapResolution } from '../../src/api/market-bootstrap-resolution.read.ts';
-import type { MarketBootstrapResolutionServices } from '../../src/api/market-bootstrap-resolution.read.ts';
+import {
+  marketBootstrapResolutionCalls,
+  runMarketBootstrapResolution,
+} from '../../src/api/market-bootstrap-resolution.read.ts';
+import type {
+  MarketBootstrapResolutionRunContext,
+  MarketBootstrapResolutionServices,
+} from '../../src/api/market-bootstrap-resolution.read.ts';
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread -- Test fixtures preserve exact optional schema fields. */
 
@@ -195,11 +205,61 @@ const scope = {
   trustedStorefrontId: storefrontId,
 };
 
-const context = (services: MarketBootstrapResolutionServices) => ({
-  readKey: 'commerce.customer-context.api.market-bootstrap-resolution',
-  scope,
-  services,
-});
+/** What the Market owner and the bootstrap policy owner answer in one scenario. */
+interface MarketBootstrapScenario extends MarketBootstrapResolutionServices {
+  readonly loadEligibleTuples: (
+    input: EligibleMarketTuplesRequest,
+  ) => Effect.Effect<EligibleMarketTuplesResponse, MarketBootstrapDependencyUnavailable>;
+  readonly resolveMarket: (
+    input: ResolveCommerceMarketRequest,
+  ) => Effect.Effect<ResolveCommerceMarketResponse, MarketBootstrapDependencyUnavailable>;
+}
+
+/** A Market owner answer as Core's call reports it: the decoded answer, or unavailable. */
+const asCallOutcome = <Value>(
+  answer: Effect.Effect<Value, MarketBootstrapDependencyUnavailable>,
+): Effect.Effect<CallOutcome<Value>> =>
+  answer.pipe(
+    Effect.map((value): CallOutcome<Value> => ({ _tag: 'Ok', value })),
+    Effect.catchTag('MARKET_BOOTSTRAP_DEPENDENCY_UNAVAILABLE', ({ reason }) =>
+      Effect.succeed(CallUnavailableSchema.make({ reason, retryable: true })),
+    ),
+  );
+
+/**
+ * Core's capability stand-ins over one scenario: the two Market calls answer from the scenario, every
+ * transaction gets its policy owner. A call while a transaction is open dies, as it does in Core.
+ */
+const harness = (scenario: MarketBootstrapScenario) => {
+  const standIn = makeExecutionStandIn(marketBootstrapResolutionCalls, {
+    answers: {
+      eligibleTuples: (input) => asCallOutcome(scenario.loadEligibleTuples(input)),
+      resolveMarket: (input) => asCallOutcome(scenario.resolveMarket(input)),
+    },
+    operationAt: evaluatedAtInstant,
+    services: () => ({ loadPolicyCandidates: scenario.loadPolicyCandidates }),
+  });
+  const context: MarketBootstrapResolutionRunContext = {
+    access: {},
+    call: standIn.call,
+    execution: {
+      compositionRevision: 'composition-revision-1',
+      identity: RequestExecutionSchema.make({ via: 'system' }),
+      operationKey: 'commerce.customer-context.api.market-bootstrap-resolution',
+      owningModuleKey: 'commerce.customer-context',
+    },
+    readKey: 'commerce.customer-context.api.market-bootstrap-resolution',
+    scope,
+    transaction: standIn.transaction,
+  };
+  return {
+    calledWith: () => standIn.steps.flatMap((step) => (step.kind === 'call' ? [step.name] : [])),
+    context,
+    steps: () => standIn.steps.map((step) => step.kind),
+  };
+};
+
+const context = (scenario: MarketBootstrapScenario) => harness(scenario).context;
 
 describe('Market bootstrap policy resolution', () => {
   it('selects Storefront + Channel + Seller over Channel + Seller over Seller', () => {
@@ -351,7 +411,7 @@ describe('Governed Market bootstrap resolution', () => {
       for (const explicitOutcome of explicitOutcomes) {
         let policyCalls = 0;
         let observedRequest: ResolveCommerceMarketRequest | undefined;
-        const result = yield* handleMarketBootstrapResolution(
+        const result = yield* runMarketBootstrapResolution(
           explicitRequest,
           context({
             loadEligibleTuples: () => Effect.succeed(eligible([firstTuple, secondTuple])),
@@ -377,7 +437,7 @@ describe('Governed Market bootstrap resolution', () => {
   it.effect('uses SOLE_ELIGIBLE for one complete tuple when no bootstrap policy exists', () =>
     Effect.gen(function* soleEligibleWithoutPolicy() {
       let observedRequest: ResolveCommerceMarketRequest | undefined;
-      const result = yield* handleMarketBootstrapResolution(
+      const result = yield* runMarketBootstrapResolution(
         request(),
         context({
           loadEligibleTuples: () => Effect.succeed(eligible([firstTuple])),
@@ -400,7 +460,7 @@ describe('Governed Market bootstrap resolution', () => {
 
   it.effect('returns MARKET_SELECTION_REQUIRED for a complete multi-Market set without policy', () =>
     Effect.gen(function* selectionRequiredWithoutPolicy() {
-      const result = yield* handleMarketBootstrapResolution(
+      const result = yield* runMarketBootstrapResolution(
         request(),
         context({
           loadEligibleTuples: () => Effect.succeed(eligible([firstTuple, secondTuple])),
@@ -417,7 +477,7 @@ describe('Governed Market bootstrap resolution', () => {
   it.effect('turns a Market owner outage into a retryable legitimate outcome without consulting policy', () =>
     Effect.gen(function* marketOutage() {
       let policyCalled = false;
-      const result = yield* handleMarketBootstrapResolution(
+      const result = yield* runMarketBootstrapResolution(
         request(),
         context({
           loadEligibleTuples: () =>
@@ -452,7 +512,7 @@ describe('Governed Market bootstrap resolution', () => {
   it.effect('fails closed when the Current bootstrap policy owner is unavailable', () =>
     Effect.gen(function* policyOutage() {
       let resolveCalled = false;
-      const result = yield* handleMarketBootstrapResolution(
+      const result = yield* runMarketBootstrapResolution(
         request(),
         context({
           loadEligibleTuples: () => Effect.succeed(eligible([firstTuple])),
@@ -484,7 +544,7 @@ describe('Governed Market bootstrap resolution', () => {
     Effect.gen(function* validBootstrapDefault() {
       let observedRequest: ResolveCommerceMarketRequest | undefined;
       const policyRevisionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
-      const result = yield* handleMarketBootstrapResolution(
+      const result = yield* runMarketBootstrapResolution(
         request(),
         context({
           loadEligibleTuples: () => Effect.succeed(eligible([firstTuple, secondTuple])),
@@ -524,7 +584,7 @@ describe('Governed Market bootstrap resolution', () => {
       let eligibleAt = '';
       let policyAt = '';
       let marketAt = '';
-      const result = yield* handleMarketBootstrapResolution(
+      const result = yield* runMarketBootstrapResolution(
         request(),
         context({
           loadEligibleTuples: (input) => {
@@ -564,6 +624,63 @@ describe('Governed Market bootstrap resolution', () => {
       ).toBe(policyBoundary);
       expect(DateTime.formatIso(result.result.policyEvidence.evaluatedAt)).toBe(evaluatedAt);
       expect(result.result.policyEvidence.status).toBe('APPLIED');
+    }),
+  );
+});
+
+describe('Market bootstrap resolution on the SDK kernel', () => {
+  it.effect('calls the Market owner before and after the policy transaction, never inside it', () =>
+    Effect.gen(function* callsOutsideTransaction() {
+      const fixture = harness({
+        loadEligibleTuples: () => Effect.succeed(eligible([firstTuple])),
+        loadPolicyCandidates: () =>
+          Effect.succeed(
+            policy([partition(sellerOneId, [policyCandidate('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', sellerScope())])]),
+          ),
+        resolveMarket: () => Effect.succeed(resolved(firstTuple, 'BOOTSTRAP_DEFAULT')),
+      });
+      const result = yield* runMarketBootstrapResolution(request(), fixture.context);
+
+      expect(result.result.marketResolution).toMatchObject({ outcome: 'MARKET_RESOLVED' });
+      expect(fixture.steps()).toEqual(['call', 'begin', 'end', 'call']);
+      expect(fixture.calledWith()).toEqual(['eligibleTuples', 'resolveMarket']);
+    }),
+  );
+
+  it.effect('answers a retryable Market outcome for every resolution call outcome other than an answer', () =>
+    Effect.gen(function* resolutionWithoutAnswer() {
+      const fixture = harness({
+        loadEligibleTuples: () => Effect.succeed(eligible([firstTuple])),
+        loadPolicyCandidates: () => Effect.succeed(policy([partition(sellerOneId, [])])),
+        resolveMarket: () =>
+          Effect.fail(
+            new MarketBootstrapDependencyUnavailable({ dependency: 'MARKET', reason: 'Owner down', retryable: true }),
+          ),
+      });
+      const result = yield* runMarketBootstrapResolution(request(), fixture.context);
+
+      expect(result.result.marketResolution).toMatchObject({
+        outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE',
+        reason: 'The Current Commerce Market owner is unavailable',
+        retryable: true,
+      });
+      expect(result.result.policyEvidence.status).toBe('MISSING');
+      expect(fixture.steps()).toEqual(['call', 'begin', 'end', 'call']);
+    }),
+  );
+
+  it.effect('denies a Storefront outside the trusted scope before any call or transaction', () =>
+    Effect.gen(function* outsideScope() {
+      const fixture = harness({
+        loadEligibleTuples: () => Effect.die('must not call the Market owner'),
+        loadPolicyCandidates: () => Effect.die('must not load policy'),
+        resolveMarket: () => Effect.die('must not call the Market owner'),
+      });
+      const failure = yield* Effect.flip(
+        runMarketBootstrapResolution(request({ storefrontRef: { appId: 'another-shop', tenantId } }), fixture.context),
+      );
+      expect(failure).toMatchObject({ code: 'read_permission_denied' });
+      expect(fixture.steps()).toEqual([]);
     }),
   );
 });

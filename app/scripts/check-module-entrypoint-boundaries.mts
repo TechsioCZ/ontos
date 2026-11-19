@@ -3544,6 +3544,57 @@ const hasPublishedContractDataCodec = (
   );
 };
 
+/** What an operation reference's descriptor is built from: literals, names and closed objects, no code. */
+const operationDescriptorNodeTypes = new Set([
+  'BooleanLiteral',
+  'Identifier',
+  'NullLiteral',
+  'NumericLiteral',
+  'ObjectExpression',
+  'ObjectProperty',
+  'StringLiteral',
+]);
+
+/**
+ * The typed operation reference the owner's generated module-api leaf publishes for a consumer's declared
+ * call: its own top-level exported const, built by the Core SDK's `moduleOperation` from a descriptor of
+ * literals and the leaf's own immutable schemas.
+ */
+const hasPublishedSdkOperationReference = (
+  selection: SelectedOwnerContract,
+  exportedName: string,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  const { state } = selection;
+  const leaf = state.graph.module(nodePath.join(state.root, selection.target));
+  const { expression } = binding;
+  if (
+    !selection.nativeApi ||
+    selection.clientModules !== undefined ||
+    selection.target !== `${selection.owner}/shared/apis/${selection.name}.ts` ||
+    binding.module.path !== leaf.path ||
+    ownExportContractDeclaration(leaf, exportedName)?.expression !== expression ||
+    expression.type !== 'CallExpression' ||
+    expression.arguments.length !== 1 ||
+    expression.arguments[0]?.type !== 'ObjectExpression'
+  ) {
+    return false;
+  }
+  let descriptorData = true;
+  traverseFast(expression.arguments[0], (node) => {
+    if (!operationDescriptorNodeTypes.has(node.type) || (node.type === 'ObjectProperty' && node.computed)) {
+      descriptorData = false;
+    }
+  });
+  const factories = state.graph.evaluate(binding.module, expression.callee);
+  return (
+    descriptorData &&
+    factories.length > 0 &&
+    factories.every(isSdkOperationReferenceFactory) &&
+    isImmutablePublicContract(state, selection.target, new Set(), true, expression)
+  );
+};
+
 const hasPublishedContractCodecType = (
   selection: SelectedOwnerContract,
   statement: ImportDeclaration,
@@ -3709,7 +3760,8 @@ const hasSelectedOwnerImport = (
   }
   if (
     hasPublishedContractRoutine(selection, binding) ||
-    hasPublishedContractDataCodec(selection, exportedName, binding)
+    hasPublishedContractDataCodec(selection, exportedName, binding) ||
+    hasPublishedSdkOperationReference(selection, exportedName, binding)
   ) {
     return true;
   }

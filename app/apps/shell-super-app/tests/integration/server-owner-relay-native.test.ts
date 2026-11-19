@@ -1528,13 +1528,41 @@ const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarket
       'commerce.market-catalog.api.eligible-market-tuples',
       'commerce.market-catalog.api.resolve-commerce-market',
     ];
-    expect(reads).toHaveLength(3);
+    // Each Market read writes its own row; Market Bootstrap writes its own row plus one per completed call
+    // through Core, under its own evidence policy, naming the Market operation it reached.
+    expect(reads).toHaveLength(5);
     const providers = reads.filter((row) => row.servingModuleKey === 'commerce.market-catalog');
     expect(providers).toHaveLength(2);
     expect(providers.map((row) => row.evidencePolicyKey).toSorted()).toEqual(
       providerKeys.map((key) => `${key}.evidence.v1`).toSorted(),
     );
-    expect(reads.filter((row) => row.servingModuleKey === 'commerce.customer-context')).toHaveLength(1);
+    const bootstrap = reads.filter((row) => row.servingModuleKey === 'commerce.customer-context');
+    expect(bootstrap.map((row) => row.evidencePolicyKey)).toEqual(
+      Array.from({ length: 3 }, () => 'commerce.customer-context.api.market-bootstrap-resolution.evidence.v1'),
+    );
+    expect(bootstrap.filter((row) => row.outcomeCode === 'read_allowed')).toHaveLength(1);
+    expect(
+      bootstrap
+        .filter((row) => row.outcomeCode !== 'read_allowed')
+        .map(({ outcome, outcomeCode, outcomeStage, resultCount, targetModuleKey, targetResourceType }) => ({
+          outcome,
+          outcomeCode,
+          outcomeStage,
+          resultCount,
+          targetModuleKey,
+          targetResourceType,
+        }))
+        .toSorted((left, right) => (left.targetResourceType ?? '').localeCompare(right.targetResourceType ?? '')),
+    ).toEqual(
+      providerKeys.toSorted().map((targetResourceType) => ({
+        outcome: 'allowed',
+        outcomeCode: 'call_ok',
+        outcomeStage: 'execution',
+        resultCount: 1,
+        targetModuleKey: 'commerce.market-catalog',
+        targetResourceType,
+      })),
+    );
     for (const read of reads) {
       expect(read.tenantId).toBe(core.tenantId);
       expect(read.principalId).toBe(core.manager.principalId);
@@ -1544,8 +1572,8 @@ const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarket
       expect(read.authMethod).toBe('api_key');
       expect(read.legalEntityId).toBe(core.legalEntityId);
       expect(read.outcome).toBe('allowed');
-      expect(read.outcomeCode).toBe('read_allowed');
     }
+    expect(providers.map((row) => row.outcomeCode)).toEqual(['read_allowed', 'read_allowed']);
     const exchanges = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findMany({
       where: { sourceJti: proof.sourceJti },
     });

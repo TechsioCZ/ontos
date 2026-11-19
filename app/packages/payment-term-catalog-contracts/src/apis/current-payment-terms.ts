@@ -2,6 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { moduleOperation } from '@app/core-runtime/sdk';
 import { PaymentTermDefinitionSchema, PaymentTermInstantSchema } from '../domain/payment-term.ts';
 import {
   PaymentTermReferenceRequestSchema,
@@ -71,3 +72,16 @@ export const CurrentPaymentTermsApi = HttpApi.make('CurrentPaymentTermsApi').add
     }),
   ),
 );
+
+/** The typed operation reference a consumer passes to the Core SDK's `call`. */
+export const currentPaymentTermsOperation = moduleOperation({
+  kind: 'read',
+  path: '/reads/current-payment-terms',
+  provider: {
+    entrypointKey: 'payment.term-catalog.api.current-payment-terms',
+    moduleId: 'payment.term-catalog',
+    schemaVersion: '1',
+  },
+  request: CurrentPaymentTermsRequestSchema,
+  response: CurrentPaymentTermsResponseSchema,
+});

@@ -38,6 +38,9 @@ for (const owner of [CATALOG_VERTICAL_PATH]) {
           `${owner}/vertical.manifest.ts`,
           `${owner}/vertical.registration.ts`,
           ...(hasRuntimeDeclaration ? [runtimeDeclarationFile] : []),
+          // The modules whose published module-api contracts this owner's reads call.
+          'verticals/commerce-market-catalog/package.json',
+          'verticals/party-registry/package.json',
         ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),

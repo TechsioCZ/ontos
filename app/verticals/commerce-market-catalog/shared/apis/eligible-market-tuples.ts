@@ -2,6 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { moduleOperation } from '@app/core-runtime/sdk';
 import {
   EligibleMarketTupleSetSchema,
   MarketChannelSchema,
@@ -79,3 +80,16 @@ export const EligibleMarketTuplesApi = HttpApi.make('EligibleMarketTuplesApi').a
     }),
   ),
 );
+
+/** The typed operation reference a consumer passes to the Core SDK's `call`. */
+export const eligibleMarketTuplesOperation = moduleOperation({
+  kind: 'read',
+  path: '/reads/eligible-market-tuples',
+  provider: {
+    entrypointKey: 'commerce.market-catalog.api.eligible-market-tuples',
+    moduleId: 'commerce.market-catalog',
+    schemaVersion: '1',
+  },
+  request: EligibleMarketTuplesRequestSchema,
+  response: EligibleMarketTuplesResponseSchema,
+});

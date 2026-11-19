@@ -361,6 +361,9 @@ export const commerceMarketCatalogRuntimeManifest: VerticalRuntimeRegistrationIn
         },
       },
       {
+        // The verified requester, relayed as itself under its selected Legal Entity, as the hand-built
+        // delegation did before the read moved to the SDK's call.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: subjectQualifiedEligibilityCondition,
         entrypointKey: eligibleMarketTuplesRead.descriptor.entrypoint.entrypointKey,
         evidence: [subjectRestrictionsCurrentEvidence, purchasingSubjectCurrentEvidence],
@@ -372,6 +375,9 @@ export const commerceMarketCatalogRuntimeManifest: VerticalRuntimeRegistrationIn
         },
       },
       {
+        // The verified requester, relayed as itself under its selected Legal Entity, as the hand-built
+        // delegation did before the read moved to the SDK's call.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: subjectQualifiedEligibilityCondition,
         entrypointKey: resolveCommerceMarketRead.descriptor.entrypoint.entrypointKey,
         evidence: [subjectRestrictionsCurrentEvidence, purchasingSubjectCurrentEvidence],

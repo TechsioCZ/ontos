@@ -44,6 +44,22 @@ describe('Market owner-authored dependency contracts', () => {
     );
     expect(subject).toHaveLength(3);
     expect(subject?.every(({ condition }) => condition.endsWith('subject-qualified-market-eligibility'))).toBe(true);
+    // Every eligibility read relays its verified requester under the subject's Legal Entity and nothing
+    // else, for every request kind, as the hand-built `acquireMarketOwnerDelegation` did.
+    expect(subject?.map(({ callers, key }) => ({ callers, key }))).toEqual([
+      {
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        key: 'commerce.market-catalog.requirement.eligible-market-tuples-subject',
+      },
+      {
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        key: 'commerce.market-catalog.requirement.resolve-commerce-market-subject',
+      },
+      {
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        key: 'commerce.market-catalog.requirement.verify-market-eligibility-v1-subject',
+      },
+    ]);
     expect(extractVerticalRuntimeSafeDescriptors(commerceMarketCatalogRegistration).requirements).toEqual(requirements);
   });
 });

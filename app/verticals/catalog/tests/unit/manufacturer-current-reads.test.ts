@@ -8,18 +8,8 @@ import {
   productVariants,
   products,
 } from '../../src/database/schema.ts';
-import {
-  manufacturerCurrentReadsForScope,
-  resolveManufacturerCurrentOwner,
-} from '../../src/persistence/manufacturer-current-reads.ts';
+import { manufacturerCurrentReadsForScope } from '../../src/persistence/manufacturer-current-reads.ts';
 import { ManufacturerPersistenceUnavailable } from '../../src/persistence/manufacturer-persistence.ts';
-import { ManufacturerTargetAbsent } from '../../src/persistence/manufacturer-target-absent.ts';
-import { ManufacturerTargetForbidden } from '../../src/persistence/manufacturer-target-forbidden.ts';
-import {
-  makeManufacturerTargetResolver,
-  manufacturerTargetResolver,
-} from '../../src/persistence/manufacturer-target-resolver.ts';
-import { ManufacturerTargetUnavailable } from '../../src/persistence/manufacturer-target-unavailable.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const productId = '33333333-3333-4333-8333-333333333333';
@@ -89,43 +79,38 @@ const rows = () =>
     [manufacturerRelations, [head]],
     [manufacturerRelationRevisions, [revision]],
   ]);
-const resolver = (status: 'active' | 'suspended' | 'archived' = 'active') =>
-  makeManufacturerTargetResolver({
-    readManagedLegalEntity: ({ legalEntityRef }) => Effect.succeed({ legalEntityRef, status }),
-    readPartyDetail: () => Effect.fail({ _tag: 'PartyDetailUnavailableProblem' }),
-  });
-
-/** The read's two steps: the Catalog transaction's current assertion, then its owner after commit. */
-const currentReads = (
-  transaction: Parameters<typeof manufacturerCurrentReadsForScope>[0],
-  targetResolver: typeof manufacturerTargetResolver = manufacturerTargetResolver,
-) => {
-  const reads = manufacturerCurrentReadsForScope(transaction, scope);
-  return {
-    effective: (subject: Parameters<typeof reads.effective>[0], instant: string) =>
-      reads
-        .effective(subject, instant)
-        .pipe(Effect.flatMap((stored) => resolveManufacturerCurrentOwner(targetResolver, scope, stored))),
-  };
-};
-
 describe('Manufacturer Current reads', () => {
-  it.effect('returns the original Product provenance and owner-verified managed Legal Entity', () =>
+  it.effect('returns the original Product provenance and its exact current revision, with no owner call', () =>
     Effect.gen(function* current() {
       // @ts-expect-error Mock implements only exercised query chains.
-      const read = currentReads(mock(rows()), resolver());
-      const result = yield* read.effective(productRef, at);
+      const read = manufacturerCurrentReadsForScope(mock(rows()), scope);
+      const result = yield* read.current(productRef, at);
       expect(result).toMatchObject({
         claim: {
+          actingPrincipalId: scope.principalId,
+          actionInvocationId: revision.actionInvocationId,
           evidenceRefs: ['record:maker'],
-          owner: { kind: 'LEGAL_ENTITY', state: 'CURRENT' },
+          reason: 'Verified manufacturer',
+          recordedAt: new Date(at),
           relationId,
           revision: 1,
           subject: productRef,
-          target: { kind: 'LEGAL_ENTITY', legalEntityRef: { resourceId: legalEntityId } },
+          target: {
+            kind: 'LEGAL_ENTITY',
+            legalEntityRef: {
+              moduleId: 'core.identity',
+              resourceId: legalEntityId,
+              resourceType: 'core.identity.legal-entity',
+              tenantId,
+            },
+          },
         },
         kind: 'CURRENT',
       });
+      expect(result.kind === 'CURRENT' && [result.claim.effectiveFrom, result.claim.effectiveTo]).toEqual([
+        undefined,
+        undefined,
+      ]);
     }),
   );
 
@@ -133,78 +118,35 @@ describe('Manufacturer Current reads', () => {
     Effect.gen(function* variant() {
       const data = rows();
       // @ts-expect-error Mock implements only exercised query chains.
-      const read = currentReads(mock(data), resolver());
-      expect((yield* read.effective(variantRef, at)).kind).toBe('CURRENT');
+      const read = manufacturerCurrentReadsForScope(mock(data), scope);
+      expect((yield* read.current(variantRef, at)).kind).toBe('CURRENT');
       data.set(manufacturerRelations, []);
-      expect(yield* read.effective(variantRef, at)).toEqual({ kind: 'ABSENT' });
+      expect(yield* read.current(variantRef, at)).toEqual({ kind: 'ABSENT' });
     }),
   );
 
-  it.effect('preserves archived status and fails closed without the managed-owner port', () =>
-    Effect.gen(function* archived() {
-      // @ts-expect-error Mock implements only exercised query chains.
-      const archivedRead = currentReads(mock(rows()), resolver('archived'));
-      expect(yield* archivedRead.effective(productRef, at)).toMatchObject({
-        claim: { owner: { state: 'ARCHIVED' } },
-        kind: 'CURRENT',
-      });
-      // @ts-expect-error Mock implements only exercised query chains.
-      const noOwnerRead = currentReads(mock(rows()));
-      expect(Schema.is(ManufacturerTargetUnavailable)(yield* Effect.flip(noOwnerRead.effective(productRef, at)))).toBe(
-        true,
-      );
-    }),
-  );
-
-  it.effect('keeps owner absence, denial, and unavailability distinct', () =>
-    Effect.gen(function* failures() {
-      for (const [tag, expected] of [
-        ['ReadHandlerNotFound', ManufacturerTargetAbsent],
-        ['ReadPermissionDenied', ManufacturerTargetForbidden],
-        ['ReadUnavailable', ManufacturerTargetUnavailable],
-      ] as const) {
-        const targetResolver = makeManufacturerTargetResolver({
-          readManagedLegalEntity: () => Effect.fail({ _tag: tag }),
-          readPartyDetail: () => Effect.fail({ _tag: 'PartyDetailUnavailableProblem' }),
-        });
-        // @ts-expect-error Mock implements only exercised query chains.
-        const read = currentReads(mock(rows()), targetResolver);
-        expect(Schema.is(expected)(yield* Effect.flip(read.effective(productRef, at)))).toBe(true);
-      }
-    }),
-  );
-
-  it.effect('rejects conflicts, foreign scope, and contradictory revision before owner resolution', () =>
+  it.effect('rejects conflicts, foreign scope, and contradictory revision', () =>
     Effect.gen(function* invalid() {
       const data = rows();
-      let called = false;
-      const targetResolver = makeManufacturerTargetResolver({
-        readManagedLegalEntity: ({ legalEntityRef }) => {
-          called = true;
-          return Effect.succeed({ legalEntityRef, status: 'active' });
-        },
-        readPartyDetail: () => Effect.fail({ _tag: 'PartyDetailUnavailableProblem' }),
-      });
       // @ts-expect-error Mock implements only exercised query chains.
-      const read = currentReads(mock(data), targetResolver);
+      const read = manufacturerCurrentReadsForScope(mock(data), scope);
       data.set(manufacturerRelations, [
         head,
         { ...head, productId: null, relationId: '88888888-8888-4888-8888-888888888888', variantId },
       ]);
-      expect(Schema.is(ManufacturerPersistenceUnavailable)(yield* Effect.flip(read.effective(variantRef, at)))).toBe(
+      expect(Schema.is(ManufacturerPersistenceUnavailable)(yield* Effect.flip(read.current(variantRef, at)))).toBe(
         true,
       );
       data.set(manufacturerRelations, [head]);
       data.set(manufacturerRelationRevisions, [{ ...revision, targetId: 'wrong' }]);
-      expect(Schema.is(ManufacturerPersistenceUnavailable)(yield* Effect.flip(read.effective(productRef, at)))).toBe(
+      expect(Schema.is(ManufacturerPersistenceUnavailable)(yield* Effect.flip(read.current(productRef, at)))).toBe(
         true,
       );
       expect(
         Schema.is(ManufacturerPersistenceUnavailable)(
-          yield* Effect.flip(read.effective({ ...productRef, tenantId: '99999999-9999-4999-8999-999999999999' }, at)),
+          yield* Effect.flip(read.current({ ...productRef, tenantId: '99999999-9999-4999-8999-999999999999' }, at)),
         ),
       ).toBe(true);
-      expect(called).toBe(false);
     }),
   );
 });
