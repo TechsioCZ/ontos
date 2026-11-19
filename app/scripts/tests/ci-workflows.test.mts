@@ -1984,6 +1984,56 @@ it('saves the installed workspace from the typecheck row alone, and restores it 
   ]);
 });
 
+const workspaceManifest = (name: string, dependencies: Readonly<Record<string, string>>) =>
+  JSON.stringify({ dependencies, name, private: true, version: '1.0.0' });
+
+it('uses a restored workspace only when pnpm would run in it without installing', () => {
+  const verify = readInstallAction().find(({ id }) => id === 'restored')?.run ?? 'exit 1';
+  // The bash and pnpm the tests run with: the step reads its packages with mapfile, which macOS's /bin/bash lacks.
+  const [bash = 'bash', pnpm = 'pnpm'] = execFileSync('/bin/sh', ['-c', 'command -v bash pnpm'], { encoding: 'utf-8' })
+    .trim()
+    .split('\n');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
+  const bin = path.join(directory, 'bin');
+  const workspace = path.join(directory, 'app');
+  const env = { HOME: directory, PATH: `${bin}:${path.dirname(pnpm)}:${STEP_PATH}` };
+  const usable = () => {
+    const output = path.join(directory, 'output');
+    writeFileSync(output, '');
+    execFileSync(bash, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', verify], {
+      cwd: workspace,
+      env: { ...env, GITHUB_OUTPUT: output, PACKAGES: 'packages/bare\npackages/linked', RESTORED: 'true' },
+      stdio: 'pipe',
+    });
+    return readFileSync(output, 'utf-8').trim();
+  };
+  try {
+    mkdirSync(bin);
+    // The action runs pnpm through mise; this mise runs the command it is given.
+    writeFileSync(path.join(bin, 'mise'), '#!/bin/bash\n[ "$1 $2" = "exec --" ] || exit 2\nshift 2\nexec "$@"\n');
+    chmodSync(path.join(bin, 'mise'), 0o755);
+    for (const [member, dependencies] of [
+      ['bare', {}],
+      ['linked', { bare: 'workspace:*' }],
+    ] as const) {
+      mkdirSync(path.join(workspace, 'packages', member), { recursive: true });
+      writeFileSync(path.join(workspace, 'packages', member, 'package.json'), workspaceManifest(member, dependencies));
+    }
+    writeFileSync(path.join(workspace, 'package.json'), workspaceManifest('workspace', {}));
+    writeFileSync(path.join(workspace, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+    execFileSync(pnpm, ['install', '--offline', '--no-frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    // A package without dependencies gets no node_modules, and a complete tree is still used.
+    expect(existsSync(path.join(workspace, 'packages/bare/node_modules'))).toBe(false);
+    expect(usable()).toBe('usable=true');
+    // A package that declares dependencies but lost its node_modules: pnpm refuses to run, so it is a clean miss.
+    rmSync(path.join(workspace, 'packages/linked/node_modules'), { force: true, recursive: true });
+    expect(usable()).toBe('usable=false');
+    expect(existsSync(path.join(workspace, 'node_modules'))).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true);
