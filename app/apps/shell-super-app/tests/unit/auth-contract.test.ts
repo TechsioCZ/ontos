@@ -29,6 +29,7 @@ import {
   DecideAccessChangesPayloadSchema,
   PreviewAccessChangesPayloadSchema,
 } from '../../shared/access-admin-api.ts';
+import { AssetMetadataResponseSchema } from '../../shared/core-reads/asset-metadata.ts';
 import { LegalEntityDetailResponseSchema } from '../../shared/core-reads/legal-entity-detail.ts';
 
 type TenantEndpoint =
@@ -128,6 +129,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     decideAccessApproval: '/shell/access/approvals/decide',
     decideAccessChanges: '/shell/access/changes/decide',
     executeAccessApproval: '/shell/access/approvals/execute',
+    executeAssetMetadata: '/core/reads/asset-metadata',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     explainAccess: '/shell/access/explain',
     getAccessRole: '/shell/access/roles/detail',
@@ -226,6 +228,27 @@ it('omits ungranted identity fields without weakening API-key mutation responses
     }),
   ).not.toHaveProperty('legalName');
   expect(() => Schema.decodeUnknownSync(ApiKeyLifecycleResponseSchema)({})).toThrow();
+});
+
+it('publishes the Media Asset metadata answer without verified content values for an unfinished asset', () => {
+  const unfinished = Schema.decodeUnknownSync(AssetMetadataResponseSchema)({
+    contentVerified: false,
+    displayFilename: 'Brochure.pdf',
+    ingestionSource: 'user',
+    mediaAssetRef: {
+      moduleId: 'core.media',
+      resourceId: '11111111-1111-4111-8111-111111111111',
+      resourceType: 'core.media.asset',
+      tenantId: '22222222-2222-4222-8222-222222222222',
+    },
+    mimeType: 'application/pdf',
+    processingStatus: 'uploaded',
+  });
+  expect(unfinished).not.toHaveProperty('byteSize');
+  expect(unfinished).not.toHaveProperty('contentSha256');
+  expect(Object.keys(AssetMetadataResponseSchema.fields)).not.toEqual(
+    expect.arrayContaining(['storageKey', 'storageProvider', 'storageObjectVersionRef']),
+  );
 });
 
 it('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {
