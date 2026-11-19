@@ -68,6 +68,7 @@
       "list": "Leases and stays",
       "guestSearch": "Find a guest",
       "guest": "Guest",
+      "clearGuest": "Clear the guest",
       "retry": "Retry import with the selected details",
       "provider": "Provider",
       "attemptedAt": "Attempt time",

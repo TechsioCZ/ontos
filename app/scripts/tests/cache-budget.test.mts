@@ -145,6 +145,12 @@ it.effect('saves a content-keyed cache only when the run did not restore that ex
  * its own name, so it depends on the fallback forever (run 43725413089: six stage shards reused and saved nothing).
  */
 const SAVE_CLAUSE = /^steps\.[\w-]+\.outputs\.(?:cache-hit != 'true'|key != '')$/u;
+/**
+ * The one other clause, on the pnpm store save alone: a job that used its restored installed workspace restored no
+ * store and installed nothing, so it has no store to save. A lockfile change misses that workspace (its key holds the
+ * lockfile), so the trunk job that installs it saves the store under its exact key.
+ */
+const STORE_SAVE = { clause: "steps.restored.outputs.usable != 'true'", label: 'install-app › Save the pnpm store' };
 
 it.effect('makes every content-keyed save depend only on its exact entry not being restored', () =>
   Effect.gen(function* saveClauses() {
@@ -155,6 +161,7 @@ it.effect('makes every content-keyed save depend only on its exact entry not bei
         .map((clause) => clause.trim())
         // Which runs may write (an input, the ref) is policy; what a step produced may only be the exact hit and key.
         .filter((clause) => clause.includes('steps.') && !SAVE_CLAUSE.test(clause))
+        .filter((clause) => !(label.endsWith(STORE_SAVE.label) && clause === STORE_SAVE.clause))
         .map((clause) => `${label}: ${clause}`),
     );
     expect(offenders).toEqual([]);
@@ -166,7 +173,7 @@ const IDENTITY = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const runKey = (input: string, env: Readonly<Record<string, string>> = {}) =>
   collectToolingProcess(
-    ChildProcess.make('bash', ['-c', `printf '%s' "$INPUT" | bash ${KEY_SCRIPT} gates-units-v2-Linux-X64-3-`], {
+    ChildProcess.make('bash', ['-c', `printf '%s' "$INPUT" | bash ${KEY_SCRIPT} zerops-units-v2-3-`], {
       cwd: APP,
       env: { INPUT: input, ...env },
       extendEnv: true,
@@ -177,20 +184,21 @@ it.live(
   'names the same entry for the same identities in any order, a new one for a changed unit, and refuses doubt',
   () =>
     Effect.gen(function* keyScript() {
-      const first = yield* runKey(`tax=${IDENTITY}\npricing=${IDENTITY}\n`);
-      const again = yield* runKey(`pricing=${IDENTITY}\ntax=${IDENTITY}\n`);
-      const changed = yield* runKey(`tax=${IDENTITY}\npricing=${OTHER}\n`);
+      const first = yield* runKey(`tax\t${IDENTITY}\npricing\t${IDENTITY}\n`);
+      const again = yield* runKey(`pricing\t${IDENTITY}\ntax\t${IDENTITY}\n`);
+      const changed = yield* runKey(`tax\t${IDENTITY}\npricing\t${OTHER}\n`);
       expect(first.status, first.stderr).toBe(0);
-      expect(first.stdout).toMatch(/^key=gates-units-v2-Linux-X64-3-[a-f0-9]{64}\n$/u);
+      expect(first.stdout).toMatch(/^key=zerops-units-v2-3-[a-f0-9]{64}\n$/u);
       expect(again.stdout).toBe(first.stdout);
       expect(changed.stdout).not.toBe(first.stdout);
-      // Stage identity rows (unit, identity, inputs part, variables) name entries the same way.
+      // Stage identity rows carry the inputs part and the variables after the identity.
       const row = yield* runKey(`tax\t${IDENTITY}\tfiles\tNODE_ENV=1a2b\n`);
       expect(row.status, row.stderr).toBe(0);
       for (const [label, input, reason] of [
         ['no identities', '', 'no unit identities on stdin'],
-        ['no identity', 'tax=\n', 'not a unit identity: tax='],
-        ['short identity', 'tax=abc\n', 'not a unit identity'],
+        ['no identity', 'tax\t\n', 'not a unit identity: tax'],
+        ['short identity', 'tax\tabc\n', 'not a unit identity'],
+        ['no tab', `tax=${IDENTITY}\n`, 'not a unit identity: tax='],
       ] as const) {
         const result = yield* runKey(input);
         expect(result.status, label).toBe(1);
@@ -206,76 +214,8 @@ it.live('refuses to name an entry when the hash fails', () =>
     const bin = yield* fs.makeTempDirectoryScoped({ prefix: 'cache-key-stub-' });
     yield* fs.writeFileString(path.join(bin, 'sha256sum'), '#!/bin/sh\nexit 1\n');
     yield* fs.chmod(path.join(bin, 'sha256sum'), 0o700);
-    const result = yield* runKey(`tax=${IDENTITY}\n`, { PATH: `${bin}:${yield* Config.String('PATH')}` });
+    const result = yield* runKey(`tax\t${IDENTITY}\n`, { PATH: `${bin}:${yield* Config.String('PATH')}` });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe('');
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-const stepRun = (source: string, job: string, name: string) =>
-  Effect.gen(function* findRun() {
-    const fs = yield* FileSystem.FileSystem;
-    const workflow = yield* Schema.decodeUnknownEffect(WorkflowSchema)(
-      parse(yield* fs.readFileString(path.join(REPOSITORY, source))),
-    );
-    const run = (workflow.jobs[job]?.steps ?? []).find((step) => step.name === name)?.run;
-    if (run === undefined) {
-      return yield* Effect.die(`no run script in ${job} › ${name}`);
-    }
-    return run;
-  });
-const runStep = (cwd: string, script: string, env: Readonly<Record<string, string>>) =>
-  collectToolingProcess(
-    ChildProcess.make('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
-      cwd,
-      env,
-      extendEnv: true,
-    }),
-  );
-
-it.live("runs the gates shard's naming step with the unit digests the cache tool prints", () =>
-  Effect.gen(function* gatesNaming() {
-    const fs = yield* FileSystem.FileSystem;
-    const script = yield* stepRun(
-      '.github/workflows/ultramodern-workspace-gates.yml',
-      'node-artifact-build',
-      "Name the shard's unit output cache entry",
-    );
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: 'gates-unit-key-' });
-    yield* fs.makeDirectory(path.join(root, 'scripts/ci'), { recursive: true });
-    yield* fs.copyFile(path.join(APP, KEY_SCRIPT), path.join(root, KEY_SCRIPT));
-    const bin = path.join(root, 'bin');
-    yield* fs.makeDirectory(bin);
-    // `mise exec -- node scripts/ci/unit-output-cache.mts digest --unit …` answers from $DIGESTS, or fails.
-    yield* fs.writeFileString(
-      path.join(bin, 'mise'),
-      `#!/usr/bin/env bash\n[ -n "\${DIGESTS:-}" ] || exit 5\nprintf "%s" "$DIGESTS"\n`,
-    );
-    yield* fs.chmod(path.join(bin, 'mise'), 0o700);
-    const searchPath = `${bin}:${yield* Config.String('PATH')}`;
-    const name = (digests: string) =>
-      Effect.gen(function* nameEntry() {
-        const outputs = path.join(root, 'outputs');
-        yield* fs.writeFileString(outputs, '');
-        const result = yield* runStep(root, script, {
-          DIGESTS: digests,
-          GITHUB_OUTPUT: outputs,
-          PATH: searchPath,
-          RUNNER_ARCH: 'X64',
-          RUNNER_OS: 'Linux',
-          SHARD: '3',
-          SHARD_UNITS: 'verticals/tax verticals/pricing',
-        });
-        return { output: yield* fs.readFileString(outputs), result };
-      });
-    const kept = yield* name(`tax=${IDENTITY}\npricing=${IDENTITY}\n`);
-    expect(kept.result.status, kept.result.stderr).toBe(0);
-    expect(kept.output).toMatch(/^key=gates-units-v2-Linux-X64-3-[a-f0-9]{64}\n$/u);
-    expect((yield* name(`tax=${IDENTITY}\npricing=${IDENTITY}\n`)).output).toBe(kept.output);
-    expect((yield* name(`tax=${IDENTITY}\npricing=${OTHER}\n`)).output).not.toBe(kept.output);
-    // A failing digest (pipefail) fails the step without a key, so nothing is saved under a guess.
-    const failed = yield* name('');
-    expect(failed.result.status).not.toBe(0);
-    expect(failed.output).toBe('');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

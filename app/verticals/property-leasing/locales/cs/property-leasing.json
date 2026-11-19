@@ -68,6 +68,7 @@
       "list": "Nájmy a pobyty",
       "guestSearch": "Vyhledat hosta",
       "guest": "Host",
+      "clearGuest": "Zrušit výběr hosta",
       "retry": "Opakovat import se zvolenými údaji",
       "provider": "Poskytovatel",
       "attemptedAt": "Čas pokusu",

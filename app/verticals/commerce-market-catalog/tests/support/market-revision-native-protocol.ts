@@ -1,7 +1,11 @@
 import { SellingLegalEntityRefSchema, StorefrontRefSchema } from '../../shared/market-contracts.ts';
 import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
 import type { Socket } from 'effect/socket';
-import { ActiveApplicationCompositionSnapshotSchema, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionSnapshotSchema,
+  ONTOS_MODULE_CONTRACT_MAX_BYTES,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
 import { CreateMarketResultSchema, ReviseMarketDefinitionResultSchema } from '../../shared/action-contracts.ts';
 import { MarketRefSchema } from '../../shared/resources/market.ts';
 import { StorefrontAssociationRefSchema } from '../../shared/resources/storefront-association.ts';
@@ -109,7 +113,14 @@ export class MarketRevisionNativeTransportError extends Schema.TaggedError<Marke
   { reason: Schema.String },
 ) {}
 export const marketRevisionNativeSocketEnvironment = 'ONTOS_MARKET_REVISION_NATIVE_SOCKET';
-export const marketRevisionNativeFrameLimit = 262_144;
+/**
+ * The largest frame is READY: its published composition embeds the deployment contract document of each of
+ * its three owners as a JSON string. A document may reach `ONTOS_MODULE_CONTRACT_MAX_BYTES` and escaping at
+ * most doubles it; one more of that size holds every other READY field.
+ */
+const marketRevisionNativeOwnerCount = 3;
+export const marketRevisionNativeFrameLimit =
+  (marketRevisionNativeOwnerCount * 2 + 1) * ONTOS_MODULE_CONTRACT_MAX_BYTES;
 
 const privateSocketUnavailable = () =>
   new MarketRevisionNativeTransportError({ reason: 'Private Market socket is unavailable' });

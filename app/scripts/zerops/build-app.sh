@@ -64,7 +64,11 @@ export ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT="$ONTOS_SHOP_STOREFRONT_ORIGIN"
 for unit in $all_units; do
   [ "$unit" = shell-super-app ] || export "$(env_name "$unit")=$ONTOS_PUBLIC_ORIGIN/_m/$unit"
 done
-export ULTRAMODERN_DISABLE_BUILD_TS_CHECKER="${ULTRAMODERN_DISABLE_BUILD_TS_CHECKER:-1}"
+# The gates' build mode, set here rather than by a caller so the build shards, the delivery job and the Zerops build
+# cannot differ (this file is an input of every unit identity): no bundler TS checker and no server typecheck or
+# declarations, because the gates typecheck the workspace, and no JavaScript source maps, which never ship (the unit
+# pack, push-service.sh and .deployignore leave *.map out) and which nothing on stage reads.
+export ONTOS_CI_TYPECHECK_SEPARATE=1
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
 
 # Use the same committed dependency closure as the delivery planner. Common/unknown inputs fail closed,

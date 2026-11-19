@@ -128,7 +128,8 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # actions: read finds the newest green push run of a branch without a merge queue (plan-ci-changes.sh).
+    # actions: read finds the newest green push run of a branch without a merge queue (plan-ci-changes.sh) and the run
+    # whose unit outputs the build shards start from (scripts/ci/seed-units.sh).
     permissions:
       actions: read
       contents: read
@@ -143,6 +144,7 @@ jobs:
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
       lint-shards: ${{ steps.lint-shards.outputs.shards || '[1,2,3]' }}
+      seed-run: ${{ steps.seed.outputs.run }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -183,6 +185,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
         run: bash app/scripts/plan-ci-changes.sh "$RUNNER_TEMP/ci-changed-paths"
+      # The build shards start from the unit outputs of the run that proved the commit this plan compares with, so they
+      # build only the units whose inputs changed since. Only a successful trunk push or candidate/* dispatch of this
+      # workflow on that commit, or one of its nearest ancestors, of the trunk's history counts; why that is the only
+      # trustworthy seed is written at the lookup. No such run leaves the output empty and every unit builds.
+      - name: Find the run whose unit outputs the build shards start from
+        id: seed
+        if: steps.changes.outputs.base != '' && steps.changes.outputs.mode != 'docs' && (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'))
+        env:
+          BASE_SHA: ${{ steps.changes.outputs.base }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash app/scripts/ci/seed-units.sh find
       - name: Record the documentation or exact-commit no-op
         if: steps.changes.outputs.mode == 'docs' || steps.changes.outputs.mode == 'proven'
         env:
@@ -200,13 +213,13 @@ jobs:
           if-no-files-found: warn
           overwrite: true
           retention-days: 1
-      # Every gate installs the workspace from the pnpm store. On the trunks this one install saves a missed store
-      # before the gates fan out; it runs once per run, so no two jobs race to save.
-      - name: Install the app workspace for code impact analysis
+      # The planner reads authored JSON and imports nothing outside the repository, so it runs on the runner image's
+      # own Node, which strips its types, before anything is installed (scripts/plan-ci-without-install.sh).
+      - name: Select the preinstalled Node runtime for dependency-free planning
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
-        uses: ./.github/actions/install-app
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          save-store: 'true'
+          node-version: '24'
       - name: Resolve affected packages and required matrices
         id: selection
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
@@ -221,7 +234,7 @@ jobs:
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
-          mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
+          bash scripts/plan-ci-without-install.sh "${args[@]}"
       # A narrowed (affected or scoped) run lints only its changed files, on one runner (shard 0), through the same
       # hook. The one real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
       # configuration, which changes the result for files nobody touched: such a change, an empty or oversized list and
@@ -286,10 +299,10 @@ jobs:
   # no JavaScript source map is written, so these artifacts are never the ones shipped. A failure only the deploy's
   # build can hit (writing maps or origins) fails the stage deploy's own build: the runner build matrix, which runs
   # before deliver_app marks a deployment attempt, or the Zerops build, which deploys nothing when it fails.
-  # The units are dealt over the shards by the build seconds they take two at a time beside a real neighbour (run
-  # 44467964945) and listed heaviest first, so the two build lanes of a shard finish together: about 200 s of build per shard
-  # on top of about 100 s of setup, pack and upload. The Shell takes every core: 78 s alone, 167 s beside Privacy,
-  # so its shard builds it alone first (scripts/ci/build-units.sh) and gets fewer units. More shards do not shorten a
+  # The units are dealt over the shards by the build seconds they take two at a time beside a real neighbour (the mean
+  # of runs 44495231205 and 44498704633, which built every unit) and listed heaviest first, so the two build lanes of a
+  # shard finish together: 209 to 218 s of build per shard on top of about 100 s of setup, pack and upload. The Shell
+  # takes every core: 78 s alone, 167 s beside Privacy, so its shard builds it alone first (scripts/ci/build-units.sh) and gets fewer units. More shards do not shorten a
   # full run: the jobs that start after planning already fill the 20 shared runners (scripts/tests/ci-workflows.test.mts),
   # so a seventh shard would wait; five shards replay 44 to 60 s slower.
   node-artifact-build:
@@ -298,6 +311,10 @@ jobs:
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # actions: read downloads the shard's unit outputs from the seed run, another run of this workflow.
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -305,27 +322,27 @@ jobs:
         include:
           - {
               shard: 1,
-              units: apps/shell-super-app verticals/workforce verticals/sales-insights verticals/property-leasing verticals/storefront-registry,
+              units: apps/shell-super-app verticals/commerce-customer-context verticals/catalog,
             }
           - {
               shard: 2,
-              units: verticals/privacy verticals/commerce-customer-context verticals/symmy-integration verticals/projects,
+              units: verticals/legal-agreements verticals/sales-insights verticals/tagging verticals/merchandise verticals/payment-term-catalog verticals/availability,
             }
           - {
               shard: 3,
-              units: verticals/catalog verticals/finance-billing verticals/sales-pipeline verticals/inventory verticals/payment-term-catalog verticals/price-group-catalog,
+              units: verticals/pricing verticals/crm-activities verticals/facility-operations verticals/sales-pipeline verticals/projects verticals/payment,
             }
           - {
               shard: 4,
-              units: verticals/legal-agreements verticals/tagging verticals/crm verticals/work-tasks verticals/commerce-cart verticals/tax,
+              units: verticals/crm verticals/workforce verticals/commerce-market-catalog verticals/inventory verticals/tax verticals/price-group-catalog,
             }
           - {
               shard: 5,
-              units: verticals/party-registry verticals/pricing verticals/commerce-market-catalog verticals/commerce-order verticals/crm-activities verticals/availability,
+              units: verticals/party-registry verticals/property-leasing verticals/finance-billing verticals/property-portfolio verticals/commerce-cart verticals/promotion,
             }
           - {
               shard: 6,
-              units: verticals/merchandise verticals/facility-operations verticals/assortment verticals/property-portfolio verticals/promotion verticals/payment,
+              units: verticals/work-tasks verticals/commerce-order verticals/privacy verticals/symmy-integration verticals/assortment verticals/storefront-registry,
             }
     env:
       BUILD_JOBS: '2'
@@ -351,55 +368,37 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # The first shard publishes its lockfile check to the jobs that need this one (install-app lockfile-verdict).
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: ${{ strategy.job-index == 0 && 'publish' || '' }}
 
-      # Per-unit output cache (scripts/ci/unit-output-cache.mts). The Actions key only locates a candidate archive:
-      # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
-      # the complete shard before anything is saved or packed.
-      # Cache scope: a run reads caches of its own ref and of the default branch (main), plus the base branch of a
-      # pull request. The demo trunk is not the default branch, so its caches are invisible to candidate/* refs; its own
-      # push runs reuse each other's. A fix round therefore reuses its own earlier runs only when it keeps dispatching
-      # on the same candidate/<name> ref. The key names the shard, so rebalancing the shards makes the next run cold.
-      - name: Name the shard's cached output paths
-        id: unit-cache-paths
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          {
-            echo 'paths<<UNIT_CACHE_PATHS'
-            for unit in $SHARD_UNITS; do
-              printf 'app/%s/dist\napp/%s/.output\n' "$unit" "$unit"
-            done
-            echo 'UNIT_CACHE_PATHS'
-          } >>"$GITHUB_OUTPUT"
+      # Per-unit outputs (scripts/ci/unit-output-cache.mts): the shard starts from what the seed run that ci-plan
+      # found built for this shard, its node-units-<shard> artifact. Its receipts are self-declared, so only a run of
+      # trunk code may be the seed (scripts/ci/seed-units.sh); `plan` keeps a unit only when its recorded input digest
+      # matches this checkout, and `verify` checks the complete shard before anything is packed. An expired or missing
+      # artifact fails only this download, an archive that does not unpack leaves nothing behind, and a seed of another
+      # shard deal holds only some of this shard's units: in each case the rest builds as without a seed.
+      - name: Download the shard's unit outputs from the seed run
+        id: seed-download
+        if: needs.ci-plan.outputs.seed-run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: node-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/seed-units
+          run-id: ${{ needs.ci-plan.outputs.seed-run }}
+          github-token: ${{ github.token }}
 
-      # The entry is named by the shard's unit identities (unit-output-cache.mts digest), never by commit or run: a run
-      # whose units are all unchanged restores its exact entry and saves nothing, a changed unit names a new entry, and
-      # the prefix still restores the nearest older build for one that changed. Whether a restored unit is kept is
-      # decided by `plan` alone, so the entry is right whichever units `plan` accepts.
-      - name: Name the shard's unit output cache entry
-        id: unit-cache-key
+      - name: Unpack the seed's whole unit outputs
+        if: steps.seed-download.outcome == 'success'
         working-directory: app
         env:
-          SHARD: ${{ matrix.shard }}
           SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          # Written only once whole: a failed digest names no entry.
-          key="$(mise exec -- node scripts/ci/unit-output-cache.mts digest --unit "$SHARD_UNITS" \
-            --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD" |
-            bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-")"
-          echo "$key" >>"$GITHUB_OUTPUT"
+        run: bash scripts/ci/seed-units.sh unpack "$RUNNER_TEMP/seed-units/units.tar.zst"
 
-      - name: Restore the shard's unit outputs from earlier runs
-        id: unit-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.unit-cache-paths.outputs.paths }}
-          key: ${{ steps.unit-cache-key.outputs.key }}
-          restore-keys: gates-units-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
-
-      - name: Keep the restored units whose inputs are unchanged
+      - name: Keep the seed's units whose inputs are unchanged
         id: cached-plan
         working-directory: app
         env:
@@ -422,15 +421,6 @@ jobs:
           mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
           --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD"
 
-      # Saved only after verify, under this run's own ref scope; a failed shard saves nothing, and a shard that restored
-      # its exact entry writes nothing (the cache cannot overwrite a key, and nothing in it changed).
-      - name: Save the shard's unit outputs for later runs
-        if: steps.unit-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.unit-cache-paths.outputs.paths }}
-          key: ${{ steps.unit-cache-key.outputs.key }}
-
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
         working-directory: app
@@ -443,6 +433,9 @@ jobs:
             | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
 
       # A re-run of the run's jobs replaces the shard's earlier upload instead of failing on the existing name.
+      # Kept 4 days because later runs start from it: a trunk commit proven on Friday morning is still a seed all of
+      # Monday. A run that builds stores about 0.9 GB over its six shards (85 to 178 MB each, run 44581423294); the 26
+      # such runs of 2026-11-18 stored 13.7 GB and the 61 of 2026-11-19 38.7 GB, so 4 days hold about 55 to 155 GB.
       - name: Upload the shard's build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -451,7 +444,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           overwrite: true
-          retention-days: 1
+          retention-days: 4
 
   # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
@@ -476,11 +469,18 @@ jobs:
           fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
 
+      # The typecheck row, the one source row with typescript-build, saves a missed installed workspace, right after its
+      # install, in its run's branch scope: it ends long before the last build shard, so every job that waits for the
+      # shards (owner, bootstrap and artifact unit rows) restores it instead of installing. A candidate branch cannot
+      # read the demo trunk's caches, so this is the entry its second wave uses. On the trunks the same install saves a
+      # missed pnpm store; no other job saves one, so no two jobs race to save it.
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
+          save-node-modules: ${{ matrix.typescript-build == true }}
+          save-store: ${{ matrix.typescript-build == true }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -604,9 +604,12 @@ jobs:
           fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
 
+      # Reuses the lockfile check of the first build shard (install-app lockfile-verdict); only a job that needs
+      # the build job reads it, and a job without that need, or whose build job did not succeed, checks freshly.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
+          lockfile-verdict: ${{ needs.node-artifact-build.result == 'success' && 'reuse' || '' }}
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
       - name: Download the same-run Node artifacts for unit contract fixtures
@@ -764,8 +767,14 @@ jobs:
   # those files touch, once, under whichever program reaches it first: a vertical test importing a script checked the
   # script under the vertical's options, and a script importing vertical source checked that source under the script
   # options, so the result depended on which files a run listed. Interleaved shards would each load nearly every program,
-  # so each shard takes one contiguous third of the tracked files: a slice loads only the programs of the packages in it,
-  # and lefthook still cuts a slice into command lines that each fit a runner (one run over all verticals did not). The
+  # so each shard takes one contiguous slice of the tracked files that starts at a package root: a slice loads only the
+  # programs of the packages in it, and lefthook still cuts a slice into command lines that each fit a runner (one run
+  # over all verticals did not). The slices are cut by measured lint seconds, not file counts: a scripts file costs about
+  # 0.13 s, a Shell or Core Runtime file 0.07 s and a vertical file 0.04 to 0.08 s (the 24 lint command lines of runs
+  # 44523282275, 44508998551 and 44498704633). Shard 1 holds the Shell, Core Runtime and the contracts packages and runs
+  # the lint rule tests and the repository policy (37 to 56 s); shard 2 the scripts, the lint rules and the verticals up
+  # to Finance Billing; shard 3 Inventory and the verticals after it. Replayed, the slowest shard of those runs falls from
+  # 359, 410 and 287 s to 357, 358 and 302 s: the whole programs of the scripts and of the large verticals are the limit. The
   # separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace,
   # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
   # outside its project graph (`pnpm lint:effect-diagnostics`).
@@ -809,16 +818,24 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: 3
         run: |
-          total="$(git ls-files -z | tr -cd '\0' | wc -c)"
-          first=$(((SHARD - 1) * total / SHARDS))
-          end=$((SHARD * total / SHARDS))
-          index=0
-          git ls-files -z | while IFS= read -r -d '' file; do
-            if ((index >= first && index < end)); then
-              printf '%s\0' "$file"
-            fi
-            index=$((index + 1))
-          done >"$RUNNER_TEMP/shard-files"
+          # Shard k takes the tracked files from the (k-1)-th start up to the k-th, in `git ls-files` byte order.
+          starts=(app/scripts/ app/verticals/inventory/)
+          if ((${#starts[@]} + 1 != SHARDS)); then
+            echo "::error title=Lint shards::SHARDS is $SHARDS, but the slice starts make $((${#starts[@]} + 1)) shards."
+            exit 1
+          fi
+          (
+            export LC_ALL=C
+            shard=1
+            git ls-files -z | while IFS= read -r -d '' file; do
+              while ((shard < SHARDS)) && [[ ! "$file" < "${starts[shard - 1]}" ]]; do
+                shard=$((shard + 1))
+              done
+              if ((shard == SHARD)); then
+                printf '%s\0' "$file"
+              fi
+            done
+          ) >"$RUNNER_TEMP/shard-files"
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$RUNNER_TEMP/shard-files"
           git diff --exit-code HEAD
@@ -956,8 +973,13 @@ jobs:
         working-directory: app
         run: docker compose pull
 
+      # Reuses the lockfile check of the first build shard (install-app lockfile-verdict) in the bootstrap and owner
+      # rows, which need the build job; the database producer and the browser checks share these steps without that
+      # need, read a missing needs entry and check freshly.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: ${{ needs.node-artifact-build.result == 'success' && 'reuse' || '' }}
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # main's cache warmer saves it for main's lockfile; the demo trunk saves its own below, from its one browser row.

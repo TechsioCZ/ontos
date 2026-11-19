@@ -13,7 +13,6 @@ const DECLARED = {
   ONTOS_SHOP_STOREFRONT_ORIGIN: 'https://shop.example',
   ONTOS_STOREFRONT_ORIGIN: 'https://storefront.example',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-  ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1',
 };
 /** Project variables the Zerops build container carries and the runner does not. */
 const AMBIENT = {

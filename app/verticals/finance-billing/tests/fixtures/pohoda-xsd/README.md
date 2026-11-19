@@ -1,7 +1,8 @@
 # POHODA XML dataPack 2.0 schema pins
 
 `version-2.sha256` pins the official STORMWARE POHODA XML `dataPack` version 2.0 schemas that the
-finance-billing POHODA export tests validate their generated documents against with `xmllint`.
+finance-billing POHODA export tests validate their generated documents against with libxml2's `xmllint`,
+as the WebAssembly build `xmllint-wasm` that the lockfile pins, so no runner installs a system package.
 
 | Fact               | Value                                                                             |
 | ------------------ | --------------------------------------------------------------------------------- |

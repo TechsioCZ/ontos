@@ -1448,6 +1448,9 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        // Every requester (a person, a verified workload, a recovery or a system principal) is relayed as
+        // itself with its subject Legal Entity, as the hand-built delegation did: no registered caller.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.customer-context.condition.bootstrap-eligibility-required',
         entrypointKey: marketBootstrapResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [
@@ -1462,6 +1465,9 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        // Every requester (a person, a verified workload, a recovery or a system principal) is relayed as
+        // itself with its subject Legal Entity, as the hand-built delegation did: no registered caller.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.customer-context.condition.bootstrap-owner-resolution-required',
         entrypointKey: marketBootstrapResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [
@@ -1546,6 +1552,9 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        // Every requester (a person, a verified workload, a recovery or a system principal) is relayed as
+        // itself with its subject Legal Entity, as the hand-built delegation did: no registered caller.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.customer-context.condition.referenced-payment-term-definitions-nonempty',
         entrypointKey: paymentTermsResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [
@@ -1560,6 +1569,9 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        // Every requester (a person, a verified workload, a recovery or a system principal) is relayed as
+        // itself with its subject Legal Entity, as the hand-built delegation did: no registered caller.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.customer-context.condition.referenced-payment-term-definitions-nonempty',
         entrypointKey: guestPaymentTermsResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [

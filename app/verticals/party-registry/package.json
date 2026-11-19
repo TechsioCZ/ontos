@@ -5,6 +5,7 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/party-registry-client.ts",
+    "./api/party-detail": "./shared/apis/party-detail.ts",
     "./api/search-labels-client": "./src/api/search-labels-client.ts",
     "./domain/crm-client-evidence": "./shared/domain/crm-client-evidence.ts",
     "./domain/contact-phone-normalization": "./shared/domain/contact-phone-normalization.ts",

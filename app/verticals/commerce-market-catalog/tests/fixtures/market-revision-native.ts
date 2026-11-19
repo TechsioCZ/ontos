@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
-import { Deferred, Duration, Effect, Exit, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
+import { Deferred, Duration, Effect, Exit, Fiber, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient } from 'effect/http';
@@ -86,7 +86,10 @@ export const openMarketRevisionNativeChannel = Effect.fn('MarketRevisionNativeTr
                 ),
               ),
           ),
-          Effect.catch(() => Deferred.fail(failed, transportFailure())),
+          // A transport failure keeps its own reason (an oversized frame names itself); others are a lost channel.
+          Effect.catch((error) =>
+            Deferred.fail(failed, Schema.is(MarketRevisionNativeTransportError)(error) ? error : transportFailure()),
+          ),
         ),
       )
       .pipe(Effect.forkScoped);
@@ -254,7 +257,12 @@ export const spawnMarketRevisionNativeOwner = Effect.fn('MarketRevisionNativeLau
     const retainDiagnostics = Stream.runForEach((chunk: string) =>
       Ref.update(diagnostics, (previous) => `${previous}${chunk}`.slice(-16_384)),
     );
-    yield* child.stderr.pipe(Stream.decodeText(), retainDiagnostics, Effect.forkScoped);
+    const stderrRead = yield* child.stderr.pipe(
+      Stream.decodeText(),
+      retainDiagnostics,
+      Effect.ignore,
+      Effect.forkScoped,
+    );
     yield* child.stdout.pipe(Stream.decodeText(), retainDiagnostics, Effect.forkScoped);
     yield* Effect.addFinalizer((exit) =>
       Exit.isFailure(exit)
@@ -271,7 +279,21 @@ export const spawnMarketRevisionNativeOwner = Effect.fn('MarketRevisionNativeLau
       duration: Duration.seconds(60),
       orElse: () => Effect.fail(unavailable()),
     });
-    const childStopped = child.exitCode.pipe(Effect.andThen(Effect.fail(transportFailure())));
+    // The child's stderr ends with the child: its last lines are retained before the reason is built. What the
+    // child printed (a module that failed to load, a crash) names why it stopped.
+    const childStopped = child.exitCode.pipe(
+      Effect.tap(() => Fiber.join(stderrRead)),
+      Effect.flatMap((code) => Effect.map(Ref.get(diagnostics), (output) => ({ code, output }))),
+      Effect.flatMap(({ code, output }) =>
+        Effect.fail(
+          new MarketRevisionNativeTransportError({
+            reason: [`Market child exited with code ${String(code)} before its response`, output]
+              .filter((part) => part !== '')
+              .join('; output: '),
+          }),
+        ),
+      ),
+    );
     const nextResponse = Effect.raceFirst(channel.next, childStopped).pipe(responseTimeout);
     const ready = yield* nextResponse.pipe(
       responseTimeout,

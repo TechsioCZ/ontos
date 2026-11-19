@@ -13,8 +13,8 @@ import { FormInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { withNativeLabels } from '@app/admin-ui/select-template';
-import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
@@ -41,8 +41,10 @@ const crmActivitiesI18nResources = {
 
 type FollowUpFields = Types.Mutable<Pick<ActivityCommand, 'followUpTaskRef'>>;
 type Counterparties = Effect.Success<ReturnType<typeof loadCounterpartiesClient>>;
+type Counterparty = Counterparties[number];
 type Tasks = Effect.Success<ReturnType<typeof executeWorkRecords>>['items'];
 type Card = Effect.Success<ReturnType<typeof executeCounterpartyRead>>;
+type SearchError = Effect.Error<ReturnType<typeof loadCounterpartiesClient>>;
 /** Governed records reads (activities and Work Tasks) share the generated read problems. */
 type LoadError = Effect.Error<ReturnType<typeof executeRecords>>;
 
@@ -87,14 +89,38 @@ export const preloadPage = modulePagePreload((props) =>
   activities.preload({ legalEntityId: props.context?.legalEntityId ?? '', resourceId: resourceIdOf(props.search) }),
 );
 
-/** The activity as typed: the contact, the follow-up task and the summary. */
+/**
+ * The activity as typed: the chosen contact, the follow-up task and the summary. The form owns the chosen contact: a
+ * later search only offers others, so the contact stays chosen until the user picks another one, clears it, or the
+ * contact directory refuses the user.
+ */
 interface ActivityDraft {
-  readonly counterpartyId: readonly string[];
+  readonly counterparty: Counterparty | null;
   readonly summary: string;
   readonly taskId: readonly string[];
 }
 
-const blankActivity: ActivityDraft = { counterpartyId: [], summary: '', taskId: [] };
+const blankActivity: ActivityDraft = { counterparty: null, summary: '', taskId: [] };
+
+/** Two drafts are the same when they would record the same activity: a contact's newer name changes nothing. */
+const sameActivity = (left: ActivityDraft, right: ActivityDraft) =>
+  left.summary === right.summary &&
+  left.counterparty?.ref.resourceId === right.counterparty?.ref.resourceId &&
+  left.taskId.join(',') === right.taskId.join(',');
+
+const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterparty: null });
+
+/**
+ * A newer answer about the chosen contact replaces the kept one, so a later search that omits the contact still shows
+ * its current name.
+ */
+const withNewerContact =
+  (result: Counterparties) =>
+  (draft: ActivityDraft): ActivityDraft => ({
+    ...draft,
+    counterparty:
+      result.find((item) => item.ref.resourceId === draft.counterparty?.ref.resourceId) ?? draft.counterparty,
+  });
 
 const useRelationshipsRecords = (input: ActivitiesInput) => {
   const { language, t } = useModernI18n();
@@ -129,39 +155,75 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   const tasksFailure = canWrite && tasksSnapshot.state === 'failed' ? failureText(tasksSnapshot.error) : '';
   // The activity as typed: only Uložit sends it.
   const [draft, setDraft] = useState<ActivityDraft>(blankActivity);
-  const { counterpartyId, summary, taskId } = draft;
+  const { counterparty, summary, taskId } = draft;
+  const counterpartyId = counterparty === null ? [] : [counterparty.ref.resourceId];
   const setSummary = (next: string) => setDraft((current) => ({ ...current, summary: next }));
-  const setCounterpartyId = (next: readonly string[]) => setDraft((current) => ({ ...current, counterpartyId: next }));
   const setTaskId = (next: readonly string[]) => setDraft((current) => ({ ...current, taskId: next }));
   const [query, setQuery] = useState('');
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
+  // The picker's items are its complete collection: the latest search's hits plus the chosen contact they omit.
+  const contactChoices =
+    counterparty === null || counterparties.some((item) => item.ref.resourceId === counterparty.ref.resourceId)
+      ? counterparties
+      : [counterparty, ...counterparties];
+  const setCounterpartyId = (next: readonly string[]) => {
+    const chosen = contactChoices.find((item) => item.ref.resourceId === next[0]) ?? null;
+    setDraft((current) => ({ ...current, counterparty: chosen }));
+  };
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
+  /** Why the last contact search found nothing to offer; it shows next to the picker. */
+  const [searchFailure, setSearchFailure] = useState('');
   const retry = () => {
     setMessage('');
     void browserRuntime.runPromise(activities.refresh(input));
   };
+  /** The directory refused the user: nothing it returned earlier stays chosen or on offer. */
+  const refuseContacts = () => {
+    setSearchFailure('');
+    setDraft(withoutContact);
+    setMessage(t(`${key}.forbidden`));
+  };
+  const searchFailed = (error: SearchError) => {
+    setPending(false);
+    // No earlier hit stays on offer after a failed search.
+    setCounterparties([]);
+    const proposal = pendingProposalMessage(error);
+    if (proposal !== undefined) {
+      setMessage(proposal);
+    } else if (Predicate.isTagged(error, 'CounterpartiesProviderForbiddenProblem')) {
+      refuseContacts();
+    } else {
+      // The lookup failed for now: the chosen contact stays chosen and the form says the search did not run.
+      setSearchFailure(t(`${key}.searchUnavailable`));
+    }
+  };
+  const searchFound = (result: Counterparties) => {
+    setCounterparties(result);
+    setSearchFailure('');
+    setDraft(withNewerContact(result));
+    setPending(false);
+  };
+  /** Counts contact searches: only the latest one's answer changes what the form offers or keeps. */
+  const searches = useRef(0);
   const findCounterparty = () => {
     setPending(true);
+    searches.current += 1;
+    const asked = searches.current;
     void browserRuntime.runPromise(
       requestId.pipe(
         Effect.flatMap((id) => loadCounterpartiesClient({ query }, id)),
         Effect.match({
           onFailure: (error) => {
-            setPending(false);
-            setMessage(
-              pendingProposalMessage(error) ??
-                Match.value(error).pipe(
-                  Match.tag('CounterpartiesProviderForbiddenProblem', () => t(`${key}.forbidden`)),
-                  Match.orElse(() => t(`${key}.unavailable`)),
-                ),
-            );
-            setCounterparties([]);
+            if (asked === searches.current) {
+              searchFailed(error);
+            }
           },
           onSuccess: (result) => {
-            setCounterparties(result);
-            setPending(false);
+            if (asked === searches.current) {
+              searchFound(result);
+            }
           },
         }),
       ),
@@ -196,11 +258,9 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const counterpartyOf = (value: ActivityDraft) =>
-    counterparties.find((item) => item.ref.resourceId === value.counterpartyId[0]);
   const send = (value: ActivityDraft): Effect.Effect<SaveOutcome> => {
-    const counterparty = counterpartyOf(value);
-    if (records === undefined || counterparty === undefined) {
+    const { counterparty: chosen } = value;
+    if (records === undefined || chosen === null) {
       return Effect.succeed('failed');
     }
     const task = tasks.find((item) => item.ref.resourceId === value.taskId[0]);
@@ -223,7 +283,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           {
             command: {
               _tag: 'RecordActivity',
-              counterpartyRef: counterparty.ref,
+              counterpartyRef: chosen.ref,
               kind: 'CALL',
               occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
               ownerPrincipalRef: records.actorPrincipalRef,
@@ -258,8 +318,9 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     );
   };
   const record = useDraftSave<ActivityDraft, never>({
+    equals: sameActivity,
     initial: blankActivity,
-    isValid: (value) => value.summary.trim() !== '' && counterpartyOf(value) !== undefined,
+    isValid: (value) => value.summary.trim() !== '' && value.counterparty !== null,
     runtime: browserRuntime,
     save: send,
     value: draft,
@@ -285,7 +346,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       }
     });
   };
-  const partyItems = counterparties.map((item) =>
+  const partyItems = contactChoices.map((item) =>
     selectItem(item.ref.resourceId, item.party.title ?? item.ref.resourceId),
   );
   const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
@@ -305,6 +366,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     record,
     records,
     retry,
+    searchFailure,
     setCounterpartyId,
     setQuery,
     setSummary,
@@ -334,6 +396,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     record,
     records,
     retry,
+    searchFailure,
     setCounterpartyId,
     setQuery,
     setSummary,
@@ -522,6 +585,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           <Select.Trigger>
                             <Select.ValueText placeholder={t(`${key}.choose`)} />
                           </Select.Trigger>
+                          <Select.ClearTrigger aria-label={t(`${key}.clearContact`)} />
                         </Select.Control>
                         <Select.Positioner>
                           <Select.Content>
@@ -533,6 +597,9 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           </Select.Content>
                         </Select.Positioner>
                       </Select>
+                      <output aria-live="polite" className="crmactivities:block crmactivities:text-sm">
+                        {searchFailure}
+                      </output>
                     </div>
                     <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
                       <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={[...taskId]}>

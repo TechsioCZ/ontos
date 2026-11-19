@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { Socket } from 'node:net';
 import { promisify } from 'node:util';
 import {
@@ -450,6 +451,7 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
   const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
     Layer.provide(common),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer)))),
   );
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     bootstrap.composition,

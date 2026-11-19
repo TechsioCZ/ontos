@@ -94,13 +94,12 @@ export const createWorkspaceModernConfig = ({
     overrideBrowserslist: BROWSER_TARGETS,
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
     // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
-    // `pnpm typecheck` owns type diagnostics. A build whose TS-Go check already ran elsewhere skips the
-    // second one: a unit build after its own `ultramodern typecheck --build` sets
-    // ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1, and a CI build under the required workspace typecheck job
-    // sets ONTOS_CI_TYPECHECK_SEPARATE=1, which also drops JavaScript source maps nobody reads there.
+    // `pnpm typecheck` owns type diagnostics. A build whose types the required workspace typecheck job
+    // proves sets ONTOS_CI_TYPECHECK_SEPARATE=1: the gates' unit builds and the stage's
+    // (scripts/zerops/build-app.sh). It also drops the JavaScript source maps, which neither reads and the
+    // stage never ships.
     disableTsChecker:
       readBuildEnvironmentValue('NODE_ENV') === 'development' ||
-      readBuildEnvironmentValue('ULTRAMODERN_DISABLE_BUILD_TS_CHECKER') === '1' ||
       readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1',
     ...(readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1'
       ? { sourceMap: { js: false as const } }

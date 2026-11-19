@@ -146,7 +146,6 @@ jobs:
           ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
           ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-          ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         run: |
           out="$RUNNER_TEMP/zerops-unit-identities"
           mkdir -p "$out"
@@ -237,6 +236,7 @@ jobs:
         if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
         uses: ./.github/actions/deliver-stage
         with:
+          toolchain: installed
           app: ${{ steps.plan.outputs.app }}
           storefront: ${{ steps.plan.outputs.storefront }}
           shop: ${{ steps.plan.outputs.shop }}
@@ -283,7 +283,6 @@ jobs:
       ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
       ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
       ZEROPS_FORCE_BUILD: ${{ inputs.rebuild_units == true }}
     steps:
       - name: Checkout
@@ -420,11 +419,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install the root importer
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile --filter app
-
+      # No install before the push: the delivery's steps up to the app upload run bash, curl, jq, tar, zstd and git
+      # only, and it sets up the toolchain and the whole workspace itself once the upload is done (toolchain: none).
       - name: Download the unit builds
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -449,6 +445,7 @@ jobs:
       - name: Deliver and verify stage
         uses: ./.github/actions/deliver-stage
         with:
+          toolchain: none
           app: 'true'
           storefront: ${{ needs.deliver.outputs.storefront }}
           shop: ${{ needs.deliver.outputs.shop }}

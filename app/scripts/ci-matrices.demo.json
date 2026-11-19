@@ -139,7 +139,7 @@
     {
       "name": "Unit and Component Tests (every other package)",
       "fetch_depth": 512,
-      "setup": "command -v xmllint >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends libxml2-utils\nmise exec -- pnpm provision:pohoda-xsd\n",
+      "setup": "mise exec -- pnpm provision:pohoda-xsd\n",
       "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:component\n"
     }
   ]

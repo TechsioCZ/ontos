@@ -23,19 +23,18 @@ for (const directory of [
   'verticals/commerce-market-catalog',
   'verticals/catalog',
   'packages/catalog-selection-contracts',
-  // The provider whose operation verify-market-eligibility-v1 declares as a call.
+  // The provider whose operation Market Catalog's `{ run }` reads declare as a call.
   'packages/customer-market-retirement-contracts',
+  // The provider whose published module-api contract manufacturer-relation-current declares as a call.
+  'verticals/party-registry',
 ]) {
   collect(directory);
 }
 
-const cases = [
-  {
-    action: 'eligible-market-tuples',
-    callback: 'handleEligibleMarketTuples',
-    forwarded: 'prepareEligibleMarketTuples(input, context)',
-    owner: marketOwner,
-  },
+// Market Catalog's reads run on the SDK kernel (`{ run }`) since main #1518, so only Catalog still has a phased
+// Read whose phase records can be malformed here. Both seams are still proven whole.
+const seamOwners = [marketOwner, 'catalog'];
+const phasedCases = [
   {
     action: 'activate-local-override-recovery',
     callback: 'recoverActivateLocalOverride',
@@ -44,8 +43,8 @@ const cases = [
   },
 ];
 
-for (const { action, callback, forwarded, owner } of cases) {
-  it(`proves the complete current ${owner} API seam with its actual phased ${action} Read`, () => {
+for (const owner of seamOwners) {
+  it(`proves the complete current ${owner} API seam with its actual Reads`, () => {
     const diagnostics: string[] = [];
     expect(
       hasCompleteGeneratedModuleApiSeam(sources, `verticals/${owner}/shared/api.ts`, owner, diagnostics),
@@ -53,6 +52,17 @@ for (const { action, callback, forwarded, owner } of cases) {
     ).toBe(true);
   });
 
+  it(`keeps the actual ${owner} native backend registration and mounted root authoritative`, () => {
+    const file = `verticals/${owner}/api/index.ts`;
+    const original = sources.get(file) ?? '';
+    const invalid = original.replace('../vertical.runtime-declaration.ts', '../foreign.runtime-declaration.ts');
+    expect(invalid).not.toBe(original);
+    const modified = new Map<string, string>([...sources, [file, invalid]]);
+    expect(hasCompleteGeneratedModuleApiSeam(modified, `verticals/${owner}/shared/api.ts`, owner)).toBe(false);
+  });
+}
+
+for (const { action, callback, forwarded, owner } of phasedCases) {
   it(`rejects malformed ${owner} phase records and unproved or mutated callback authority`, () => {
     const file = `verticals/${owner}/src/api/${action}.read.ts`;
     const original = sources.get(file) ?? '';
@@ -78,15 +88,6 @@ for (const { action, callback, forwarded, owner } of cases) {
       );
       expect(diagnostics).toContain(`${action}: read`);
     }
-  });
-
-  it(`keeps the actual ${owner} native backend registration and mounted root authoritative`, () => {
-    const file = `verticals/${owner}/api/index.ts`;
-    const original = sources.get(file) ?? '';
-    const invalid = original.replace('../vertical.runtime-declaration.ts', '../foreign.runtime-declaration.ts');
-    expect(invalid).not.toBe(original);
-    const modified = new Map<string, string>([...sources, [file, invalid]]);
-    expect(hasCompleteGeneratedModuleApiSeam(modified, `verticals/${owner}/shared/api.ts`, owner)).toBe(false);
   });
 }
 

@@ -23,8 +23,8 @@ index="${BASH_REMATCH[1]}"
 count="${BASH_REMATCH[2]}"
 script_directory="$(cd "$(dirname "$0")" && pwd)"
 app_root="$(cd "$script_directory/../.." && pwd)"
-# The matrices plus the overlay the trunk names, relative to app/ (scripts/ci/ci-matrices.mts, which the planner runs
-# first and which refuses an overlay that repeats an entry).
+# The matrices plus the overlay the trunk names, relative to app/ (scripts/ci/ci-matrices-rules.mts, whose merge the
+# planner runs first and which refuses an overlay that repeats an entry).
 matrices=("$app_root/scripts/ci-matrices.json")
 [ -z "${CI_MATRICES_OVERLAY:-}" ] || matrices+=("$app_root/$CI_MATRICES_OVERLAY")
 weights="$(jq -cs 'map(."test-weights" // {}) | add' "${matrices[@]}")"

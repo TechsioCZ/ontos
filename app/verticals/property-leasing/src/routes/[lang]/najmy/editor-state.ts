@@ -40,12 +40,20 @@ export const occupancyDraftOf = (state: EditorInputs): OccupancyDraft => ({
   unitId: state.unitId,
 });
 
+type Guest = Effect.Success<ReturnType<typeof findCustomers>>[number];
+
 export interface OccupancyEditorState extends EditorInputs {
   readonly customerOpen: boolean;
   readonly customers: Effect.Success<ReturnType<typeof listCustomers>>;
   readonly customersLoading: boolean;
   readonly editor: Option.Option<'lease' | 'stay'>;
-  readonly guests: Effect.Success<ReturnType<typeof findCustomers>>;
+  /**
+   * The guest the person chose. The form owns it: a later guest search only offers others, so the guest stays chosen
+   * until the person picks another one or clears it, or a refused read clears the whole form.
+   */
+  readonly guest: Option.Option<Guest>;
+  /** What the latest guest search found. */
+  readonly guests: readonly Guest[];
   readonly rentEditorOpen: boolean;
 }
 export type OccupancyEditorMode = Option.Option.Value<OccupancyEditorState['editor']>;
@@ -78,6 +86,7 @@ export const initialEditorState = (startDate: EditorInputs['startDate']): Occupa
   editingId: '',
   editor: Option.none(),
   endDate: '',
+  guest: Option.none(),
   guestId: '',
   guestQuery: '',
   guests: [],
@@ -108,6 +117,20 @@ export const withRecordInputs = (draft: OccupancyDraft, record: Occupancy): Occu
   startDate: record.startDate,
 });
 
+/**
+ * The guests the stay form offers: the latest search's hits plus the chosen guest they omit. The picker treats them as
+ * its complete collection.
+ */
+export const guestChoicesOf = (state: OccupancyEditorState): readonly Guest[] =>
+  state.guest.pipe(
+    Option.filter(
+      (chosen) =>
+        chosen.partyRef.resourceId === state.guestId &&
+        !state.guests.some((item) => item.partyRef.resourceId === chosen.partyRef.resourceId),
+    ),
+    Option.match({ onNone: () => state.guests, onSome: (chosen) => [chosen, ...state.guests] }),
+  );
+
 /** One transition owns the related dialog fields; filters and records remain outside the editor. */
 export const occupancyEditorReducer = (
   state: OccupancyEditorState,
@@ -124,6 +147,7 @@ export const occupancyEditorReducer = (
         editingId: '',
         editor: Option.none(),
         endDate: '',
+        guest: Option.none(),
         guestId: '',
         guestQuery: '',
         guests: [],
@@ -141,7 +165,17 @@ export const occupancyEditorReducer = (
         endDate: record.endDate ?? '',
         startDate: record.startDate,
       }),
-      GUESTS_LOADED: ({ guests }) => ({ ...state, guestId: '', guests }),
+      // A newer answer about the chosen guest replaces the kept one, so a later search that omits the guest still
+      // shows the current name.
+      GUESTS_LOADED: ({ guests }) => ({
+        ...state,
+        guest: state.guest.pipe(
+          Option.map(
+            (chosen) => guests.find((item) => item.partyRef.resourceId === chosen.partyRef.resourceId) ?? chosen,
+          ),
+        ),
+        guests,
+      }),
       OPEN_DRAFT: ({ initialUnitId, mode, startDate }) => ({
         ...state,
         customerId: '',
@@ -150,6 +184,7 @@ export const occupancyEditorReducer = (
         editingId: '',
         editor: Option.some(mode),
         endDate: '',
+        guest: Option.none(),
         guestId: '',
         guestQuery: '',
         guests: [],
@@ -165,7 +200,15 @@ export const occupancyEditorReducer = (
       RESTORE_DRAFT: ({ draft }) => ({ ...state, ...draft }),
       SET_CUSTOMER_OPEN: ({ open }) => ({ ...state, customerOpen: open }),
       SET_EDITOR: ({ mode }) => ({ ...state, editor: mode }),
-      SET_INPUT: ({ field, value }) => ({ ...state, [field]: value }),
+      // Choosing a guest keeps who it is, so a later search that omits the guest does not lose the choice.
+      SET_INPUT: ({ field, value }) =>
+        field === 'guestId'
+          ? {
+              ...state,
+              guest: Option.fromUndefinedOr(guestChoicesOf(state).find((item) => item.partyRef.resourceId === value)),
+              guestId: value,
+            }
+          : { ...state, [field]: value },
       SET_RENT_EDITOR_OPEN: ({ open }) => ({ ...state, rentEditorOpen: open }),
     }),
   );

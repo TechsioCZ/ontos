@@ -23,9 +23,14 @@ const collect = (directory: string): void => {
 };
 collect(owner);
 for (const file of [
-  // The provider whose operation customer-price-group-resolution declares as a call: main's `{ run }` rule
-  // resolves the declared call's import through this package's exports.
+  // The providers whose operations this owner's `{ run }` reads declare as calls: main's rule resolves a
+  // declared call's import through the provider package's exports. customer-price-group-resolution calls
+  // the Price Group Catalog.
   'packages/price-group-catalog-contracts/package.json',
+  // Both payment-terms resolutions call the Payment Term Catalog; market-bootstrap-resolution calls the
+  // Market Catalog's published module-api contracts.
+  'packages/payment-term-catalog-contracts/package.json',
+  'verticals/commerce-market-catalog/package.json',
   'packages/shared-contracts/package.json',
   'packages/shared-contracts/src/external-identity-client.ts',
 ]) {

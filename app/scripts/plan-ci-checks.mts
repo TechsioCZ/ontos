@@ -1,16 +1,20 @@
-import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Predicate, Schema } from 'effect';
-import { Command, Flag } from 'effect/cli';
-
-import { parse } from 'yaml';
-
-import { knownTask, loadCiMatrices, taskDirectory } from './ci/ci-matrices.mts';
-import type { CiIntegrationEntry, CiScope, CiTemplates } from './ci/ci-matrices.mts';
-import { runQualityCli } from './quality-cli-lifecycle.mts';
+/**
+ * The CI planner: which gates, rows and integration tasks a change needs. It imports nothing outside the repository
+ * and only erasable types, so the plan job runs it on the hosted runner's Node before anything is installed
+ * (scripts/plan-ci-without-install.sh reads the files and writes the outputs).
+ */
+import { CI_TEXT, CI_TEXTS, knownTask, optionalField, requiredField, taskDirectory } from './ci/ci-matrices-rules.mts';
+import type {
+  CiAuthoredFields,
+  CiAuthoredValue,
+  CiIntegrationEntry,
+  CiScope,
+  CiTemplates,
+} from './ci/ci-matrices-rules.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
-export { CiTemplatesSchema } from './ci/ci-matrices.mts';
-export type { CiScope } from './ci/ci-matrices.mts';
-type Templates = CiTemplates;
+export type { CiScope } from './ci/ci-matrices-rules.mts';
+type Templates = Required<CiTemplates>;
 type IntegrationEntry = CiIntegrationEntry;
 
 export interface CiWorkspacePackage {
@@ -38,27 +42,26 @@ const rootPackagesOf = (templates: Templates): readonly string[] => templates['r
  */
 const rootOwnedTrees: readonly string[] = ['scripts/'];
 
-const CiTopologyUnitSchema = Schema.Struct({
-  id: Schema.String,
-  moduleFederation: Schema.optionalKey(
-    Schema.Struct({
-      remotes: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String }))),
-      verticalRefs: Schema.optionalKey(Schema.Array(Schema.String)),
-    }),
-  ),
-  package: Schema.String,
-  path: Schema.String,
-  verticalRefs: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-export const CiTopologySchema = Schema.Struct({
-  shell: CiTopologyUnitSchema,
-  verticals: Schema.Array(CiTopologyUnitSchema),
-});
+interface CiTopologyUnit {
+  readonly id: string;
+  readonly moduleFederation?: {
+    readonly remotes?: readonly { readonly id: string }[];
+    readonly verticalRefs?: readonly string[];
+  };
+  readonly package: string;
+  readonly path: string;
+  readonly verticalRefs?: readonly string[];
+}
+/** app/topology/reference-topology.json: the shell and the verticals the deployment composes. */
+export interface CiTopology {
+  readonly shell: CiTopologyUnit;
+  readonly verticals: readonly CiTopologyUnit[];
+}
 
 /** Runtime federation references are consumer edges even when package manifests omit them. */
 export const withCiTopologyDependencies = (
   packages: readonly CiWorkspacePackage[],
-  topology: typeof CiTopologySchema.Type,
+  topology: CiTopology,
 ): readonly CiWorkspacePackage[] => {
   const units = [topology.shell, ...topology.verticals];
   const invalid =
@@ -323,8 +326,9 @@ interface PlanInput {
   readonly templates: Templates;
 }
 /** How much of the suite a plan runs: everything, the changed owners and their consumers, or the rows of scopes. */
-const PlanModeSchema = Schema.Literals(['affected', 'full', 'scoped']);
-type PlanMode = typeof PlanModeSchema.Type;
+/** How much of the suite a plan runs: everything, the changed owners and their consumers, or the rows of scopes. */
+const PLAN_MODES = ['affected', 'full', 'scoped'] as const;
+type PlanMode = (typeof PLAN_MODES)[number];
 
 /**
  * The scopes a narrowed diff stays inside. A diff inside them runs their source rows and the unit rows of the packages
@@ -387,7 +391,7 @@ export const planCiChecks = (input: PlanInput) => {
     ...seeds,
   ]);
   const affected = packages.filter(({ name }) => affectedNames.has(name));
-  const affectedPackages = EffectArray.sort([...affectedNames], Order.String);
+  const affectedPackages = [...affectedNames].toSorted();
   const broad =
     input.forceFull === true ||
     unaccountedWorkspace(packages, rootPackagesOf(templates)) ||
@@ -501,98 +505,187 @@ export const planCiChecks = (input: PlanInput) => {
   };
 };
 
-/** A package `exports` target: a path, a condition map, or a fallback list of either. */
-type ExportTarget = string | readonly ExportTarget[] | { readonly [condition: string]: ExportTarget };
-const ExportTargetSchema: Schema.Codec<ExportTarget> = Schema.suspend(() =>
-  Schema.Union([Schema.String, Schema.Array(ExportTargetSchema), Schema.Record(Schema.String, ExportTargetSchema)]),
-);
-
-const ManifestSchema = Schema.Struct({
-  dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  devDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  exports: Schema.optionalKey(ExportTargetSchema),
-  name: Schema.String,
-  ontosContractOwner: Schema.optionalKey(Schema.Struct({ packageName: Schema.String })),
-  optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-});
-
-/** Every file an `exports` map points at, package-relative, through conditions and fallback lists. */
-const exportTargets = (exports: ExportTarget | undefined): readonly string[] => {
-  if (exports === undefined) {
-    return [];
-  }
-  if (Predicate.isString(exports)) {
-    return [exports.replace(/^\.\//u, '')];
-  }
-  return (Array.isArray(exports) ? exports : Object.values(exports)).flatMap(exportTargets);
-};
+/** The fields of a workspace package.json the planner reads. */
+export interface CiPackageManifest {
+  readonly dependencies?: Readonly<Record<string, string>>;
+  readonly devDependencies?: Readonly<Record<string, string>>;
+  /**
+   * Every path the `exports` value names, through conditions and fallback lists, collected by the reader that checks
+   * package.json against CI_WORKSPACE_FIELDS (scripts/plan-ci-without-install.sh).
+   */
+  readonly exportPaths: readonly string[];
+  readonly name: string;
+  readonly ontosContractOwner?: { readonly packageName: string };
+  readonly optionalDependencies?: Readonly<Record<string, string>>;
+  readonly peerDependencies?: Readonly<Record<string, string>>;
+}
 
 /** A dependency the planner cannot resolve to a workspace package by name. */
 const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version);
-const PnpmWorkspaceSchema = Schema.Struct({ packages: Schema.Array(Schema.String) });
-class WorkspaceUnreadable extends Schema.TaggedError<WorkspaceUnreadable>()('WorkspaceUnreadable', {
-  reason: Schema.String,
-}) {}
 
 /**
- * The package directories app/pnpm-workspace.yaml declares: `<directory>/*` names every directory below it that holds a
- * package.json, any other entry one package directory. Another form cannot be resolved and fails.
+ * Whether a line of pnpm-workspace.yaml may start or continue a value that spans lines, so that the lines after it can
+ * be the inside of one value instead of keys and items: a flow collection or an escape anywhere outside a whole-line
+ * comment, or a quote left open before a trailing comment. Counting brackets or quotes is not enough, because an
+ * escaped quote hides a bracket inside a string. The real file needs none of these forms, and a false alarm only makes
+ * the document unreadable.
  */
-const readWorkspace = (rootPackages: readonly string[]) =>
-  Effect.gen(function* readCiWorkspace() {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const app = yield* path.fromFileUrl(new URL('..', import.meta.url));
-    const workspace = yield* Schema.decodeUnknownEffect(PnpmWorkspaceSchema)(
-      parse(yield* fs.readFileString(path.join(app, 'pnpm-workspace.yaml'))),
-    );
-    const directories = ['.'];
-    for (const declared of workspace.packages) {
-      const area = declared.endsWith('/*') ? declared.slice(0, -2) : undefined;
-      if (!/^[a-z0-9-]+$/u.test(area ?? declared)) {
-        return yield* new WorkspaceUnreadable({ reason: `unsupported pnpm-workspace.yaml package entry ${declared}` });
-      }
-      if (area === undefined) {
-        directories.push(declared);
-        continue;
-      }
-      for (const entry of yield* fs.readDirectory(path.join(app, area))) {
-        if (yield* fs.exists(path.join(app, area, entry, 'package.json'))) {
-          directories.push(`${area}/${entry}`);
-        }
-      }
+const maySpanLines = (line: string) => {
+  if (/^\s*#/u.test(line)) {
+    return false;
+  }
+  const body = line.replace(/\s#.*$/u, '');
+  const count = (pattern: RegExp) => body.match(pattern)?.length ?? 0;
+  return /[[\]{}\\]/u.test(line) || count(/"/gu) % 2 !== 0 || count(/'/gu) % 2 !== 0;
+};
+
+/**
+ * The entries of the top-level `packages:` block list of pnpm-workspace.yaml. Comment and blank lines inside the list
+ * are skipped; the next top-level key ends it. Empty when the file has no such list, or the list holds a line this
+ * reader does not know (another indentation, a flow list, an anchor), or the document is not one plain mapping: every
+ * line at column zero is a comment, a list item or a top-level key named once, so a document marker, a directive, text
+ * after a document end or a repeated key is no document this reader knows, and neither is one with a flow collection,
+ * an escape or an open quote (maySpanLines), whose next lines may be one value. A form it cannot read never yields a
+ * shorter list.
+ */
+const workspaceEntries = (text: string): readonly string[] => {
+  // pnpm's reader also breaks a line at a carriage return that stands alone.
+  const lines = text.split(/\r\n?|\n/u);
+  if (lines.some(maySpanLines)) {
+    return [];
+  }
+  const keys = new Set<string>();
+  for (const line of lines) {
+    if (/^(?:\s|#|- |$)/u.test(line)) {
+      continue;
     }
-    const manifests = yield* Effect.forEach(
-      directories,
-      (directory) =>
-        fs.readFileString(path.join(app, directory, 'package.json')).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ManifestSchema))),
-          Effect.map((manifest) => ({ directory, manifest })),
-        ),
-      { concurrency: 4 },
+    const key = /^(?<quote>['"]?)(?<key>[A-Za-z_@][\w@/.-]*)\k<quote>\s*:(?:\s|$)/u.exec(line)?.groups?.key;
+    if (key === undefined || keys.has(key)) {
+      return [];
+    }
+    keys.add(key);
+  }
+  const start = lines.findIndex((line) => /^packages:\s*(?:#.*)?$/u.test(line));
+  if (start === -1) {
+    return [];
+  }
+  const declared: string[] = [];
+  let indentation: string | undefined;
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*(?:#.*)?$/u.test(line)) {
+      continue;
+    }
+    const item = /^(?<indent> *)- +(?<quote>['"]?)(?<entry>[^\s#'"]+)\k<quote>(?: +#.*| *)$/u.exec(line)?.groups;
+    if (item === undefined) {
+      return /^[A-Za-z_][\w.-]*\s*:/u.test(line) ? declared : [];
+    }
+    indentation ??= item.indent;
+    if (item.indent !== indentation || item.entry === undefined) {
+      return [];
+    }
+    declared.push(item.entry);
+  }
+  return declared;
+};
+
+/**
+ * The package directories app/pnpm-workspace.yaml declares, read from its text: `<directory>/*` names every entry of
+ * that directory (`entries`, in the order the file system lists it) that holds a package.json (`hasManifest`), any
+ * other entry one package directory. A list this cannot read, or another entry form, cannot be resolved.
+ */
+export const workspacePackageDirectories = (
+  text: string,
+  entries: (directory: string) => readonly string[],
+  hasManifest: (directory: string) => boolean,
+): { readonly directories: readonly string[] } | { readonly unreadable: string } => {
+  const declared = workspaceEntries(text);
+  if (declared.length === 0) {
+    return { unreadable: 'pnpm-workspace.yaml has no packages list this planner can read' };
+  }
+  const directories = ['.'];
+  for (const entry of declared) {
+    const area = entry.endsWith('/*') ? entry.slice(0, -2) : undefined;
+    if (!/^[a-z0-9-]+$/u.test(area ?? entry)) {
+      return { unreadable: `unsupported pnpm-workspace.yaml package entry ${entry}` };
+    }
+    directories.push(
+      ...(area === undefined
+        ? [entry]
+        : entries(area)
+            .map((name) => `${area}/${name}`)
+            .filter(hasManifest)),
     );
-    const names = new Set(manifests.map(({ manifest }) => manifest.name));
-    const ownership = yield* fs.readFileString(path.join(app, 'topology/ownership.json')).pipe(
-      Effect.flatMap(
-        Schema.decodeUnknownEffect(
-          Schema.fromJsonString(
-            Schema.Struct({
-              owners: Schema.Array(Schema.Struct({ package: Schema.String, path: Schema.String })),
-            }),
-          ),
-        ),
-      ),
-    );
-    const topology = yield* fs
-      .readFileString(path.join(app, 'topology/reference-topology.json'))
-      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(CiTopologySchema))));
-    return withCiTopologyDependencies(
-      manifests.map(({ directory, manifest }): CiWorkspacePackage => ({
+  }
+  return { directories };
+};
+
+const VERSIONS = optionalField({ map: CI_TEXT });
+const topologyUnit: CiAuthoredValue = {
+  closed: false,
+  fields: {
+    id: requiredField(CI_TEXT),
+    moduleFederation: optionalField({
+      closed: false,
+      fields: {
+        remotes: optionalField({ list: { closed: false, fields: { id: requiredField(CI_TEXT) } } }),
+        verticalRefs: optionalField(CI_TEXTS),
+      },
+    }),
+    package: requiredField(CI_TEXT),
+    path: requiredField(CI_TEXT),
+    verticalRefs: optionalField(CI_TEXTS),
+  },
+};
+
+/**
+ * What the planner reads from each workspace package.json, topology/ownership.json and
+ * topology/reference-topology.json, to the strictness the installed planner decoded them with. A file that breaks
+ * its contract leaves the workspace unreadable, and the complete suite runs. Keys outside a contract are not read.
+ */
+export const CI_WORKSPACE_FIELDS = {
+  manifest: {
+    dependencies: VERSIONS,
+    devDependencies: VERSIONS,
+    /** A path, a condition map, or a fallback list of either. */
+    exports: optionalField({ tree: CI_TEXT }),
+    name: requiredField(CI_TEXT),
+    ontosContractOwner: optionalField({ closed: false, fields: { packageName: requiredField(CI_TEXT) } }),
+    optionalDependencies: VERSIONS,
+    peerDependencies: VERSIONS,
+  },
+  ownership: {
+    owners: requiredField({
+      list: { closed: false, fields: { package: requiredField(CI_TEXT), path: requiredField(CI_TEXT) } },
+    }),
+  },
+  topology: { shell: requiredField(topologyUnit), verticals: requiredField({ list: topologyUnit }) },
+} satisfies Readonly<Record<string, CiAuthoredFields>>;
+
+/**
+ * The planner's view of the workspace from the manifests of the declared directories, the OntOS module map
+ * (topology/ownership.json `owners`) and the deployment topology. A package the module map does not name, outside the
+ * matrices' root-level packages, is uncertain.
+ */
+export const ciWorkspacePackages = (input: {
+  readonly manifests: readonly { readonly directory: string; readonly manifest: CiPackageManifest }[];
+  readonly owners: readonly { readonly package: string; readonly path: string }[];
+  readonly rootPackages: readonly string[];
+  readonly topology: CiTopology;
+}): readonly CiWorkspacePackage[] => {
+  const names = new Set(input.manifests.map(({ manifest }) => manifest.name));
+  return withCiTopologyDependencies(
+    input.manifests.map(({ directory, manifest }): CiWorkspacePackage => {
+      const groups = [
+        manifest.dependencies,
+        manifest.devDependencies,
+        manifest.optionalDependencies,
+        manifest.peerDependencies,
+      ];
+      return {
         contractProducer: manifest.ontosContractOwner?.packageName,
         dependencies: [
           ...new Set(
-            [manifest.dependencies, manifest.devDependencies, manifest.optionalDependencies, manifest.peerDependencies]
+            groups
               .flatMap((group) => Object.entries(group ?? {}))
               .filter(
                 ([name, version]) => names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:'),
@@ -601,85 +694,46 @@ const readWorkspace = (rootPackages: readonly string[]) =>
           ),
         ],
         directory,
-        exportTargets: exportTargets(manifest.exports),
+        exportTargets: manifest.exportPaths.map((target) => target.replace(/^\.\//u, '')),
         name: manifest.name,
         uncertain:
           // `topology/ownership.json` is the OntOS module map: it names the root-level storefront packages nowhere.
           (directory !== '.' &&
-            !rootPackages.includes(directory) &&
-            !ownership.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
-          [
-            manifest.dependencies,
-            manifest.devDependencies,
-            manifest.optionalDependencies,
-            manifest.peerDependencies,
-          ].some((group) => Object.values(group ?? {}).some(isLocalVersion)),
-      })),
-      topology,
-    );
-  });
-
-const cli = Command.make(
-  'plan-ci-checks',
-  {
-    applyAffected: Flag.Boolean('apply-affected').pipe(Flag.withDefault(false)),
-    forceFull: Flag.Boolean('full').pipe(Flag.withDefault(false)),
-    pathsFile: Flag.String('paths-file'),
-  },
-  ({ applyAffected, forceFull, pathsFile }) =>
-    Effect.gen(function* writeCiPlan() {
-      const fs = yield* FileSystem.FileSystem;
-      const templates = yield* loadCiMatrices();
-      const paths = yield* fs.readFileString(pathsFile);
-      const packages = yield* readWorkspace(rootPackagesOf(templates)).pipe(
-        Effect.tapError((error) =>
-          Console.log(`Workspace impact is unavailable: ${String(error)}. Running the complete suite.`),
-        ),
-        Effect.orElseSucceed((): readonly CiWorkspacePackage[] => []),
-      );
-      const plan = planCiChecks({
-        applyAffected,
-        changedPaths: paths.split('\0').filter(Boolean),
-        forceFull,
-        packages,
-        templates,
-      });
-      const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-      const encoded = yield* Effect.all({
-        expected: encode(plan.expected),
-        integration: encode(plan.jobs.database),
-        integrationBrowser: encode(plan.jobs.browser),
-        integrationOwners: encode(plan.jobs.owners),
-        integrationTopology: encode(plan.jobs.topology),
-        source: encode(plan.source),
-        unit: encode(plan.jobs.unitPlain),
-        'unit-artifacts': encode(plan.jobs.unitArtifacts),
-      });
-      const output = yield* Config.String('GITHUB_OUTPUT');
-      const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);
-      yield* fs.writeFileString(output, `mode=${plan.mode}\n${outputLines.join('\n')}\n`, { flag: 'a' });
-      const summary = yield* Config.String('GITHUB_STEP_SUMMARY');
-      yield* fs.writeFileString(
-        summary,
-        [
-          '## CI selection',
-          '',
-          plan.reason,
-          '',
-          `Affected packages: ${plan.affectedPackages.join(', ') || 'full/unknown'}.`,
-          `Required integration rows: ${plan.integration.length} of ${templates.integration.length}.`,
-          `Affected-plan integration rows: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
-          '',
-          `Mode: ${plan.mode}. Source rows: ${plan.source.map(({ name }) => name).join(', ')}.`,
-          'Only a candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates; every other run is complete.',
-          '',
-        ].join('\n'),
-        { flag: 'a' },
-      );
-      yield* Console.log(plan.reason);
+            !input.rootPackages.includes(directory) &&
+            !input.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
+          groups.some((group) => Object.values(group ?? {}).some(isLocalVersion)),
+      };
     }),
-);
+    input.topology,
+  );
+};
 
-if (Schema.is(Schema.Struct({ main: Schema.Literal(true) }))(import.meta)) {
-  runQualityCli(Command.run(cli, { version: '1.0.0' }));
-}
+type CiPlan = ReturnType<typeof planCiChecks>;
+
+/** The plan job's outputs after `mode`, by output name, in the order it writes them. */
+export const ciPlanOutputs = (plan: CiPlan) => ({
+  expected: plan.expected,
+  integration: plan.jobs.database,
+  integrationBrowser: plan.jobs.browser,
+  integrationOwners: plan.jobs.owners,
+  integrationTopology: plan.jobs.topology,
+  source: plan.source,
+  unit: plan.jobs.unitPlain,
+  'unit-artifacts': plan.jobs.unitArtifacts,
+});
+
+/** The plan job's step summary. */
+export const ciPlanSummary = (plan: CiPlan, templates: Templates) =>
+  [
+    '## CI selection',
+    '',
+    plan.reason,
+    '',
+    `Affected packages: ${plan.affectedPackages.join(', ') || 'full/unknown'}.`,
+    `Required integration rows: ${plan.integration.length} of ${templates.integration.length}.`,
+    `Affected-plan integration rows: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
+    '',
+    `Mode: ${plan.mode}. Source rows: ${plan.source.map(({ name }) => name).join(', ')}.`,
+    'Only a candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates; every other run is complete.',
+    '',
+  ].join('\n');

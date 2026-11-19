@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
+import { taskDirectory } from '../ci/ci-matrices-rules.mts';
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import type { CiWorkspacePackage } from '../plan-ci-checks.mts';
 import { planCiChecks } from '../plan-ci-checks.mts';
 

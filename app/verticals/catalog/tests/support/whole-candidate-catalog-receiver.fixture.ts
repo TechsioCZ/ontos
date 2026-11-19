@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { catalogRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
@@ -315,6 +316,7 @@ const wholeCandidateCatalogRuntime = Effect.fn('WholeCandidateCatalog.runtime')(
   const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
     Layer.provide(common),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer)))),
   );
   return Layer.mergeAll(actions, reads, namespace);
 });

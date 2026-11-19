@@ -1,8 +1,15 @@
-import { NodeCrypto } from '@effect/platform-node';
-import { FetchHttpClient } from 'effect/http';
-import { getReadStages } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { ReadPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  CallForbiddenSchema,
+  CallUnavailableSchema,
+  RequestExecutionSchema,
+  callOkSchema,
+} from '@app/core-runtime/sdk';
+import type { CallOutcome, RequestExecution } from '@app/core-runtime/sdk';
+import { makeExecutionStandIn } from '@app/core-runtime/testing/sdk';
+import { MarketSubjectRestrictionsCurrentResponseSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
+import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -10,26 +17,14 @@ import { describe, expect, it } from 'effect-rstest';
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
 import { ResolveCommerceMarketRequestSchema } from '../../shared/apis/resolve-commerce-market.ts';
 import type { EligibleMarketTuple } from '../../shared/market-contracts.ts';
-import type { EligibleMarketTuplesRequest } from '../../shared/apis/eligible-market-tuples.ts';
-import type { ResolveCommerceMarketRequest } from '../../shared/apis/resolve-commerce-market.ts';
-import {
-  eligibleMarketTuplesRead,
-  handleEligibleMarketTuples,
-  prepareEligibleMarketTuples,
-} from '../../src/api/eligible-market-tuples.read.ts';
-import {
-  resolveCommerceMarketRead,
-  handleResolveCommerceMarket,
-  prepareResolveCommerceMarket,
-} from '../../src/api/resolve-commerce-market.read.ts';
+import { eligibleMarketTuplesCalls, runEligibleMarketTuples } from '../../src/api/eligible-market-tuples.read.ts';
+import type { EligibleMarketTuplesRunContext } from '../../src/api/eligible-market-tuples.read.ts';
+import { resolveCommerceMarketCalls, runResolveCommerceMarket } from '../../src/api/resolve-commerce-market.read.ts';
+import type { ResolveCommerceMarketRunContext } from '../../src/api/resolve-commerce-market.read.ts';
 import type { MarketEligibilitySnapshot } from '../../src/domain/market-resolution.ts';
 import { MarketResolutionPersistenceUnavailable } from '../../src/persistence/market-resolution-persistence.ts';
 import type { MarketResolutionPersistence } from '../../src/persistence/market-resolution-persistence.ts';
-import type {
-  MarketSubjectRestrictionSnapshot,
-  MarketSubjectRestrictionsReader,
-} from '../../src/integrations/market-subject-restrictions.ts';
-import { MarketSubjectRestrictionsUnavailable } from '../../src/integrations/market-subject-restrictions.ts';
+import type { MarketSubjectRestrictionSnapshot } from '../../src/integrations/market-subject-restrictions.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const sellerId = '22222222-2222-4222-8222-222222222222';
@@ -118,30 +113,6 @@ const ownerRestrictions: MarketSubjectRestrictionSnapshot = {
   subjectIdentityRef: profileId,
   subjectKind: 'COUNTERPARTY',
 };
-const reader = { current: () => Effect.succeed(ownerRestrictions) };
-const context = (
-  services: MarketResolutionPersistence,
-  scopeOverride: OperationalScope = scope,
-  subjectReader: MarketSubjectRestrictionsReader = reader,
-) => ({
-  reader: subjectReader,
-  readKey: 'commerce.market-catalog.api.resolve-commerce-market',
-  scope: scopeOverride,
-  services,
-});
-type ReadSteps = ReturnType<typeof context>;
-/** prepare (trusted scope, Customer Context restrictions) then load (the owner snapshot), as the runtime runs them. */
-const resolveCommerceMarket = (input: ResolveCommerceMarketRequest, steps: ReadSteps) =>
-  prepareResolveCommerceMarket(input, steps, steps.reader).pipe(
-    Effect.flatMap((prepared) => handleResolveCommerceMarket(input, { ...steps, prepared })),
-    Effect.provide(NodeCrypto.layer),
-  );
-const eligibleMarketTuples = (input: EligibleMarketTuplesRequest, steps: ReadSteps) =>
-  prepareEligibleMarketTuples(input, steps, steps.reader).pipe(
-    Effect.flatMap((prepared) => handleEligibleMarketTuples(input, { ...steps, prepared })),
-    Effect.provide(NodeCrypto.layer),
-  );
-
 const counterpartySubject = {
   counterpartyRef: {
     moduleId: 'party.registry' as const,
@@ -168,6 +139,142 @@ const retailSubject = {
   },
 };
 
+type Subject = typeof counterpartySubject | typeof retailSubject;
+
+/** Customer Context's current restrictions for a subject, as its contract answers them. */
+const ownerAnswer = (
+  subject: Subject,
+  restrictions: MarketSubjectRestrictionSnapshot = ownerRestrictions,
+): CallOutcome<MarketSubjectRestrictionsCurrentResponse> =>
+  callOkSchema(MarketSubjectRestrictionsCurrentResponseSchema).make({
+    value: Schema.decodeUnknownSync(MarketSubjectRestrictionsCurrentResponseSchema)({
+      channelConstraint: { allowedChannels: restrictions.allowedChannels, kind: 'ALLOWED_CHANNELS' },
+      completenessEvidence: {
+        observedAt: DateTime.formatIso(restrictions.observedAt),
+        ownerRevision: restrictions.ownerRevision,
+        scope: {
+          kind: 'EXACT_PREDICATE',
+          predicateRef: `market-subject-restrictions:${subject.profileRef.resourceId}`,
+        },
+      },
+      decision: restrictions.decision,
+      evidenceRefs: restrictions.evidenceRefs,
+      marketConstraint: { kind: 'ANY_MARKET' },
+      observedAt: DateTime.formatIso(restrictions.observedAt),
+      outcome: 'SUBJECT_RESTRICTIONS_CURRENT',
+      ownerRevision: restrictions.ownerRevision,
+      profileState: restrictions.profileState,
+      // A Retail Profile buys from exactly one fixed seller; a Counterparty from an allowed set.
+      sellerConstraint:
+        subject.kind === 'RETAIL_PROFILE'
+          ? { kind: 'FIXED_SELLER', sellerRef: { ...sellerRef, resourceId: restrictions.allowedSellerIds[0] } }
+          : {
+              kind: 'ALLOWED_SELLERS',
+              sellerRefs: restrictions.allowedSellerIds.map((resourceId) => ({ ...sellerRef, resourceId })),
+            },
+      subject,
+    }),
+  });
+const ownerUnavailable: CallOutcome<MarketSubjectRestrictionsCurrentResponse> = CallUnavailableSchema.make({
+  reason: 'owner unavailable',
+  retryable: true,
+});
+
+interface Fixture {
+  readonly answer?: CallOutcome<MarketSubjectRestrictionsCurrentResponse>;
+  readonly persistence: MarketResolutionPersistence;
+  readonly scope?: OperationalScope;
+  readonly via?: RequestExecution['via'];
+}
+
+/**
+ * Drives a read's `run` with Core's capability stand-ins, which keep the kernel's rule: a call while
+ * the owner transaction is open, or a nested transaction, dies. Both reads declare the same call by the
+ * same name, so one context type serves both.
+ */
+const harness = (
+  calls: typeof eligibleMarketTuplesCalls | typeof resolveCommerceMarketCalls,
+  readKey: string,
+  fixture: Fixture,
+) => {
+  const loads: (MarketSubjectRestrictionSnapshot | undefined)[] = [];
+  const persistence: MarketResolutionPersistence = {
+    load: (request, restrictions) =>
+      Effect.suspend(() => {
+        loads.push(restrictions);
+        return fixture.persistence.load(request, restrictions);
+      }),
+  };
+  const standIn = makeExecutionStandIn(calls, {
+    answers: {
+      subjectRestrictions: ({ subject }) =>
+        Effect.succeed(
+          fixture.answer ?? ownerAnswer(subject.kind === 'COUNTERPARTY' ? counterpartySubject : retailSubject),
+        ),
+    },
+    operationAt: DateTime.makeUnsafe(at),
+    services: () => persistence,
+  });
+  const context: EligibleMarketTuplesRunContext & ResolveCommerceMarketRunContext = {
+    access: {},
+    call: standIn.call,
+    execution: {
+      compositionRevision: 'composition-revision-1',
+      identity: RequestExecutionSchema.make({ via: fixture.via ?? 'person' }),
+      operationKey: readKey,
+      owningModuleKey: 'commerce.market-catalog',
+    },
+    readKey,
+    scope: fixture.scope ?? scope,
+    transaction: standIn.transaction,
+  };
+  return {
+    calledWith: () => standIn.steps.flatMap((step) => (step.kind === 'call' ? [step.input] : [])),
+    context,
+    /** The subject restrictions each owner query received. */
+    loadedWith: () => [...loads],
+    /** The stand-in's steps, in order: the call, each transaction's begin and end. */
+    steps: () => standIn.steps.map(({ kind }) => kind),
+  };
+};
+
+/** Both reads, run over the same request shape, answering the outcome and what the stand-ins saw. */
+const readsUnderTest = [
+  {
+    name: 'eligible-market-tuples',
+    run: (encoded: typeof EligibleMarketTuplesRequestSchema.Encoded, fixture: Fixture) => {
+      const probe = harness(eligibleMarketTuplesCalls, 'commerce.market-catalog.api.eligible-market-tuples', fixture);
+      const outcome = runEligibleMarketTuples(
+        Schema.decodeUnknownSync(EligibleMarketTuplesRequestSchema)(encoded),
+        probe.context,
+      ).pipe(Effect.map(({ result }) => result.outcome));
+      return { outcome, probe };
+    },
+  },
+  {
+    name: 'resolve-commerce-market',
+    run: (encoded: typeof EligibleMarketTuplesRequestSchema.Encoded, fixture: Fixture) => {
+      const probe = harness(resolveCommerceMarketCalls, 'commerce.market-catalog.api.resolve-commerce-market', fixture);
+      const outcome = runResolveCommerceMarket(
+        Schema.decodeUnknownSync(ResolveCommerceMarketRequestSchema)(encoded),
+        probe.context,
+      ).pipe(Effect.map(({ result }) => result.outcome));
+      return { outcome, probe };
+    },
+  },
+] as const;
+
+const eligible = (input: Parameters<typeof runEligibleMarketTuples>[0], fixture: Fixture) =>
+  runEligibleMarketTuples(
+    input,
+    harness(eligibleMarketTuplesCalls, 'commerce.market-catalog.api.eligible-market-tuples', fixture).context,
+  );
+const resolve = (input: Parameters<typeof runResolveCommerceMarket>[0], fixture: Fixture) =>
+  runResolveCommerceMarket(
+    input,
+    harness(resolveCommerceMarketCalls, 'commerce.market-catalog.api.resolve-commerce-market', fixture).context,
+  );
+
 describe('Commerce Market governed resolution reads', () => {
   it.effect('returns safe complete eligible tuples under trusted Storefront context', () =>
     Effect.gen(function* eligibleRead() {
@@ -177,7 +284,7 @@ describe('Commerce Market governed resolution reads', () => {
         sellingLegalEntityRestriction: sellerRef,
         storefrontRef,
       });
-      const result = yield* eligibleMarketTuples(input, context(available));
+      const result = yield* eligible(input, { persistence: available });
       expect(result.result).toMatchObject({ outcome: 'ELIGIBLE_MARKET_TUPLES', tuples: [eligibleTuple] });
       if (result.result.outcome === 'ELIGIBLE_MARKET_TUPLES') {
         expect(DateTime.formatIso(result.result.effectiveAt)).toBe(at);
@@ -194,7 +301,7 @@ describe('Commerce Market governed resolution reads', () => {
         effectiveAt: at,
         storefrontRef: { ...storefrontRef, appId: 'untrusted-shop' },
       });
-      const error = yield* Effect.flip(eligibleMarketTuples(input, context(available)));
+      const error = yield* Effect.flip(eligible(input, { persistence: available }));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );
@@ -211,7 +318,7 @@ describe('Commerce Market governed resolution reads', () => {
         storefrontRef,
         subject: counterpartySubject,
       });
-      const result = yield* resolveCommerceMarket(input, context(available));
+      const result = yield* resolve(input, { persistence: available });
       expect(result.result).toMatchObject({ outcome: 'MARKET_NOT_ALLOWED_FOR_SUBJECT_OR_CHANNEL' });
     }),
   );
@@ -233,23 +340,19 @@ describe('Commerce Market governed resolution reads', () => {
         subjectIdentityRef: retailProfileId,
         subjectKind: 'RETAIL_PROFILE',
       };
-      const result = yield* resolveCommerceMarket(
-        input,
-        context(
-          {
-            load: (_request, restrictions) => {
-              receivedRestrictions = restrictions;
-              return Effect.succeed({
-                ...snapshot,
-                facts: [{ lifecycle: 'ACTIVE', tuple: { ...eligibleTuple, channel: 'B2C' } }],
-                generation: 7,
-              });
-            },
+      const result = yield* resolve(input, {
+        answer: ownerAnswer(retailSubject, retailSnapshot),
+        persistence: {
+          load: (_request, restrictions) => {
+            receivedRestrictions = restrictions;
+            return Effect.succeed({
+              ...snapshot,
+              facts: [{ lifecycle: 'ACTIVE', tuple: { ...eligibleTuple, channel: 'B2C' } }],
+              generation: 7,
+            });
           },
-          scope,
-          { current: () => Effect.succeed(retailSnapshot) },
-        ),
-      );
+        },
+      });
 
       expect(receivedRestrictions).toEqual(retailSnapshot);
       expect(result.result).toMatchObject({
@@ -286,18 +389,15 @@ describe('Commerce Market governed resolution reads', () => {
             generation: 7,
           }),
       };
-      const before = yield* resolveCommerceMarket(input, context(restrictionAwarePersistence));
-      const after = yield* resolveCommerceMarket(
-        input,
-        context(restrictionAwarePersistence, scope, {
-          current: () =>
-            Effect.succeed({
-              ...ownerRestrictions,
-              allowedSellerIds: ['88888888-8888-4888-8888-888888888888'],
-              ownerRevision: 'counterparty-profile:8',
-            }),
+      const before = yield* resolve(input, { persistence: restrictionAwarePersistence });
+      const after = yield* resolve(input, {
+        answer: ownerAnswer(counterpartySubject, {
+          ...ownerRestrictions,
+          allowedSellerIds: ['88888888-8888-4888-8888-888888888888'],
+          ownerRevision: 'counterparty-profile:8',
         }),
-      );
+        persistence: restrictionAwarePersistence,
+      });
 
       expect(before.result.outcome).toBe('MARKET_RESOLVED');
       expect(after.result).toMatchObject({ outcome: 'MARKET_NOT_ALLOWED_FOR_SUBJECT_OR_CHANNEL' });
@@ -313,7 +413,7 @@ describe('Commerce Market governed resolution reads', () => {
         storefrontRef,
         subject: counterpartySubject,
       });
-      const result = yield* resolveCommerceMarket(input, context(available));
+      const result = yield* resolve(input, { persistence: available });
       expect(result.result).toMatchObject({
         outcome: 'MARKET_RESOLVED',
         subjectRestrictionEvidence: {
@@ -342,27 +442,15 @@ describe('Commerce Market governed resolution reads', () => {
           storefrontRef,
           subject: counterpartySubject,
         });
-        const result = yield* resolveCommerceMarket(
-          input,
-          context(
-            {
-              load: () => {
-                persistenceCalls += 1;
-                return Effect.succeed({ ...snapshot, generation: 7 });
-              },
+        const result = yield* resolve(input, {
+          answer: ownerUnavailable,
+          persistence: {
+            load: () => {
+              persistenceCalls += 1;
+              return Effect.succeed({ ...snapshot, generation: 7 });
             },
-            scope,
-            {
-              current: () =>
-                Effect.fail(
-                  new MarketSubjectRestrictionsUnavailable({
-                    code: 'market_subject_restrictions_unavailable',
-                    reason: 'owner unavailable',
-                  }),
-                ),
-            },
-          ),
-        );
+          },
+        });
         expect(result.result).toEqual({
           outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE',
           reason: 'Current Commerce Market eligibility could not be established',
@@ -381,27 +469,15 @@ describe('Commerce Market governed resolution reads', () => {
         storefrontRef,
         subject: counterpartySubject,
       });
-      const result = yield* eligibleMarketTuples(
-        input,
-        context(
-          {
-            load: () => {
-              persistenceCalls += 1;
-              return Effect.succeed({ ...snapshot, generation: 7 });
-            },
+      const result = yield* eligible(input, {
+        answer: ownerUnavailable,
+        persistence: {
+          load: () => {
+            persistenceCalls += 1;
+            return Effect.succeed({ ...snapshot, generation: 7 });
           },
-          scope,
-          {
-            current: () =>
-              Effect.fail(
-                new MarketSubjectRestrictionsUnavailable({
-                  code: 'market_subject_restrictions_unavailable',
-                  reason: 'owner unavailable',
-                }),
-              ),
-          },
-        ),
-      );
+        },
+      });
 
       expect(result.result).toEqual({
         outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE',
@@ -431,13 +507,11 @@ describe('Commerce Market governed resolution reads', () => {
             generation: 7,
           }),
       };
-      const before = yield* resolveCommerceMarket(input, context(ownerAwarePersistence));
-      const after = yield* resolveCommerceMarket(
-        input,
-        context(ownerAwarePersistence, scope, {
-          current: () => Effect.succeed({ ...ownerRestrictions, ownerRevision: 'counterparty-profile:8' }),
-        }),
-      );
+      const before = yield* resolve(input, { persistence: ownerAwarePersistence });
+      const after = yield* resolve(input, {
+        answer: ownerAnswer(counterpartySubject, { ...ownerRestrictions, ownerRevision: 'counterparty-profile:8' }),
+        persistence: ownerAwarePersistence,
+      });
       if (before.result.outcome === 'MARKET_RESOLVED' && after.result.outcome === 'MARKET_RESOLVED') {
         expect(before.result.completenessEvidence.ownerRevision).not.toBe(
           after.result.completenessEvidence.ownerRevision,
@@ -453,7 +527,7 @@ describe('Commerce Market governed resolution reads', () => {
         effectiveAt: at,
         storefrontRef,
       });
-      const result = yield* resolveCommerceMarket(input, context(unavailable));
+      const result = yield* resolve(input, { persistence: unavailable });
       expect(result.result).toEqual({
         outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE',
         reason: 'Current Commerce Market eligibility could not be established',
@@ -476,8 +550,8 @@ describe('Commerce Market governed resolution reads', () => {
           ownerRevision: 'market-eligibility:v1:changed-material-state',
         },
       };
-      const before = yield* resolveCommerceMarket(input, context(withSnapshot(snapshot, 7)));
-      const after = yield* resolveCommerceMarket(input, context(withSnapshot(changedSnapshot, 8)));
+      const before = yield* resolve(input, { persistence: withSnapshot(snapshot, 7) });
+      const after = yield* resolve(input, { persistence: withSnapshot(changedSnapshot, 8) });
       expect(before.result.outcome).toBe('MARKET_RESOLVED');
       expect(after.result.outcome).toBe('MARKET_RESOLVED');
       if (before.result.outcome === 'MARKET_RESOLVED' && after.result.outcome === 'MARKET_RESOLVED') {
@@ -496,109 +570,161 @@ describe('Commerce Market governed resolution reads', () => {
         effectiveAt: at,
         storefrontRef,
       });
-      const before = yield* resolveCommerceMarket(input, context(withSnapshot(snapshot, 7)));
-      const after = yield* resolveCommerceMarket(input, context(withSnapshot(snapshot, 99)));
+      const before = yield* resolve(input, { persistence: withSnapshot(snapshot, 7) });
+      const after = yield* resolve(input, { persistence: withSnapshot(snapshot, 99) });
       if (before.result.outcome === 'MARKET_RESOLVED' && after.result.outcome === 'MARKET_RESOLVED') {
         expect(before.result.completenessEvidence.ownerRevision).toBe(after.result.completenessEvidence.ownerRevision);
       }
     }),
   );
-});
-
-describe('Registered Market read phase boundaries', () => {
-  it.effect('prepares guest reads before owner load and needs no remote reader', () =>
-    Effect.gen(function* guestStages() {
-      const input = Schema.decodeUnknownSync(EligibleMarketTuplesRequestSchema)({
-        channel: 'B2B',
-        effectiveAt: at,
-        storefrontRef,
-      });
-      let loads = 0;
-      const steps = {
-        readKey: eligibleMarketTuplesRead.descriptor.readKey,
-        scope,
-        transaction: () => Effect.die('No after-commit owner transaction is needed'),
-      };
-      const load = yield* getReadStages(eligibleMarketTuplesRead)(input, steps);
-      expect(loads).toBe(0);
-      const finish = yield* load({
-        load: () => {
-          loads += 1;
-          return available.load(input);
-        },
-      });
-      expect(loads).toBe(1);
-      expect((yield* finish).result.outcome).toBe('ELIGIBLE_MARKET_TUPLES');
-    }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
-
-  it.effect(
-    'fails named subjects closed when the exact lazy contract cannot be admitted, before HTTP or owner queries',
-    () =>
-      Effect.gen(function* missingContract() {
-        let requests = 0;
-        const fakeFetch: typeof fetch = () => {
-          requests += 1;
-          return Promise.reject(new Error('An unadmitted contract must not reach HTTP'));
-        };
-        const input = Schema.decodeUnknownSync(EligibleMarketTuplesRequestSchema)({
-          channel: 'B2B',
-          effectiveAt: at,
-          storefrontRef,
-          subject: counterpartySubject,
-        });
-        const steps = {
-          readKey: eligibleMarketTuplesRead.descriptor.readKey,
-          scope,
-          transaction: () => Effect.die('No after-commit owner transaction is needed'),
-        };
-        const services: MarketResolutionPersistence = {
-          load: () => Effect.die('A named subject without Current restrictions must not query Markets'),
-        };
-        const loadEligible = yield* getReadStages(eligibleMarketTuplesRead)(input, steps).pipe(
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-        );
-        const eligible = yield* yield* loadEligible(services);
-        expect(eligible.result.outcome).toBe('MARKET_ELIGIBILITY_UNAVAILABLE');
-        const loadResolve = yield* getReadStages(resolveCommerceMarketRead)(input, {
-          ...steps,
-          readKey: resolveCommerceMarketRead.descriptor.readKey,
-        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-        const resolved = yield* yield* loadResolve(services);
-        expect(resolved.result.outcome).toBe('MARKET_ELIGIBILITY_UNAVAILABLE');
-        expect(requests).toBe(0);
-      }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
-
-  it.effect('passes the prepared owner restrictions into the plain SQL loader after remote preparation completes', () =>
-    Effect.gen(function* preparedRestrictions() {
-      const calls: string[] = [];
-      const input = Schema.decodeUnknownSync(ResolveCommerceMarketRequestSchema)({
-        channel: 'B2B',
-        effectiveAt: at,
-        storefrontRef,
-        subject: counterpartySubject,
-      });
-      const services: MarketResolutionPersistence = {
-        load: (request, restrictions) => {
-          calls.push('owner-load');
-          expect(calls).toEqual(['customer-context', 'owner-load']);
-          expect(restrictions).toBe(ownerRestrictions);
-          return available.load(request, restrictions);
-        },
-      };
-      const result = yield* resolveCommerceMarket(
-        input,
-        context(services, scope, {
-          current: () =>
-            Effect.sync(() => {
-              calls.push('customer-context');
-              return ownerRestrictions;
-            }),
+  it.effect('calls Customer Context before the owner transaction, never while it is open', () =>
+    Effect.forEach(
+      readsUnderTest,
+      ({ name, run }) =>
+        Effect.gen(function* callOutsideTransaction() {
+          const { outcome, probe } = run(
+            { channel: 'B2B', effectiveAt: at, storefrontRef, subject: counterpartySubject },
+            { persistence: available },
+          );
+          expect({ name, outcome: yield* outcome }).toEqual({
+            name,
+            outcome: name === 'eligible-market-tuples' ? 'ELIGIBLE_MARKET_TUPLES' : 'MARKET_RESOLVED',
+          });
+          expect({ name, steps: probe.steps() }).toEqual({ name, steps: ['call', 'begin', 'end'] });
+          expect(probe.calledWith()).toEqual([{ subject: counterpartySubject }]);
+          expect(probe.loadedWith()).toEqual([ownerRestrictions]);
         }),
-      );
-      expect(result.result.outcome).toBe('MARKET_RESOLVED');
-      expect(calls).toEqual(['customer-context', 'owner-load']);
-    }),
+      { discard: true },
+    ),
+  );
+
+  it.effect('makes no call for a guest or an absent subject and loads without subject restrictions', () =>
+    Effect.forEach(
+      readsUnderTest,
+      ({ name, run }) =>
+        Effect.forEach(
+          [
+            { channel: 'B2B', effectiveAt: at, storefrontRef },
+            {
+              channel: 'B2B',
+              effectiveAt: at,
+              storefrontRef,
+              subject: { kind: 'GUEST', subjectRef: 'storefront-guest-session' },
+            },
+          ] as const,
+          (request) =>
+            Effect.gen(function* withoutSubjectCall() {
+              const { outcome, probe } = run(request, { persistence: available });
+              yield* outcome;
+              expect({ name, steps: probe.steps() }).toEqual({ name, steps: ['begin', 'end'] });
+              expect(probe.loadedWith()).toEqual([undefined]);
+            }),
+          { discard: true },
+        ),
+      { discard: true },
+    ),
+  );
+
+  it.effect('answers UNAVAILABLE without a transaction when Customer Context gives no current restrictions', () =>
+    Effect.forEach(
+      readsUnderTest,
+      ({ name, run }) =>
+        Effect.forEach(
+          [
+            ownerUnavailable,
+            CallForbiddenSchema.make({ reason: 'Customer Context refused the relayed requester' }),
+            callOkSchema(MarketSubjectRestrictionsCurrentResponseSchema).make({
+              value: Schema.decodeUnknownSync(MarketSubjectRestrictionsCurrentResponseSchema)({
+                outcome: 'SUBJECT_RESTRICTIONS_UNAVAILABLE',
+                reason: 'owner restrictions unavailable',
+                retryable: true,
+              }),
+            }),
+          ],
+          (answer) =>
+            Effect.gen(function* unavailableAnswer() {
+              const { outcome, probe } = run(
+                { channel: 'B2B', effectiveAt: at, storefrontRef, subject: counterpartySubject },
+                { answer, persistence: available },
+              );
+              expect({ name, outcome: yield* outcome }).toEqual({ name, outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE' });
+              expect({ name, steps: probe.steps() }).toEqual({ name, steps: ['call'] });
+            }),
+          { discard: true },
+        ),
+      { discard: true },
+    ),
+  );
+
+  it.effect('answers UNAVAILABLE without a call or a transaction for a subject without a Legal Entity', () =>
+    Effect.forEach(
+      readsUnderTest,
+      ({ name, run }) =>
+        Effect.gen(function* withoutLegalEntity() {
+          const { legalEntityId: _withoutLegalEntity, ...scopeWithoutLegalEntity } = scope;
+          const { outcome, probe } = run(
+            { channel: 'B2B', effectiveAt: at, storefrontRef, subject: counterpartySubject },
+            { persistence: available, scope: scopeWithoutLegalEntity },
+          );
+          expect({ name, outcome: yield* outcome }).toEqual({ name, outcome: 'MARKET_ELIGIBILITY_UNAVAILABLE' });
+          expect({ name, steps: probe.steps() }).toEqual({ name, steps: [] });
+        }),
+      { discard: true },
+    ),
+  );
+
+  it.effect('denies a request outside the trusted scope before any call or transaction', () =>
+    Effect.forEach(
+      readsUnderTest,
+      ({ name, run }) =>
+        Effect.gen(function* outsideScope() {
+          const { outcome, probe } = run(
+            {
+              channel: 'B2B',
+              effectiveAt: at,
+              storefrontRef: { ...storefrontRef, appId: 'untrusted-shop' },
+              subject: counterpartySubject,
+            },
+            { persistence: available },
+          );
+          const failure = yield* Effect.flip(outcome);
+          expect({ denied: Schema.is(ReadPermissionDenied)(failure), name }).toEqual({ denied: true, name });
+          expect({ name, steps: probe.steps() }).toEqual({ name, steps: [] });
+        }),
+      { discard: true },
+    ),
+  );
+
+  /*
+   * Which identity the call carries is Core's choice from the requirement's declared callers: both
+   * requirements declare only the relayed person (see module-dependency-contracts.test.ts), so every
+   * request kind relays its verified scope as an `Assertion` under the subject's Legal Entity, as the
+   * hand-built `acquireMarketOwnerDelegation` did for every kind. The read itself makes the same call,
+   * with the same input, before the same single transaction, whatever kind of request it serves.
+   */
+  it.effect('makes the same call before the same transaction for every request kind', () =>
+    Effect.forEach(
+      readsUnderTest,
+      ({ name, run }) =>
+        Effect.forEach(
+          ['person', 'recovery', 'system', 'workload'] as const,
+          (via) =>
+            Effect.gen(function* perRequestKind() {
+              const { outcome, probe } = run(
+                { channel: 'B2B', effectiveAt: at, storefrontRef, subject: counterpartySubject },
+                { persistence: available, via },
+              );
+              yield* outcome;
+              expect({ name, steps: probe.steps(), via }).toEqual({ name, steps: ['call', 'begin', 'end'], via });
+              expect({ calledWith: probe.calledWith(), name, via }).toEqual({
+                calledWith: [{ subject: counterpartySubject }],
+                name,
+                via,
+              });
+            }),
+          { discard: true },
+        ),
+      { discard: true },
+    ),
   );
 });

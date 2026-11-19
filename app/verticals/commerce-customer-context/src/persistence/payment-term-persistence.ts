@@ -10,7 +10,7 @@ import type {
 import { ReadHandlerUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Equal, Option, Schema } from 'effect';
+import { Effect, Equal, Option, Result, Schema } from 'effect';
 
 import type {
   CustomerPaymentTermEntitlementReadRequest,
@@ -1519,6 +1519,118 @@ const definitionRequestsForResolution = (
   return [...definitionRequests.values()];
 };
 
+/**
+ * The owner's facts a Payment Terms resolution decides from, read in one transaction: the profile's
+ * Payment Terms state and the Current policy's decision at `input.at`, with the Catalog definitions that
+ * decision needs. A policy that does not resolve is the failure: it is the resolution's answer.
+ */
+export interface PaymentTermsResolutionSnapshot {
+  readonly definitionRequests: readonly PaymentTermDefinitionRequest[];
+  readonly policyResolution: Exclude<PaymentTermsPolicyResolution, { readonly _tag: string }>;
+  readonly state: CustomerPaymentTermsState;
+}
+
+export type PaymentTermsResolutionSnapshotReader = (
+  input: PaymentTermsResolutionRequest,
+) => Effect.Effect<
+  Result.Result<PaymentTermsResolutionSnapshot, Extract<PaymentTermsPolicyResolution, { readonly _tag: string }>>,
+  ReadHandlerUnavailable
+>;
+
+/** Reads the snapshot with the owner's routine and the given policy port; it never calls the Catalog. */
+export const paymentTermsResolutionSnapshotReader = (
+  persistence: PaymentTermsPersistenceContext,
+  policy: CustomerCommercePaymentTermsPolicyPort = unavailableCustomerCommercePaymentTermsPolicyPort,
+): PaymentTermsResolutionSnapshotReader =>
+  Effect.fn('CustomerPaymentTermsPersistence.readResolutionSnapshot')(function* readResolutionSnapshot(input) {
+    if (input.purchasingContext.sellingLegalEntityId !== persistence.scope.legalEntityId) {
+      return yield* readUnavailable('The purchasing context is outside the scoped Payment Terms capability');
+    }
+    const state = yield* readState(
+      persistence.invoker,
+      persistence.scope,
+      input.profileRef,
+      input.authorizationSubject.kind === 'COUNTERPARTY' ? input.authorizationSubject.counterpartyRef.resourceId : null,
+    ).pipe(
+      Effect.mapError((failure) =>
+        readUnavailable(
+          failure._tag === 'PERSISTENCE_UNAVAILABLE'
+            ? failure.reason
+            : 'The Commerce Customer Profile is unavailable for Payment Terms resolution',
+        ),
+      ),
+    );
+    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- The scope-verified owner read intentionally gates any external policy call for nonexistent or mismatched profiles.
+    const policyResolution = yield* policy
+      .resolve(input)
+      .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
+    if ('_tag' in policyResolution) {
+      return Result.fail(policyResolution);
+    }
+    return Result.succeed({
+      definitionRequests: definitionRequestsForResolution(
+        state.entitlements,
+        policyResolution,
+        input.explicitChoice,
+        input.at,
+      ),
+      policyResolution,
+      state,
+    });
+  });
+
+/** The resolution of one snapshot over the Catalog definitions it named. */
+export const resolvePaymentTermsFromSnapshot = (
+  input: PaymentTermsResolutionRequest,
+  snapshot: PaymentTermsResolutionSnapshot,
+  definitions: readonly PaymentTermDefinition[],
+): PaymentTermsResolutionResponse => {
+  const { policyResolution, state } = snapshot;
+  const commonResolutionInput = {
+    at: input.at,
+    definitions,
+    eligiblePaymentTermRefs: policyResolution.eligiblePaymentTermRefs,
+    policyExplicitlyPermittedRefs: policyResolution.explicitlyPermittedPaymentTermRefs,
+    policyFallbackRefs: policyResolution.fallbackPaymentTermRefs,
+    policyRevision: policyResolution.policyRevision,
+    policySource: policyResolution.policySource,
+    purchasingContextRevision: input.purchasingContext.contextRevision,
+    state,
+  };
+  return input.explicitChoice === undefined
+    ? resolvePaymentTerms(commonResolutionInput)
+    : resolvePaymentTerms({
+        ...commonResolutionInput,
+        explicitChoice: input.explicitChoice,
+      });
+};
+
+export const makePaymentTermsResolutionServices = (
+  persistence: PaymentTermsPersistenceContext,
+  ports: CustomerPaymentTermsPersistencePorts = {},
+): PaymentTermsResolutionServices => {
+  const readSnapshot = paymentTermsResolutionSnapshotReader(persistence, ports.policy);
+  return {
+    resolve: Effect.fn('CustomerPaymentTermsPersistence.resolve')(function* resolveCurrentPaymentTerms(input) {
+      const catalog = ports.catalog ?? unavailablePaymentTermCatalogPort;
+      const read = yield* readSnapshot(input);
+      if (Result.isFailure(read)) {
+        return read.failure;
+      }
+      const snapshot = read.success;
+      const definitions = yield* catalog
+        .resolveDefinitions(snapshot.definitionRequests)
+        .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
+      return resolvePaymentTermsFromSnapshot(input, snapshot, definitions);
+    }),
+  };
+};
+
+/**
+ * Demo: order finalization (`order-finalization-payment-terms.ts`) reads this state inside its own
+ * transaction and resolves after it, so it keeps the two halves apart. Both run on the same pieces
+ * as the read above.
+ */
 export const loadPaymentTermsResolutionState = Effect.fn('CustomerPaymentTermsPersistence.loadResolutionState')(
   function* loadResolutionState(persistence: PaymentTermsPersistenceContext, input: PaymentTermsResolutionRequest) {
     return yield* readState(
@@ -1551,48 +1663,22 @@ export const finishPaymentTermsResolution = Effect.fn('CustomerPaymentTermsPersi
     if ('_tag' in policyResolution) {
       return policyResolution;
     }
-    const definitionRequests = definitionRequestsForResolution(
-      state.entitlements,
+    const snapshot: PaymentTermsResolutionSnapshot = {
+      definitionRequests: definitionRequestsForResolution(
+        state.entitlements,
+        policyResolution,
+        input.explicitChoice,
+        input.at,
+      ),
       policyResolution,
-      input.explicitChoice,
-      input.at,
-    );
-    const definitions = yield* catalog
-      .resolveDefinitions(definitionRequests)
-      .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
-    const commonResolutionInput = {
-      at: input.at,
-      definitions,
-      eligiblePaymentTermRefs: policyResolution.eligiblePaymentTermRefs,
-      policyExplicitlyPermittedRefs: policyResolution.explicitlyPermittedPaymentTermRefs,
-      policyFallbackRefs: policyResolution.fallbackPaymentTermRefs,
-      policyRevision: policyResolution.policyRevision,
-      policySource: policyResolution.policySource,
-      purchasingContextRevision: input.purchasingContext.contextRevision,
       state,
     };
-    return input.explicitChoice === undefined
-      ? resolvePaymentTerms(commonResolutionInput)
-      : resolvePaymentTerms({
-          ...commonResolutionInput,
-          explicitChoice: input.explicitChoice,
-        });
+    const definitions = yield* catalog
+      .resolveDefinitions(snapshot.definitionRequests)
+      .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
+    return resolvePaymentTermsFromSnapshot(input, snapshot, definitions);
   },
 );
-export const makePaymentTermsResolutionServices = (
-  persistence: PaymentTermsPersistenceContext,
-  ports: CustomerPaymentTermsPersistencePorts = {},
-): PaymentTermsResolutionServices => ({
-  resolve: Effect.fn('CustomerPaymentTermsPersistence.resolve')(function* resolveCurrentPaymentTerms(input) {
-    if (input.purchasingContext.sellingLegalEntityId !== persistence.scope.legalEntityId) {
-      return yield* readUnavailable('The purchasing context is outside the scoped Payment Terms capability');
-    }
-    const catalog = ports.catalog ?? unavailablePaymentTermCatalogPort;
-    const policy = ports.policy ?? unavailableCustomerCommercePaymentTermsPolicyPort;
-    const state = yield* loadPaymentTermsResolutionState(persistence, input);
-    return yield* finishPaymentTermsResolution(input, state, policy, catalog);
-  }),
-});
 
 export interface CustomerPaymentTermsPersistencePorts {
   readonly catalog?: PaymentTermCatalogPort;

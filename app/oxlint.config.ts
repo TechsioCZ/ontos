@@ -1442,7 +1442,6 @@ export default defineConfig({
         'apps/shell-super-app/tests/unit/native-protocol-response-bytes.test.ts',
         'apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts',
         'apps/shell-super-app/tests/unit/routes/browser-request-cache-reauthorization.test.ts',
-        'verticals/crm-activities/tests/unit/activity-form-save.test.ts',
       ],
       rules: { 'anti-slop/no-module-mocking': 'off' },
     },

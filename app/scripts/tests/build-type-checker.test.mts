@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,6 +49,8 @@ for (const config of JSON.parse(process.argv[1])) {
     autoprefixerBrowserslist: autoprefixer.overrideBrowserslist ?? [],
     disableTsChecker: resolved.output?.disableTsChecker ?? false,
     overrideBrowserslist: resolved.output?.overrideBrowserslist ?? [],
+    sourceMapJs:
+      typeof resolved.output?.sourceMap === 'object' ? (resolved.output.sourceMap.js ?? null) : (resolved.output?.sourceMap ?? null),
   };
 }
 process.stdout.write(JSON.stringify(result));
@@ -60,6 +62,8 @@ const BuildOutputsSchema = Schema.Record(
     autoprefixerBrowserslist: Schema.Array(Schema.String),
     disableTsChecker: Schema.Boolean,
     overrideBrowserslist: Schema.Array(Schema.String),
+    // Unset (null) leaves Modern's default, which writes JavaScript source maps in a production build.
+    sourceMapJs: Schema.Union([Schema.Boolean, Schema.String, Schema.Null]),
   }),
 );
 
@@ -71,7 +75,7 @@ const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(environment:
       {
         cwd: workspaceRoot,
         // Blank counts as unset, so an inherited checker switch cannot leak into a case that does not set it.
-        env: { ONTOS_CI_TYPECHECK_SEPARATE: '', ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '', ...environment },
+        env: { ONTOS_CI_TYPECHECK_SEPARATE: '', ...environment },
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -133,17 +137,26 @@ it.live(
   }),
 );
 
-// The unit build runs its own TS-Go reference build first, which
-// fails on a transitive type error (typecheck-project-references.test.mts), so its bundler skips the second check.
+// The stage builds its units with scripts/zerops/build-app.sh in the gates' build mode, so the gates' build of a unit
+// and the stage's differ only in environment values, and no unit writes a JavaScript source map: the stage never ships
+// one (the unit pack, push-service.sh and .deployignore leave *.map out) and nothing there reads one.
 it.live(
-  'every application build skips the bundler checker after the unit TS-Go reference build',
+  'the stage unit build runs in the gates build mode and writes no JavaScript source maps',
   Effect.fn(function* testEffect() {
-    const outputs = yield* resolveBuildOutputs({
-      NODE_ENV: 'production',
-      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
-    });
+    const buildApp = readFileSync(path.join(workspaceRoot, 'scripts/zerops/build-app.sh'), 'utf-8');
+    const exported = [...buildApp.matchAll(/^export ONTOS_CI_TYPECHECK_SEPARATE=(?<value>\S*)$/gmu)].map(
+      (match) => match.groups?.value,
+    );
+    expect(exported).toEqual(['1']);
+    const outputs = yield* resolveBuildOutputs({ NODE_ENV: 'production', ONTOS_CI_TYPECHECK_SEPARATE: '1' });
     for (const [config, output] of Object.entries(outputs)) {
-      expect(output.disableTsChecker, `${config} must honor ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1`).toBe(true);
+      expect(output.sourceMapJs, `${config} must write no JavaScript source maps on stage`).toBe(false);
+      expect(output.disableTsChecker, `${config} must leave checking to the gates`).toBe(true);
+    }
+    // Without the switch Modern keeps its own source map default, so the switch is what removes them.
+    const unseparated = yield* resolveBuildOutputs({ NODE_ENV: 'production' });
+    for (const [config, output] of Object.entries(unseparated)) {
+      expect(output.sourceMapJs, config).toBeNull();
     }
   }),
 );

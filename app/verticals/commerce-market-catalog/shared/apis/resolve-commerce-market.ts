@@ -2,6 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { moduleOperation } from '@app/core-runtime/sdk';
 import {
   MarketChannelSchema,
   MarketResolutionOutcomeSchema,
@@ -100,3 +101,16 @@ export const ResolveCommerceMarketApi = HttpApi.make('ResolveCommerceMarketApi')
     }),
   ),
 );
+
+/** The typed operation reference a consumer passes to the Core SDK's `call`. */
+export const resolveCommerceMarketOperation = moduleOperation({
+  kind: 'read',
+  path: '/reads/resolve-commerce-market',
+  provider: {
+    entrypointKey: 'commerce.market-catalog.api.resolve-commerce-market',
+    moduleId: 'commerce.market-catalog',
+    schemaVersion: '1',
+  },
+  request: ResolveCommerceMarketRequestSchema,
+  response: ResolveCommerceMarketResponseSchema,
+});

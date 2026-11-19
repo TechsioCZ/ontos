@@ -283,15 +283,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('access decision eng
         tuple('access_record', recordObjectOf(ids.r3), 'scope', { id: scopeObject, type: 'access_scope' }),
       ]);
 
-      const slotCheck = yield* Effect.tryPromise(() =>
-        client.promises.checkPermission(
-          v1.CheckPermissionRequest.create({
-            consistency: fullyConsistent,
-            permission: 'run_all',
-            resource: ref('access_capability', capabilityObject(ids.capabilityKeys.void)),
-            subject: subjectRef(human(ids.alice)),
-          }),
-        ),
+      const slotCheck = yield* rpc.checkPermission(
+        v1.CheckPermissionRequest.create({
+          consistency: fullyConsistent,
+          permission: 'run_all',
+          resource: ref('access_capability', capabilityObject(ids.capabilityKeys.void)),
+          subject: subjectRef(human(ids.alice)),
+        }),
       );
       expect(slotCheck.permissionship).toBe(HAS);
 

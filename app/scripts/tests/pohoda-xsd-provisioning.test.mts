@@ -11,6 +11,7 @@ const root = path.resolve(import.meta.dirname, '../..');
 const manifestPath = 'verticals/finance-billing/tests/fixtures/pohoda-xsd/version-2.sha256';
 const scriptPath = 'scripts/provision-pohoda-xsd.sh';
 const supportPath = 'verticals/finance-billing/tests/support/pohoda-xsd.ts';
+const financeManifestPath = 'verticals/finance-billing/package.json';
 const gatesWorkflowPath = '../.github/workflows/ultramodern-workspace-gates.yml';
 const matricesPath = 'scripts/ci-matrices.json';
 const overlayPath = 'scripts/ci-matrices.demo.json';
@@ -70,6 +71,14 @@ it.effect('downloads and verifies those pins into the cache the tests read, and 
     const support = yield* fs.readFileString(path.join(root, supportPath));
     expect(support).toContain(cacheDirectory);
     expect(support).toContain('provision:pohoda-xsd');
+    // The validator is libxml2's xmllint as a WebAssembly build pinned by the lockfile, never a system package a
+    // runner would have to download while the gate runs.
+    expect(support).toContain("import { validateXML } from 'xmllint-wasm';");
+    expect(support).not.toContain('ChildProcess');
+    const manifest = Schema.decodeUnknownSync(
+      Schema.fromJsonString(Schema.Struct({ devDependencies: Schema.Record(Schema.String, Schema.String) })),
+    )(yield* fs.readFileString(path.join(root, financeManifestPath)));
+    expect(manifest.devDependencies['xmllint-wasm']).toMatch(/^\d+\.\d+\.\d+$/u);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -94,7 +103,7 @@ it.effect('provisions the pinned schemas in the shard that runs the finance-bill
     const shard = matrices.unit.find(({ name }) => name === financeShard);
     expect(shard, financeShard).toBeDefined();
     expect(shard?.setup).toContain('mise exec -- pnpm provision:pohoda-xsd');
-    expect(shard?.setup).toContain('xmllint');
+    expect(shard?.setup).not.toContain('apt-get');
     expect(matrices.unit.filter(({ setup }) => setup?.includes('provision:pohoda-xsd') === true)).toHaveLength(1);
     const commands = shard?.commands ?? '';
     expect(commands, financeShard).toContain('run test:unit');

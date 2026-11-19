@@ -18,7 +18,8 @@ import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
-import { parseCiMatrices, taskDirectory } from '../ci/ci-matrices.mts';
+import { taskDirectory } from '../ci/ci-matrices-rules.mts';
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
@@ -356,12 +357,15 @@ it('classifies documentation before installation and schedules full regression w
   expect(workflow.jobs[WORKSPACE_GATES_JOB].permissions).toEqual({ contents: 'read' });
   const { steps } = workflow.jobs[CI_PLAN_JOB];
   const classify = steps.findIndex(({ id }) => id === 'changes');
-  const install = steps.findIndex(({ name }) => name === 'Install the app workspace for code impact analysis');
+  // The planner runs on the runner image's Node, with nothing installed (scripts/plan-ci-without-install.sh).
+  const runtime = steps.findIndex(
+    ({ name }) => name === 'Select the preinstalled Node runtime for dependency-free planning',
+  );
   const selection = steps.find(({ id }) => id === 'selection');
   expect(classify).toBeGreaterThan(-1);
-  expect(install).toBeGreaterThan(classify);
+  expect(runtime).toBeGreaterThan(classify);
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
-  expect(steps[install]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
+  expect(steps[runtime]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
   // A candidate dispatch that is not forced full and a push to the demo trunk narrow the gates to the changed owners;
   // pull requests, merge groups and pushes to main still run the complete suite.
   expect(selection?.env?.APPLY_AFFECTED).toBe(
@@ -581,7 +585,9 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
 });
 
 const ArtifactStepSchema = Schema.Struct({
+  'continue-on-error': Schema.optional(Schema.Boolean),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  id: Schema.optional(Schema.String),
   if: Schema.optional(Schema.String),
   name: Schema.String,
   run: Schema.optional(Schema.String),
@@ -684,41 +690,68 @@ it('writes the app host entry of every served unit it builds, after its build, a
   expect(build).toContain('--post-build "$UNIT_POST_BUILD"');
 });
 
-it('keeps only verified unit outputs from the unit output cache and saves them only after verification', () => {
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+/** The seed archive the build shard downloads, and the one command that may place anything from it in the checkout. */
+const SEED_UNPACK_COMMAND = 'bash scripts/ci/seed-units.sh unpack "$RUNNER_TEMP/seed-units/units.tar.zst"';
+
+it('starts each build shard from the outputs of the run that proved the comparison base, keeping only verified units', () => {
+  const plan = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [CI_PLAN_JOB]: Schema.Struct({
+          outputs: Schema.Record(Schema.String, Schema.String),
+          steps: Schema.Array(WorkflowStepSchema),
+        }),
+      }),
+    }),
+  )(readGateWorkflow()).jobs[CI_PLAN_JOB];
+  // The seed is looked up from the commit the classification compared with, never from a dispatch input, and only
+  // for a candidate dispatch that has a comparison point or a demo trunk push (scripts/ci/seed-units.sh).
+  const classify = plan.steps.findIndex(({ id }) => id === 'changes');
+  const seed = plan.steps.findIndex(({ id }) => id === 'seed');
+  expect(classify !== -1 && classify < seed).toBe(true);
+  expect(plan.steps[seed]?.if).toBe(
+    "steps.changes.outputs.base != '' && steps.changes.outputs.mode != 'docs' && (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'))",
+  );
+  expect(plan.steps[seed]?.env).toEqual({
+    BASE_SHA: expression('steps.changes.outputs.base'),
+    GH_TOKEN: GITHUB_TOKEN_EXPRESSION,
+  });
+  expect(plan.steps[seed]?.run).toBe('bash app/scripts/ci/seed-units.sh find');
+  expect(plan.outputs['seed-run']).toBe(expression('steps.seed.outputs.run'));
+
+  const { permissions, steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  // Reading another run's artifacts is the one permission the shard adds to the workflow's contents: read.
+  expect(permissions).toEqual({ actions: 'read', contents: 'read' });
   const index = (predicate: (step: (typeof steps)[number]) => boolean) => steps.findIndex(predicate);
-  const paths = index(({ name }) => name === "Name the shard's cached output paths");
-  const restore = index(({ uses }) => uses?.startsWith('actions/cache/restore@') === true);
-  const plan = index(({ run }) => run?.includes('unit-output-cache.mts plan --units "$SHARD_UNITS"') === true);
+  const download = index(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
+  const unpack = index(({ run }) => run === SEED_UNPACK_COMMAND);
+  const keep = index(({ run }) => run?.includes('unit-output-cache.mts plan --units "$SHARD_UNITS"') === true);
   const build = index(({ run }) => run === BUILD_DRIVER_COMMAND);
   const verify = index(
     ({ run }) =>
       run ===
       'mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS" --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD"',
   );
-  const save = index(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
   const pack = index(({ name }) => name === "Pack the shard's build outputs");
-  expect(paths > -1 && paths < restore && restore < plan && plan < build && build < verify).toBe(true);
-  expect(verify < save && save < pack).toBe(true);
-  // Named by the shard's unit identities, never by commit or run; an exact hit saves nothing (cache-budget.test.mts).
-  const keyStep = index(({ name }) => name === "Name the shard's unit output cache entry");
-  expect(paths < keyStep && keyStep < restore).toBe(true);
-  expect(steps[keyStep]?.run).toContain('unit-output-cache.mts digest --unit "$SHARD_UNITS"');
-  expect(steps[keyStep]?.run).toContain(
-    'bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-"',
+  expect(download > -1 && download < unpack && unpack < keep && keep < build && build < verify && verify < pack).toBe(
+    true,
   );
-  const prefix = `gates-units-v2-${expression('runner.os')}-${expression('runner.arch')}-${expression(MATRIX_SHARD)}-`;
-  expect(steps[restore]?.with).toEqual({
-    key: expression('steps.unit-cache-key.outputs.key'),
-    path: expression('steps.unit-cache-paths.outputs.paths'),
-    'restore-keys': prefix,
+  expect(steps[download]).toMatchObject({
+    'continue-on-error': true,
+    id: 'seed-download',
+    if: "needs.ci-plan.outputs.seed-run != ''",
+    with: {
+      'github-token': GITHUB_TOKEN_EXPRESSION,
+      name: `node-units-${expression(MATRIX_SHARD)}`,
+      path: `${RUNNER_TEMP_EXPRESSION}/seed-units`,
+      'run-id': expression('needs.ci-plan.outputs.seed-run'),
+    },
   });
-  expect(steps[save]?.with).toEqual({
-    key: expression('steps.unit-cache-key.outputs.key'),
-    path: expression('steps.unit-cache-paths.outputs.paths'),
-  });
-  expect(steps[save]?.if).toBe("steps.unit-cache.outputs.cache-hit != 'true'");
+  // A missing or expired seed fails only its own download: nothing is unpacked, and every unit of the shard builds.
+  expect(steps[unpack]?.if).toBe("steps.seed-download.outcome == 'success'");
   expect(steps[build]?.env).toEqual({ BUILD_UNITS: expression('steps.cached-plan.outputs.build') });
+  // One mechanism: no Actions cache step is left in the shard.
+  expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache') === true)).toEqual([]);
 });
 
 it('only builds on the shards and proves every unit together on the bootstrap row that no test waits for', () => {
@@ -726,8 +759,10 @@ it('only builds on the shards and proves every unit together on the bootstrap ro
   const build = jobs[NODE_ARTIFACT_BUILD_JOB];
   expect(build.needs).toEqual([CI_PLAN_JOB]);
   expect(build.services).toBeUndefined();
-  expect(build.permissions).toBeUndefined();
-  expect(build.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
+  // Its one download is its own shard's seed, from another run: it never waits for a shard of this run.
+  expect(
+    build.steps.filter(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true).map(({ id }) => id),
+  ).toEqual(['seed-download']);
   expect(build.steps.some(({ run }) => run?.includes('node:proof') === true)).toBe(false);
   expect(build.steps.at(-1)?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
   expect(build.steps.at(-1)?.with?.name).toBe(`node-units-${expression(MATRIX_SHARD)}`);
@@ -1951,13 +1986,289 @@ const readInstallAction = () =>
 const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
 const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 
-it('saves the pnpm store from the one planner install, on the trunks only', () => {
+it("plans on the runner image's Node with nothing installed, only where it plans at all", () => {
+  const steps = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB]?.steps ?? [];
+  const runtime = steps.find(
+    ({ name }) => name === 'Select the preinstalled Node runtime for dependency-free planning',
+  );
+  const selection = steps.find(({ id }) => id === 'selection');
+  expect(runtime?.uses).toBe('actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38');
+  expect(runtime?.with).toEqual({ 'node-version': '24' });
+  expect(selection?.if).toBe(runtime?.if);
+  expect(selection?.run).toContain('bash scripts/plan-ci-without-install.sh');
+  expect(selection?.run).not.toContain('mise');
+});
+
+// The plan job installs nothing, so the typecheck row, which already saves the installed workspace, saves a missed
+// store too: one row of one job, so no two jobs of a run race to save it.
+it('saves the pnpm store from the typecheck row alone, on the trunks only', () => {
   const store = readInstallAction().find(({ name }) => name === 'Save the pnpm store');
   expect(store?.if).toContain(DEMO_REF);
   expect(store?.if).toContain("github.ref == 'refs/heads/main'");
   const gates = readJobsOf(GATES_WORKFLOW);
-  const planInstall = gates[CI_PLAN_JOB]?.steps.find(({ uses }) => uses === INSTALL_APP_ACTION);
-  expect(planInstall?.with).toEqual({ 'save-store': 'true' });
+  expect(gates[CI_PLAN_JOB]?.steps.some(({ uses }) => uses === INSTALL_APP_ACTION)).toBe(false);
+  const savers = Object.entries(gates).flatMap(([job, { steps }]) =>
+    steps
+      .filter((step) => step.uses === INSTALL_APP_ACTION && step.with?.['save-store'] !== undefined)
+      .map((step) => [job, step.with?.['save-store']]),
+  );
+  expect(savers).toEqual([[WORKSPACE_GATE_JOB, expression('matrix.typescript-build == true')]]);
+});
+
+const LOCKFILE_VERDICT = 'lockfile-verdict';
+const LOCKFILE_RECORD = 'lockfile-verified.jsonl';
+const VerdictJobsSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({ needs: Schema.optional(Schema.Array(Schema.String)), steps: Schema.Array(AnyStepSchema) }),
+  ),
+});
+
+const PUBLISH_LOCKFILE_VERDICT = expression("strategy.job-index == 0 && 'publish' || ''");
+const REUSE_LOCKFILE_VERDICT = expression(`needs.${NODE_ARTIFACT_BUILD_JOB}.result == 'success' && 'reuse' || ''`);
+
+// pnpm skips its supply-chain check of the lockfile when it finds its own record of a passed check. A record read by a
+// job that does not need the publisher could come from nothing (a slower publisher) or, with a plain 'reuse', be read
+// in a job that runs beside the publisher; a second publisher would race the first.
+it('publishes the lockfile verdict from one build shard and reuses it only in jobs that need the build', () => {
+  const { jobs } = Schema.decodeUnknownSync(VerdictJobsSchema)(
+    parse(readFileSync(new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url), 'utf-8')),
+  );
+  const verdicts = Object.entries(jobs).flatMap(([job, { needs = [], steps }]) =>
+    steps
+      .filter(({ uses }) => uses === INSTALL_APP_ACTION)
+      .map((step) => ({ job, needs, verdict: step.with?.[LOCKFILE_VERDICT] })),
+  );
+  expect(verdicts.filter(({ verdict }) => verdict === PUBLISH_LOCKFILE_VERDICT).map(({ job }) => job)).toEqual([
+    NODE_ARTIFACT_BUILD_JOB,
+  ]);
+  for (const { job, verdict } of verdicts) {
+    expect([undefined, PUBLISH_LOCKFILE_VERDICT, REUSE_LOCKFILE_VERDICT], job).toContain(verdict);
+  }
+  // Every job that waits for the build job reuses the verdict, and only those resolve 'reuse': a job sharing their
+  // steps without that need reads a missing needs entry and checks freshly, as every first-wave job does.
+  const readers = verdicts.filter(({ needs }) => needs.includes(NODE_ARTIFACT_BUILD_JOB));
+  expect(readers.map(({ job }) => job).toSorted()).toEqual(
+    [NODE_TOPOLOGY_PROOF_JOB, OWNER_INTEGRATION_JOB, WORKSPACE_UNIT_ARTIFACTS_JOB].toSorted(),
+  );
+  for (const { job, verdict } of readers) {
+    expect(verdict, job).toBe(REUSE_LOCKFILE_VERDICT);
+  }
+  // Other workflows install on their own and keep the default.
+  for (const file of ['quality-audit.yml', 'zerops-stage.yml', 'merge-adaptation-check.yml']) {
+    const steps = Object.values(readJobsOf(file)).flatMap(({ steps: jobSteps }) => jobSteps);
+    expect(
+      steps.filter(({ uses, with: inputs }) => uses === INSTALL_APP_ACTION && inputs?.[LOCKFILE_VERDICT] !== undefined),
+      file,
+    ).toEqual([]);
+  }
+});
+
+it('carries one record file per run attempt, around the install and only on the install path', () => {
+  const steps = readInstallAction();
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const install = index('Install dependencies from the frozen lockfile');
+  const installPath = steps[install]?.if ?? '';
+  expect(installPath).toBe("steps.restored.outputs.usable != 'true'");
+  const downloads = steps.filter(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
+  const uploads = steps.filter(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true);
+  const artifact = `pnpm-lockfile-verdict-${expression('github.run_attempt')}`;
+  // A pattern, not a name: an attempt without a record downloads nothing and pnpm checks; no run id, so only this run.
+  expect(downloads.map(({ with: inputs }) => inputs)).toEqual([
+    { path: expression('steps.verdict.outputs.staging'), pattern: artifact },
+  ]);
+  expect(uploads.map(({ with: inputs }) => inputs)).toEqual([
+    {
+      'if-no-files-found': 'error',
+      name: artifact,
+      overwrite: true,
+      path: `${expression('steps.verdict.outputs.staging')}/${LOCKFILE_RECORD}`,
+      'retention-days': 1,
+    },
+  ]);
+  const locate = steps.find(({ id }) => id === 'verdict');
+  expect(locate?.run).toContain(`echo "record=\${XDG_CACHE_HOME:-$HOME/.cache}/pnpm/${LOCKFILE_RECORD}"`);
+  const order = [
+    "Locate pnpm's lockfile verdict",
+    'Download the lockfile verdict of this run attempt',
+    'Put the lockfile verdict in place',
+    'Install dependencies from the frozen lockfile',
+    'Stage the lockfile verdict this install recorded',
+    'Publish the lockfile verdict to this run attempt',
+  ].map(index);
+  expect(order.every((position) => position >= 0)).toBe(true);
+  expect(order).toEqual(EffectArray.sort(order, Order.Number));
+  for (const position of order.filter((candidate) => candidate !== install)) {
+    const step = steps[position];
+    // A restored workspace runs no pnpm: nothing to reuse and no fresh record to publish.
+    expect(step?.if, step?.name).toContain(installPath);
+    expect(step?.if, step?.name).toContain(`inputs.${LOCKFILE_VERDICT}`);
+  }
+});
+
+/** Runs one lockfile-verdict step of the install action with bash, as the composite step does. */
+const runVerdictStep = (name: string, env: Readonly<Record<string, string>>) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-verdict-output-'));
+  const output = path.join(scratch, 'github-output');
+  writeFileSync(output, '');
+  const run = readInstallAction().find((step) => step.name === name)?.run ?? 'exit 1';
+  try {
+    const stdout = execFileSync('/bin/bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], {
+      encoding: 'utf-8',
+      env: { GITHUB_OUTPUT: output, PATH: STEP_PATH, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const outputs = Object.fromEntries(
+      readFileSync(output, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+    );
+    return { outputs, status: 0, stdout };
+  } catch (error) {
+    const failed = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.Number, stdout: Schema.String }))(error);
+    return { outputs: {}, status: failed.status, stdout: failed.stdout };
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+};
+
+// pnpm reads and writes its record in ${XDG_CACHE_HOME:-$HOME/.cache}/pnpm on Linux; a record put anywhere else,
+// or a publish that uploads nothing, would silently bring the supply-chain check back to every job.
+it('moves only pnpm’s lockfile record between pnpm’s cache directory and the artifact', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'install-app-verdict-'));
+  const locateStep = "Locate pnpm's lockfile verdict";
+  const placeStep = 'Put the lockfile verdict in place';
+  const stageStep = 'Stage the lockfile verdict this install recorded';
+  try {
+    const temp = path.join(home, 'runner-temp');
+    const locate = (mode: string, xdg?: string) => {
+      const env = { HOME: home, MODE: mode, RUNNER_TEMP: temp };
+      return runVerdictStep(locateStep, xdg === undefined ? env : { ...env, XDG_CACHE_HOME: xdg });
+    };
+    expect(locate('reuse', path.join(home, 'xdg')).outputs.record).toBe(path.join(home, 'xdg/pnpm', LOCKFILE_RECORD));
+    expect(locate('publish').status).toBe(0);
+    expect(locate('save').status).not.toBe(0);
+    const { record = '', staging = '' } = locate('reuse').outputs;
+    expect(record).toBe(path.join(home, '.cache/pnpm', LOCKFILE_RECORD));
+    expect(staging).toBe(path.join(temp, 'pnpm-lockfile-verdict'));
+    const env = { HOME: home, RECORD: record, STAGING: staging };
+
+    // Nothing published in this attempt: no record, and pnpm runs its check.
+    expect(runVerdictStep(placeStep, env).status).toBe(0);
+    expect(existsSync(record)).toBe(false);
+    // A publisher whose pnpm wrote no record fails instead of uploading nothing.
+    expect(runVerdictStep(stageStep, env).stdout).toContain('wrote no record');
+
+    mkdirSync(path.dirname(record), { recursive: true });
+    writeFileSync(record, '{"lockfile":{"hash":"published"}}\n');
+    expect(runVerdictStep(stageStep, env).status).toBe(0);
+    expect(readdirSync(staging)).toEqual([LOCKFILE_RECORD]);
+    rmSync(path.join(home, '.cache'), { force: true, recursive: true });
+
+    // The downloaded artifact may hold more than the record; only the record reaches pnpm's cache directory.
+    mkdirSync(path.join(staging, 'v12/metadata'), { recursive: true });
+    writeFileSync(path.join(staging, 'v12/metadata/forged.json'), '{}');
+    expect(runVerdictStep(placeStep, env).stdout).toContain('reuses the lockfile check');
+    expect(readFileSync(record, 'utf-8')).toBe('{"lockfile":{"hash":"published"}}\n');
+    expect(readdirSync(path.dirname(record))).toEqual([LOCKFILE_RECORD]);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+it('saves the installed workspace from the typecheck row alone, and restores it only for a complete install', () => {
+  const install = readInstallAction();
+  // A caller with its own install arguments (the quality audit, the stage deploy) installs from the store as before.
+  for (const name of [
+    'List the workspace packages',
+    'Name the installed workspace',
+    'Restore the installed workspace',
+  ]) {
+    expect(install.find((step) => step.name === name)?.if, name).toBe(
+      "inputs.restore-node-modules == 'true' && inputs.install-args == ''",
+    );
+  }
+  // One first-wave job saves, so parallel jobs never race; the jobs after the build shards restore what it saved.
+  const savers = Object.entries(readJobsOf(GATES_WORKFLOW)).flatMap(([job, { steps }]) =>
+    steps
+      .filter((step) => step.uses === INSTALL_APP_ACTION && step.with?.['save-node-modules'] !== undefined)
+      .map((step) => [job, step.with?.['save-node-modules']]),
+  );
+  expect(savers).toEqual([[WORKSPACE_GATE_JOB, expression('matrix.typescript-build == true')]]);
+  expect(MATRICES.source.filter((row) => row['typescript-build'] === true).map(({ name }) => name)).toEqual([
+    'Typecheck and OntOS API Boundary Rules',
+  ]);
+});
+
+const workspaceManifest = (name: string, dependencies: Readonly<Record<string, string>>) =>
+  JSON.stringify({ dependencies, name, private: true, version: '1.0.0' });
+
+const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { encoding: 'utf-8' }).trim();
+
+it('uses a restored workspace only when pnpm would run in it without installing', () => {
+  const verify = readInstallAction().find(({ id }) => id === 'restored')?.run ?? 'exit 1';
+  // The step needs mapfile, which bash has since version 4 and macOS's /bin/bash (3.2) lacks, so take the
+  // first bash on PATH that has it instead of the first bash. An empty or relative entry is read from the
+  // current directory, as the shell reads it, and printed absolute because the fixture runs elsewhere.
+  const bash = lookup(
+    [
+      'entries="$PATH:"; IFS=:; set -f',
+      'for d in $entries; do',
+      '  case "$d" in /*) ;; *) d="$PWD/$d" ;; esac',
+      '  if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi',
+      'done',
+    ].join('\n'),
+  );
+  expect(bash).not.toBe('');
+  const pnpm = lookup('command -v pnpm');
+  const node = lookup('command -v node');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
+  const bin = path.join(directory, 'bin');
+  const workspace = path.join(directory, 'app');
+  const bareModules = path.join(workspace, 'packages/bare/node_modules');
+  const linkedModules = path.join(workspace, 'packages/linked/node_modules');
+  const env = { CI: 'true', HOME: directory, PATH: `${bin}:${path.dirname(pnpm)}:${path.dirname(node)}:${STEP_PATH}` };
+  const usable = () => {
+    const output = path.join(directory, 'output');
+    writeFileSync(output, '');
+    execFileSync(bash, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', verify], {
+      cwd: workspace,
+      env: { ...env, GITHUB_OUTPUT: output, PACKAGES: 'packages/bare\npackages/linked', RESTORED: 'true' },
+      stdio: 'pipe',
+    });
+    return readFileSync(output, 'utf-8').trim();
+  };
+  try {
+    mkdirSync(bin);
+    // Only mise is substituted; the dependency check runs the real pnpm against the installed fixture.
+    writeFileSync(path.join(bin, 'mise'), '#!/bin/sh\n[ "$1 $2" = "exec --" ] || exit 2\nshift 2\nexec "$@"\n');
+    chmodSync(path.join(bin, 'mise'), 0o755);
+    for (const [member, dependencies] of [
+      ['bare', {}],
+      ['linked', { bare: 'workspace:*' }],
+    ] as const) {
+      mkdirSync(path.join(workspace, 'packages', member), { recursive: true });
+      writeFileSync(path.join(workspace, 'packages', member, 'package.json'), workspaceManifest(member, dependencies));
+    }
+    writeFileSync(path.join(workspace, 'package.json'), workspaceManifest('workspace', {}));
+    writeFileSync(path.join(workspace, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+    execFileSync(pnpm, ['install', '--offline', '--no-frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    // The action's own install is frozen; the restored tree is the one that install leaves.
+    execFileSync(pnpm, ['install', '--offline', '--frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    // A package without dependencies gets no node_modules, and a complete tree is still used.
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(true);
+    expect(usable()).toBe('usable=true');
+    // A package that declares dependencies but lost its node_modules: pnpm refuses to run, so it is a clean miss.
+    rmSync(linkedModules, { force: true, recursive: true });
+    expect(usable()).toBe('usable=false');
+    expect(existsSync(path.join(workspace, 'node_modules'))).toBe(false);
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {

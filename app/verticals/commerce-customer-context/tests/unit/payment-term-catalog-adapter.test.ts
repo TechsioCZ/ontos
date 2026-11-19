@@ -81,8 +81,10 @@ it('attaches production Payment Terms factories to persistence and the public ca
   expect(retailFactory).toContain('paymentTermsPersistenceForTransaction');
   expect(retailFactory).not.toContain('paymentTermCatalogPort');
   expect(getActionServicePreflight(changeRetailPaymentTermPreferenceAction)).toBeDefined();
-  expect(resolutionFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(resolutionFactory).toContain('paymentTermCatalogPort');
+  // The resolution Reads reach the Catalog only through Core's call: their owner services build no client.
+  expect(resolutionFactory).toContain('paymentTermsResolutionSnapshotReader');
+  expect(resolutionFactory).not.toContain('paymentTermCatalogPort');
+  expect(resolutionFactory).not.toContain('acquireDelegatedGatewayContext');
   expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(makeGuestPaymentTermsResolutionServices);
 });
 

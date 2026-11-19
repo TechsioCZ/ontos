@@ -3448,6 +3448,37 @@ const publicContractPackageManifests = (
     return decoded?.name === packageName ? [[candidate, decoded] as const] : [];
   });
 
+const ModulePackageManifestSchema = Schema.Struct({
+  exports: Schema.Record(Schema.String, Schema.String),
+  name: Schema.String,
+});
+/**
+ * The subpath a module package publishes its generated module-api contract under: `./api/<name>`, mapped
+ * to `./shared/apis/<name>.ts` (the same leaf the module entrypoint boundary admits operation references from).
+ */
+const MODULE_API_CONTRACT_EXPORT = /^\.\/api\/(?<name>[a-z0-9-]+)$/u;
+
+/** Whether exactly one module package under `verticals/` publishes `exportName` as its generated module-api contract. */
+const publishesModuleApiContract = (
+  sources: ReadonlyMap<string, string>,
+  packageName: string,
+  exportName: string,
+): boolean => {
+  const contractName = MODULE_API_CONTRACT_EXPORT.exec(exportName)?.groups?.name;
+  return (
+    contractName !== undefined &&
+    [...sources.entries()].filter(([candidate, source]) => {
+      if (!/^verticals\/[^/]+\/package\.json$/u.test(candidate)) {
+        return false;
+      }
+      const decoded = Option.getOrUndefined(
+        Schema.decodeUnknownOption(Schema.fromJsonString(ModulePackageManifestSchema))(source),
+      );
+      return decoded?.name === packageName && decoded.exports[exportName] === `./shared/apis/${contractName}.ts`;
+    }).length === 1
+  );
+};
+
 /* ------------------------------------------------------------------------------------------------ */
 /* The read SDK form: `{ run }`, declared calls and access questions                                */
 /* ------------------------------------------------------------------------------------------------ */
@@ -3697,14 +3728,18 @@ const declaredCallProvider = (
   }
   const manifests = publicContractPackageManifests(sources, parts.packageName);
   const [manifest] = manifests.map(([, decoded]) => decoded);
-  return manifests.length === 1 && manifest?.exports[parts.exportName] !== undefined
+  return (manifests.length === 1 && manifest?.exports[parts.exportName] !== undefined) ||
+    publishesModuleApiContract(sources, parts.packageName, parts.exportName)
     ? { kind: 'module' }
-    : { kind: 'invalid', reason: `${binding.source} is no public subpath of one contract package` };
+    : {
+        kind: 'invalid',
+        reason: `${binding.source} is no public subpath of one contract package or module-api contract of one module`,
+      };
 };
 
 /**
- * A declared call names an operation reference the gate can trace to a public contract package or to
- * `coreOperations`. Whether the calling module's manifest covers it (requirement, entrypoint, provider,
+ * A declared call names an operation reference the gate can trace to a public contract package, to the
+ * generated module-api contract a module package publishes, or to `coreOperations`. Whether the calling module's manifest covers it (requirement, entrypoint, provider,
  * callers) is decided by Core when the registration is built (`declaredCallsIssues`), not re-parsed here.
  */
 const declaredCallViolations = (
@@ -3785,8 +3820,8 @@ const readDefinitionObjectViolations = (form: ReadDefinitionForm, definition: Ar
  * The parser-visible rules of the read SDK form. The second `defineRead` argument is a bare handler,
  * `{ load }` or `{ run }` (the handler itself is judged by `hasReadCallbacks`). `accessQuestions` stand
  * only beside `{ load }` or `{ run }`, `calls` only beside `{ run }`; each call names an operation
- * reference of a public contract package or `coreOperations`, and a `{ run }` read builds no gateway
- * call by hand. Whether the manifest covers each call is decided by Core at registration
+ * reference of a public contract package, a module's published module-api contract or `coreOperations`,
+ * and a `{ run }` read builds no gateway call by hand. Whether the manifest covers each call is decided by Core at registration
  * (`declaredCallsIssues`). Returns every violation.
  */
 export const readSdkFormViolations = (input: ReadSdkFormInput): readonly string[] => {
