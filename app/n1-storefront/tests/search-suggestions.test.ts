@@ -1,5 +1,3 @@
-// @rstest-environment happy-dom
-import { browserNetwork, networkIdle } from "@app/shared-contracts/testing/http-double";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -13,6 +11,7 @@ import { projectCatalog } from "../src/ontos/catalog-model";
 import { readSearchSuggestions } from "../src/ontos/search-suggestions";
 import { SearchSuggestionsResponse } from "../src/ontos/search-contract";
 import { GET } from "../src/app/api/search-suggestions/route";
+import { ownerServer } from "./support/owner-server";
 
 const tenantId = "70000000-0000-4000-8000-000000000099";
 const legalEntityId = "71000000-0000-4000-8000-000000000099";
@@ -94,28 +93,14 @@ const getPreview = (url: string) =>
     );
     const environment = {
       ONTOS_N1_STOREFRONT_API_KEY: "search-suggestions-service-key",
-      ONTOS_SHELL_URL: "https://shell.example",
       ONTOS_STOREFRONT_LEGAL_ENTITY_ID: legalEntityId,
       ONTOS_STOREFRONT_TENANT_ID: tenantId,
     };
-    const previous = Object.keys(environment).map((key) => [key, process.env[key]] as const);
-    Object.assign(process.env, environment);
-    try {
-      return yield* Effect.gen(function* readPreview() {
-        const response = yield* Effect.promise(async () => await GET(new Request(url)));
-        const body: unknown = yield* Effect.promise(async () => await response.json());
-        yield* networkIdle;
-        return { body, requests, response };
-      }).pipe(Effect.provide(browserNetwork(owner)));
-    } finally {
-      for (const [key, value] of previous) {
-        if (value === undefined) {
-          Reflect.deleteProperty(process.env, key);
-        } else {
-          process.env[key] = value;
-        }
-      }
-    }
+    return yield* Effect.gen(function* readPreview() {
+      const response = yield* Effect.promise(async () => await GET(new Request(url)));
+      const body: unknown = yield* Effect.promise(async () => await response.json());
+      return { body, requests, response };
+    }).pipe(Effect.provide(ownerServer(owner, environment)));
   });
 
 describe("search suggestions read boundary", () => {

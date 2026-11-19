@@ -1,12 +1,10 @@
-// @rstest-environment happy-dom
-import { browserNetwork, networkIdle } from "@app/shared-contracts/testing/http-double";
 import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "@modern-js/bff-effect/effect-edge";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, beforeAll, beforeEach, describe, expect } from "@rstest/core";
+import { beforeEach, describe, expect } from "@rstest/core";
 import { Effect, Schema } from "effect";
 import { it } from "effect-rstest";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
@@ -16,6 +14,7 @@ import ContentPage from "../src/app/[locale]/[content]/page";
 import { getDictionary } from "../src/i18n";
 import type { CatalogResponseSchema } from "../src/ontos/catalog-model";
 import type { FulfillmentSnapshotSchema } from "../src/ontos/fulfillment-model";
+import { ownerServer } from "./support/owner-server";
 
 const tenantId = "70000000-0000-4000-8000-000000000099";
 const legalEntityId = "71000000-0000-4000-8000-000000000099";
@@ -134,23 +133,9 @@ const owner = HttpRouter.add(
 );
 const environment = {
   ONTOS_N1_STOREFRONT_API_KEY: "legal-route-service-key",
-  ONTOS_SHELL_URL: "https://shell.example",
   ONTOS_STOREFRONT_LEGAL_ENTITY_ID: legalEntityId,
   ONTOS_STOREFRONT_TENANT_ID: tenantId,
 };
-const previousEnvironment = Object.keys(environment).map((key) => [key, process.env[key]] as const);
-beforeAll(() => {
-  Object.assign(process.env, environment);
-});
-afterAll(() => {
-  for (const [key, value] of previousEnvironment) {
-    if (value === undefined) {
-      Reflect.deleteProperty(process.env, key);
-    } else {
-      process.env[key] = value;
-    }
-  }
-});
 beforeEach(() => {
   reads.length = 0;
   serverErrors.length = 0;
@@ -190,15 +175,11 @@ const renderPage = (
       ),
   }).pipe(
     Effect.ensuring(
-      networkIdle.pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            expect(serverErrors).toEqual([]);
-          }),
-        ),
-      ),
+      Effect.sync(() => {
+        expect(serverErrors).toEqual([]);
+      }),
     ),
-    Effect.provide(browserNetwork(owner)),
+    Effect.provide(ownerServer(owner, environment)),
   );
 const renderContact = (query: { productId?: string | string[]; variantIds?: string | string[] }) =>
   renderPage("kontakty", "cs", query);

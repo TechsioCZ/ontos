@@ -1,5 +1,3 @@
-// @rstest-environment happy-dom
-import { browserNetwork, networkIdle } from "@app/shared-contracts/testing/http-double";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "effect-rstest";
@@ -9,6 +7,7 @@ import { projectCatalog } from "../src/ontos/catalog-model";
 import { readCardVariants } from "../src/ontos/card-variants-server";
 import { CardVariantsQuerySchema } from "../src/ontos/card-variants";
 import { GET } from "../src/app/api/card-variants/route";
+import { ownerServer } from "./support/owner-server";
 
 const query = { locale: "cs", productId: "owner-product", slug: "owner-product" } as const;
 const ownerCatalog = {
@@ -102,7 +101,6 @@ describe("card variant intent read", () => {
           { id: "second", name: "SM" },
         ],
       });
-      yield* networkIdle;
       expect(reads).toEqual([["cs", JSON.stringify({ slug: query.slug })]]);
     }),
   );
@@ -155,28 +153,9 @@ describe("card variant intent read", () => {
     Effect.gen(function* serveCardVariants() {
       const config = {
         ONTOS_N1_STOREFRONT_API_KEY: "card-variants-test-service-key",
-        ONTOS_SHELL_URL: "https://shell.example",
         ONTOS_STOREFRONT_LEGAL_ENTITY_ID: "71000000-0000-4000-8000-000000000099",
         ONTOS_STOREFRONT_TENANT_ID: "70000000-0000-4000-8000-000000000099",
       };
-      const previous = Object.keys(config).map((key) => [key, process.env[key]] as const);
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          for (const [key, value] of Object.entries(config)) {
-            process.env[key] = value;
-          }
-        }),
-        () =>
-          Effect.sync(() => {
-            for (const [key, value] of previous) {
-              if (value === undefined) {
-                Reflect.deleteProperty(process.env, key);
-              } else {
-                process.env[key] = value;
-              }
-            }
-          }),
-      );
       const reads: (typeof GatewayRead.Type)[] = [];
       const owner = HttpRouter.add(
         "POST",
@@ -249,7 +228,6 @@ describe("card variant intent read", () => {
             { id: "second", name: "SM" },
           ],
         });
-        yield* networkIdle;
         expect(reads.map((read) => read.readName)).toEqual(["current-market-catalog", "records"]);
         expect(reads[1]?.query.view?.storefrontCatalog).toEqual({
           fields: "full",
@@ -263,9 +241,8 @@ describe("card variant intent read", () => {
           GET(new Request("https://n1.example/api/card-variants?locale=bad&slug=x&productId=x")),
         );
         expect(invalid.status).toBe(400);
-        yield* networkIdle;
         expect(reads).toEqual([]);
-      }).pipe(Effect.provide(browserNetwork(owner)));
+      }).pipe(Effect.provide(ownerServer(owner, config)));
     }).pipe(Effect.scoped),
   );
 });
