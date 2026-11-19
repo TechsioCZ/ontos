@@ -664,6 +664,40 @@ it.effect('saves no reply that PostgreSQL jsonb cannot hold and commits the Acti
   }),
 );
 
+/** A Date declared without a JSON codec: the result hashes, but a reply holding it has no JSON form. */
+const DateWithoutJsonForm = Schema.declare(Predicate.isDate);
+const epoch = DateTime.toDateUtc(DateTime.makeUnsafe(0));
+
+it.effect('saves no reply that has no JSON form and commits the Action as before', () =>
+  Effect.gen(function* replyWithoutJsonForm() {
+    let handlerRuns = 0;
+    const at = epoch;
+    const action = defineAction(
+      {
+        ...counterAction({ handlerRuns: 0, policyRuns: 0 }).descriptor,
+        resultSchema: Schema.Struct({ at: DateWithoutJsonForm }),
+      },
+      () =>
+        Effect.sync(() => {
+          handlerRuns += 1;
+          return { at };
+        }),
+    );
+    const harness = yield* harnessFor(action);
+
+    const original = yield* harness.runtime.runAction(request(action));
+    const retry = yield* harness.runtime.runAction(request(action)).pipe(Effect.flip);
+    const snapshot = harness.snapshot();
+
+    expect(original.at).toBe(at);
+    expect(snapshot.committed).toHaveLength(1);
+    expect(snapshot.committed[0]?.committedReply).toBeNull();
+    expect(snapshot.invocations[0]?.status).toBe('succeeded');
+    expect(Predicate.isTagged(retry, 'ActionAlreadyCommitted')).toBe(true);
+    expect(handlerRuns).toBe(1);
+  }),
+);
+
 it.effect('replays a retry whose Policy denies only after the concurrent first attempt committed', () =>
   Effect.gen(function* policyRaceReplay() {
     const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
