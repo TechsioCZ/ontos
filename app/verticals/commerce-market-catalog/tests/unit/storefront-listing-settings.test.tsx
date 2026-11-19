@@ -1,205 +1,278 @@
 // @rstest-environment happy-dom
+// Real module providers, toaster and generated Action client; the public HTTP contract answers in process.
+import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { executeManageCatalog } from '@app/merchandise/apis/manage-catalog-action/client';
 import {
+  ManageCatalogActionApi,
   ManageCatalogActionConflictProblemSchema,
+  ManageCatalogActionInvalidProblemSchema,
+  ManageCatalogActionSchemaErrorMiddleware,
   ManageCatalogActionUnavailableProblemSchema,
 } from '@app/merchandise/apis/manage-catalog-action';
-import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast' with { rstest: 'importActual' };
-import { Effect, Option, Schema } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import type { ManageCatalogPayloadSchema } from '@app/merchandise/apis/manage-catalog-action';
+import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
+import {
+  browserNetwork,
+  networkIdle,
+  networkQuietExcept,
+  pinTestDocument,
+  serveApi,
+  shellGatewayIssuer,
+} from '@app/shared-contracts/testing/http-double';
+import { HttpApiBuilder, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
+import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { constVoid } from 'effect/Function';
-import { act } from 'react';
-import type { ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Root } from 'react-dom/client';
 import { EshopCardView } from '../../src/routes/[lang]/prodej/eshopy/page.tsx';
+import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
-rstest.mock('@app/merchandise/apis/manage-catalog-action/client');
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  FederatedI18nBoundary: ({ children }: { children: ReactNode }) => children,
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
-}));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useNavigate: () => constVoid }));
-const toast = rstest.hoisted(() => rstest.fn());
-rstest.mock('@techsio/ui-kit/molecules/toast', () => ({ Toaster, toaster, useToast: () => ({ create: toast }) }));
-
-let root: Root;
-let container: HTMLDivElement;
-/** React owns the Promise boundary; the test program remains an Effect. */
-const inReact = (action: () => void) => Effect.promise(() => act(() => Promise.resolve().then(action)));
-const settle = Effect.yieldNow.pipe(Effect.andThen(() => inReact(constVoid)));
-const input = () =>
-  Option.getOrThrow(Option.fromNullOr(container.querySelector<HTMLInputElement>('input[type="checkbox"]')));
-const save = () => Option.getOrThrow(Option.fromNullOr(container.querySelector<HTMLButtonElement>('button')));
-const mount = (canManageCatalog = true) =>
-  inReact(() =>
-    root.render(
-      <EshopCardView
-        card={{
-          appId: 'akros-storefront',
-          channels: ['B2C'],
-          lifecycle: 'ACTIVE',
-          markets: [],
-          name: 'Akros',
-          url: 'https://akros.test',
-        }}
-        onOpenMarket={constVoid}
-        refresh={Effect.void}
-        settings={{ canManageCatalog, revision: 17 }}
-      />,
+const committed = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ entityIds: [], revision: 18 });
+const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2030-01-01T00:00:00.000Z',
+  proposalId: '22222222-2222-4222-8222-222222222222',
+});
+type OwnerProblem =
+  | typeof ManageCatalogActionConflictProblemSchema.Type
+  | typeof ManageCatalogActionUnavailableProblemSchema.Type;
+let answer: Effect.Effect<typeof committed | typeof proposal, OwnerProblem> = Effect.succeed(committed);
+const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const OwnerApi = ManageCatalogActionApi.prefix('/merchandise-api');
+const network = browserNetwork(
+  shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
+  serveApi(
+    OwnerApi,
+    HttpApiBuilder.group(OwnerApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.suspend(() => {
+          commands.push(payload);
+          return answer;
+        }),
+      ),
+    ).pipe(
+      Layer.provide(
+        HttpApiMiddleware.layerSchemaErrorTransform(ManageCatalogActionSchemaErrorMiddleware, () =>
+          Effect.fail(
+            ManageCatalogActionInvalidProblemSchema.make({
+              detail: 'The test endpoint received an invalid request.',
+              status: 400,
+              title: 'Invalid request',
+              type: 'https://ontos.dev/problems/action-invalid',
+            }),
+          ),
+        ),
+      ),
     ),
-  ).pipe(Effect.andThen(settle));
-const toggle = () => inReact(() => input().click()).pipe(Effect.andThen(settle));
-const clickSave = () => inReact(() => save().click()).pipe(Effect.andThen(settle));
+  ),
+);
+
+const czech = moduleText('cs');
+const copy = (path: string) => czech(`commerce-market-catalog.${path}`);
+const input = () =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>('input[type="checkbox"]')));
+const save = () =>
+  Option.getOrThrow(
+    Option.fromNullOr(buttons(copy('eshops.listing.save'))[0] ?? buttons(copy('eshops.listing.saving'))[0]),
+  );
+const mount = (canManageCatalog = true) =>
+  Effect.gen(function* mountStorefrontSetting() {
+    yield* pinTestDocument;
+    yield* mountInRoute(
+      <>
+        <EshopCardView
+          card={{
+            appId: 'akros-storefront',
+            channels: ['B2C'],
+            lifecycle: 'ACTIVE',
+            markets: [],
+            name: 'Akros',
+            url: 'https://akros.test',
+          }}
+          onOpenMarket={constVoid}
+          refresh={Effect.void}
+          settings={{ canManageCatalog, revision: 17 }}
+        />
+        <Toaster />
+      </>,
+    );
+  });
+const toggle = () => acted(() => input().click());
+const clickSave = () => acted(() => save().click());
+const saved = () => text().includes(copy('eshops.listing.saved'));
 
 beforeEach(() => {
-  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  container = document.createElement('div');
-  document.body.append(container);
-  root = createRoot(container);
-  rstest.mocked(executeManageCatalog).mockReset();
-  toast.mockReset();
-});
-afterEach(async () => {
-  await act(() => Promise.resolve().then(() => root.unmount()));
-  container.remove();
-  rstest.unstubAllGlobals();
+  commands.length = 0;
+  answer = Effect.succeed(committed);
+  toaster.remove();
 });
 
-it.effect('shows the Akros default and sends the changed checkbox only after Save', () =>
+afterEach(() => {
+  unmountAll();
+  toaster.remove();
+});
+
+it.live('shows the Akros default and sends the changed checkbox only after Save', () =>
   Effect.gen(function* explicitSave() {
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 18 }));
     yield* mount();
     expect(input().checked).toBe(true);
     expect(save().disabled).toBe(true);
     yield* toggle();
     expect(input().checked).toBe(false);
-    expect(executeManageCatalog).not.toHaveBeenCalled();
+    yield* networkIdle;
+    expect(commands).toEqual([]);
     yield* clickSave();
-    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0]).toMatchObject({
-      command: {
-        _tag: 'ConfigureStorefrontCatalog',
-        mainSourceProductsOnly: false,
-        storefrontAppId: 'akros-storefront',
+    yield* networkIdle;
+    yield* waitUntil(saved);
+    expect(commands).toEqual([
+      {
+        command: {
+          _tag: 'ConfigureStorefrontCatalog',
+          mainSourceProductsOnly: false,
+          storefrontAppId: 'akros-storefront',
+        },
+        expectedRevision: 17,
       },
-      expectedRevision: 17,
-    });
+    ]);
     expect(input().checked).toBe(false);
     expect(save().disabled).toBe(true);
-    expect(toast).toHaveBeenCalledWith({ title: 'commerce-market-catalog.eshops.listing.saved', type: 'success' });
-  }),
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('retains an unsaved draft on failure and allows retrying', () =>
+it.live('retains an unsaved draft on failure and allows retrying', () =>
   Effect.gen(function* failedSave() {
-    rstest.mocked(executeManageCatalog).mockReturnValue(
-      Effect.fail(
-        Schema.decodeUnknownSync(ManageCatalogActionUnavailableProblemSchema)({
-          _tag: 'ManageCatalogActionUnavailableProblem',
-          code: 'merchandise_persistence_unavailable',
-          detail: 'The catalog owner is temporarily unavailable',
-          retryable: true,
-          status: 503,
-          title: 'Unavailable',
-          type: 'https://ontos.dev/problems/unavailable',
-        }),
-      ),
+    answer = Effect.fail(
+      Schema.decodeUnknownSync(ManageCatalogActionUnavailableProblemSchema)({
+        _tag: 'ManageCatalogActionUnavailableProblem',
+        code: 'merchandise_persistence_unavailable',
+        detail: 'The catalog owner is temporarily unavailable',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'https://ontos.dev/problems/unavailable',
+      }),
     );
     yield* mount();
     yield* toggle();
     yield* clickSave();
+    yield* networkIdle;
+    yield* waitUntil(() => text().includes(copy('failures.unavailable')));
     expect(input().checked).toBe(false);
     expect(save().disabled).toBe(false);
-    expect(container.textContent).toContain('commerce-market-catalog.failures.unavailable');
-    expect(toast).not.toHaveBeenCalled();
-  }),
+    expect(saved()).toBe(false);
+    expect(commands).toHaveLength(1);
+
+    answer = Effect.succeed(committed);
+    yield* clickSave();
+    yield* networkIdle;
+    yield* waitUntil(saved);
+    expect(commands).toHaveLength(2);
+    expect(input().checked).toBe(false);
+    expect(save().disabled).toBe(true);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('keeps an unsaved checkbox editable and shows saving only during the request', () =>
+it.live('keeps an unsaved checkbox editable and shows saving only during the request', () =>
   Effect.gen(function* dirtyIsNotSaving() {
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.never);
+    const response = yield* Deferred.make<typeof committed>();
+    answer = Deferred.await(response);
     yield* mount();
     yield* toggle();
     expect(input().disabled).toBe(false);
-    expect(save().textContent).toBe('commerce-market-catalog.eshops.listing.save');
+    expect(save().textContent).toBe(copy('eshops.listing.save'));
     yield* toggle();
     expect(input().checked).toBe(true);
     expect(save().disabled).toBe(true);
+    yield* networkIdle;
+    expect(commands).toEqual([]);
+
     yield* toggle();
     yield* clickSave();
+    yield* waitUntil(() => commands.length === 1);
+    yield* networkQuietExcept(1);
     expect(input().disabled).toBe(true);
-    expect(save().textContent).toBe('commerce-market-catalog.eshops.listing.saving');
-    expect(executeManageCatalog).toHaveBeenCalledTimes(1);
-  }),
+    expect(save().textContent).toBe(copy('eshops.listing.saving'));
+    yield* Deferred.succeed(response, committed);
+    yield* networkIdle;
+    yield* waitUntil(saved);
+    expect(commands).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('reports an approval proposal without claiming the preference was saved', () =>
+it.live('reports an approval proposal without claiming the preference was saved', () =>
   Effect.gen(function* proposedSave() {
-    rstest.mocked(executeManageCatalog).mockReturnValue(
-      Effect.succeed(
-        Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
-          _tag: 'ActionProposalAccepted',
-          expiresAt: '2030-01-01T00:00:00.000Z',
-          proposalId: '22222222-2222-4222-8222-222222222222',
-        }),
-      ),
-    );
+    answer = Effect.succeed(proposal);
     yield* mount();
     yield* toggle();
     yield* clickSave();
-    expect(toast).toHaveBeenCalledWith({ title: 'commerce-market-catalog.eshops.listing.proposed', type: 'warning' });
-  }),
+    yield* networkIdle;
+    yield* waitUntil(() => text().includes(copy('eshops.listing.proposed')));
+    expect(saved()).toBe(false);
+    expect(input().checked).toBe(false);
+    expect(commands).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('offers no Save action without catalog management permission', () =>
+it.live('offers no Save action without catalog management permission', () =>
   Effect.gen(function* readOnlySetting() {
     yield* mount(false);
     expect(input().checked).toBe(true);
     expect(input().readOnly).toBe(true);
-    expect(container.querySelector('button')).toBeNull();
-    expect(executeManageCatalog).not.toHaveBeenCalled();
-  }),
+    expect(buttons(copy('eshops.listing.save'))).toEqual([]);
+    yield* toggle();
+    yield* networkIdle;
+    expect(input().checked).toBe(true);
+    expect(commands).toEqual([]);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('prevents duplicate saves and checkbox edits while the owner is responding', () =>
+it.live('prevents duplicate saves and checkbox edits while the owner is responding', () =>
   Effect.gen(function* pendingSave() {
-    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.never);
+    const response = yield* Deferred.make<typeof committed>();
+    answer = Deferred.await(response);
     yield* mount();
     yield* toggle();
     yield* clickSave();
+    yield* waitUntil(() => commands.length === 1);
+    yield* networkQuietExcept(1);
     expect(input().disabled).toBe(true);
     expect(save().disabled).toBe(true);
     yield* clickSave();
-    expect(executeManageCatalog).toHaveBeenCalledTimes(1);
-  }),
+    yield* toggle();
+    yield* networkQuietExcept(1);
+    expect(input().checked).toBe(false);
+    expect(commands).toHaveLength(1);
+    yield* Deferred.succeed(response, committed);
+    yield* networkIdle;
+    yield* waitUntil(saved);
+    expect(commands).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
 
-it.effect('keeps a conflicting draft and lets the person reload the saved version', () =>
+it.live('keeps a conflicting draft and lets the person reload the saved version', () =>
   Effect.gen(function* conflictingSave() {
-    rstest.mocked(executeManageCatalog).mockReturnValue(
-      Effect.fail(
-        Schema.decodeUnknownSync(ManageCatalogActionConflictProblemSchema)({
-          _tag: 'ManageCatalogActionConflictProblem',
-          code: 'merchandise_revision_conflict',
-          detail: 'The catalog changed',
-          status: 409,
-          title: 'Conflict',
-          type: 'https://ontos.dev/problems/conflict',
-        }),
-      ),
+    answer = Effect.fail(
+      Schema.decodeUnknownSync(ManageCatalogActionConflictProblemSchema)({
+        _tag: 'ManageCatalogActionConflictProblem',
+        code: 'merchandise_revision_conflict',
+        detail: 'The catalog changed',
+        status: 409,
+        title: 'Conflict',
+        type: 'https://ontos.dev/problems/conflict',
+      }),
     );
     yield* mount();
     yield* toggle();
     yield* clickSave();
+    yield* networkIdle;
+    yield* waitUntil(() => text().includes(copy('failures.conflict')));
     expect(input().checked).toBe(false);
-    expect(container.textContent).toContain('commerce-market-catalog.failures.conflict');
-    const reload = Option.getOrThrow(
-      Option.fromNullOr(container.querySelectorAll<HTMLButtonElement>('button').item(1)),
-    );
-    yield* inReact(() => reload.click());
+    yield* acted(() => {
+      Option.getOrThrow(Option.fromNullOr(buttons(copy('eshops.listing.reload'))[0])).click();
+    });
     yield* settle;
     expect(input().checked).toBe(true);
-    expect(container.textContent).not.toContain('commerce-market-catalog.failures.conflict');
-  }),
+    expect(text()).not.toContain(copy('failures.conflict'));
+    expect(commands).toHaveLength(1);
+  }).pipe(Effect.provide(network)),
 );
