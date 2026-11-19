@@ -17,8 +17,8 @@ import type { SupportedLanguage } from './vocabulary.ts';
  * path refuses any value for it and leaves its slot untouched, so the owner completes it under its own authority.
  */
 const OWNER_RENDERED = 'owner-rendered' as const;
-export const PlaceholderKindSchema = Schema.Literals(['date', 'link', 'money', OWNER_RENDERED, 'text']);
-export type PlaceholderKind = typeof PlaceholderKindSchema.Type;
+const PlaceholderKindSchema = Schema.Literals(['date', 'link', 'money', OWNER_RENDERED, 'text']);
+type PlaceholderKind = typeof PlaceholderKindSchema.Type;
 export interface PlaceholderContract {
   readonly kind: PlaceholderKind;
   readonly name: string;
@@ -30,7 +30,7 @@ export interface PlaceholderContract {
 }
 
 /** The text an approved revision carries, with the placeholder names it declares. */
-export interface RenderTemplate {
+interface RenderTemplate {
   readonly body: string;
   readonly optionalPlaceholders: readonly string[];
   readonly requiredPlaceholders: readonly string[];
@@ -45,7 +45,7 @@ export interface RenderInput {
   readonly values: Readonly<Record<string, GenericValue>>;
 }
 
-export const RENDER_REFUSAL_CODES = [
+const RENDER_REFUSAL_CODES = [
   // the contract does not match what the revision declares, or the text uses a name it does not declare
   'contract_mismatch',
   'content_not_equivalent',
@@ -59,7 +59,7 @@ export const RENDER_REFUSAL_CODES = [
   'value_malformed',
   'value_not_declared',
 ] as const;
-export type RenderRefusalCode = (typeof RENDER_REFUSAL_CODES)[number];
+type RenderRefusalCode = (typeof RENDER_REFUSAL_CODES)[number];
 
 /** A refusal names placeholders, never a value: it can be logged and stored without carrying owner data. */
 export interface RenderRefusal {
@@ -171,7 +171,8 @@ export const renderMessage = (input: RenderInput): Result.Result<RenderedMessage
   const shown = new Map<string, Shown>();
   const omitted = new Set<string>();
   for (const entry of contract.filter((candidate) => candidate.kind !== OWNER_RENDERED)) {
-    const value = values[entry.name];
+    // own properties only: a placeholder named like an inherited member (`constructor`) has no value unless offered
+    const value = Object.hasOwn(values, entry.name) ? values[entry.name] : undefined;
     if (value !== undefined) {
       const presented = present(entry, value, input);
       if (Result.isFailure(presented)) {

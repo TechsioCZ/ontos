@@ -58,7 +58,9 @@ export const setLanguagePolicyAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'optional',
+    // The mode is a Tenant-wide setting: a call that selects a Legal Entity is refused (DATA_ACCESS.md: `forbidden` means
+    // the legal entity must be absent), and the access decision runs in the Tenant context, not in a company.
+    legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
     payloadSchema: SetLanguagePolicyPayloadSchema,
     policies: [],

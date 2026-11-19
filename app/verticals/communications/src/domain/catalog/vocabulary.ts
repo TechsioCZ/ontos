@@ -108,7 +108,7 @@ export const RecipientStopReasonSchema = Schema.Literals([
  * is uncertainty about a mandatory owner, never a proven prohibition; AUDIENCE_GROUP_INCOMPLETE stops an otherwise
  * eligible member of an approved indivisible audience because another required member could not proceed.
  */
-export const CandidateStopReasonSchema = Schema.Literals([
+const CandidateStopReasonSchema = Schema.Literals([
   'PRIVACY_NOT_ALLOWED',
   'PRIVACY_INDETERMINATE',
   'RECIPIENT_NOT_ELIGIBLE',

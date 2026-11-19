@@ -56,7 +56,7 @@ export interface TemplateInvalidationRecord {
 }
 
 /** Who acted, under which invocation and when: stamped on every write so who/what/when/why stays answerable. */
-export interface TemplateWriteAttribution {
+interface TemplateWriteAttribution {
   readonly actionInvocationId: string;
   readonly at: DateTime.Utc;
   readonly principalId: string;

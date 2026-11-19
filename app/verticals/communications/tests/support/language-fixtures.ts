@@ -71,7 +71,7 @@ const storeUnavailable = () =>
 /** Same port contract as the PostgreSQL form, in memory, with a switch that makes the setting unreadable. */
 export const makeInMemoryLanguagePolicyPort = () => {
   const versions: LanguageModeVersionRecord[] = [];
-  const state = { unreadable: false, versions };
+  const state = { clock: DateTime.makeUnsafe('2026-11-19T11:00:00Z'), unreadable: false, versions };
   const guard = <Value>(read: Effect.Effect<Value>): Effect.Effect<Value, ReturnType<typeof storeUnavailable>> =>
     Effect.suspend(() => (state.unreadable ? Effect.fail(storeUnavailable()) : read));
   const port: LanguagePolicyPortContract = {
@@ -84,13 +84,14 @@ export const makeInMemoryLanguagePolicyPort = () => {
         const record: LanguageModeVersionRecord = {
           mode: input.mode,
           policyVersionId,
-          setAt: DateTime.makeUnsafe('2026-11-19T11:00:00Z'),
+          setAt: input.setAt,
           setByPrincipalId: input.principalId,
           versionNumber: state.versions.length + 1,
         };
         state.versions.push(record);
         return record;
       }),
+    clockNow: guard(Effect.sync(() => state.clock)),
     latest: guard(Effect.sync(() => Option.fromNullishOr(state.versions.at(-1)))),
     lockTenant: guard(Effect.void),
   };

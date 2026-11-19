@@ -4,12 +4,12 @@ import { usablePin } from './selection.ts';
 import type { LanguagePolicySnapshot, RevisionAvailability, SelectedLanguageDecision } from './vocabulary.ts';
 
 /** Why the last stoppable handoff of a pinned message does not go ahead. */
-export const LanguageHandoffStopReasonSchema = Schema.Literals([
+const LanguageHandoffStopReasonSchema = Schema.Literals([
   'czech_revision_required_by_mode_b',
   'language_policy_unreadable',
   'template_revision_ambiguous',
 ]);
-export type LanguageHandoffStopReason = typeof LanguageHandoffStopReasonSchema.Type;
+type LanguageHandoffStopReason = typeof LanguageHandoffStopReasonSchema.Type;
 
 export type LanguageHandoffCheck =
   | { readonly decision: SelectedLanguageDecision; readonly outcome: 'proceed' }

@@ -134,41 +134,45 @@ describe('Retry reuses the pinned decision (L-04, S10)', () => {
 });
 
 describe('Tenant mode A and B through the decision (L-13, AC-11)', () => {
-  it.effect('[S07 S08 S09 AC-03 AC-11] B by default, B to A to B, per Tenant, earlier results untouched', () =>
-    Effect.gen(function* switching() {
-      const one = withTenant();
-      const two = withTenant();
-      yield* seedLanguages(one.templates.port, ['en']);
-      yield* seedLanguages(two.templates.port, ['en']);
-      const decideOne = decideMessageLanguage(one.templates.port, one.policies.port, input());
-      const decideTwo = decideMessageLanguage(two.templates.port, two.policies.port, input());
+  it.effect(
+    '[S07 S08 S09 AC-03 AC-11] B by default, B to A to B, per Tenant; a decision value is immutable by construction',
+    () =>
+      Effect.gen(function* switching() {
+        const one = withTenant();
+        const two = withTenant();
+        yield* seedLanguages(one.templates.port, ['en']);
+        yield* seedLanguages(two.templates.port, ['en']);
+        const decideOne = decideMessageLanguage(one.templates.port, one.policies.port, input());
+        const decideTwo = decideMessageLanguage(two.templates.port, two.policies.port, input());
 
-      const earlier = yield* decideOne;
-      expect(earlier).toMatchObject({ mode: 'B', outcome: 'not-sent', reason: 'czech_revision_required_by_mode_b' });
-      const earlierSnapshot = structuredClone(earlier);
+        const earlier = yield* decideOne;
+        expect(earlier).toMatchObject({ mode: 'B', outcome: 'not-sent', reason: 'czech_revision_required_by_mode_b' });
+        const earlierSnapshot = structuredClone(earlier);
 
-      yield* setLanguageMode(one.policies.port, 'A', actor);
-      // switching to A never revives the earlier not-sent decision: it is a stored value nothing rewrites
-      expect(earlier).toEqual(earlierSnapshot);
-      const underA = selected(yield* decideOne);
-      expect(underA).toMatchObject({ language: 'en', mode: 'A', policy: { source: 'tenant', versionNumber: 1 } });
-      // the other Tenant keeps B
-      expect(yield* decideTwo).toMatchObject({ mode: 'B', outcome: 'not-sent' });
+        yield* setLanguageMode(one.policies.port, 'A', actor);
+        // By construction only: the decision is a returned value and nothing in this lane stores or rewrites it. The
+        // durable proof that a persisted decision is never rewritten belongs to the intent store (d21-07).
+        expect(earlier).toEqual(earlierSnapshot);
+        const underA = selected(yield* decideOne);
+        expect(underA).toMatchObject({ language: 'en', mode: 'A', policy: { source: 'tenant', versionNumber: 1 } });
+        // the other Tenant keeps B
+        expect(yield* decideTwo).toMatchObject({ mode: 'B', outcome: 'not-sent' });
 
-      yield* setLanguageMode(one.policies.port, 'B', actor);
-      expect(yield* decideOne).toMatchObject({
-        mode: 'B',
-        outcome: 'not-sent',
-        policy: { source: 'tenant', versionNumber: 2 },
-        reason: 'czech_revision_required_by_mode_b',
-      });
-      // the English intent decided under A is stopped before its last stoppable handoff, and rewritten by nothing
-      const underASnapshot = structuredClone(underA);
-      const gate = yield* verifyLanguageForHandoff(one.templates.port, one.policies.port, underA);
-      expect(gate).toEqual({ currentMode: 'B', outcome: 'stop', reason: 'czech_revision_required_by_mode_b' });
-      expect(underA).toEqual(underASnapshot);
-      expect(underA).toMatchObject({ language: 'en', mode: 'A', policy: { versionNumber: 1 } });
-    }).pipe(Effect.provide(NodeCrypto.layer)),
+        yield* setLanguageMode(one.policies.port, 'B', actor);
+        expect(yield* decideOne).toMatchObject({
+          mode: 'B',
+          outcome: 'not-sent',
+          policy: { source: 'tenant', versionNumber: 2 },
+          reason: 'czech_revision_required_by_mode_b',
+        });
+        // the English intent decided under A is stopped before its last stoppable handoff; the value is not mutated (by
+        // construction, as above)
+        const underASnapshot = structuredClone(underA);
+        const gate = yield* verifyLanguageForHandoff(one.templates.port, one.policies.port, underA);
+        expect(gate).toEqual({ currentMode: 'B', outcome: 'stop', reason: 'czech_revision_required_by_mode_b' });
+        expect(underA).toEqual(underASnapshot);
+        expect(underA).toMatchObject({ language: 'en', mode: 'A', policy: { versionNumber: 1 } });
+      }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('[AC-11] with a usable Czech revision the pinned English intent passes under B and under A', () =>

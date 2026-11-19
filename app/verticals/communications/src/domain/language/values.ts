@@ -22,8 +22,11 @@ export type ValueFailure = 'value_malformed';
 const malformed = Result.fail<ValueFailure>('value_malformed');
 
 const MAX_TEXT = 500;
-// Controls (C0, DEL, C1), line and paragraph separators, and bidirectional controls: they spoof or break a message.
-const forbiddenCharacter = /[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+// Controls (C0, DEL, C1), line and paragraph separators, and every invisible format character (Unicode category Cf):
+// soft hyphen, zero-width space, joiners, bidirectional marks and isolates, word joiner and invisible operators, the
+// byte-order mark. They spoof, hide or break a message. No exception is made for the zero-width joiner and non-joiner:
+// Czech and English text never needs them, and an exception would reopen the invisible-character gap.
+const forbiddenCharacter = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 // Braces are refused so no value can carry a placeholder token that a later owner step would complete.
 const placeholderBrace = /\{\{|\}\}/u;
 

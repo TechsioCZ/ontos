@@ -7,6 +7,7 @@ import {
 import type { EffectiveLanguagePolicy, LanguageMode } from '../../shared/language-policy.ts';
 import type { LanguagePolicySnapshot } from '../domain/language/vocabulary.ts';
 import type { LanguageModeVersionRecord, LanguagePolicyPortContract } from './language-policy-port.service.ts';
+import { clampBusinessTime } from './template-revision-domain.service.ts';
 
 const effectiveOf = (latest: Option.Option<LanguageModeVersionRecord>): EffectiveLanguagePolicy =>
   Option.match(latest, {
@@ -62,10 +63,15 @@ export const setLanguageMode = Effect.fn('LanguagePolicy.set')(function* setMode
   if (Option.isSome(latest) && latest.value.mode === mode) {
     return { changed: false, effective: effectiveOf(latest) };
   }
+  // Business time is taken only now, under the Tenant lock, and never earlier than the version it follows: a writer that
+  // began first but took the lock last still gets a later time than the version it succeeds.
+  const floor = latest.pipe(Option.map((version) => version.setAt));
+  const setAt = clampBusinessTime(yield* port.clockNow, floor);
   const appended = yield* port.append({
     actionInvocationId: actor.actionInvocationId,
     mode,
     principalId: actor.principalId,
+    setAt,
   });
   return { changed: true, effective: effectiveOf(Option.some(appended)) };
 });

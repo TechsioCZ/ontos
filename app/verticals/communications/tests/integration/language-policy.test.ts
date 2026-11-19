@@ -1,5 +1,5 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { Effect, Exit } from 'effect';
+import { Deferred, Effect, Exit } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { tenantLanguageModeVersions } from '../../src/database/schema.ts';
 import {
@@ -154,6 +154,72 @@ describe('The Tenant language mode on native PostgreSQL as the runtime role (L-1
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
+  it.live(
+    'takes the version time after the Tenant lock: the writer that began first but locked last stays in order',
+    () =>
+      Effect.gen(function* losingOrder() {
+        const database = yield* makeRuntimeDatabase();
+        const tenant = yield* nextId;
+        const slowBegan = yield* Deferred.make<boolean>();
+        const fastWrote = yield* Deferred.make<boolean>();
+        // The slow transaction begins first, so its transaction start time is the earliest, but it takes the Tenant lock
+        // last. A transaction-time default would stamp its version before the version it follows; time taken under the
+        // lock cannot. The ordering is forced, so the failure of such a default is deterministic.
+        const slow = database.withPorts(tenant, (_templates, policies) =>
+          Effect.gen(function* slowWriter() {
+            yield* Deferred.succeed(slowBegan, true);
+            yield* Deferred.await(fastWrote);
+            return yield* setLanguageMode(policies, 'B', policyActor(yield* nextId));
+          }),
+        );
+        const fast = database.withPorts(tenant, (_templates, policies) =>
+          Effect.gen(function* fastWriter() {
+            yield* Deferred.await(slowBegan);
+            const written = yield* setLanguageMode(policies, 'A', policyActor(yield* nextId));
+            // the slow transaction proceeds while this one still holds the Tenant lock and its uncommitted version
+            yield* Deferred.succeed(fastWrote, true);
+            return written;
+          }),
+        );
+        const [slowResult, fastResult] = yield* Effect.all([slow, fast], { concurrency: 2 });
+        expect(fastResult.effective.policy).toMatchObject({ versionNumber: 1 });
+        expect(slowResult.effective.policy).toMatchObject({ versionNumber: 2 });
+        const history = yield* database.inTenant(tenant, (transaction) =>
+          transaction.select().from(tenantLanguageModeVersions),
+        );
+        const ordered = history.toSorted((left, right) => left.versionNumber - right.versionNumber);
+        expect(ordered.map((row) => row.mode)).toEqual(['A', 'B']);
+        expect(ordered[1]?.setAt.getTime()).toBeGreaterThanOrEqual(ordered[0]?.setAt.getTime() ?? Number.NaN);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('refuses a port-level write of another Tenant: the row-level policy holds even if the port is misbound', () =>
+    Effect.gen(function* misbound() {
+      const database = yield* makeRuntimeDatabase();
+      const tenant = yield* nextId;
+      const otherTenant = yield* nextId;
+      // the transaction is installed for `otherTenant`, the port is bound to `tenant`: only the database can refuse
+      const outcome = yield* Effect.exit(
+        database.inTenant(otherTenant, (transaction) =>
+          Effect.gen(function* write() {
+            return yield* setLanguageMode(
+              postgresLanguagePolicyPort(transaction, { tenantId: tenant }),
+              'A',
+              policyActor(yield* nextId),
+            );
+          }),
+        ),
+      );
+      expect(Exit.isFailure(outcome)).toBe(true);
+      for (const inTenant of [tenant, otherTenant]) {
+        const rows = yield* database.inTenant(inTenant, (transaction) =>
+          transaction.select().from(tenantLanguageModeVersions),
+        );
+        expect(rows).toEqual([]);
+      }
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
   it.live('is unreadable, not the default, when the store cannot answer: a decision stops and nothing is guessed', () =>
     Effect.gen(function* unreadable() {
       const database = yield* makeRuntimeDatabase();
@@ -181,7 +247,7 @@ describe('The Tenant language mode on native PostgreSQL as the runtime role (L-1
 
 describe('Decisions on native PostgreSQL pin the Tenant mode and survive its changes (S07, S08, AC-03, AC-11)', () => {
   it.live(
-    'B stops an English-only type, A allows it, B again stops its handoff, and nothing earlier is rewritten',
+    'B stops an English-only type, A allows it and B again stops its handoff; each decision pins the mode it used',
     () =>
       Effect.gen(function* decisions() {
         const database = yield* makeRuntimeDatabase();
@@ -209,10 +275,10 @@ describe('Decisions on native PostgreSQL pin the Tenant mode and survive its cha
           verifyLanguageForHandoff(templates, policies, pinned),
         );
         expect(gate).toEqual({ currentMode: 'B', outcome: 'stop', reason: 'czech_revision_required_by_mode_b' });
-        // the stored decision is a value the gate never rewrote: language, revision, mode and policy version intact
+        // By construction only: the decision is a returned value this lane never stores, so nothing can rewrite it here.
+        // That a persisted decision survives a later mode change is proved with the intent store (d21-07).
         expect(underA).toMatchObject({ language: 'en', mode: 'A', pin: { revisionNumber: 1 } });
-        // the earlier not-sent decision stays not-sent; only a new request is decided again
-        expect(earlier.outcome).toBe('not-sent');
+        // only a new request is decided again, by the then-current mode
         expect(yield* decide(tenantOne)).toMatchObject({ mode: 'B', outcome: 'not-sent' });
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );

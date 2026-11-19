@@ -76,7 +76,7 @@ const businessTimeOf = Effect.fn('TemplateRevision.businessTime')(function* busi
 });
 
 /** Meaning fingerprint of one revision text: identifies it without storing or exposing the text again. */
-export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
+const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
   subject: string,
   body: string,
 ) {
@@ -90,7 +90,7 @@ export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')
  * An Action of one scope may only change a Template of exactly that scope: a tenant-wide Template needs a tenant-wide
  * operation, a Legal Entity Template needs that Legal Entity as the trusted operating scope.
  */
-export const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null) =>
+const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null) =>
   (scope.kind === 'tenant' ? legalEntityId === null : legalEntityId === scope.legalEntityId)
     ? Effect.void
     : refuse('template_scope_mismatch', 'The Template scope is not the trusted operating scope of this operation');
@@ -99,7 +99,7 @@ export const assertOperatingScope = (scope: TemplateScope, legalEntityId: string
  * What activation requires of a revision: a single-line subject, well-formed placeholders, every placeholder the
  * revision itself requires present and nothing undeclared by it. The Type carries no declaration to fall back on.
  */
-export const assessActivatable = Effect.fn('TemplateRevision.assessActivatable')(function* assess(
+const assessActivatable = Effect.fn('TemplateRevision.assessActivatable')(function* assess(
   revision: TemplateRevisionRecord,
 ) {
   const subject = extractPlaceholders(revision.subject);

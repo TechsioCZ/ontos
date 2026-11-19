@@ -20,12 +20,18 @@ export interface LanguageModeVersionRecord {
  * the Core scope installed, never a value a caller can name.
  */
 export interface LanguagePolicyPortContract {
-  /** Appends the next version; the number is assigned under the Tenant lock, so numbers never collide. */
+  /**
+   * Appends the next version; the number is assigned under the Tenant lock, so numbers never collide. `setAt` is the
+   * business time the domain took under that same lock, so time and number run in the same order.
+   */
   readonly append: (input: {
     readonly actionInvocationId: string;
     readonly mode: LanguageMode;
     readonly principalId: string;
+    readonly setAt: DateTime.Utc;
   }) => Effect.Effect<LanguageModeVersionRecord, LanguagePolicyStoreUnavailable, Crypto.Crypto>;
+  /** The database wall clock now; only meaningful for business time once the Tenant lock is held. */
+  readonly clockNow: Effect.Effect<DateTime.Utc, LanguagePolicyStoreUnavailable>;
   /** The Tenant's latest own choice; none is a proven absence of an own choice, not an unreadable setting. */
   readonly latest: Effect.Effect<Option.Option<LanguageModeVersionRecord>, LanguagePolicyStoreUnavailable>;
   /** Serializes the writers of this Tenant's mode for the rest of the transaction. */

@@ -1,4 +1,11 @@
-import { ActionPayloadValidationError, ActionPermissionDenied, ReadPermissionDenied } from '@app/core-runtime';
+import {
+  ActionAlreadyCommitted,
+  ActionPayloadValidationError,
+  ActionPermissionDenied,
+  ActionRequestHashConflict,
+  OperationContextInvalid,
+  ReadPermissionDenied,
+} from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
@@ -12,6 +19,7 @@ import {
   readLanguagePolicySnapshot,
   setLanguageMode,
 } from '../../src/services/language-policy-domain.service.ts';
+import { clampBusinessTime } from '../../src/services/template-revision-domain.service.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { makeInMemoryLanguagePolicyPort } from '../support/language-fixtures.ts';
 
@@ -168,28 +176,99 @@ describe('The set Action through the Core Action runtime', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('[S09 AC-11] a write names no Tenant: it changes only the Tenant of the trusted principal', () =>
-    Effect.gen(function* crossTenant() {
-      const own = yield* makeHarness('allowed');
-      const foreign = yield* makeHarness('allowed');
-      // a payload that tries to name another Tenant either fails validation or is ignored; it can never reach it
-      yield* own.harness.runtime
-        .runAction({
-          payload: JSON.parse(`{"mode":"A","tenantId":"${tenantTwo}"}`),
+  it.effect(
+    '[S09 AC-11] the payload has no Tenant field: a Tenant named in it is refused (isolation itself: PostgreSQL integration test)',
+    () =>
+      Effect.gen(function* noTenantInPayload() {
+        const { harness, memory } = yield* makeHarness('allowed');
+        const failure = yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: JSON.parse(`{"mode":"A","tenantId":"${tenantTwo}"}`),
+            principal: principalOf(tenantOne),
+            registration: setLanguagePolicyAction,
+            transport: transport('set-with-foreign-tenant'),
+          }),
+        );
+        expect(Schema.is(ActionPayloadValidationError)(failure)).toBe(true);
+        expect(memory.state.versions).toEqual([]);
+        expect(harness.snapshot().stages).not.toContain('handler_executed');
+        expect(Object.keys(SetLanguagePolicyPayloadSchema.fields)).toEqual(['mode']);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('[AC-11] a replay with the same idempotency key appends nothing and answers the saved result', () =>
+    Effect.gen(function* replay() {
+      const { harness, memory } = yield* makeHarness('allowed');
+      const run = (mode: 'A' | 'B', key: string, savedReply?: 'answer') =>
+        harness.runtime.runAction({
+          payload: { mode },
           principal: principalOf(tenantOne),
           registration: setLanguagePolicyAction,
-          transport: transport('set-with-foreign-tenant'),
-        })
-        .pipe(Effect.ignore);
-      yield* own.harness.runtime.runAction({
-        payload: { mode: 'A' },
-        principal: principalOf(tenantOne),
-        registration: setLanguagePolicyAction,
-        transport: transport('set-own'),
-      });
-      expect(foreign.memory.state.versions).toEqual([]);
-      expect(own.memory.state.versions.at(-1)?.mode).toBe('A');
-      expect(Object.keys(SetLanguagePolicyPayloadSchema.fields)).toEqual(['mode']);
+          savedReply,
+          transport: transport(key),
+        });
+      const first = yield* run('A', 'set-once');
+      // an in-process caller meets the stop signal; a transport that lost its reply is answered with the saved one
+      const stopped = yield* Effect.flip(run('A', 'set-once'));
+      expect(Schema.is(ActionAlreadyCommitted)(stopped)).toBe(true);
+      const answered = yield* run('A', 'set-once', 'answer');
+      expect(answered).toEqual(first);
+      expect(memory.state.versions).toHaveLength(1);
+      expect(harness.snapshot().committed).toHaveLength(1);
+      // the same key for a different request is a conflict, not a second change
+      const conflict = yield* Effect.flip(run('B', 'set-once'));
+      expect(Schema.is(ActionRequestHashConflict)(conflict)).toBe(true);
+      expect(memory.state.versions).toHaveLength(1);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect(
+    '[S09 AC-11] the mode is Tenant-wide: a caller that selects a Legal Entity is refused and nothing changes',
+    () =>
+      Effect.gen(function* legalEntityScoped() {
+        const { harness, memory } = yield* makeHarness('allowed');
+        const failure = yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { mode: 'A' },
+            principal: { ...principalOf(tenantOne), legalEntityId: '33333333-3333-4333-8333-333333333333' },
+            registration: setLanguagePolicyAction,
+            transport: transport('set-from-company'),
+          }),
+        );
+        expect(Schema.is(OperationContextInvalid)(failure)).toBe(true);
+        expect(memory.state.versions).toEqual([]);
+        expect(harness.snapshot().stages).not.toContain('handler_executed');
+        expect(setLanguagePolicyAction.descriptor.legalEntityScope).toBe('forbidden');
+        expect(languagePolicyRead.descriptor.legalEntityScope).toBe('forbidden');
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+});
+
+const at = (iso: string) => DateTime.makeUnsafe(iso);
+
+describe('Business time of a version follows the Tenant lock, not the transaction start', () => {
+  it('[clock] the clamp never lets a version time precede the version it follows', () => {
+    const clock = at('2026-11-19T10:00:00Z');
+    expect(clampBusinessTime(clock, Option.none())).toEqual(clock);
+    expect(clampBusinessTime(clock, Option.some(at('2026-11-19T09:59:59Z')))).toEqual(clock);
+    expect(clampBusinessTime(clock, Option.some(at('2026-11-19T10:00:01Z')))).toEqual(at('2026-11-19T10:00:01Z'));
+  });
+
+  it.effect('[clock] a lagging clock is clamped: set_at never decreases while the version number grows', () =>
+    Effect.gen(function* lagging() {
+      const { port, state } = makeInMemoryLanguagePolicyPort();
+      state.clock = at('2026-11-19T10:00:00Z');
+      yield* setLanguageMode(port, 'A', actor);
+      // the next writer's clock reads earlier than the version already committed
+      state.clock = at('2026-11-19T09:58:00Z');
+      yield* setLanguageMode(port, 'B', actor);
+      state.clock = at('2026-11-19T10:05:00Z');
+      yield* setLanguageMode(port, 'A', actor);
+      expect(state.versions.map((version) => [version.versionNumber, DateTime.formatIso(version.setAt)])).toEqual([
+        [1, '2026-11-19T10:00:00.000Z'],
+        [2, '2026-11-19T10:00:00.000Z'],
+        [3, '2026-11-19T10:05:00.000Z'],
+      ]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
@@ -252,6 +331,24 @@ describe('The language policy Read through the Core Read runtime', () => {
           mode: 'A',
           policy: { policyVersionId: '00000000-0000-4000-8000-0000000000f1', source: 'tenant', versionNumber: 1 },
         });
+      }),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('[S09 AC-11] a caller that selects a Legal Entity is refused: the mode is read in the Tenant context', () =>
+    Effect.scoped(
+      Effect.gen(function* companyRead() {
+        const harness = yield* makeReadHarness('allowed', [versionRow(tenantOne, 'A')]);
+        const failure = yield* Effect.flip(
+          harness.runtime.runRead({
+            input: {},
+            principal: { ...principal, legalEntityId: '33333333-3333-4333-8333-333333333333' },
+            registration: languagePolicyRead,
+            transport: { correlationId: 'language-policy-read-company' },
+          }),
+        );
+        expect(Schema.is(OperationContextInvalid)(failure)).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeCrypto.layer)),
   );

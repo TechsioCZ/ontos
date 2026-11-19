@@ -30,7 +30,7 @@ const availabilityOf = (port: TemplateRevisionPortContract, base: TemplateBaseId
     ),
   );
 
-export const resolveLanguageAvailability = Effect.fn('LanguageSelection.availability')(function* availability(
+const resolveLanguageAvailability = Effect.fn('LanguageSelection.availability')(function* availability(
   port: TemplateRevisionPortContract,
   base: TemplateBaseIdentity,
 ) {

@@ -11,7 +11,8 @@ import { GenericValueSchema, amountDigits, formatDate, formatMoney } from '../..
 import type { GenericValue } from '../../src/domain/language/values.ts';
 
 const NBSP = '\u00A0';
-const linkPolicy = { allowedOrigins: ['https://portal.fictional.test'] };
+// the owner approves one origin and declares the only two query parameters its links carry
+const linkPolicy = { allowedOrigins: ['https://portal.fictional.test'], allowedQueryParameters: ['lang', 'tab'] };
 // Clearly labelled FICTIONAL copy: no production wording, no recipient, no secret.
 const template = {
   body: [
@@ -264,6 +265,18 @@ describe('Escaping, Unicode and HTML equivalence (L-09, S16, AC-08)', () => {
       'a\u0000b',
       'a\u202Eb',
       'a\u2028b',
+      // invisible format characters (Unicode Cf): soft hyphen, zero-width space, joiners, marks, word joiner, BOM
+      'a\u00ADb',
+      'a\u200Bb',
+      'a\u200Cb',
+      'a\u200Db',
+      'a\u200Eb',
+      'a\u2060b',
+      'a\u2062b',
+      'a\u2064b',
+      'a\u2066b',
+      'a\uFEFFb',
+      '\u200Bsomeone',
       'a\u0085b',
       '\uD800',
       ' leading',
@@ -283,6 +296,38 @@ describe('Escaping, Unicode and HTML equivalence (L-09, S16, AC-08)', () => {
     for (const value of ['{{portal_link}}', 'a {{ otp_code }} b', '}}']) {
       expect(refusal(render({ values: { customer_name: text(value) } })).code).toBe('value_malformed');
     }
+  });
+
+  it('[AC-08] a placeholder named like an inherited member gets no value from the prototype', () => {
+    const inherited = {
+      body: 'Reference {{constructor}}',
+      optionalPlaceholders: [],
+      requiredPlaceholders: ['constructor'],
+      subject: 'Subject',
+    };
+    const inheritedContract: readonly PlaceholderContract[] = [{ kind: 'text', name: 'constructor' }];
+    const run = (values: Record<string, GenericValue>) =>
+      renderMessage({ contract: inheritedContract, language: 'cs', linkPolicy, template: inherited, values });
+    // no own value: the required value is missing, not "the Object constructor"
+    expect(refusal(run({}))).toEqual({ code: 'required_value_missing', placeholders: ['constructor'] });
+    // an own value is used as usual
+    expect(rendered(run({ constructor: text('REF-1') })).text).toBe('Reference REF-1');
+    // an own `__proto__` key is an undeclared value, never a way to reach a prototype
+    expect(refusal(run(JSON.parse('{"__proto__":{"kind":"text","value":"x"}}'))).code).toBe('value_not_declared');
+    // an optional placeholder with an approved omission is omitted, not filled from the prototype
+    const optional = renderMessage({
+      contract: [{ kind: 'text', name: 'constructor', omission: 'omit-paragraph' }],
+      language: 'cs',
+      linkPolicy,
+      template: {
+        ...inherited,
+        body: 'Always\n\nReference {{constructor}}',
+        optionalPlaceholders: ['constructor'],
+        requiredPlaceholders: [],
+      },
+      values: {},
+    });
+    expect(rendered(optional).text).toBe('Always');
   });
 
   it('[L-09] HTML and text say the same thing for every rendering of the template', () => {
@@ -340,6 +385,85 @@ describe('Links stay inside the owner policy (L-07, S17)', () => {
     for (const url of refused) {
       expect(refusal(linkTo(url))).toEqual({ code: 'link_not_permitted', placeholders: ['portal_link'] });
     }
+  });
+
+  it('[S17 AC-06] a link that carries a brace in any encoding is refused: no owner step can complete {{otp}} into it', () => {
+    const base = 'https://portal.fictional.test/orders/42';
+    const braced = [
+      `${base}?tab={{otp_code}}`,
+      `${base}/{{otp_code}}`,
+      `${base}?tab=%7B%7Botp_code%7D%7D`,
+      `${base}?tab=%7b%7botp_code%7d%7d`,
+      `${base}?tab=%257B%257Botp_code%257D%257D`,
+      `${base}?tab=%25257B%25257Botp_code%25257D%25257D`,
+      `${base}?tab=&#123;&#123;otp_code&#125;&#125;`,
+      `${base}?tab=&#x7b;&#x7B;otp_code&#x7d;&#x7D;`,
+      `${base}?tab=&lbrace;&lbrace;otp_code&rbrace;&rbrace;`,
+      `${base}?tab=&lcub;&lcub;otp_code&rcub;&rcub;`,
+      `${base}?tab=&#123&#123otp_code`,
+      `${base}?tab=%7B&#123;otp_code`,
+      `${base}?tab=%26%23123%3B%26%23123%3Botp_code`,
+      `${base}/%7B%7Botp_code%7D%7D`,
+      `${base}?tab={`,
+      `${base}?tab=}`,
+      `${base}?tab=%7B`,
+      `${base}?tab=%`,
+    ];
+    for (const url of braced) {
+      expect(refusal(linkTo(url))).toEqual({ code: 'link_not_permitted', placeholders: ['portal_link'] });
+    }
+  });
+
+  it('[S17 AC-06] an allow-list, not a deny-list: a link is approved only with owner-declared parameters and plain values', () => {
+    const refusedLinks = [
+      // a URL or path in a parameter nobody declared, whatever its name
+      String.raw`https://portal.fictional.test/verify?r=/\evil.example`,
+      'https://portal.fictional.test/verify?r=evil.example',
+      'https://portal.fictional.test/verify?r=https://evil.example',
+      'https://portal.fictional.test/verify?to=%2F%2Fevil.example',
+      // a declared parameter must still carry a plain value, never a URL, a host or a path
+      'https://portal.fictional.test/verify?lang=evil.example',
+      String.raw`https://portal.fictional.test/verify?lang=/\evil.example`,
+      'https://portal.fictional.test/verify?lang=%2F%2Fevil.example',
+      'https://portal.fictional.test/verify?lang=https%3A%2F%2Fevil.example',
+      'https://portal.fictional.test/verify?lang=',
+      'https://portal.fictional.test/verify?lang=en&r=en',
+      // a path that is itself a URL or a hop elsewhere
+      'https://portal.fictional.test/out/https://evil.example',
+      'https://portal.fictional.test/out/https%3A%2F%2Fevil.example',
+      'https://portal.fictional.test/out/%2F%2Fevil.example',
+      'https://portal.fictional.test//evil.example',
+      'https://portal.fictional.test/out//evil.example',
+      'https://portal.fictional.test/out/..%2F..%2Fevil',
+      'https://portal.fictional.test/out/%252e%252e/evil',
+      'https://portal.fictional.test/out;url=https://evil.example',
+      String.raw`https://portal.fictional.test/out/\evil.example`,
+    ];
+    for (const url of refusedLinks) {
+      expect(refusal(linkTo(url))).toEqual({ code: 'link_not_permitted', placeholders: ['portal_link'] });
+    }
+    // a legitimate owner link: an allowed origin, plain path segments, declared parameters with plain values
+    for (const url of [
+      'https://portal.fictional.test/',
+      'https://portal.fictional.test/orders/OBJ-2026-0042/',
+      'https://portal.fictional.test/orders/42?tab=details&lang=en',
+      'https://portal.fictional.test/cs/objednavky/42?lang=cs',
+    ]) {
+      expect(rendered(linkTo(url)).text).toContain(new URL(url).href);
+    }
+    // a dot segment is resolved by URL normalization, and what is shown is the resolved, same-origin path
+    expect(rendered(linkTo('https://portal.fictional.test/out/%2e%2e/evil')).text).toContain(
+      'https://portal.fictional.test/evil',
+    );
+    // the declared set is the owner's: with none declared, not even a harmless parameter passes
+    expect(
+      refusal(
+        render({
+          linkPolicy: { allowedOrigins: ['https://portal.fictional.test'] },
+          values: { portal_link: { kind: 'link', url: 'https://portal.fictional.test/orders/42?tab=details' } },
+        }),
+      ).code,
+    ).toBe('link_not_permitted');
   });
 
   it('[S17] with no approved origin no link is ever permitted', () => {

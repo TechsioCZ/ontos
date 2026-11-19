@@ -9,7 +9,7 @@ import type { LanguageMode, LanguagePolicyRef } from '../../../shared/language-p
  * fallback. Nothing here knows an address, an IP, a host name or an e-mail domain: the language of a message is decided
  * from a trusted recipient or flow language context, never guessed from where a message goes.
  */
-export const SupportedLanguageSchema = TemplateLanguageSchema;
+const SupportedLanguageSchema = TemplateLanguageSchema;
 export type SupportedLanguage = typeof SupportedLanguageSchema.Type;
 export const isSupportedLanguage = Schema.is(SupportedLanguageSchema);
 
@@ -18,7 +18,7 @@ export const isSupportedLanguage = Schema.is(SupportedLanguageSchema);
  * trustworthy language, and a source locale hint is deliberately a different field of the selection input that selection
  * never reads: the source owner informs, Communications decides.
  */
-export const RecipientLanguageContextSchema = Schema.Union([
+const RecipientLanguageContextSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('trusted'), language: Schema.String.check(Schema.isMaxLength(35)) }),
   Schema.Struct({ kind: Schema.Literal('not-established') }),
 ]);
@@ -50,7 +50,7 @@ export interface LanguageAvailability {
   readonly en: RevisionAvailability;
 }
 
-export const NotSentReasonSchema = Schema.Literals([
+const NotSentReasonSchema = Schema.Literals([
   // A Czech default or fallback is needed and no approved usable Czech revision exists in the exact type and scope.
   'czech_revision_unavailable',
   // Mode B: the trusted English recipient has a usable EN revision but the Czech revision B requires is not usable.
@@ -65,7 +65,7 @@ export const NotSentReasonSchema = Schema.Literals([
 export type NotSentReason = typeof NotSentReasonSchema.Type;
 
 /** Why the language is what it is; the evidence of the original context next to the language actually used. */
-export const LanguageBasisSchema = Schema.Literals([
+const LanguageBasisSchema = Schema.Literals([
   'trusted-context',
   'default-no-trusted-language',
   'fallback-unsupported-language',

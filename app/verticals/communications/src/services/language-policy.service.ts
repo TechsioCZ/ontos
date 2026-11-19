@@ -49,6 +49,16 @@ export const postgresLanguagePolicyPort = (
     .select({ locked: sql<string>`pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))::text` })
     .from(sql`(values (1)) as communications_language_policy_lock(value)`)
     .pipe(Effect.mapError(unavailable), Effect.asVoid);
+  const clockNow: LanguagePolicyPortContract['clockNow'] = Effect.gen(function* wallClock() {
+    // Read per call, not at transaction start: the domain takes it only after the Tenant lock is held. PostgreSQL's
+    // clock is not a business row; the scalar SQL function has no table equivalent.
+    const [row] = yield* transaction
+      .select({ at: sql<string>`clock_timestamp()::text` })
+      .from(sql`(values (1)) as communications_language_policy_clock(value)`)
+      .pipe(Effect.mapError(unavailable));
+    const at = row === undefined ? Option.none() : DateTime.make(row.at);
+    return Option.isNone(at) ? yield* unavailable() : DateTime.toUtc(at.value);
+  });
   const append: LanguagePolicyPortContract['append'] = Effect.fn('LanguagePolicyPort.append')(
     function* appendVersion(input) {
       const policyVersionId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
@@ -65,6 +75,8 @@ export const postgresLanguagePolicyPort = (
           actionInvocationId: input.actionInvocationId,
           mode: input.mode,
           policyVersionId,
+          // explicit, never the column default: the default is the transaction start, which can precede the lock
+          setAt: DateTime.toDateUtc(input.setAt),
           setByPrincipalId: input.principalId,
           tenantId,
           versionNumber: (highest?.highest ?? 0) + 1,
@@ -74,7 +86,7 @@ export const postgresLanguagePolicyPort = (
       return row === undefined ? yield* unavailable() : versionRecord(row);
     },
   );
-  return LanguagePolicyPort.of({ append, latest, lockTenant });
+  return LanguagePolicyPort.of({ append, clockNow, latest, lockTenant });
 };
 
 export const languagePolicyService = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>

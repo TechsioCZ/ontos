@@ -35,7 +35,8 @@ export const languagePolicyRead = defineRead(
       policyKey: 'communications.core.api.language-policy.evidence.v1',
     },
     inputSchema: LanguagePolicyRequestSchema,
-    legalEntityScope: 'optional',
+    // The mode is a Tenant-wide setting, read in the Tenant context only (DATA_ACCESS.md: `forbidden` = no legal entity).
+    legalEntityScope: 'forbidden',
     owningModuleKey: 'communications.core',
     policies: [],
     readKey: 'communications.core.api.language-policy',
