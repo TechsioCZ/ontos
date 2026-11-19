@@ -142,5 +142,56 @@ export const DsrCasesResponseSchema = Schema.Struct({
   metadata: QueryMetadataSchema,
 });
 
-export const OwnerInventoryRequestSchema = Schema.Struct({ activityRef: ProcessingActivityRefSchema });
+const OwnerLookupRefSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
+const OwnerResourceKeySchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.brand('PrivacyOwnerLookupResourceKey'),
+);
+const OwnerResourceLookupFields = {
+  lookupRef: OwnerLookupRefSchema,
+  moduleId: OwnerResourceKeySchema,
+  resourceId: OwnerResourceKeySchema,
+  resourceType: OwnerResourceKeySchema,
+} as const;
+
+/**
+ * The typed, already confirmed lookups Privacy hands an owner: a subject resource, a contact resource, or a staff actor. The
+ * owner finds records only by these exact references and performs no Party Matching. The owner's own contract validates them
+ * again, so this public shape never decides what an owner accepts.
+ */
+const OwnerInventoryLookupSchema = Schema.Union([
+  Schema.TaggedStruct('SUBJECT_REFERENCE', OwnerResourceLookupFields),
+  Schema.TaggedStruct('CONTACT_REFERENCE', OwnerResourceLookupFields),
+  Schema.TaggedStruct('ACTOR_PRINCIPAL', {
+    lookupRef: OwnerLookupRefSchema,
+    principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyOwnerLookupPrincipalId')),
+  }),
+]);
+
+const PrivacyRightLiteralsSchema = Schema.Literals([
+  'ACCESS',
+  'PORTABILITY',
+  'RECTIFICATION',
+  'ERASURE',
+  'RESTRICTION',
+  'OBJECTION',
+]);
+
+/**
+ * The exact owner lookup of ONE Data Subject for owners that publish an Owner Coverage Read (#595-#597). It is optional and
+ * additive: without it the Read stays the structural inventory it always was. Privacy supplies only references it has already
+ * confirmed; the owner performs no Party Matching and the Read never searches owner data on its own.
+ */
+export const OwnerInventoryOwnerLookupSchema = Schema.Struct({
+  controllerRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  requestedScopeRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  right: Schema.optionalKey(PrivacyRightLiteralsSchema),
+  subjectRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  trustedLookups: Schema.Array(OwnerInventoryLookupSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+});
+export type OwnerInventoryOwnerLookup = typeof OwnerInventoryOwnerLookupSchema.Type;
+
+export const OwnerInventoryRequestSchema = Schema.Struct({
+  activityRef: ProcessingActivityRefSchema,
+  ownerLookup: Schema.optionalKey(OwnerInventoryOwnerLookupSchema),
+});
 export { PrivacyOwnerInventoryResultSchema as OwnerInventoryResponseSchema } from './domain/owner-inventory.ts';

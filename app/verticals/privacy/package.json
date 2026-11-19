@@ -84,6 +84,7 @@
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",
+    "@app/communications": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/symmy-integration": "workspace:*",

@@ -2644,6 +2644,9 @@ importers:
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../commerce-customer-context
+      '@app/communications':
+        specifier: workspace:*
+        version: link:../communications
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime

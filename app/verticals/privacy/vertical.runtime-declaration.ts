@@ -55,6 +55,7 @@ import { LegalBasisAssignmentsApi } from './shared/apis/legal-basis-assignments.
 import { NoticePresentationApi } from './shared/apis/notice-presentation.ts';
 import { NoticeVersionsApi } from './shared/apis/notice-versions.ts';
 import { OwnerInventoryApi } from './shared/apis/owner-inventory.ts';
+import { ownerInventoryRead } from './src/api/owner-inventory.read.ts';
 import { PrivacySubjectsApi } from './shared/apis/privacy-subjects.ts';
 import { ProcessingActivitiesApi } from './shared/apis/processing-activities.ts';
 import { ProcessingEligibilityApi } from './shared/apis/processing-eligibility.ts';
@@ -94,6 +95,7 @@ const profileIcoProvider = 'commerce.customer-context.api.customer-profile-organ
 const partyIcoProvider = 'party.registry.api.organization-ico-facts';
 const commerceOwnerModule = 'commerce.customer-context';
 const symmyOwnerModule = 'integration.symmy';
+const communicationsOwnerModule = 'communications.core';
 const recordApplicabilityConsumer = 'privacy.core.record-privacy-applicability';
 const organizationBusinessConsumer = 'privacy.core.api.organization-business-applicability';
 const organizationBusinessCondition = 'privacy.core.condition.native-organization-business-facts';
@@ -187,6 +189,7 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         operationKey: 'organizationBusinessApplicability.execute',
         registration: organizationBusinessApplicabilityRead,
       },
+      { apiKey: 'owner-inventory', operationKey: 'ownerInventory.execute', registration: ownerInventoryRead },
       {
         apiKey: 'organization-ico-applicability',
         operationKey: 'organizationIcoApplicability.execute',
@@ -363,6 +366,20 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         },
       },
       {
+        // The verified requester, relayed as itself under its selected Legal Entity: Communications answers Privacy only
+        // for the person who may read the owner inventory (#1410).
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        condition: 'privacy.core.condition.communications-owner-coverage',
+        entrypointKey: 'privacy.core.api.owner-inventory',
+        evidence: ['privacy.core.evidence.current-communications-owner-coverage'],
+        key: 'privacy.core.requirement.communications-owner-coverage',
+        provider: {
+          entrypointKey: 'communications.core.api.privacy-owner-coverage',
+          moduleId: communicationsOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
         condition: 'privacy.core.condition.symmy-owner-execution-outcome',
         entrypointKey: 'privacy.core.record-owner-execution-outcome',
         evidence: ['privacy.core.evidence.current-symmy-owner-execution-outcome'],
@@ -464,6 +481,7 @@ export const privacyRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     organizationBusinessApplicabilityRead,
     organizationIcoApplicabilityRead,
     organizationProfileIcoApplicabilityRead,
+    ownerInventoryRead,
     privacySubjectsRead,
     sourceProcessingEligibilityRead,
     // </generated-module-registration-reads>

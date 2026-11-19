@@ -14176,6 +14176,40 @@
         },
         {
           "accessDeclaration": {
+            "key": "communications.core.privacy-owner-coverage.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "privacy-owner-coverage",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.privacy-owner-coverage",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "communications.core.template-revision.activate",
             "kind": "action",
             "modes": [
