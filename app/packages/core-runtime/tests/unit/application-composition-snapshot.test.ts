@@ -21,10 +21,12 @@ import {
   loadCheckedActiveApplicationComposition,
   narrowActiveApplicationComposition,
   makeActiveApplicationCompositionLayer,
+  ProcessCompositionValidationLive,
   makeActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSource } from '../../src/modules/active-application-composition-source-service.ts';
+import { ProcessCompositionValidation } from '../../src/modules/process-composition-validation.ts';
 import { ActiveApplicationCompositionSourceReadError } from '../../src/modules/active-application-composition-source-errors.ts';
 import { TenantModuleStateValidationUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
@@ -422,6 +424,76 @@ it.effect('checks a snapshot text that differs in any character in full again', 
       expect(source.checks()).toBe(2);
       expect(second).not.toBe(first);
       expect(second.snapshot).toEqual(first.snapshot);
+    }),
+  ),
+);
+
+/** The native host's process registry, installed for one test and removed when it ends. */
+const withHostRegistry = Effect.fn('test.withHostRegistry')(function* withHostRegistry() {
+  const registry = Context.get(yield* Layer.build(ProcessCompositionValidationLive), ProcessCompositionValidation);
+  globalThis.ontosProcessCompositionValidation = registry;
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      Reflect.deleteProperty(globalThis, 'ontosProcessCompositionValidation');
+    }),
+  );
+});
+
+it.effect('checks a text with appended JSON whitespace in full again through the host registry', () =>
+  Effect.scoped(
+    Effect.gen(function* registryWhitespaceCheckedAgain() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      yield* withHostRegistry();
+      const encoded = yield* encodeSnapshot(snapshot());
+      const source = yield* countedConfiguredSource(encoded);
+      yield* loadCheckedActiveApplicationComposition(source.authority);
+      expect(source.checks()).toBe(1);
+      source.present(`${encoded}\n `);
+      yield* loadCheckedActiveApplicationComposition(source.authority);
+      expect(source.checks()).toBe(2);
+    }),
+  ),
+);
+
+it.effect('checks a renewed lease around an unchanged composition in full again through the host registry', () =>
+  Effect.scoped(
+    Effect.gen(function* registryRenewalCheckedAgain() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      yield* withHostRegistry();
+      const original = snapshot();
+      const source = yield* countedConfiguredSource(yield* encodeSnapshot(original));
+      yield* loadCheckedActiveApplicationComposition(source.authority);
+      expect(source.checks()).toBe(1);
+      source.present(
+        yield* encodeSnapshot({
+          ...original,
+          validUntil: yield* Schema.decodeEffect(Schema.DateTimeUtcFromString)('2026-10-02T12:00:02.000Z'),
+        }),
+      );
+      const renewed = yield* loadCheckedActiveApplicationComposition(source.authority);
+      expect(source.checks()).toBe(2);
+      expect(renewed.snapshot.composition.revision).toBe(original.composition.revision);
+    }),
+  ),
+);
+
+it.effect('refuses a composition that differs in one byte through the host registry', () =>
+  Effect.scoped(
+    Effect.gen(function* registryChangedByteRefused() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      yield* withHostRegistry();
+      const valid = snapshot();
+      const encoded = yield* encodeSnapshot(valid);
+      const source = yield* countedConfiguredSource(encoded);
+      yield* loadCheckedActiveApplicationComposition(source.authority);
+      const changed = encoded.replace('shell-build-1/mf-manifest.json', 'shell-build-2/mf-manifest.json');
+      expect(changed).not.toBe(encoded);
+      source.present(changed);
+      const error = yield* Effect.flip(loadCheckedActiveApplicationComposition(source.authority));
+      expect(error.cause).toMatchObject({
+        reason: 'Application Composition revision does not match its immutable content',
+      });
+      expect(source.checks()).toBe(2);
     }),
   ),
 );

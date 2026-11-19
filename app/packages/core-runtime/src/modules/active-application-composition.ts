@@ -54,7 +54,6 @@ type CheckedRead = Effect.Effect<CheckedActiveApplicationComposition, ActiveAppl
 const activeApplicationCompositionSnapshotJsonSchema = Schema.fromJsonString(
   ActiveApplicationCompositionSnapshotSchema,
 );
-const encodeComposition = Schema.encodeEffect(Schema.fromJsonString(ApplicationCompositionSchema));
 
 const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicationCompositionUnavailableError =>
   new ActiveApplicationCompositionUnavailableError({
@@ -177,19 +176,13 @@ const decodeConfiguredText = (encoded: string) => {
 const checkConfiguredText = (encoded: string): CheckedRead =>
   decodeConfiguredText(encoded).pipe(Effect.flatMap(approveDecodedSnapshot));
 
-interface ProcessAcceptedText extends AcceptedText {
-  readonly compositionEncoded: string;
-}
-
 /**
- * The process registry's check of one configured snapshot text, bounded to its one last successful text. Exact text,
- * not a claimed revision, identifies the entry, and its reuse still checks the lease against the current time.
- * Publication renews the observation lease without changing the immutable deployment: a new text whose composition
- * encodes to exactly the kept composition reuses that frozen composition value and its catalog, while its own
- * envelope is decoded and its own lease checked. A same-revision edit still passes the complete check.
+ * The process registry's check of one configured snapshot text, bounded to its one last successful text. Only the
+ * identical full text reuses that result, and its reuse still checks the lease against the current time; a text that
+ * differs in any byte, a renewed lease envelope included, passes the complete check itself.
  */
 const checkProcessText = Effect.fn('ActiveApplicationComposition.checkProcessText')(function* checkProcessText(
-  kept: Ref.Ref<ProcessAcceptedText | null>,
+  kept: Ref.Ref<AcceptedText | null>,
   encoded: string,
 ) {
   const cached = yield* Ref.get(kept);
@@ -197,14 +190,8 @@ const checkProcessText = Effect.fn('ActiveApplicationComposition.checkProcessTex
     yield* requireLiveActiveApplicationCompositionLease(cached.checked.snapshot);
     return cached.checked;
   }
-  const decoded = yield* decodeConfiguredText(encoded);
-  const compositionEncoded = yield* encodeComposition(decoded.composition).pipe(
-    Effect.mapError(unavailableActiveApplicationComposition),
-  );
-  const composition =
-    cached?.compositionEncoded === compositionEncoded ? cached.checked.snapshot.composition : decoded.composition;
-  const checked = yield* approveDecodedSnapshot({ ...decoded, composition });
-  yield* Ref.set(kept, { checked, compositionEncoded, encoded });
+  const checked = yield* checkConfiguredText(encoded);
+  yield* Ref.set(kept, { checked, encoded });
   return checked;
 });
 
@@ -217,7 +204,7 @@ export const ProcessCompositionValidationLive = Layer.effect(
   ProcessCompositionValidation,
   Effect.gen(function* makeProcessValidation() {
     const permit = yield* Semaphore.make(1);
-    const kept = yield* Ref.make<ProcessAcceptedText | null>(null);
+    const kept = yield* Ref.make<AcceptedText | null>(null);
     return Object.freeze({
       catalog: validatedApplicationCompositionCatalog,
       decode: (encoded: string) => permit.withPermit(checkProcessText(kept, encoded)),
