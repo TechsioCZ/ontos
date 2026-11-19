@@ -2749,28 +2749,27 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
        * The reply this commit saves for a same-key retry. Only an invocation with an idempotency key can
        * ever be replayed, so an invocation without one saves none.
        */
-      const replyToSave = <Value, Failure extends object>(
+      const replyToSave = <Value>(
         kind: NonNullable<FlushActionSuccessInput['committedReply']>['kind'],
         schema: Schema.Constraint,
         value: Value,
-        failure: () => Failure,
-      ): Effect.Effect<FlushActionSuccessInput['committedReply'], Failure> =>
-        transport.idempotencyKey === undefined
-          ? Effect.succeed(null)
-          : Effect.try({
-              catch: (cause) => attachFailureCause(failure(), cause),
-              try: () => ({ encoded: Result.getOrThrow(encodeCommittedReplyJson(schema, value)), kind }),
-            }).pipe(
-              // Decided before the flush: a reply jsonb cannot hold is not saved, the Action commits as
-              // it did before replies were saved, and a same-key retry answers ActionAlreadyCommitted.
-              Effect.flatMap((reply) =>
-                jsonbCanHold(reply.encoded)
-                  ? Effect.succeed(reply)
-                  : Effect.logWarning('An Action reply cannot be saved: PostgreSQL jsonb cannot hold it', kind).pipe(
-                      Effect.as(null),
-                    ),
-              ),
+      ): Effect.Effect<FlushActionSuccessInput['committedReply']> => {
+        if (transport.idempotencyKey === undefined) {
+          return Effect.succeed(null);
+        }
+        // Decided before the flush: a reply that has no JSON form, or one jsonb cannot hold, is not saved;
+        // the Action commits as it did before replies were saved, and a same-key retry answers
+        // ActionAlreadyCommitted.
+        const encoded = encodeCommittedReplyJson(schema, value);
+        if (Result.isFailure(encoded)) {
+          return Effect.logWarning('An Action reply cannot be saved: it has no JSON form', kind).pipe(Effect.as(null));
+        }
+        return jsonbCanHold(encoded.success)
+          ? Effect.succeed({ encoded: encoded.success, kind })
+          : Effect.logWarning('An Action reply cannot be saved: PostgreSQL jsonb cannot hold it', kind).pipe(
+              Effect.as(null),
             );
+      };
 
       const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
         function* executeTransactionAndHandleExitEffect() {
@@ -2965,7 +2964,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 'rejection',
                 input.registration.descriptor.domainErrorSchema,
                 committedDomainError.domainError,
-                makeHandlerExecutionError,
               );
             } else {
               const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerValue);
@@ -2988,16 +2986,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                     ),
                   ),
               });
-              committedReply = yield* replyToSave(
-                'result',
-                input.registration.descriptor.resultSchema,
-                result,
-                () =>
-                  new ActionResultValidationError({
-                    code: 'action_result_invalid',
-                    reason: 'The decoded Action result cannot be saved as its committed reply',
-                  }),
-              );
+              committedReply = yield* replyToSave('result', input.registration.descriptor.resultSchema, result);
               const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
               if (onDecodedSuccess !== undefined) {
                 const hookExit = yield* Effect.exit(
