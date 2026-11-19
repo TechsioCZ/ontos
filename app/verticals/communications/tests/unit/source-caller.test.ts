@@ -67,7 +67,7 @@ describe('The source module claimed by a Communication Request is bound to the v
     const { descriptor } = submitCommunicationRequestAction;
     expect(descriptor.accessWorkload?.workloads).toEqual(['communications.core.request-source']);
     // no `accessDeclaration` beside it: a v2 grant can never admit a human or an agent on this Action (O59, O67-Q4)
-    expect(Reflect.get(descriptor, 'accessDeclaration')).toBeUndefined();
+    expect(Object.hasOwn(descriptor, 'accessDeclaration')).toBe(false);
     // The refusal itself (a human on a workload carrier -> 403 `deny.workload_only`, handler not reached) is proved by
     // Core's own `action-access-gate.test.ts`; the Core test harness here scripts the access decision and cannot run it.
   });

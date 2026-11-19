@@ -391,7 +391,7 @@ const skipOfDocument = (document: IntentDocument): Option.Option<SkipReason> => 
 
 /** What the first read phase found: skip, stop, or "every local gate is open, ask the other owners". */
 type Loaded =
-  | { readonly kind: 'OPEN'; readonly document: IntentDocument; readonly pins: OpenPins }
+  | { readonly document: IntentDocument; readonly kind: 'OPEN'; readonly pins: OpenPins }
   | { readonly kind: 'STOP'; readonly reasons: readonly StopReason[] }
   | { readonly kind: 'SKIP'; readonly processing: HandoffProcessing };
 

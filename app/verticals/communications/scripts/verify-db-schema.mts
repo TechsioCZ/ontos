@@ -60,6 +60,53 @@ const intakeAppendOnlyTriggers = [
 const sameList = (actual: readonly string[], expected: readonly string[]) =>
   actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 
+const verifyHandoffContract = Effect.fn('Communications.verifyHandoffContract')(function* verifyHandoff() {
+  const client = yield* PgClient.PgClient;
+  // The contract the review hardening relies on (#1401): a stop is keyed per EVALUATION (never per intent alone, so a later
+  // Current evaluation is representable), `proven` is derived from the reasons, NOT_ATTEMPTED is its own attempt state and
+  // the begin routine carries the attempt number. An intent key is one unique key per Tenant; its composition (request
+  // identity first, so one occurrence under two scopes cannot collide) is code, proved by the integration suite.
+  const [contract] = yield* client
+    .unsafe<{
+      readonly begin_signature: string | null;
+      readonly intent_key_unique: string | null;
+      readonly legacy_stop_unique: number;
+      readonly proven_generated: boolean;
+      readonly state_check: string | null;
+      readonly stop_unique: string | null;
+    }>(
+      `
+    select
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.intent_handoff_stops'::regclass and k.conname = 'communications_handoff_stops_evaluation_uk') as stop_unique,
+      (select count(*)::integer from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.intent_handoff_stops'::regclass and k.conname = 'communications_handoff_stops_intent_uk') as legacy_stop_unique,
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.message_intents'::regclass and k.conname = 'communications_intents_key_uk') as intent_key_unique,
+      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
+        where k.conrelid = 'communications.delivery_attempts'::regclass and k.conname = 'communications_attempts_state_ck') as state_check,
+      exists (select 1 from pg_catalog.pg_attribute a
+        where a.attrelid = 'communications.intent_handoff_stops'::regclass and a.attname = 'proven' and a.attgenerated = 's') as proven_generated,
+      (select pg_catalog.pg_get_function_identity_arguments(p.oid) from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = $1 and p.proname = 'worker_begin_attempt') as begin_signature`,
+      [COMMUNICATIONS_SCHEMA_NAME],
+    )
+    .pipe(Effect.mapError((cause) => failure('Unable to read the Communications handoff contract', cause)));
+  if (
+    contract === undefined ||
+    contract.stop_unique !== 'UNIQUE (tenant_id, intent_id, evaluation_seq)' ||
+    contract.legacy_stop_unique !== 0 ||
+    contract.intent_key_unique !== 'UNIQUE (tenant_id, intent_key)' ||
+    !contract.proven_generated ||
+    !(contract.state_check ?? '').includes("'NOT_ATTEMPTED'") ||
+    contract.begin_signature !== 'p_tenant_id uuid, p_intent_id uuid, p_attempt_id uuid, p_attempt_number integer'
+  ) {
+    yield* failure(
+      'Communications stop evaluations, attempt states or the begin routine differ from the owner contract',
+    );
+  }
+});
+
 const verify = Effect.gen(function* verifyCommunicationsSchema() {
   const client = yield* PgClient.PgClient;
   const database = yield* makeWithDefaults({ relations: communicationsRelations });
@@ -200,49 +247,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
   ) {
     return yield* failure('Communications journal, role, schema, routine privileges or constraints are unsafe');
   }
-  // The shape the review hardening relies on (#1401): a stop is keyed per EVALUATION (never per intent alone, so a later
-  // Current evaluation is representable), `proven` is derived from the reasons, NOT_ATTEMPTED is its own attempt state and
-  // the begin routine carries the attempt number. An intent key is one unique key per Tenant; its composition (request
-  // identity first, so one occurrence under two scopes cannot collide) is code, proved by the integration suite.
-  const [shape] = yield* client
-    .unsafe<{
-      readonly begin_signature: string | null;
-      readonly intent_key_unique: string | null;
-      readonly legacy_stop_unique: number;
-      readonly proven_generated: boolean;
-      readonly state_check: string | null;
-      readonly stop_unique: string | null;
-    }>(
-      `
-    select
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.intent_handoff_stops'::regclass and k.conname = 'communications_handoff_stops_evaluation_uk') as stop_unique,
-      (select count(*)::integer from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.intent_handoff_stops'::regclass and k.conname = 'communications_handoff_stops_intent_uk') as legacy_stop_unique,
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.message_intents'::regclass and k.conname = 'communications_intents_key_uk') as intent_key_unique,
-      (select pg_catalog.pg_get_constraintdef(k.oid) from pg_catalog.pg_constraint k
-        where k.conrelid = 'communications.delivery_attempts'::regclass and k.conname = 'communications_attempts_state_ck') as state_check,
-      exists (select 1 from pg_catalog.pg_attribute a
-        where a.attrelid = 'communications.intent_handoff_stops'::regclass and a.attname = 'proven' and a.attgenerated = 's') as proven_generated,
-      (select pg_catalog.pg_get_function_identity_arguments(p.oid) from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = $1 and p.proname = 'worker_begin_attempt') as begin_signature`,
-      [COMMUNICATIONS_SCHEMA_NAME],
-    )
-    .pipe(Effect.mapError((cause) => failure('Unable to read the Communications handoff shape', cause)));
-  if (
-    shape === undefined ||
-    shape.stop_unique !== 'UNIQUE (tenant_id, intent_id, evaluation_seq)' ||
-    shape.legacy_stop_unique !== 0 ||
-    shape.intent_key_unique !== 'UNIQUE (tenant_id, intent_key)' ||
-    !shape.proven_generated ||
-    !(shape.state_check ?? '').includes("'NOT_ATTEMPTED'") ||
-    shape.begin_signature !== 'p_tenant_id uuid, p_intent_id uuid, p_attempt_id uuid, p_attempt_number integer'
-  ) {
-    return yield* failure(
-      'Communications stop evaluations, attempt states or the begin routine differ from the owner contract',
-    );
-  }
+  yield* verifyHandoffContract();
   return COMMUNICATIONS_TABLES.length;
 });
 

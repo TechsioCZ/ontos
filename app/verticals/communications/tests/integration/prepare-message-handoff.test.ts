@@ -2,7 +2,7 @@ import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runti
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { Effect, Exit, Layer, Match, Option, Redacted, Ref } from 'effect';
+import { DateTime, Effect, Exit, Layer, Match, Option, Redacted, Ref } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { HandoffStoreUnavailable, processIntentHandoff } from '../../src/handoff/process-intent-handoff.ts';
@@ -101,6 +101,12 @@ const rowsOf = <Row>(
     transaction: Parameters<Parameters<World['database']['inTenant']>[1]>[0],
   ) => Effect.Effect<readonly Row[], unknown>,
 ) => world.database.inTenant(world.tenantId, select);
+
+const textOrder = (left: string, right: string) => left.localeCompare(right);
+
+/** The PostgreSQL SQLSTATE of a failure, or `none` when it carries none. */
+const sqlStateOf = (failure: Error) =>
+  Option.match(findPostgresFailure(failure), { onNone: () => 'none', onSome: ({ code }) => code });
 
 const kindOf = (processing: HandoffProcessing) =>
   processing.kind === 'SKIPPED' ? `${processing.kind}:${processing.reason}` : processing.kind;
@@ -458,7 +464,8 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
         const world = yield* setup();
         const intentId = yield* decidedIntent(world);
         // the production composition today: owner ports enabled, no Messaging Adapter (step 22)
-        const none = { calls: [] as PinnedHandoff[], layer: unavailableMessageHandoffLayer };
+        const calls: PinnedHandoff[] = [];
+        const none = { calls, layer: unavailableMessageHandoffLayer };
         expect(yield* step(world, none, intentId)).toMatchObject({
           evidence: { outcome: { kind: 'NOT_ATTEMPTED', reason: 'NO_ADAPTER_CONFIGURED' } },
           kind: 'HANDED_OFF',
@@ -470,10 +477,9 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
         expect((yield* step(world, adapter, intentId)).kind).toBe('HANDED_OFF');
         expect(adapter.calls).toHaveLength(1);
         const attempts = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
-        expect(attempts.map(({ attemptNumber, state }) => [attemptNumber, state]).toSorted()).toEqual([
-          [1, 'NOT_ATTEMPTED'],
-          [2, 'ACCEPTED'],
-        ]);
+        expect(
+          attempts.map(({ attemptNumber, state }) => `${String(attemptNumber)}:${state}`).toSorted(textOrder),
+        ).toEqual(['1:NOT_ATTEMPTED', '2:ACCEPTED']);
         expect(adapter.calls[0]?.attemptId).toBe(attempts.find(({ attemptNumber }) => attemptNumber === 2)?.attemptId);
         // an answer from a real adapter is final: no third attempt, however often Core delivers again
         expect(kindOf(yield* step(world, adapter, intentId))).toBe('SKIPPED:ALREADY_FINISHED');
@@ -524,13 +530,14 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
 
         // d21-10 supersedes an UNPROVEN stop by APPENDING evaluation 2; the owner connection stands in for its routine. The
         // runtime role can append nothing, and no row is ever edited or removed.
+        const recordedAt = DateTime.toDateUtc(yield* DateTime.now);
         const runtimeInsert = yield* Effect.exit(
           world.database.inTenant(world.tenantId, (tx) =>
             tx.insert(intentHandoffStops).values({
               evaluationSeq: 2,
               intentId,
               reasons: [],
-              recordedAt: new Date(),
+              recordedAt,
               tenantId: world.tenantId,
             }),
           ),
@@ -559,22 +566,21 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
           );
         yield* append(2, true);
         const evaluations = yield* rowsOf(world, (tx) => tx.select().from(intentHandoffStops));
-        expect(evaluations.map(({ evaluationSeq, proven }) => [evaluationSeq, proven]).toSorted()).toEqual([
-          [1, false],
-          [2, true],
-        ]);
+        expect(
+          evaluations
+            .map(({ evaluationSeq, proven }) => `${String(evaluationSeq)}:${String(proven)}`)
+            .toSorted(textOrder),
+        ).toEqual(['1:false', '2:true']);
         // exactly one row per (intent, evaluation): a repeated evaluation and a non-positive one are refused
-        const failureOf = (effect: ReturnType<typeof append>) =>
-          Effect.flip(effect).pipe(Effect.map((failure) => findPostgresFailure(failure)));
-        expect(Option.map(yield* failureOf(append(2, false)), ({ code }) => code)).toEqual(Option.some('23505'));
-        expect(Option.map(yield* failureOf(append(0, false)), ({ code }) => code)).toEqual(Option.some('23514'));
+        expect(sqlStateOf(yield* Effect.flip(append(2, false)))).toBe('23505');
+        expect(sqlStateOf(yield* Effect.flip(append(0, false)))).toBe('23514');
         // and history stays append-only for every role
         for (const mutation of [
           `update communications.intent_handoff_stops set evaluation_seq = 3 where tenant_id = '${world.tenantId}'`,
           `delete from communications.intent_handoff_stops where tenant_id = '${world.tenantId}'`,
         ]) {
           const refused = yield* Effect.flip(admin.withTransaction(admin.unsafe(mutation)));
-          expect(Option.map(findPostgresFailure(refused), ({ code }) => code)).toEqual(Option.some('55000'));
+          expect(sqlStateOf(refused)).toBe('55000');
         }
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
@@ -599,7 +605,7 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
       ];
       for (const routineCall of calls) {
         const failure = yield* Effect.flip(world.database.inTenant(world.tenantId, (tx) => call(tx, routineCall)));
-        expect(Option.map(findPostgresFailure(failure), ({ code }) => code)).toEqual(Option.some('42501'));
+        expect(sqlStateOf(failure)).toBe('42501');
       }
       // the same call naming the installed Tenant is answered: the guard refuses the Tenant, not the routine
       const own = yield* world.database.inTenant(world.tenantId, (tx) =>

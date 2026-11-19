@@ -44,6 +44,12 @@ import type { OwnerAnswer } from '../unit/support/recipient-fixtures.ts';
 const decodeRequest = Schema.decodeUnknownSync(CommunicationRequestSchema, { onExcessProperty: 'error' });
 const encodeBinding = Schema.encodeSync(OriginalRecipientBindingSchema);
 
+interface ScopeInput {
+  legalEntityId?: string;
+  profileId?: string;
+  tenantId: string;
+}
+
 export interface RequestInput {
   readonly bindings: readonly OriginalRecipientBinding[];
   readonly correlationId?: string;
@@ -53,19 +59,22 @@ export interface RequestInput {
   readonly profileId?: string;
   readonly purpose?: string;
   readonly revision?: number;
-  readonly sourceModule?: string;
   readonly safeReferences?: readonly { readonly key: string; readonly resourceId: string }[];
+  readonly sourceModule?: string;
   readonly tenantId?: string;
 }
 
 /** A fictional committed source request as the published contract carries it. */
 export const communicationRequest = (input: RequestInput): CommunicationRequest => {
   const tenantId = input.tenantId ?? FIXTURE_TENANT_ID;
-  const scope = fixtureScope({
-    ...(input.legalEntityId === undefined ? {} : { legalEntityId: input.legalEntityId }),
-    ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
-    tenantId,
-  });
+  const scopeInput: ScopeInput = { tenantId };
+  if (input.legalEntityId !== undefined) {
+    scopeInput.legalEntityId = input.legalEntityId;
+  }
+  if (input.profileId !== undefined) {
+    scopeInput.profileId = input.profileId;
+  }
+  const scope = fixtureScope(scopeInput);
   const key = input.idempotencyKey ?? `fixture-key-${input.occurrenceId ?? 'occurrence-1'}`;
   return decodeRequest({
     idempotency: input.correlationId === undefined ? { key } : { correlationId: input.correlationId, key },

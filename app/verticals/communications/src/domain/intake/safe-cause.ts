@@ -1,5 +1,5 @@
 import { findPostgresFailure } from '@app/core-runtime';
-import { Option, Predicate } from 'effect';
+import { Option, Schema } from 'effect';
 
 /**
  * What a typed "unavailable" error may keep of the failure it replaces.
@@ -16,12 +16,16 @@ export interface SafeCause {
   readonly sqlState?: string;
 }
 
-const kindOf = (cause: unknown): string => {
-  if (Predicate.hasProperty(cause, '_tag') && typeof cause._tag === 'string') {
-    return cause._tag;
-  }
-  return cause instanceof Error ? cause.name : typeof cause;
-};
+const decodeTag = Schema.decodeUnknownOption(Schema.Struct({ _tag: Schema.String }));
+const decodeName = Schema.decodeUnknownOption(Schema.Struct({ name: Schema.String }));
+
+/** The failure's own tag, else its error name, else nothing more: a value is never described by what it contains. */
+const kindOf = (cause: unknown): string =>
+  decodeTag(cause).pipe(
+    Option.map(({ _tag }) => _tag),
+    Option.orElse(() => Option.map(decodeName(cause), ({ name }) => name)),
+    Option.getOrElse(() => 'unknown'),
+  );
 
 export const safeCauseOf = (cause: unknown): SafeCause => {
   const postgres = findPostgresFailure(cause);
