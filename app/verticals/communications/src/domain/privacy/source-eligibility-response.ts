@@ -1,12 +1,14 @@
 import { Schema } from 'effect';
 
 import { ProcessingEligibilityVerdict } from './eligibility-gate.ts';
+import type { UnavailableReason } from './eligibility-errors.ts';
 import type { EligibilityEvidence, ProcessingEligibilityVerdictCase } from './eligibility-gate.ts';
 import {
   PrivacyPurposeVersionIdSchema,
   PrivacyScopeIdSchema,
   PrivacySubjectResourceIdSchema,
 } from './processing-scope.ts';
+import type { ProcessingScope } from './processing-scope.ts';
 
 /**
  * Anti-corruption mapping of the Privacy owner's PUBLIC source-processing response (`DENIED | ALLOWED`, #1396) onto
@@ -35,10 +37,23 @@ const OwnerEvidenceSchema = Schema.Struct({
 });
 type OwnerEvidence = typeof OwnerEvidenceSchema.Type;
 
+/** Why the owner evaluated nothing; the safe discriminator only the Communications consumer receives. */
+const NotEvaluatedCauseSchema = Schema.Literals([
+  'NO_CONTEXT',
+  'MULTIPLE_CONTEXTS',
+  'CONTEXT_NOT_CURRENT',
+  'PURPOSE_NOT_CURRENT',
+  'APPLICABILITY_NOT_CURRENT',
+  'SUBJECT_NOT_FOUND',
+]);
+
 export const PrivacySourceEligibilityResponseSchema = Schema.Union([
   Schema.Struct({
     eligibility: Schema.optionalKey(
-      Schema.Struct({ evidence: OwnerEvidenceSchema, outcome: Schema.Literals(['NOT_ALLOWED', 'INDETERMINATE']) }),
+      Schema.Union([
+        Schema.Struct({ evidence: OwnerEvidenceSchema, outcome: Schema.Literals(['NOT_ALLOWED', 'INDETERMINATE']) }),
+        Schema.Struct({ outcome: Schema.Literal('NOT_EVALUATED'), reasonCode: NotEvaluatedCauseSchema }),
+      ]),
     ),
     evaluatedAt: Schema.DateTimeUtcFromString,
     outcome: Schema.Literal('DENIED'),
@@ -52,9 +67,16 @@ export const PrivacySourceEligibilityResponseSchema = Schema.Union([
 ]);
 export type PrivacySourceEligibilityResponse = typeof PrivacySourceEligibilityResponseSchema.Type;
 
-const safeEvidenceOf = (evidence: OwnerEvidence): EligibilityEvidence => ({
+/**
+ * `sent` is the scope the adapter actually put to the owner for THIS response. Privacy's published scope does not echo
+ * the channel, the catalog purpose key or the subject locator, so the evidence carries the request binding for them
+ * and the assessment refuses a response that was correlated with another question.
+ */
+const safeEvidenceOf = (evidence: OwnerEvidence, sent: ProcessingScope): EligibilityEvidence => ({
   authoritativeReferences: evidence.authoritativeReferences,
   evaluatedScope: {
+    catalogPurposeRef: sent.catalogPurposeRef,
+    channel: sent.channel,
     controllerRef: evidence.evaluatedScope.controllerRef,
     dataCategoryRefs: evidence.evaluatedScope.dataCategoryRefs,
     operation: evidence.evaluatedScope.operation,
@@ -63,49 +85,76 @@ const safeEvidenceOf = (evidence: OwnerEvidence): EligibilityEvidence => ({
     purposeRef: evidence.evaluatedScope.purposeRef,
     purposeVersionId: evidence.evaluatedScope.purposeVersionId,
     recipientRefs: evidence.evaluatedScope.recipientRefs,
+    subject: sent.subject,
   },
   policyRevisions: evidence.policyRevisions,
   reasonCodes: evidence.reasonCodes,
   trustedDecisionTime: evidence.trustedDecisionTime,
 });
 
-const inconsistent = (evidence: OwnerEvidence) =>
-  ProcessingEligibilityVerdict.Indeterminate({ cause: 'EVIDENCE_INCONSISTENT', evidence: safeEvidenceOf(evidence) });
+const inconsistent = (evidence: OwnerEvidence, sent: ProcessingScope) =>
+  ProcessingEligibilityVerdict.Indeterminate({
+    cause: 'EVIDENCE_INCONSISTENT',
+    evidence: safeEvidenceOf(evidence, sent),
+  });
 
 /**
- * The three owner results, each only on matching owner evidence:
+ * The owner results, each only on matching owner evidence:
  * - ALLOWED needs evidence that itself says ALLOWED;
  * - a non-allowed evaluation is NOT_ALLOWED or INDETERMINATE exactly as the owner's evidence says, and a denial that
  *   carries no evidence of an evaluation is never a prohibition (`EVIDENCE_MISSING`);
- * - a recorded protection is a prohibition on the owner's own named basis;
- * - no exact current Privacy context means nothing was evaluated (`CONTEXT_NOT_SUPPORTED`).
+ * - an owner that says it evaluated nothing names why: no exact context (`CONTEXT_NOT_SUPPORTED`), several contexts
+ *   (`CONTEXT_AMBIGUOUS`) or an absent or retired purpose (`PURPOSE_NOT_CURRENT`); without that discriminator a missing
+ *   context is `CONTEXT_NOT_SUPPORTED` and an unexplained denial is `EVIDENCE_MISSING`;
+ * - a refusal as protected material has no evaluation evidence, so it is NOT a Privacy prohibition: it stops as its own
+ *   `PROTECTED_MATERIAL` cause until the owner supplies evidence for it.
  */
-export const eligibilityVerdictOf = (response: PrivacySourceEligibilityResponse): ProcessingEligibilityVerdictCase => {
+export const eligibilityVerdictOf = (
+  response: PrivacySourceEligibilityResponse,
+  sent: ProcessingScope,
+): ProcessingEligibilityVerdictCase => {
   if (response.outcome === 'ALLOWED') {
     return response.evidence.outcome === 'ALLOWED'
-      ? ProcessingEligibilityVerdict.Allowed({ evidence: safeEvidenceOf(response.evidence) })
-      : inconsistent(response.evidence);
+      ? ProcessingEligibilityVerdict.Allowed({ evidence: safeEvidenceOf(response.evidence, sent) })
+      : inconsistent(response.evidence, sent);
+  }
+  const { eligibility } = response;
+  if (eligibility?.outcome === 'NOT_EVALUATED') {
+    if (eligibility.reasonCode === 'MULTIPLE_CONTEXTS') {
+      return ProcessingEligibilityVerdict.Indeterminate({ cause: 'CONTEXT_AMBIGUOUS' });
+    }
+    return ProcessingEligibilityVerdict.Indeterminate({
+      cause: eligibility.reasonCode === 'PURPOSE_NOT_CURRENT' ? 'PURPOSE_NOT_CURRENT' : 'CONTEXT_NOT_SUPPORTED',
+    });
   }
   if (response.reason === 'AUTHORITY_NOT_CURRENT') {
     return ProcessingEligibilityVerdict.Indeterminate({ cause: 'CONTEXT_NOT_SUPPORTED' });
   }
   if (response.reason === 'PROTECTED_MATERIAL') {
-    return ProcessingEligibilityVerdict.NotAllowed({ basis: 'PROTECTED_MATERIAL' });
+    return ProcessingEligibilityVerdict.Indeterminate({ cause: 'PROTECTED_MATERIAL' });
   }
-  const { eligibility } = response;
   if (eligibility === undefined) {
     return ProcessingEligibilityVerdict.Indeterminate({ cause: 'EVIDENCE_MISSING' });
   }
   if (eligibility.evidence.outcome !== eligibility.outcome) {
-    return inconsistent(eligibility.evidence);
+    return inconsistent(eligibility.evidence, sent);
   }
   return eligibility.outcome === 'NOT_ALLOWED'
     ? ProcessingEligibilityVerdict.NotAllowed({
         basis: 'EVALUATED_PROHIBITION',
-        evidence: safeEvidenceOf(eligibility.evidence),
+        evidence: safeEvidenceOf(eligibility.evidence, sent),
       })
     : ProcessingEligibilityVerdict.Indeterminate({
         cause: 'INPUTS_NOT_EVIDENCED',
-        evidence: safeEvidenceOf(eligibility.evidence),
+        evidence: safeEvidenceOf(eligibility.evidence, sent),
       });
 };
+
+/**
+ * Why a Privacy Read produced no response at all, from the status of the owner's published problem. Only the owner
+ * contract's authentication (401) and forbidden (403) problems say that this Principal may not read Privacy eligibility;
+ * every other failure (unavailable authority, conflict, policy, internal, transport) says the owner did not decide.
+ * Neither is ever a Privacy outcome.
+ */
+export const unavailableReasonOfOwnerProblem = (status: number): UnavailableReason =>
+  status === 401 || status === 403 ? 'AUTHORIZATION_DENIED' : 'OWNER_UNAVAILABLE';

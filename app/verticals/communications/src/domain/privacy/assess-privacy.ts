@@ -10,7 +10,7 @@ import type {
   ProcessingEligibilityVerdictCase,
   UnavailableReason,
 } from './eligibility-gate.ts';
-import { processingScopeKey } from './processing-scope.ts';
+import { processingScopeKey, subjectLocatorKey } from './processing-scope.ts';
 import type { ProcessingScope } from './processing-scope.ts';
 
 /**
@@ -50,11 +50,16 @@ const sameSet = (a: readonly string[], b: readonly string[]) => {
 
 /**
  * The owner evaluated exactly the use that was asked about. Privacy's own subject reference is opaque to us; every
- * other dimension it echoes must equal the question's. A decision for another scope is never applied, in either direction.
+ * other dimension that is echoed must equal the question's, including the subject locator, the catalog purpose and the
+ * channel the adapter bound the owner request to (Privacy's published scope has none of those three, so they are only
+ * as trustworthy as the adapter's request binding). A decision for another scope is never applied, in either direction.
  */
 const evidenceCoversScope = (evidence: EligibilityEvidence, scope: ProcessingScope) => {
   const echoed = evidence.evaluatedScope;
   return (
+    subjectLocatorKey(echoed.subject) === subjectLocatorKey(scope.subject) &&
+    echoed.catalogPurposeRef === scope.catalogPurposeRef &&
+    echoed.channel === scope.channel &&
     echoed.controllerRef === scope.controllerRef &&
     echoed.operation === scope.operation &&
     echoed.purposeRef === scope.purposeRef &&
@@ -83,9 +88,6 @@ const assessmentOf = (
         : indeterminate('EVIDENCE_SCOPE_MISMATCH', evidence),
     Indeterminate: ({ cause, evidence }) => indeterminate(cause, evidence),
     NotAllowed: ({ basis, evidence }) => {
-      if (basis === 'PROTECTED_MATERIAL') {
-        return PrivacyAssessment.NotAllowed({ assessedAt, basis, scopeKey });
-      }
       // A proven prohibition needs the owner's evidence for exactly this scope; without it nothing is proven.
       if (evidence === undefined) {
         return indeterminate('EVIDENCE_MISSING');

@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CommunicationResourceRefSchema, PrivacyPurposeKeySchema, resourceRefKey } from '../catalog/vocabulary.ts';
+import { CommunicationResourceRefSchema, PrivacyPurposeKeySchema } from '../catalog/vocabulary.ts';
 import { EndpointChannelSchema } from '../recipient/original-binding.ts';
 
 /**
@@ -25,7 +25,7 @@ export const PrivacySubjectResourceIdSchema = Ref.pipe(Schema.brand('Communicati
  * address is verified, for example) or the Party the source already holds. A locator is not proof of identity or of
  * a right to process; Privacy alone decides whether it names a supported context.
  */
-const SubjectLocatorSchema = Schema.Union([
+export const SubjectLocatorSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('SOURCE_ASSERTED'),
     source: Schema.Struct({
@@ -39,6 +39,8 @@ const SubjectLocatorSchema = Schema.Union([
   }),
   Schema.Struct({ kind: Schema.Literal('PARTY_TARGET'), partyRef: CommunicationResourceRefSchema }),
 ]);
+
+export type SubjectLocator = typeof SubjectLocatorSchema.Type;
 
 export const ProcessingScopeSchema = Schema.Struct({
   /** The catalog's reference to the Privacy purpose; it must be one the approved type declares. */
@@ -58,25 +60,39 @@ export const ProcessingScopeSchema = Schema.Struct({
 });
 export type ProcessingScope = typeof ProcessingScopeSchema.Type;
 
-/** Control characters never occur in a closed reference, so these separators keep parts unambiguous. */
-const PART = '\u0000';
-const FIELD = '\u0001';
 const sorted = (values: readonly string[]) => values.toSorted();
+
+/**
+ * Parts joined by their own length, so no value can imitate a boundary: `3:abc|1:d` has exactly one reading whatever
+ * characters the parts contain. A key built from joined parts is never ambiguous.
+ */
+const lengthPrefixed = (parts: readonly string[]): string =>
+  parts.map((part) => `${String(part.length)}:${part}`).join('|');
+
+const subjectParts = (subject: SubjectLocator): readonly string[] => {
+  if (subject.kind === 'PARTY_TARGET') {
+    return [subject.kind, subject.partyRef.moduleId, subject.partyRef.resourceType, subject.partyRef.resourceId];
+  }
+  // The source record fields are ordered by name, so the key never depends on how the record was assembled.
+  return [
+    subject.kind,
+    ...Object.entries(subject.source)
+      .toSorted(([a], [b]) => a.localeCompare(b))
+      .flatMap(([key, value]) => [key, value]),
+  ];
+};
+
+/** Equal exactly when two locators name the same source record or the same Party target. */
+export const subjectLocatorKey = (subject: SubjectLocator): string => lengthPrefixed(subjectParts(subject));
 
 /**
  * Stable identity of a scope: equal exactly when every dimension is, whatever the order of its lists. Nothing else
  * (a TTL, a clock, a previous result) is part of it, so no result can be reused for a scope that differs in any part.
+ * Every part and every list is length-prefixed, so two different scopes can never produce the same key.
  */
 export const processingScopeKey = (scope: ProcessingScope): string =>
-  [
-    scope.subject.kind === 'SOURCE_ASSERTED'
-      ? [
-          'SOURCE_ASSERTED',
-          ...Object.entries(scope.subject.source)
-            .toSorted(([a], [b]) => a.localeCompare(b))
-            .map(([key, value]) => `${key}=${value}`),
-        ].join(FIELD)
-      : `PARTY_TARGET${FIELD}${resourceRefKey(scope.subject.partyRef)}`,
+  lengthPrefixed([
+    subjectLocatorKey(scope.subject),
     scope.controllerRef,
     scope.purposeRef,
     scope.purposeVersionId,
@@ -85,6 +101,6 @@ export const processingScopeKey = (scope: ProcessingScope): string =>
     scope.processingScopeRef.scopeType,
     scope.processingScopeRef.scopeId,
     scope.channel,
-    sorted(scope.dataCategoryRefs).join(FIELD),
-    sorted(scope.recipientRefs).join(FIELD),
-  ].join(PART);
+    lengthPrefixed(sorted(scope.dataCategoryRefs)),
+    lengthPrefixed(sorted(scope.recipientRefs)),
+  ]);

@@ -2,9 +2,11 @@ import { Context, Data, Effect, Layer, Schema } from 'effect';
 import type { Duration } from 'effect';
 
 import type { CommunicationDecisionRequest } from '../catalog/decision-request.ts';
+import { PrivacyPurposeKeySchema } from '../catalog/vocabulary.ts';
 import type { CommunicationResourceRef, MessageTypeId, RecipientRole } from '../catalog/vocabulary.ts';
+import { EndpointChannelSchema } from '../recipient/original-binding.ts';
 import { ProcessingEligibilityUnavailable } from './eligibility-errors.ts';
-import { PrivacyPurposeVersionIdSchema, PrivacyScopeIdSchema } from './processing-scope.ts';
+import { PrivacyPurposeVersionIdSchema, PrivacyScopeIdSchema, SubjectLocatorSchema } from './processing-scope.ts';
 import type { ProcessingScope } from './processing-scope.ts';
 
 export type { UnavailableReason } from './eligibility-errors.ts';
@@ -26,8 +28,17 @@ const EligibilityEvidenceSchema = Schema.Struct({
   authoritativeReferences: Schema.Array(
     Schema.Struct({ kind: Schema.String, reference: Schema.String, revision: Schema.String }),
   ),
-  /** The exact scope Privacy says it evaluated, so a decision for another use is recognized and never applied. */
+  /**
+   * The exact scope the decision was evaluated for, so a decision for another use is recognized and never applied.
+   * Privacy's published scope has controller, activity, processing scope, purpose and its version, data and recipient
+   * dimensions and its own opaque subject. It has NO channel, no catalog purpose key and no locator of the subject.
+   * Those three are the request binding of the adapter: the very scope it put to the owner for this answer, so an answer
+   * correlated with another message, subject, purpose or channel is refused. They are exactly as trustworthy as the
+   * adapter (see the trust boundary on the gate); Privacy's own subject reference is opaque and is not compared.
+   */
   evaluatedScope: Schema.Struct({
+    catalogPurposeRef: PrivacyPurposeKeySchema,
+    channel: EndpointChannelSchema,
     controllerRef: Schema.String,
     dataCategoryRefs: Schema.Array(Schema.String),
     operation: Schema.String,
@@ -36,6 +47,7 @@ const EligibilityEvidenceSchema = Schema.Struct({
     purposeRef: Schema.String,
     purposeVersionId: PrivacyPurposeVersionIdSchema,
     recipientRefs: Schema.Array(Schema.String),
+    subject: SubjectLocatorSchema,
   }),
   policyRevisions: Schema.Array(Schema.Struct({ policyRef: Schema.String, revision: Schema.String })),
   /** Owner explanation codes, for example the blocking fact; never interpreted as legal advice. */
@@ -49,6 +61,10 @@ export type EligibilityEvidence = typeof EligibilityEvidenceSchema.Type;
  * - INPUTS_NOT_EVIDENCED: Privacy says a mandatory input is unavailable, stale or in conflict, and no prohibition is proven;
  * - CONTEXT_NOT_SUPPORTED: Privacy has no exact current context for this use (for example an Auth occurrence it cannot
  *   represent before the address is verified); nothing was evaluated, so nothing is allowed and nothing is forbidden;
+ * - CONTEXT_AMBIGUOUS: Privacy found more than one exact context for this use, so it evaluated none of them;
+ * - PURPOSE_NOT_CURRENT: the purpose of the Privacy context is absent, retired or its version is no longer the one asked;
+ * - PROTECTED_MATERIAL: Privacy refuses the material as protected but supplied no evaluation evidence, so it is not
+ *   reported as a Privacy prohibition (that needs the owner's own evidence);
  * - EVIDENCE_MISSING: a denial arrived without the owner evidence that a proven prohibition requires;
  * - EVIDENCE_SCOPE_MISMATCH: the owner decision is for another use than the one asked about, so it is not applied;
  * - EVIDENCE_INCONSISTENT: the decision contradicts its own evidence.
@@ -56,14 +72,17 @@ export type EligibilityEvidence = typeof EligibilityEvidenceSchema.Type;
 const IndeterminateCauseSchema = Schema.Literals([
   'INPUTS_NOT_EVIDENCED',
   'CONTEXT_NOT_SUPPORTED',
+  'CONTEXT_AMBIGUOUS',
+  'PURPOSE_NOT_CURRENT',
+  'PROTECTED_MATERIAL',
   'EVIDENCE_MISSING',
   'EVIDENCE_SCOPE_MISMATCH',
   'EVIDENCE_INCONSISTENT',
 ]);
 export type IndeterminateCause = typeof IndeterminateCauseSchema.Type;
 
-/** Basis of a proven prohibition: an evaluated Current fact, or Privacy's own recorded protection of the material. */
-const NotAllowedBasisSchema = Schema.Literals(['EVALUATED_PROHIBITION', 'PROTECTED_MATERIAL']);
+/** Basis of a proven prohibition: only an evaluated Current fact with the owner's evidence proves one. */
+const NotAllowedBasisSchema = Schema.Literals(['EVALUATED_PROHIBITION']);
 export type NotAllowedBasis = typeof NotAllowedBasisSchema.Type;
 
 /** What the Privacy owner decided Now for one exact scope. */

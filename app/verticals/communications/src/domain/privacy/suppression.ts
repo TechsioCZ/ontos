@@ -25,10 +25,20 @@ const SuppressionCategorySchema = Schema.Literals([
   'AUDIENCE_GROUP_INCOMPLETE',
   'CHANNEL_UNUSABLE',
   'HANDOFF_INDETERMINATE',
+  // Privacy answered but could not evidence a decision (inputs, context, purpose, evidence): not a prohibition.
   'PRIVACY_INDETERMINATE',
+  // Privacy PROVED a prohibition of this exact scope with its own evidence. Nothing else is ever reported as this.
   'PRIVACY_NOT_ALLOWED',
+  // No decision was reached, and each reason is its own fact: the Principal may not read Privacy eligibility,
+  // the owner or its authority could not answer, or the request does not resolve to exactly one Privacy context.
+  'PRIVACY_ACCESS_DENIED',
+  'PRIVACY_AUTHORITY_UNAVAILABLE',
+  'PRIVACY_CONTEXT_AMBIGUOUS',
   'PROVIDER_SUPPRESSED',
+  // A mandatory recipient authority did not answer: uncertainty about the recipient, not a recipient fact.
+  'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_INVALID',
+  'SOURCE_PROTECTED',
   'SOURCE_STALE',
 ]);
 export type SuppressionCategory = typeof SuppressionCategorySchema.Type;
@@ -118,12 +128,31 @@ const stop = (category: SuppressionCategory, cause: SuppressionCause, proven: bo
   proven,
 });
 
-const privacyReasons = (assessment: PrivacyAssessmentCase): readonly SuppressionReason[] =>
+/** Where each Privacy stop is reported. Only evidence of a prohibition is ever `PRIVACY_NOT_ALLOWED`. */
+const INDETERMINATE_CATEGORY = {
+  CONTEXT_AMBIGUOUS: 'PRIVACY_CONTEXT_AMBIGUOUS',
+  CONTEXT_NOT_SUPPORTED: 'PRIVACY_INDETERMINATE',
+  EVIDENCE_INCONSISTENT: 'PRIVACY_INDETERMINATE',
+  EVIDENCE_MISSING: 'PRIVACY_INDETERMINATE',
+  EVIDENCE_SCOPE_MISMATCH: 'PRIVACY_INDETERMINATE',
+  INPUTS_NOT_EVIDENCED: 'PRIVACY_INDETERMINATE',
+  PROTECTED_MATERIAL: 'SOURCE_PROTECTED',
+  PURPOSE_NOT_CURRENT: 'PRIVACY_INDETERMINATE',
+} as const satisfies Record<IndeterminateCause, SuppressionCategory>;
+
+const UNAVAILABLE_CATEGORY = {
+  AUTHORIZATION_DENIED: 'PRIVACY_ACCESS_DENIED',
+  CONTEXT_AMBIGUOUS: 'PRIVACY_CONTEXT_AMBIGUOUS',
+  OWNER_UNAVAILABLE: 'PRIVACY_AUTHORITY_UNAVAILABLE',
+} as const satisfies Record<UnavailableReason, SuppressionCategory>;
+
+/** Only a proven prohibition is `PRIVACY_NOT_ALLOWED`; every other Privacy stop names its own fact and is unproven. */
+export const privacySuppressionReasons = (assessment: PrivacyAssessmentCase): readonly SuppressionReason[] =>
   PrivacyAssessment.$match(assessment, {
     Allowed: () => [],
-    Indeterminate: ({ cause }) => [stop('PRIVACY_INDETERMINATE', cause, false)],
+    Indeterminate: ({ cause }) => [stop(INDETERMINATE_CATEGORY[cause], cause, false)],
     NotAllowed: ({ basis }) => [stop('PRIVACY_NOT_ALLOWED', basis, true)],
-    Unavailable: ({ reason }) => [stop('PRIVACY_INDETERMINATE', reason, false)],
+    Unavailable: ({ reason }) => [stop(UNAVAILABLE_CATEGORY[reason], reason, false)],
   });
 
 /** A recipient stop keeps its owner reason; an ended or unsafe endpoint is a channel stop, an ended source a source stop. */
@@ -144,7 +173,7 @@ const recipientReasons = (verdict: HandoffVerdictCase): readonly SuppressionReas
             : [stop('RECIPIENT_INVALID', reason, true)];
         },
         RecipientUnresolved: ({ reason }) => [stop('RECIPIENT_INVALID', reason, false)],
-        SourceUnavailable: () => [stop('RECIPIENT_INVALID', 'AUTHORITY_UNAVAILABLE', false)],
+        SourceUnavailable: () => [stop('RECIPIENT_AUTHORITY_UNAVAILABLE', 'AUTHORITY_UNAVAILABLE', false)],
       }),
   });
 
@@ -173,7 +202,12 @@ const CATEGORY_RANK: readonly SuppressionCategory[] = [
   'RECIPIENT_INVALID',
   'CHANNEL_UNUSABLE',
   'PROVIDER_SUPPRESSED',
+  'SOURCE_PROTECTED',
   'PRIVACY_INDETERMINATE',
+  'PRIVACY_CONTEXT_AMBIGUOUS',
+  'PRIVACY_ACCESS_DENIED',
+  'PRIVACY_AUTHORITY_UNAVAILABLE',
+  'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'HANDOFF_INDETERMINATE',
   'AUDIENCE_GROUP_INCOMPLETE',
 ];
@@ -208,7 +242,7 @@ const recipientEvidenceOf = (verdict: HandoffVerdictCase): RecipientEvidence | n
 const allReasonsOf = (facts: MessageFacts): readonly SuppressionReason[] =>
   orderedReasons([
     ...sourceReasons(facts.source),
-    ...Option.match(facts.privacy, { onNone: () => [], onSome: privacyReasons }),
+    ...Option.match(facts.privacy, { onNone: () => [], onSome: privacySuppressionReasons }),
     ...recipientReasons(facts.recipient),
     ...channelReasons(facts.recipient, facts.scope),
     ...providerReasons(facts.provider),

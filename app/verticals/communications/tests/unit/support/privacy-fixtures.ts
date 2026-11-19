@@ -70,14 +70,19 @@ export const processingScope = (recipientId: string, overrides: ScopeOverrides =
     ...overrides,
   });
 
+export const FIXTURE_OWNER_DECISION_TIME = '2026-11-19T10:00:00.000Z';
+
 /** Owner evidence that echoes the scope exactly as Privacy would for the evaluated use. */
 export const ownerEvidence = (
   scope: ProcessingScope,
   outcome: 'ALLOWED' | 'INDETERMINATE' | 'NOT_ALLOWED',
   reasonCodes: readonly string[] = [`fixture_${outcome.toLowerCase()}`],
+  decidedAt: string = FIXTURE_OWNER_DECISION_TIME,
 ): EligibilityEvidence => ({
   authoritativeReferences: [{ kind: 'FIXTURE_OWNER_FACT', reference: `fixture:${outcome}`, revision: '1' }],
   evaluatedScope: {
+    catalogPurposeRef: scope.catalogPurposeRef,
+    channel: scope.channel,
     controllerRef: scope.controllerRef,
     dataCategoryRefs: scope.dataCategoryRefs,
     operation: scope.operation,
@@ -86,10 +91,11 @@ export const ownerEvidence = (
     purposeRef: scope.purposeRef,
     purposeVersionId: scope.purposeVersionId,
     recipientRefs: scope.recipientRefs,
+    subject: scope.subject,
   },
   policyRevisions: [{ policyRef: 'fixture:policy', revision: '1' }],
   reasonCodes,
-  trustedDecisionTime: DateTime.makeUnsafe('2026-11-19T10:00:00.000Z'),
+  trustedDecisionTime: DateTime.makeUnsafe(decidedAt),
 });
 
 type OwnerReply = Effect.Effect<ProcessingEligibilityVerdictCase, ProcessingEligibilityUnavailable>;
@@ -97,6 +103,30 @@ export type PrivacyAnswer = (query: ProcessingEligibilityQuery) => OwnerReply;
 
 export const privacyAllowed: PrivacyAnswer = ({ scope }) =>
   Effect.succeed(ProcessingEligibilityVerdict.Allowed({ evidence: ownerEvidence(scope, 'ALLOWED') }));
+
+/** An ALLOWED the owner decided at its own time, so a test can tell a new owner evaluation from an old one. */
+export const privacyAllowedAt =
+  (decidedAt: string): PrivacyAnswer =>
+  ({ scope }) =>
+    Effect.succeed(
+      ProcessingEligibilityVerdict.Allowed({ evidence: ownerEvidence(scope, 'ALLOWED', undefined, decidedAt) }),
+    );
+
+export const privacyIndeterminateAt =
+  (decidedAt: string): PrivacyAnswer =>
+  ({ scope }) =>
+    Effect.succeed(
+      ProcessingEligibilityVerdict.Indeterminate({
+        cause: 'INPUTS_NOT_EVIDENCED',
+        evidence: ownerEvidence(scope, 'INDETERMINATE', undefined, decidedAt),
+      }),
+    );
+
+/** The owner answered with an already mapped verdict, for example from its public response. */
+export const privacyVerdict =
+  (verdict: ProcessingEligibilityVerdictCase): PrivacyAnswer =>
+  () =>
+    Effect.succeed(verdict);
 
 export const privacyNotAllowed =
   (reasonCodes: readonly string[] = ['fixture_current_restriction']): PrivacyAnswer =>

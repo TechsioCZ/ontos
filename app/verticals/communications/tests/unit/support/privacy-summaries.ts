@@ -55,7 +55,7 @@ export const requiredSummary = (outcome: RequiredHandoffOutcomeCase) =>
 
 export const recoverySummary = (admission: RecoveryAdmissionCase) =>
   RecoveryAdmission.$match(admission, {
-    Admitted: ({ priorStopPreserved }) => ({ kind: 'Admitted' as const, priorStopPreserved }),
+    Admitted: () => ({ kind: 'Admitted' as const }),
     Refused: ({ reason }) => ({ kind: 'Refused' as const, reason }),
   });
 

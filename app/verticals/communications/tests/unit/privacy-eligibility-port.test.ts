@@ -1,4 +1,4 @@
-import { Effect, Fiber, Result, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -8,6 +8,7 @@ import { CommunicationResourceRefSchema, RecipientRoleSchema } from '../../src/d
 import {
   assessPrivacyEligibility,
   assessmentCoversScope,
+  PrivacyAssessment,
   privacyEvidenceOf,
 } from '../../src/domain/privacy/assess-privacy.ts';
 import {
@@ -19,7 +20,10 @@ import { processingScopeKey, ProcessingScopeSchema } from '../../src/domain/priv
 import {
   eligibilityVerdictOf,
   PrivacySourceEligibilityResponseSchema,
+  unavailableReasonOfOwnerProblem,
 } from '../../src/domain/privacy/source-eligibility-response.ts';
+import type { PrivacySourceEligibilityResponse } from '../../src/domain/privacy/source-eligibility-response.ts';
+import { privacySuppressionReasons } from '../../src/domain/privacy/suppression.ts';
 import { assessRecipients, recipientFactOf } from '../../src/domain/recipient/assess-recipients.ts';
 import {
   decideOrThrow,
@@ -40,16 +44,28 @@ import {
   privacyNotAllowed,
   privacyThrowing,
   privacyUnavailable,
+  privacyVerdict,
   processingScope,
 } from './support/privacy-fixtures.ts';
 import type { PrivacyAnswer } from './support/privacy-fixtures.ts';
 import { assessmentSummary, verdictSummary } from './support/privacy-summaries.ts';
 import { binding, evaluationInput, gateDouble, TEST_GATE_CHECK_TIMEOUT, usable } from './support/recipient-fixtures.ts';
 
+const sourceOf = processingScope('recipient-a').subject;
+const otherSource = processingScope('recipient-b').subject;
+const sameRecordOtherOccurrence =
+  sourceOf.kind === 'SOURCE_ASSERTED'
+    ? ({ ...sourceOf, source: { ...sourceOf.source, occurrenceId: 'fixture-occurrence:another' } } as const)
+    : sourceOf;
 const type = fixtureType();
 const request = fixtureRequest({ purpose: type.purpose });
 const decodeRole = Schema.decodeSync(RecipientRoleSchema);
 const decodeRef = Schema.decodeSync(CommunicationResourceRefSchema);
+const partyTarget = (partyId: string) =>
+  ({
+    kind: 'PARTY_TARGET',
+    partyRef: decodeRef({ moduleId: 'fixture.party', resourceId: partyId, resourceType: 'fixture.party' }),
+  }) as const;
 
 const queryFor = (recipientId: string, scope = processingScope(recipientId)): ProcessingEligibilityQuery => ({
   occurrence: request.occurrence,
@@ -130,17 +146,29 @@ describe('#1396 Rule: Privacy ALLOWED, NOT_ALLOWED and INDETERMINATE are three d
 
 describe('#1396 Rule: no decision is not a Privacy decision (authorization, outage and ambiguous context)', () => {
   it.effect.each([
-    ['access to the Privacy Read was denied', 'AUTHORIZATION_DENIED'],
-    ['the owner is unavailable', 'OWNER_UNAVAILABLE'],
-    ['the context is ambiguous', 'CONTEXT_AMBIGUOUS'],
-  ] as const)('Scenario: %s is its own reason and never a NOT_ALLOWED', ([, reason]) =>
+    ['access to the Privacy Read was denied', 'AUTHORIZATION_DENIED', 'PRIVACY_ACCESS_DENIED'],
+    ['the owner is unavailable', 'OWNER_UNAVAILABLE', 'PRIVACY_AUTHORITY_UNAVAILABLE'],
+    ['the context is ambiguous', 'CONTEXT_AMBIGUOUS', 'PRIVACY_CONTEXT_AMBIGUOUS'],
+  ] as const)('Scenario: %s is its own reason and never a NOT_ALLOWED', ([, reason, category]) =>
     Effect.gen(function* notADecision() {
       const assessment = yield* assess({ 'recipient-a': privacyUnavailable(reason) }).run;
 
       expect(assessmentSummary(assessment)).toEqual({ kind: 'Unavailable', reason });
+      // The catalog still receives the three-valued evidence; the stop keeps its own distinct, unproven category.
       expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
+      expect(privacySuppressionReasons(assessment)).toEqual([{ category, cause: reason, proven: false }]);
+      expect(category).not.toBe('PRIVACY_NOT_ALLOWED');
     }),
   );
+
+  it('Scenario: the owner problem status maps to a denied access or an unavailable owner, and nothing else', () => {
+    // 401 and 403 are the owner contract's authentication and forbidden problems; the Read was withdrawn from the caller.
+    expect(unavailableReasonOfOwnerProblem(401)).toBe('AUTHORIZATION_DENIED');
+    expect(unavailableReasonOfOwnerProblem(403)).toBe('AUTHORIZATION_DENIED');
+    for (const status of [404, 409, 422, 500, 503, 504, 0]) {
+      expect(unavailableReasonOfOwnerProblem(status)).toBe('OWNER_UNAVAILABLE');
+    }
+  });
 
   it.effect.each([
     ['throws', privacyThrowing],
@@ -230,6 +258,85 @@ describe('#1396 Rule: an ALLOWED is never reused across purpose, controller, cha
       }),
   );
 
+  it('Scenario: crafted references can never make two different scopes share one key', () => {
+    // A separator inside a reference cannot imitate a boundary between two references or two dimensions.
+    expect(processingScopeKey(processingScope('recipient-a', { dataCategoryRefs: ['a\u0001b'] }))).not.toBe(
+      processingScopeKey(processingScope('recipient-a', { dataCategoryRefs: ['a', 'b'] })),
+    );
+    expect(processingScopeKey(processingScope('recipient-a', { recipientRefs: ['x\u0001y'] }))).not.toBe(
+      processingScopeKey(processingScope('recipient-a', { recipientRefs: ['x', 'y'] })),
+    );
+    expect(processingScopeKey(processingScope('recipient-a', { controllerRef: 'c\u0000d', purposeRef: 'e' }))).not.toBe(
+      processingScopeKey(processingScope('recipient-a', { controllerRef: 'c', purposeRef: 'd\u0000e' })),
+    );
+    expect(processingScopeKey(processingScope('recipient-a', { controllerRef: 'x"],["y', purposeRef: 'z' }))).not.toBe(
+      processingScopeKey(processingScope('recipient-a', { controllerRef: 'x', purposeRef: 'y","z' })),
+    );
+    // The same references in another list order are still the same scope.
+    expect(processingScopeKey(processingScope('recipient-a', { recipientRefs: ['p', 'q'] }))).toBe(
+      processingScopeKey(processingScope('recipient-a', { recipientRefs: ['q', 'p'] })),
+    );
+  });
+
+  it.each([
+    ['another source record', { subject: otherSource }],
+    ['another Party target', { subject: partyTarget('party-two') }],
+    ['the same source record in another occurrence', { subject: sameRecordOtherOccurrence }],
+  ] as const)('Scenario: a subject locator that is %s is another scope', (_name, change) => {
+    const base = processingScope('recipient-a');
+    expect(processingScopeKey(processingScope('recipient-a', change))).not.toBe(processingScopeKey(base));
+    expect(processingScopeKey(processingScope('recipient-a', { subject: partyTarget('party-one') }))).not.toBe(
+      processingScopeKey(processingScope('recipient-a', { subject: partyTarget('party-two') })),
+    );
+  });
+
+  it.effect.each([
+    ['another subject', { subject: otherSource }],
+    ['another Party target', { subject: partyTarget('party-two') }],
+    ['another catalog purpose', { catalogPurposeRef: FIXTURE_MARKETING_PURPOSE }],
+    ['another channel', { channel: 'sms' }],
+  ] as const)('Scenario: an answer echoing %s is refused as a scope mismatch, ALLOWED or not', ([, change]) =>
+    Effect.gen(function* echoOfAnotherUse() {
+      for (const outcome of ['ALLOWED', 'NOT_ALLOWED'] as const) {
+        const assessment = yield* assess({
+          'recipient-a': privacyAnswersFor(() => processingScope('recipient-a', change), outcome),
+        }).run;
+        expect(assessmentSummary(assessment)).toEqual({ cause: 'EVIDENCE_SCOPE_MISMATCH', kind: 'Indeterminate' });
+        expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
+      }
+    }),
+  );
+
+  it.effect('Scenario: a Party-target subject is asked, answered and compared like any other exact scope', () =>
+    Effect.gen(function* partyTargetSubject() {
+      const scope = processingScope('recipient-a', { subject: partyTarget('party-one') });
+      const query = queryFor('recipient-a', scope);
+      const double = privacyGateDouble({ 'recipient-a': privacyAllowed });
+      const assessment = yield* assessPrivacyEligibility(query).pipe(Effect.provide(double.layer));
+
+      expect(assessmentSummary(assessment)).toEqual({ kind: 'Allowed' });
+      expect(double.queries.map(({ scope: asked }) => asked.subject)).toEqual([partyTarget('party-one')]);
+      expect(assessmentCoversScope(assessment, scope)).toBe(true);
+      // The Party's allowance is never applied to the source record, nor to another Party.
+      expect(assessmentCoversScope(assessment, processingScope('recipient-a'))).toBe(false);
+      expect(
+        assessmentCoversScope(assessment, processingScope('recipient-a', { subject: partyTarget('party-two') })),
+      ).toBe(false);
+      // An answer given for the source record is refused for the Party target.
+      const echoedSource = yield* assessPrivacyEligibility(query).pipe(
+        Effect.provide(
+          privacyGateDouble({
+            'recipient-a': privacyAnswersFor(
+              (asked) => ({ ...asked, subject: processingScope('recipient-a').subject }),
+              'ALLOWED',
+            ),
+          }).layer,
+        ),
+      );
+      expect(assessmentSummary(echoedSource)).toEqual({ cause: 'EVIDENCE_SCOPE_MISMATCH', kind: 'Indeterminate' });
+    }),
+  );
+
   it('Scenario: the scope cannot carry an e-mail address or any field that would identify a subject by address', () => {
     const decode = Schema.decodeUnknownResult(ProcessingScopeSchema, { onExcessProperty: 'error' });
     expect(Result.isFailure(decode({ ...processingScope('recipient-a'), emailAddress: 'someone@example.test' }))).toBe(
@@ -265,7 +372,13 @@ describe('#1396 Rule: an Auth occurrence has a Privacy scope without any usable 
   );
 });
 
+const sentScope = processingScope('recipient-a');
+const verdictOf = (response: PrivacySourceEligibilityResponse) => eligibilityVerdictOf(response, sentScope);
 type OwnerResponse = typeof PrivacySourceEligibilityResponseSchema.Encoded;
+type NotEvaluatedCause = Extract<
+  NonNullable<Extract<OwnerResponse, { readonly outcome: 'DENIED' }>['eligibility']>,
+  { readonly outcome: 'NOT_EVALUATED' }
+>['reasonCode'];
 const owner = (response: OwnerResponse) => Schema.decodeUnknownSync(PrivacySourceEligibilityResponseSchema)(response);
 const evidenceDocument = (outcome: 'ALLOWED' | 'INDETERMINATE' | 'NOT_ALLOWED') => ({
   authoritativeReferences: [{ kind: 'PRIVACY_LEGAL_BASIS_ASSIGNMENT', reference: 'assignment-1', revision: '1' }],
@@ -289,6 +402,16 @@ const allowedResponse = (outcome: 'ALLOWED' | 'INDETERMINATE' | 'NOT_ALLOWED') =
   owner({ evaluatedAt: EVALUATED_AT, evidence: evidenceDocument(outcome), outcome: 'ALLOWED' });
 const deniedResponse = (reason: 'AUTHORITY_NOT_CURRENT' | 'PROCESSING_NOT_ALLOWED' | 'PROTECTED_MATERIAL') =>
   owner({ evaluatedAt: EVALUATED_AT, outcome: 'DENIED', reason });
+const notEvaluated = (
+  cause: NotEvaluatedCause,
+  reason: 'AUTHORITY_NOT_CURRENT' | 'PROCESSING_NOT_ALLOWED' = 'AUTHORITY_NOT_CURRENT',
+) =>
+  owner({
+    eligibility: { outcome: 'NOT_EVALUATED', reasonCode: cause },
+    evaluatedAt: EVALUATED_AT,
+    outcome: 'DENIED',
+    reason,
+  });
 const evaluatedDenial = (outcome: 'INDETERMINATE' | 'NOT_ALLOWED', evidenceOutcome = outcome) =>
   owner({
     eligibility: { evidence: evidenceDocument(evidenceOutcome), outcome },
@@ -299,45 +422,100 @@ const evaluatedDenial = (outcome: 'INDETERMINATE' | 'NOT_ALLOWED', evidenceOutco
 
 describe('#1396 Rule: the Privacy owner public response maps to the three outcomes only on matching owner evidence', () => {
   it('Scenario: ALLOWED needs evidence that itself says ALLOWED', () => {
-    expect(verdictSummary(eligibilityVerdictOf(allowedResponse('ALLOWED')))).toEqual({ kind: 'Allowed' });
-    expect(verdictSummary(eligibilityVerdictOf(allowedResponse('NOT_ALLOWED')))).toEqual({
+    expect(verdictSummary(verdictOf(allowedResponse('ALLOWED')))).toEqual({ kind: 'Allowed' });
+    expect(verdictSummary(verdictOf(allowedResponse('NOT_ALLOWED')))).toEqual({
       cause: 'EVIDENCE_INCONSISTENT',
       kind: 'Indeterminate',
     });
   });
 
   it('Scenario: the owner NOT_ALLOWED and INDETERMINATE stay distinct although both are DENIED/PROCESSING_NOT_ALLOWED', () => {
-    expect(verdictSummary(eligibilityVerdictOf(evaluatedDenial('NOT_ALLOWED')))).toEqual({
+    expect(verdictSummary(verdictOf(evaluatedDenial('NOT_ALLOWED')))).toEqual({
       basis: 'EVALUATED_PROHIBITION',
       kind: 'NotAllowed',
     });
-    expect(verdictSummary(eligibilityVerdictOf(evaluatedDenial('INDETERMINATE')))).toEqual({
+    expect(verdictSummary(verdictOf(evaluatedDenial('INDETERMINATE')))).toEqual({
       cause: 'INPUTS_NOT_EVIDENCED',
       kind: 'Indeterminate',
     });
   });
 
   it('Scenario: a denial without an evaluation is not a prohibition, and evidence that contradicts its outcome is refused', () => {
-    expect(verdictSummary(eligibilityVerdictOf(deniedResponse('PROCESSING_NOT_ALLOWED')))).toEqual({
+    expect(verdictSummary(verdictOf(deniedResponse('PROCESSING_NOT_ALLOWED')))).toEqual({
       cause: 'EVIDENCE_MISSING',
       kind: 'Indeterminate',
     });
-    expect(verdictSummary(eligibilityVerdictOf(evaluatedDenial('NOT_ALLOWED', 'INDETERMINATE')))).toEqual({
+    expect(verdictSummary(verdictOf(evaluatedDenial('NOT_ALLOWED', 'INDETERMINATE')))).toEqual({
       cause: 'EVIDENCE_INCONSISTENT',
       kind: 'Indeterminate',
     });
   });
 
-  it('Scenario: no exact current Privacy context is nothing evaluated, and a recorded protection is a prohibition', () => {
-    expect(verdictSummary(eligibilityVerdictOf(deniedResponse('AUTHORITY_NOT_CURRENT')))).toEqual({
+  it('Scenario: no exact current Privacy context is nothing evaluated', () => {
+    expect(verdictSummary(verdictOf(deniedResponse('AUTHORITY_NOT_CURRENT')))).toEqual({
       cause: 'CONTEXT_NOT_SUPPORTED',
       kind: 'Indeterminate',
     });
-    expect(verdictSummary(eligibilityVerdictOf(deniedResponse('PROTECTED_MATERIAL')))).toEqual({
-      basis: 'PROTECTED_MATERIAL',
-      kind: 'NotAllowed',
-    });
   });
+
+  it('Scenario: protected material without owner evidence is its own stop and is never a Privacy prohibition', () => {
+    const verdict = verdictOf(deniedResponse('PROTECTED_MATERIAL'));
+    expect(verdictSummary(verdict)).toEqual({ cause: 'PROTECTED_MATERIAL', kind: 'Indeterminate' });
+
+    const assessment = PrivacyAssessment.Indeterminate({
+      assessedAt: DateTime.makeUnsafe(EVALUATED_AT),
+      cause: 'PROTECTED_MATERIAL',
+      scopeKey: processingScopeKey(sentScope),
+    });
+    expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
+    expect(privacySuppressionReasons(assessment)).toEqual([
+      { category: 'SOURCE_PROTECTED', cause: 'PROTECTED_MATERIAL', proven: false },
+    ]);
+  });
+
+  it('Scenario: the owner names why it evaluated nothing, so no context, several contexts and a retired purpose differ', () => {
+    expect(verdictSummary(verdictOf(notEvaluated('NO_CONTEXT')))).toEqual({
+      cause: 'CONTEXT_NOT_SUPPORTED',
+      kind: 'Indeterminate',
+    });
+    expect(verdictSummary(verdictOf(notEvaluated('MULTIPLE_CONTEXTS')))).toEqual({
+      cause: 'CONTEXT_AMBIGUOUS',
+      kind: 'Indeterminate',
+    });
+    expect(verdictSummary(verdictOf(notEvaluated('PURPOSE_NOT_CURRENT', 'PROCESSING_NOT_ALLOWED')))).toEqual({
+      cause: 'PURPOSE_NOT_CURRENT',
+      kind: 'Indeterminate',
+    });
+    for (const cause of ['CONTEXT_NOT_CURRENT', 'APPLICABILITY_NOT_CURRENT', 'SUBJECT_NOT_FOUND'] as const) {
+      expect(verdictSummary(verdictOf(notEvaluated(cause)))).toEqual({
+        cause: 'CONTEXT_NOT_SUPPORTED',
+        kind: 'Indeterminate',
+      });
+    }
+    // None of them is a prohibition, and an absent or retired purpose is not reported as missing evidence.
+    expect(JSON.stringify(verdictOf(notEvaluated('PURPOSE_NOT_CURRENT', 'PROCESSING_NOT_ALLOWED')))).not.toContain(
+      'EVIDENCE_MISSING',
+    );
+  });
+
+  it.effect('Scenario: an ambiguous context and a retired purpose stop under their own categories', () =>
+    Effect.gen(function* ownerReasons() {
+      const ambiguous = yield* assess({
+        'recipient-a': privacyVerdict(verdictOf(notEvaluated('MULTIPLE_CONTEXTS'))),
+      }).run;
+      const retired = yield* assess({
+        'recipient-a': privacyVerdict(verdictOf(notEvaluated('PURPOSE_NOT_CURRENT', 'PROCESSING_NOT_ALLOWED'))),
+      }).run;
+
+      expect(privacySuppressionReasons(ambiguous)).toEqual([
+        { category: 'PRIVACY_CONTEXT_AMBIGUOUS', cause: 'CONTEXT_AMBIGUOUS', proven: false },
+      ]);
+      expect(privacySuppressionReasons(retired)).toEqual([
+        { category: 'PRIVACY_INDETERMINATE', cause: 'PURPOSE_NOT_CURRENT', proven: false },
+      ]);
+      expect(privacyEvidenceOf(retired)).toBe('INDETERMINATE');
+    }),
+  );
 
   it.effect(
     'Scenario: an owner decision for another use than the question is never applied (stale or foreign evidence)',
@@ -352,7 +530,7 @@ describe('#1396 Rule: the Privacy owner public response maps to the three outcom
           },
           outcome: 'ALLOWED',
         });
-        const double = privacyGateDouble({ 'recipient-a': () => Effect.succeed(eligibilityVerdictOf(foreign)) });
+        const double = privacyGateDouble({ 'recipient-a': () => Effect.succeed(verdictOf(foreign)) });
         const assessment = yield* assessPrivacyEligibility(queryFor('recipient-a')).pipe(Effect.provide(double.layer));
 
         expect(assessmentSummary(assessment)).toEqual({ cause: 'EVIDENCE_SCOPE_MISMATCH', kind: 'Indeterminate' });
@@ -365,7 +543,7 @@ describe('#1396 Rule: two Auth identities with one address stay two subjects (pr
     Effect.gen(function* sharedAddress() {
       // Privacy has a context only for the second occurrence; the first is located by its own occurrence record.
       const double = privacyGateDouble({
-        'identity-one': () => Effect.succeed(eligibilityVerdictOf(deniedResponse('AUTHORITY_NOT_CURRENT'))),
+        'identity-one': () => Effect.succeed(verdictOf(deniedResponse('AUTHORITY_NOT_CURRENT'))),
         'identity-two': privacyAllowed,
       });
       const run = (recipientId: string) =>

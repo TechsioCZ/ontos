@@ -1,13 +1,20 @@
-import { Array as EffectArray, DateTime, Effect, Layer, Option } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
   admitRecoveryAfterStop,
   decideMessageHandoffs,
+  RecoveryAdmission,
   requiredHandoffOutcomeOf,
+  stopRecordOf,
 } from '../../src/domain/privacy/handoff-decision.ts';
 import type { MessageHandoffInput, MessageHandoffItem } from '../../src/domain/privacy/handoff-decision.ts';
+import {
+  eligibilityVerdictOf,
+  PrivacySourceEligibilityResponseSchema,
+  unavailableReasonOfOwnerProblem,
+} from '../../src/domain/privacy/source-eligibility-response.ts';
 import { HandoffFact, MessageHandoffDecision, ProviderFact } from '../../src/domain/privacy/suppression.ts';
 import type { MessageHandoffDecisionCase } from '../../src/domain/privacy/suppression.ts';
 import type { RecipientEvaluationInput } from '../../src/domain/recipient/assess-recipients.ts';
@@ -28,7 +35,10 @@ import {
   privacyGateDouble,
   privacyIndeterminate,
   privacyNotAllowed,
+  privacyAllowedAt,
+  privacyIndeterminateAt,
   privacyUnavailable,
+  privacyVerdict,
   processingScope,
   staleSource,
 } from './support/privacy-fixtures.ts';
@@ -46,6 +56,25 @@ import {
   usable,
 } from './support/recipient-fixtures.ts';
 import type { OwnerAnswer } from './support/recipient-fixtures.ts';
+
+const owner = (response: typeof PrivacySourceEligibilityResponseSchema.Encoded) =>
+  Schema.decodeUnknownSync(PrivacySourceEligibilityResponseSchema)(response);
+
+const ownerAnswered = (response: typeof PrivacySourceEligibilityResponseSchema.Encoded) =>
+  privacyVerdict(eligibilityVerdictOf(owner(response), processingScope('recipient-a')));
+
+const proceedOf = (decision: MessageHandoffDecisionCase) => {
+  if (!MessageHandoffDecision.$is('Proceed')(decision)) {
+    throw new Error('expected a message that may proceed');
+  }
+  return decision;
+};
+const suppressedOf = (decision: MessageHandoffDecisionCase) => {
+  if (!MessageHandoffDecision.$is('Suppressed')(decision)) {
+    throw new Error('expected a stopped message');
+  }
+  return decision;
+};
 
 const decide = (
   recipient: RecipientEvaluationInput,
@@ -166,7 +195,7 @@ describe('#1396 Rule: eligibility is exact and Current for every recipient', () 
 
         expect(view(yield* first)).toMatchObject({
           kind: 'Suppressed',
-          reasons: ['PRIVACY_INDETERMINATE:CONTEXT_AMBIGUOUS'],
+          reasons: ['PRIVACY_CONTEXT_AMBIGUOUS:CONTEXT_AMBIGUOUS'],
         });
       }),
   );
@@ -200,7 +229,7 @@ describe('#1396 Rule: eligibility is exact and Current for every recipient', () 
       });
       const decision = only(yield* prepared.run);
 
-      expect(view(decision)).toMatchObject({ reasons: ['PRIVACY_INDETERMINATE:CONTEXT_AMBIGUOUS'] });
+      expect(view(decision)).toMatchObject({ reasons: ['PRIVACY_CONTEXT_AMBIGUOUS:CONTEXT_AMBIGUOUS'] });
       expect(prepared.privacyQueries).toHaveLength(0);
     }),
   );
@@ -231,7 +260,7 @@ describe('#1396 Rule: eligibility is exact and Current for every recipient', () 
       });
 
       expect(view(yield* first)).toMatchObject({
-        reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION', 'RECIPIENT_INVALID:AUTHORITY_UNAVAILABLE'],
+        reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION', 'RECIPIENT_AUTHORITY_UNAVAILABLE:AUTHORITY_UNAVAILABLE'],
       });
     }),
   );
@@ -246,9 +275,71 @@ describe('#1396 Rule: eligibility is exact and Current for every recipient', () 
         });
         const decision = yield* first;
 
-        expect(view(decision)).toMatchObject({ reasons: ['PRIVACY_INDETERMINATE:OWNER_UNAVAILABLE'] });
+        expect(view(decision)).toMatchObject({ reasons: ['PRIVACY_AUTHORITY_UNAVAILABLE:OWNER_UNAVAILABLE'] });
         expect(JSON.stringify(view(decision))).not.toContain('PRIVACY_NOT_ALLOWED');
       }),
+  );
+});
+
+describe('#1396 Rule: a retired purpose and protected material stop under their own reasons', () => {
+  it.effect('Scenario: an absent or retired Privacy purpose stops as its own cause, not as missing evidence', () =>
+    Effect.gen(function* retiredPurpose() {
+      const { first } = decideOne({
+        privacy: {
+          'recipient-a': ownerAnswered({
+            eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'PURPOSE_NOT_CURRENT' },
+            evaluatedAt: '2026-11-19T10:00:00.000Z',
+            outcome: 'DENIED',
+            reason: 'PROCESSING_NOT_ALLOWED',
+          }),
+        },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = yield* first;
+
+      expect(view(decision)).toEqual({
+        kind: 'Suppressed',
+        reasons: ['PRIVACY_INDETERMINATE:PURPOSE_NOT_CURRENT'],
+        recipient: 'recipient-a',
+      });
+      expect(JSON.stringify(view(decision))).not.toMatch(/EVIDENCE_MISSING|PRIVACY_NOT_ALLOWED/u);
+    }),
+  );
+
+  it.effect('Scenario: protected material stops as a source protection and is never a Privacy prohibition', () =>
+    Effect.gen(function* protectedMaterial() {
+      const { first } = decideOne({
+        privacy: {
+          'recipient-a': ownerAnswered({
+            evaluatedAt: '2026-11-19T10:00:00.000Z',
+            outcome: 'DENIED',
+            reason: 'PROTECTED_MATERIAL',
+          }),
+        },
+        recipients: { 'contact-a': usable() },
+      });
+      const decision = yield* first;
+
+      expect(view(decision)).toEqual({
+        kind: 'Suppressed',
+        reasons: ['SOURCE_PROTECTED:PROTECTED_MATERIAL'],
+        recipient: 'recipient-a',
+      });
+      expect(MessageHandoffDecision.$is('Suppressed')(decision) && decision.primary.proven).toBe(false);
+    }),
+  );
+
+  it.effect('Scenario: an owner outage on the recipient side is not labelled an invalid recipient', () =>
+    Effect.gen(function* recipientOwnerOutage() {
+      const { first } = decideOne({
+        privacy: { 'recipient-a': privacyAllowed },
+        recipients: { 'contact-a': unavailable() },
+      });
+
+      expect(view(yield* first)).toMatchObject({
+        reasons: ['RECIPIENT_AUTHORITY_UNAVAILABLE:AUTHORITY_UNAVAILABLE'],
+      });
+    }),
   );
 });
 
@@ -260,6 +351,7 @@ describe('#1396 Rule: a change before the last handoff stops the work, and a pro
         const { input, items } = oneMessage();
         const owners = { recipients: { 'contact-a': usable() } };
         const queued = yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowed } }).run;
+        const queuedBefore = JSON.stringify(queued);
         const rechecked = yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyNotAllowed() } })
           .run;
 
@@ -268,8 +360,10 @@ describe('#1396 Rule: a change before the last handoff stops the work, and a pro
           kind: 'Suppressed',
           reasons: ['PRIVACY_NOT_ALLOWED:EVALUATED_PROHIBITION'],
         });
-        // The earlier decision is an immutable value: rechecking produced a NEW decision and left it as it was.
-        expect(view(only(queued)).kind).toBe('Proceed');
+        // Rechecking produced a NEW decision object with its own Privacy evidence and left the first one byte for byte.
+        expect(rechecked).not.toBe(queued);
+        expect(JSON.stringify(queued)).toBe(queuedBefore);
+        expect(JSON.stringify(rechecked)).not.toBe(queuedBefore);
       }),
   );
 
@@ -285,17 +379,26 @@ describe('#1396 Rule: a change before the last handoff stops the work, and a pro
         const rechecked = only(
           yield* decide(input, items, {
             ...owners,
-            privacy: { 'recipient-a': privacyUnavailable('AUTHORIZATION_DENIED') },
+            // The owner answers the withdrawn Read with its published 403 problem; the real mapping names the reason.
+            privacy: { 'recipient-a': privacyUnavailable(unavailableReasonOfOwnerProblem(403)) },
+          }).run,
+        );
+        const outage = only(
+          yield* decide(input, items, {
+            ...owners,
+            privacy: { 'recipient-a': privacyUnavailable(unavailableReasonOfOwnerProblem(503)) },
           }).run,
         );
 
         expect(view(prepared).kind).toBe('Proceed');
         expect(view(rechecked)).toEqual({
           kind: 'Suppressed',
-          reasons: ['PRIVACY_INDETERMINATE:AUTHORIZATION_DENIED'],
+          reasons: ['PRIVACY_ACCESS_DENIED:AUTHORIZATION_DENIED'],
           recipient: 'recipient-a',
         });
         expect(JSON.stringify(view(rechecked))).not.toContain('PRIVACY_NOT_ALLOWED');
+        // An outage of the same Read is another fact, so the two are never reported as one another.
+        expect(view(outage)).toMatchObject({ reasons: ['PRIVACY_AUTHORITY_UNAVAILABLE:OWNER_UNAVAILABLE'] });
       }),
   );
 
@@ -686,46 +789,130 @@ describe('#1396 Rule: a required message never bypasses a gate and its stop reac
 });
 
 describe('#1396 Rule: recovery needs a new Current evaluation and never rewrites the stop (BR-13)', () => {
-  const stoppedAt = DateTime.makeUnsafe('2026-11-19T10:00:00.000Z');
-  const prior = (decision: MessageHandoffDecisionCase) => ({ evaluatedAt: stoppedAt, identity: decision.identity });
+  const earlier = '2026-11-19T10:00:00.000Z';
+  const later = '2026-11-19T11:00:00.000Z';
 
   it.effect(
-    'Scenario: a later Current ALLOWED admits one more attempt while the earlier stop stays exactly as recorded',
+    'Scenario: a later owner ALLOWED admits one more attempt while the earlier stop stays exactly as recorded',
     () =>
       Effect.gen(function* recoveryAfterRepair() {
         const { input, items } = oneMessage();
         const owners = { recipients: { 'contact-a': usable() } };
-        const stopped = only(
-          yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyIndeterminate } }).run,
+        const stopped = suppressedOf(
+          only(
+            yield* decide(input, items, {
+              ...owners,
+              privacy: { 'recipient-a': privacyIndeterminateAt(earlier) },
+            }).run,
+          ),
         );
+        const stopRecord = stopRecordOf(stopped);
         const stoppedBefore = JSON.stringify(stopped);
-        yield* TestClock.setTime(Date.parse('2026-11-19T11:00:00.000Z'));
+        const recordBefore = JSON.stringify(stopRecord);
         const repaired = only(
-          yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowed } }).run,
+          yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowedAt(later) } }).run,
         );
+        const admission = admitRecoveryAfterStop(stopRecord, repaired);
 
-        expect(recoverySummary(admitRecoveryAfterStop(prior(stopped), repaired))).toEqual({
-          kind: 'Admitted',
-          priorStopPreserved: true,
-        });
+        expect(recoverySummary(admission)).toEqual({ kind: 'Admitted' });
+        // Admission is decided against the unchanged prior record; the stop itself is neither replaced nor edited.
+        expect(RecoveryAdmission.$is('Admitted')(admission) && admission.priorStop).toBe(stopRecord);
         expect(JSON.stringify(stopped)).toBe(stoppedBefore);
+        expect(JSON.stringify(stopRecord)).toBe(recordBefore);
+        // The stop keeps the owner's evidence it was decided on.
+        expect(Option.isSome(stopRecord.ownerDecidedAt)).toBe(true);
       }),
   );
 
   it.effect(
-    'Scenario: an evaluation that is not newer, or still stopped, or already handed off, or unreconciled admits nothing',
+    'Scenario: only the owner decision time counts: a later local clock alone never admits an old owner decision',
+    () =>
+      Effect.gen(function* ownerTimeNotLocalClock() {
+        const { input, items } = oneMessage();
+        const owners = { recipients: { 'contact-a': usable() } };
+        const stopped = suppressedOf(
+          only(
+            yield* decide(input, items, {
+              ...owners,
+              privacy: { 'recipient-a': privacyIndeterminateAt(later) },
+            }).run,
+          ),
+        );
+        yield* TestClock.adjust('30 days');
+        // The local evaluation is a month newer, but Privacy's decision is older than the one behind the stop.
+        const staleOwnerDecision = proceedOf(
+          only(yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowedAt(earlier) } }).run),
+        );
+        const sameOwnerDecision = proceedOf(
+          only(yield* decide(input, items, { ...owners, privacy: { 'recipient-a': privacyAllowedAt(later) } }).run),
+        );
+
+        expect(DateTime.isGreaterThan(staleOwnerDecision.evidence.evaluatedAt, stopped.evidence.evaluatedAt)).toBe(
+          true,
+        );
+        expect(recoverySummary(admitRecoveryAfterStop(stopRecordOf(stopped), staleOwnerDecision))).toEqual({
+          kind: 'Refused',
+          reason: 'NOT_A_NEW_EVALUATION',
+        });
+        expect(recoverySummary(admitRecoveryAfterStop(stopRecordOf(stopped), sameOwnerDecision))).toEqual({
+          kind: 'Refused',
+          reason: 'NOT_A_NEW_EVALUATION',
+        });
+      }),
+  );
+
+  it.effect(
+    'Scenario: a stop without an owner decision (owner outage) is recovered by an owner decision made after it',
+    () =>
+      Effect.gen(function* recoveryAfterOutage() {
+        yield* TestClock.setTime(Date.parse('2026-11-19T10:30:00.000Z'));
+        const { input, items } = oneMessage();
+        const owners = { recipients: { 'contact-a': usable() } };
+        const stopped = suppressedOf(
+          only(
+            yield* decide(input, items, {
+              ...owners,
+              privacy: { 'recipient-a': privacyUnavailable('OWNER_UNAVAILABLE') },
+            }).run,
+          ),
+        );
+        const stopRecord = stopRecordOf(stopped);
+        // An owner decision that predates the stop cannot be the evaluation that repaired it.
+        const predating = only(
+          yield* decide(input, items, {
+            ...owners,
+            privacy: { 'recipient-a': privacyAllowedAt('2000-01-01T00:00:00.000Z') },
+          }).run,
+        );
+        const after = only(
+          yield* decide(input, items, {
+            ...owners,
+            privacy: { 'recipient-a': privacyAllowedAt('2099-01-01T00:00:00.000Z') },
+          }).run,
+        );
+
+        expect(Option.isNone(stopRecord.ownerDecidedAt)).toBe(true);
+        expect(recoverySummary(admitRecoveryAfterStop(stopRecord, predating))).toEqual({
+          kind: 'Refused',
+          reason: 'NOT_A_NEW_EVALUATION',
+        });
+        expect(recoverySummary(admitRecoveryAfterStop(stopRecord, after))).toEqual({ kind: 'Admitted' });
+      }),
+  );
+
+  it.effect(
+    'Scenario: a message that is still stopped, already handed off, unreconciled or another admits nothing',
     () =>
       Effect.gen(function* recoveryRefusals() {
         const { input, items } = oneMessage();
         const usableOwner = { recipients: { 'contact-a': usable() } };
-        const stopped = only(
-          yield* decide(input, items, {
-            ...usableOwner,
-            privacy: { 'recipient-a': privacyIndeterminate },
-          }).run,
-        );
-        const sameTime = only(
-          yield* decide(input, items, { ...usableOwner, privacy: { 'recipient-a': privacyAllowed } }).run,
+        const stopped = suppressedOf(
+          only(
+            yield* decide(input, items, {
+              ...usableOwner,
+              privacy: { 'recipient-a': privacyIndeterminateAt(earlier) },
+            }).run,
+          ),
         );
         const stillStopped = only(
           yield* decide(input, items, {
@@ -733,32 +920,32 @@ describe('#1396 Rule: recovery needs a new Current evaluation and never rewrites
             privacy: { 'recipient-a': privacyNotAllowed() },
           }).run,
         );
+        const allowed = only(
+          yield* decide(input, items, { ...usableOwner, privacy: { 'recipient-a': privacyAllowedAt(later) } }).run,
+        );
         const handedOff = oneMessage({ handoff: HandoffFact.ProvenHandedOff() });
         const unknownEffect = oneMessage({ handoff: HandoffFact.EffectUnknown() });
         const handed = only(yield* decide(handedOff.input, handedOff.items, usableOwner).run);
         const unknown = only(yield* decide(unknownEffect.input, unknownEffect.items, usableOwner).run);
-        const laterStop = { evaluatedAt: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z'), identity: stopped.identity };
+        const record = stopRecordOf(stopped);
 
-        expect(recoverySummary(admitRecoveryAfterStop(laterStop, sameTime))).toEqual({
-          kind: 'Refused',
-          reason: 'NOT_A_NEW_EVALUATION',
-        });
-        expect(recoverySummary(admitRecoveryAfterStop(prior(stopped), stillStopped))).toEqual({
+        expect(recoverySummary(admitRecoveryAfterStop(record, stillStopped))).toEqual({
           kind: 'Refused',
           reason: 'STILL_SUPPRESSED',
         });
-        expect(recoverySummary(admitRecoveryAfterStop(prior(stopped), handed))).toEqual({
+        expect(recoverySummary(admitRecoveryAfterStop(record, handed))).toEqual({
           kind: 'Refused',
           reason: 'ALREADY_HANDED_OFF',
         });
-        expect(recoverySummary(admitRecoveryAfterStop(prior(stopped), unknown))).toEqual({
+        expect(recoverySummary(admitRecoveryAfterStop(record, unknown))).toEqual({
           kind: 'Refused',
           reason: 'RECONCILIATION_REQUIRED',
         });
         const otherMessage = { ...stopped.identity, slotKey: slotKeyOf('other-slot') };
-        expect(
-          recoverySummary(admitRecoveryAfterStop({ ...prior(stopped), identity: otherMessage }, sameTime)),
-        ).toEqual({ kind: 'Refused', reason: 'DIFFERENT_MESSAGE' });
+        expect(recoverySummary(admitRecoveryAfterStop({ ...record, identity: otherMessage }, allowed))).toEqual({
+          kind: 'Refused',
+          reason: 'DIFFERENT_MESSAGE',
+        });
       }),
   );
 });
