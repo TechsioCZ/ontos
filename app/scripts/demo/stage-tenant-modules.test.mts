@@ -10,11 +10,14 @@ import { N1_TENANT_ID } from './n1-stage-grants.mts';
 import { reportLines, reportProblems } from './release-tenant-modules.mts';
 import { financeBillingManifest } from '../../verticals/finance-billing/vertical.manifest.ts';
 import { merchandiseManifest } from '../../verticals/merchandise/vertical.manifest.ts';
+import { symmyIntegrationManifest } from '../../verticals/symmy-integration/vertical.manifest.ts';
+import { AKROS_CUSTOMER_TARGET } from './prepare-akros-customer.mts';
 import {
   AKROS_PLAYGROUND_TENANT_ID,
   sellingModuleKeys,
   stageActivationScopes,
   stageReleaseModuleRules,
+  symmyAkrosModuleKeys,
   taxModuleKey,
 } from './stage-tenant-modules.mts';
 
@@ -57,6 +60,57 @@ it('the manual activation list still names Tax only beside the selling Tenants i
     expect(marketActivationScopeAllowed(tenantId, tax, 'session')).toBe(true);
     expect(tenantServesPeople(tenantId)).toBe(true);
   }
+});
+
+/** Owner reads of the four GET routes: every `<module>.api.<read>` the Shell ingress requires of a route. */
+const SHELL_SYMMY_READ_SOURCES = [
+  'governed-dispatch.ts',
+  'source-read-projections.ts',
+  'price-batch-facts.ts',
+  'product-batch-facts.ts',
+];
+const shellReadOwners = () =>
+  SHELL_SYMMY_READ_SOURCES.flatMap((name) =>
+    [
+      ...readFileSync(new URL(`../../apps/shell-super-app/api/symmy/${name}`, import.meta.url), 'utf-8').matchAll(
+        /'(?<moduleId>[a-z]+\.[a-z-]+)\.api\.[a-z-]+'/gu,
+      ),
+    ].flatMap(({ groups }) => (groups?.moduleId === undefined ? [] : [groups.moduleId])),
+  );
+
+const marketCatalog = 'commerce.market-catalog';
+const scopeOf = (tenantId: string) =>
+  stageActivationScopes.filter((scope) => scope.tenantId === tenantId).flatMap(({ moduleKeys }) => moduleKeys);
+
+it('the AKROS playground activates exactly Symmy and the native owners its agreed routes call, never Tax or Assortment imports', () => {
+  const symmy = 'integration.symmy';
+  const notActivated = ['commerce.assortment', tax];
+  const writeOwners = symmyIntegrationManifest.requirements?.operations.map(({ provider }) => provider.moduleId) ?? [];
+  // The Tax and Assortment imports are declared by the manifest, and are exactly what this list leaves out.
+  expect(notActivated.every((moduleId) => writeOwners.includes(moduleId))).toBe(true);
+  const derived = new Set([symmy, ...writeOwners, ...shellReadOwners()].filter((key) => !notActivated.includes(key)));
+  expect([...symmyAkrosModuleKeys].toSorted()).toEqual([...derived].toSorted());
+  expect(new Set(symmyAkrosModuleKeys).size).toBe(symmyAkrosModuleKeys.length);
+  // The regions read is the one owner no write route calls.
+  expect(writeOwners).not.toContain(marketCatalog);
+  expect(shellReadOwners()).toContain(marketCatalog);
+  // Owners first: Symmy is activated last, so its worker never runs without them.
+  expect(symmyAkrosModuleKeys.at(-1)).toBe(symmy);
+  // The exact AKROS Tenant whose seller the Symmy routes pin.
+  expect(AKROS_CUSTOMER_TARGET).toMatchObject({
+    legalEntityId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
+    tenantId: AKROS_PLAYGROUND_TENANT_ID,
+  });
+  expect(AKROS_PLAYGROUND_TENANT_ID).toBe('bceaa540-13eb-5508-9ac0-9ed7e40a2ee9');
+});
+
+it('only the AKROS playground scope grows: Tax plus the Symmy modules, and every other Tenant keeps its reviewed list', () => {
+  expect(scopeOf(AKROS_PLAYGROUND_TENANT_ID)).toEqual([tax, ...symmyAkrosModuleKeys]);
+  expect(scopeOf(AKROS_PLAYGROUND_TENANT_ID)).not.toContain('commerce.assortment');
+  expect(scopeOf(demoTenantId)).toEqual([marketCatalog, 'commerce.storefront-registry', tax, 'projects.core']);
+  expect(scopeOf(N1_TENANT_ID)).toEqual([tax, 'work.tasks']);
+  // A release still installs Tax only: activating Symmy is a reviewed operator step, never a release rule.
+  expect(stageReleaseModuleRules.map(({ moduleKey }) => moduleKey)).toEqual([tax]);
 });
 
 it('reports every decision in one line and fails only on a module it could not install or project', () => {

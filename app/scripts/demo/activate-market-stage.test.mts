@@ -75,8 +75,8 @@ it('commerce.tax may be installed in exactly the three stage Tenants that sell o
     expect(marketActivationScopeAllowed(tenantId, tax, session)).toBe(false);
     expect(validPlan({ ...plan, moduleKey: tax, sellingModules: [billing], tenantId })).toBe(false);
   }
-  // The playground gets tax only; N1 gets tax and Tasks only.
-  expect(marketActivationScopeAllowed(AKROS_PLAYGROUND_TENANT_ID, market, session)).toBe(false);
+  // AKROS also enrolls the Symmy owners; N1 still gets tax and Tasks only.
+  expect(marketActivationScopeAllowed(AKROS_PLAYGROUND_TENANT_ID, market, session)).toBe(true);
   expect(marketActivationScopeAllowed(N1_TENANT_ID, storefrontRegistry, session)).toBe(false);
 });
 

@@ -1,7 +1,8 @@
 /**
  * The per-Tenant modules approved for stage:
  *
- * - `stageActivationScopes`: what `activate-market-stage.mts`, the reviewed manual path, may activate;
+ * - `stageActivationScopes`: what the reviewed manual paths may activate: `activate-market-stage.mts` one module at a
+ *   time, `symmy-akros-activate.mts` the Symmy C14 modules of the AKROS playground in one reviewed plan;
  * - `stageReleaseModuleRules`: what a release installs by itself (`release-tenant-modules.mts`, run by the app host
  *   after it publishes the composition; additive only, it never changes a state a person set). A rule names a module
  *   and the modules that require it; the Tenants are derived from Core's module states at every release, never
@@ -22,8 +23,9 @@ import { demoTenantId } from './fixture-ids.mts';
 import { N1_TENANT_ID } from './n1-stage-grants.mts';
 
 export const taxModuleKey = 'commerce.tax';
+const marketCatalogModuleKey = 'commerce.market-catalog';
 export const stageMarketModuleKeys = [
-  'commerce.market-catalog',
+  marketCatalogModuleKey,
   'commerce.storefront-registry',
   taxModuleKey,
   'projects.core',
@@ -31,23 +33,45 @@ export const stageMarketModuleKeys = [
 ] as const;
 export type StageMarketModuleKey = (typeof stageMarketModuleKeys)[number];
 
+/**
+ * Symmy C14 on the AKROS playground: `integration.symmy` and the native owners the agreed routes call. The seven POST
+ * routes and job polling call the owner operations the Symmy manifest requires (`requirements.operations` providers);
+ * the four GET routes call the owner reads the Shell ingress requires (`apps/shell-super-app/api/symmy`), which add
+ * `commerce.market-catalog` for the regions read. Tax and Assortment imports (`commerce.tax`, `commerce.assortment`)
+ * are never part of it. None of these modules declares an intrinsic dependency, so Core activates each on its own; the
+ * owners come first so Symmy never runs without them. The test derives this list from the manifest and the Shell.
+ */
+export const symmyAkrosModuleKeys = [
+  'commerce.catalog',
+  'commerce.customer-context',
+  'commerce.inventory',
+  marketCatalogModuleKey,
+  'commerce.pricing',
+  'party.registry',
+  'pricing.price-group-catalog',
+  'privacy.core',
+  'integration.symmy',
+] as const;
+export type SymmyAkrosModuleKey = (typeof symmyAkrosModuleKeys)[number];
+export type StageModuleKey = StageMarketModuleKey | SymmyAkrosModuleKey;
+
 /** The AKROS playground Tenant on stage (its storefront sells for its one company). */
 export const AKROS_PLAYGROUND_TENANT_ID = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
 
 /** The modules approved to be active tenant-wide, per Tenant; nothing else is installed by either path. */
 export const stageActivationScopes: readonly {
-  readonly moduleKeys: readonly StageMarketModuleKey[];
+  readonly moduleKeys: readonly StageModuleKey[];
   readonly tenantId: string;
 }[] = [
   // The e-shop market modules, Projekty and the tax module of the six demo companies.
   {
-    moduleKeys: ['commerce.market-catalog', 'commerce.storefront-registry', taxModuleKey, 'projects.core'],
+    moduleKeys: [marketCatalogModuleKey, 'commerce.storefront-registry', taxModuleKey, 'projects.core'],
     tenantId: demoTenantId,
   },
   // The N1 storefront files every contact and product inquiry as a Task, and sells through its catalogue.
   { moduleKeys: [taxModuleKey, 'work.tasks'], tenantId: N1_TENANT_ID },
-  // The AKROS playground storefront sells for its one company.
-  { moduleKeys: [taxModuleKey], tenantId: AKROS_PLAYGROUND_TENANT_ID },
+  // The AKROS playground storefront sells for its one company, which Symmy C14 feeds.
+  { moduleKeys: [taxModuleKey, ...symmyAkrosModuleKeys], tenantId: AKROS_PLAYGROUND_TENANT_ID },
 ];
 export const stageActivationTenantIds = [demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID] as const;
 
