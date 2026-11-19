@@ -82,6 +82,7 @@ const sameCarrier = (left: GateCarrier, right: GateCarrier): boolean =>
   left.entrypoint.entrypointKey === right.entrypoint.entrypointKey &&
   left.schemaVersion === right.schemaVersion &&
   left.accessDeclaration?.key === right.accessDeclaration?.key &&
+  left.accessActor?.subject === right.accessActor?.subject &&
   (left.accessWorkload === undefined) === (right.accessWorkload === undefined);
 
 /**
