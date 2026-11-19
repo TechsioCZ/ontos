@@ -561,5 +561,62 @@ it.effect('answers a same-key HTTP retry with the original success reply', () =>
     expect(executions).toBe(1);
     expect(mapped).toEqual([]);
     expect(harness.snapshot().committed).toHaveLength(1);
+
+    // An endpoint that withholds saved replies (its handler acts after the Action, and that must not
+    // repeat) gets ActionAlreadyCommitted on a same-key retry, never the saved reply.
+    const withheldRecovery = yield* runGovernedActionHttp({
+      endpointHeaders: { idempotencyKey: 'create-once', traceId: 'http-replay-withheld-recovery-trace' },
+      internalProblem: () => internalProblem,
+      invalidCorrelationProblem: () => invalidProblem,
+      mapError: (failure: Exclude<ActionCoreError, ActionAlreadyCommitted>) => {
+        mapped.push(failure);
+        return internalProblem;
+      },
+      onReplay: ({ invocationId }) =>
+        Effect.sync(() => {
+          replays.push(invocationId);
+        }),
+      payload: { name: 'Acme' },
+      principal: { authenticate: () => Effect.succeed(principal) },
+      recoverAlreadyCommitted: (failure) => {
+        recoveries += 1;
+        return CommittedRetryReceiptSchema.make({ invocationId: failure.invocationId });
+      },
+      registration: action,
+      requestHeaders: { authorization: authorization(), 'x-correlation-id': 'http-replay-withheld-recovery-test' },
+      savedReply: 'withhold',
+    }).pipe(Effect.provideService(ActionRuntime, harness.runtime));
+
+    const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
+    expect(withheldRecovery).toEqual(CommittedRetryReceiptSchema.make({ invocationId: invocationId ?? '' }));
+    expect(recoveries).toBe(1);
+
+    const withheld = yield* Effect.flip(
+      runGovernedActionHttp({
+        endpointHeaders: { idempotencyKey: 'create-once', traceId: 'http-replay-withheld-trace' },
+        internalProblem: () => internalProblem,
+        invalidCorrelationProblem: () => invalidProblem,
+        mapError: (failure) => {
+          mapped.push(failure);
+          return internalProblem;
+        },
+        payload: { name: 'Acme' },
+        principal: { authenticate: () => Effect.succeed(principal) },
+        registration: action,
+        requestHeaders: { authorization: authorization(), 'x-correlation-id': 'http-replay-withheld-test' },
+        savedReply: 'withhold',
+      }).pipe(Effect.provideService(ActionRuntime, harness.runtime)),
+    );
+
+    expect(withheld).toBe(internalProblem);
+    expect(mapped).toHaveLength(1);
+    const [withheldFailure] = mapped;
+    expect(Schema.is(ActionAlreadyCommitted)(withheldFailure)).toBe(true);
+    expect(Schema.is(ActionAlreadyCommitted)(withheldFailure) ? withheldFailure.invocationId : undefined).toBe(
+      invocationId,
+    );
+    expect(replays).toEqual([invocationId]);
+    expect(executions).toBe(1);
+    expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );
