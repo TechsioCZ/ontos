@@ -213,7 +213,8 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
           kind: 'HANDED_OFF',
         });
         const retry = yield* step(world, handoff, intentId);
-        expect(kindOf(retry)).toBe('SKIPPED:ALREADY_FINISHED');
+        // an unknown effect is reconciled first, never "finished" and never resent (#1403)
+        expect(kindOf(retry)).toBe('SKIPPED:RECONCILIATION_REQUIRED');
         expect(handoff.calls).toHaveLength(1);
         const [attempt] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
         expect(attempt).toMatchObject({ state: 'INDETERMINATE' });
@@ -248,7 +249,7 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
         });
         const [attempt] = yield* rowsOf(world, (tx) => tx.select().from(deliveryAttempts));
         expect(attempt).toMatchObject({ state: 'INDETERMINATE' });
-        expect(kindOf(yield* step(world, wrongAttempt, intentId))).toBe('SKIPPED:ALREADY_FINISHED');
+        expect(kindOf(yield* step(world, wrongAttempt, intentId))).toBe('SKIPPED:RECONCILIATION_REQUIRED');
         expect(calls).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
@@ -495,7 +496,7 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
         expect(yield* rowsOf(other, (tx) => tx.select().from(deliveryAttempts))).toMatchObject([
           { attemptNumber: 1, state: 'UNAVAILABLE' },
         ]);
-        expect(kindOf(yield* step(other, handoffDouble(), otherId))).toBe('SKIPPED:ALREADY_FINISHED');
+        expect(kindOf(yield* step(other, handoffDouble(), otherId))).toBe('SKIPPED:RECONCILIATION_REQUIRED');
 
         // after NOT_ATTEMPTED a later Current stop is recordable (nothing ever left), unlike after an attempt that may have
         const stopped = yield* setup();
@@ -525,11 +526,12 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
         expect(yield* rowsOf(prohibited, (tx) => tx.select().from(intentHandoffStops))).toMatchObject([
           { evaluationSeq: 1, proven: true },
         ]);
-        // this lane's worker still treats the stop as final: nothing is retried or handed off
-        expect(kindOf(yield* step(world, handoffDouble(), intentId))).toBe('SKIPPED:ALREADY_STOPPED');
+        // a PROVEN stop is final: nothing is retried or handed off (an UNPROVEN one is superseded by the next evaluation,
+        // which the recovery tests prove through the worker itself)
+        expect(kindOf(yield* step(prohibited, handoffDouble(), prohibitedId))).toBe('SKIPPED:ALREADY_STOPPED');
 
-        // d21-10 supersedes an UNPROVEN stop by APPENDING evaluation 2; the owner connection stands in for its routine. The
-        // runtime role can append nothing, and no row is ever edited or removed.
+        // the owner connection stands in for the routine that appends a later evaluation. The runtime role can append
+        // nothing, and no row is ever edited or removed.
         const recordedAt = DateTime.toDateUtc(yield* DateTime.now);
         const runtimeInsert = yield* Effect.exit(
           world.database.inTenant(world.tenantId, (tx) =>

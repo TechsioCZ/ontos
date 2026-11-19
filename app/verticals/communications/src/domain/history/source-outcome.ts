@@ -13,7 +13,7 @@ import type {
   MessageIntentIdSchema,
 } from '../../../shared/communication-intake.ts';
 import { isStaleSourceReason } from '../catalog/decision.ts';
-import type { IntentHistorySummary } from './timeline.ts';
+import type { IntentHistorySummary, RecoveryFacts } from './timeline.ts';
 
 /**
  * The result Communications gives the SOURCE workflow about one request (#1402, H-13, AC-07). It is derived from the same
@@ -62,8 +62,17 @@ const statusAttention = (status: HistoryStatus): MessageAttention =>
  * reconciliation of conflicting provider evidence, or nothing. A conflict never erases the headline fact and never softens a
  * PROVEN failure; on any other message it asks for reconciliation instead of reporting a quiet success.
  */
-export const attentionOf = (status: HistoryStatus, needsReconciliation = false): MessageAttention => {
+export const attentionOf = (
+  status: HistoryStatus,
+  needsReconciliation = false,
+  recovery?: Pick<RecoveryFacts, 'outcome' | 'proven'>,
+): MessageAttention => {
   const attention = statusAttention(status);
+  // a PROVEN non-acceptance whose recovery was stopped only because a fact could not be established is not a final failure:
+  // nothing is proven against the message and the next Current evaluation may continue it (#1403)
+  if (attention === 'FAILURE' && status === 'FAILED' && recovery?.outcome === 'STOPPED' && !recovery.proven) {
+    return 'NEEDS_REEVALUATION';
+  }
   return needsReconciliation && attention !== 'FAILURE' ? 'NEEDS_RECONCILIATION' : attention;
 };
 
@@ -96,9 +105,10 @@ const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly Messag
 /** The typed outcome feed of one request, from the decision and the headline of each of its intents. */
 export const sourceOutcomeFeedOf = (facts: RequestOutcomeFacts): CommunicationOutcomeFeed => {
   const messages = facts.intents.map(({ intentId, reason, recipientRef, slotKey, summary }): MessageOutcome => ({
-    attention: attentionOf(summary.status, summary.needsReconciliation),
+    attention: attentionOf(summary.status, summary.needsReconciliation, summary.recovery),
     intentId,
-    reason,
+    // the closed code of the decision, else why recovery did not continue the message: the source learns a concrete reason
+    reason: reason ?? summary.recovery?.code,
     recipientRef,
     slotKey,
     status: summary.status,

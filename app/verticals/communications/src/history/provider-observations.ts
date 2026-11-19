@@ -6,10 +6,12 @@ import { observationIdOf } from '../domain/history/provider-observation.ts';
 import type { ProviderObservationInput } from '../domain/history/provider-observation.ts';
 import { ObservationEvidenceSchema } from '../domain/history/vocabulary.ts';
 import type { LinkReasonCodeSchema } from '../domain/history/vocabulary.ts';
+import type { RetryBasis } from '../domain/recovery/vocabulary.ts';
 import { storeUnavailable } from '../handoff/process-intent-handoff.ts';
 import {
   ingestProviderObservationRoutine,
   workerLinkRetryAttemptRoutine,
+  workerResolveObservationConflictRoutine,
 } from '../persistence/communications-routines.ts';
 
 /**
@@ -59,15 +61,6 @@ export const ingestProviderObservation = Effect.fn('Communications.ingestProvide
   return answer.outcome;
 });
 
-/**
- * Why a later attempt follows an earlier one of the SAME intent: nothing was submitted (including no request made for want of
- * a usable configuration), the provider provably refused it, or a reconciliation proved non-acceptance of an unknown effect.
- */
-export type RetryBasis =
-  | { readonly kind: 'PRIOR_NOT_ATTEMPTED' }
-  | { readonly kind: 'PRIOR_REJECTED' }
-  | { readonly kind: 'RECONCILED_NON_ACCEPTANCE'; readonly observationId: string };
-
 export interface RetryLinkInput {
   readonly attemptId: typeof DeliveryAttemptIdSchema.Type;
   readonly basis: RetryBasis;
@@ -97,6 +90,38 @@ export const linkRetryAttempt = Effect.fn('Communications.linkRetryAttempt')(fun
     .pipe(Effect.mapError((cause) => storeUnavailable('The retry link could not be recorded', cause)));
   const answer = yield* Schema.decodeUnknownEffect(RetryLinkAnswerSchema)(rows[0]?.result).pipe(
     Effect.mapError((cause) => storeUnavailable('The retry link answer was unreadable', cause)),
+  );
+  return answer.outcome;
+});
+
+/**
+ * The answer to the resolution of one provider observation conflict (#1403): RESOLVED, EXISTS (already resolved by this very
+ * basis), MISSING (no such conflict of this intent), BASIS_INVALID (not a reconciliation of the same attempt, recorded at or after
+ * the conflict). A resolution is an appended fact; the conflict and every observation stay.
+ */
+export const ResolveAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['BASIS_INVALID', 'EXISTS', 'MISSING', 'RESOLVED']),
+});
+
+export const resolveObservationConflict = Effect.fn('Communications.resolveObservationConflict')(function* resolve(
+  invoker: ScopedRoutineInvoker,
+  input: {
+    readonly basisObservationId: string;
+    readonly conflictId: string;
+    readonly intentId: typeof MessageIntentIdSchema.Type;
+    readonly reasonCode: string;
+  },
+) {
+  const rows = yield* invoker
+    .invoke(workerResolveObservationConflictRoutine, [
+      input.intentId,
+      input.conflictId,
+      input.basisObservationId,
+      input.reasonCode,
+    ])
+    .pipe(Effect.mapError((cause) => storeUnavailable('The conflict resolution could not be recorded', cause)));
+  const answer = yield* Schema.decodeUnknownEffect(ResolveAnswerSchema)(rows[0]?.result).pipe(
+    Effect.mapError((cause) => storeUnavailable('The conflict resolution answer was unreadable', cause)),
   );
   return answer.outcome;
 });

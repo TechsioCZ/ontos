@@ -117,3 +117,44 @@ export const workerLinkRetryAttemptRoutine = defineScopedRoutine({
   routineKey: 'communications.worker-link-retry-attempt',
   schema: ROUTINE_SCHEMA,
 });
+
+/**
+ * The recovery routines (#1403, migration `enforce-recovery-and-resend`). Same rules as above: no executor, the Core-verified
+ * Tenant is the first argument and each routine refuses another one. None of them can call a provider: they only record why an
+ * attempt may follow, that an evaluation did not continue the intent, or that a conflict of provider evidence was settled.
+ */
+export const workerBeginRetryAttemptRoutine = defineScopedRoutine({
+  name: 'worker_begin_retry_attempt',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    tenant,
+    input('uuid'),
+    input('uuid'),
+    input('integer'),
+    input('uuid'),
+    input('text'),
+    { nullable: true, source: 'input', type: 'uuid' },
+    input('text'),
+  ] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-begin-retry-attempt',
+  schema: ROUTINE_SCHEMA,
+});
+
+export const workerRecordRecoveryEvaluationRoutine = defineScopedRoutine({
+  name: 'worker_record_recovery_evaluation',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [tenant, input('uuid'), input('uuid'), input('text'), input('text'), input('jsonb')] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-record-recovery-evaluation',
+  schema: ROUTINE_SCHEMA,
+});
+
+export const workerResolveObservationConflictRoutine = defineScopedRoutine({
+  name: 'worker_resolve_observation_conflict',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [tenant, input('uuid'), input('uuid'), input('uuid'), input('text')] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-resolve-observation-conflict',
+  schema: ROUTINE_SCHEMA,
+});

@@ -1,12 +1,9 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
-import { Data, Effect, Exit, Match, Option, Schema } from 'effect';
+import { Data, DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
 
-import {
-  CommunicationRequestIdSchema,
-  DeliveryAttemptIdSchema,
-  MessageIntentIdSchema,
-} from '../../shared/communication-intake.ts';
+import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import type { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
 import type { MessageIntentIdentity } from '../domain/catalog/decision.ts';
 import type { TransactionalMessageType } from '../domain/catalog/message-type.ts';
 import {
@@ -16,6 +13,7 @@ import {
 } from '../domain/catalog/vocabulary.ts';
 import { MessageHandoff } from '../domain/handoff/message-handoff.ts';
 import type { PinnedHandoff, ProviderEvidence } from '../domain/handoff/message-handoff.ts';
+import { recoveryPolicyOf } from '../domain/catalog/message-type.ts';
 import { attemptIdOf } from '../domain/intake/identity.ts';
 import { decodeIntakeInput } from '../domain/intake/intake-input.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
@@ -28,10 +26,17 @@ import { HandoffFact, MessageHandoffDecision, ProviderFact, SourceCurrentness } 
 import type { SourceCurrentnessCase, SuppressionReason } from '../domain/privacy/suppression.ts';
 import { OriginalRecipientBindingSchema } from '../domain/recipient/original-binding.ts';
 import { HandoffPinSchema } from '../domain/recipient/recheck-before-handoff.ts';
+import { assessAttemptHistory, confirmContinuation } from '../domain/recovery/retry-eligibility.ts';
+import type { Continuation, HistoryAssessment } from '../domain/recovery/retry-eligibility.ts';
+import { RETRY_REASON_CODE } from '../domain/recovery/vocabulary.ts';
+import type { RecoveryHaltCode } from '../domain/recovery/vocabulary.ts';
+import { StoredIntentFactsSchema, timelineFactsOfStored } from '../history/stored-intent-facts.ts';
 import {
   workerBeginAttemptRoutine,
+  workerBeginRetryAttemptRoutine,
   workerFinishAttemptRoutine,
   workerReadIntentRoutine,
+  workerRecordRecoveryEvaluationRoutine,
   workerRecordStopRoutine,
 } from '../persistence/communications-routines.ts';
 import { languagePolicyPortOverRoutines, readTemplatePortOverRoutines } from '../persistence/snapshot-ports.ts';
@@ -44,10 +49,17 @@ import { verifyLanguageForHandoff } from '../services/language-selection.service
  * 1. it reads the pinned intent the decision stored and nothing else about the message;
  * 2. it asks every Current gate again NOW (approved type, language and template pin, source validity, the ORIGINAL
  *    recipient and endpoint, Privacy for the exact stored scope); a retained ALLOWED is never an input;
- * 3. any stop is recorded once with its reasons and nothing is handed off;
- * 4. otherwise the single delivery attempt is recorded BEFORE the handoff is called, so a crash after the call leaves
+ * 3. any stop is recorded with its reasons and nothing is handed off;
+ * 4. otherwise the delivery attempt is recorded BEFORE the handoff is called, so a crash after the call leaves
  *    evidence that an effect may exist and no later processing resends blindly (I-09). A second worker that finds the
- *    attempt never calls out; an attempt without a provider answer stays unresolved until reconciliation (#1403).
+ *    attempt never calls out; an attempt without a provider answer stays unresolved until reconciliation.
+ *
+ * RECOVERY (#1403). The same step is the only entry of Technical Retry, and every delivery of it is a fresh evaluation, so
+ * nothing runs on a clock: Core redelivering the message (also its technical redrive, which is not a new send approval) or
+ * a recorded reconciliation is what triggers one. A later attempt of the SAME intent follows only a PROVEN non-acceptance of
+ * the earlier one (nothing submitted, a provider refusal, or a reconciled non-acceptance) and only when the approved recovery
+ * rule of the type says so; the Current gates are asked again from scratch and the history guard has the last word. An
+ * unknown or contradicted effect, and an acceptance, begin nothing. See `domain/recovery/retry-eligibility.ts`.
  */
 
 /** A retryable failure of the owner's own store: Core delivers the message again and the step is safe to repeat. */
@@ -83,6 +95,8 @@ export type SkipReason = typeof SkipReasonSchema.Type;
 
 export type HandoffProcessing =
   | { readonly evidence: ProviderEvidence; readonly intentId: string; readonly kind: 'HANDED_OFF' }
+  /** Proven non-acceptance, but automatic recovery was not performed for this closed reason; the source owner decides. */
+  | { readonly code: RecoveryHaltCode; readonly intentId: string; readonly kind: 'HALTED' }
   | { readonly intentId: string; readonly kind: 'SKIPPED'; readonly reason: SkipReason }
   | { readonly intentId: string; readonly kind: 'STOPPED'; readonly reasons: readonly StopReason[] };
 
@@ -91,14 +105,6 @@ const skipped = (intentId: string, reason: SkipReason) =>
 const own = (category: string, cause: string, proven: boolean): StopReason => ({ category, cause, proven });
 const asStopReason = ({ category, cause, proven }: SuppressionReason): StopReason => ({ category, cause, proven });
 
-const AttemptStateSchema = Schema.Literals([
-  'ACCEPTED',
-  'INDETERMINATE',
-  'NOT_ATTEMPTED',
-  'PREPARED',
-  'REJECTED',
-  'UNAVAILABLE',
-]);
 const EndpointPinSchema = Schema.Struct({
   channel: Schema.String,
   contactRef: CommunicationResourceRefSchema,
@@ -106,9 +112,7 @@ const EndpointPinSchema = Schema.Struct({
   mask: Schema.String,
 });
 const IntentDocumentSchema = Schema.Struct({
-  attempt: Schema.optionalKey(
-    Schema.Struct({ attemptId: DeliveryAttemptIdSchema, attemptNumber: Schema.Number, state: AttemptStateSchema }),
-  ),
+  ...StoredIntentFactsSchema.fields,
   intent: Schema.Struct({
     endpointPin: Schema.optionalKey(EndpointPinSchema),
     handoffPin: HandoffPinSchema,
@@ -124,7 +128,6 @@ const IntentDocumentSchema = Schema.Struct({
     typeRevision: Schema.Number,
   }),
   request: Schema.Struct({ payload: Schema.Unknown, requestId: CommunicationRequestIdSchema }),
-  stopped: Schema.Boolean,
 });
 type IntentDocument = typeof IntentDocumentSchema.Type;
 
@@ -137,10 +140,20 @@ const StoredPinsSchema = Schema.Struct({
 });
 
 const AttemptAnswerSchema = Schema.Struct({
-  outcome: Schema.Literals(['BEGUN', 'EXISTS', 'MISSING', 'NOT_PENDING', 'STALE', 'STOPPED']),
+  outcome: Schema.Literals([
+    'BASIS_MISSING',
+    'BEGUN',
+    'CONFLICT_UNRESOLVED',
+    'EXISTS',
+    'MISSING',
+    'NOT_PENDING',
+    'STALE',
+    'STOPPED',
+  ]),
   state: Schema.optionalKey(Schema.String),
 });
 const StopAnswerSchema = Schema.Struct({ outcome: Schema.String });
+const RecoveryAnswerSchema = Schema.Struct({ outcome: Schema.Literals(['FINAL', 'MISSING', 'RECORDED', 'UNCHANGED']) });
 const FinishAnswerSchema = Schema.Struct({ outcome: Schema.Literals(['CONFLICT', 'FINISHED', 'MISSING']) });
 
 const documentOf = <Result>(
@@ -150,18 +163,63 @@ const documentOf = <Result>(
 ) =>
   Schema.decodeUnknownEffect(schema)(rows[0]?.result).pipe(Effect.mapError((cause) => storeUnavailable(reason, cause)));
 
+/** The latest attempt of the intent, which a recovery evaluation is about. */
+const latestAttemptOf = (document: IntentDocument) =>
+  document.attempts.toSorted((left, right) => left.attemptNumber - right.attemptNumber).at(-1);
+
+/**
+ * Records a stop. An intent that has no attempt that may have left stops in the handoff stops, per evaluation (a proven one is
+ * final, an unproven one is superseded by the next Current evaluation). An intent that already has such an attempt is stopped
+ * as a RECOVERY evaluation about its latest attempt, with the same rules, and never as if nothing had been submitted.
+ */
 const stopIntent = Effect.fn('Communications.recordHandoffStop')(function* recordStop(
   invoker: ScopedRoutineInvoker,
-  intentId: typeof MessageIntentIdSchema.Type,
+  document: IntentDocument,
   reasons: readonly StopReason[],
 ) {
+  const { intentId } = document.intent;
+  const stopped = { intentId, kind: 'STOPPED', reasons } satisfies HandoffProcessing;
+  const latest = latestAttemptOf(document);
+  if (latest !== undefined && document.attempts.some(({ state }) => state !== 'NOT_ATTEMPTED')) {
+    const rows = yield* invoker
+      .invoke(workerRecordRecoveryEvaluationRoutine, [
+        intentId,
+        latest.attemptId,
+        'STOPPED',
+        reasons[0]?.category ?? 'GATE_UNANSWERED',
+        reasons.map((reason) => ({ ...reason })),
+      ])
+      .pipe(Effect.mapError((cause) => storeUnavailable('The recovery stop could not be recorded', cause)));
+    const { outcome } = yield* documentOf(rows, RecoveryAnswerSchema, 'The recovery stop answer was unreadable');
+    return outcome === 'MISSING' ? skipped(intentId, 'INTENT_MISSING') : stopped;
+  }
   const rows = yield* invoker
     .invoke(workerRecordStopRoutine, [intentId, reasons.map((reason) => ({ ...reason }))])
     .pipe(Effect.mapError((cause) => storeUnavailable('The handoff stop could not be recorded', cause)));
   const { outcome } = yield* documentOf(rows, StopAnswerSchema, 'The handoff stop answer was unreadable');
-  return outcome === 'ATTEMPT_EXISTS'
-    ? skipped(intentId, 'RECONCILIATION_REQUIRED')
-    : ({ intentId, kind: 'STOPPED', reasons } satisfies HandoffProcessing);
+  return outcome === 'ATTEMPT_EXISTS' ? skipped(intentId, 'RECONCILIATION_REQUIRED') : stopped;
+});
+
+/**
+ * Records that automatic action did NOT continue an intent although nothing is known to have been accepted (no approved
+ * recovery rule, or the owner's own limit reached): the closed reason is kept, nothing is handed off, and the source owner
+ * decides. A halt proves nothing against the message and is evaluated again at the next delivery.
+ */
+const haltIntent = Effect.fn('Communications.recordRecoveryHalt')(function* recordHalt(
+  invoker: ScopedRoutineInvoker,
+  intentId: typeof MessageIntentIdSchema.Type,
+  halt: { readonly attemptId: string; readonly code: RecoveryHaltCode },
+) {
+  const rows = yield* invoker
+    .invoke(workerRecordRecoveryEvaluationRoutine, [intentId, halt.attemptId, 'HALTED', halt.code, []])
+    .pipe(Effect.mapError((cause) => storeUnavailable('The recovery halt could not be recorded', cause)));
+  const { outcome } = yield* documentOf(rows, RecoveryAnswerSchema, 'The recovery halt answer was unreadable');
+  if (outcome === 'MISSING') {
+    return skipped(intentId, 'INTENT_MISSING');
+  }
+  return outcome === 'FINAL'
+    ? skipped(intentId, 'ALREADY_STOPPED')
+    : ({ code: halt.code, intentId, kind: 'HALTED' } satisfies HandoffProcessing);
 });
 
 /** The source owner's own change (BR-08): stale only when the Current facts say the request is no longer justified. */
@@ -238,6 +296,13 @@ interface OpenPins {
 
 type LocalGate = { readonly open: OpenPins } | { readonly reasons: readonly StopReason[] };
 
+const retiredTypeCause = (type: TransactionalMessageType) => {
+  if (type.status !== 'ACTIVE') {
+    return type.status === 'DEACTIVATED' ? 'TYPE_DEACTIVATED' : 'TYPE_STALE';
+  }
+  return type.onboarding === 'ACTIVE' ? undefined : 'SOURCE_ONBOARDING_INACTIVE';
+};
+
 /**
  * The gates that only read this owner's own store, in cheap-and-local-first order: the approved type, the stored pins and
  * the language and template pin. They run INSIDE the first scoped transaction, which is therefore short.
@@ -250,6 +315,11 @@ const localGates = Effect.fn('Communications.localGates')(function* gates(
   const type = (yield* MessageTypeCatalog).byTypeId(intent.typeId);
   if (Option.isNone(type)) {
     return { reasons: [own('TYPE_UNAVAILABLE', 'TYPE_NOT_APPROVED', true)] } satisfies LocalGate;
+  }
+  // a retired purpose (#1403): the approved type was deactivated, went stale or lost its source onboarding since the decision
+  const retired = retiredTypeCause(type.value);
+  if (retired !== undefined) {
+    return { reasons: [own('TYPE_UNAVAILABLE', retired, true)] } satisfies LocalGate;
   }
   const pins = yield* Schema.decodeUnknownEffect(StoredPinsSchema)({
     binding: intent.originalBinding,
@@ -372,30 +442,49 @@ const notBegunReason = (answer: typeof AttemptAnswerSchema.Type): SkipReason => 
   if (answer.outcome === 'NOT_PENDING') {
     return 'NOT_PENDING';
   }
-  return answer.state === 'PREPARED' ? 'RECONCILIATION_REQUIRED' : 'ALREADY_FINISHED';
+  if (answer.outcome === 'BASIS_MISSING' || answer.outcome === 'CONFLICT_UNRESOLVED') {
+    // the history changed under this caller (an acceptance, or evidence that disagrees with itself): reconcile, never send
+    return 'RECONCILIATION_REQUIRED';
+  }
+  // an attempt that may have left, or whose answer is unknown, is reconciled; only a final answer is "finished"
+  return answer.state === 'ACCEPTED' || answer.state === 'REJECTED' || answer.state === 'NOT_ATTEMPTED'
+    ? 'ALREADY_FINISHED'
+    : 'RECONCILIATION_REQUIRED';
 };
 
+/** An intent that is not pending, or whose stop is PROVEN, is never processed again: such a stop is final. */
 const skipOfDocument = (document: IntentDocument): Option.Option<SkipReason> => {
   if (document.intent.status !== 'PENDING_HANDOFF') {
     return Option.some('NOT_PENDING');
   }
-  if (document.stopped) {
-    return Option.some('ALREADY_STOPPED');
-  }
-  // only an attempt that provably submitted nothing leaves the intent open for a next one
-  if (document.attempt === undefined || document.attempt.state === 'NOT_ATTEMPTED') {
-    return Option.none();
-  }
-  return Option.some(document.attempt.state === 'PREPARED' ? 'RECONCILIATION_REQUIRED' : 'ALREADY_FINISHED');
+  const provenStop =
+    document.stops.some(({ proven }) => proven) ||
+    document.recoveries.some(({ outcome, proven }) => outcome === 'STOPPED' && proven);
+  return provenStop ? Option.some('ALREADY_STOPPED') : Option.none();
 };
 
-/** What the first read phase found: skip, stop, or "every local gate is open, ask the other owners". */
+/** What the first read phase found: skip, stop, halt, or "every local gate is open, ask the other owners". */
 type Loaded =
-  | { readonly document: IntentDocument; readonly kind: 'OPEN'; readonly pins: OpenPins }
-  | { readonly kind: 'STOP'; readonly reasons: readonly StopReason[] }
+  | {
+      readonly assessment: Extract<HistoryAssessment, { readonly kind: 'CONTINUE' | 'FIRST_ATTEMPT' }>;
+      readonly document: IntentDocument;
+      readonly kind: 'OPEN';
+      readonly pins: OpenPins;
+    }
+  | {
+      readonly attemptId: string;
+      readonly code: RecoveryHaltCode;
+      readonly document: IntentDocument;
+      readonly kind: 'HALT';
+    }
+  | { readonly document: IntentDocument; readonly kind: 'STOP'; readonly reasons: readonly StopReason[] }
   | { readonly kind: 'SKIP'; readonly processing: HandoffProcessing };
 
-/** Phase 1a (scoped, short, own store only): read the intent, decide whether it is open, run the local gates. */
+/**
+ * Phase 1a (scoped, short, own store only): read the intent and every fact of its history, decide from the history and the
+ * approved recovery rule whether any attempt may follow, then run the local gates. The history is assessed BEFORE any gate, so
+ * no owner is asked about a message that cannot be sent whatever they answer.
+ */
 const loadAndGate = Effect.fn('Communications.loadAndGate')(function* load(
   input: StepInput,
   invoker: ScopedRoutineInvoker,
@@ -412,27 +501,53 @@ const loadAndGate = Effect.fn('Communications.loadAndGate')(function* load(
   if (Option.isSome(skip)) {
     return { kind: 'SKIP', processing: skipped(intentId, skip.value) } satisfies Loaded;
   }
+  // the CURRENT approved rule of the type: a rule that is not approved (or a type that is gone) recovers nothing automatically
+  const type = (yield* MessageTypeCatalog).byTypeId(document.intent.typeId);
+  const assessment = assessAttemptHistory(
+    timelineFactsOfStored(document),
+    Option.match(type, { onNone: () => ({ kind: 'NONE' }) as const, onSome: recoveryPolicyOf }),
+  );
+  if (assessment.kind === 'SKIP') {
+    return { kind: 'SKIP', processing: skipped(intentId, assessment.reason) } satisfies Loaded;
+  }
+  if (assessment.kind === 'HALT') {
+    return { attemptId: assessment.attemptId, code: assessment.code, document, kind: 'HALT' } satisfies Loaded;
+  }
+  if (assessment.kind === 'STOP') {
+    return { document, kind: 'STOP', reasons: assessment.reasons } satisfies Loaded;
+  }
   const gate = yield* localGates(invoker, document);
   return 'reasons' in gate
-    ? ({ kind: 'STOP', reasons: gate.reasons } satisfies Loaded)
-    : ({ document, kind: 'OPEN', pins: gate.open } satisfies Loaded);
+    ? ({ document, kind: 'STOP', reasons: gate.reasons } satisfies Loaded)
+    : ({ assessment, document, kind: 'OPEN', pins: gate.open } satisfies Loaded);
 });
 
-/** Phase 1c (scoped, short): the one attempt of a message every gate cleared; the routine re-checks everything transactional. */
+/** Phase 1c (scoped, short): the next attempt of a message every gate cleared; the routine re-checks everything transactional. */
 const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
   input: StepInput,
   invoker: ScopedRoutineInvoker,
   document: IntentDocument,
   cleared: Cleared,
+  continuation: Extract<Continuation, { readonly kind: 'BEGIN_FIRST' | 'BEGIN_RETRY' }>,
 ) {
   const { intentId } = input;
-  // the next attempt number: 1, or the one after an attempt that provably submitted nothing (NOT_ATTEMPTED)
-  const attemptNumber = (document.attempt?.attemptNumber ?? 0) + 1;
+  // the next attempt number: 1, or the one after an attempt that provably did not leave (`continuation.basis` says why)
+  const attemptNumber = (latestAttemptOf(document)?.attemptNumber ?? 0) + 1;
   const attemptId = yield* attemptIdOf(intentId, attemptNumber);
-  const begun = yield* invoker.invoke(workerBeginAttemptRoutine, [intentId, attemptId, attemptNumber]).pipe(
-    Effect.mapError((cause) => storeUnavailable('The delivery attempt could not be recorded', cause)),
-    Effect.flatMap((rows) => documentOf(rows, AttemptAnswerSchema, 'The delivery attempt answer was unreadable')),
-  );
+  const rows = yield* (
+    continuation.kind === 'BEGIN_FIRST'
+      ? invoker.invoke(workerBeginAttemptRoutine, [intentId, attemptId, attemptNumber])
+      : invoker.invoke(workerBeginRetryAttemptRoutine, [
+          intentId,
+          attemptId,
+          attemptNumber,
+          continuation.previousAttemptId,
+          continuation.basis.kind,
+          continuation.basis.kind === 'RECONCILED_NON_ACCEPTANCE' ? continuation.basis.observationId : null,
+          RETRY_REASON_CODE[continuation.basis.kind],
+        ])
+  ).pipe(Effect.mapError((cause) => storeUnavailable('The delivery attempt could not be recorded', cause)));
+  const begun = yield* documentOf(rows, AttemptAnswerSchema, 'The delivery attempt answer was unreadable');
   if (begun.outcome === 'STALE') {
     // another caller moved the attempts on between the read and this call: Core delivers again and the step re-reads
     return yield* storeUnavailable('The delivery attempt number was stale');
@@ -455,7 +570,10 @@ const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
   } satisfies Prepared;
 });
 
-/** Phases 1b and 1c: ask the other owners with no connection held, then record the stop or the one attempt. */
+/**
+ * Phases 1b and 1c: ask the other owners with no connection held, then record the stop, the halt or the next attempt. The
+ * evaluation of the continuation is made AFTER the gates answered, so it is Current relative to every reconciliation evidence.
+ */
 const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* decide(
   input: StepInput,
   scoped: ScopedRunner,
@@ -464,15 +582,30 @@ const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* deci
   if (loaded.kind === 'SKIP') {
     return loaded.processing satisfies Prepared;
   }
-  if (loaded.kind === 'STOP') {
-    return (yield* scoped((invoker) => stopIntent(invoker, input.intentId, loaded.reasons))) satisfies Prepared;
+  if (loaded.kind === 'HALT') {
+    return (yield* scoped((invoker) =>
+      haltIntent(invoker, input.intentId, { attemptId: loaded.attemptId, code: loaded.code }),
+    )) satisfies Prepared;
   }
-  const verdict = yield* ownerGates(loaded.document, loaded.pins);
-  if ('reasons' in verdict) {
-    return (yield* scoped((invoker) => stopIntent(invoker, input.intentId, verdict.reasons))) satisfies Prepared;
+  if (loaded.kind === 'STOP') {
+    return (yield* scoped((invoker) => stopIntent(invoker, loaded.document, loaded.reasons))) satisfies Prepared;
+  }
+  const { assessment, document } = loaded;
+  const verdict = yield* ownerGates(document, loaded.pins);
+  const continuation = confirmContinuation(
+    timelineFactsOfStored(document),
+    assessment,
+    'reasons' in verdict ? { kind: 'STOPPED', reasons: verdict.reasons } : { kind: 'CLEARED' },
+    yield* DateTime.now,
+  );
+  if (continuation.kind === 'STOP') {
+    return (yield* scoped((invoker) => stopIntent(invoker, document, continuation.reasons))) satisfies Prepared;
+  }
+  if (continuation.kind === 'SKIP' || 'reasons' in verdict) {
+    return skipped(input.intentId, 'RECONCILIATION_REQUIRED') satisfies Prepared;
   }
   return (yield* scoped((invoker) =>
-    beginAttempt(input, invoker, loaded.document, verdict.cleared),
+    beginAttempt(input, invoker, document, verdict.cleared, continuation),
   )) satisfies Prepared;
 });
 

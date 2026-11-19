@@ -24,8 +24,10 @@ import {
   communicationRequests,
   deliveryAttempts,
   intentHandoffStops,
+  intentRecoveryEvaluations,
   intentResendLinks,
   messageIntents,
+  providerObservationConflictResolutions,
   providerObservationConflicts,
   providerObservations,
 } from '../database/schema.ts';
@@ -37,6 +39,7 @@ import type {
   IntentHistory,
   IntentTimelineFacts,
   ObservationFacts,
+  RecoveryFacts,
   StopFacts,
 } from '../domain/history/timeline.ts';
 import { FailureClassSchema } from '../domain/history/vocabulary.ts';
@@ -148,6 +151,8 @@ type AttemptRow = typeof deliveryAttempts.$inferSelect;
 type StopRow = typeof intentHandoffStops.$inferSelect;
 type ObservationRow = typeof providerObservations.$inferSelect;
 type ConflictRow = typeof providerObservationConflicts.$inferSelect;
+type ResolutionRow = typeof providerObservationConflictResolutions.$inferSelect;
+type RecoveryRow = typeof intentRecoveryEvaluations.$inferSelect;
 type RetryRow = typeof attemptRetryLinks.$inferSelect;
 type ResendRow = typeof intentResendLinks.$inferSelect;
 
@@ -158,13 +163,15 @@ interface RequestRows {
   readonly decision: DecisionRow;
   readonly intents: readonly IntentRow[];
   readonly observations: readonly ObservationRow[];
+  readonly recoveries: readonly RecoveryRow[];
   readonly request: RequestRow;
   readonly resends: readonly ResendRow[];
+  readonly resolutions: readonly ResolutionRow[];
   readonly retries: readonly RetryRow[];
   readonly stops: readonly StopRow[];
 }
 
-/** The six append-only child tables of a set of intents: one statement each, whatever the number of intents. */
+/** The eight append-only child tables of a set of intents: one statement each, whatever the number of intents. */
 const readChildRows = (transaction: ScopedTransactionExecutor, tenantId: string, ids: readonly string[]) =>
   Effect.all(
     {
@@ -182,6 +189,10 @@ const readChildRows = (transaction: ScopedTransactionExecutor, tenantId: string,
         .select()
         .from(providerObservations)
         .where(and(eq(providerObservations.tenantId, tenantId), inArray(providerObservations.intentId, ids))),
+      recoveries: transaction
+        .select()
+        .from(intentRecoveryEvaluations)
+        .where(and(eq(intentRecoveryEvaluations.tenantId, tenantId), inArray(intentRecoveryEvaluations.intentId, ids))),
       resends: transaction
         .select()
         .from(intentResendLinks)
@@ -189,6 +200,15 @@ const readChildRows = (transaction: ScopedTransactionExecutor, tenantId: string,
           and(
             eq(intentResendLinks.tenantId, tenantId),
             or(inArray(intentResendLinks.originalIntentId, ids), inArray(intentResendLinks.resendIntentId, ids)),
+          ),
+        ),
+      resolutions: transaction
+        .select()
+        .from(providerObservationConflictResolutions)
+        .where(
+          and(
+            eq(providerObservationConflictResolutions.tenantId, tenantId),
+            inArray(providerObservationConflictResolutions.intentId, ids),
           ),
         ),
       retries: transaction
@@ -240,7 +260,7 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
   const ids = intents.map(({ intentId }) => intentId);
   const children =
     ids.length === 0
-      ? { attempts: [], conflicts: [], observations: [], resends: [], retries: [], stops: [] }
+      ? { attempts: [], conflicts: [], observations: [], recoveries: [], resends: [], resolutions: [], retries: [], stops: [] }
       : yield* readChildRows(transaction, tenantId, ids);
   for (const request of requests) {
     const decision = decisions.find(({ requestId }) => requestId === request.requestId);
@@ -255,10 +275,12 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
       decision,
       intents: own,
       observations: children.observations.filter(({ intentId }) => owns.has(intentId)),
+      recoveries: children.recoveries.filter(({ intentId }) => owns.has(intentId)),
       request,
       resends: children.resends.filter(
         ({ originalIntentId, resendIntentId }) => owns.has(originalIntentId) || owns.has(resendIntentId),
       ),
+      resolutions: children.resolutions.filter(({ intentId }) => owns.has(intentId)),
       retries: children.retries.filter(({ intentId }) => owns.has(intentId)),
       stops: children.stops.filter(({ intentId }) => owns.has(intentId)),
     });
@@ -285,13 +307,26 @@ const observationFactOf = (row: ObservationRow): ObservationFacts => ({
   recordedSeq: row.recordedSeq,
 });
 
-const conflictFactOf = (row: ConflictRow): ConflictFacts => ({
-  attemptId: row.attemptId,
-  kind: row.kind,
-  observationId: row.observationId,
-  observedAt: instant(row.observedAt),
-  recordedAt: instant(row.recordedAt),
-  recordedSeq: row.recordedSeq,
+const conflictFactOf = (row: ConflictRow, resolutions: readonly ResolutionRow[]): ConflictFacts => {
+  const resolution = resolutions.find(({ conflictId }) => conflictId === row.conflictId);
+  return {
+    attemptId: row.attemptId,
+    kind: row.kind,
+    observationId: row.observationId,
+    observedAt: instant(row.observedAt),
+    recordedAt: instant(row.recordedAt),
+    recordedSeq: row.recordedSeq,
+    resolvedAt: resolution === undefined ? undefined : instant(resolution.resolvedAt),
+  };
+};
+
+const recoveryFactOf = (row: RecoveryRow): RecoveryFacts => ({
+  basisAttemptId: row.basisAttemptId,
+  code: row.code,
+  evaluationSeq: row.evaluationSeq,
+  outcome: row.outcome,
+  proven: row.proven,
+  recordedAt: instant(row.evaluatedAt),
 });
 
 const stopFactOf = (row: StopRow): StopFacts => ({
@@ -306,7 +341,9 @@ const timelineFactsOf = (rows: RequestRows, intent: IntentRow): IntentTimelineFa
   attempts: rows.attempts
     .flatMap((row) => (row.intentId === intent.intentId ? [attemptFactOf(row)] : []))
     .toSorted((left, right) => left.attemptNumber - right.attemptNumber),
-  conflicts: rows.conflicts.flatMap((row) => (row.intentId === intent.intentId ? [conflictFactOf(row)] : [])),
+  conflicts: rows.conflicts.flatMap((row) =>
+    row.intentId === intent.intentId ? [conflictFactOf(row, rows.resolutions)] : [],
+  ),
   intent: {
     createdAt: instant(intent.createdAt),
     intentId: intent.intentId,
@@ -314,6 +351,9 @@ const timelineFactsOf = (rows: RequestRows, intent: IntentRow): IntentTimelineFa
     status: intent.status,
   },
   observations: rows.observations.flatMap((row) => (row.intentId === intent.intentId ? [observationFactOf(row)] : [])),
+  recoveries: rows.recoveries
+    .flatMap((row) => (row.intentId === intent.intentId ? [recoveryFactOf(row)] : []))
+    .toSorted((left, right) => left.evaluationSeq - right.evaluationSeq),
   stops: rows.stops.flatMap((row) => (row.intentId === intent.intentId ? [stopFactOf(row)] : [])),
 });
 

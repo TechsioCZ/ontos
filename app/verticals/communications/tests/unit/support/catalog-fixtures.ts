@@ -61,7 +61,9 @@ interface TypeOverrides {
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
   readonly privacyPurposeRefs?: readonly string[];
   readonly purpose?: string;
+  readonly recovery?: unknown;
   readonly requiredness?: 'OPTIONAL' | 'REQUIRED';
+  readonly resend?: string;
   readonly result?: unknown;
   readonly revision?: number;
   readonly sourceOwner?: string;
@@ -92,6 +94,13 @@ export const fixtureType = (overrides: TypeOverrides = {}): TransactionalMessage
     typeId: 'fixture.single-message',
     ...overrides,
   });
+
+/**
+ * TEST-ONLY recovery rule of a fictional type: the owner-approved limit is test data and not a default of any code. The
+ * production catalog approves no type and no rule, so nothing here is ever approved outside tests.
+ */
+export const fixtureRecovery = (maxAttempts: number) =>
+  ({ kind: 'RETRY_ON_PROVEN_NON_ACCEPTANCE', maxAttempts }) as const;
 
 /** Distinct purpose and type id derived from one suffix, so many types can coexist in one registry. */
 export const fixtureTypeNamed = (name: string, overrides: TypeOverrides = {}) =>

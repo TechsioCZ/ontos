@@ -34,11 +34,17 @@ export interface FreshEligibility {
   readonly evaluatedAt: DateTime.Utc;
 }
 
-/** Why another potentially duplicating send is NOT allowed now; none means the history allows it. */
-export const unknownEffectBlock = (
-  facts: IntentTimelineFacts,
-  eligibility: Option.Option<FreshEligibility>,
-): Option.Option<UnknownEffectBlock> => {
+/** What the effect guard reads: the attempts, their provider observations and the conflicts (with their resolutions). */
+export type EffectFacts = Pick<IntentTimelineFacts, 'attempts' | 'conflicts' | 'observations'>;
+
+/** The blocks the APPEND-ONLY history alone causes, whatever any Current eligibility says. */
+export type EffectBlock = Exclude<UnknownEffectBlock, 'ELIGIBILITY_NOT_ELIGIBLE' | 'ELIGIBILITY_NOT_FRESH'>;
+
+/**
+ * Why the history alone forbids another potentially duplicating send: contradictory evidence, an acceptance already proven, or an
+ * effect that is still unknown (or provider evidence that disagrees with itself and was not settled by a reconciliation, #1403).
+ */
+export const effectBlockOf = (facts: EffectFacts): Option.Option<EffectBlock> => {
   const effects = new Set(
     facts.attempts.map((attempt) =>
       effectAfterObservations(
@@ -53,9 +59,21 @@ export const unknownEffectBlock = (
   if (effects.has('PRESENT')) {
     return Option.some('ACCEPTANCE_ALREADY_PROVEN');
   }
-  if (effects.has('UNKNOWN') || facts.conflicts.length > 0) {
+  if (effects.has('UNKNOWN') || facts.conflicts.some(({ resolvedAt }) => resolvedAt === undefined)) {
     // an unknown effect, or provider evidence that disagrees with itself: only a reconciliation ends the doubt
     return Option.some('RECONCILIATION_REQUIRED');
+  }
+  return Option.none();
+};
+
+/** Why another potentially duplicating send is NOT allowed now; none means the history allows it. */
+export const unknownEffectBlock = (
+  facts: EffectFacts,
+  eligibility: Option.Option<FreshEligibility>,
+): Option.Option<UnknownEffectBlock> => {
+  const blocked = effectBlockOf(facts);
+  if (Option.isSome(blocked)) {
+    return blocked;
   }
   if (Option.isNone(eligibility)) {
     // nothing was ever in doubt AND no evaluation was supplied: the guard cannot vouch for a Current fact it was not given
@@ -79,6 +97,6 @@ export const unknownEffectBlock = (
  * exists, and false forever after an acceptance: the retry lane calls this and never decides it on its own.
  */
 export const canAttemptAfterUnknownEffect = (
-  facts: IntentTimelineFacts,
+  facts: EffectFacts,
   eligibility: Option.Option<FreshEligibility>,
 ): boolean => Option.isNone(unknownEffectBlock(facts, eligibility));

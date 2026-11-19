@@ -71,6 +71,30 @@ export const ApprovedResultSchema = Schema.Union([
 export const CurrentnessSchema = Schema.Struct({ requireLatestSourceRevision: Schema.Boolean });
 
 /**
+ * The approved recovery rule of a type (#1403, PO 2A): whether Communications may AUTOMATICALLY begin another attempt of
+ * the SAME Message Intent after a PROVEN non-acceptance of the previous one. It is platform-owned data of the approved type
+ * and has no tenant override. `NONE` is the default: automatic action halts and records why. The only approved variant
+ * carries the owner's own per-flow limit (`maxAttempts`, the total number of submitted attempts the owner approved): the
+ * limit comes from the approved catalog entry together with the step-22 handoff, and no code, default or fallback ever
+ * supplies one. A rule without a limit cannot be expressed, so there is no unlimited automatic recovery.
+ */
+export const RecoveryPolicySchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('NONE') }),
+  Schema.Struct({
+    kind: Schema.Literal('RETRY_ON_PROVEN_NON_ACCEPTANCE'),
+    maxAttempts: RevisionSchema,
+  }),
+]);
+export type RecoveryPolicy = typeof RecoveryPolicySchema.Type;
+
+/**
+ * Whether the SOURCE OWNER approved an Explicit Resend of this type (#1403, PO 1A). Per type and platform-owned; a tenant
+ * switch, an operator permission or access to the history never grants it. `NOT_ALLOWED` is the default.
+ */
+export const ResendPolicySchema = Schema.Literals(['NOT_ALLOWED', 'SOURCE_APPROVED']);
+export type ResendPolicy = typeof ResendPolicySchema.Type;
+
+/**
  * Transactional Message Type: the approved purpose and policy behind one kind of message. It names meaning, owner,
  * eligibility and audience; it carries no template, language, copy, recipient address or secret, and it never
  * claims transport success.
@@ -90,7 +114,11 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
   onboarding: SourceOnboardingSchema,
   privacyPurposeRefs: Schema.Array(PrivacyPurposeKeySchema),
   purpose: CommunicationPurposeKeySchema,
+  /** The approved automatic recovery rule; absent means `NONE`. See `recoveryPolicyOf`. */
+  recovery: Schema.optionalKey(RecoveryPolicySchema),
   requiredness: RequirednessSchema,
+  /** Whether the source owner approved an Explicit Resend of this type; absent means `NOT_ALLOWED`. See `resendPolicyOf`. */
+  resend: Schema.optionalKey(ResendPolicySchema),
   result: ApprovedResultSchema,
   /** Revision of this approved rule; a decision records it so a later catalog change cannot rewrite it. */
   revision: RevisionSchema,
@@ -99,3 +127,13 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
   typeId: MessageTypeIdSchema,
 });
 export type TransactionalMessageType = typeof TransactionalMessageTypeSchema.Type;
+
+const NO_RECOVERY: RecoveryPolicy = { kind: 'NONE' };
+
+/** The recovery rule of an approved type: absent is `NONE`, so a type that declares nothing never recovers on its own. */
+export const recoveryPolicyOf = (type: Pick<TransactionalMessageType, 'recovery'>): RecoveryPolicy =>
+  type.recovery ?? NO_RECOVERY;
+
+/** The resend approval of an approved type: absent is `NOT_ALLOWED`, so a type that declares nothing has no resend. */
+export const resendPolicyOf = (type: Pick<TransactionalMessageType, 'resend'>): ResendPolicy =>
+  type.resend ?? 'NOT_ALLOWED';

@@ -5,6 +5,7 @@ import type {
   ConflictFacts,
   IntentTimelineFacts,
   ObservationFacts,
+  RecoveryFacts,
   StopFacts,
 } from '../../../src/domain/history/timeline.ts';
 import type { AttemptState, FailureClass, ObservationKind } from '../../../src/domain/history/vocabulary.ts';
@@ -67,6 +68,8 @@ interface ConflictOptions {
   readonly observationId?: string;
   readonly observed: number;
   readonly recorded?: number;
+  /** The minute a later reconciliation appended its resolution (#1403); none while the conflict is unresolved. */
+  readonly resolved?: number;
 }
 
 /** A re-delivery of the identity of `kind` with another content: only the trace, the first observation is untouched. */
@@ -79,8 +82,28 @@ export const conflict = (kind: ObservationKind, options: ConflictOptions): Confl
     observedAt: minute(options.observed),
     recordedAt: minute(options.recorded ?? options.observed),
     recordedSeq: sequence,
+    resolvedAt: options.resolved === undefined ? undefined : minute(options.resolved),
   };
 };
+
+interface RecoveryOptions {
+  readonly at?: number;
+  readonly attemptId?: string;
+  readonly code?: string;
+  readonly outcome?: 'HALTED' | 'STOPPED';
+  readonly proven?: boolean;
+  readonly seq?: number;
+}
+
+/** One recovery evaluation about an attempt (#1403): a halt, or a stop with or without proof. */
+export const recovery = (options: RecoveryOptions = {}): RecoveryFacts => ({
+  basisAttemptId: options.attemptId ?? ATTEMPT_1,
+  code: options.code ?? 'NO_RECOVERY_RULE',
+  evaluationSeq: options.seq ?? 1,
+  outcome: options.outcome ?? 'HALTED',
+  proven: options.proven ?? false,
+  recordedAt: minute(options.at ?? 5),
+});
 
 interface StopOptions {
   readonly at?: number;
@@ -102,6 +125,7 @@ interface FactsParts {
   readonly intentStatus?: 'NOT_SENT' | 'PENDING_HANDOFF' | 'SUPPRESSED';
   readonly observations?: readonly ObservationFacts[];
   readonly reason?: string;
+  readonly recoveries?: readonly RecoveryFacts[];
   readonly stops?: readonly StopFacts[];
 }
 
@@ -115,5 +139,6 @@ export const factsOf = (parts: FactsParts): IntentTimelineFacts => ({
     status: parts.intentStatus ?? 'PENDING_HANDOFF',
   },
   observations: parts.observations ?? [],
+  recoveries: parts.recoveries ?? [],
   stops: parts.stops ?? [],
 });

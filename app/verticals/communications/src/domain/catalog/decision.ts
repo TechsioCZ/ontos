@@ -6,7 +6,7 @@ import type { CommunicationDecisionContext, CommunicationDecisionRequest, Recipi
 import type { AudienceSlot, TransactionalMessageType } from './message-type.ts';
 import { findMessageTypeByPurpose } from './registry.ts';
 import type { MessageTypeRegistry } from './registry.ts';
-import { resourceRefKey } from './vocabulary.ts';
+import { ResendRefusalSchema, resourceRefKey } from './vocabulary.ts';
 import type {
   ApprovedRuleKey,
   AudienceSlotKey,
@@ -37,18 +37,22 @@ import type {
  * - SOURCE_STATE_INELIGIBLE: the source occurrence is in a state the type does not cover;
  * - SOURCE_REVISION_NOT_CURRENT: the request reflects a source revision that is not the current one;
  * - APPROVED_NO_MESSAGE: the approved rule for this context is an explicit zero-message rule;
- * - RECIPIENT_AUTHORITY_MISSING: every audience slot lacks an unambiguous approved recipient.
+ * - RECIPIENT_AUTHORITY_MISSING: every audience slot lacks an unambiguous approved recipient;
+ * - RESEND_*: an Explicit Resend request (#1403) was refused (see `ResendRefusalSchema`).
  */
-export const NoMessageReasonSchema = Schema.Literals([
-  'UNKNOWN_PURPOSE',
-  'SOURCE_NOT_AUTHORIZED_FOR_TYPE',
-  'TYPE_DEACTIVATED',
-  'TYPE_STALE',
-  'SOURCE_ONBOARDING_INACTIVE',
-  'SOURCE_STATE_INELIGIBLE',
-  'SOURCE_REVISION_NOT_CURRENT',
-  'APPROVED_NO_MESSAGE',
-  'RECIPIENT_AUTHORITY_MISSING',
+export const NoMessageReasonSchema = Schema.Union([
+  Schema.Literals([
+    'UNKNOWN_PURPOSE',
+    'SOURCE_NOT_AUTHORIZED_FOR_TYPE',
+    'TYPE_DEACTIVATED',
+    'TYPE_STALE',
+    'SOURCE_ONBOARDING_INACTIVE',
+    'SOURCE_STATE_INELIGIBLE',
+    'SOURCE_REVISION_NOT_CURRENT',
+    'APPROVED_NO_MESSAGE',
+    'RECIPIENT_AUTHORITY_MISSING',
+  ]),
+  ResendRefusalSchema,
 ]);
 export type NoMessageReason = typeof NoMessageReasonSchema.Type;
 
@@ -196,7 +200,8 @@ const admissionBlock = (
   if (type.currentness.requireLatestSourceRevision && request.occurrence.revision !== context.source.latestRevision) {
     return 'SOURCE_REVISION_NOT_CURRENT';
   }
-  return undefined;
+  // an Explicit Resend that the approved type, the original or its unknown effect does not admit creates no message (#1403)
+  return context.resendRefusal;
 };
 
 /**

@@ -38,6 +38,8 @@ const routineWrittenTables = [
   'intent_handoff_stops',
   'provider_observations',
   'provider_observation_conflicts',
+  'provider_observation_conflict_resolutions',
+  'intent_recovery_evaluations',
   'attempt_retry_links',
 ];
 const closableTable = 'template_activations';
@@ -50,11 +52,14 @@ const scopedRoutines = [
   'ingest_provider_observation',
   'read_language_policy_snapshot',
   'worker_begin_attempt',
+  'worker_begin_retry_attempt',
   'worker_finish_attempt',
   'worker_link_retry_attempt',
   'worker_read_intent',
   'worker_read_template_snapshot',
+  'worker_record_recovery_evaluation',
   'worker_record_stop',
+  'worker_resolve_observation_conflict',
 ];
 // Every intake fact rejects an update or delete by trigger, whatever the role; a finished attempt does too.
 const intakeAppendOnlyTriggers = [
@@ -66,6 +71,8 @@ const intakeAppendOnlyTriggers = [
   'communications_attempts_finished_append_only',
   'communications_observations_append_only',
   'communications_observation_conflicts_append_only',
+  'communications_conflict_resolutions_append_only',
+  'communications_recovery_evaluations_append_only',
   'communications_resend_links_append_only',
   'communications_retry_links_append_only',
 ];
@@ -238,16 +245,72 @@ const historyConstraints: readonly {
     table: 'intent_resend_links',
   },
   {
-    contains: ["'SOURCE_APPROVED_RESEND'"],
+    // the closed business reasons of the published request contract (#1403)
+    contains: [
+      "'PRIOR_DELIVERY_FAILED'",
+      "'RECIPIENT_NOT_RECEIVED'",
+      "'RECIPIENT_REQUESTED_COPY'",
+      "'SOURCE_APPROVED_RESEND'",
+    ],
     name: 'communications_resend_links_reason_ck',
     table: 'intent_resend_links',
+  },
+  {
+    exact: 'UNIQUE (tenant_id, conflict_id)',
+    name: 'communications_observation_conflicts_identity_uk',
+    table: 'provider_observation_conflicts',
+  },
+  {
+    // one resolution per conflict, bound to the conflict, its attempt and the reconciliation that settled it
+    exact: 'UNIQUE (tenant_id, conflict_id)',
+    name: 'communications_conflict_resolutions_conflict_uk',
+    table: 'provider_observation_conflict_resolutions',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, conflict_id)'],
+    name: 'communications_conflict_resolutions_conflict_fk',
+    table: 'provider_observation_conflict_resolutions',
+  },
+  {
+    contains: [ATTEMPT_FOREIGN_KEY],
+    name: 'communications_conflict_resolutions_attempt_fk',
+    table: 'provider_observation_conflict_resolutions',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, basis_observation_id)'],
+    name: 'communications_conflict_resolutions_basis_fk',
+    table: 'provider_observation_conflict_resolutions',
+  },
+  {
+    // a recovery evaluation is keyed per intent and evaluation, bound to the attempt it concerns, and its shape is closed
+    exact: 'UNIQUE (tenant_id, intent_id, evaluation_seq)',
+    name: 'communications_recovery_evaluations_seq_uk',
+    table: 'intent_recovery_evaluations',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, intent_id, basis_attempt_id)'],
+    name: 'communications_recovery_evaluations_attempt_fk',
+    table: 'intent_recovery_evaluations',
+  },
+  {
+    contains: ["'HALTED'", "'STOPPED'"],
+    name: 'communications_recovery_evaluations_outcome_ck',
+    table: 'intent_recovery_evaluations',
+  },
+  {
+    contains: ["'HALTED'", "'STOPPED'", 'jsonb_array_length(reasons)'],
+    name: 'communications_recovery_evaluations_shape_ck',
+    table: 'intent_recovery_evaluations',
   },
 ];
 
 /** The history routines and guards: the definer or invoker nature each one must have, and the pinned search path of all. */
 const historyRoutines: readonly { readonly definer: boolean; readonly name: string }[] = [
   { definer: true, name: 'ingest_provider_observation' },
+  { definer: true, name: 'worker_begin_retry_attempt' },
   { definer: true, name: 'worker_link_retry_attempt' },
+  { definer: true, name: 'worker_record_recovery_evaluation' },
+  { definer: true, name: 'worker_resolve_observation_conflict' },
   // the guard runs as the caller, under the Tenant's own row-level security: it must never be a definer
   { definer: false, name: 'enforce_resend_link' },
 ];

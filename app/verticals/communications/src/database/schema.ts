@@ -546,7 +546,8 @@ export const providerObservations = communicationsSchema.table.withRLS(
  * identity (Tenant, attempt, provider, key, kind) with DIFFERENT content. The original observation is never touched and the
  * conflicting delivery is never silently dropped: this row keeps only safe fields (the identity, the claimed `observed_at`
  * and a SHA-256 fingerprint of the conflicting content), never the content itself. An intent with a conflict needs
- * reconciliation until the recovery lane (d21-10) records otherwise; the history never erases the earlier fact.
+ * reconciliation until a resolution fact is appended to `provider_observation_conflict_resolutions` (#1403); the history
+ * never erases the earlier fact and the conflict row itself is never touched.
  * The same conflicting content delivered again is the same row (`content_fingerprint` is part of the identity).
  * Written only by `ingest_provider_observation`; the runtime role can only read it.
  */
@@ -575,6 +576,8 @@ export const providerObservationConflicts = communicationsSchema.table.withRLS(
       table.contentFingerprint,
     ),
     unique('communications_observation_conflicts_seq_uk').on(table.recordedSeq),
+    // the target of the resolution foreign key: a resolution names a conflict of the SAME Tenant
+    unique('communications_observation_conflicts_identity_uk').on(table.tenantId, table.conflictId),
     foreignKey({
       columns: [table.tenantId, table.intentId, table.attemptId],
       foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
@@ -596,6 +599,98 @@ export const providerObservationConflicts = communicationsSchema.table.withRLS(
     ),
     check('communications_observation_conflicts_fingerprint_ck', sql`${table.contentFingerprint} ~ '^[0-9a-f]{64}$'`),
     ...tenantRlsPolicies('provider_observation_conflicts', table.tenantId),
+  ],
+);
+
+/**
+ * Resolution of a Provider Observation Conflict (#1403, Reconciliation): the append-only fact that a conflict was settled by
+ * a LATER reconciliation observation of the SAME attempt. It never edits or removes the conflict or the observation it
+ * concerns: both stay in the history, and only the question "does this intent still need reconciliation" changes. One
+ * resolution per conflict. Written only by the scoped routine `worker_resolve_observation_conflict`, which checks that the
+ * basis is a reconciliation observation of the same attempt that was recorded AFTER the conflict; the runtime role can only
+ * read it. `reason_code` is a closed upper-case code of the lane that writes it, never free text.
+ */
+export const providerObservationConflictResolutions = communicationsSchema.table.withRLS(
+  'provider_observation_conflict_resolutions',
+  {
+    attemptId: uuid('attempt_id').notNull(),
+    basisObservationId: uuid('basis_observation_id').notNull(),
+    conflictId: uuid('conflict_id').notNull(),
+    intentId: uuid('intent_id').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    resolutionId: uuid('resolution_id').primaryKey(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }).notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('communications_conflict_resolutions_conflict_uk').on(table.tenantId, table.conflictId),
+    foreignKey({
+      columns: [table.tenantId, table.conflictId],
+      foreignColumns: [providerObservationConflicts.tenantId, providerObservationConflicts.conflictId],
+      name: 'communications_conflict_resolutions_conflict_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.intentId, table.attemptId],
+      foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
+      name: 'communications_conflict_resolutions_attempt_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.basisObservationId],
+      foreignColumns: [providerObservations.tenantId, providerObservations.observationId],
+      name: 'communications_conflict_resolutions_basis_fk',
+    }).onDelete('restrict'),
+    index('communications_conflict_resolutions_intent_idx').on(table.tenantId, table.intentId),
+    check('communications_conflict_resolutions_reason_ck', sql`${table.reasonCode} ~ ${REASON_CODE_PATTERN}`),
+    ...tenantRlsPolicies('provider_observation_conflict_resolutions', table.tenantId),
+  ],
+);
+
+/**
+ * Recovery Evaluation (#1403): the append-only record of ONE evaluation of whether an intent that already has a delivery
+ * attempt may be continued, when that evaluation did NOT lead to another attempt. It is keyed per (intent, evaluation) like
+ * `intent_handoff_stops`, so a later Current evaluation is appended and never edits an earlier one.
+ *
+ * - `HALTED`: automatic action was not performed and the reason is a closed code (no approved recovery rule, a rule's own
+ *   limit reached, acceptance already proven, reconciliation required, contradictory evidence). It proves nothing against
+ *   the message and is evaluated again whenever the facts change; `reasons` is empty.
+ * - `STOPPED`: a Current gate or a proven fact stopped the continuation, with every distinct reason (`reasons`, the same
+ *   shape as a handoff stop). `proven` (derived, never written) separates a proven stop, which is final (a later
+ *   evaluation never supersedes it), from an unproven one (an owner outage), which a later evaluation supersedes.
+ *
+ * The attempt that was the latest one when the evaluation was made is `basis_attempt_id`. Nothing here ever changes an
+ * attempt, an observation or the original handoff. Written only by `worker_record_recovery_evaluation`.
+ */
+export const intentRecoveryEvaluations = communicationsSchema.table.withRLS(
+  'intent_recovery_evaluations',
+  {
+    basisAttemptId: uuid('basis_attempt_id').notNull(),
+    code: text('code').notNull(),
+    evaluatedAt: timestamp('evaluated_at', { withTimezone: true }).notNull(),
+    evaluationSeq: integer('evaluation_seq').notNull(),
+    intentId: uuid('intent_id').notNull(),
+    outcome: text('outcome').$type<'HALTED' | 'STOPPED'>().notNull(),
+    proven: boolean('proven')
+      .generatedAlwaysAs(sql`jsonb_path_exists("reasons", '$[*] ? (@.proven == true)')`)
+      .notNull(),
+    reasons: jsonb('reasons').$type<StoredJson>().notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('communications_recovery_evaluations_seq_uk').on(table.tenantId, table.intentId, table.evaluationSeq),
+    foreignKey({
+      columns: [table.tenantId, table.intentId, table.basisAttemptId],
+      foreignColumns: [deliveryAttempts.tenantId, deliveryAttempts.intentId, deliveryAttempts.attemptId],
+      name: 'communications_recovery_evaluations_attempt_fk',
+    }).onDelete('restrict'),
+    check('communications_recovery_evaluations_seq_ck', sql`${table.evaluationSeq} > 0`),
+    check('communications_recovery_evaluations_outcome_ck', sql`${table.outcome} in ('HALTED', 'STOPPED')`),
+    check('communications_recovery_evaluations_code_ck', sql`${table.code} ~ ${REASON_CODE_PATTERN}`),
+    // a halt carries no stop reason; a stop carries at least one
+    check(
+      'communications_recovery_evaluations_shape_ck',
+      sql`jsonb_typeof(${table.reasons}) = 'array' and ((${table.outcome} = 'HALTED' and jsonb_array_length(${table.reasons}) = 0) or (${table.outcome} = 'STOPPED' and jsonb_array_length(${table.reasons}) > 0))`,
+    ),
+    ...tenantRlsPolicies('intent_recovery_evaluations', table.tenantId),
   ],
 );
 
@@ -686,8 +781,11 @@ export const intentResendLinks = communicationsSchema.table.withRLS(
     }).onDelete('restrict'),
     index('communications_resend_links_original_idx').on(table.tenantId, table.originalIntentId),
     check('communications_resend_links_distinct_ck', sql`${table.originalIntentId} <> ${table.resendIntentId}`),
-    // a closed list: the vocabulary of the lane that writes the link (d21-10) extends it by a forward migration
-    check('communications_resend_links_reason_ck', sql`${table.reasonCode} in ('SOURCE_APPROVED_RESEND')`),
+    // a closed list, the business reasons of the published request contract (#1403); a new one is a forward migration
+    check(
+      'communications_resend_links_reason_ck',
+      sql`${table.reasonCode} in ('PRIOR_DELIVERY_FAILED', 'RECIPIENT_NOT_RECEIVED', 'RECIPIENT_REQUESTED_COPY', 'SOURCE_APPROVED_RESEND')`,
+    ),
     ...tenantRlsPolicies('intent_resend_links', table.tenantId),
   ],
 );
@@ -708,6 +806,8 @@ export const COMMUNICATIONS_TABLES = [
   intentHandoffStops,
   providerObservations,
   providerObservationConflicts,
+  providerObservationConflictResolutions,
+  intentRecoveryEvaluations,
   attemptRetryLinks,
   intentResendLinks,
 ] as const;
@@ -727,6 +827,8 @@ export const COMMUNICATIONS_TABLE_INVENTORY = [
   'intent_handoff_stops',
   'provider_observations',
   'provider_observation_conflicts',
+  'provider_observation_conflict_resolutions',
+  'intent_recovery_evaluations',
   'attempt_retry_links',
   'intent_resend_links',
 ] as const;
@@ -740,8 +842,10 @@ export const communicationsRelations = defineRelations({
   deliveryAttempts,
   gatewayAssertionRedemptions,
   intentHandoffStops,
+  intentRecoveryEvaluations,
   intentResendLinks,
   messageIntents,
+  providerObservationConflictResolutions,
   providerObservationConflicts,
   providerObservations,
   templateActivations,

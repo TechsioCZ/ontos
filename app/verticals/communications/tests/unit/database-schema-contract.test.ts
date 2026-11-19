@@ -21,7 +21,7 @@ describe('Communications database schema contract', () => {
     expect(configs.every((config) => config.schema === COMMUNICATIONS_SCHEMA_NAME)).toBe(true);
   });
 
-  it('declares the replay ledger, the template tables, the language mode history, the intake tables and the history tables, and no table of a later lane', () => {
+  it('declares the replay ledger, the template tables, the language mode history, the intake tables, the history tables and the recovery tables, and no table of a later lane', () => {
     expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual([
       'gateway_assertion_redemptions',
       'template_types',
@@ -37,6 +37,8 @@ describe('Communications database schema contract', () => {
       'intent_handoff_stops',
       'provider_observations',
       'provider_observation_conflicts',
+      'provider_observation_conflict_resolutions',
+      'intent_recovery_evaluations',
       'attempt_retry_links',
       'intent_resend_links',
     ]);

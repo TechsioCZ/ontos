@@ -117,3 +117,19 @@ const CandidateStopReasonSchema = Schema.Literals([
   'AUDIENCE_GROUP_INCOMPLETE',
 ]);
 export type CandidateStopReason = typeof CandidateStopReasonSchema.Type;
+
+/**
+ * Why an Explicit Resend request (#1403) produced no message. They are NO_MESSAGE reasons of the decision, so the source
+ * workflow learns a concrete closed reason through the ordinary outcome feed and nothing is created:
+ * - RESEND_NOT_APPROVED: the approved type does not carry the source owner's resend approval;
+ * - RESEND_ORIGINAL_NOT_FOUND: no intent of the same source owner in this Tenant has that identity;
+ * - RESEND_ORIGINAL_TYPE_MISMATCH: the original is a message of another type;
+ * - RESEND_ORIGINAL_EFFECT_UNKNOWN: it is not known whether the original left, so it is reconciled before anything is resent.
+ */
+export const ResendRefusalSchema = Schema.Literals([
+  'RESEND_NOT_APPROVED',
+  'RESEND_ORIGINAL_NOT_FOUND',
+  'RESEND_ORIGINAL_TYPE_MISMATCH',
+  'RESEND_ORIGINAL_EFFECT_UNKNOWN',
+]);
+export type ResendRefusal = typeof ResendRefusalSchema.Type;

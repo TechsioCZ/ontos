@@ -12,6 +12,7 @@ import {
   RevisionSchema,
   SourceStateKeySchema,
 } from './vocabulary.ts';
+import type { ResendRefusal } from './vocabulary.ts';
 
 /**
  * What the Communication Decision needs from a committed source Communication Request. Only a request names an
@@ -59,5 +60,10 @@ export type RecipientFact = typeof RecipientFactSchema.Type;
 
 export interface CommunicationDecisionContext {
   readonly recipients: readonly RecipientFact[];
+  /**
+   * Why an Explicit Resend request (#1403) is not admitted, decided by the intake over the approved type and the original
+   * intent; absent for an ordinary request and for an admitted resend. A refused resend produces no message.
+   */
+  readonly resendRefusal?: ResendRefusal;
   readonly source: SourceOccurrenceFacts;
 }

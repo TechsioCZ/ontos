@@ -55,6 +55,11 @@ export interface ConflictFacts {
   readonly observedAt: DateTime.Utc;
   readonly recordedAt: DateTime.Utc;
   readonly recordedSeq: number;
+  /**
+   * When a later reconciliation settled this conflict (#1403): a resolution is an appended fact, so the conflict and the
+   * observation it concerns stay in the history and only the question "does this still need reconciliation" changes.
+   */
+  readonly resolvedAt?: DateTime.Utc | undefined;
 }
 
 export interface StopFacts {
@@ -64,9 +69,23 @@ export interface StopFacts {
   readonly recordedAt: DateTime.Utc;
 }
 
+/**
+ * One evaluation of a recovery that did NOT lead to another attempt (#1403): a halt (`HALTED`, automatic action was not
+ * performed for a closed reason) or a stop (`STOPPED`, with the stop reasons kept by the owner). `proven` is true only for a stop
+ * a proven fact caused; such a stop is final.
+ */
+export interface RecoveryFacts {
+  readonly basisAttemptId: string;
+  readonly code: string;
+  readonly evaluationSeq: number;
+  readonly outcome: 'HALTED' | 'STOPPED';
+  readonly proven: boolean;
+  readonly recordedAt: DateTime.Utc;
+}
+
 export interface IntentTimelineFacts {
   readonly attempts: readonly AttemptFacts[];
-  /** Unresolved conflicts of provider evidence (none is ever resolved in this lane: d21-10 appends the resolution). */
+  /** Every conflict of provider evidence, each with the time its resolution was appended (none while it is unresolved). */
   readonly conflicts: readonly ConflictFacts[];
   readonly intent: {
     readonly createdAt: DateTime.Utc;
@@ -76,6 +95,8 @@ export interface IntentTimelineFacts {
     readonly status: 'NOT_SENT' | 'PENDING_HANDOFF' | 'SUPPRESSED';
   };
   readonly observations: readonly ObservationFacts[];
+  /** Recovery evaluations that did not lead to another attempt, oldest first; absent when the intent has none. */
+  readonly recoveries?: readonly RecoveryFacts[] | undefined;
   readonly stops: readonly StopFacts[];
 }
 
@@ -117,10 +138,15 @@ export interface IntentHistorySummary {
   readonly contradictory: boolean;
   /** A delivery observation exists and is the latest delivery-class fact. */
   readonly deliveryProven: boolean;
-  /** Provider evidence of this intent disagrees with itself: the headline stays, and the disagreement needs reconciliation. */
+  /** Provider evidence of this intent disagrees with itself and no reconciliation settled it: the headline stays. */
   readonly needsReconciliation: boolean;
   /** At least one attempt is, after all its observations, known to have been accepted by the provider. */
   readonly providerAccepted: boolean;
+  /**
+   * The latest recovery evaluation made about the LATEST attempt (#1403): why automatic recovery did not continue it. It never
+   * changes the headline status (the attempt's own proof stays); it tells the source what was decided about continuing.
+   */
+  readonly recovery: RecoveryFacts | undefined;
   readonly status: HistoryStatus;
 }
 
@@ -292,6 +318,17 @@ export const timelineOf = (facts: IntentTimelineFacts): readonly HistoryEntry[] 
   });
 };
 
+const byAttemptNumber = Order.mapInput(Order.Number, (attempt: AttemptFacts) => attempt.attemptNumber);
+
+/** The latest recovery evaluation made about the LATEST attempt; an evaluation about an earlier one was superseded by it. */
+const latestRecoveryOf = (facts: IntentTimelineFacts, latestAttempt: AttemptFacts | undefined) =>
+  latestAttempt === undefined
+    ? undefined
+    : EffectArray.sort(
+        (facts.recoveries ?? []).filter(({ basisAttemptId }) => basisAttemptId === latestAttempt.attemptId),
+        Order.mapInput(Order.Number, (recovery: RecoveryFacts) => recovery.evaluationSeq),
+      ).at(-1);
+
 const resolveAttempts = (facts: IntentTimelineFacts) =>
   facts.attempts.map((attempt) => {
     const kinds = facts.observations.flatMap(({ attemptId, kind }) => (attemptId === attempt.attemptId ? [kind] : []));
@@ -330,23 +367,31 @@ export const summarizeIntent = (facts: IntentTimelineFacts): IntentHistorySummar
   const providerAccepted = resolved.some(({ effect }) => effect === 'PRESENT');
   const latestDelivery = latestConclusiveDelivery(facts);
   const deliveryProven = latestDelivery?.kind === 'DELIVERY_PROVEN' && !contradictory;
+  const latestAttempt = EffectArray.sort(facts.attempts, byAttemptNumber).at(-1);
   const withStatus = (status: HistoryStatus): IntentHistorySummary => ({
     contradictory,
     deliveryProven,
-    needsReconciliation: facts.conflicts.length > 0,
+    needsReconciliation: facts.conflicts.some(({ resolvedAt }) => resolvedAt === undefined),
     providerAccepted,
+    recovery: latestRecoveryOf(facts, latestAttempt),
     status,
   });
   // an attempt that provably submitted nothing (no adapter, or no request made) never let a stopped message leave
   const mayHaveLeft = facts.attempts.some(
     ({ reason, state }) => submissionFactOfAttempt(state, reason).technical !== 'NOT_ATTEMPTED',
   );
+  // a stop recorded BEFORE the latest attempt began was superseded by the Current evaluation that cleared it (#1403); a stop
+  // that cannot be ordered before it stays current, so an uncertain order never turns a stop into a send
+  const currentStops = facts.stops.filter(
+    ({ recordedAt }) =>
+      latestAttempt === undefined || DateTime.isGreaterThanOrEqualTo(recordedAt, latestAttempt.preparedAt),
+  );
   if (facts.intent.status !== 'PENDING_HANDOFF') {
     return withStatus('SUPPRESSED');
   }
-  if (facts.stops.length > 0 && !mayHaveLeft) {
+  if (currentStops.length > 0 && !mayHaveLeft) {
     // one proven stop is final; a stop that only could not establish a fact is held, with its reason, for re-evaluation
-    return withStatus(facts.stops.some(({ proven }) => proven) ? 'SUPPRESSED' : 'HELD_UNPROVEN');
+    return withStatus(currentStops.some(({ proven }) => proven) ? 'SUPPRESSED' : 'HELD_UNPROVEN');
   }
   if (contradictory) {
     return withStatus('INDETERMINATE');

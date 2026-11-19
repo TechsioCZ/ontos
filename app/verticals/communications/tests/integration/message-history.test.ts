@@ -208,7 +208,13 @@ const guardAllows = Effect.fn('HistoryTest.guardAllows')(function* allows(
 });
 
 /** One Explicit Resend link of the world's Tenant, written as the runtime role does. */
-const insertResendLink = (world: World, linkedAt: Date, originalIntentId: string, resendIntentId: string, reasonCode: string) =>
+const insertResendLink = (
+  world: World,
+  linkedAt: Date,
+  originalIntentId: string,
+  resendIntentId: string,
+  reasonCode: string,
+) =>
   world.database.inTenant(world.tenantId, (tx) =>
     tx
       .insert(intentResendLinks)
@@ -843,7 +849,7 @@ describe('Truthful message history on native PostgreSQL (#1402)', () => {
               reasonCode: LinkReasonCodeSchema.make(reasonCode),
             }),
           );
-        expect(yield* link('PRIOR_NOT_SUBMITTED', first.attemptId)).toBe('LINKED');
+        // the pre-handoff step already recorded the link when it began the second attempt (#1403): the same link is idempotent
         expect(yield* link('PRIOR_NOT_SUBMITTED', first.attemptId)).toBe('EXISTS');
         expect(yield* link('SOMETHING_ELSE', second.attemptId)).toBe('CONFLICT');
         // both attempts belong to the one intent, and the immutable intent (recipient, language, template pin) never changed
