@@ -2,6 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { moduleOperation } from '@app/core-runtime/sdk';
 
 import { ValidatePriceGroupCompatibilityDomainConflictProblemSchema } from './validate-price-group-compatibility-domain-conflict-problem.ts';
 import { ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema } from './validate-price-group-compatibility-domain-unavailable-problem.ts';
@@ -93,3 +94,16 @@ export const ValidatePriceGroupCompatibilityApi = HttpApi.make('ValidatePriceGro
     }),
   ),
 );
+
+/** The typed operation reference a consumer passes to the Core SDK's `call`. */
+export const validatePriceGroupCompatibilityOperation = moduleOperation({
+  kind: 'read',
+  path: '/reads/validate-price-group-compatibility',
+  provider: {
+    entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+    moduleId: 'pricing.price-group-catalog',
+    schemaVersion: '1',
+  },
+  request: ValidatePriceGroupCompatibilityRequestSchema,
+  response: ValidatePriceGroupCompatibilityResponseSchema,
+});

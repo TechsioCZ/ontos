@@ -4,7 +4,15 @@ import path from 'node:path';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { Expression, ObjectExpression, Statement } from 'oxc-parser';
+import type {
+  Argument,
+  CallExpression,
+  Expression,
+  ObjectExpression,
+  ObjectProperty,
+  Program,
+  Statement,
+} from 'oxc-parser';
 
 import {
   DelimiterDepth,
@@ -3333,17 +3341,18 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
-  // `defineRead` also takes the handler written as `{ load: handler }`. When that object holds exactly the
-  // one `load` entry naming a handler, the named handler is judged by the rule a bare handler gets. Any other
-  // object (a `prepare` or `finish` step, an inline phase, an extra key, a spread) is a staged pipeline and is
-  // judged only by the demo exception below, which proves each phase, its bindings and its Effect import.
+  // `defineRead` also takes the handler written as `{ load: handler }` or, for a read that calls another
+  // operation or opens more than one transaction, `{ run: handler }`. When that object holds exactly the one
+  // `load` entry naming a handler, or the one `run` entry, the handler it holds is judged by the rule a bare
+  // handler gets. Any other object (a `prepare` or `finish` step, an inline `load`, an extra key, a spread)
+  // is a staged pipeline and is judged only by the demo exception below, which proves each phase, its
+  // bindings and its Effect import.
   let loadHandler = handler;
   if (handler !== undefined && topLevelObjectEntries(handler) !== undefined) {
     const named = objectPropertyValue(handler, 'load');
-    loadHandler =
-      topLevelObjectEntries(handler)?.length === 1 && named !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(named)
-        ? named
-        : undefined;
+    const single = topLevelObjectEntries(handler)?.length === 1;
+    const namedLoad = named !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(named) ? named : undefined;
+    loadHandler = single ? (namedLoad ?? objectPropertyValue(handler, 'run')) : undefined;
   }
   // Demo-only exception 3: a staged prepare/load/finish read is proven by the ported staged-read proof.
   const phaseOwner: ReadPhaseOwner = { ownerPath, readFile, sources };
@@ -3392,6 +3401,430 @@ const hasReadCallbacks = (
       );
     })
   );
+};
+
+export const PublicContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerAppId'));
+export const PublicContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerModuleId'));
+const PublicContractPackageManifestSchema = Schema.Struct({
+  exports: Schema.Record(Schema.String, Schema.String),
+  name: Schema.String,
+  ontosContractOwner: Schema.Struct({
+    appId: PublicContractOwnerAppIdSchema,
+    moduleApis: Schema.Array(Schema.String),
+    moduleId: PublicContractOwnerModuleIdSchema,
+    packageName: Schema.String,
+  }),
+});
+const OwnerPackageManifestSchema = Schema.Struct({ name: Schema.String });
+
+interface PublicContractSpecifierParts {
+  readonly exportName: string;
+  readonly packageName: string;
+}
+
+type PublicContractPackageManifest = typeof PublicContractPackageManifestSchema.Type;
+
+const publicContractSpecifierParts = (specifier: string): PublicContractSpecifierParts | undefined => {
+  const [scope, packageStem, ...subpathSegments] = specifier.split('/');
+  return scope !== '@app' || packageStem === undefined || subpathSegments.length === 0
+    ? undefined
+    : {
+        exportName: `./${subpathSegments.join('/')}`,
+        packageName: `${scope}/${packageStem}`,
+      };
+};
+
+const publicContractPackageManifests = (
+  sources: ReadonlyMap<string, string>,
+  packageName: string,
+): readonly (readonly [string, PublicContractPackageManifest])[] =>
+  [...sources.entries()].flatMap(([candidate, source]) => {
+    if (!candidate.startsWith('packages/') || !candidate.endsWith('/package.json')) {
+      return [];
+    }
+    const decoded = Option.getOrUndefined(
+      Schema.decodeUnknownOption(Schema.fromJsonString(PublicContractPackageManifestSchema))(source),
+    );
+    return decoded?.name === packageName ? [[candidate, decoded] as const] : [];
+  });
+
+/* ------------------------------------------------------------------------------------------------ */
+/* The read SDK form: `{ run }`, declared calls and access questions                                */
+/* ------------------------------------------------------------------------------------------------ */
+
+const SDK_MODULE = '@app/core-runtime/sdk';
+const SDK_READ_MODULE = '@app/core-runtime/sdk/read';
+const SDK_CORE_MODULE = '@app/core-runtime/sdk/core';
+const GATEWAY_CONTEXT_SERVER_MODULE = '@app/shared-contracts/gateway-context-server';
+const CONTRACT_CLIENT_SUBPATH = /^@app\/[^/]+\/(?:.+\/)?client$/u;
+const ACCESS_QUESTION_ARITY = new Map([
+  ['canList', 1],
+  ['canRun', 1],
+  ['canSeeFields', 2],
+]);
+
+const ReadDefinitionFormSchema = Schema.Literals(['bare', 'load', 'object', 'run']);
+type ReadDefinitionForm = typeof ReadDefinitionFormSchema.Type;
+const isStringValue = Schema.is(Schema.String);
+
+interface ParsedImport {
+  readonly imported: string | undefined;
+  readonly source: string;
+  readonly typeOnly: boolean;
+}
+
+/** What the gate knows about the read whose `{ run }`, `calls` and `accessQuestions` it judges. */
+interface ReadSdkFormInput {
+  readonly readFile: string;
+  /** The exported `defineRead` binding, e.g. `quotationVerificationRead`. */
+  readonly readName: string;
+  /** The read source when it differs from `sources.get(readFile)` (a canonicalized companion). */
+  readonly source?: string;
+  readonly sources: ReadonlyMap<string, string>;
+}
+
+const parseTypeScript = (file: string, source: string): Program | undefined => {
+  const parsed = parseSync(file, source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  return parsed.errors.length === 0 ? parsed.program : undefined;
+};
+
+const unwrapTypeAssertion = (expression: Expression): Expression => {
+  let current = expression;
+  while (
+    current.type === 'TSAsExpression' ||
+    current.type === 'TSSatisfiesExpression' ||
+    current.type === 'ParenthesizedExpression'
+  ) {
+    current = current.expression;
+  }
+  return current;
+};
+
+const staticPropertyName = (property: ObjectProperty): string | undefined => {
+  if (property.computed || property.method || property.kind !== 'init') {
+    return undefined;
+  }
+  if (property.key.type === 'Identifier') {
+    return property.key.name;
+  }
+  return property.key.type === 'Literal' && isStringValue(property.key.value) ? property.key.value : undefined;
+};
+
+const objectPropertiesNamed = (object: ObjectExpression, name: string): readonly ObjectProperty[] =>
+  object.properties.flatMap((property) =>
+    property.type === 'Property' && staticPropertyName(property) === name ? [property] : [],
+  );
+
+const topLevelConstInitializers = (program: Program): ReadonlyMap<string, Expression> => {
+  const initializers = new Map<string, Expression>();
+  const repeated = new Set<string>();
+  for (const statement of program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type === 'VariableDeclaration' && declaration.kind === 'const') {
+      for (const declarator of declaration.declarations) {
+        if (declarator.id.type === 'Identifier' && declarator.init !== null && declarator.init !== undefined) {
+          if (initializers.has(declarator.id.name)) {
+            repeated.add(declarator.id.name);
+          }
+          initializers.set(declarator.id.name, declarator.init);
+        }
+      }
+    }
+  }
+  for (const name of repeated) {
+    initializers.delete(name);
+  }
+  return initializers;
+};
+
+const topLevelImports = (program: Program): ReadonlyMap<string, ParsedImport> => {
+  const imports = new Map<string, ParsedImport>();
+  for (const statement of program.body) {
+    if (statement.type === 'ImportDeclaration') {
+      for (const specifier of statement.specifiers) {
+        imports.set(specifier.local.name, {
+          imported:
+            specifier.type === 'ImportSpecifier' && specifier.imported.type === 'Identifier'
+              ? specifier.imported.name
+              : undefined,
+          source: statement.source.value,
+          typeOnly:
+            statement.importKind === 'type' ||
+            (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'),
+        });
+      }
+    }
+  }
+  return imports;
+};
+
+const isValueImportOf = (
+  imports: ReadonlyMap<string, ParsedImport>,
+  local: string,
+  imported: string,
+  source: string,
+): boolean => {
+  const binding = imports.get(local);
+  return binding !== undefined && !binding.typeOnly && binding.imported === imported && binding.source === source;
+};
+
+const definedReadCall = (program: Program, readName: string): CallExpression | undefined => {
+  const declared = topLevelConstInitializers(program).get(readName);
+  const init = declared === undefined ? undefined : unwrapTypeAssertion(declared);
+  return init?.type === 'CallExpression' && init.callee.type === 'Identifier' && init.callee.name === 'defineRead'
+    ? init
+    : undefined;
+};
+
+const readDefinitionForm = (definition: Argument | undefined): ReadDefinitionForm => {
+  if (definition?.type !== 'ObjectExpression') {
+    return 'bare';
+  }
+  const [only] = definition.properties;
+  const name = only?.type === 'Property' ? staticPropertyName(only) : undefined;
+  if (definition.properties.length === 1 && (name === 'load' || name === 'run')) {
+    return name;
+  }
+  return 'object';
+};
+
+/** An object literal written inline or bound once to a top-level `const` of the read file. */
+const resolvedObjectLiteral = (
+  value: Expression,
+  initializers: ReadonlyMap<string, Expression>,
+): ObjectExpression | undefined => {
+  const direct = unwrapTypeAssertion(value);
+  const resolved = direct.type === 'Identifier' ? initializers.get(direct.name) : direct;
+  const object = resolved === undefined ? undefined : unwrapTypeAssertion(resolved);
+  return object?.type === 'ObjectExpression' ? object : undefined;
+};
+
+/** Every entry of a declared-data object: plain `name: value` properties, no spread, no computed key. */
+const declaredDataEntries = (object: ObjectExpression): readonly (readonly [string, Expression])[] | undefined => {
+  const entries = object.properties.flatMap((property) => {
+    const name = property.type === 'Property' && !property.shorthand ? staticPropertyName(property) : undefined;
+    return property.type === 'Property' && name !== undefined ? [[name, property.value] as const] : [];
+  });
+  return entries.length === object.properties.length ? entries : undefined;
+};
+
+const stringLiteralValue = (expression: Expression | undefined): string | undefined =>
+  expression?.type === 'Literal' && isStringValue(expression.value) ? expression.value : undefined;
+
+interface PlainImportedCall {
+  readonly arguments: readonly Argument[];
+  readonly callee: string;
+}
+
+/** `callee(...)` where `callee` is a value import from `source`; the imported name is reported. */
+const plainCall = (
+  expression: Expression,
+  imports: ReadonlyMap<string, ParsedImport>,
+  source: string,
+): PlainImportedCall | undefined => {
+  const call = unwrapTypeAssertion(expression);
+  const binding =
+    call.type === 'CallExpression' && call.callee.type === 'Identifier' && !call.optional
+      ? imports.get(call.callee.name)
+      : undefined;
+  return call.type === 'CallExpression' &&
+    binding?.imported !== undefined &&
+    !binding.typeOnly &&
+    binding.source === source
+    ? { arguments: call.arguments, callee: binding.imported }
+    : undefined;
+};
+
+const accessQuestionViolations = (
+  value: Expression,
+  initializers: ReadonlyMap<string, Expression>,
+  imports: ReadonlyMap<string, ParsedImport>,
+): readonly string[] => {
+  const object = resolvedObjectLiteral(value, initializers);
+  const entries = object === undefined ? undefined : declaredDataEntries(object);
+  if (entries === undefined) {
+    return ['accessQuestions must be an object literal of named entries'];
+  }
+  return entries.flatMap(([name, question]) => {
+    const call = plainCall(question, imports, SDK_READ_MODULE);
+    const arity = call === undefined ? undefined : ACCESS_QUESTION_ARITY.get(call.callee);
+    const [target, groupKey] = call?.arguments ?? [];
+    const valid =
+      call !== undefined &&
+      arity !== undefined &&
+      call.arguments.length === arity &&
+      target?.type === 'Identifier' &&
+      (arity === 1 || (groupKey?.type !== 'SpreadElement' && stringLiteralValue(groupKey) !== undefined));
+    return valid
+      ? []
+      : [
+          `accessQuestions.${name} must be canRun(<identifier>), canList(<identifier>) or canSeeFields(<identifier>, '<literal>') from ${SDK_READ_MODULE}`,
+        ];
+  });
+};
+
+/** The provider a declared call's operation reference belongs to, as the gate can see it from imports. */
+type DeclaredCallProvider =
+  | { readonly kind: 'core' }
+  | { readonly kind: 'module' }
+  | { readonly kind: 'invalid'; readonly reason: string };
+
+const declaredCallProvider = (
+  operation: Argument | undefined,
+  imports: ReadonlyMap<string, ParsedImport>,
+  sources: ReadonlyMap<string, string>,
+): DeclaredCallProvider => {
+  if (operation?.type === 'MemberExpression') {
+    return !operation.computed &&
+      operation.object.type === 'Identifier' &&
+      isValueImportOf(imports, operation.object.name, 'coreOperations', SDK_CORE_MODULE)
+      ? { kind: 'core' }
+      : { kind: 'invalid', reason: `a Core operation must be coreOperations.<name> imported from ${SDK_CORE_MODULE}` };
+  }
+  if (operation?.type !== 'Identifier') {
+    return { kind: 'invalid', reason: 'the operation must be an imported operation reference' };
+  }
+  const binding = imports.get(operation.name);
+  const parts = binding === undefined ? undefined : publicContractSpecifierParts(binding.source);
+  if (binding === undefined || binding.typeOnly || binding.imported === undefined || parts === undefined) {
+    return {
+      kind: 'invalid',
+      reason: `${operation.name} must be a value import from a contract package public subpath`,
+    };
+  }
+  if (CONTRACT_CLIENT_SUBPATH.test(binding.source)) {
+    return { kind: 'invalid', reason: `${operation.name} must not come from a /client subpath` };
+  }
+  const manifests = publicContractPackageManifests(sources, parts.packageName);
+  const [manifest] = manifests.map(([, decoded]) => decoded);
+  return manifests.length === 1 && manifest?.exports[parts.exportName] !== undefined
+    ? { kind: 'module' }
+    : { kind: 'invalid', reason: `${binding.source} is no public subpath of one contract package` };
+};
+
+/**
+ * A declared call names an operation reference the gate can trace to a public contract package or to
+ * `coreOperations`. Whether the calling module's manifest covers it (requirement, entrypoint, provider,
+ * callers) is decided by Core when the registration is built (`declaredCallsIssues`), not re-parsed here.
+ */
+const declaredCallViolations = (
+  name: string,
+  declared: Expression,
+  imports: ReadonlyMap<string, ParsedImport>,
+  sources: ReadonlyMap<string, string>,
+): readonly string[] => {
+  const call = plainCall(declared, imports, SDK_MODULE);
+  if (call?.callee !== 'declaredCall' || call.arguments.length !== 2) {
+    return [`calls.${name} must be declaredCall(<operation>, <requirement key>) from ${SDK_MODULE}`];
+  }
+  const provider = declaredCallProvider(call.arguments[0], imports, sources);
+  return provider.kind === 'invalid' ? [`calls.${name}: ${provider.reason}`] : [];
+};
+
+/** A `{ run }` read reaches other operations only through `call`: no hand-built gateway call. */
+const runReadImportViolations = (program: Program): readonly string[] => {
+  const violations: string[] = [];
+  const checkSource = (specifier: Expression): void => {
+    const value = stringLiteralValue(specifier);
+    if (value === undefined) {
+      violations.push('a { run } read imports only static module specifiers');
+    } else if (value === GATEWAY_CONTEXT_SERVER_MODULE) {
+      violations.push(`a { run } read imports nothing from ${GATEWAY_CONTEXT_SERVER_MODULE}`);
+    } else if (CONTRACT_CLIENT_SUBPATH.test(value)) {
+      violations.push(`a { run } read imports no contract client (${value})`);
+    }
+  };
+  let requiresModuleOperation = false;
+  new Visitor({
+    ExportAllDeclaration: (declaration) => checkSource(declaration.source),
+    ExportNamedDeclaration: (declaration) => {
+      if (declaration.source !== null) {
+        checkSource(declaration.source);
+      }
+    },
+    Identifier: (identifier) => {
+      requiresModuleOperation ||= identifier.name === 'requireModuleOperation';
+    },
+    ImportDeclaration: (declaration) => checkSource(declaration.source),
+    ImportExpression: (expression) => checkSource(expression.source),
+  }).visit(program);
+  if (requiresModuleOperation) {
+    violations.push('a { run } read declares its calls instead of using requireModuleOperation');
+  }
+  return violations;
+};
+
+const declaredCallsViolations = (
+  value: Expression,
+  initializers: ReadonlyMap<string, Expression>,
+  imports: ReadonlyMap<string, ParsedImport>,
+  input: ReadSdkFormInput,
+): readonly string[] => {
+  const object = resolvedObjectLiteral(value, initializers);
+  const entries = object === undefined ? undefined : declaredDataEntries(object);
+  if (entries === undefined) {
+    return ['calls must be an object literal of named entries'];
+  }
+  return entries.flatMap(([name, declared]) => declaredCallViolations(name, declared, imports, input.sources));
+};
+
+// Demo-only exception 3: any other object given to `defineRead` is a staged prepare/load/finish pipeline, judged
+// by the staged-read proof (`hasNativeReadPipeline`), never by the handler rules; only `{ run }` mixed with other
+// keys is refused here.
+const readDefinitionObjectViolations = (form: ReadDefinitionForm, definition: Argument | undefined): string[] => {
+  if (form !== 'object' || definition?.type !== 'ObjectExpression') {
+    return [];
+  }
+  const names = definition.properties.map((property) =>
+    property.type === 'Property' ? staticPropertyName(property) : undefined,
+  );
+  return names.includes('run') ? ['{ run } must hold exactly the one run entry'] : [];
+};
+
+/**
+ * The parser-visible rules of the read SDK form. The second `defineRead` argument is a bare handler,
+ * `{ load }` or `{ run }` (the handler itself is judged by `hasReadCallbacks`). `accessQuestions` stand
+ * only beside `{ load }` or `{ run }`, `calls` only beside `{ run }`; each call names an operation
+ * reference of a public contract package or `coreOperations`, and a `{ run }` read builds no gateway
+ * call by hand. Whether the manifest covers each call is decided by Core at registration
+ * (`declaredCallsIssues`). Returns every violation.
+ */
+export const readSdkFormViolations = (input: ReadSdkFormInput): readonly string[] => {
+  const source = input.source ?? input.sources.get(input.readFile);
+  const program = source === undefined ? undefined : parseTypeScript(input.readFile, source);
+  const read = program === undefined ? undefined : definedReadCall(program, input.readName);
+  const [descriptor, definition] = read?.arguments ?? [];
+  if (program === undefined || descriptor?.type !== 'ObjectExpression') {
+    return [`${input.readFile}: ${input.readName} must be defineRead({ ... }, ...)`];
+  }
+  const form = readDefinitionForm(definition);
+  const imports = topLevelImports(program);
+  const initializers = topLevelConstInitializers(program);
+  const violations = readDefinitionObjectViolations(form, definition);
+  const accessQuestions = objectPropertiesNamed(descriptor, 'accessQuestions');
+  const calls = objectPropertiesNamed(descriptor, 'calls');
+  if (accessQuestions.length > 1 || calls.length > 1) {
+    violations.push('accessQuestions and calls are declared at most once');
+  }
+  const [questions] = accessQuestions;
+  if (questions !== undefined) {
+    // Demo-only exception 3: a staged pipeline (`object`) receives Core's answers in its steps' context too.
+    if (form === 'bare') {
+      violations.push('accessQuestions stand only beside { load } or { run }, or in a staged pipeline');
+    }
+    violations.push(...accessQuestionViolations(questions.value, initializers, imports));
+  }
+  const [declaredCalls] = calls;
+  if (declaredCalls !== undefined) {
+    if (form !== 'run') {
+      violations.push('calls stand only beside { run }');
+    }
+    violations.push(...declaredCallsViolations(declaredCalls.value, initializers, imports, input));
+  }
+  if (form === 'run') {
+    violations.push(...runReadImportViolations(program));
+  }
+  return violations.map((violation) => `${input.readFile}: ${violation}`);
 };
 
 const hasReadEntrypoint = (source: string, entrypoint: string, identity: Readonly<Record<string, string>>): boolean => {
@@ -3495,6 +3928,13 @@ const hasReadContract = (
     }),
     policy: hasReadDescriptorPolicy(read, allowedAccessKinds, v2Access),
     readCall: isWholeObjectCall(readExpression, read, /^defineRead\(/u),
+    sdkForm:
+      readSdkFormViolations({
+        readFile,
+        readName: `${camel}Read`,
+        source,
+        sources,
+      }).length === 0,
   };
   return Object.values(checks).every(Boolean);
 };
@@ -4730,20 +5170,6 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
   });
 };
 
-export const PublicContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerAppId'));
-export const PublicContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerModuleId'));
-const PublicContractPackageManifestSchema = Schema.Struct({
-  exports: Schema.Record(Schema.String, Schema.String),
-  name: Schema.String,
-  ontosContractOwner: Schema.Struct({
-    appId: PublicContractOwnerAppIdSchema,
-    moduleApis: Schema.Array(Schema.String),
-    moduleId: PublicContractOwnerModuleIdSchema,
-    packageName: Schema.String,
-  }),
-});
-const OwnerPackageManifestSchema = Schema.Struct({ name: Schema.String });
-
 interface ResolvedPublicContract {
   readonly packagePath: string;
   readonly source: string;
@@ -4757,17 +5183,10 @@ type ExpectedPublicContractOwner = {
   readonly packageName: string;
 } & ({ readonly moduleApi: string } | { readonly actionSlug: string });
 
-interface PublicContractSpecifierParts {
-  readonly exportName: string;
-  readonly packageName: string;
-}
-
 interface PublicContractSourceLocation {
   readonly packageDirectory: string;
   readonly sourcePath: string;
 }
-
-type PublicContractPackageManifest = typeof PublicContractPackageManifestSchema.Type;
 
 const publicContractSpecifier = (source: string): string | undefined => {
   const annotated = /^\/\/ @ontos-public-contract (?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)$/mu.exec(
@@ -4846,30 +5265,6 @@ const isClosedPublicContractExport = (source: string, specifier: string): boolea
 
 const isExactPublicContractShim = (source: string, header: string, specifier: string): boolean =>
   hasGeneratedSourceHeader(source, header) && isClosedPublicContractExport(source, specifier);
-
-const publicContractSpecifierParts = (specifier: string): PublicContractSpecifierParts | undefined => {
-  const [scope, packageStem, ...subpathSegments] = specifier.split('/');
-  return scope !== '@app' || packageStem === undefined || subpathSegments.length === 0
-    ? undefined
-    : {
-        exportName: `./${subpathSegments.join('/')}`,
-        packageName: `${scope}/${packageStem}`,
-      };
-};
-
-const publicContractPackageManifests = (
-  sources: ReadonlyMap<string, string>,
-  packageName: string,
-): readonly (readonly [string, PublicContractPackageManifest])[] =>
-  [...sources.entries()].flatMap(([candidate, source]) => {
-    if (!candidate.startsWith('packages/') || !candidate.endsWith('/package.json')) {
-      return [];
-    }
-    const decoded = Option.getOrUndefined(
-      Schema.decodeUnknownOption(Schema.fromJsonString(PublicContractPackageManifestSchema))(source),
-    );
-    return decoded?.name === packageName ? [[candidate, decoded] as const] : [];
-  });
 
 const hasExpectedPublicContractOwner = (
   manifest: PublicContractPackageManifest,
@@ -23364,6 +23759,20 @@ export const hasOriginalReadServiceFactoryProvenance = (
 };
 
 /** The identical complete Read proof used by the combined seam, without inventing a service-factory export. */
+/** A read given to `defineRead` as the single-entry `{ run }` object: main's SDK form. */
+const isRunFormRead = (source: string, name: string): boolean => {
+  const readExpression = assignedExpression(
+    source,
+    new RegExp(`export const ${escapeRegExp(toCamelCase(name))}Read\\s*=\\s*`, 'u'),
+  );
+  const handler = readExpression === undefined ? undefined : callArgument(readExpression, /^defineRead\(/u, 1);
+  return (
+    handler !== undefined &&
+    topLevelObjectEntries(handler)?.length === 1 &&
+    objectPropertyValue(handler, 'run') !== undefined
+  );
+};
+
 export const hasCompleteGeneratedModuleRead = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
@@ -23373,19 +23782,15 @@ export const hasCompleteGeneratedModuleRead = (
   diagnostics?: string[],
 ): boolean => {
   const source = sources.get(readFile);
+  const contribution = { contractStem: name, kind: MODULE_API_KIND, name } as const;
   return (
     readFile === `${ownerPath}/src/api/${name}.read.ts` &&
     source !== undefined &&
     hasGeneratedSourceHeader(source, MODULE_API_HEADER) &&
-    hasCompleteContributionReadStaged(
-      source,
-      { contractStem: name, kind: MODULE_API_KIND, name },
-      moduleId,
-      sources,
-      readFile,
-      ownerPath,
-      diagnostics,
-    )
+    // A `{ run }` read has no phases for the staged proof to bind: it is judged by main's handler rules.
+    (isRunFormRead(source, name)
+      ? hasCompleteContributionRead(source, contribution, moduleId, sources, readFile, ownerPath)
+      : hasCompleteContributionReadStaged(source, contribution, moduleId, sources, readFile, ownerPath, diagnostics))
   );
 };
 

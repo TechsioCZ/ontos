@@ -34,6 +34,7 @@ import {
   ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type {
   ActionCoreError,
   ActionRuntimeService,
@@ -48,7 +49,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Crypto, Effect, Layer, Logger, Schema, Predicate } from 'effect';
+import { Clock, ConfigProvider, Context, Crypto, Effect, Layer, Logger, Schema, Predicate } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -281,6 +282,7 @@ const makeAssertion = (
       use: 'sig',
     };
     const tokenId = yield* nextUuid;
+    const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: snapshot.composition.revision,
@@ -296,13 +298,14 @@ const makeAssertion = (
         .setIssuer(options.tokenIssuer ?? issuer)
         .setAudience(audience)
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime(options.expiresAt ?? '5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(options.expiresAt ?? issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(tokenId)
         .sign(privateKey),
     );
     const otherPrincipal = { ...principal, principalId: yield* nextUuid };
     const otherTokenId = yield* nextUuid;
+    const otherIssuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const otherToken = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: snapshot.composition.revision,
@@ -318,8 +321,8 @@ const makeAssertion = (
         .setIssuer(issuer)
         .setAudience(audience)
         .setSubject(otherPrincipal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(otherIssuedAt)
+        .setExpirationTime(otherIssuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(otherTokenId)
         .sign(privateKey),
     );

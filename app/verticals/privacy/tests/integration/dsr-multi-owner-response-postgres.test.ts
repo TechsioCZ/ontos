@@ -35,7 +35,7 @@ import {
 } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { createHttpApiHandler } from '@modern-js/bff-effect/effect-edge';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makePrivacyApiRuntime } from '../../api/index.ts';
@@ -580,6 +580,7 @@ const makeDsrHttp = Effect.fn('DsrMultiOwner.makeHttp')(function* makeDsrHttp(
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const authorize = Effect.fn('DsrMultiOwner.freshGatewayAssertion')(function* authorize() {
     const jti = yield* nextId;
+    const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
     const token = yield* Effect.tryPromise({
       catch: authorityFailure,
       try: async () =>
@@ -593,8 +594,8 @@ const makeDsrHttp = Effect.fn('DsrMultiOwner.makeHttp')(function* makeDsrHttp(
           .setIssuer(issuer)
           .setAudience('privacy')
           .setSubject(native.principal.principalId)
-          .setIssuedAt()
-          .setExpirationTime('5m')
+          .setIssuedAt(issuedAt)
+          .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
           .setJti(jti)
           .sign(pair.privateKey),
     });
@@ -866,7 +867,7 @@ it.live(
     Effect.gen(function* nativeRedemption() {
       const { makeRedemption } = yield* makeDsrIsolation();
       const jti = yield* nextId;
-      const expiresAtEpochSeconds = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000) + 300;
+      const expiresAtEpochSeconds = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000) + 300;
       const input = { audience: 'privacy', expiresAtEpochSeconds, issuer: 'TEST.issuer', jti };
       const closedService = yield* Effect.scoped(
         Effect.gen(function* firstStorageScope() {

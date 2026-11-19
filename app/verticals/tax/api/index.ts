@@ -5,6 +5,7 @@ import {
   makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { taxRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
@@ -136,6 +137,7 @@ const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, taxRegistra
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );
 
 /** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */

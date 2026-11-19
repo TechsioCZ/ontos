@@ -4,7 +4,10 @@ import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './te
 import { Effect, Schema } from 'effect';
 
 import { AccessKeySyntaxSchema, WorkloadKeySchema } from '../authorization/access-key-syntax.ts';
+import { CoreOperationRouteSchema, RequirementCallerSchema } from '../sdk/index.ts';
+import type { AnyDeclaredCall, DeclaredCalls } from '../sdk/index.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
+import type { OntosRegisteredWorkloadCall } from './registered-workload-calls.ts';
 
 /** Required compatibility claim; providers advertise it only with executed closure enforcement. */
 export const ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY = Object.freeze({
@@ -39,8 +42,15 @@ export const OntosCoreCapabilityRequirementSchema = Schema.Struct({
   version: Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u)),
 });
 
-/** Conditions and evidence meanings are data owned by the consumer, never executable selectors. */
+/**
+ * Conditions and evidence meanings are data owned by the consumer, never executable selectors.
+ * `callers` are the caller identities a call to a vertical provider may carry (see
+ * `RequirementCallerSchema` in `@app/core-runtime/sdk`): required and non-empty for a vertical
+ * provider that a declared call uses, and absent for a Core provider (`core.*`), which Core runs
+ * in-process with the execution's own principal.
+ */
 export const OntosOperationRequirementSchema = Schema.Struct({
+  callers: Schema.optionalKey(Schema.Array(RequirementCallerSchema)),
   condition: OntosModuleIdSchema,
   entrypointKey: OntosModuleIdSchema,
   evidence: boundedIdentities,
@@ -89,6 +99,121 @@ export type OntosOperationContract = typeof OntosOperationContractSchema.Type;
 const unique = (values: readonly string[]): boolean => new Set(values).size === values.length;
 const owns = (moduleId: string, key: string): boolean => key.startsWith(`${moduleId}.`);
 
+/** A provider whose module id is a Core module: Core itself satisfies it, never the composition. */
+export const isCoreOperationProvider = (provider: { readonly moduleId: string }): boolean =>
+  provider.moduleId.startsWith('core.');
+
+/**
+ * Core runs a Core provider in-process with the execution's own principal, so its requirement names no
+ * caller. A vertical provider's `callers`, when declared, list each caller kind at most once, so Core
+ * always selects exactly one and never has to choose between two.
+ */
+const requirementCallersIssue = (requirement: OntosOperationRequirement): string | undefined => {
+  const { callers } = requirement;
+  if (callers === undefined) {
+    return undefined;
+  }
+  if (isCoreOperationProvider(requirement.provider)) {
+    return `operation requirement ${requirement.key} on a Core provider must not declare callers`;
+  }
+  if (callers.length === 0) {
+    return `operation requirement ${requirement.key} must declare at least one caller or none at all`;
+  }
+  return unique(callers.map(({ kind }) => kind))
+    ? undefined
+    : `operation requirement ${requirement.key} declares a caller kind more than once`;
+};
+
+export const sameOperationProvider = (
+  left: Readonly<OntosOperationRequirement['provider']>,
+  right: Readonly<OntosOperationRequirement['provider']>,
+): boolean =>
+  left.moduleId === right.moduleId &&
+  left.entrypointKey === right.entrypointKey &&
+  left.schemaVersion === right.schemaVersion;
+
+/** What the definition-time check of an operation's declared calls reads. */
+interface DeclaredCallsCheck {
+  readonly calls: DeclaredCalls;
+  readonly consumerEntrypointKey: string;
+  readonly consumerKind: 'action' | 'read' | 'worker';
+  readonly registeredWorkloadCalls: readonly OntosRegisteredWorkloadCall[];
+  readonly requirements: OntosModuleRequirements | undefined;
+}
+
+const requirementCallersIssues = (
+  label: string,
+  requirement: OntosOperationRequirement,
+  registeredWorkloadCalls: readonly OntosRegisteredWorkloadCall[],
+): readonly string[] => {
+  if (isCoreOperationProvider(requirement.provider)) {
+    return requirement.callers === undefined
+      ? []
+      : [`${label}: requirement ${requirement.key} names a Core provider and must declare no callers`];
+  }
+  const callers = requirement.callers ?? [];
+  if (callers.length === 0) {
+    return [`${label}: requirement ${requirement.key} must declare the callers a call to its provider may carry`];
+  }
+  return callers.flatMap((caller) =>
+    caller.kind === 'person' ||
+    registeredWorkloadCalls.some(
+      (call) =>
+        call.declarationKey === caller.declarationKey && call.entrypointKey === requirement.provider.entrypointKey,
+    )
+      ? []
+      : [
+          `${label}: ${caller.kind} caller ${caller.declarationKey} of requirement ${requirement.key} has no registeredWorkloadCalls entry for ${requirement.provider.entrypointKey}`,
+        ],
+  );
+};
+
+const writeCallIssues = (label: string, declared: AnyDeclaredCall, check: DeclaredCallsCheck): readonly string[] => {
+  if (declared.operation.kind !== 'write') {
+    return declared.recovery === undefined ? [] : [`${label}: only a write call names a recovery`];
+  }
+  const recovery =
+    declared.recovery !== undefined && Object.hasOwn(check.calls, declared.recovery)
+      ? check.calls[declared.recovery]
+      : undefined;
+  return [
+    ...(check.consumerKind === 'read' ? [`${label}: a read declares only read calls`] : []),
+    ...(recovery?.operation.kind === 'read'
+      ? []
+      : [`${label}: a write call names a read call of the same calls as its recovery`]),
+  ];
+};
+
+const declaredCallIssues = (name: string, declared: AnyDeclaredCall, check: DeclaredCallsCheck): readonly string[] => {
+  const label = `${check.consumerEntrypointKey} call ${name}`;
+  const { operation } = declared;
+  const issues = [...writeCallIssues(label, declared, check)];
+  if (isCoreOperationProvider(operation.provider) !== Schema.is(CoreOperationRouteSchema)(operation.route)) {
+    issues.push(`${label}: a Core provider is reached in-process and a vertical provider over its module route`);
+  }
+  const requirement = check.requirements?.operations.find(({ key }) => key === declared.requirementKey);
+  if (requirement === undefined) {
+    return [...issues, `${label}: requirement ${declared.requirementKey} is not declared by the module`];
+  }
+  if (requirement.entrypointKey !== check.consumerEntrypointKey) {
+    issues.push(`${label}: requirement ${requirement.key} belongs to entrypoint ${requirement.entrypointKey}`);
+  }
+  if (!sameOperationProvider(requirement.provider, operation.provider)) {
+    issues.push(`${label}: requirement ${requirement.key} names another provider than the called operation`);
+  }
+  return [...issues, ...requirementCallersIssues(label, requirement, check.registeredWorkloadCalls)];
+};
+
+/**
+ * Every declared call names a requirement of the same module whose entrypoint is the declaring
+ * operation's and whose provider is the reference's; a vertical provider's requirement lists its
+ * callers, each registered or workload caller backed by a `registeredWorkloadCalls` entry for the
+ * provider's entrypoint; a Core provider's lists none. A read declares only read calls, and a write
+ * call's recovery names a read call of the same calls. Every issue, in declaration order.
+ */
+export const declaredCallsIssues = (check: DeclaredCallsCheck): readonly string[] =>
+  Object.entries(check.calls).flatMap(([name, declared]) => declaredCallIssues(name, declared, check));
+
 const requirementsIssue = (moduleId: string, requirements: OntosModuleRequirements): string | undefined => {
   if (
     !unique(requirements.intrinsic.map((requirement) => requirement.moduleId)) ||
@@ -116,6 +241,10 @@ const requirementsIssue = (moduleId: string, requirements: OntosModuleRequiremen
       !unique(requirement.evidence)
     ) {
       return 'operation requirements must preserve consumer/provider ownership and unique evidence meanings';
+    }
+    const callersIssue = requirementCallersIssue(requirement);
+    if (callersIssue !== undefined) {
+      return callersIssue;
     }
     branches.push(
       // These schema-validated dotted identifiers cannot contain the separator.

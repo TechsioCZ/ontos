@@ -3,20 +3,18 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
-  requireModuleOperation,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   OperationContextUnavailable,
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ReadFinishContext,
-  ReadHandlerExecutionError,
-  ReadLoadContext,
-} from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { OperationalScope } from '@app/core-runtime';
+import { declaredCall } from '@app/core-runtime/sdk';
+import type { TransactionCapability } from '@app/core-runtime/sdk';
+import { readAnswer } from '@app/core-runtime/sdk/read';
+import type { NoAccessQuestions, ReadRunContext } from '@app/core-runtime/sdk/read';
+import { validatePriceGroupCompatibilityOperation } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
@@ -28,31 +26,47 @@ import type {
   CustomerPriceGroupResolutionRequest,
   CustomerPriceGroupResolutionResponse,
 } from '../../shared/apis/customer-price-group-resolution.ts';
-import type { CustomerPriceGroupAssignment, PriceGroupInstant } from '../../shared/domain/price-group-contracts.ts';
+import type {
+  CustomerPriceGroupAssignment,
+  CustomerPriceGroupResolution,
+  PriceGroupInstant,
+} from '../../shared/domain/price-group-contracts.ts';
 import type {
   CustomerPriceGroupAssignmentStorePort,
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
-import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { resolveCustomerPriceGroupAt } from '../../shared/domain/price-group-resolution.ts';
-import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
+import { priceGroupCatalogPortFromCall } from '../integrations/price-group-catalog.ts';
 import {
   customerPriceGroupAssignmentStoreForTransaction,
   customerPriceGroupProfileValidationForTransaction,
 } from '../persistence/price-group-persistence.ts';
 import type { PriceGroupRoutineInvoker } from '../persistence/price-group-persistence.ts';
-import { stableRevision } from '../stable-revision.ts';
+import { validateCustomerPriceGroupReadProfile } from './customer-price-group-assignment-read.read.ts';
 import { customerPriceGroupOwnerFacts } from './customer-price-group-read-permission.ts';
 
 const CUSTOMER_CONTEXT_MODULE_ID = 'commerce.customer-context' as const;
 
+/** Owner services over the scoped transaction only: the clock, profile validation and the assignment store. */
 export interface CustomerPriceGroupResolutionServices {
-  readonly catalog: PriceGroupCatalogPort;
   readonly now: Effect.Effect<PriceGroupInstant>;
   readonly profileValidation: CustomerPriceGroupProfileValidationPort;
   readonly store: CustomerPriceGroupAssignmentStorePort;
 }
+
+const customerPriceGroupResolutionCalls = {
+  compatibility: declaredCall(
+    validatePriceGroupCompatibilityOperation,
+    'commerce.customer-context.requirement.price-group-single-assignment',
+  ),
+} as const;
+
+type CustomerPriceGroupResolutionRunContext = ReadRunContext<
+  CustomerPriceGroupResolutionServices,
+  typeof customerPriceGroupResolutionCalls,
+  NoAccessQuestions
+>;
 
 const notFound = () =>
   new ReadHandlerNotFound({
@@ -113,27 +127,23 @@ const verificationReference = (input: {
   return `commerce.customer-context.customer-price-group.verification:v1:sha256:${digest}`;
 };
 
-/** SQL-only snapshot at the original effective time. No remote Catalog call is retained in it. */
-export const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolution.loadSnapshot')(
+/**
+ * The owner's own facts, read in one transaction: the profile still exists for this subject, and its
+ * complete current assignment set at `effectiveAt` (the request's instant, or the owner's now).
+ */
+const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.loadSnapshot')(
   function* loadSnapshot(
     input: CustomerPriceGroupResolutionRequest,
     tenantId: string,
-    services: Omit<CustomerPriceGroupResolutionServices, 'catalog'>,
+    services: CustomerPriceGroupResolutionServices,
   ) {
-    if (input.profile.tenantId !== tenantId) {
-      return yield* notFound();
-    }
-    const effectiveAt = input.effectiveAt ?? (yield* services.now);
-    const validation = yield* services.profileValidation
-      .inspect(
-        input.profile,
-        effectiveAt,
-        input.authorizationSubject.kind === 'COUNTERPARTY' ? input.authorizationSubject.counterpartyRef : undefined,
-      )
-      .pipe(Effect.mapError(unavailable));
-    if (validation._tag === 'NOT_FOUND') {
-      return yield* notFound();
-    }
+    const effectiveAt = yield* validateCustomerPriceGroupReadProfile(
+      input,
+      tenantId,
+      services,
+      unavailable,
+      input.effectiveAt,
+    );
     const lookup = yield* services.store.resolve(input.profile, effectiveAt).pipe(Effect.mapError(unavailable));
     if (lookup._tag === 'profile_not_found') {
       return yield* notFound();
@@ -142,100 +152,114 @@ export const loadCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResol
       assignments: lookup.assignments,
       effectiveAt,
       generation: currentSetGeneration(input.profile, lookup.assignments),
-      ownerState: stableRevision({ assignments: lookup.assignments, validation }),
     };
   },
 );
-export type CustomerPriceGroupSnapshot = Effect.Success<ReturnType<typeof loadCustomerPriceGroupSnapshot>>;
+type CustomerPriceGroupSnapshot = Effect.Success<ReturnType<typeof loadCustomerPriceGroupSnapshot>>;
 
-export const recheckCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolution.recheckSnapshot')(
+/** The public answer about one snapshot: its resolution and the evidence that binds both to the owner's set. */
+const customerPriceGroupResolutionResponse = (
+  profile: CustomerPriceGroupResolutionRequest['profile'],
+  snapshot: CustomerPriceGroupSnapshot,
+  resolution: CustomerPriceGroupResolution,
+  observedAt: PriceGroupInstant,
+): CustomerPriceGroupResolutionResponse => {
+  const { effectiveAt, generation } = snapshot;
+  const predicateRef = customerPriceGroupResolutionPredicateRef(profile, effectiveAt);
+  const ownerRevision = generation;
+  const verificationRef = verificationReference({ generation, observedAt, predicateRef });
+  return {
+    completenessEvidence: {
+      observedAt,
+      ownerRevision,
+      scope: { kind: 'EXACT_PREDICATE', predicateRef },
+    },
+    currentnessEvidence: {
+      evaluatedAt: effectiveAt,
+      generation,
+      observedAt,
+      ownerRevision,
+      predicateRef,
+      revalidatedAt: observedAt,
+      verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
+    },
+    effectiveAt,
+    generation,
+    observedAt,
+    profile,
+    resolution,
+    verificationReceipt: {
+      generation,
+      issuedAt: observedAt,
+      ownerModuleId: CUSTOMER_CONTEXT_MODULE_ID,
+      ownerRevision,
+      predicateRef,
+      verificationRef,
+    },
+  };
+};
+
+/** The same assignment set is still the owner's current one at the snapshot's instant: when it is, observe. */
+const recheckCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolutionRead.recheckSnapshot')(
   function* recheckSnapshot(
     input: CustomerPriceGroupResolutionRequest,
     tenantId: string,
-    services: Omit<CustomerPriceGroupResolutionServices, 'catalog'>,
-    expected: CustomerPriceGroupSnapshot,
+    services: CustomerPriceGroupResolutionServices,
+    snapshot: CustomerPriceGroupSnapshot,
   ) {
     const current = yield* loadCustomerPriceGroupSnapshot(
-      { ...input, effectiveAt: expected.effectiveAt },
+      { ...input, effectiveAt: snapshot.effectiveAt },
       tenantId,
       services,
     );
-    if (current.ownerState !== expected.ownerState) {
-      return yield* unavailable('The profile or current Price Group assignment changed during Catalog resolution');
+    if (current.generation !== snapshot.generation) {
+      return yield* unavailable('The current Price Group assignment set changed during Catalog resolution');
     }
-    return yield* Effect.void;
+    return yield* services.now;
   },
 );
 
-/** Catalog I/O runs after commit; the scoped recheck completes before any result is released. */
-export const finishCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolution.finishSnapshot')(
-  function* finishSnapshot<Requirements>(
-    input: CustomerPriceGroupResolutionRequest,
-    snapshot: CustomerPriceGroupSnapshot,
-    catalog: PriceGroupCatalogPort,
-    recheck: Effect.Effect<
-      void,
-      ReadHandlerExecutionError | ReadHandlerNotFound | ReadHandlerUnavailable | OperationContextUnavailable,
-      Requirements
-    >,
-    now: Effect.Effect<PriceGroupInstant>,
-  ) {
-    const { effectiveAt, generation } = snapshot;
-    const resolution = yield* resolveCustomerPriceGroupAt(
-      input.profile,
-      snapshot.assignments,
-      effectiveAt,
-      catalog,
-    ).pipe(Effect.mapError(unavailable));
-    yield* recheck;
-    const observedAt = yield* now;
-    const predicateRef = customerPriceGroupResolutionPredicateRef(input.profile, effectiveAt);
-    const ownerRevision = generation;
-    const verificationRef = verificationReference({ generation, observedAt, predicateRef });
-    return {
-      completenessEvidence: { observedAt, ownerRevision, scope: { kind: 'EXACT_PREDICATE', predicateRef } },
-      currentnessEvidence: {
-        evaluatedAt: effectiveAt,
-        generation,
-        observedAt,
-        ownerRevision,
-        predicateRef,
-        revalidatedAt: observedAt,
-        verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
-      },
-      effectiveAt,
-      generation,
-      observedAt,
-      profile: input.profile,
-      resolution,
-      verificationReceipt: {
-        generation,
-        issuedAt: observedAt,
-        ownerModuleId: CUSTOMER_CONTEXT_MODULE_ID,
-        ownerRevision,
-        predicateRef,
-        verificationRef,
-      },
-    } satisfies CustomerPriceGroupResolutionResponse;
-  },
-);
+/** What the resolution needs from Core: the Catalog over Core's `call`, and Core's owner transaction. */
+export interface CustomerPriceGroupResolutionSteps {
+  readonly catalog: PriceGroupCatalogPort;
+  readonly transaction: TransactionCapability<CustomerPriceGroupResolutionServices>;
+}
 
-export const resolveCustomerPriceGroupFromServices = Effect.fn('CustomerPriceGroupResolution.resolveFromServices')(
-  function* resolve(
-    input: CustomerPriceGroupResolutionRequest,
-    tenantId: string,
-    services: CustomerPriceGroupResolutionServices,
-  ) {
-    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
-    return yield* finishCustomerPriceGroupSnapshot(
-      input,
-      snapshot,
-      services.catalog,
-      recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot),
-      services.now,
-    );
-  },
-);
+/**
+ * Three steps, so no Catalog call runs while the owner's transaction is open:
+ * 1. one owner transaction loads the profile and its current assignment set;
+ * 2. with no transaction open, the Catalog decides the one current assignment;
+ * 3. a second transaction proves the same set is still current at the same instant, and observes.
+ * Catalog failures stay unavailability: they never collapse into NONE, which would grant default pricing.
+ */
+export const resolveCustomerPriceGroup = Effect.fn('CustomerPriceGroupResolutionRead.resolve')(function* resolve(
+  input: CustomerPriceGroupResolutionRequest,
+  tenantId: string,
+  steps: CustomerPriceGroupResolutionSteps,
+) {
+  const snapshot = yield* steps.transaction((services) => loadCustomerPriceGroupSnapshot(input, tenantId, services));
+  const result = yield* resolveCustomerPriceGroupAt(
+    input.profile,
+    snapshot.assignments,
+    snapshot.effectiveAt,
+    steps.catalog,
+  ).pipe(
+    Effect.mapError(unavailable),
+    Effect.flatMap((resolution) =>
+      steps
+        .transaction((services) => recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot))
+        .pipe(
+          Effect.map((observedAt) =>
+            customerPriceGroupResolutionResponse(input.profile, snapshot, resolution, observedAt),
+          ),
+        ),
+    ),
+  );
+  const { resolution } = result;
+  const resultCount =
+    resolution._tag === 'NONE' ? 0 : resolution._tag === 'INCONSISTENT' ? resolution.currentAssignmentCount : 1;
+  return readAnswer(result, { resultCount });
+});
 
 const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -245,46 +269,10 @@ const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-export const customerPriceGroupCatalogForScope = Effect.fn('CustomerPriceGroupResolution.catalogForScope')(
-  function* requiredCatalogPort(scope: OperationalScope) {
-    const catalog = yield* priceGroupCatalogPortFromEnvironment({
-      operationRequirementKey: 'commerce.customer-context.requirement.price-group-single-assignment',
-      requestCorrelation: scope.correlationId,
-      subject: { _tag: 'Assertion', scope },
-    });
-    const requiredCatalog: PriceGroupCatalogPort = {
-      resolveCurrent: (...args) =>
-        requireModuleOperation('commerce.customer-context.requirement.price-group-single-assignment').pipe(
-          Effect.mapError((cause) =>
-            Object.defineProperty(
-              new CustomerPriceGroupCatalogUnavailable({
-                code: 'customer_price_group_catalog_unavailable',
-                reason: 'Required Price Group Catalog operation is unavailable',
-              }),
-              'cause',
-              { configurable: true, value: cause },
-            ),
-          ),
-          Effect.flatMap(() => catalog.resolveCurrent(...args)),
-        ),
-    };
-    return requiredCatalog;
-  },
-);
-
 export const customerPriceGroupResolutionServicesForTransaction = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string | undefined,
-): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable, Crypto.Crypto> => {
-  if (compositionRevision === undefined) {
-    return Effect.fail(
-      new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Cross-owner Read credentials require a verified composition revision',
-      }),
-    );
-  }
+): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable> => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -295,14 +283,10 @@ export const customerPriceGroupResolutionServicesForTransaction = (
     );
   }
   const trustedScope = { ...scope, legalEntityId };
-  return Effect.gen(function* makeCustomerPriceGroupResolutionServices() {
-    const requiredCatalog = yield* customerPriceGroupCatalogForScope(scope);
-    return {
-      catalog: requiredCatalog,
-      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-      profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
-      store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
-    };
+  return Effect.succeed({
+    now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+    profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
+    store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
   });
 };
 
@@ -323,6 +307,7 @@ export const customerPriceGroupResolutionRead = defineRead(
     },
     accessKind: 'detail',
     accessOwnerFacts: customerPriceGroupOwnerFacts,
+    calls: customerPriceGroupResolutionCalls,
     domainErrorSchema: Schema.Never,
     entrypoint: customerPriceGroupResolutionEntrypoint,
     evidencePolicy: {
@@ -338,37 +323,15 @@ export const customerPriceGroupResolutionRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (
+    run: Effect.fn('CustomerPriceGroupResolutionRead.run')(function* run(
       input: CustomerPriceGroupResolutionRequest,
-      context: ReadLoadContext<CustomerPriceGroupResolutionServices>,
-    ) => loadCustomerPriceGroupSnapshot(input, context.scope.tenantId, context.services),
-    finish: Effect.fn('CustomerPriceGroupResolution.finish')(function* finish(
-      input: CustomerPriceGroupResolutionRequest,
-      context: ReadFinishContext<undefined, CustomerPriceGroupSnapshot>,
+      context: CustomerPriceGroupResolutionRunContext,
     ) {
-      const { compositionRevision, scope } = context;
-      const catalog = yield* customerPriceGroupCatalogForScope(scope);
-      const recheck = context.transaction((transaction) =>
-        customerPriceGroupResolutionServicesForTransaction(transaction, scope, compositionRevision).pipe(
-          Effect.flatMap((services) =>
-            recheckCustomerPriceGroupSnapshot(input, scope.tenantId, services, context.loaded),
-          ),
-        ),
-      );
-      const result = yield* finishCustomerPriceGroupSnapshot(
-        input,
-        context.loaded,
-        catalog,
-        recheck,
-        DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-      );
-      const resultCount =
-        result.resolution._tag === 'NONE'
-          ? 0
-          : result.resolution._tag === 'INCONSISTENT'
-            ? result.resolution.currentAssignmentCount
-            : 1;
-      return { evidence: { resultCount }, result };
+      // Core owns the Catalog call: requirement, caller identity, credential, route, revision and decoding.
+      return yield* resolveCustomerPriceGroup(input, context.scope.tenantId, {
+        catalog: priceGroupCatalogPortFromCall((payload) => context.call('compatibility', payload)),
+        transaction: context.transaction,
+      });
     }),
   },
   customerPriceGroupResolutionServicesForTransaction,

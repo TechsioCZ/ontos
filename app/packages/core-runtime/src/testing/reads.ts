@@ -31,6 +31,9 @@ import type {
   ContextAccessDecision,
   ContextAccessService,
 } from '../permissions/context-access.ts';
+import type { CallRoute, CallRouteRequest } from '../execution/contract.ts';
+import type { CoreTransaction } from '../db/types.ts';
+import type { BoundAccessGate } from '../operations/access-gate.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 import type { ReadRuntimeOptions, ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
@@ -53,6 +56,11 @@ export interface ReadTestHarnessOptions extends Pick<
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
   readonly legalEntityPermissionDecisions?: Readonly<Partial<Record<LegalEntityPermissionKey, ContextAccessDecision>>>;
+  /**
+   * A stub of the governed HTTP route to verticals (`ModuleCallRoute`) for `{ run }` reads that call
+   * another module. The harness records every request it receives in `snapshot().routedCalls`.
+   */
+  readonly moduleCallRoute?: CallRoute;
   /** Observes the owner overlay input the runtime builds inside the transaction and answers it (O70). */
   readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   readonly operationTime: Date;
@@ -162,14 +170,25 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   const stages: ReadRuntimeStage[] = [];
   const statements: string[] = [];
   const ownerQueries: ReadTestOwnerQuery[] = [];
+  const routedCalls: CallRouteRequest[] = [];
+  /** Whether each access gate question was asked inside a transaction the runtime already held. */
+  const gateTransactions: ('none' | 'owned')[] = [];
   let evidenceWrites = 0;
+  let connectionsOpened = 0;
+  let openConnections = 0;
   let connectionQueue = Effect.void;
   const acquireConnection = Effect.gen(function* acquireReadTestConnection() {
     const previous = connectionQueue;
     const released = Deferred.makeUnsafe<null>();
     connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
     yield* previous;
-    yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
+    connectionsOpened += 1;
+    openConnections += 1;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        openConnections -= 1;
+      }).pipe(Effect.andThen(Deferred.succeed(released, null))),
+    );
     const scope = { legalEntityId: '', tenantId: '' };
     // The connected role: the shared runtime until a gateway scope is established.
     const connection = { role: SHARED_RUNTIME_IDENTITY.role };
@@ -188,7 +207,9 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     ): Effect.fn.Return<readonly object[], SqlError> {
       statements.push(sql);
       const text = sql.trim().replaceAll(/\s+/gu, ' ').toLowerCase();
-      if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/u.test(text)) {
+      if (
+        /^(?:begin|commit|rollback|savepoint|release savepoint|start transaction|set transaction)(?:\s|$)/u.test(text)
+      ) {
         return [];
       }
       if (text === 'select current_user::text as role') {
@@ -274,7 +295,10 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         yield* Schema.decodeUnknownEffect(readFenceValuesSchema)(params).pipe(Effect.orDie);
         return installedReadScopeRows(true);
       }
-      if (text === 'select transaction_timestamp() as operation_at') {
+      if (
+        text === 'select transaction_timestamp() as operation_at' ||
+        text === 'select statement_timestamp() as operation_at'
+      ) {
         return [{ operation_at: options.operationTime }];
       }
       if (text.startsWith('insert into "core"."data_access_events"')) {
@@ -383,8 +407,28 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   });
   // The same scripted gate answers the runtime and any owner code that asks the gate itself (O62).
   const scriptedGate = makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied');
+  const runtimeGate = options.accessDecision ?? scriptedGate.bound;
+  const observe = (transaction: CoreTransaction | undefined) => {
+    gateTransactions.push(transaction === undefined ? 'none' : 'owned');
+  };
+  const observedGate: BoundAccessGate = {
+    ...runtimeGate,
+    decide: (input, transaction) =>
+      Effect.sync(() => observe(transaction)).pipe(Effect.andThen(runtimeGate.decide(input, transaction))),
+    list: (input, transaction) =>
+      Effect.sync(() => observe(transaction)).pipe(Effect.andThen(runtimeGate.list(input, transaction))),
+  };
+  const { decideMany } = runtimeGate;
+  const accessDecision: BoundAccessGate =
+    decideMany === undefined
+      ? observedGate
+      : {
+          ...observedGate,
+          decideMany: (inputs, transaction) =>
+            Effect.sync(() => observe(transaction)).pipe(Effect.andThen(decideMany(inputs, transaction))),
+        };
   let runtimeOptions: ReadRuntimeOptions = {
-    accessDecision: options.accessDecision ?? scriptedGate.bound,
+    accessDecision,
     databaseIdentities,
     onStage: (stage) => {
       stages.push(stage);
@@ -402,6 +446,18 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   }
   if (options.shellSystemReads !== undefined) {
     runtimeOptions = { ...runtimeOptions, shellSystemReads: options.shellSystemReads };
+  }
+  const stubRoute = options.moduleCallRoute;
+  if (stubRoute !== undefined) {
+    runtimeOptions = {
+      ...runtimeOptions,
+      moduleCallRoute: {
+        send: (request) =>
+          Effect.sync(() => {
+            routedCalls.push(request);
+          }).pipe(Effect.andThen(stubRoute.send(request))),
+      },
+    };
   }
   const database = { executor };
   const runtime = makeReadRuntime(
@@ -429,10 +485,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       Layer.succeed(OperationalScopeResolver, scopeResolver),
       Layer.succeed(ContextAccess, contextAccess),
     ),
+    /** Scripted database connections open right now: zero while no transaction is held. */
+    openConnections: () => openConnections,
     runtime,
     snapshot: () => ({
+      connectionsOpened,
       evidenceWrites,
+      gateTransactions: [...gateTransactions],
       ownerQueries: [...ownerQueries],
+      routedCalls: [...routedCalls],
       stages: [...stages],
       statements: [...statements],
     }),

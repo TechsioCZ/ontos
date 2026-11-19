@@ -4,6 +4,7 @@ import {
   makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { OwnerActionApprovals, makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { storefrontRegistryRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
@@ -171,6 +172,10 @@ const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUni
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(compositionSourceLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
 const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -184,6 +189,7 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, s
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)))),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(

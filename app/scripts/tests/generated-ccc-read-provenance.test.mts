@@ -23,6 +23,9 @@ const collect = (directory: string): void => {
 };
 collect(owner);
 for (const file of [
+  // The provider whose operation customer-price-group-resolution declares as a call: main's `{ run }` rule
+  // resolves the declared call's import through this package's exports.
+  'packages/price-group-catalog-contracts/package.json',
   'packages/shared-contracts/package.json',
   'packages/shared-contracts/src/external-identity-client.ts',
 ]) {

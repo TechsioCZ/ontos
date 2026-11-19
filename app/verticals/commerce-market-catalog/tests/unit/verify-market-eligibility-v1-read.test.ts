@@ -1,9 +1,12 @@
-import { NodeCrypto } from '@effect/platform-node';
-import { getReadStages } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { CallUnavailableSchema, RequestExecutionSchema, callOkSchema } from '@app/core-runtime/sdk';
+import type { CallOutcome } from '@app/core-runtime/sdk';
+import { makeExecutionStandIn } from '@app/core-runtime/testing/sdk';
+import { MarketSubjectRestrictionsCurrentResponseSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
+import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
@@ -14,10 +17,10 @@ import type { MarketResolutionPersistence } from '../../src/persistence/market-r
 import { MarketResolutionPersistenceUnavailable } from '../../src/persistence/market-resolution-persistence.ts';
 import type { MarketSubjectRestrictionSnapshot } from '../../src/integrations/market-subject-restrictions.ts';
 import {
-  verifyMarketEligibilityV1Read,
-  handleVerifyMarketEligibilityV1,
-  prepareVerifyMarketEligibilityV1,
+  runVerifyMarketEligibilityV1,
+  verifyMarketEligibilityCalls,
 } from '../../src/api/verify-market-eligibility-v1.read.ts';
+import type { VerifyMarketEligibilityV1RunContext } from '../../src/api/verify-market-eligibility-v1.read.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const subjectId = '99999999-9999-4999-8999-999999999999';
@@ -41,6 +44,7 @@ const subject = {
     tenantId,
   },
 };
+/** The snapshot Market resolution receives for the Customer Context answer below. */
 const ownerRestrictions = (ownerRevision: string): MarketSubjectRestrictionSnapshot => ({
   allowedChannels: ['B2B'],
   allowedSellerIds: [sellerId],
@@ -52,6 +56,34 @@ const ownerRestrictions = (ownerRevision: string): MarketSubjectRestrictionSnaps
   subjectIdentityRef: subjectId,
   subjectKind: 'COUNTERPARTY',
 });
+/** Customer Context's current restrictions for the subject, as its contract answers them. */
+const ownerAnswer = (ownerRevision: string): MarketSubjectRestrictionsCurrentResponse =>
+  Schema.decodeUnknownSync(MarketSubjectRestrictionsCurrentResponseSchema)({
+    channelConstraint: { allowedChannels: ['B2B'], kind: 'ALLOWED_CHANNELS' },
+    completenessEvidence: {
+      observedAt: at,
+      ownerRevision,
+      scope: { kind: 'EXACT_PREDICATE', predicateRef: `market-subject-restrictions:${subjectId}` },
+    },
+    decision: 'ALLOWED',
+    evidenceRefs: ['ccc:market-restrictions:proof'],
+    marketConstraint: { kind: 'ANY_MARKET' },
+    observedAt: at,
+    outcome: 'SUBJECT_RESTRICTIONS_CURRENT',
+    ownerRevision,
+    profileState: 'ACTIVE',
+    sellerConstraint: {
+      kind: 'ALLOWED_SELLERS',
+      sellerRefs: [
+        { moduleId: 'core.identity', resourceId: sellerId, resourceType: 'core.identity.legal-entity', tenantId },
+      ],
+    },
+    subject,
+  });
+const answered = (
+  value: MarketSubjectRestrictionsCurrentResponse,
+): CallOutcome<MarketSubjectRestrictionsCurrentResponse> =>
+  callOkSchema(MarketSubjectRestrictionsCurrentResponseSchema).make({ value });
 const request = (effectiveAt = at, includeSubject = false) => {
   const requestBase = {
     channel: 'B2B',
@@ -127,35 +159,82 @@ const snapshotFor = (
     generation: 1,
   };
 };
+
+/** What happened, in order: the call, the transaction's begin and end, and the owner query inside it. */
+const StepSchema = Schema.Literals(['begin', 'call', 'end', 'load']);
+type Step = typeof StepSchema.Type;
+
+interface Fixture {
+  readonly answer?: CallOutcome<MarketSubjectRestrictionsCurrentResponse>;
+  readonly current: ReturnType<typeof snapshotFor>;
+  readonly persistenceUnavailable?: boolean;
+}
+
+/**
+ * Drives the read's `run` with Core's capability stand-ins, which keep the kernel's rule: a call while
+ * the owner transaction is open, or a nested transaction, dies.
+ */
+const harness = (fixture: Fixture) => {
+  const loads: { readonly restrictions: MarketSubjectRestrictionSnapshot | undefined; readonly sequence: number }[] =
+    [];
+  const persistenceFor = (sequence: number): MarketResolutionPersistence => ({
+    load: (_input, restrictions) =>
+      Effect.suspend(() => {
+        loads.push({ restrictions, sequence });
+        return fixture.persistenceUnavailable === true
+          ? Effect.fail(
+              new MarketResolutionPersistenceUnavailable({
+                code: 'market_resolution_persistence_unavailable',
+                reason: 'fixture unavailable',
+              }),
+            )
+          : Effect.succeed(fixture.current);
+      }),
+  });
+  const standIn = makeExecutionStandIn(verifyMarketEligibilityCalls, {
+    answers: { subjectRestrictions: () => Effect.succeed(fixture.answer ?? answered(ownerAnswer('subject:1'))) },
+    operationAt: DateTime.makeUnsafe(at),
+    services: persistenceFor,
+  });
+  const context: VerifyMarketEligibilityV1RunContext = {
+    access: {},
+    call: standIn.call,
+    execution: {
+      compositionRevision: 'composition-revision-1',
+      identity: RequestExecutionSchema.make({ via: 'person' }),
+      operationKey: 'commerce.market-catalog.api.verify-market-eligibility-v1',
+      owningModuleKey: 'commerce.market-catalog',
+    },
+    readKey: 'commerce.market-catalog.api.verify-market-eligibility-v1',
+    scope,
+    transaction: standIn.transaction,
+  };
+  /** The stand-in's steps with each owner query placed inside the transaction that ran it. */
+  const steps = (): Step[] =>
+    standIn.steps.flatMap((step): Step[] =>
+      step.kind === 'begin'
+        ? ['begin', ...loads.filter(({ sequence }) => sequence === step.sequence).map((): Step => 'load')]
+        : [step.kind],
+    );
+  return {
+    calledWith: () => standIn.steps.flatMap((step) => (step.kind === 'call' ? [step.input] : [])),
+    context,
+    loadedWith: () => loads.map(({ restrictions }) => restrictions),
+    steps,
+  };
+};
+
 const run = (
   input: ReturnType<typeof request>,
   observedProof: ReturnType<typeof proof>,
   current: ReturnType<typeof snapshotFor>,
-  restrictions?: MarketSubjectRestrictionSnapshot,
+  answer?: CallOutcome<MarketSubjectRestrictionsCurrentResponse>,
   persistenceUnavailable = false,
 ) => {
-  const persistence: MarketResolutionPersistence = {
-    load: () =>
-      persistenceUnavailable
-        ? Effect.fail(
-            new MarketResolutionPersistenceUnavailable({
-              code: 'market_resolution_persistence_unavailable',
-              reason: 'fixture unavailable',
-            }),
-          )
-        : Effect.succeed(current),
-  };
-  const reader = {
-    current: () => Effect.succeed(restrictions ?? ownerRestrictions('subject:1')),
-  };
-  const verifyInput = { observedProof, originalRequest: input };
-  const steps = { readKey: 'commerce.market-catalog.api.verify-market-eligibility-v1', scope };
-  return prepareVerifyMarketEligibilityV1(verifyInput, steps, reader).pipe(
-    Effect.flatMap((prepared) =>
-      handleVerifyMarketEligibilityV1(verifyInput, { ...steps, prepared, services: persistence }),
-    ),
-    Effect.provide(NodeCrypto.layer),
-  );
+  const fixture: Fixture =
+    answer === undefined ? { current, persistenceUnavailable } : { answer, current, persistenceUnavailable };
+  const { context } = harness(fixture);
+  return runVerifyMarketEligibilityV1({ observedProof, originalRequest: input }, context);
 };
 
 describe('verify market eligibility owner read', () => {
@@ -198,7 +277,7 @@ describe('verify market eligibility owner read', () => {
         request(at, true),
         originalProof,
         snapshotFor(at, { subjectRevision: 'subject:2' }),
-        ownerRestrictions('subject:2'),
+        answered(ownerAnswer('subject:2')),
       );
       expect(result.result.state).toBe('STALE');
     }),
@@ -235,19 +314,88 @@ describe('verify market eligibility owner read', () => {
       expect(result.result.state).toBe('UNAVAILABLE');
     }),
   );
-});
 
-it.effect('registers subject preparation and refuses an unadmitted Current-subject contract before owner SQL', () =>
-  Effect.gen(function* registeredVerification() {
-    const input = { observedProof: proof(at), originalRequest: request(at, true) };
-    const load = yield* getReadStages(verifyMarketEligibilityV1Read)(input, {
-      readKey: verifyMarketEligibilityV1Read.descriptor.readKey,
-      scope,
-      transaction: () => Effect.die('No after-commit owner transaction is needed'),
-    });
-    const finish = yield* load({
-      load: () => Effect.die('Current subject restrictions must be established before owner SQL'),
-    });
-    expect((yield* finish).result.state).toBe('UNAVAILABLE');
-  }).pipe(Effect.provide(NodeCrypto.layer)),
-);
+  it.effect('calls Customer Context before the owner transaction, never while it is open', () =>
+    Effect.gen(function* verifyCallOutsideTransaction() {
+      const fixture = harness({
+        answer: answered(ownerAnswer('subject:1')),
+        current: snapshotFor(at, { subjectRevision: '1' }),
+      });
+      const result = yield* runVerifyMarketEligibilityV1(
+        { observedProof: proof(at, undefined, 'subject:1'), originalRequest: request(at, true) },
+        fixture.context,
+      );
+      expect(result.result.state).toBe('CURRENT');
+      expect(fixture.steps()).toEqual(['call', 'begin', 'load', 'end']);
+      expect(fixture.calledWith()).toEqual([{ subject }]);
+      expect(fixture.loadedWith()).toEqual([ownerRestrictions('subject:1')]);
+    }),
+  );
+
+  it.effect('makes no call for a guest and loads without subject restrictions', () =>
+    Effect.gen(function* verifyGuest() {
+      const fixture = harness({ current: snapshotFor(at) });
+      const result = yield* runVerifyMarketEligibilityV1(
+        { observedProof: proof(at), originalRequest: request() },
+        fixture.context,
+      );
+      expect(result.result.state).toBe('CURRENT');
+      expect(fixture.steps()).toEqual(['begin', 'load', 'end']);
+      expect(fixture.loadedWith()).toEqual([undefined]);
+    }),
+  );
+
+  it.effect('answers UNAVAILABLE without a transaction when Customer Context cannot answer', () =>
+    Effect.gen(function* verifyCallUnavailable() {
+      const outcomes: readonly CallOutcome<MarketSubjectRestrictionsCurrentResponse>[] = [
+        CallUnavailableSchema.make({ reason: 'provider down', retryable: true }),
+        answered(
+          Schema.decodeUnknownSync(MarketSubjectRestrictionsCurrentResponseSchema)({
+            outcome: 'SUBJECT_RESTRICTIONS_UNAVAILABLE',
+            reason: 'owner restrictions unavailable',
+            retryable: true,
+          }),
+        ),
+      ];
+      for (const answer of outcomes) {
+        const fixture = harness({ answer, current: snapshotFor(at) });
+        const result = yield* runVerifyMarketEligibilityV1(
+          { observedProof: proof(at), originalRequest: request(at, true) },
+          fixture.context,
+        );
+        expect(result.result.state).toBe('UNAVAILABLE');
+        expect(fixture.steps()).toEqual(['call']);
+      }
+    }),
+  );
+
+  it.effect('answers UNAVAILABLE without a call or a transaction for a subject without a Legal Entity', () =>
+    Effect.gen(function* verifyWithoutLegalEntity() {
+      const fixture = harness({ current: snapshotFor(at) });
+      const { legalEntityId: _withoutLegalEntity, ...scopeWithoutLegalEntity } = scope;
+      const result = yield* runVerifyMarketEligibilityV1(
+        { observedProof: proof(at), originalRequest: request(at, true) },
+        { ...fixture.context, scope: scopeWithoutLegalEntity },
+      );
+      expect(result.result.state).toBe('UNAVAILABLE');
+      expect(fixture.steps()).toEqual([]);
+    }),
+  );
+
+  it.effect('denies a request outside the trusted scope before any call or transaction', () =>
+    Effect.gen(function* verifyOutsideScope() {
+      const fixture = harness({ current: snapshotFor(at) });
+      const outside = Schema.decodeUnknownSync(EligibleMarketTuplesRequestSchema)({
+        channel: 'B2B',
+        effectiveAt: at,
+        storefrontRef: { appId: 'another-shop', tenantId },
+        subject,
+      });
+      const failure = yield* Effect.flip(
+        runVerifyMarketEligibilityV1({ observedProof: proof(at), originalRequest: outside }, fixture.context),
+      );
+      expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+      expect(fixture.steps()).toEqual([]);
+    }),
+  );
+});

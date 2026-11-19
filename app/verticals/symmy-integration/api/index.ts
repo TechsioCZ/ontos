@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { SymmyCatalogPricingInventoryAdaptersLive } from '../src/services/symmy-catalog-pricing-inventory-adapters.ts';
 import { SymmyPolicyFixtureAdaptersLive } from '../src/services/symmy-policy-fixture-adapters.ts';
 import { SymmyPartyCommerceAdaptersLive } from '../src/services/symmy-party-commerce-adapters.ts';
@@ -89,9 +90,20 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = FetchHttpClient.layer.pipe(
+  GovernedReadLayer.provide(
+    GovernedReadLayer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+  ),
+);
 const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+  GovernedReadLayer.provide(
+    ModuleCallRouteLive.pipe(
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)),
+    ),
+  ),
 );
 const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration).pipe(
   GovernedReadLayer.provide(

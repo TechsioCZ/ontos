@@ -1,12 +1,11 @@
-import { readFile } from 'node:fs/promises';
 import { getActionServiceFactory } from '@app/core-runtime/testing/actions';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { PriceGroupInstantSchema, PriceGroupRefSchema } from '@app/price-group-catalog-contracts';
-import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
@@ -34,11 +33,9 @@ import {
 } from '../../src/api/customer-price-group-resolution.read.ts';
 import type { PriceGroupRoutineInvoker } from '../../src/persistence/price-group-persistence.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
-import { delegatedGatewayConfiguration, holdDelegatedCallerKey } from '../support/delegated-gateway-shell.fixture.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
-const compositionRevision = 'a'.repeat(64);
 const scopeFields = {
   authBindingId: '30000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:price-group-production-wiring',
@@ -64,19 +61,7 @@ const scopeWithoutLegalEntity: OperationalScope = {
   principalId: scope.principalId,
   tenantId: scope.tenantId,
 };
-// No verified composition revision: the cross-owner Read must refuse before wiring the catalog.
-const absentCompositionRevision: string | undefined = new Map<string, string>().get('composition-revision');
 
-// Construction must not acquire delegated context: with no delegated configuration at all, wiring still succeeds.
-const constructionWithoutDelegation = Layer.mergeAll(
-  nodeCryptoLayer,
-  ConfigProvider.layer(ConfigProvider.fromUnknown({})),
-);
-const shellOrigin = new URL('https://shell.example.test');
-const delegatedCallerConfiguration = Layer.merge(
-  ConfigProvider.layer(delegatedGatewayConfiguration(shellOrigin)),
-  Layer.effectDiscard(holdDelegatedCallerKey),
-);
 const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
   moduleId: 'pricing.price-group-catalog',
   resourceId: '30000000-0000-4000-8000-000000000001',
@@ -85,46 +70,39 @@ const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
 });
 const trustedOperationAt = Schema.decodeSync(PriceGroupInstantSchema)('2026-09-23T10:00:00.000Z');
 
-const readResolutionSource = Effect.promise(() =>
-  readFile(new URL('../../src/api/customer-price-group-resolution.read.ts', import.meta.url), 'utf-8'),
-);
+it('attaches every Price Group Action and the governed resolution Read to production catalog wiring', () => {
+  // Catalog evidence is prepared before the Action transaction; the transaction services stay owner-local.
+  expect(getActionServicePreflight(assignCustomerPriceGroupAction)).toBe(prepareAssignCustomerPriceGroupServices);
+  expect(getActionServicePreflight(assignCounterpartyPriceGroupAction)).toBe(
+    prepareAssignCounterpartyPriceGroupServices,
+  );
+  expect(getActionServicePreflight(migrateCustomerPriceGroupAction)).toBe(prepareMigrateCustomerPriceGroupServices);
+  expect(getActionServicePreflight(migrateCounterpartyPriceGroupAction)).toBe(
+    prepareMigrateCounterpartyPriceGroupServices,
+  );
+  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
+  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+    assignCounterpartyPriceGroupServicesForTransaction,
+  );
+  expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
+  expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
 
-it.effect('attaches every Price Group Action and the governed resolution Read to production catalog wiring', () =>
-  Effect.gen(function* readProductionWiring() {
-    // Catalog evidence is prepared before the Action transaction; the transaction services stay owner-local.
-    expect(getActionServicePreflight(assignCustomerPriceGroupAction)).toBe(prepareAssignCustomerPriceGroupServices);
-    expect(getActionServicePreflight(assignCounterpartyPriceGroupAction)).toBe(
-      prepareAssignCounterpartyPriceGroupServices,
-    );
-    expect(getActionServicePreflight(migrateCustomerPriceGroupAction)).toBe(prepareMigrateCustomerPriceGroupServices);
-    expect(getActionServicePreflight(migrateCounterpartyPriceGroupAction)).toBe(
-      prepareMigrateCounterpartyPriceGroupServices,
-    );
-    expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(
-      assignCustomerPriceGroupServicesForTransaction,
-    );
-    expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
-      assignCounterpartyPriceGroupServicesForTransaction,
-    );
-    expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-    expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
+  expect(getActionServiceFactory(removeCustomerPriceGroupAction).toString()).toContain(
+    'priceGroupActionServicesForTransaction',
+  );
+  expect(getActionServiceFactory(removeCounterpartyPriceGroupAction).toString()).toContain(
+    'priceGroupActionServicesForTransaction',
+  );
 
-    expect(getActionServiceFactory(removeCustomerPriceGroupAction).toString()).toContain(
-      'priceGroupActionServicesForTransaction',
-    );
-    expect(getActionServiceFactory(removeCounterpartyPriceGroupAction).toString()).toContain(
-      'priceGroupActionServicesForTransaction',
-    );
-
-    expect(getReadServiceFactory(customerPriceGroupResolutionRead)).toBe(
-      customerPriceGroupResolutionServicesForTransaction,
-    );
-    const readFactorySource = customerPriceGroupResolutionServicesForTransaction.toString();
-    expect(readFactorySource).toContain('customerPriceGroupCatalogForScope');
-    expect(yield* readResolutionSource).toContain('priceGroupCatalogPortFromEnvironment');
-    expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
-  }),
-);
+  expect(getReadServiceFactory(customerPriceGroupResolutionRead)).toBe(
+    customerPriceGroupResolutionServicesForTransaction,
+  );
+  // The Read reaches the Catalog only through Core's call: its owner services build no catalog client.
+  const readFactorySource = customerPriceGroupResolutionServicesForTransaction.toString();
+  expect(readFactorySource).not.toContain('priceGroupCatalogPortFromEnvironment');
+  expect(readFactorySource).not.toContain('acquireDelegatedGatewayContext');
+  expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
+});
 
 it('declares the Pricing caller with an identity subject on the customer Price Group resolution Read', () => {
   expect(customerPriceGroupResolutionRead.descriptor.accessActor).toMatchObject({
@@ -133,20 +111,15 @@ it('declares the Pricing caller with an identity subject on the customer Price G
   });
 });
 
-it.effect('creates a fresh catalog adapter for every governed Read attempt', () =>
-  Effect.gen(function* freshPerAttempt() {
-    const firstReadServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(constructionWithoutDelegation));
-    const secondReadServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(constructionWithoutDelegation));
+it.effect('builds no catalog adapter for the Read: its owner services are owner-local', () =>
+  Effect.gen(function* readServicesOwnerLocal() {
+    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scope);
 
-    expect(firstReadServices.catalog).not.toBe(secondReadServices.catalog);
+    expect(readServices).toEqual({
+      now: expect.anything(),
+      profileValidation: expect.anything(),
+      store: expect.anything(),
+    });
   }),
 );
 
@@ -166,33 +139,36 @@ it.effect('keeps the transaction services catalog-free and rejects missing Legal
   }),
 );
 
-it.effect('rejects a cross-owner Read without a verified composition revision before wiring the catalog', () =>
-  Effect.gen(function* missingCompositionRevision() {
+it.effect('rejects a Read scope without a trusted Legal Entity before building owner services', () =>
+  Effect.gen(function* missingLegalEntity() {
     const failure = yield* Effect.flip(
-      customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scope, absentCompositionRevision).pipe(
-        Effect.provide(constructionWithoutDelegation),
-      ),
+      customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scopeWithoutLegalEntity),
     );
     expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
   }),
 );
 
-it.effect('sends the verified request scope to the catalog as an Assertion subject, not an Originator', () =>
-  Effect.gen(function* assertionCallSite() {
-    // Action preparation delegates the same Assertion subject (price-group-action-preparation.test.ts).
-    // The Read gates its catalog behind the module operation requirement, which only a genuine Read execution
-    // satisfies; its port is built with the same Assertion subject.
-    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(Layer.mergeAll(nodeCryptoLayer, delegatedCallerConfiguration)));
-    const readFailure = yield* Effect.flip(
-      readServices.catalog
-        .resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt)
-        .pipe(Effect.provide(delegatedCallerConfiguration)),
-    );
-    expect(readFailure).toMatchObject({ cause: { code: 'module_operation_requirement_unavailable' } });
-    expect(yield* readResolutionSource).toMatch(/_tag:\s*["']Assertion["']/u);
-  }),
-);
+it('declares the Catalog call with the caller identities the hand-built delegation used', () => {
+  const requirement = commerceCustomerContextManifest.requirements?.operations.find(
+    ({ key }) => key === 'commerce.customer-context.requirement.price-group-single-assignment',
+  );
+  expect(requirement?.entrypointKey).toBe(customerPriceGroupResolutionRead.descriptor.entrypoint.entrypointKey);
+  // A person is relayed as itself; any other requester calls as this module under the Catalog's
+  // compatibility declaration, which the module's registered workload calls carry.
+  expect(requirement?.callers).toEqual([
+    { kind: 'person', legalEntityScope: 'tenant' },
+    {
+      declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+      kind: 'registered',
+      legalEntityScope: 'tenant',
+      pinPrincipal: false,
+    },
+  ]);
+  expect(
+    commerceCustomerContextManifest.registeredWorkloadCalls?.some(
+      ({ declarationKey, entrypointKey }) =>
+        declarationKey === 'pricing.price-group-catalog.price-group.read.compatibility' &&
+        entrypointKey === requirement?.provider.entrypointKey,
+    ),
+  ).toBe(true);
+});

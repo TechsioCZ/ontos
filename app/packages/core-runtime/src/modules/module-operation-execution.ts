@@ -20,6 +20,8 @@ import {
   resolveExternalSubjectRead,
 } from '../auth/external-identity/read.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
+import { coreOperations } from '../sdk/core-operations.ts';
+import type { AnyReadOperationRef, RequirementCaller } from '../sdk/index.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import {
   isVerifiedGatewayPrincipalContext,
@@ -38,6 +40,7 @@ import type { ActiveApplicationCompositionServiceContract } from './active-appli
 import { copyOntosModuleRequirements } from './manifest.ts';
 import type { OntosDeploymentIdentitySchema } from './manifest.ts';
 import {
+  isCoreOperationProvider,
   OntosModuleRequirementsSchema,
   OntosOperationContractSchema,
   tenantModuleIntrinsicDependencyClosure,
@@ -188,6 +191,20 @@ const readActiveExecutionLease = Effect.fn('ModuleOperation.readActiveLease')(fu
   return lease;
 });
 
+/** One Core operation a module may `call`: its public reference and the governed Core read that answers it. */
+export interface CoreOperationRegistration {
+  readonly operation: AnyReadOperationRef;
+  readonly registration: AnyReadRegistration;
+}
+
+/**
+ * The Core operations a module may `call`. A Core requirement is satisfied only by one of them, and
+ * Core's in-process route (`execution/core-route.ts`) answers each through its read.
+ */
+export const coreOperationRegistrations: readonly CoreOperationRegistration[] = Object.freeze([
+  Object.freeze({ operation: coreOperations.legalEntityDetail, registration: legalEntityDetailRead }),
+]);
+
 const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequirement')(
   function* resolveExecutingRequirement(lease: ModuleOperationExecutionLease, requirementKey: string) {
     const { registration } = lease.input;
@@ -205,6 +222,7 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
     const consumer = catalog.getByModuleId(lease.input.registration.descriptor.entrypoint.moduleKey);
     const requirement = consumer?.manifest.requirements?.operations.find(({ key }) => key === requirementKey);
     if (
+      consumer === undefined ||
       requirement === undefined ||
       requirement.entrypointKey !== lease.input.registration.descriptor.entrypoint.entrypointKey
     ) {
@@ -224,6 +242,27 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
     if (!registered) {
       return yield* unavailable();
     }
+    // A Core provider is satisfied by Core itself, never by the composition: it must be one of Core's own
+    // registered operations at the exact required version.
+    if (isCoreOperationProvider(requirement.provider)) {
+      const core = coreOperationRegistrations.find(
+        ({ operation }) =>
+          operation.provider.moduleId === requirement.provider.moduleId &&
+          operation.provider.entrypointKey === requirement.provider.entrypointKey &&
+          operation.provider.schemaVersion === requirement.provider.schemaVersion,
+      );
+      if (core === undefined) {
+        return yield* unsatisfied();
+      }
+      return {
+        catalog,
+        consumer,
+        consumerAppId: consumer.deployment.appId,
+        ownerRegistration: owner,
+        providerAppId: core.operation.provider.moduleId,
+        requirement,
+      };
+    }
     const provider = catalog.getByModuleId(requirement.provider.moduleId);
     if (
       provider === undefined ||
@@ -231,7 +270,14 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
     ) {
       return yield* unsatisfied();
     }
-    return { catalog, consumer, ownerRegistration: owner, provider, requirement };
+    return {
+      catalog,
+      consumer,
+      consumerAppId: consumer.deployment.appId,
+      ownerRegistration: owner,
+      providerAppId: provider.deployment.appId,
+      requirement,
+    };
   },
 );
 
@@ -346,7 +392,11 @@ const validateOwnerContractProjection = Effect.fn('ModuleOperation.validateOwner
 );
 
 export interface ModuleOperationRequirementFact {
+  /** The caller identities the requirement permits for a call; present exactly when it declares them. */
+  readonly callers?: readonly RequirementCaller[];
   readonly compositionRevision: string;
+  /** The calling deployment's app id: whose own module credential a delegated call authenticates with. */
+  readonly consumerAppId: string;
   readonly consumerEntrypointKey: string;
   readonly consumerSchemaVersion: string;
   readonly providerAppId: string;
@@ -427,17 +477,20 @@ export const readModuleOperationRequirement = Effect.fn('ModuleOperation.readReq
     if (!matchesGatewayExecutionScope(lease, scope)) {
       return yield* unavailable();
     }
-    return Object.freeze({
+    const { callers } = resolved.requirement;
+    const fact = {
       compositionRevision: lease.input.revision,
+      consumerAppId: resolved.consumerAppId,
       consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
       consumerSchemaVersion: registration.descriptor.schemaVersion,
-      providerAppId: resolved.provider.deployment.appId,
+      providerAppId: resolved.providerAppId,
       providerEntrypointKey: resolved.requirement.provider.entrypointKey,
       providerModuleId: resolved.requirement.provider.moduleId,
       providerSchemaVersion: resolved.requirement.provider.schemaVersion,
       requirementKey: resolved.requirement.key,
       tenantId: scope.tenantId,
-    });
+    };
+    return Object.freeze(callers === undefined ? fact : { ...fact, callers: Object.freeze([...callers]) });
   },
 );
 
@@ -534,7 +587,7 @@ export const readWorkerModuleOperationRequirement = Effect.fn('ModuleOperation.r
       compositionRevision: lease.input.revision,
       consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
       kind: 'worker' as const,
-      providerAppId: resolved.provider.deployment.appId,
+      providerAppId: resolved.providerAppId,
       providerEntrypointKey: resolved.requirement.provider.entrypointKey,
       providerModuleId: resolved.requirement.provider.moduleId,
       providerSchemaVersion: resolved.requirement.provider.schemaVersion,

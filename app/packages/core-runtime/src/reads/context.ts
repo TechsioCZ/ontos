@@ -5,6 +5,7 @@ import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
+import type { AccessAnswers, AccessQuestions } from '../sdk/read.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
 import type { ReadHandlerExecutionError, ReadHandlerUnavailable } from './errors.ts';
@@ -34,6 +35,12 @@ export interface ReadEvidenceMetadata {
  * and the access gate's own answer for this caller's rows and fields.
  */
 export interface ReadPrepareContext {
+  /**
+   * Core's answers to the descriptor's `accessQuestions`, by the names it gave them. Present exactly
+   * when a `{ load }` or staged read declares questions: Core asks them after the read's own decision
+   * allowed it, at the same time and in the same scope, and never lets them change it.
+   */
+  readonly access?: AccessAnswers<AccessQuestions>;
   /** The Core-admitted composition revision, which remote owner calls must carry. */
   readonly compositionRevision?: string | undefined;
   /**
@@ -87,6 +94,8 @@ export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext 
 
 /** What a single-handler Read receives: the Read, its Core-verified scope, and the scoped owner services. */
 export interface ReadHandlerContext<Services> {
+  /** Core's answers to the descriptor's `accessQuestions`; see {@link ReadPrepareContext}. */
+  readonly access?: AccessAnswers<AccessQuestions>;
   /** The declared result paths this caller's field grants deny (O17, O25); see {@link ReadPrepareContext}. */
   readonly deniedFieldPaths?: readonly (readonly string[])[];
   /** The owner's row filter for this row-scoped read (D16, O25); see {@link ReadPrepareContext}. */

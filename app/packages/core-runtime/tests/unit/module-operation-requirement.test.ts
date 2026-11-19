@@ -382,6 +382,7 @@ it.effect('reads immutable exact conditional operation facts only from the origi
     );
     expect(fact).toEqual({
       compositionRevision: revision,
+      consumerAppId: 'consumer-alpha',
       consumerEntrypointKey: 'consumer.alpha.change',
       consumerSchemaVersion: '1',
       providerAppId: 'required-provider',

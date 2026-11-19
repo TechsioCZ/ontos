@@ -2,11 +2,12 @@ import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-r
 import { randomUUID } from 'node:crypto';
 
 import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
+import { DateTime, ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -173,6 +174,7 @@ const mountPaymentTransport = Effect.fn('PaymentFoundationCompositionTest.mount'
     path: string,
     body: typeof actionBody | typeof readBody,
   ) {
+    const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: compositionSnapshot.composition.revision,
@@ -184,8 +186,8 @@ const mountPaymentTransport = Effect.fn('PaymentFoundationCompositionTest.mount'
         .setIssuer(issuer)
         .setAudience('payment')
         .setSubject(principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(randomUUID())
         .sign(privateKey),
     );
