@@ -135,11 +135,37 @@ export const CommunicationIdempotencySchema = Schema.Struct({
 });
 export type CommunicationIdempotency = typeof CommunicationIdempotencySchema.Type;
 
+/**
+ * The closed business reasons a source owner can give for an Explicit Resend. Communications records the reason with the
+ * link between the new Message Intent and the original; it never accepts free text, so no address, secret or message
+ * content can travel in it. A reason names why the source owner decided to communicate AGAIN: it grants nothing by itself.
+ */
+export const CommunicationResendReasonSchema = Schema.Literals([
+  'PRIOR_DELIVERY_FAILED',
+  'RECIPIENT_NOT_RECEIVED',
+  'RECIPIENT_REQUESTED_COPY',
+  'SOURCE_APPROVED_RESEND',
+]);
+export type CommunicationResendReason = typeof CommunicationResendReasonSchema.Type;
+
+/**
+ * Marks a request as an Explicit Resend (#1403): a NEW source occurrence, decided by the source owner after its own
+ * business decision, that deliberately communicates again. It names the ORIGINAL Message Intent (as Communications
+ * returned it to the same source) and why. It is only honoured for a message type whose platform catalog entry approves
+ * resend; a request without it can never become a resend, and a resend never rewrites or reuses the original intent.
+ */
+export const CommunicationResendOfSchema = Schema.Struct({
+  originalIntentId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CommunicationOriginalIntentId')),
+  reason: CommunicationResendReasonSchema,
+});
+export type CommunicationResendOf = typeof CommunicationResendOfSchema.Type;
+
 export const CommunicationRequestSchema = Schema.Struct({
   idempotency: CommunicationIdempotencySchema,
   occurrence: CommunicationSourceOccurrenceSchema,
   originalRecipients: Schema.NonEmptyArray(OriginalRecipientBindingSchema),
   purpose: CommunicationPurposeKeySchema,
+  resendOf: Schema.optionalKey(CommunicationResendOfSchema),
   safeReferences: SafeReferencesSchema,
   schemaVersion: Schema.Literal(1),
   scope: CommunicationRequestScopeSchema,

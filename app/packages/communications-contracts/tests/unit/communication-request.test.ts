@@ -135,6 +135,32 @@ describe('Communication Request contract', () => {
     expect(accepted(withTopLevel({ [field]: 'fixture' }))).toBe(false);
   });
 
+  describe('Explicit Resend marker (#1403)', () => {
+    const resendOf = { originalIntentId: '33333333-3333-4333-8333-333333333333', reason: 'RECIPIENT_NOT_RECEIVED' };
+
+    it('accepts a request that names the original Message Intent and a closed business reason', () => {
+      expect(accepted({ ...minimalRequest, resendOf })).toBe(true);
+      const decoded = Schema.decodeUnknownSync(CommunicationRequestSchema)({ ...minimalRequest, resendOf });
+      expect(Schema.encodeSync(CommunicationRequestSchema)(decoded)).toEqual({ ...minimalRequest, resendOf });
+    });
+
+    it('is optional: a request without it is an ordinary request, never a resend', () => {
+      const decoded = Schema.decodeUnknownSync(CommunicationRequestSchema)(minimalRequest);
+      expect(decoded.resendOf).toBeUndefined();
+    });
+
+    it.each([
+      ['a free text reason', { ...resendOf, reason: 'customer asked by phone' }],
+      ['a lower-case reason', { ...resendOf, reason: 'source_approved_resend' }],
+      ['an original that is not an intent id', { ...resendOf, originalIntentId: 'order-fixture-1' }],
+      ['a missing reason', { originalIntentId: resendOf.originalIntentId }],
+      ['a missing original', { reason: resendOf.reason }],
+      ['an extra field such as an address', { ...resendOf, address: 'person@example.test' }],
+    ])('rejects %s', (_label, change) => {
+      expect(accepted({ ...minimalRequest, resendOf: change })).toBe(false);
+    });
+  });
+
   it.each(['email', 'address', 'language', 'locale', 'otp', 'token', 'secret', 'proof'])(
     'does not let a nested object carry %s',
     (field) => {

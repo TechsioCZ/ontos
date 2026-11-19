@@ -16,9 +16,10 @@ import type {
   RecipientFact,
   SourceOccurrenceFacts,
 } from '../catalog/decision-request.ts';
+import { resendPolicyOf } from '../catalog/message-type.ts';
 import type { TransactionalMessageType } from '../catalog/message-type.ts';
 import { resourceRefKey, SourceStateKeySchema } from '../catalog/vocabulary.ts';
-import type { CommunicationResourceRef } from '../catalog/vocabulary.ts';
+import type { CommunicationResourceRef, ResendRefusal } from '../catalog/vocabulary.ts';
 import type { LanguagePolicySnapshot } from '../language/vocabulary.ts';
 import { assessPrivacyEligibility, PrivacyAssessment, privacyEvidenceOf } from '../privacy/assess-privacy.ts';
 import type { PrivacyAssessmentCase } from '../privacy/assess-privacy.ts';
@@ -27,6 +28,8 @@ import { assessRecipients, recipientFactOf } from '../recipient/assess-recipient
 import type { EvaluatedRecipient } from '../recipient/assess-recipients.ts';
 import { handoffPinOf } from '../recipient/recheck-before-handoff.ts';
 import { RecipientAssessment } from '../recipient/recipient-assessment.ts';
+import { resendRefusalOf } from '../recovery/resend-admission.ts';
+import type { ResendOriginalPortContract } from '../recovery/resend-admission.ts';
 import { decisionIdOf, intentIdOf, requestIdentityKeyOf, requestIdOf } from './identity.ts';
 import { decodeIntakeInput } from './intake-input.ts';
 import type { IntakeInput } from './intake-input.ts';
@@ -61,8 +64,12 @@ const unavailable = (reason: string, cause?: unknown) =>
 /** Ports of the owner-local persistence that a decision reads, bound to the Action's own transaction. */
 export interface DecisionStores {
   readonly policies: LanguagePolicyPortContract;
+  /** The original intent of an Explicit Resend; read only for a request that names one, of a type that approves resend. */
+  readonly resend: ResendOriginalPortContract;
   readonly templates: TemplateReadPortContract;
 }
+
+type DecisionStoresRequest = CommunicationRequest;
 
 /** Concurrency of the owner calls of one request; it never limits how many recipients a request may have. */
 const OWNER_CALL_CONCURRENCY = 8;
@@ -81,6 +88,26 @@ const echoFactsOf = (request: CommunicationDecisionRequest): SourceOccurrenceFac
 
 const ownedType = (type: Option.Option<TransactionalMessageType>, request: CommunicationDecisionRequest) =>
   type.pipe(Option.filter(({ sourceOwner }) => sourceOwner === request.source.moduleKey));
+
+/**
+ * Why an Explicit Resend request (#1403) produces no message: the approved type must carry the source owner's resend approval,
+ * and only then is the original intent read. A request that names no original is never a resend. Nothing about another source's
+ * intent, or an intent of a type without that approval, is read or revealed.
+ */
+const resendRefusalFor = Effect.fn('Communications.admitResend')(function* admit(
+  request: DecisionStoresRequest,
+  type: Option.Option<TransactionalMessageType>,
+  stores: DecisionStores,
+) {
+  if (request.resendOf === undefined || Option.isNone(type)) {
+    return Option.none<ResendRefusal>();
+  }
+  const original =
+    resendPolicyOf(type.value) === 'SOURCE_APPROVED'
+      ? yield* stores.resend.findOriginal(request.resendOf.originalIntentId)
+      : Option.none();
+  return resendRefusalOf(type.value, request.source.moduleKey, original);
+});
 
 const factsFor = Effect.fn('Communications.readSourceFacts')(function* readFacts(
   request: CommunicationDecisionRequest,
@@ -253,10 +280,22 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
   const catalog = yield* MessageTypeCatalog;
   const evaluator = yield* CommunicationDecisionService;
   const typeOption = catalog.byPurpose(input.decisionRequest.purpose);
-  const source = yield* factsFor(input.decisionRequest, typeOption);
+  const { resendRefusal, source } = yield* Effect.all(
+    {
+      resendRefusal: resendRefusalFor(request, ownedType(typeOption, input.decisionRequest), stores),
+      source: factsFor(input.decisionRequest, typeOption),
+    },
+    { concurrency: 2 },
+  );
   const evaluate = (recipients: readonly RecipientFact[]) =>
     evaluator
-      .decide(input.decisionRequest, { recipients, source })
+      .decide(
+        input.decisionRequest,
+        Option.match(resendRefusal, {
+          onNone: () => ({ recipients, source }),
+          onSome: (refusal) => ({ recipients, resendRefusal: refusal, source }),
+        }),
+      )
       .pipe(
         Effect.mapError((mismatch) => unavailable('Facts of another occurrence or tenant were supplied', mismatch)),
       );

@@ -103,7 +103,7 @@ export const handleSubmitCommunicationRequest = Effect.fn('SubmitCommunicationRe
         reason: 'The scope claimed by the request is not the trusted scope of this operation',
       });
     }
-    const { intake, policies, templates } = context.services;
+    const { intake, policies, resend, templates } = context.services;
     const identityKey = requestIdentityKeyOf(payload);
     const fingerprint = yield* requestFingerprintOf(payload);
     yield* intake.lockIdentity(identityKey);
@@ -125,7 +125,7 @@ export const handleSubmitCommunicationRequest = Effect.fn('SubmitCommunicationRe
         requestId: stored.requestId,
       } satisfies SubmitCommunicationRequestResult;
     }
-    const plan = yield* decideRequest(payload, { policies, templates }).pipe(
+    const plan = yield* decideRequest(payload, { policies, resend, templates }).pipe(
       underOwnerCall(actionOwnerCall(context.scope)),
     );
     const stored = yield* intake.insertDecision({

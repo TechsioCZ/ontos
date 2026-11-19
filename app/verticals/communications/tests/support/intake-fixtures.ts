@@ -60,6 +60,8 @@ export interface RequestInput {
   readonly occurrenceId?: string;
   readonly profileId?: string;
   readonly purpose?: string;
+  /** Makes the request an Explicit Resend of the named original intent (#1403). */
+  readonly resendOf?: { readonly originalIntentId: string; readonly reason?: string };
   readonly revision?: number;
   readonly safeReferences?: readonly { readonly key: string; readonly resourceId: string }[];
   readonly sourceModule?: string;
@@ -81,7 +83,7 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
   }
   const scope = fixtureScope(scopeInput);
   const key = input.idempotencyKey ?? `fixture-key-${input.occurrenceId ?? 'occurrence-1'}`;
-  return decodeRequest({
+  const ordinary = {
     idempotency: input.correlationId === undefined ? { key } : { correlationId: input.correlationId, key },
     occurrence: { occurrenceId: input.occurrenceId ?? 'fixture-occurrence-1', revision: input.revision ?? 1 },
     originalRecipients: input.bindings.map((entry) => encodeBinding({ ...entry, scope })),
@@ -93,7 +95,19 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
     schemaVersion: 1,
     scope,
     source: { moduleKey: input.sourceModule ?? 'fixture.source' },
-  });
+  };
+  // an Explicit Resend names its original intent and a closed business reason; any other request carries neither (#1403)
+  return decodeRequest(
+    input.resendOf === undefined
+      ? ordinary
+      : {
+          ...ordinary,
+          resendOf: {
+            originalIntentId: input.resendOf.originalIntentId,
+            reason: input.resendOf.reason ?? 'SOURCE_APPROVED_RESEND',
+          },
+        },
+  );
 };
 
 export const originalRecipient = (recipientId: string, contactId: string | null = `contact-${recipientId}`) =>

@@ -1,7 +1,7 @@
 import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -31,6 +31,7 @@ import {
   originalRecipient,
 } from '../support/intake-fixtures.ts';
 import { inMemoryIntakePort } from '../support/in-memory-intake-port.ts';
+import { makeInMemoryResendPort } from '../support/in-memory-resend-port.ts';
 import { baseIdentity, makeInMemoryLanguagePolicyPort, seedLanguages } from '../support/language-fixtures.ts';
 import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts';
 
@@ -63,6 +64,7 @@ const encode = Schema.encodeSync(SubmitCommunicationRequestPayloadSchema);
 const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorld(
   types = [fixtureType()],
   callerModule = 'fixture.source',
+  originals: Parameters<typeof makeInMemoryResendPort>[0] = {},
 ) {
   const templates = makeInMemoryTemplatePort();
   yield* seedLanguages(templates.port, ['cs', 'en'], {
@@ -71,6 +73,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
   }).pipe(Effect.provide(NodeCrypto.layer));
   const intake = inMemoryIntakePort();
   const policies = makeInMemoryLanguagePolicyPort();
+  const resend = makeInMemoryResendPort(originals);
   const harness = yield* makeActionTestHarness({
     access: 'allowed',
     ownerRegistration: communicationsRegistration,
@@ -78,6 +81,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
       bindActionTestServices(submitCommunicationRequestAction, {
         intake: intake.port,
         policies: policies.port,
+        resend: resend.port,
         sourceCaller: { isClaimedSource: (claimed: string) => claimed === callerModule },
         templates: templates.port,
       }),
@@ -112,7 +116,54 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
         transport: { correlationId: key, idempotencyKey: key },
       })
       .pipe(Effect.provide(ports));
-  return { harness, intake, issue };
+  return { harness, intake, issue, resend };
+});
+
+const ORIGINAL_INTENT_ID = '33333333-3333-4333-8333-333333333333';
+
+describe('Explicit Resend over the public Action boundary (#1403)', () => {
+  const resendOf = { originalIntentId: ORIGINAL_INTENT_ID, reason: 'RECIPIENT_NOT_RECEIVED' };
+  const request = (key: string) =>
+    communicationRequest({ bindings: [originalRecipient('customer-1')], occurrenceId: key, resendOf, tenantId });
+
+  it.effect(
+    "[S08 AC-04] a type without the source owner's resend approval is refused with a closed reason, and the original is never even read",
+    () =>
+      Effect.gen(function* unapproved() {
+        const t = yield* world([fixtureType()], 'fixture.source', {
+          [ORIGINAL_INTENT_ID]: {
+            effectBlock: Option.none(),
+            sourceModule: 'fixture.source',
+            typeId: fixtureType().typeId,
+          },
+        });
+        const result = yield* t.issue(request('o-resend-1'), 'k-resend-1');
+        expect(result).toMatchObject({
+          decision: { kind: 'NO_MESSAGE', reason: 'RESEND_NOT_APPROVED' },
+          outcome: 'DECIDED',
+        });
+        expect(t.resend.reads).toEqual([]);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect(
+    '[S07 R-02] an approved type with an original of the same source owner and type is decided like any request',
+    () =>
+      Effect.gen(function* approved() {
+        const type = fixtureType({ resend: 'SOURCE_APPROVED' });
+        const t = yield* world([type], 'fixture.source', {
+          [ORIGINAL_INTENT_ID]: { effectBlock: Option.none(), sourceModule: 'fixture.source', typeId: type.typeId },
+        });
+        const result = yield* t.issue(request('o-resend-2'), 'k-resend-2');
+        expect(result).toMatchObject({ decision: { kind: 'MESSAGE_INTENTS' }, outcome: 'DECIDED' });
+        expect(t.resend.reads).toEqual([ORIGINAL_INTENT_ID]);
+        // an original that is not there is refused, and no message is created
+        const missing = yield* world([type]);
+        expect(yield* missing.issue(request('o-resend-3'), 'k-resend-3')).toMatchObject({
+          decision: { kind: 'NO_MESSAGE', reason: 'RESEND_ORIGINAL_NOT_FOUND' },
+        });
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
 });
 
 describe('Communication Request intake over the public Action boundary (#1401, AC-01)', () => {

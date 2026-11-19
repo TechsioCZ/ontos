@@ -13,6 +13,7 @@ import {
   communicationDecisions,
   communicationRequestConflicts,
   communicationRequests,
+  intentResendLinks,
   messageIntents,
 } from '../database/schema.ts';
 import type { StoredJson } from '../database/schema.ts';
@@ -30,6 +31,8 @@ import type {
   CommunicationIntakePortContract,
   StoredCommunicationDecision,
 } from './communication-intake-port.service.ts';
+import { ResendOriginalPort } from '../domain/recovery/resend-admission.ts';
+import { postgresResendOriginalPort } from './resend-original.service.ts';
 import { postgresTemplateRevisionPort } from './template-revision.service.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -249,6 +252,24 @@ export const postgresCommunicationIntakePort = (
         rows.length === 0
           ? []
           : yield* transaction.insert(messageIntents).values(rows).returning().pipe(Effect.mapError(unavailable));
+      // An Explicit Resend (#1403): every NEW intent of this request is linked to the original it was requested for, with the
+      // closed business reason of the source. The original and its history are not touched: the link is the only thing written
+      // about it, and the database refuses a link that would make the resend older than, or part of the request of, its original.
+      const { resendOf } = request;
+      if (resendOf !== undefined && intentRows.length > 0) {
+        yield* transaction
+          .insert(intentResendLinks)
+          .values(
+            intentRows.map((row) => ({
+              linkedAt: now,
+              originalIntentId: resendOf.originalIntentId,
+              reasonCode: resendOf.reason,
+              resendIntentId: row.intentId,
+              tenantId,
+            })),
+          )
+          .pipe(Effect.mapError(unavailable), Effect.asVoid);
+      }
       if (requestRow === undefined || decisionRow === undefined) {
         return yield* unavailable();
       }
@@ -284,6 +305,7 @@ export const communicationIntakeService = (transaction: ScopedTransactionExecuto
   Effect.succeed({
     intake: CommunicationIntakePort.of(postgresCommunicationIntakePort(transaction, scope)),
     policies: languagePolicyPortOverRoutines(transaction),
+    resend: ResendOriginalPort.of(postgresResendOriginalPort(transaction, scope)),
     sourceCaller: sourceCallerOf(scope),
     templates: postgresTemplateRevisionPort(transaction, scope),
   });
