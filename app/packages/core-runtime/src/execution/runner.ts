@@ -40,9 +40,14 @@ interface Ledger {
   readonly callsInFlight: Map<number, CallRecord>;
   callsSent: number;
   closed: boolean;
+  /**
+   * The sequence of the admitted transaction that is open, if one is. Only the release of that same
+   * admission clears it: the transaction's fiber and its caller both release it, and a later admission
+   * between the two is never closed by the earlier one. (Calls are already tracked by their sequence.)
+   */
+  openTransaction: number | null;
   ownerDenied: boolean;
   readonly records: CallRecord[];
-  transactionOpen: boolean;
   transactions: number;
 }
 
@@ -99,7 +104,7 @@ const admitTransaction = <Services, Calls extends DeclaredCalls, Requirements>(
   if (ledger.closed) {
     return refusal('capability_after_execution');
   }
-  if (ledger.transactionOpen) {
+  if (ledger.openTransaction !== null) {
     return refusal('nested_transaction');
   }
   if (ledger.callsInFlight.size > 0) {
@@ -112,16 +117,28 @@ const admitTransaction = <Services, Calls extends DeclaredCalls, Requirements>(
   if (ledger.transactions >= budget.maxTransactions || durationSpent(state, now)) {
     return { aborted: 'budget_exhausted' };
   }
-  ledger.transactionOpen = true;
   ledger.transactions += 1;
+  ledger.openTransaction = ledger.transactions;
   return { sequence: ledger.transactions };
 };
 
-const settleTransaction = (ledger: Ledger) =>
+/** Ends the admission `sequence`, and only it: a later admission stays open. */
+const releaseAdmission = (ledger: Ledger, sequence: number) =>
   Effect.sync(() => {
-    ledger.transactionOpen = false;
-    ledger.anyTransactionEnded = true;
+    if (ledger.openTransaction === sequence) {
+      ledger.openTransaction = null;
+    }
   });
+
+/** The transaction's own fiber ended: its admission is released and a transaction has ended. */
+const settleTransaction = (ledger: Ledger, sequence: number) =>
+  releaseAdmission(ledger, sequence).pipe(
+    Effect.andThen(
+      Effect.sync(() => {
+        ledger.anyTransactionEnded = true;
+      }),
+    ),
+  );
 
 /**
  * The owner binding whose denial is noted the moment the owner rule answers it, before any SQL
@@ -189,7 +206,7 @@ const admitAndOpen = Effect.fnUntraced(function* admitAndOpen<
       // The factory's requirements come from the session; the fiber's own context wins where both hold
       // a service (its span, its references).
       Effect.updateContext((current: Context.Context<R>) => Context.merge(captured, current)),
-      Effect.ensuring(settleTransaction(ledger)),
+      Effect.ensuring(settleTransaction(ledger, admitted.sequence)),
     );
   // Forked into the work scope, so settling the session interrupts (and so rolls back) a transaction
   // still open; interrupting the caller interrupts it as well.
@@ -197,11 +214,7 @@ const admitAndOpen = Effect.fnUntraced(function* admitAndOpen<
   const exit = yield* Effect.exit(
     restore(Fiber.join(fiber)).pipe(
       Effect.onInterrupt(() => Fiber.interrupt(fiber)),
-      Effect.ensuring(
-        Effect.sync(() => {
-          ledger.transactionOpen = false;
-        }),
-      ),
+      Effect.ensuring(releaseAdmission(ledger, admitted.sequence)),
     ),
   );
   if (Exit.isSuccess(exit)) {
@@ -270,7 +283,7 @@ const admitCall = <Services, Calls extends DeclaredCalls, Requirements>(
   if (ledger.closed) {
     return refusal('capability_after_execution');
   }
-  if (ledger.transactionOpen) {
+  if (ledger.openTransaction !== null) {
     return refusal('call_inside_transaction');
   }
   const declared = declaredCallOf(state.execution.calls, name);
@@ -427,9 +440,9 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
     callsInFlight: new Map(),
     callsSent: 0,
     closed: false,
+    openTransaction: null,
     ownerDenied: false,
     records: [],
-    transactionOpen: false,
     transactions: 0,
   };
   yield* Scope.addFinalizer(

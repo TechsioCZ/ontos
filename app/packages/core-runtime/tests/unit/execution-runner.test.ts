@@ -1,10 +1,25 @@
-import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  References,
+  Schema,
+} from 'effect';
+import { constVoid } from 'effect/Function';
 import { expect, it } from 'effect-rstest';
 
 import type { OwnerAuthorizationDecision } from '../../src/access/enforcement/owner-overlay.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { dataAccessEvents } from '../../src/db/schema.ts';
+import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import { ExecutionRuleViolation, RequestPrincipalCallerSourceSchema } from '../../src/execution/contract.ts';
 import type {
@@ -17,6 +32,7 @@ import { KernelCalls } from '../../src/execution/kernel-calls.ts';
 import type { KernelCallsService } from '../../src/execution/kernel-calls.ts';
 import { KernelSessions } from '../../src/execution/kernel-sessions.ts';
 import { KernelSessionsLive } from '../../src/execution/runner.ts';
+import { KernelTransactions } from '../../src/execution/kernel-transactions.ts';
 import { KernelTransactionsLive } from '../../src/execution/transaction.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import {
@@ -169,6 +185,45 @@ const makeHarness = (decisions: OwnerAuthorizationDecision[], execute?: KernelCa
     return { callRequests, open, sealCloses, statements };
   });
 
+/** The stand-in opener's services: the scoped transaction it ran the body on. */
+interface StandInServices {
+  readonly executor: ScopedTransactionExecutor;
+}
+
+const standInOwner: OwnerBinding<StandInServices, never> = {
+  build: (transaction) => Effect.succeed({ executor: transaction }),
+  decide: () => Effect.succeed('allowed'),
+  seal: (transaction) => ({ close: constVoid, transaction }),
+};
+
+/**
+ * Sessions over a stand-in opener that runs the body directly on a scripted scoped executor, without a
+ * driver transaction, so only the session's own admission bookkeeping is between two transactions.
+ */
+const makeStandInSessions = Effect.fn('ExecutionRunnerTest.standInSessions')(function* makeStandInSessions() {
+  const executor = yield* makeTestDatabase((statement) => Effect.succeed(scriptedRows(statement)));
+  const callRequests: CallExecutionRequest[] = [];
+  const transactions = KernelTransactions.of({
+    checkOwner: () => Effect.void,
+    open: (request, owner, body) =>
+      installOperationalScope(executor, request.execution.scope).pipe(
+        Effect.flatMap((transaction) =>
+          owner.build(transaction, request.execution.scope, request.execution.facts.compositionRevision),
+        ),
+        Effect.mapError(() => new TransactionAborted({ reason: 'database_unavailable' })),
+        Effect.flatMap((services) => body(services, { operationAt: operationTime, sequence: request.sequence })),
+      ),
+  });
+  const callsService: KernelCallsService = {
+    execute: (request) => okExecution(request).pipe(Effect.tap(() => recordRequest(callRequests, request))),
+  };
+  const layer = KernelSessionsLive.pipe(
+    Layer.provide(Layer.succeed(KernelTransactions, transactions)),
+    Layer.provide(Layer.succeed(KernelCalls, callsService)),
+  );
+  return { callRequests, sessions: Context.get(yield* Layer.build(layer), KernelSessions) };
+});
+
 const violationRule = <A, E>(exit: Exit.Exit<A, E>) => {
   if (Exit.isSuccess(exit)) {
     return null;
@@ -251,6 +306,40 @@ it.effect('a transaction interrupted right after admission leaves none open', ()
       expect(callAnswer(yield* session.capabilities.call('restrictions', { subject: 'customer' }))).toStrictEqual(
         Option.some({ outcome: 'CURRENT' }),
       );
+    }),
+  ),
+);
+
+it.effect('a transaction admitted between the settlement of another and its caller cleanup stays open', () =>
+  Effect.scoped(
+    Effect.gen(function* admissionOwnedBySequence() {
+      const { callRequests, sessions } = yield* makeStandInSessions();
+      const session = yield* sessions.open(execution(calls), standInOwner);
+      const firstBodyEnded = yield* Deferred.make<null>();
+      const secondAdmitted = yield* Deferred.make<null>();
+      const secondRelease = yield* Deferred.make<null>();
+      // B asks again until it is admitted: the first moment A's own fiber settled its transaction. A runs
+      // with a tiny operation budget, so it yields between that settlement and its caller's cleanup.
+      const admitSecond: Effect.Effect<void> = session.capabilities
+        .transaction(() => Deferred.succeed(secondAdmitted, null).pipe(Effect.andThen(Deferred.await(secondRelease))))
+        .pipe(
+          Effect.exit,
+          Effect.flatMap((exit) =>
+            violationRule(exit) === 'nested_transaction' ? Effect.yieldNow.pipe(Effect.andThen(admitSecond)) : exit,
+          ),
+          Effect.orDie,
+        );
+      const second = yield* Effect.forkChild(Deferred.await(firstBodyEnded).pipe(Effect.andThen(admitSecond)));
+      const firstSettled = yield* session.capabilities
+        .transaction(() => Deferred.succeed(firstBodyEnded, null))
+        .pipe(Effect.andThen(Deferred.isDone(secondAdmitted)), Effect.provideService(References.MaxOpsBeforeYield, 4));
+      // B was admitted before A's caller returned, so A's cleanup ran while B was open.
+      expect(firstSettled).toBe(true);
+      const exit = yield* Effect.exit(session.capabilities.call('restrictions', { subject: 'customer' }));
+      expect(violationRule(exit)).toBe('call_inside_transaction');
+      expect(callRequests).toHaveLength(0);
+      yield* Deferred.succeed(secondRelease, null);
+      yield* Fiber.join(second);
     }),
   ),
 );
