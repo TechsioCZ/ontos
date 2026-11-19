@@ -13,19 +13,7 @@ import {
   withOAuthResponseHeaders,
 } from '../../api/auth/oauth-server/policy.ts';
 import { serveMcp, serveMcpMetadata, unauthorizedResponse } from '../../api/mcp/http.ts';
-
-let sdkResponse: Response;
-let sdkRequest: Request | undefined;
-
-// This fixture controls only the external SDK response, not the production response adapter.
-rs.mock('@modelcontextprotocol/server', () => ({
-  createMcpHandler: () => ({
-    fetch: (request: Request) => {
-      sdkRequest = request;
-      return sdkResponse;
-    },
-  }),
-}));
+import type { McpHandlerFactory } from '../../api/mcp/http.ts';
 
 const config = {
   issuer: 'https://shell.test/shell-super-app-api/oauth',
@@ -228,13 +216,21 @@ it.effect('MCP SDK streaming keeps status, cookies, stream identity and both can
   Effect.gen(function* mcpSdkStream() {
     const cancel = rs.fn();
     const stream = new ReadableStream<Uint8Array>({ cancel });
-    sdkResponse = new Response(stream, {
+    const sdkResponse = new Response(stream, {
       headers: headersWithCookies({ 'content-type': 'text/event-stream', 'mcp-protocol-version': '2026-07-28' }),
       status: 202,
       statusText: 'SDK Stream',
     });
     const abort = new AbortController();
-    const response = yield* serveMcp(sdkDeps)(mcpRequest(abort.signal));
+    let sdkRequest: Request | undefined;
+    const createHandler: McpHandlerFactory = () =>
+      Effect.succeed({
+        fetch: (request) => {
+          sdkRequest = request;
+          return Promise.resolve(sdkResponse);
+        },
+      });
+    const response = yield* serveMcp(sdkDeps, createHandler)(mcpRequest(abort.signal));
     expect(response).not.toBe(sdkResponse);
     expect(response.status).toBe(202);
     expect(response.statusText).toBe('SDK Stream');
@@ -256,12 +252,13 @@ it.effect('MCP SDK streaming keeps status, cookies, stream identity and both can
 it.effect('MCP SDK opaque bytes keep a missing content type and a non-default error status', () =>
   Effect.gen(function* mcpSdkOpaqueBytes() {
     const bytes = Uint8Array.from([0, 255, 13, 10, 128, 42]);
-    sdkResponse = new Response(bytes, {
+    const sdkResponse = new Response(bytes, {
       headers: headersWithCookies({ 'retry-after': '7', 'x-sdk-detail': 'retained' }),
       status: 503,
       statusText: 'SDK Retry',
     });
-    const response = yield* serveMcp(sdkDeps)(mcpRequest());
+    const createHandler: McpHandlerFactory = () => Effect.succeed({ fetch: () => Promise.resolve(sdkResponse) });
+    const response = yield* serveMcp(sdkDeps, createHandler)(mcpRequest());
     expect(response.status).toBe(503);
     expect(response.statusText).toBe('SDK Retry');
     expect(response.headers.getSetCookie()).toEqual(cookies);

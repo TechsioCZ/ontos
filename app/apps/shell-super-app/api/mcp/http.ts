@@ -6,6 +6,7 @@
  * `tools/call`) describes the connection's authority; discovery and protocol errors never do.
  */
 import { registerBootWarmUpImport } from '@app/core-runtime/runtime/boot-warm-up-imports';
+import type { createMcpHandler } from '@modelcontextprotocol/server';
 import { Duration, Effect, Function as Fn, Schema } from 'effect';
 import { HttpServerResponse } from 'effect/http';
 
@@ -206,8 +207,39 @@ export const serveMcpMetadata =
     );
   };
 
+/** Creates the external SDK handler; response adaptation and request cancellation belong to serveMcp. */
+export type McpHandlerFactory = (
+  describeTools: Effect.Effect<readonly ToolSpec[]>,
+) => Effect.Effect<Pick<ReturnType<typeof createMcpHandler>, 'fetch'>>;
+
+const createMcpSdkHandler: McpHandlerFactory = Effect.fn('Mcp.createSdkHandler')(
+  function* createSdkHandler(describeTools) {
+    const [sdk, { buildMcpServer }] = yield* loadMcpRuntime;
+    // The SDK calls back with Promises; tools and logs run with the services of this request.
+    const services = yield* Effect.context();
+    const run = Effect.runPromiseWith(services);
+    const describedServer = describeTools.pipe(Effect.map((tools) => buildMcpServer(tools, { run, sdk })));
+    return sdk.createMcpHandler(
+      ({ requestInfo }): ReturnType<typeof buildMcpServer> | Promise<ReturnType<typeof buildMcpServer>> =>
+        MCP_TOOL_METHODS.has(requestInfo?.headers.get('mcp-method') ?? '')
+          ? run(describedServer)
+          : buildMcpServer([], { run, sdk }),
+      {
+        // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
+        legacy: 'reject',
+        onerror: (error) => {
+          Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
+        },
+      },
+    );
+  },
+);
+
 /** Serves the MCP endpoint itself. */
-export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, Requirements>) =>
+export const serveMcp = <Failure, Requirements>(
+  deps: McpEndpointDeps<Failure, Requirements>,
+  createHandler: McpHandlerFactory = createMcpSdkHandler,
+) =>
   Effect.fn('Mcp.serve')(function* serveMcpRequest(
     request: Request,
   ): Effect.fn.Return<Response, Failure, Requirements> {
@@ -229,38 +261,22 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     if (authentication.kind === 'unavailable') {
       return unavailableResponse();
     }
-    const [sdk, { buildMcpServer }] = yield* loadMcpRuntime;
-    // The SDK calls back with Promises; tools and logs run with the services of this request.
-    const services = yield* Effect.context();
-    const run = Effect.runPromiseWith(services);
-    // Set by the factory when the connection could not be described. The factory then serves no tool at all and
-    // the endpoint answers HTTP 401/503 below in place of the SDK's answer: an expected refusal, not an error.
+    // Set by the description when the connection could not be described. The endpoint then answers HTTP 401/503
+    // in place of the SDK's answer: an expected refusal, not an error.
     let refused: 'invalid' | 'unavailable' | undefined;
     let describedMs: number | undefined;
     let describedTiming: DescriptionTiming | undefined;
-    const describedServer = Effect.gen(function* describeServer() {
+    const describeTools = Effect.gen(function* describeConnectionTools() {
       const [elapsed, described] = yield* Effect.timed(authentication.tools);
       describedMs = Duration.toMillis(elapsed);
       if (described.kind !== 'ok') {
         refused = described.kind;
-        return buildMcpServer([], { run, sdk });
+        return [];
       }
       describedTiming = described.timing;
-      return buildMcpServer(described.tools, { run, sdk });
+      return described.tools;
     });
-    const handler = sdk.createMcpHandler(
-      ({ requestInfo }): ReturnType<typeof buildMcpServer> | Promise<ReturnType<typeof buildMcpServer>> =>
-        MCP_TOOL_METHODS.has(requestInfo?.headers.get('mcp-method') ?? '')
-          ? run(describedServer)
-          : buildMcpServer([], { run, sdk }),
-      {
-        // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
-        legacy: 'reject',
-        onerror: (error) => {
-          Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
-        },
-      },
-    );
+    const handler = yield* createHandler(describeTools);
     const [elapsed, response] = yield* Effect.timed(
       Effect.promise(
         // Effect creates its cancellation signal only for a callback with nonzero runtime arity.

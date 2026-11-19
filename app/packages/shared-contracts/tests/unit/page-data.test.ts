@@ -1,3 +1,4 @@
+// @rstest-environment happy-dom
 import {
   changeConcerns,
   definePageData,
@@ -12,28 +13,7 @@ import {
 import type { ModuleChangeDetail, PageDataWork } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Result } from 'effect';
 import { TestClock } from 'effect/testing';
-import { afterAll, beforeAll, expect, it } from 'effect-rstest';
-
-const events = new EventTarget();
-const browserGlobals = {
-  addEventListener: events.addEventListener.bind(events),
-  dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
-  removeEventListener: events.removeEventListener.bind(events),
-};
-
-// The store only works in a document; Node gets the few window members it uses.
-beforeAll(() => {
-  for (const [name, value] of Object.entries(browserGlobals)) {
-    Reflect.set(globalThis, name, value);
-  }
-});
-
-afterAll(() => {
-  for (const name of Object.keys(browserGlobals)) {
-    Reflect.deleteProperty(globalThis, name);
-  }
-});
+import { expect, it } from 'effect-rstest';
 
 const runtime = ManagedRuntime.make(Layer.empty);
 

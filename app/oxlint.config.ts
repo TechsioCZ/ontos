@@ -1437,8 +1437,6 @@ export default defineConfig({
     {
       // Demo-only tests that replace an imported module.
       files: [
-        'apps/shell-super-app/tests/unit/auth-document-context.test.ts',
-        'apps/shell-super-app/tests/unit/native-protocol-response-bytes.test.ts',
         'apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts',
         'apps/shell-super-app/tests/unit/routes/browser-request-cache-reauthorization.test.ts',
       ],

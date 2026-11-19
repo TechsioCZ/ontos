@@ -526,7 +526,7 @@ const installedPageCatalog = () =>
     ]),
   );
 it.live(
-  'creates, resolves, persists, revokes, and signs out a Better Auth session',
+  'creates, resolves documents, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
     const approvedPageCatalog = yield* installedPageCatalog();
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -829,6 +829,15 @@ it.live(
       .pipe(Effect.provide(authenticationContextLayer));
     assertOptionalField(current.identity, 'tenantId', tenantId);
     expect(current.identity).not.toBe(undefined);
+    const signedInDocument = yield* authentication
+      .resolveDocumentContext(authenticatedHeaders)
+      .pipe(Effect.provide(authenticationContextLayer));
+    expect(signedInDocument.context.state).toBe('authenticated');
+    if (signedInDocument.context.state === 'authenticated') {
+      expect(signedInDocument.context.identity.principalId).toBe(principalId);
+      expect(signedInDocument.context.identity.tenantId).toBe(tenantId);
+    }
+    expect(Result.isSuccess(signedInDocument.tenants)).toBe(true);
     let moduleResourcePermissionCalls = 0;
     let providerCalls = 0;
     let authenticationContextCalls = 0;
@@ -1799,6 +1808,9 @@ it.live(
     yield* assertSessionForbidden(
       authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(authenticationContextLayer)),
     );
+    yield* assertSessionForbidden(
+      authentication.resolveDocumentContext(authenticatedHeaders).pipe(Effect.provide(authenticationContextLayer)),
+    );
     const forbiddenModulesResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/composition`, {
@@ -1834,6 +1846,16 @@ it.live(
       )
       .pipe(Effect.provide(authenticationContextLayer));
     expect(anonymous.identity).toBe(null);
+    const signedOutDocument = yield* authentication
+      .resolveDocumentContext(
+        new Headers({
+          cookie: cookieHeader(signedOutCookies),
+          origin: configuration.baseUrl,
+        }),
+      )
+      .pipe(Effect.provide(authenticationContextLayer));
+    expect(signedOutDocument.context.state).toBe('anonymous');
+    expect(Result.isFailure(signedOutDocument.tenants)).toBe(true);
     const expiredModulesResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/composition`, {

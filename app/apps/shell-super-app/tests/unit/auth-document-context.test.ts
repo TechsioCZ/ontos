@@ -1,47 +1,90 @@
+// @rstest-environment node
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
   ContextAccess,
   LegalEntityContext,
   OAuthAuthenticationAudit,
-  OAuthGrantRegistryLive,
   PrincipalResolver,
   PrincipalResolverUnavailableError,
 } from '@app/core-runtime';
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { apiKey } from '@better-auth/api-key';
+import { cimd } from '@better-auth/cimd';
+import { mcp } from '@better-auth/mcp';
+import { betterAuth } from 'better-auth/minimal';
+import { memoryAdapter } from 'better-auth/adapters/memory';
+import { admin } from 'better-auth/plugins/admin';
+import { jwt } from 'better-auth/plugins/jwt';
 import { NodeCrypto } from '@effect/platform-node';
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Result } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
-import { Reactivity } from 'effect/reactivity';
 
-import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
-import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
-import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
+import { fetchClientMetadataResource } from '../../api/auth/cimd-transport.node.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, BetterAuthNativeAdapterLive } from '../../api/auth/db/client.ts';
-import { authRelations } from '../../api/auth/db/schema.ts';
+import { BetterAuthNativeAdapter } from '../../api/auth/better-auth-native-adapter.ts';
+import type { ShellBetterAuth, ShellSessionOptions } from '../../api/auth/better-auth-provider-types.ts';
 import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
-import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
+import { BetterAuthRuntime, BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
 import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
 import { OAuthEndpointGuardData } from '../../api/oauth-connections/grant-store.ts';
-import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
+import { OAuthConnectionHooks } from '../../api/auth/oauth-server/connection-hooks.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 
-const { createAuth, getSession, handleRequest, initializeAuth } = rs.hoisted(() => ({
-  createAuth: rs.fn(),
-  getSession: rs.fn(),
-  handleRequest: rs.fn(),
-  initializeAuth: rs.fn(Promise.resolve.bind(Promise, { ready: true })),
-}));
-rs.mock('better-auth/minimal', () => ({
-  betterAuth: () => {
-    createAuth();
-    return { $context: initializeAuth(), api: { getSession }, handler: handleRequest };
+// Real SDK metadata supplies the complete typed provider contract. Only the existing runtime service's
+// creation callback is controlled; the production framework dispatcher, cache and guards remain real.
+const sdk = betterAuth<ShellSessionOptions>({
+  baseURL: 'http://localhost:3020',
+  database: memoryAdapter({ oauthResource: [] }),
+  logger: { disabled: true },
+  plugins: [
+    apiKey(),
+    admin(),
+    jwt(),
+    mcp({ consentPage: '/consent', loginPage: '/login', resource: 'http://localhost:3020/mcp' }),
+    cimd({ fetchClientMetadataResource, metadataProfile: 'mcp-2026-07-28' }),
+  ],
+  secret: 'document-context-unit-test-secret',
+  session: {
+    additionalFields: {
+      activeContextKind: { defaultValue: 'company', input: true, required: true, type: 'string' },
+      activeLegalEntityId: { input: true, required: false, type: 'string' },
+      activeTenantId: { input: true, required: false, type: 'string' },
+      impersonationActionId: { input: false, required: false, type: 'string' },
+      impersonationOriginalAuthBindingId: { input: false, required: false, type: 'string' },
+      impersonationOriginalPrincipalId: { input: false, required: false, type: 'string' },
+      impersonationOriginalSessionId: { input: false, required: false, type: 'string' },
+      impersonationReason: { input: false, required: false, type: 'string' },
+      impersonationTargetPrincipalId: { input: false, required: false, type: 'string' },
+    },
   },
-}));
+});
+const createAuth = rs.fn<() => void>();
+type NativeSessionReply = Awaited<ReturnType<typeof sdk.api.getSession<false, false>>>;
+type NativeSessionHeadersReply = Awaited<ReturnType<typeof sdk.api.getSession<false, true>>>;
+const getSession =
+  rs.fn<(input: Parameters<typeof sdk.api.getSession>[0]) => Promise<NativeSessionReply | NativeSessionHeadersReply>>();
+const handleRequest = rs.fn<ShellBetterAuth['handler']>();
+const initializeAuth = rs.fn<() => ShellBetterAuth['$context']>(() => sdk.$context);
+const controlledRuntime = Layer.effect(
+  BetterAuthRuntime,
+  Effect.gen(function* controlledNativeProviderCreation() {
+    const runtime = yield* BetterAuthRuntime;
+    return {
+      getOrCreate: (key: string) =>
+        runtime.getOrCreate(key, () => {
+          createAuth();
+          return {
+            ...sdk,
+            $context: initializeAuth(),
+            api: { ...sdk.api, getSession: Object.assign(getSession, sdk.api.getSession) },
+            handler: handleRequest,
+          };
+        }),
+    };
+  }),
+).pipe(Layer.provide(BetterAuthRuntimeLive));
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -58,16 +101,28 @@ const principalIdentity = {
 const legalEntity = { legalEntityId, legalName: 'Document company' };
 const availableTenants = [{ name: 'Document tenant', tenantId }];
 const headers = new Headers({ cookie: 'session=test-session', origin: 'http://localhost:3020' });
-const sessionResponse = () => ({
+const sessionResponse = (): NativeSessionHeadersReply => ({
   headers: new Headers({ 'set-cookie': 'session=renewed; HttpOnly' }),
   response: {
     session: {
       activeContextKind: 'company',
       activeLegalEntityId: legalEntityId,
       activeTenantId: tenantId,
+      createdAt: new Date(0),
+      expiresAt: new Date('2030-01-01'),
       id: 'document-session',
+      token: 'document-session-token',
+      updatedAt: new Date(0),
+      userId,
     },
-    user: { email: 'document@example.test', id: userId },
+    user: {
+      createdAt: new Date(0),
+      email: 'document@example.test',
+      emailVerified: true,
+      id: userId,
+      name: 'Document user',
+      updatedAt: new Date(0),
+    },
   },
 });
 const authenticationConfig = {
@@ -78,34 +133,17 @@ const authenticationConfig = {
   supportUserIds: [],
   trustedOrigins: ['http://localhost:3020'],
 };
-const driver = scriptedPgClientLayer(
-  Effect.succeed(testSqlConnection(() => Effect.die('The document fixture must not execute SQL'))),
-).pipe(Layer.provide(Reactivity.layer));
-const registryDatabase = Layer.effect(
-  CoreDatabase,
-  makeWithDefaults({ relations: coreRelations }).pipe(Effect.map((executor) => ({ executor }))),
-).pipe(Layer.provide(driver));
-const hooks = OAuthConnectionHooksLive.pipe(
-  Layer.provide(OAuthGrantRegistryLive.pipe(Layer.provide(registryDatabase))),
-);
-const persistence = Layer.effect(
-  AuthDatabase,
-  makeWithDefaults({ relations: authRelations }).pipe(
-    Effect.map((executor) => ({
-      adapter: () => {
-        throw new Error('The document fixture must not open the Better Auth adapter');
-      },
-      executor,
-    })),
-  ),
-).pipe(Layer.provide(driver));
 const legalEntityContext = {
   listActiveForTenant: () => Effect.succeed([legalEntity]),
   validateSelection: () => Effect.succeed(legalEntity),
 };
 const context = Layer.mergeAll(
-  BetterAuthRuntimeLive,
-  hooks,
+  controlledRuntime,
+  Layer.succeed(OAuthConnectionHooks, {
+    consentReferenceId: () => Effect.die('Document resolution must not create an OAuth connection'),
+    customAccessTokenClaims: () => Effect.die('Document resolution must not mint OAuth claims'),
+    shouldRedirect: () => Effect.die('Document resolution must not redirect OAuth login'),
+  }),
   Layer.succeed(AuthConfig, authenticationConfig),
   Layer.succeed(
     AccessDecisionGate,
@@ -121,14 +159,18 @@ const context = Layer.mergeAll(
     loadRefresh: () => Effect.succeed(Option.none()),
     revokeFamily: () => Effect.die('Document resolution must not revoke an OAuth token family'),
   }),
-  BetterAuthNativeAdapterLive.pipe(Layer.provideMerge(persistence)),
+  Layer.succeed(BetterAuthNativeAdapter, {
+    forOptions: () => {
+      throw new Error('The controlled runtime must not open the native adapter');
+    },
+  }),
 ).pipe(Layer.provide(NodeCrypto.layer));
 
 const frameworkLive = BetterAuthFrameworkLive();
 const requestServices = Layer.merge(frameworkLive, OAuthEndpointGuardsLive.pipe(Layer.provide(frameworkLive)));
 const makeAuthentication = () => makeAuthenticationService().pipe(Effect.provide(requestServices));
 
-it.effect('resolves one session and principal per document and observes revocation on the next document', () =>
+it.effect('resolves one session and principal per document and observes an anonymous next document', () =>
   Effect.gen(function* documentSessionResolution() {
     getSession.mockReset().mockResolvedValueOnce(sessionResponse()).mockResolvedValueOnce({
       headers: new Headers(),
@@ -201,13 +243,14 @@ it.effect('loads tenant choices and legal-entity selection concurrently after au
   }).pipe(Effect.provide(context)),
 );
 
-it.effect('binds OAuth consent to the real Better Auth session without resolving a principal', () =>
+it.effect('binds OAuth consent to the dispatched Better Auth session without resolving a principal', () =>
   Effect.gen(function* oauthConsentSession() {
     createAuth.mockClear();
-    getSession.mockReset().mockResolvedValue({
-      session: { id: 'oauth-session' },
-      user: { id: userId },
-    });
+    const signedIn = sessionResponse().response;
+    if (signedIn === null) {
+      return yield* Effect.die('Expected signed-in session fixture');
+    }
+    getSession.mockReset().mockResolvedValue({ ...signedIn, session: { ...signedIn.session, id: 'oauth-session' } });
     const consentReads: { readonly sessionId: string; readonly userId: string }[] = [];
     const authentication = yield* makeAuthentication().pipe(
       Effect.provideService(PrincipalResolver, makePrincipalResolverDouble()),
@@ -286,7 +329,8 @@ it.effect('defers native dispatch and reuses only the ready provider while retai
 it.effect('does not share pending setup and reuses a provider only after setup is ready', () =>
   Effect.gen(function* pendingNativeSetup() {
     createAuth.mockClear();
-    const pending = Promise.withResolvers<{ ready: boolean }>();
+    const ready = yield* Effect.promise(() => sdk.$context);
+    const pending = Promise.withResolvers<Awaited<ShellBetterAuth['$context']>>();
     initializeAuth.mockReturnValueOnce(pending.promise);
     handleRequest.mockReset().mockResolvedValue(new Response('native OAuth response'));
     yield* Effect.gen(function* pendingSetupRequests() {
@@ -299,7 +343,7 @@ it.effect('does not share pending setup and reuses a provider only after setup i
       yield* first.oauth.handler(request);
       yield* second.oauth.handler(request);
       expect(createAuth).toHaveBeenCalledTimes(2);
-      pending.resolve({ ready: true });
+      pending.resolve(ready);
       yield* Effect.yieldNow;
       const third = yield* makeAuthentication();
       if (third.oauth === undefined) {
@@ -308,7 +352,7 @@ it.effect('does not share pending setup and reuses a provider only after setup i
       yield* third.oauth.handler(request);
       expect(createAuth).toHaveBeenCalledTimes(2);
       return yield* Effect.void;
-    }).pipe(Effect.ensuring(Effect.sync(() => pending.resolve({ ready: true }))));
+    }).pipe(Effect.ensuring(Effect.sync(() => pending.resolve(ready))));
   }).pipe(Effect.provideService(PrincipalResolver, makePrincipalResolverDouble()), Effect.provide(context)),
 );
 
@@ -341,7 +385,11 @@ it.effect('never publishes failed SDK setup and retains its original request fai
 it.effect('interrupts request-owned dispatch without changing the original SDK request', () =>
   Effect.gen(function* interruptedNativeDispatch() {
     const pending = Promise.withResolvers<Response>();
-    handleRequest.mockReset().mockReturnValueOnce(pending.promise);
+    const started = yield* Deferred.make<boolean>();
+    handleRequest.mockReset().mockImplementationOnce(() => {
+      Deferred.doneUnsafe(started, Effect.succeed(true));
+      return pending.promise;
+    });
     yield* Effect.gen(function* interruptedRequest() {
       const authentication = yield* makeAuthentication();
       if (authentication.oauth === undefined) {
@@ -349,7 +397,7 @@ it.effect('interrupts request-owned dispatch without changing the original SDK r
       }
       const request = new Request(`${authentication.oauth.issuer}/jwks`);
       const fiber = yield* authentication.oauth.handler(request).pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
+      yield* Deferred.await(started);
       expect(handleRequest).toHaveBeenCalledWith(request, undefined);
       yield* Fiber.interrupt(fiber);
       expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
