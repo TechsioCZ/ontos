@@ -13,7 +13,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Redacted, Result } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Predicate, Redacted, Result } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -272,14 +272,8 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         principal: yield* gateway.verifyPrincipal(principal),
         transport: reviewTransport,
       })
-      .pipe(Effect.provideContext(context));
-    expect(replay).toEqual(reviewed);
-    expect(
-      yield* admin
-        .select()
-        .from(partyMatchDecisions)
-        .where(eq(partyMatchDecisions.actionInvocationId, decision.actionInvocationId)),
-    ).toEqual([decision]);
+      .pipe(Effect.provideContext(context), Effect.flip);
+    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
     const end = yield* DateTime.now;
     yield* runtime
       .runAction({

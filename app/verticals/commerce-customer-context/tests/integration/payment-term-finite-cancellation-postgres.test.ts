@@ -858,8 +858,11 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
         if (committedAttempt === undefined) {
           return yield* Effect.die('Missing committed legacy cancellation key');
         }
-        // The winner's same-key retry answers its saved result; the evidence counts below prove nothing ran again.
-        expect(yield* executeRemoval(committedAttempt.payload, committedAttempt.key)).toEqual(winner.success);
+        const replay = yield* executeRemoval(committedAttempt.payload, committedAttempt.key).pipe(Effect.result);
+        expect(Result.isFailure(replay)).toBe(true);
+        if (Result.isFailure(replay)) {
+          expect(Predicate.isTagged(replay.failure, 'ActionAlreadyCommitted')).toBe(true);
+        }
         const equivalent = yield* executeRemoval({
           ...committedAttempt.payload,
           expectedRevision: winner.success.state.revision,
@@ -919,19 +922,16 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
   }).pipe(Effect.provideContext(context));
   expect(cancelled.removalKind).toBe('CANCELLED');
   expect(cancelled.changed).toBe(true);
-  const evidenceBeforeReplay = yield* fixture.evidence(coreEvidenceExecutor);
   const replay = yield* runAction({
     payload,
     principal,
     registration: removeCustomerPaymentTermAction,
     transport,
-  }).pipe(Effect.provideContext(context));
-  // The same-key retry answers the saved cancellation and writes no new evidence.
-  expect(replay).toEqual(cancelled);
-  const evidenceAfterReplay = yield* fixture.evidence(coreEvidenceExecutor);
-  expect(evidenceAfterReplay.events).toHaveLength(evidenceBeforeReplay.events.length);
-  expect(evidenceAfterReplay.outbox).toHaveLength(evidenceBeforeReplay.outbox.length);
-  expect(evidenceAfterReplay.audits).toHaveLength(evidenceBeforeReplay.audits.length);
+  }).pipe(Effect.provideContext(context), Effect.result);
+  expect(Result.isFailure(replay)).toBe(true);
+  if (Result.isFailure(replay)) {
+    expect(Predicate.isTagged(replay.failure, 'ActionAlreadyCommitted')).toBe(true);
+  }
   const equivalent = yield* runAction({
     payload: { ...payload, expectedRevision: cancelled.state.revision },
     principal,

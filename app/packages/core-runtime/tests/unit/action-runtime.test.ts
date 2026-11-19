@@ -4512,10 +4512,7 @@ it.effect(
 
     expect(Predicate.isTagged(committedError, 'ActionAlreadyCommitted')).toBe(true);
 
-    // Only the scoped read of the saved reply; no owner transaction locks the invocation.
-    expect(committed.counts().transactionCount).toBe(1);
-    expect(committed.counts().lockCount).toBe(0);
-    expect(committed.committedReplyLoads).toHaveLength(1);
+    expect(committed.counts().transactionCount).toBe(0);
     expect(committed.permissionCounts().permissionCheckCount).toBe(0);
     expect(Predicate.isTagged(conflictError, 'ActionRequestHashConflict')).toBe(true);
 
@@ -5055,9 +5052,7 @@ it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
       expect(result).toEqual({ total: 9 });
       expect(seen).toEqual(['AlreadyCommitted']);
       expect(harness.permissionCounts().permissionCheckCount).toBe(0);
-      // Only the scoped read of the (absent) saved reply; no owner transaction locks the invocation.
-      expect(harness.counts().transactionCount).toBe(1);
-      expect(harness.counts().lockCount).toBe(0);
+      expect(harness.counts().transactionCount).toBe(0);
     }),
   );
 
@@ -6181,6 +6176,7 @@ it.effect('answers a saved reply only for the exact invocation, principal and re
       payload: { amount: 1 },
       principal,
       registration: registration(),
+      savedReply: 'answer',
       transport: transport('saved-reply-binding'),
     });
 
@@ -6215,6 +6211,7 @@ it.effect('keeps ActionAlreadyCommitted without the saved reply for a caller tha
         payload: { amount: 1 },
         principal,
         registration: registration(),
+        savedReply: 'answer',
         transport: transport('saved-reply-permission'),
       })
       .pipe(Effect.flip);
@@ -6238,6 +6235,7 @@ it.effect('keeps ActionAlreadyCommitted for an invocation without a decodable sa
           payload: { amount: 1 },
           principal,
           registration: registration(),
+          savedReply: 'answer',
           transport: transport('saved-reply-missing'),
         }),
       );
@@ -6273,6 +6271,7 @@ it.effect('shows a replay to the post-attempt hook as AlreadyCommitted and answe
         payload: { amount: 1 },
         principal,
         registration: action,
+        savedReply: 'answer',
         transport: transport('saved-reply-post-attempt'),
       });
 
@@ -6310,6 +6309,7 @@ it.effect('keeps a seen commit AlreadyCommitted for the hook when reading or dec
             payload: { amount: 1 },
             principal,
             registration: action,
+            savedReply: 'answer',
             transport: transport(`saved-reply-${failing}-fails`),
           })
           .pipe(Effect.flip);

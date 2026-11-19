@@ -991,7 +991,7 @@ it('publishes the real registration of each Action, never a fabricated declarati
 });
 
 it.layer(NodeServices.layer)('access approvals owner runner over a real catalog Action', (suite) => {
-  suite.effect('runs the real owner Action once and answers a committed retry with its saved reply', () =>
+  suite.effect('runs the real owner Action once and answers a committed retry with its receipt', () =>
     onLiveClock(
       Effect.gen(function* ownerRunsOnce() {
         const { admin, executor } = yield* disposableDatabase;
@@ -1018,8 +1018,8 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         expect((yield* invocationReceipt(admin, mandateId))?.status).toBe('succeeded');
         expect(yield* frozenCommandCount(admin)).toBe(1);
 
-        // The retry resolves the SAME deterministic invocation and answers its saved reply, no second write.
-        expect(yield* runtime.runAction(mandateRequest(eva, mandateId))).toEqual(result);
+        // The retry resolves the SAME deterministic invocation and reports its receipt, no second write.
+        expect(yield* refusalOf(runtime.runAction(mandateRequest(eva, mandateId)))).toBe('action_already_committed');
         expect(yield* brandCount(admin)).toBe(1);
         expect((yield* proposalReceipt(admin, proposed.id))?.status).toBe('executed');
       }),

@@ -151,8 +151,16 @@ const request = <Registration>(
   payload: { amount: options.amount ?? 2 },
   principal: options.who ?? principal,
   registration,
+  // The request a transport sends: its client can lose the reply, so it asks for the saved one.
+  savedReply: 'answer' as const,
   transport: { correlationId: 'saved-reply-test', idempotencyKey: options.idempotencyKey ?? 'increment-once' },
 });
+
+/** The same request from an in-process caller, which never asks for the saved reply. */
+const inProcessRequest = <Registration>(registration: Registration, options: Parameters<typeof request>[1] = {}) => {
+  const { savedReply: _transportOnly, ...rest } = request(registration, options);
+  return rest;
+};
 
 it.effect('answers a same-key retry with the saved reply and runs nothing again', () =>
   Effect.gen(function* savedReplyReplay() {
@@ -181,6 +189,55 @@ it.effect('answers a same-key retry with the saved reply and runs nothing again'
     expect(snapshot.transactionCount).toBe(2);
     expect(snapshot.stages.filter((stage) => stage === 'invocation_locked')).toHaveLength(1);
     expect(snapshot.stages.filter((stage) => stage === 'handler_executed')).toHaveLength(1);
+  }),
+);
+
+it.effect('keeps ActionAlreadyCommitted for an in-process caller that does not ask for the saved reply', () =>
+  Effect.gen(function* inProcessStopSignal() {
+    const probe: CounterProbe = { handlerRuns: 0, policyRuns: 0 };
+    const outcomes: string[] = [];
+    const replays: string[] = [];
+    const counter = counterAction(probe);
+    const action = defineAction(
+      counter.descriptor,
+      (payload) =>
+        Effect.sync(() => {
+          probe.handlerRuns += 1;
+          return { at: DateTime.makeUnsafe(0), run: probe.handlerRuns, total: payload.amount };
+        }),
+      () => Effect.succeed({}),
+      undefined,
+      (context) =>
+        Effect.sync(() => {
+          outcomes.push(context.outcome._tag);
+          return { _tag: 'Settled' as const };
+        }),
+    );
+    const harness = yield* harnessFor(action);
+
+    yield* harness.runtime.runAction(inProcessRequest(action));
+    const retry = yield* harness.runtime
+      .runAction({
+        ...inProcessRequest(action),
+        onReplay: (replay) =>
+          Effect.sync(() => {
+            replays.push(replay.invocationId);
+          }),
+      })
+      .pipe(Effect.flip);
+    const snapshot = harness.snapshot();
+
+    expect(Predicate.isTagged(retry, 'ActionAlreadyCommitted')).toBe(true);
+    expect(retry).toMatchObject({ invocationId: snapshot.invocations[0]?.actionInvocationId });
+    expect(outcomes).toEqual(['Committed', 'AlreadyCommitted']);
+    expect(replays).toEqual([]);
+    // The reply is still saved with the commit, but the in-process retry reads nothing.
+    expect(snapshot.committed[0]?.committedReply).toEqual({
+      encoded: { at: '1970-01-01T00:00:00.000Z', run: 1, total: 2 },
+      kind: 'result',
+    });
+    expect(snapshot.transactionCount).toBe(1);
+    expect(probe.handlerRuns).toBe(1);
   }),
 );
 

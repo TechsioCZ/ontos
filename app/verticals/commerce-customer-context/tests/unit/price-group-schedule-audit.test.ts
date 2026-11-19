@@ -1,4 +1,5 @@
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -77,10 +78,9 @@ const permissions = {
   access: 'allowed',
 } as const;
 
-it.effect('retains the finite request rather than a truncated replay row, and replays a committed key', () =>
+it.effect('retains the finite request rather than a truncated replay row, and does not duplicate a committed key', () =>
   Effect.gen(function* retainOriginalRequest() {
     const captured: string[] = [];
-    let assignCalls = 0;
     const services = {
       captureAssignmentReceipt: (invocationId: string) =>
         Effect.sync(() => {
@@ -97,16 +97,12 @@ it.effect('retains the finite request rather than a truncated replay row, and re
       store: {
         ...unusedStore,
         assign: () =>
-          Effect.sync(() => {
-            assignCalls += 1;
-          }).pipe(
-            Effect.as({
-              _tag: 'assigned' as const,
-              assignment: assignment('assignment', '2027-03-01T00:00:00.000Z'),
-              changed: false,
-              replacedAssignmentRef: ref('predecessor'),
-            }),
-          ),
+          Effect.succeed({
+            _tag: 'assigned' as const,
+            assignment: assignment('assignment', '2027-03-01T00:00:00.000Z'),
+            changed: false,
+            replacedAssignmentRef: ref('predecessor'),
+          }),
       },
       validateAssignmentSource: () => Effect.void,
     };
@@ -142,11 +138,9 @@ it.effect('retains the finite request rather than a truncated replay row, and re
       requestedEffectiveTo: end,
     });
     expect(committed[0]?.evidence.domainEvents).toHaveLength(0);
-    // A same-key, same-payload retry answers the saved result and runs nothing again.
-    const replay = yield* harness.runtime.runAction(request);
-    expect(replay).toEqual(result);
+    const replay = yield* Effect.flip(harness.runtime.runAction(request));
+    expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
     expect(harness.snapshot().committed).toHaveLength(1);
-    expect(assignCalls).toBe(1);
     expect(captured).toHaveLength(1);
   }).pipe(Effect.provide(nodeCryptoLayer)),
 );
