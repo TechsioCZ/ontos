@@ -1,7 +1,20 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, DateTime, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Option,
+  Predicate,
+  Schema,
+} from 'effect';
 import { TestClock } from 'effect/testing';
-import { ConnectionError, SqlError } from 'effect/sql/SqlError';
+import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -175,6 +188,8 @@ const makeRunFormHarness = (
     readonly decisions?: readonly OwnerAuthorizationDecision[];
     /** The call executor after the harness recorded the request; by default every call answers Ok. */
     readonly execute?: KernelCallsService['execute'];
+    /** The ordinal (1-based) of the trusted clock statement the database fails, with this SQLSTATE. */
+    readonly failClock?: Readonly<{ readonly code: string; readonly ordinal: number }>;
     /** The ordinal (1-based) of the ROLLBACK the database fails. */
     readonly failRollback?: number;
     /** How long the owner rule takes to answer, on the test clock. */
@@ -185,13 +200,19 @@ const makeRunFormHarness = (
   Effect.gen(function* makeHarness() {
     const statements: string[] = [];
     let rollbacks = 0;
+    let clocks = 0;
     const executor = yield* makeTestDatabase((statement) =>
       Effect.suspend(() => {
         statements.push(statement);
         rollbacks += /^rollback/iu.test(statement.trim()) ? 1 : 0;
-        return /^rollback/iu.test(statement.trim()) && rollbacks === options.failRollback
-          ? Effect.fail(new SqlError({ reason: new ConnectionError({ cause: { code: '08006' } }) }))
-          : Effect.succeed(answer(statement));
+        clocks += statement.includes('statement_timestamp()') ? 1 : 0;
+        if (/^rollback/iu.test(statement.trim()) && rollbacks === options.failRollback) {
+          return Effect.fail(new SqlError({ reason: new ConnectionError({ cause: { code: '08006' } }) }));
+        }
+        if (statement.includes('statement_timestamp()') && clocks === options.failClock?.ordinal) {
+          return Effect.fail(new SqlError({ reason: new UnknownError({ cause: { code: options.failClock.code } }) }));
+        }
+        return Effect.succeed(answer(statement));
       }),
     );
     const openTransactions = () => openTransactionsIn(statements);
@@ -496,6 +517,42 @@ it.effect('answers permission unavailable when the owner rule cannot answer', ()
       expect(rowsOf(harness.settled)).toEqual([
         [{ outcome: 'failed', outcomeCode: 'read_permission_unavailable', outcomeStage: 'execution' }],
       ]);
+    }),
+  ),
+);
+
+it.effect('logs the read key and the preserved cause of an aborted transaction, and no value', () =>
+  Effect.scoped(
+    Effect.gen(function* abortedTransactionLogged() {
+      const logged: string[] = [];
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === 'Warn') {
+          logged.push(JSON.stringify(message));
+        }
+      });
+      // The opening owner check reads the clock first; the module's own transaction fails at its clock.
+      const harness = yield* makeRunFormHarness({ failClock: { code: '25006', ordinal: 2 } });
+      const exit = yield* Effect.exit(
+        harness
+          .execute(
+            runRead((input, context) =>
+              context.transaction((owned) => owned.load(input.subject)).pipe(Effect.map(answered)),
+            ),
+          )
+          .pipe(Effect.provide(Logger.layer([logger]))),
+      );
+      expect(Schema.is(ReadHandlerUnavailable)(failureOf(exit))).toBe(true);
+      expect(logged).toEqual([
+        JSON.stringify([
+          'A { run } Read answered unavailable',
+          {
+            causes: [{ detail: 'database_unavailable', sqlState: '25006', tag: 'TransactionAborted' }],
+            readKey: READ_KEY,
+          },
+        ]),
+      ]);
+      // No input or result value reaches the log.
+      expect(logged.join('')).not.toMatch(/customer/u);
     }),
   ),
 );
