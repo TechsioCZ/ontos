@@ -534,8 +534,12 @@ jobs:
           fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
 
+      # Reuses the lockfile check of the first build shard (install-app lockfile-verdict); only a job that needs
+      # the build job reads it, and a job without that need, or whose build job did not succeed, checks freshly.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: ${{ needs.node-artifact-build.result == 'success' && 'reuse' || '' }}
 
       - name: Download the same-run Node artifacts for unit contract fixtures
         if: matrix.node-artifacts == true
@@ -947,8 +951,12 @@ jobs:
         working-directory: app
         run: docker compose pull
 
+      # Reuses the lockfile check of the first build shard (install-app lockfile-verdict); only a job that needs
+      # the build job reads it, and a job without that need, or whose build job did not succeed, checks freshly.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: ${{ needs.node-artifact-build.result == 'success' && 'reuse' || '' }}
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.
@@ -1394,8 +1402,11 @@ jobs:
         working-directory: app
         run: *sample-runner-pressure
 
+      # The first shard publishes its lockfile check to the jobs that need this one (install-app lockfile-verdict).
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          lockfile-verdict: ${{ strategy.job-index == 0 && 'publish' || '' }}
 
       # A shard build took 55 s median and 90 s at most on healthy hosts, 187 s on one degraded host, so a
       # build past 10 minutes fails the shard instead of holding back every consumer of the run.

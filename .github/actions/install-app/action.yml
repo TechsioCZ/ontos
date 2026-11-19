@@ -27,6 +27,12 @@ inputs:
       Restore the newest TS-Go typecheck build (app/node_modules/.cache/tsgo) saved on main for this
       toolchain and lockfile. TS-Go rechecks every file whose content changed, so a stale build only costs time.
     default: 'false'
+  lockfile-verdict:
+    description: >-
+      Carry pnpm's record that it checked this lockfile against the supply-chain policies to later jobs of the
+      same run attempt. 'publish' uploads the record this job's install wrote; 'reuse' puts the record this run
+      attempt published in place before the install. Empty: neither.
+    default: ''
 
 outputs:
   typescript-build-key:
@@ -233,11 +239,91 @@ runs:
         key: pnpm-store-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}
         restore-keys: pnpm-store-${{ runner.os }}-
 
+    # pnpm checks the lockfile against the supply-chain policies of app/pnpm-workspace.yaml (release age, trust
+    # policy, tarball and integrity binding) on every install, 18 to 44 s on a runner. A passed check is
+    # recorded in its cache directory (lockfile-verified.jsonl) by lockfile hash and with the policies it passed
+    # under; a later install of that lockfile under policies no stricter skips the check and prints
+    # "verified ... ago". One job of a run publishes that one file as an artifact named by the run attempt, and
+    # only jobs that need the publishing job read it, so every run and every re-run attempt still checks freshly
+    # in its first installing jobs and goes red when the check fails; a record is reused only inside the
+    # attempt that wrote it, minutes old. The check also asks the registry whether each version still exists,
+    # so a record carried across runs could keep installing a version the registry has since withdrawn.
+    # Only jobs of this run can write its artifacts; such a job already shares this run's pnpm store and could
+    # write the installed workspace or the build outputs the readers use, so a forged record grants it nothing
+    # more. Only the record is copied into pnpm's cache directory, never the rest of the artifact, and pnpm
+    # ignores a record for another lockfile or for laxer policies and runs its check.
+    - name: Locate pnpm's lockfile verdict
+      id: verdict
+      if: inputs.lockfile-verdict != '' && steps.restored.outputs.usable != 'true'
+      shell: bash
+      env:
+        MODE: ${{ inputs.lockfile-verdict }}
+      run: |
+        case "$MODE" in
+          publish | reuse) ;;
+          *)
+            echo "::error::lockfile-verdict is '', 'publish' or 'reuse', not '$MODE'."
+            exit 1
+            ;;
+        esac
+        # pnpm's own rule for its cache directory on Linux (pnpm/crates/config/src/defaults.rs).
+        echo "record=${XDG_CACHE_HOME:-$HOME/.cache}/pnpm/lockfile-verified.jsonl" >>"$GITHUB_OUTPUT"
+        echo "staging=$RUNNER_TEMP/pnpm-lockfile-verdict" >>"$GITHUB_OUTPUT"
+
+    # A pattern that matches nothing downloads nothing and succeeds: the publishing job used its restored
+    # workspace and never ran pnpm, or this is a later attempt that re-runs only failed jobs.
+    - name: Download the lockfile verdict of this run attempt
+      if: inputs.lockfile-verdict == 'reuse' && steps.restored.outputs.usable != 'true'
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: pnpm-lockfile-verdict-${{ github.run_attempt }}
+        path: ${{ steps.verdict.outputs.staging }}
+
+    - name: Put the lockfile verdict in place
+      if: inputs.lockfile-verdict == 'reuse' && steps.restored.outputs.usable != 'true'
+      shell: bash
+      env:
+        RECORD: ${{ steps.verdict.outputs.record }}
+        STAGING: ${{ steps.verdict.outputs.staging }}
+      run: |
+        if [[ -f "$STAGING/lockfile-verified.jsonl" ]]; then
+          mkdir -p "${RECORD%/*}"
+          cp "$STAGING/lockfile-verified.jsonl" "$RECORD"
+          echo 'pnpm reuses the lockfile check this run attempt already passed.'
+        else
+          echo 'No job of this run attempt published a lockfile verdict; pnpm checks the lockfile.'
+        fi
+
     - name: Install dependencies from the frozen lockfile
       if: steps.restored.outputs.usable != 'true'
       shell: bash
       working-directory: app
       run: mise exec -- pnpm install --frozen-lockfile ${{ inputs.install-args }}
+
+    # Reached only when the install above ran and passed. A pnpm that stops writing the record fails here.
+    - name: Stage the lockfile verdict this install recorded
+      if: inputs.lockfile-verdict == 'publish' && steps.restored.outputs.usable != 'true'
+      shell: bash
+      env:
+        RECORD: ${{ steps.verdict.outputs.record }}
+        STAGING: ${{ steps.verdict.outputs.staging }}
+      run: |
+        if [[ ! -f "$RECORD" ]]; then
+          echo "::error::pnpm checked the lockfile but wrote no record at $RECORD."
+          exit 1
+        fi
+        mkdir -p "$STAGING"
+        cp "$RECORD" "$STAGING/lockfile-verified.jsonl"
+
+    - name: Publish the lockfile verdict to this run attempt
+      if: inputs.lockfile-verdict == 'publish' && steps.restored.outputs.usable != 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: pnpm-lockfile-verdict-${{ github.run_attempt }}
+        path: ${{ steps.verdict.outputs.staging }}/lockfile-verified.jsonl
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 1
 
     - name: Save the pnpm store
       if: >-

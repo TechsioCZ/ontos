@@ -49,6 +49,7 @@ const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 const LEFTHOOK_CONFIG = 'lefthook.yml';
 /** Any pinned download-artifact action; a bare prefix match is what keeps the pin out of these tests. */
 const DOWNLOAD_ARTIFACT = 'actions/download-artifact@';
+const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
 /** A representative changed source path for the format-and-lint selection tests. */
 const CHANGED_SOURCE_PATH = 'app/scripts/check.mts';
 /** The build shard a matrix row carries. */
@@ -116,6 +117,7 @@ const STEP_PATH = '/usr/bin:/bin';
 const INSTALL_APP_STEP = 'Install the app workspace';
 /** The composite action every job uses to install the app workspace. */
 const INSTALL_APP_ACTION = './.github/actions/install-app';
+const INSTALL_APP_ACTION_URL = new URL('../../../.github/actions/install-app/action.yml', import.meta.url);
 /** The last step of a build shard: its consumers need the shard, so they start once this upload exists. */
 const UPLOAD_STEP = "Upload the shard's build outputs";
 const NODE_BUILD_STEP = "Build the shard's Node artifacts";
@@ -159,6 +161,7 @@ it('reports the required Workspace gates check on every pull request and merge g
 const expression = (body: string) => `\${{ ${body} }}`;
 const CURRENT_SOURCE_REVISION = expression('github.sha');
 const GITHUB_TOKEN_EXPRESSION = expression('github.token');
+const RUN_ATTEMPT_EXPRESSION = expression('github.run_attempt');
 
 const WorkflowStepSchema = Schema.Struct({
   'continue-on-error': Schema.optional(Schema.Boolean),
@@ -974,29 +977,139 @@ it('names every failure-diagnostics upload per job, row and attempt', () => {
   const names = new Map<string, string>();
   for (const [job, { steps = [] }] of Object.entries(jobs)) {
     for (const step of steps) {
-      if (step.uses?.startsWith('actions/upload-artifact@') === true && step.if?.includes('failure()') === true) {
+      if (step.uses?.startsWith(UPLOAD_ARTIFACT) === true && step.if?.includes('failure()') === true) {
         names.set(`${job}: ${String(step.with?.name)}`, String(step.with?.name));
       }
     }
   }
   expect(names.size).toBeGreaterThanOrEqual(4);
   for (const [where, name] of names) {
-    expect(name, where).toContain(expression('github.run_attempt'));
+    expect(name, where).toContain(RUN_ATTEMPT_EXPRESSION);
   }
   for (const job of [OWNER_INTEGRATION_JOB, SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB]) {
     expect(
       names.get(
-        `${job}: native-startup-${expression('github.job')}-${expression('strategy.job-index')}-${expression('github.run_attempt')}`,
+        `${job}: native-startup-${expression('github.job')}-${expression('strategy.job-index')}-${RUN_ATTEMPT_EXPRESSION}`,
       ),
       job,
     ).toBeDefined();
   }
 });
 
+const LOCKFILE_VERDICT_INPUT = 'lockfile-verdict';
+const PUBLISH_LOCKFILE_VERDICT = expression("strategy.job-index == 0 && 'publish' || ''");
+const REUSE_LOCKFILE_VERDICT = expression(`needs.${NODE_ARTIFACT_BUILD_JOB}.result == 'success' && 'reuse' || ''`);
+
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
   const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const install = steps.find(({ name }) => name === INSTALL_APP_STEP);
-  expect(install?.with).toBeUndefined();
+  // The first shard publishes only pnpm's lockfile verdict; no shard saves a store or an installed workspace.
+  expect(install?.with).toEqual({ [LOCKFILE_VERDICT_INPUT]: PUBLISH_LOCKFILE_VERDICT });
+});
+
+const VerdictWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      needs: Schema.optional(Schema.Array(Schema.String)),
+      steps: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            uses: Schema.optional(Schema.String),
+            with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
+// pnpm skips its supply-chain check of the lockfile when it finds its own record of a passed check. A record
+// read by a job that does not need the publisher could come from nothing (a slower publisher) or, with a plain
+// 'reuse', be read in a job that runs beside the publisher; a second publisher would race the first.
+it('publishes the lockfile verdict from one build shard and reuses it only in jobs that need the build', () => {
+  const { jobs } = Schema.decodeUnknownSync(VerdictWorkflowSchema)(readGateWorkflow());
+  const verdicts = new Map<string, unknown>();
+  const installers: string[] = [];
+  for (const [job, { steps = [] }] of Object.entries(jobs)) {
+    for (const step of steps) {
+      if (step.uses === INSTALL_APP_ACTION) {
+        installers.push(job);
+        verdicts.set(job, step.with?.[LOCKFILE_VERDICT_INPUT]);
+      }
+    }
+  }
+  const withVerdict = (value: string) =>
+    sorted([...verdicts].filter(([, verdict]) => verdict === value).map(([job]) => job));
+  expect(withVerdict(PUBLISH_LOCKFILE_VERDICT)).toEqual([NODE_ARTIFACT_BUILD_JOB]);
+  // job-index 0 names exactly one row of the build matrix, whichever shards a plan selects.
+  expect(fullPlanMatrices().integrationBuild.length).toBeGreaterThan(1);
+  for (const [job, verdict] of verdicts) {
+    expect([undefined, PUBLISH_LOCKFILE_VERDICT, REUSE_LOCKFILE_VERDICT], job).toContain(verdict);
+  }
+  // Every job that waits for the build job reuses the verdict, and only those resolve 'reuse': a job sharing
+  // their steps without that need reads a missing needs entry and checks freshly.
+  const readers = installers.filter((job) => (jobs[job]?.needs ?? []).includes(NODE_ARTIFACT_BUILD_JOB));
+  expect(sorted(readers)).toEqual(
+    sorted([
+      OWNER_INTEGRATION_JOB,
+      TOPOLOGY_PROOF_JOB,
+      WORKSPACE_UNIT_JOB,
+      UNIT_AFTER_LINT_JOB,
+      UNIT_AFTER_STATIC_JOB,
+      UNIT_AFTER_TOOLING_JOB,
+    ]),
+  );
+  for (const job of readers) {
+    expect(verdicts.get(job), job).toBe(REUSE_LOCKFILE_VERDICT);
+  }
+  // The verdict travels only inside the install action, never as a workflow step of its own.
+  expect(readFileSync(GATES_WORKFLOW_URL, 'utf-8')).not.toContain('pnpm-lockfile-verdict');
+});
+
+it('carries one record file per run attempt, downloaded before the install and only on the install path', () => {
+  const schema = Schema.Struct({
+    inputs: Schema.Record(Schema.String, Schema.Struct({ default: Schema.String })),
+    runs: Schema.Struct({ steps: Schema.Array(PublicationWorkflowStepSchema) }),
+  });
+  const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
+  const { steps } = action.runs;
+  expect(action.inputs[LOCKFILE_VERDICT_INPUT]?.default).toBe('');
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const install = index('Install dependencies from the frozen lockfile');
+  const installPath = steps[install]?.if ?? '';
+  expect(installPath).toBe("steps.restored.outputs.usable != 'true'");
+  const downloads = steps.filter(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+  const uploads = steps.filter(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT) === true);
+  expect(downloads.map(({ name }) => name)).toEqual(['Download the lockfile verdict of this run attempt']);
+  expect(uploads.map(({ name }) => name)).toEqual(['Publish the lockfile verdict to this run attempt']);
+  const artifact = `pnpm-lockfile-verdict-${RUN_ATTEMPT_EXPRESSION}`;
+  // A pattern, not a name: a run attempt without the record downloads nothing instead of failing. No run id or
+  // token: only this run's artifacts.
+  expect(downloads[0]?.with).toEqual({ path: expression('steps.verdict.outputs.staging'), pattern: artifact });
+  expect(uploads[0]?.with).toEqual({
+    'if-no-files-found': 'error',
+    name: artifact,
+    overwrite: true,
+    path: `${expression('steps.verdict.outputs.staging')}/lockfile-verified.jsonl`,
+    'retention-days': 1,
+  });
+  const order = [
+    "Locate pnpm's lockfile verdict",
+    'Download the lockfile verdict of this run attempt',
+    'Put the lockfile verdict in place',
+    'Install dependencies from the frozen lockfile',
+    'Stage the lockfile verdict this install recorded',
+    'Publish the lockfile verdict to this run attempt',
+  ].map(index);
+  expect(order.every((position) => position >= 0)).toBe(true);
+  expect(order).toEqual(EffectArray.sort(order, Order.Number));
+  for (const position of order.filter((candidate) => candidate !== install)) {
+    const step = steps[position];
+    // A restored workspace runs no pnpm: nothing to reuse and no fresh record to publish.
+    expect(step?.if, step?.name).toContain(installPath);
+    expect(step?.if, step?.name).toContain('inputs.lockfile-verdict');
+  }
 });
 
 it('warms only reusable dependencies and typecheck state on main, never commit-bound releases', () => {
@@ -1054,14 +1167,12 @@ it('saves no toolchain under a merge group ref, which no later run can read', ()
         Schema.Struct({
           name: Schema.optional(Schema.String),
           uses: Schema.optional(Schema.String),
-          with: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+          with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
         }),
       ),
     }),
   });
-  const action = Schema.decodeUnknownSync(schema)(
-    parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
-  );
+  const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
   const mise = action.runs.steps.filter(({ uses }) => (uses ?? '').startsWith('jdx/mise-action@'));
   expect(mise.map((step) => step.with?.cache_save)).toEqual([expression("github.event_name != 'merge_group'")]);
 });
@@ -1070,9 +1181,7 @@ const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { enc
 
 it('uses a restored workspace only when pnpm would run in it without installing', () => {
   const schema = Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(PublicationWorkflowStepSchema) }) });
-  const action = Schema.decodeUnknownSync(schema)(
-    parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
-  );
+  const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
   const verify = action.runs.steps.find(({ id }) => id === 'restored')?.run ?? 'exit 1';
   // The step needs mapfile, which bash has since version 4 and macOS's /bin/bash (3.2) lacks, so take the
   // first bash on PATH that has it instead of the first bash. An empty or relative entry is read from the
@@ -2438,7 +2547,6 @@ const RuleWorkflowSchema = Schema.Struct({ jobs: Schema.Record(Schema.String, Ru
 type RuleWorkflow = typeof RuleWorkflowSchema.Type;
 type RuleStep = typeof RuleStepSchema.Type;
 const isSuiteRows = Schema.is(Schema.Array(Schema.Struct({ suite: Schema.optional(Schema.String) })));
-const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
 /** A step that waits for jobs of a run: no job of the workflow may hold a runner for that. */
 const RUN_WAITS = [/wait-for-[\w-]+\.sh/u, /gh run (?:watch|view)\b/u];
 /**
