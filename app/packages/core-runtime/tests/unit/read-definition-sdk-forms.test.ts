@@ -10,7 +10,8 @@ import {
   getReadRun,
 } from '../../src/reads/definition.ts';
 import type { ReadLoadContext } from '../../src/reads/definition.ts';
-import { declaredCall, declaredWriteCall, moduleOperation } from '../../src/sdk/index.ts';
+import { ModuleOperationRouteSchema, declaredCall, declaredWriteCall, moduleOperation } from '../../src/sdk/index.ts';
+import type { CallCapability, RecoveriesDeclared } from '../../src/sdk/index.ts';
 import { canList, canRun, readAnswer } from '../../src/sdk/read.ts';
 import type { ReadRunContext } from '../../src/sdk/read.ts';
 
@@ -194,4 +195,89 @@ it('refuses a legacy result permission resolver on a { run } read', () => {
   expect(() =>
     defineRead({ ...descriptor(`${MODULE}.result-filter`), calls }, { run }, services, undefined, () => []),
   ).toThrow(/a \{ run \} read declares no legacy result permission resolver/u);
+});
+
+it('registers a frozen snapshot of each declared operation, its route and provider with it', () => {
+  const route = { _tag: 'Module' as const, path: '/restrictions' as const };
+  const provider = { ...restrictions.provider };
+  const operation = { ...restrictions, provider, route };
+  const registration = defineRead(
+    {
+      ...descriptor(`${MODULE}.snapshot`),
+      calls: { restrictions: declaredCall(operation, `${MODULE}.requirement.restrictions`) },
+    },
+    { run },
+    services,
+  );
+  Reflect.set(route, 'path', '/elsewhere');
+  Reflect.set(provider, 'entrypointKey', 'test.provider.api.elsewhere');
+  const registered = getReadCalls(registration)['restrictions']?.operation;
+  const registeredRoute = registered?.route;
+  expect(Schema.is(ModuleOperationRouteSchema)(registeredRoute) ? registeredRoute.path : undefined).toBe(
+    '/restrictions',
+  );
+  expect(registered?.provider.entrypointKey).toBe('test.provider.api.restrictions');
+  expect(
+    Object.isFrozen(registered) && Object.isFrozen(registered?.route) && Object.isFrozen(registered?.provider),
+  ).toBe(true);
+  // The schemas are the reference's own.
+  expect(registered?.request).toBe(restrictions.request);
+});
+
+/** Type-level checks of the SDK surface; the function is never run. */
+const surfaceTypes = (call: CallCapability<typeof twoCalls>, subject: 'other' | 'restrictions') => {
+  const loadWithoutQuestions = defineRead(
+    descriptor(`${MODULE}.load-without-questions`),
+    {
+      load: (input, context) => {
+        // @ts-expect-error A { load } read that asks nothing may receive no context.access.
+        const answers: object = context.access;
+        return Effect.succeed(
+          readAnswer({ outcome: `${input.subject}:${Object.keys(answers).length}` }, { resultCount: 1 }),
+        );
+      },
+    },
+    services,
+  );
+  const writeWithoutRecovery = {
+    reserve: { operation: reserve, requirementKey: `${MODULE}.requirement.reserve` },
+    restrictions: calls.restrictions,
+  };
+  const readWithRecovery = { restrictions: { ...calls.restrictions, recovery: 'restrictions' as const } };
+  const writeWithRecovery = {
+    reserve: declaredWriteCall(reserve, `${MODULE}.requirement.reserve`, 'restrictions'),
+    restrictions: calls.restrictions,
+  };
+  // @ts-expect-error A write call must name its recovery.
+  const missingRecovery: RecoveriesDeclared<typeof writeWithoutRecovery> = writeWithoutRecovery;
+  // @ts-expect-error A read call names no recovery.
+  const readRecovery: RecoveriesDeclared<typeof readWithRecovery> = readWithRecovery;
+  const declaredRecovery: RecoveriesDeclared<typeof writeWithRecovery> = writeWithRecovery;
+  return [
+    loadWithoutQuestions,
+    missingRecovery,
+    readRecovery,
+    declaredRecovery,
+    call('restrictions', { subject: 'a' }),
+    call('other', { count: 1 }),
+    // @ts-expect-error A name typed as a union takes only arguments every member accepts.
+    call(subject, { subject: 'a' }),
+  ];
+};
+const twoCalls = {
+  other: declaredCall(
+    moduleOperation({
+      kind: 'read',
+      path: '/other',
+      provider: { entrypointKey: 'test.provider.api.other', moduleId: 'test.provider', schemaVersion: '1' },
+      request: Schema.Struct({ count: Schema.Finite }),
+      response: Schema.Struct({ outcome: Schema.String }),
+    }),
+    `${MODULE}.requirement.other`,
+  ),
+  restrictions: calls.restrictions,
+} as const;
+
+it('states the SDK surface rules in its types', () => {
+  expect(surfaceTypes).toBeTypeOf('function');
 });

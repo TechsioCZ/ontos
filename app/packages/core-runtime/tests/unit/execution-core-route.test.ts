@@ -169,6 +169,22 @@ it.effect('runs the Core read with the execution principal and encodes its answe
   }),
 );
 
+it.effect('runs the Core read under the receiving audience of the outer read', () =>
+  Effect.gen(function* forwardsAudience() {
+    const runtime = yield* makeRuntime(allowAll());
+    const { runRead, seen } = recordingRunRead(runtime);
+    const request = requestOf(coreOperations.legalEntityDetail, { legalEntityRef });
+    yield* coreCallRouteFor(runRead).send({
+      ...request,
+      execution: {
+        ...request.execution,
+        callerSource: { _tag: 'RequestPrincipal', audience: 'commerce-pricing', principal },
+      },
+    });
+    expect(seen[0]?.audience).toBe('commerce-pricing');
+  }),
+);
+
 it.effect('maps the Core read failures to problems: denied 403, not found 404', () =>
   Effect.gen(function* failures() {
     const denied = yield* makeRuntime(makeTestBoundAccessGate({ defaultAnswer: { outcome: 'DENIED' } }).bound);

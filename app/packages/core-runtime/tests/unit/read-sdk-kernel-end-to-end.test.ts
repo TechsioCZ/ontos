@@ -263,10 +263,12 @@ it.layer(NodeCrypto.layer)('a { run } read on the SDK kernel', (suite) => {
     Effect.gen(function* callThenTransaction() {
       const probe: HarnessProbe = {};
       const openAtCall: number[] = [];
+      const statementsAtCall: number[] = [];
       const route: CallRoute = {
         send: () =>
           Effect.sync(() => {
             openAtCall.push(probe.harness?.openConnections() ?? -1);
+            statementsAtCall.push(probe.harness?.snapshot().statements.length ?? -1);
             return restrictedAnswer;
           }),
       };
@@ -284,12 +286,36 @@ it.layer(NodeCrypto.layer)('a { run } read on the SDK kernel', (suite) => {
       const { evidenceWrites, routedCalls, statements } = harness.snapshot();
       expect(routedCalls).toHaveLength(1);
       expect(routedCalls[0]?.encodedInput).toEqual({ subject: 'customer' });
-      expect(routedCalls[0]?.caller).toMatchObject({ kind: 'person' });
+      // The request's own person, relayed under the requirement's declared Legal Entity scope.
+      expect(routedCalls[0]?.caller).toMatchObject({ kind: 'person', legalEntityScope: 'subject' });
+      expect(routedCalls[0]?.execution.callerSource.principal).toMatchObject({
+        principalId: scope.principalId,
+        tenantId,
+      });
       // No connection is held while the call is in flight.
       expect(openAtCall).toEqual([0]);
       // The read's own row and one row for its call, written together after run.
       expect(evidenceWrites).toBe(2);
-      expect(statements.some((statement) => /read only/iu.test(statement))).toBe(true);
+      // The module's transaction, the first one after the call, is READ ONLY from its first statement.
+      const [afterCall = -1] = statementsAtCall;
+      const moduleMode = statements
+        .slice(afterCall)
+        .find((statement) => /^set transaction|read (?:only|write)/iu.test(statement));
+      expect(moduleMode).toMatch(/read only/iu);
+    }),
+  );
+
+  suite.effect('relays the receiving audience the read was admitted under with its calls', () =>
+    Effect.gen(function* audienceRelayed() {
+      const registration = runRead((input, context) =>
+        Effect.gen(function* run() {
+          const restriction = restrictionOf(yield* context.call('restrictions', { subject: input.subject }));
+          return answered({ restriction, state: 'CURRENT' });
+        }),
+      );
+      const harness = yield* harnessFor(registration);
+      yield* harness.runtime.runRead({ ...harness.request, audience: 'sdk-kernel-receiver', registration });
+      expect(harness.snapshot().routedCalls[0]?.execution.callerSource.audience).toBe('sdk-kernel-receiver');
     }),
   );
 

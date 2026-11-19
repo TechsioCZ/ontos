@@ -157,10 +157,12 @@ export interface ReadSdkDescriptorFields<Calls extends ReadCalls, Questions exte
   readonly calls?: Calls;
 }
 
-/** The context of a one-transaction handler whose descriptor declares `accessQuestions`. */
-export type ReadLoadContextWithAnswers<Services, Questions extends AccessQuestions> = ReadHandlerContext<Services> & {
-  readonly access: AccessAnswers<Questions>;
-};
+/**
+ * The context of a one-transaction handler: with the answers to the descriptor's `accessQuestions` when
+ * it names any, and otherwise the bare handler's context, whose `access` Core leaves out.
+ */
+export type ReadLoadContextWithAnswers<Services, Questions extends AccessQuestions> = ReadHandlerContext<Services> &
+  ([keyof Questions] extends [never] ? unknown : { readonly access: AccessAnswers<Questions> });
 
 /** A one-transaction handler that also receives Core's answers to the descriptor's questions. */
 export type ReadLoadWithAnswers<

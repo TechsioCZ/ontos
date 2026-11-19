@@ -189,18 +189,28 @@ export const declaredWriteCall = <Ref extends AnyWriteOperationRef, const Recove
 ): DeclaredCall<Ref, Recovery> & { readonly recovery: Recovery } =>
   Object.freeze({ operation, recovery, requirementKey });
 
+/** A write call whose `recovery` names a read call of `Calls`: itself, else `never`. */
+type RecoveredWriteCall<Calls extends DeclaredCalls, Name extends keyof Calls> = Calls[Name] extends {
+  readonly recovery: infer Recovery;
+}
+  ? Recovery extends keyof Calls
+    ? Calls[Recovery]['operation']['kind'] extends 'read'
+      ? Calls[Name]
+      : never
+    : never
+  : never;
+
 /**
- * `Calls` itself when every write call's `recovery` names a read call of the same object, else `never`.
+ * `Calls` itself when every write call names, as `recovery`, a read call of the same object and no read
+ * call names one, else `never` at the offending entry: what the registration check refuses at runtime.
  * The Action and worker authoring forms will constrain their `calls` with it; a type test asserts it.
  */
 export type RecoveriesDeclared<Calls extends DeclaredCalls> = {
-  readonly [Name in keyof Calls]: Calls[Name] extends { readonly recovery: infer Recovery }
-    ? Recovery extends keyof Calls
-      ? Calls[Recovery]['operation']['kind'] extends 'read'
-        ? Calls[Name]
-        : never
-      : never
-    : Calls[Name];
+  readonly [Name in keyof Calls]: Calls[Name]['operation']['kind'] extends 'read'
+    ? Calls[Name] extends { readonly recovery: string }
+      ? never
+      : Calls[Name]
+    : RecoveredWriteCall<Calls, Name>;
 };
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -360,13 +370,23 @@ type CallArguments<Declared extends AnyDeclaredCall> = Declared['operation']['ki
   : readonly [input: OperationInput<Declared['operation']>];
 
 /**
+ * The arguments every call `Name` names accepts: a call's own for one name, and for a name typed as a
+ * union only what each of its calls accepts, so a name is never paired with another call's input.
+ */
+type ArgumentsForEvery<Calls extends DeclaredCalls, Name extends keyof Calls> = (
+  Name extends unknown ? (...args: CallArguments<Calls[Name]>) => void : never
+) extends (...args: infer Args extends readonly unknown[]) => void
+  ? Args
+  : never;
+
+/**
  * Calls one declared operation by its name in the descriptor's `calls`. Never fails: every answer is a
  * typed outcome. A write call takes the caller's stable idempotency key. It dies (a programming error)
  * when a transaction of this execution is open.
  */
 export type CallCapability<Calls extends DeclaredCalls> = <Name extends keyof Calls & string>(
   name: Name,
-  ...args: CallArguments<Calls[Name]>
+  ...args: ArgumentsForEvery<Calls, Name>
 ) => Effect.Effect<CallOutcomeOf<Calls[Name]>>;
 
 /** Facts Core establishes at the start of one owner transaction. */
@@ -394,7 +414,8 @@ export interface TransactionFacts {
  * - `owner_unavailable`: the owner rule could not answer; for a read, Core answers permission
  *   unavailable.
  * - `composition_changed`, `database_unavailable`: retryable unavailability.
- * - `budget_exhausted`: the execution opened more transactions than its budget allows.
+ * - `budget_exhausted`: the execution opened more transactions than its budget allows, or ran past its
+ *   duration.
  */
 export class TransactionAborted extends Schema.TaggedError<TransactionAborted>()('TransactionAborted', {
   reason: Schema.Literals([

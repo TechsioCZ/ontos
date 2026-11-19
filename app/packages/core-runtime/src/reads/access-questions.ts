@@ -165,7 +165,9 @@ const materializeAccessQuestion = (
     legalEntityScope: descriptor.legalEntityScope,
     name,
     sameAsOwnDecision:
-      sameCarrier(read.carrier, carrier) && (kind === 'decide' || ROW_SCOPED_READ_ACCESS_KINDS.has(read.accessKind)),
+      sameCarrier(read.carrier, carrier) &&
+      descriptor.legalEntityScope === read.legalEntityScope &&
+      (kind === 'decide' || ROW_SCOPED_READ_ACCESS_KINDS.has(read.accessKind)),
   };
   // A field capability run as an operation rides its own capability decided scope-wide, the parent read
   // of a scope-wide entrypoint (O74); the engine refuses it without one.

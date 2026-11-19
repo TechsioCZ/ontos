@@ -1688,41 +1688,45 @@ const readRuntimeFromDependencies = <
             executeRunFormRead(
               input.registration,
               withOptional(
-                {
-                  access: admitted.accessAnswers ?? NO_ACCESS_ANSWERS,
-                  decodedInput,
-                  deniedFieldPaths: admitted.gateAuthorization.deniedFieldPaths,
-                  facts: {
-                    compositionRevision: admitted.admittedCompositionRevision,
-                    identity: requestExecutionOf(principal),
-                    operationKey: descriptor.readKey,
-                    owningModuleKey: descriptor.owningModuleKey,
-                  },
-                  lease: (effect) =>
-                    withReadExecution(
-                      {
-                        loadCatalog: operationCatalogLoader(operationAuthority, admitted.executionRevision),
-                        ownerRegistration: options.ownerRegistration,
-                        phase: 'execution',
-                        registration: input.registration,
-                        revision: admitted.executionRevision,
-                        scope: admitted.scope,
-                      },
-                      effect,
+                withOptional(
+                  {
+                    access: admitted.accessAnswers ?? NO_ACCESS_ANSWERS,
+                    decodedInput,
+                    deniedFieldPaths: admitted.gateAuthorization.deniedFieldPaths,
+                    facts: {
+                      compositionRevision: admitted.admittedCompositionRevision,
+                      identity: requestExecutionOf(principal),
+                      operationKey: descriptor.readKey,
+                      owningModuleKey: descriptor.owningModuleKey,
+                    },
+                    lease: (effect) =>
+                      withReadExecution(
+                        {
+                          loadCatalog: operationCatalogLoader(operationAuthority, admitted.executionRevision),
+                          ownerRegistration: options.ownerRegistration,
+                          phase: 'execution',
+                          registration: input.registration,
+                          revision: admitted.executionRevision,
+                          scope: admitted.scope,
+                        },
+                        effect,
+                      ),
+                    ownerQuestion: admitted.ownerQuestion,
+                    permissionTargetMetadata: admitted.permissionTargetMetadata,
+                    queryHash,
+                    scope: admitted.scope,
+                    usesAccessGate,
+                    workloadAdmission: withOptional(
+                      { carrier: accessCarrier },
+                      'decision',
+                      admitted.gateAuthorization.mainAccessDecision,
                     ),
-                  ownerQuestion: admitted.ownerQuestion,
-                  permissionTargetMetadata: admitted.permissionTargetMetadata,
-                  queryHash,
-                  scope: admitted.scope,
-                  usesAccessGate,
-                  workloadAdmission: withOptional(
-                    { carrier: accessCarrier },
-                    'decision',
-                    admitted.gateAuthorization.mainAccessDecision,
-                  ),
-                },
-                'listAccess',
-                admitted.gateAuthorization.listAccess,
+                  },
+                  'listAccess',
+                  admitted.gateAuthorization.listAccess,
+                ),
+                'audience',
+                input.audience,
               ),
             ).pipe(Effect.provideContext(kernel)),
           ),
@@ -2240,12 +2244,18 @@ const readRuntimeFromDependencies = <
   const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
   /** Core's own operations run in-process through `runRead`, which clears the caller's lease. */
   const coreRunRead: CoreRunRead = (request) =>
-    runRead({
-      input: request.input,
-      principal: request.principal,
-      registration: governedReadRegistration(request.registration),
-      transport: request.transport,
-    });
+    runRead(
+      withOptional(
+        {
+          input: request.input,
+          principal: request.principal,
+          registration: governedReadRegistration(request.registration),
+          transport: request.transport,
+        },
+        'audience',
+        request.audience,
+      ),
+    );
   /**
    * The execution kernel a `{ run }` read executes on, built over this runtime's own dependencies: each
    * engine layer is built with exactly the services it requires, and the read gets their context.
