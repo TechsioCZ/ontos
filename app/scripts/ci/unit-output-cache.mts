@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * The gates' per-unit output cache. A build shard restores the dist/ and .output/ of its units from an earlier run,
- * keeps a unit only when its receipt (dist/.gates-output-cache.json: the input digest, the original build identity and
- * a complete byte and mode inventory) matches this checkout, builds the rest (scripts/ci/build-units.sh, which stamps a
- * receipt on each fresh build) and verifies the complete shard before anything is saved or packed. The Actions key only
- * locates a candidate archive; it is never evidence.
+ * The gates' per-unit outputs. A build shard starts from the dist/ and .output/ of its units that the seed run built
+ * (scripts/ci/seed-units.sh), keeps a unit only when its receipt (dist/.gates-output-cache.json: the input digest, the
+ * original build identity and a complete byte and mode inventory) matches this checkout, builds the rest
+ * (scripts/ci/build-units.sh, which stamps a receipt on each fresh build) and verifies the complete shard before
+ * anything is packed. Where an archive came from is never evidence; who may be the seed is decided at the lookup.
  *
  * The digest is the unit identity of scripts/ci/unit-inputs.mts with build-units.sh as the build driver (its post-build
  * script, --post-build, included) and the trunk's public origins (`build-origin-variables` of the gate matrices),
@@ -541,8 +541,6 @@ const withUnits = (value: string, flags: { readonly postBuild: string; readonly 
     }
     return yield* Effect.succeed({ context, units });
   });
-const printUnitDigest = (context: Context, unit: CacheUnit) =>
-  expectedDigest(context, unit).pipe(Effect.flatMap((digest) => Console.log(`${unit.id}=${digest}`)));
 const inspectUnit = (context: Context, unit: CacheUnit) =>
   checkUnit(context, unit).pipe(
     Effect.match({
@@ -550,17 +548,6 @@ const inspectUnit = (context: Context, unit: CacheUnit) =>
       onSuccess: () => ({ unit: unit.id }),
     }),
   );
-const digestCommand = Command.make(
-  'digest',
-  { ...policyFlags, unit: Flag.String('unit').pipe(Flag.atLeast(1)) },
-  ({ unit, ...flags }) =>
-    Effect.gen(function* printDigests() {
-      const { context, units } = yield* withUnits(unit.join(' '), flags);
-      return yield* Effect.forEach(units, (entry) => printUnitDigest(context, entry), { concurrency: 1 }).pipe(
-        Effect.asVoid,
-      );
-    }),
-);
 /** A unit's committed-inputs digest, as receipts and keep proofs record it (unitIdentity without build variables). */
 export const committedInputs = (graph: UnitInputGraph, driver: BuildDriver, unitPath: string) =>
   unitIdentity(`app/${unitPath}`, { driver, environment: [], graph }).pipe(Effect.map(({ files }) => files));
@@ -655,7 +642,7 @@ const verifyCommand = Command.make(
     }),
 );
 export const unitOutputCacheCommand = Command.make('unit-output-cache').pipe(
-  Command.withSubcommands([digestCommand, planCommand, stampCommand, verifyCommand]),
+  Command.withSubcommands([planCommand, stampCommand, verifyCommand]),
 );
 if (import.meta.main) {
   runQualityCli(Command.run(unitOutputCacheCommand, { version: '1.0.0' }));
