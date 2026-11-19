@@ -145,6 +145,12 @@ it.effect('saves a content-keyed cache only when the run did not restore that ex
  * its own name, so it depends on the fallback forever (run 43725413089: six stage shards reused and saved nothing).
  */
 const SAVE_CLAUSE = /^steps\.[\w-]+\.outputs\.(?:cache-hit != 'true'|key != '')$/u;
+/**
+ * The one other clause, on the pnpm store save alone: a job that used its restored installed workspace restored no
+ * store and installed nothing, so it has no store to save. A lockfile change misses that workspace (its key holds the
+ * lockfile), so the trunk job that installs it saves the store under its exact key.
+ */
+const STORE_SAVE = { clause: "steps.restored.outputs.usable != 'true'", label: 'install-app › Save the pnpm store' };
 
 it.effect('makes every content-keyed save depend only on its exact entry not being restored', () =>
   Effect.gen(function* saveClauses() {
@@ -155,6 +161,7 @@ it.effect('makes every content-keyed save depend only on its exact entry not bei
         .map((clause) => clause.trim())
         // Which runs may write (an input, the ref) is policy; what a step produced may only be the exact hit and key.
         .filter((clause) => clause.includes('steps.') && !SAVE_CLAUSE.test(clause))
+        .filter((clause) => !(label.endsWith(STORE_SAVE.label) && clause === STORE_SAVE.clause))
         .map((clause) => `${label}: ${clause}`),
     );
     expect(offenders).toEqual([]);
