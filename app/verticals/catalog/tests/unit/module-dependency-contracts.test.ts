@@ -61,20 +61,41 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('keeps Party validation conditional without making Party an installation dependency', () => {
     expect(catalogManifest.requirements?.intrinsic).toEqual([]);
     expect(catalogManifest.requirements?.coreCapabilities).toContainEqual(ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY);
-    const requirements = catalogManifest.requirements?.operations;
+    const operations = catalogManifest.requirements?.operations ?? [];
+    expect(operations).toHaveLength(4);
+    // Core's own Legal Entity detail is satisfied by Core itself, never by the composition: the one Core
+    // requirement is the call the current-relation read makes for a managed Legal Entity target.
+    const coreRequirements = operations.filter(({ provider }) => provider.moduleId.startsWith('core.'));
+    expect(coreRequirements).toEqual([
+      {
+        condition: 'commerce.catalog.condition.retained-manufacturer-target-legal-entity',
+        entrypointKey: 'commerce.catalog.api.manufacturer-relation-current',
+        evidence: [
+          'commerce.catalog.evidence.manufacturer-target.legal-entity-current',
+          'commerce.catalog.evidence.manufacturer-target.exact-revision',
+        ],
+        key: 'commerce.catalog.requirement.manufacturer-current-legal-entity',
+        provider: {
+          entrypointKey: 'core.identity.api.legal-entity-detail',
+          moduleId: 'core.identity',
+          schemaVersion: '1',
+        },
+      },
+    ]);
+    const requirements = operations.filter(({ provider }) => !provider.moduleId.startsWith('core.'));
     expect(requirements).toHaveLength(3);
     expect(
-      requirements?.every(
+      requirements.every(
         ({ condition, provider }) =>
           provider.moduleId === 'party.registry' && condition.endsWith('manufacturer-target-party'),
       ),
     ).toBe(true);
     expect(
-      requirements?.some(
+      operations.some(
         ({ entrypointKey }) => entrypointKey === removeProductManufacturerAction.descriptor.entrypoint.entrypointKey,
       ),
     ).toBe(false);
-    expect(requirements?.some(({ condition }) => condition.includes('legal-entity'))).toBe(false);
+    expect(requirements.some(({ condition }) => condition.includes('legal-entity'))).toBe(false);
   });
 
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
