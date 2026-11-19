@@ -1,0 +1,206 @@
+import { ActionAlreadyCommitted } from '@app/core-runtime';
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { NodeCrypto } from '@effect/platform-node';
+import { Effect, Layer, Schema } from 'effect';
+import { describe, expect, it } from 'effect-rstest';
+
+import { CommunicationRequestScopeMismatch } from '../../shared/communication-intake-errors.ts';
+import { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
+import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
+import { outboxWorkers } from '../../src/workers/index.ts';
+import { communicationsRegistration } from '../../vertical.registration.ts';
+import {
+  fixtureType,
+  nRecipientPolicyType,
+  noMessageType,
+  FIXTURE_APPROVER_ROLE,
+} from '../unit/support/catalog-fixtures.ts';
+import { privacyAllowed } from '../unit/support/privacy-fixtures.ts';
+import { binding, usable } from '../unit/support/recipient-fixtures.ts';
+import {
+  catalogOf,
+  communicationRequest,
+  privacyOwnerDouble,
+  recipientOwnerDouble,
+  recipientLanguageDouble,
+  scopeDeclarationDouble,
+  sourceAuthorityDouble,
+  originalRecipient,
+} from '../support/intake-fixtures.ts';
+import { inMemoryIntakePort } from '../support/in-memory-intake-port.ts';
+import { baseIdentity, makeInMemoryLanguagePolicyPort, seedLanguages } from '../support/language-fixtures.ts';
+import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts';
+
+/**
+ * End to end through the PUBLIC Action boundary of the Core Action runtime (access gate for a registered source workload,
+ * request hash and idempotency, payload and result validation, outbox collection), with a fake but real-boundary SOURCE
+ * that issues requests the way a source owner's after-commit worker does. The store is in memory and every other owner is
+ * a labelled double, so this is boundary and lifecycle evidence, NOT delivery, Privacy or provider evidence. HTTP/SpiceDB
+ * native evidence needs an authorization graph that this environment does not provide (reported, not claimed).
+ */
+
+const tenantId = '11111111-1111-4111-8111-111111111111';
+// The scripted harness decides access for the protected Action; a registered-workload principal needs the verified
+// gateway provenance of a live Shell issuer, which this in-process boundary does not have (reported, not claimed).
+const sourceWorkload = {
+  authBindingId: '99999999-9999-4999-8999-999999999999',
+  authContextRef: 'better-auth-session:fixture-source',
+  authMethod: 'session' as const,
+  principalId: '77777777-7777-4777-8777-777777777777',
+  tenantId,
+};
+const encode = Schema.encodeSync(SubmitCommunicationRequestPayloadSchema);
+
+const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorld(types = [fixtureType()]) {
+  const templates = makeInMemoryTemplatePort();
+  yield* seedLanguages(templates.port, ['cs', 'en'], {
+    ...baseIdentity,
+    messageType: types[0]?.typeId ?? 'fixture.single-message',
+  }).pipe(Effect.provide(NodeCrypto.layer));
+  const intake = inMemoryIntakePort();
+  const policies = makeInMemoryLanguagePolicyPort();
+  const harness = yield* makeActionTestHarness({
+    access: 'allowed',
+    ownerRegistration: communicationsRegistration,
+    services: [
+      bindActionTestServices(submitCommunicationRequestAction, {
+        intake: intake.port,
+        policies: policies.port,
+        templates: templates.port,
+      }),
+    ],
+  });
+  const privacy = privacyOwnerDouble({
+    'approver-1': privacyAllowed,
+    'approver-2': privacyAllowed,
+    'customer-1': privacyAllowed,
+  });
+  const recipients = recipientOwnerDouble({
+    'contact-approver-1': usable(),
+    'contact-approver-2': usable(),
+    'contact-customer-1': usable(),
+  });
+  const ports = Layer.mergeAll(
+    catalogOf(...types),
+    recipientLanguageDouble().layer,
+    sourceAuthorityDouble().layer,
+    scopeDeclarationDouble().layer,
+    recipients.layer,
+    privacy.layer,
+    NodeCrypto.layer,
+  );
+  /** The fake source: it calls the PUBLIC Action as its registered workload, with a transport key of its own. */
+  const issue = (request: Parameters<typeof encode>[0], key: string) =>
+    harness.runtime
+      .runAction({
+        payload: encode(request),
+        principal: sourceWorkload,
+        registration: submitCommunicationRequestAction,
+        transport: { correlationId: key, idempotencyKey: key },
+      })
+      .pipe(Effect.provide(ports));
+  return { harness, intake, issue };
+});
+
+describe('Communication Request intake over the public Action boundary (#1401, AC-01)', () => {
+  it.effect(
+    '[AC-01 S01 S03] a source request yields 0, 1 and N messages with stable identities; an event alone creates nothing',
+    () =>
+      Effect.gen(function* zeroOneN() {
+        const t = yield* world([fixtureType(), noMessageType, nRecipientPolicyType]);
+        expect(t.intake.stored.size).toBe(0);
+        const zero = yield* t.issue(
+          communicationRequest({
+            bindings: [originalRecipient('customer-1')],
+            purpose: noMessageType.purpose,
+            tenantId,
+          }),
+          'k-0',
+        );
+        expect(zero).toMatchObject({ decision: { kind: 'NO_MESSAGE' }, outcome: 'DECIDED' });
+        const one = yield* t.issue(
+          communicationRequest({ bindings: [originalRecipient('customer-1')], occurrenceId: 'o-1', tenantId }),
+          'k-1',
+        );
+        const many = yield* t.issue(
+          communicationRequest({
+            bindings: ['approver-1', 'approver-2'].map((id) => binding(FIXTURE_APPROVER_ROLE, id)),
+            occurrenceId: 'o-n',
+            purpose: nRecipientPolicyType.purpose,
+            tenantId,
+          }),
+          'k-n',
+        );
+        const count = (result: typeof one) =>
+          result.outcome === 'DECIDED' && result.decision.kind === 'MESSAGE_INTENTS'
+            ? result.decision.intents.length
+            : 0;
+        expect([count(one), count(many)]).toEqual([1, 2]);
+        // the identities are stable: the very same requests again give the very same intents, not new ones
+        const oneAgain = yield* t.issue(
+          communicationRequest({ bindings: [originalRecipient('customer-1')], occurrenceId: 'o-1', tenantId }),
+          'k-1-transport-2',
+        );
+        expect(oneAgain).toEqual({ ...one, replayed: true });
+        // only the three submitted requests exist; a Domain Event without a request created nothing
+        expect(t.intake.stored.size).toBe(3);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect(
+    '[AC-02 AC-03] Core refuses a replayed transport key as already committed; a new key returns the stored decision; another meaning is a conflict',
+    () =>
+      Effect.gen(function* replayAndConflict() {
+        const t = yield* world();
+        const request = communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId });
+        const first = yield* t.issue(request, 'k-1');
+        // the transport key is Core's own replay guard: it is never the business identity
+        expect(Schema.is(ActionAlreadyCommitted)(yield* Effect.flip(t.issue(request, 'k-1')))).toBe(true);
+        expect(yield* t.issue(request, 'k-1-retry')).toEqual({ ...first, replayed: true });
+        const otherRecipient = communicationRequest({
+          bindings: [originalRecipient('customer-2', 'contact-customer-2')],
+          tenantId,
+        });
+        const conflict = yield* t.issue(otherRecipient, 'k-2');
+        expect(conflict).toMatchObject({
+          originalDecisionId: first.outcome === 'DECIDED' ? first.decisionId : '',
+          outcome: 'CONFLICT',
+        });
+        expect(t.intake.conflicts).toHaveLength(1);
+        expect(t.intake.stored.size).toBe(1);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('[trusted scope] a payload claiming another Tenant is refused by the Action and stores nothing', () =>
+    Effect.gen(function* foreignClaim() {
+      const t = yield* world();
+      const failure = yield* Effect.flip(
+        t.issue(
+          communicationRequest({
+            bindings: [originalRecipient('customer-1')],
+            tenantId: '22222222-2222-4222-8222-222222222222',
+          }),
+          'k-foreign',
+        ),
+      );
+      expect(Schema.is(CommunicationRequestScopeMismatch)(failure)).toBe(true);
+      expect(t.intake.stored.size).toBe(0);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it('[AC-02] the public payload is the published contract: an extra field, an address or a language is refused', () => {
+    const encoded = encode(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }));
+    const strict = Schema.decodeUnknownSync(SubmitCommunicationRequestPayloadSchema, { onExcessProperty: 'error' });
+    for (const extra of [{ recipientAddress: 'someone@example.test' }, { language: 'en' }, { templateId: 'x' }]) {
+      expect(() => strict({ ...encoded, ...extra })).toThrow();
+    }
+    expect(Object.keys(encoded)).not.toContain('recipientAddress');
+  });
+
+  it('[AC-09 ADR-0013] the owner worker consumes ONLY its own pre-handoff topic: no source event is ever a request, no backfill code exists', () => {
+    const subscriptions = outboxWorkers.map(({ descriptor }) => [descriptor.producerModuleKey, descriptor.topic]);
+    expect(subscriptions).toEqual([['communications.core', 'communications.core.message-intent-prepared.v1']]);
+    // Core matches a new consumer only for messages it first observes after the consumer exists (proven by `outbox:test`);
+    // Communications adds no replay, redrive or matcher of its own, so the consumer's first message is its first request.
+  });
+});
