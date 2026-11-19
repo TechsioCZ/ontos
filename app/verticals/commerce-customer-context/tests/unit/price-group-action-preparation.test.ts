@@ -180,9 +180,12 @@ const ownerPhasePayload = Schema.decodeUnknownSync(AssignCustomerPriceGroupPaylo
 const ownerDescriptors = extractVerticalRuntimeSafeDescriptors(commerceCustomerContextRegistration);
 const operationCatalog = (providerInstalled: boolean) => {
   const operations = ownerDescriptors.requirements?.operations ?? [];
-  const modules = new Map<string, unknown>([[ownerDescriptors.moduleId, { manifest: ownerDescriptors }]]);
+  const modules = new Map<string, unknown>([
+    [ownerDescriptors.moduleId, { deployment: { appId: 'commerce-customer-context' }, manifest: ownerDescriptors }],
+  ]);
   for (const { provider } of providerInstalled ? operations : []) {
     modules.set(provider.moduleId, {
+      deployment: { appId: provider.moduleId.replaceAll('.', '-') },
       manifest: {
         publicSurface: {
           operationContracts: operations.map((operation) => ({
@@ -193,7 +196,8 @@ const operationCatalog = (providerInstalled: boolean) => {
       },
     });
   }
-  // SAFETY: the operation requirement check reads only getByModuleId(...).manifest requirements and contracts.
+  // SAFETY: the operation requirement check reads only getByModuleId(...).manifest requirements and contracts,
+  // and each module's deployment app id.
   return { getByModuleId: (moduleId: string) => modules.get(moduleId) } as unknown as InstalledModuleCatalog;
 };
 

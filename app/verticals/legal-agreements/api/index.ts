@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import {
   OwnerActionApprovalSchemaErrorLive,
   makeOwnerActionApproveHandler,
@@ -103,6 +104,11 @@ const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, leg
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+  GovernedReadLayer.provide(
+    ModuleCallRouteLive.pipe(
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(nodeCryptoLayer, governedCompositionHttpClientLive)),
+    ),
+  ),
 );
 
 const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(

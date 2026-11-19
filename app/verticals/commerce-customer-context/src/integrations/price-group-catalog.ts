@@ -9,7 +9,9 @@ import type { ValidatePriceGroupCompatibilityClientOptions } from '@app/price-gr
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, Effect, Match, Redacted, Schema } from 'effect';
+import { callAnswer } from '@app/core-runtime/sdk';
+import type { CallOutcome } from '@app/core-runtime/sdk';
+import { Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import type {
   PriceGroupCatalogOutcome,
@@ -27,7 +29,6 @@ export const PriceGroupCatalogRequirementSchema = Schema.Literals([
   'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
   'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
   'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
-  'commerce.customer-context.requirement.price-group-single-assignment',
 ]);
 export type PriceGroupCatalogRequirement = typeof PriceGroupCatalogRequirementSchema.Type;
 
@@ -186,18 +187,45 @@ const requestPayload = (
             },
       ).pipe(Effect.mapError(unavailable));
 
-export const priceGroupCatalogPort = (
-  requestCorrelation: string,
-  execute: PriceGroupCompatibilityExecutor = executeValidatePriceGroupCompatibility,
+/** The port over one source of Catalog decisions; every decision is checked against the exact request. */
+const catalogPortOver = (
+  decide: (
+    payload: ValidatePriceGroupCompatibilityRequest,
+  ) => Effect.Effect<PriceGroupCompatibilityDecision, CompatibilityClientError | CustomerPriceGroupCatalogUnavailable>,
 ): PriceGroupCatalogPort => ({
   resolveCurrent: (priceGroupRef, requiredContractId, trustedOperationAt, expected) =>
     requestPayload(priceGroupRef, requiredContractId, trustedOperationAt, expected).pipe(
-      Effect.flatMap((payload) => execute(payload, requestCorrelation)),
+      Effect.flatMap(decide),
       Effect.mapError(unavailable),
       Effect.flatMap((decision) => validateDecision(priceGroupRef, trustedOperationAt, expected, decision)),
       Effect.map(toCommerceOutcome),
     ),
 });
+
+export const priceGroupCatalogPort = (
+  requestCorrelation: string,
+  execute: PriceGroupCompatibilityExecutor = executeValidatePriceGroupCompatibility,
+): PriceGroupCatalogPort => catalogPortOver((payload) => execute(payload, requestCorrelation));
+
+/**
+ * The port over Core's `call` to the Catalog (a `{ run }` read). Core owns the credential, the route and
+ * the decoding; every outcome other than the Catalog's decision is unavailable, never a resolution.
+ */
+export const priceGroupCatalogPortFromCall = (
+  call: (
+    payload: ValidatePriceGroupCompatibilityRequest,
+  ) => Effect.Effect<CallOutcome<PriceGroupCompatibilityDecision>>,
+): PriceGroupCatalogPort =>
+  catalogPortOver((payload) =>
+    call(payload).pipe(
+      Effect.flatMap((outcome) =>
+        Option.match(callAnswer(outcome), {
+          onNone: () => Effect.fail(unavailable(outcome)),
+          onSome: Effect.succeed,
+        }),
+      ),
+    ),
+  );
 
 type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
 

@@ -12,6 +12,7 @@ import {
 } from '../materialize-zerops-environment.mts';
 import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
+import { declaresModuleCalls } from '../ops/owner-runtime-configuration.mts';
 
 /** The whole stage deployment: the SpiceDB data plane, the storefront, and the one application container. */
 const SETUPS = ['spicedb', 'storefront', 'n1', 'app'];
@@ -764,4 +765,15 @@ it('installs the full verification workspace and caches the frozen browser graph
     expect(download).toBeGreaterThan(restore);
     expect(steps[download]?.if).toBeUndefined();
   }
+});
+
+it('counts a module as a caller by its declared requirement callers or registered-workload calls', () => {
+  const requirement = {};
+  expect(declaresModuleCalls({})).toBe(false);
+  expect(declaresModuleCalls({ requirements: { operations: [requirement] } })).toBe(false);
+  expect(declaresModuleCalls({ requirements: { operations: [{ ...requirement, callers: [] }] } })).toBe(false);
+  expect(
+    declaresModuleCalls({ requirements: { operations: [{ ...requirement, callers: [{ kind: 'person' }] }] } }),
+  ).toBe(true);
+  expect(declaresModuleCalls({ registeredWorkloadCalls: [{ workloadKey: 'commerce.catalog.read' }] })).toBe(true);
 });

@@ -1520,6 +1520,18 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        // A person or a system requester is relayed as itself; a verified workload or a recovery calls as
+        // this module under the Catalog's compatibility declaration, as the hand-built delegation did.
+        // Both carry a tenant-only credential, as before.
+        callers: [
+          { kind: 'person', legalEntityScope: 'tenant' },
+          {
+            declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+            kind: 'registered',
+            legalEntityScope: 'tenant',
+            pinPrincipal: false,
+          },
+        ],
         condition: 'commerce.customer-context.condition.complete-current-single-price-group-assignment',
         entrypointKey: customerPriceGroupResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [

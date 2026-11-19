@@ -10,6 +10,7 @@ import {
 } from '@app/core-runtime/access/approvals/owner-runtime';
 import { customerOwnConsentReadApiLive, customerOwnConsentUpdateApiLive } from './portal-auth/consent/http.ts';
 import { customerOwnPasswordChangeApiLive } from './portal-auth/password-change/http.ts';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { commerceCustomerContextRegistration } from '../vertical.registration.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { HttpServerRequest } from 'effect/http';
@@ -678,6 +679,11 @@ const readRuntimeCoreLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerc
     ),
   ),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(
+    ModuleCallRouteLive.pipe(
+      Layer.provide(Layer.mergeAll(commercePortalAuthPlatformCryptoLive, compositionHttpClientLive)),
+    ),
+  ),
 );
 
 const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeServicesLive.pipe(

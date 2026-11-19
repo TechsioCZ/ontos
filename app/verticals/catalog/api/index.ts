@@ -5,6 +5,7 @@ import {
 } from '@app/core-runtime/access/approvals/owner-http';
 import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { catalogBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -356,6 +357,7 @@ const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogB
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, nativeHttpClientLive)))),
 );
 
 const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(

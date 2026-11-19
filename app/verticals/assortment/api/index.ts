@@ -6,6 +6,7 @@ import {
   makeOwnerActionApproveHandler,
   makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { assortmentRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
@@ -172,6 +173,7 @@ const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );
 
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(

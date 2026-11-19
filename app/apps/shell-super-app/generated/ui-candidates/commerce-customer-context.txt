@@ -1,5 +1,6 @@
 absolute
 block
+collapse
 filter
 fixed
 hidden

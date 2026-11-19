@@ -1,13 +1,9 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  LegalEntityDetailRequestSchema,
-  LegalEntityDetailResponseSchema,
-  classifyLegalEntityDetail,
-  legalEntityDetailRead,
-} from '../../src/generated-reads/legal-entity-detail.ts';
+import { classifyLegalEntityDetail, legalEntityDetailRead } from '../../src/generated-reads/legal-entity-detail.ts';
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '../../src/reads/errors.ts';
+import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from '../../src/sdk/core-operations.ts';
 
 const legalEntityRef = {
   moduleId: 'core.identity',

@@ -110,6 +110,16 @@ export const isProblemDetailsFactory = (value: GraphValue): boolean =>
   problemDetailsFactoryNames.has(declaredName(value) ?? '');
 
 /**
+ * The Core SDK's `moduleOperation`, followed into its workspace source: a public contract exports the
+ * typed operation reference a consumer passes to `call`, built from the contract's own schemas.
+ */
+export const isSdkOperationReferenceFactory = (value: GraphValue): boolean =>
+  value.kind === 'node' &&
+  isFunction(value.node) &&
+  value.module.path.endsWith('/packages/core-runtime/src/sdk/index.ts') &&
+  declaredName(value) === 'moduleOperation';
+
+/**
  * Rejects HttpApi endpoints and Problem Details extensions that reach an unconstrained schema. The
  * framework module graph follows imports, re-exports, aliases, destructuring, function returns and
  * member writes across workspace packages.

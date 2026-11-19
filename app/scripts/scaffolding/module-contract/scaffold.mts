@@ -236,6 +236,7 @@ import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositio
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer as GovernedReadLayer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
+import { ModuleCallRouteLive as GovernedModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 
@@ -283,10 +284,21 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
+// The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider.
+const governedModuleCallHttpClientLive = GovernedFetchHttpClient.layer.pipe(
+  GovernedReadLayer.provide(
+    GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+  ),
+);
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
   GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
+  GovernedReadLayer.provide(
+    GovernedModuleCallRouteLive.pipe(
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(NodeCrypto.layer, governedModuleCallHttpClientLive)),
+    ),
+  ),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(

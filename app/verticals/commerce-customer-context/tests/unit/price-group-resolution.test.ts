@@ -1,11 +1,10 @@
-import { TestClock } from 'effect/testing';
-import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { NodeCrypto } from '@effect/platform-node';
-import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 /* eslint-disable effect-native/no-manual-tag-comparison -- Resolution tests assert all four exact public discriminants and evidence payloads; expires: 2027-03-01. */
 import { expect, it } from 'effect-rstest';
-import { Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
+import type { CallOutcome } from '@app/core-runtime/sdk';
+import { PriceGroupCompatibilityDecisionSchema } from '@app/price-group-catalog-contracts';
+import type { PriceGroupCompatibilityDecision } from '@app/price-group-catalog-contracts';
+import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { AssignCustomerPriceGroupPayloadSchema } from '../../src/actions/assign-customer-price-group.action.ts';
 import {
   customerPriceGroupAssignmentReadRead,
@@ -13,17 +12,19 @@ import {
 } from '../../src/api/customer-price-group-assignment-read.read.ts';
 import {
   customerPriceGroupResolutionRead,
-  resolveCustomerPriceGroupFromServices,
-  loadCustomerPriceGroupSnapshot,
-  recheckCustomerPriceGroupSnapshot,
-  finishCustomerPriceGroupSnapshot,
+  resolveCustomerPriceGroup,
 } from '../../src/api/customer-price-group-resolution.read.ts';
+import type {
+  CustomerPriceGroupResolutionServices,
+  CustomerPriceGroupResolutionSteps,
+} from '../../src/api/customer-price-group-resolution.read.ts';
+import { priceGroupCatalogPortFromCall } from '../../src/integrations/price-group-catalog.ts';
+import type { CustomerPriceGroupResolutionRequest } from '../../shared/apis/customer-price-group-resolution.ts';
 import {
   CustomerPriceGroupResolutionRequestSchema,
   CustomerPriceGroupResolutionResponseSchema,
   customerPriceGroupResolutionPredicateRef,
 } from '../../shared/apis/customer-price-group-resolution.ts';
-import type { CustomerPriceGroupResolutionServices } from '../../src/api/customer-price-group-resolution.read.ts';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCatalogOutcome,
@@ -48,9 +49,9 @@ const profile = {
   tenantId,
 } as const;
 const priceGroupRef: PriceGroupRef = {
-  moduleId: 'pricing.catalog',
-  resourceId: 'price-group-standard',
-  resourceType: 'pricing.catalog.price-group',
+  moduleId: 'pricing.price-group-catalog',
+  resourceId: '33333333-3333-4333-8333-333333333333',
+  resourceType: 'pricing.price-group-catalog.price-group',
   tenantId,
 };
 const counterpartyRef = {
@@ -109,6 +110,71 @@ const assignment = (
 const catalog = (outcome: PriceGroupCatalogOutcome): PriceGroupCatalogPort => ({
   resolveCurrent: () => Effect.succeed(outcome),
 });
+interface RunTrace {
+  readonly calls: ValidatePriceGroupCompatibilityRequest[];
+  /** Each step of a run as the read sees it: a transaction begins or ends, or a call is made. */
+  readonly events: string[];
+  /** How many transactions were open when each call was made. */
+  readonly openAtCall: number[];
+}
+type CatalogAnswer = (
+  payload: ValidatePriceGroupCompatibilityRequest,
+) => Effect.Effect<CallOutcome<PriceGroupCompatibilityDecision>>;
+
+const noCall: CatalogAnswer = () => Effect.die('the Catalog must not be called');
+
+/**
+ * Runs the read's resolution against stand-ins of Core's two capabilities that keep Core's bookkeeping:
+ * every transaction gets `services(sequence)`, and every call, through the read's real Catalog adapter
+ * over `call`, records how many transactions were open.
+ */
+const runResolution = (
+  request: CustomerPriceGroupResolutionRequest,
+  services: (sequence: number) => CustomerPriceGroupResolutionServices,
+  answer: CatalogAnswer = noCall,
+) => {
+  const trace: RunTrace = { calls: [], events: [], openAtCall: [] };
+  let open = 0;
+  let sequence = 0;
+  const transaction: CustomerPriceGroupResolutionSteps['transaction'] = (body) =>
+    Effect.suspend(() => {
+      open += 1;
+      sequence += 1;
+      trace.events.push('begin');
+      return body(services(sequence), { operationAt: DateTime.makeUnsafe(observedAt), sequence });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          open -= 1;
+          trace.events.push('end');
+        }),
+      ),
+    );
+  const catalogOverCall = priceGroupCatalogPortFromCall((payload) =>
+    Effect.suspend(() => {
+      trace.events.push('call');
+      trace.openAtCall.push(open);
+      trace.calls.push(payload);
+      return answer(payload);
+    }),
+  );
+  return Effect.exit(resolveCustomerPriceGroup(request, tenantId, { catalog: catalogOverCall, transaction })).pipe(
+    Effect.map((exit) => ({ exit, trace })),
+  );
+};
+const sameServices =
+  (services: CustomerPriceGroupResolutionServices) =>
+  (_sequence: number): CustomerPriceGroupResolutionServices =>
+    services;
+const currentProfile = {
+  inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' } as const),
+};
+const usableDecision = (trustedOperationAt: string) =>
+  Schema.decodeUnknownSync(PriceGroupCompatibilityDecisionSchema)({
+    evidence: { ...compatibility, trustedOperationAt },
+    kind: 'USABLE',
+  });
+
 const unavailableStore = () => Effect.die('store must not run after profile not-found');
 const unreachableStore: CustomerPriceGroupAssignmentStorePort = {
   assign: unavailableStore,
@@ -117,96 +183,6 @@ const unreachableStore: CustomerPriceGroupAssignmentStorePort = {
   remove: unavailableStore,
   resolve: unavailableStore,
 };
-
-it.effect('releases the owner snapshot before catalog I/O and revalidates the current set afterwards', () =>
-  Effect.gen(function* phasedResolution() {
-    let inTransaction = true;
-    let catalogCalls = 0;
-    const events: string[] = [];
-    const services: CustomerPriceGroupResolutionServices = {
-      catalog: {
-        resolveCurrent: () =>
-          Effect.sync(() => {
-            expect(inTransaction).toBe(false);
-            catalogCalls += 1;
-            events.push('catalog');
-            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
-          }),
-      },
-      now: Effect.succeed(observedAt),
-      profileValidation: {
-        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
-      },
-      store: {
-        ...unreachableStore,
-        resolve: () =>
-          Effect.sync(() => {
-            expect(inTransaction).toBe(true);
-            events.push('snapshot');
-            return { _tag: 'found', assignments: [assignment('current')] } as const;
-          }),
-      },
-    };
-    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
-    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
-    expect(catalogCalls).toBe(0);
-    inTransaction = false;
-    const result = yield* finishCustomerPriceGroupSnapshot(
-      input,
-      snapshot,
-      services.catalog,
-      Effect.sync(() => {
-        inTransaction = true;
-      }).pipe(
-        Effect.andThen(recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot)),
-        Effect.ensuring(
-          Effect.sync(() => {
-            inTransaction = false;
-          }),
-        ),
-      ),
-      services.now,
-    );
-    expect(result.resolution._tag).toBe('ASSIGNED');
-    expect(events).toEqual(['snapshot', 'catalog', 'snapshot']);
-    expect(catalogCalls).toBe(1);
-  }),
-);
-
-it.effect('fails closed when an assignment changes while the catalog request is in flight', () =>
-  Effect.gen(function* concurrentAssignmentChange() {
-    let assignments = [assignment('current')];
-    const services: CustomerPriceGroupResolutionServices = {
-      catalog: {
-        resolveCurrent: () =>
-          Effect.sync(() => {
-            assignments = [];
-            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
-          }),
-      },
-      now: Effect.succeed(observedAt),
-      profileValidation: {
-        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
-      },
-      store: {
-        ...unreachableStore,
-        resolve: () => Effect.sync(() => ({ _tag: 'found' as const, assignments })),
-      },
-    };
-    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
-    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
-    const failure = yield* Effect.flip(
-      finishCustomerPriceGroupSnapshot(
-        input,
-        snapshot,
-        services.catalog,
-        recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot),
-        services.now,
-      ),
-    );
-    expect(failure._tag).toBe('ReadHandlerUnavailable');
-  }),
-);
 
 it.effect('resolves NONE only when there is no current temporal assignment', () =>
   Effect.gen(function* noCurrentAssignment() {
@@ -259,14 +235,11 @@ it.effect('threads one trusted Read instant and exact Counterparty association t
         store: unreachableStore,
       }),
     );
-    yield* Effect.exit(
-      resolveCustomerPriceGroupFromServices({ ...request, effectiveAt: requestedEffectiveAt }, tenantId, {
-        catalog: catalog({ _tag: 'MISSING' }),
-        now,
-        profileValidation,
-        store: unreachableStore,
-      }),
+    const { trace } = yield* runResolution(
+      { ...request, effectiveAt: requestedEffectiveAt },
+      sameServices({ now, profileValidation, store: unreachableStore }),
     );
+    expect(trace.calls).toEqual([]);
     expect(inspected).toEqual([
       [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
       [counterpartyProfile, requestedEffectiveAt, counterpartyRef],
@@ -276,36 +249,33 @@ it.effect('threads one trusted Read instant and exact Counterparty association t
 
 it.effect('resolves from the dedicated current-at lookup instead of capped history', () =>
   Effect.gen(function* dedicatedCurrentLookup() {
-    let resolvedAt = '';
-    const result = yield* resolveCustomerPriceGroupFromServices(
+    const resolvedAt: string[] = [];
+    const { exit } = yield* runResolution(
       {
         authorizationSubject: { kind: 'RETAIL' },
         effectiveAt: requestedEffectiveAt,
         profile,
       },
-      tenantId,
-      {
-        catalog: catalog({ _tag: 'MISSING' }),
+      sameServices({
         now: Effect.succeed(observedAt),
-        profileValidation: {
-          inspect: () =>
-            Effect.succeed({
-              _tag: 'CURRENT',
-              counterpartyRef: null,
-              revision: 1,
-              state: 'ACTIVE',
-            }),
-        },
+        profileValidation: currentProfile,
         store: {
           ...unreachableStore,
           resolve: (_profile, effectiveAt) => {
-            resolvedAt = effectiveAt;
+            resolvedAt.push(effectiveAt);
             return Effect.succeed({ _tag: 'found', assignments: [] });
           },
         },
-      },
+      }),
     );
-    expect(resolvedAt).toBe(requestedEffectiveAt);
+    // The snapshot and its recheck both read the set at the one requested instant.
+    expect(resolvedAt).toEqual([requestedEffectiveAt, requestedEffectiveAt]);
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (!Exit.isSuccess(exit)) {
+      return;
+    }
+    const { evidence, result } = exit.value;
+    expect(evidence).toEqual({ resultCount: 0 });
     expect(result.effectiveAt).toBe(requestedEffectiveAt);
     expect(result.observedAt).toBe(observedAt);
     expect(result.resolution).toEqual({ _tag: 'NONE' });
@@ -340,33 +310,38 @@ it.effect('resolves from the dedicated current-at lookup instead of capped histo
 
 it.effect('rejects owner evidence that echoes another Profile predicate or generation', () =>
   Effect.gen(function* ownerEvidenceBinding() {
-    const result = yield* resolveCustomerPriceGroupFromServices(
-      { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
-      tenantId,
-      {
-        catalog: catalog({ _tag: 'MISSING' }),
+    const request = {
+      authorizationSubject: { kind: 'RETAIL' },
+      effectiveAt: requestedEffectiveAt,
+      profile,
+    } as const;
+    const empty = yield* runResolution(
+      request,
+      sameServices({
         now: Effect.succeed('2026-03-01T00:00:00.000Z'),
-        profileValidation: {
-          inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
-        },
+        profileValidation: currentProfile,
         store: { ...unreachableStore, resolve: () => Effect.succeed({ _tag: 'found', assignments: [] }) },
-      },
+      }),
     );
-    const assignedResult = yield* resolveCustomerPriceGroupFromServices(
-      { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
-      tenantId,
-      {
-        catalog: catalog({ _tag: 'USABLE', compatibility, priceGroupRef }),
+    const assigned = yield* runResolution(
+      request,
+      sameServices({
         now: Effect.succeed('2026-03-01T00:00:00.000Z'),
-        profileValidation: {
-          inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
-        },
+        profileValidation: currentProfile,
         store: {
           ...unreachableStore,
           resolve: () => Effect.succeed({ _tag: 'found', assignments: [assignment('authoritative-current')] }),
         },
-      },
+      }),
+      () => Effect.succeed({ _tag: 'Ok', value: usableDecision(requestedEffectiveAt) }),
     );
+    expect(Exit.isSuccess(empty.exit) && Exit.isSuccess(assigned.exit)).toBe(true);
+    if (!Exit.isSuccess(empty.exit) || !Exit.isSuccess(assigned.exit)) {
+      return;
+    }
+    const { result } = empty.exit.value;
+    const assignedResult = assigned.exit.value.result;
+    expect(assignedResult.resolution._tag).toBe('ASSIGNED');
     expect(assignedResult.generation).not.toBe(result.generation);
     expect(assignedResult.verificationReceipt.verificationRef).not.toBe(result.verificationReceipt.verificationRef);
     expect(
@@ -384,6 +359,79 @@ it.effect('rejects owner evidence that echoes another Profile predicate or gener
         verificationReceipt: { ...result.verificationReceipt, generation: 'caller-generation' },
       }),
     ).toBe(false);
+  }),
+);
+
+it.effect('calls the Catalog only between the snapshot and the recheck transactions, never inside one', () =>
+  Effect.gen(function* callOutsideTransaction() {
+    const { exit, trace } = yield* runResolution(
+      { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
+      sameServices({
+        now: Effect.succeed(observedAt),
+        profileValidation: currentProfile,
+        store: {
+          ...unreachableStore,
+          resolve: () => Effect.succeed({ _tag: 'found', assignments: [assignment('current')] }),
+        },
+      }),
+      () => Effect.succeed({ _tag: 'Ok', value: usableDecision(requestedEffectiveAt) }),
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(trace.events).toEqual(['begin', 'end', 'call', 'begin', 'end']);
+    expect(trace.openAtCall).toEqual([0]);
+    expect(trace.calls).toEqual([
+      {
+        priceGroupRef,
+        requiredContract: { contractId: CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, version: 1 },
+        trustedOperationAt: requestedEffectiveAt,
+      },
+    ]);
+  }),
+);
+
+it.effect('answers unavailable, never NONE or a stale answer, when the Catalog or the owner set fails it', () =>
+  Effect.gen(function* failedResolution() {
+    const request = { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile } as const;
+    const services = sameServices({
+      now: Effect.succeed(observedAt),
+      profileValidation: currentProfile,
+      store: {
+        ...unreachableStore,
+        resolve: () => Effect.succeed({ _tag: 'found', assignments: [assignment('current')] }),
+      },
+    });
+    for (const outcome of [
+      { _tag: 'Unavailable', reason: 'Catalog down', retryable: true },
+      { _tag: 'Forbidden', reason: 'Catalog refused the caller' },
+      { _tag: 'NotFound', reason: 'Catalog operation missing' },
+      { _tag: 'Rejected', code: 'invalid', reason: 'Catalog rejected the request' },
+    ] as const) {
+      const { exit, trace } = yield* runResolution(request, services, () => Effect.succeed(outcome));
+      expect(trace.events).toEqual(['begin', 'end', 'call']);
+      expect(Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject({ code: 'read_handler_unavailable' });
+    }
+
+    // The assignment set changed while the Catalog answered: the recheck refuses to release the answer.
+    const changed = yield* runResolution(
+      request,
+      (sequence) => ({
+        now: Effect.succeed(observedAt),
+        profileValidation: currentProfile,
+        store: {
+          ...unreachableStore,
+          resolve: () =>
+            Effect.succeed({
+              _tag: 'found',
+              assignments: [assignment(sequence === 1 ? 'current' : 'replacement')],
+            }),
+        },
+      }),
+      () => Effect.succeed({ _tag: 'Ok', value: usableDecision(requestedEffectiveAt) }),
+    );
+    expect(changed.trace.events).toEqual(['begin', 'end', 'call', 'begin', 'end']);
+    expect(Option.getOrUndefined(Exit.findErrorOption(changed.exit))).toMatchObject({
+      code: 'read_handler_unavailable',
+    });
   }),
 );
 
@@ -482,86 +530,4 @@ it.effect('rejects invalid periods and declares tagged business-plus-resource Re
       }),
     ).toBe(false);
   }),
-);
-
-it.effect('runs the original registered load and recheck in separate committed owner transactions', () =>
-  Effect.gen(function* nativePriceGroupLifecycle() {
-    yield* TestClock.setTime(Date.parse(observedAt));
-    const principal = trustVerifiedGatewayPrincipalContext(
-      Schema.decodeSync(TrustedPrincipalContextSchema)({
-        authBindingId: '44444444-4444-4444-8444-444444444444',
-        authContextRef: 'session:price-group-native',
-        authMethod: 'session',
-        legalEntityId: '22222222-2222-4222-8222-222222222222',
-        principalId: '33333333-3333-4333-8333-333333333333',
-        tenantId,
-      }),
-      'a'.repeat(64),
-    );
-    yield* Effect.forEach(
-      ['CURRENT', 'PROFILE_CHANGED', 'GATE_DENIED'] as const,
-      Effect.fnUntraced(function* nativeCase(scenario) {
-        let inspections = 0;
-        const harness = yield* makeReadTestHarness({
-          access: scenario === 'GATE_DENIED' ? 'denied' : 'allowed',
-          compositionRevision: 'a'.repeat(64),
-          executeOwnerQuery: ({ sql }) => {
-            if (sql.includes('inspect_price_group_profile')) {
-              inspections += 1;
-              return Effect.succeed([
-                {
-                  counterparty_resource_id: null,
-                  outcome: 'CURRENT',
-                  profile_state: 'ACTIVE',
-                  revision: scenario === 'PROFILE_CHANGED' && inspections > 1 ? 2 : 1,
-                },
-              ]);
-            }
-            if (sql.includes('resolve_price_group_assignments')) {
-              return Effect.succeed([]);
-            }
-            return Effect.die(`Unexpected price-group owner query: ${sql}`);
-          },
-          operationTime: new Date(observedAt),
-          ownerAuthorizationDecision: 'allowed',
-          ownerRegistration: commerceCustomerContextRegistration,
-          scope: { ...principal, correlationId: 'price-group-native' },
-        });
-        const result = yield* harness.runtime
-          .runRead({
-            input: { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
-            principal,
-            registration: customerPriceGroupResolutionRead,
-            transport: { correlationId: 'price-group-native' },
-          })
-          .pipe(Effect.result);
-        if (scenario === 'CURRENT' && Result.isFailure(result)) {
-          return yield* Effect.fail(result.failure);
-        }
-        expect(Result.isSuccess(result)).toBe(scenario === 'CURRENT');
-        if (scenario === 'GATE_DENIED') {
-          expect(inspections).toBe(0);
-        } else {
-          expect(inspections).toBe(2);
-          const { statements } = harness.snapshot();
-          const inspectionsAt = statements.flatMap((statement, index) =>
-            statement.includes('inspect_price_group_profile') ? [index] : [],
-          );
-          const [loadedAt, recheckedAt] = inspectionsAt;
-          expect(loadedAt).toBeDefined();
-          expect(recheckedAt).toBeDefined();
-          expect(
-            statements
-              .slice((loadedAt ?? 0) + 1, recheckedAt)
-              .some((statement) => statement.trim().toLowerCase() === 'commit'),
-          ).toBe(true);
-        }
-        if (Result.isSuccess(result)) {
-          expect(result.success.resolution).toEqual({ _tag: 'NONE' });
-        }
-        return yield* Effect.void;
-      }),
-      { concurrency: 1, discard: true },
-    );
-  }).pipe(Effect.provide(TestClock.layer()), Effect.provide(NodeCrypto.layer)),
 );

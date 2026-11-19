@@ -28,6 +28,8 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
           `${owner}/src`,
           'packages/customer-market-retirement-contracts',
           'packages/customer-payment-term-contracts',
+          // customer-price-group-resolution calls the Catalog's operation reference from this package.
+          'packages/price-group-catalog-contracts',
         ].map((folder) => readPricingSourceTree(root, folder)),
       ),
       Effect.all(

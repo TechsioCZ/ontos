@@ -1,3 +1,4 @@
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -1051,6 +1052,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     Layer.provide(
       makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
         Layer.provide(common),
+        Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(FetchHttpClient.layer))),
         Layer.provide(NodeCrypto.layer),
       ),
     ),
