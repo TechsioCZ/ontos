@@ -13,7 +13,12 @@ import { Base64Url } from 'effect/encoding';
 import type { HttpServerRequest } from 'effect/http';
 
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
-import type { ActionRegistration, DomainEventContractMap, TrustedPrincipalContext } from '@app/core-runtime';
+import type {
+  ActionCoreError,
+  ActionRegistration,
+  DomainEventContractMap,
+  TrustedPrincipalContext,
+} from '@app/core-runtime';
 
 import {
   authenticateOperationPrincipal,
@@ -52,7 +57,7 @@ import {
 } from '../../../src/enrollment/journeys/retail-enrollment-restart.ts';
 import type { StartPortalEnrollmentPayload } from '../../../shared/actions/start-portal-enrollment.ts';
 import { readCurrentRetailEnrollment } from '../../../src/enrollment/attempts/registration-persistence.ts';
-import { CommerceEnrollmentAttemptUnavailable, attemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
+import { attemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../../src/enrollment/attempts/errors.ts';
 import { readCounterpartyInvitationClaimability } from '../../../src/persistence/access-persistence.ts';
 import type {
@@ -92,6 +97,7 @@ import { commercePortalAuthEnrollmentSessionSubject } from './session-subject.ts
 import { advanceEnrollmentWithinRequest } from './request-continuation.ts';
 import {
   answerEnrollmentFailure,
+  answerEnrollmentActionFailure,
   answerEnrollmentOwnerFailure,
   commercePortalAuthEnrollmentAuthenticationProblem,
   commercePortalAuthEnrollmentInvalidProblem,
@@ -216,19 +222,6 @@ export const commercePortalAuthEnrollmentExistingAccountBudget = Effect.fn(
   }
   return null;
 });
-
-const isAttemptUnavailable = Schema.is(CommerceEnrollmentAttemptUnavailable);
-
-/**
- * Every governed Action failure this route can surface collapses to two public answers. An Attempt
- * the owner reports as retryably unavailable is the retryable 503; every other governed refusal is
- * the owner's closed-vocabulary 403, so a caller never learns which governed rule refused it. The
- * problem is exactly its schema; the Action runtime records the rejected invocation.
- */
-const actionProblem = (error: { readonly _tag: string }) =>
-  isAttemptUnavailable(error)
-    ? commercePortalAuthEnrollmentUnavailableProblem()
-    : commercePortalAuthEnrollmentRejectedProblem();
 
 /**
  * The caller's own wire headers, forwarded to the governed Action transport verbatim. The
@@ -865,14 +858,19 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
       internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
       invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
-      mapError: actionProblem,
+      mapError: (error: ActionCoreError | DomainErrorSchema['Type']) => error,
       payload: actionPayload,
       registration,
       requestHeaders: actionRequestHeaders(request),
       // The start signs up a provider account after its claim Action, which only the request that
       // committed the claim may do: a same-key retry keeps ActionAlreadyCommitted, never the saved CLAIMED.
       savedReply: 'withhold',
-    });
+    }).pipe(
+      Effect.matchEffect({
+        onFailure: answerEnrollmentActionFailure(registration.descriptor.actionKey),
+        onSuccess: Effect.succeed,
+      }),
+    );
 
   const continuation = yield* CommerceEnrollmentContinuation;
   // The admitted request origin is the storefront this Attempt starts on; every later verification mail returns there.
@@ -893,7 +891,8 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
         endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
         internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
         invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
-        mapError: actionProblem,
+        mapError: (error: ActionCoreError | typeof startPortalEnrollmentAction.descriptor.domainErrorSchema.Type) =>
+          error,
         payload: intent,
         recoverAlreadyCommitted: () => null,
         registration: startPortalEnrollmentAction,
@@ -902,6 +901,7 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
         // committed start is reread below, never answered from the saved reply of the first restart.
         savedReply: 'withhold',
       }).pipe(
+        Effect.catch(answerEnrollmentActionFailure(startPortalEnrollmentAction.descriptor.actionKey)),
         Effect.filterOrElse(
           (result) => result !== null,
           () =>
@@ -975,7 +975,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
           endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
           internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
           invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
-          mapError: actionProblem,
+          mapError: (
+            error: ActionCoreError | typeof claimPortalEnrollmentTransitionAction.descriptor.domainErrorSchema.Type,
+          ) => error,
           payload: {
             expectedRevision: unclaimed.revision,
             ownerInvocationId: verification.ownerInvocationId,
@@ -987,7 +989,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
           recoverAlreadyCommitted: () => null,
           registration: claimPortalEnrollmentTransitionAction,
           requestHeaders: actionRequestHeaders(request),
-        }),
+        }).pipe(
+          Effect.catch(answerEnrollmentActionFailure(claimPortalEnrollmentTransitionAction.descriptor.actionKey)),
+        ),
     ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
     const continued = yield* continueEnrollment(continuation, journalled);
     return { attempt: commercePortalAuthEnrollmentAttemptProjection(continued), outcome: started.outcome };
@@ -1061,7 +1065,10 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       // A definitive rejection is terminal for the claimed transition: recorded here, or the lease
       // fences it indeterminate and no correlation ever appears to resolve it.
       Effect.catchTag('CommercePortalAuthAccountCreationRejected', (rejection) =>
-        settleRejectedAccountCreation(store, claim, claimedState, rejection),
+        Effect.logWarning('Commerce portal enrollment account creation refused').pipe(
+          Effect.annotateLogs({ failure: 'CommercePortalAuthAccountCreationRejected', stage: 'account-creation' }),
+          Effect.andThen(settleRejectedAccountCreation(store, claim, claimedState, rejection)),
+        ),
       ),
       Effect.catch((error) =>
         answerEnrollmentOwnerFailure(

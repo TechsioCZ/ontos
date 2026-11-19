@@ -627,7 +627,7 @@ const buildStep = () =>
   readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(({ run }) => run === BUILD_DRIVER_COMMAND);
 const buildDriver = () => readFileSync(new URL('../ci/build-units.sh', import.meta.url), 'utf-8');
 
-it('builds every delivery unit of the topology in exactly one build shard, with the Shell alone', () => {
+it('builds every delivery unit of the topology in exactly one build shard', () => {
   const { strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
@@ -636,10 +636,34 @@ it('builds every delivery unit of the topology in exactly one build shard, with 
   expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
   const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
   expect(sorted(built)).toEqual(sorted(units));
-  expect(
-    strategy.matrix.include.find(({ units: shardUnits }) => shardUnits.includes('apps/shell-super-app'))?.units,
-  ).toBe('apps/shell-super-app');
+  // A shard with no unit would only pay a runner's setup.
+  expect(strategy.matrix.include.filter(({ units: shardUnits }) => shardUnits.trim() === '')).toEqual([]);
   expect(buildStep()).toBeDefined();
+});
+
+/** A job of the expanded gates workflow: what it waits for and, for a matrix job, the lists it runs one job per. */
+const FirstWaveJobSchema = Schema.Struct({
+  needs: Schema.optional(Schema.Array(Schema.String)),
+  strategy: Schema.optional(Schema.Struct({ matrix: Schema.Record(Schema.String, Schema.Array(Schema.Unknown)) })),
+});
+
+/** One job per combination of a matrix's lists; `include` only extends those, unless it is the whole matrix. */
+const matrixJobs = (matrix: Readonly<Record<string, readonly unknown[]>>) => {
+  const { include = [], ...lists } = matrix;
+  const sizes = Object.values(lists).map((values) => values.length);
+  return sizes.length === 0 ? include.length : sizes.reduce((product, size) => product * size, 1);
+};
+
+it('starts no more jobs after planning than the 20 shared runners hold', () => {
+  const { jobs } = Schema.decodeUnknownSync(Schema.Struct({ jobs: Schema.Record(Schema.String, FirstWaveJobSchema) }))(
+    readGateWorkflow(),
+  );
+  // On a full run they all start together. In run 44467964945 there were 24: three build shards and the browser
+  // checks waited 88 to 145 s for a runner, and the owner rows, which need every shard, started that much later.
+  const firstWave = Object.values(jobs)
+    .filter(({ needs }) => needs?.length === 1 && needs[0] === CI_PLAN_JOB)
+    .reduce((total, { strategy }) => total + (strategy === undefined ? 1 : matrixJobs(strategy.matrix)), 0);
+  expect(firstWave).toBeLessThanOrEqual(20);
 });
 
 it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {

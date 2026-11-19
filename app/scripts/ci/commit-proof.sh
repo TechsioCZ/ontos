@@ -8,10 +8,13 @@
 #     1. A completed, successful workflow_dispatch run of this workflow file on a candidate/* branch has head_sha equal
 #        to the pushed commit: the same tree and the same workflow definition. A cancelled run, a rerun whose final
 #        conclusion is not success, a run of another workflow, event or branch never counts.
-#     2. That run's own ci-comparison artifact says it compared with this branch (base-ref) at exactly the commit the
-#        push starts from (BEFORE_SHA) and ran a full, affected or scoped plan. Its base is git merge-base, an ancestor
-#        of the pushed commit, so base == BEFORE_SHA also makes the push a fast-forward from it. Another base-ref, an
-#        older merge base, a forced-full run without a base, a docs or a proven plan never counts.
+#     2. That run's own ci-comparison artifact says it planned against this branch (base-ref) and either ran a full
+#        plan, or an affected or scoped plan that compared with exactly the commit the push starts from (BEFORE_SHA).
+#        A full plan runs every gate whatever it compared with, so a forced-full run, which records no base, counts:
+#        plan-ci-checks.mts gives it the whole matrices, and the one gate that reads the comparison, the changed-file
+#        lint row, runs only in a narrowed plan. A narrowed plan's base is git merge-base, an ancestor of the pushed
+#        commit, so base == BEFORE_SHA also makes the push a fast-forward from it. Another base-ref, a narrowed plan
+#        against an older merge base or none, a docs or a proven plan never counts.
 #     3. The commit the push starts from is green: the newest push run of this workflow on this branch for it
 #        succeeded (its own gates, or a proof by these same rules). Red, unfinished or no run at all: the gates run,
 #        because the next planner would compare with the last green push and re-test the unfixed part.
@@ -94,12 +97,11 @@ find_proof() {
       echo "The $RECORD_ARTIFACT record of $url is unreadable; it does not count."
       continue
     fi
-    if jq -e --arg sha "$head" --arg branch "$branch" --arg before "$before" '.head == $sha and ."base-ref" == $branch and .base == $before
-      and (.mode == "full" or .mode == "affected" or .mode == "scoped")' <<<"$record" >/dev/null 2>&1; then
-      local message
-      message="Run $url already proved $head: a successful candidate dispatch of this workflow on this exact commit, whose $(
-        jq -r .mode <<<"$record"
-      ) plan compared with $branch at $before, the green commit this push starts from. The gates are skipped."
+    if jq -e --arg sha "$head" --arg branch "$branch" --arg before "$before" '.head == $sha and ."base-ref" == $branch
+      and (.mode == "full" or (.base == $before and (.mode == "affected" or .mode == "scoped")))' <<<"$record" >/dev/null 2>&1; then
+      local plan message
+      plan="$(jq -r 'if .mode == "full" then "full plan ran every gate" else "\(.mode) plan compared with \(."base-ref") at \(.base)" end' <<<"$record")"
+      message="Run $url already proved $head: a successful candidate dispatch of this workflow on this exact commit, whose $plan; $before, the commit this push starts from, is green. The gates are skipped."
       echo "$message"
       printf '## Proven commit\n\n%s\n' "$message" >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
       printf 'proven=true\nrun=%s\n' "$url" >>"$GITHUB_OUTPUT"

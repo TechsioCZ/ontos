@@ -68,7 +68,8 @@ const plan = (...changedPaths: readonly string[]) =>
   planCiChecks({ applyAffected: true, changedPaths, packages, templates });
 const names = (entries: readonly { readonly name: string }[]) => entries.map(({ name }) => name);
 const EVERY_OTHER_PACKAGE = 'Unit and Component Tests (every other package)';
-const STOREFRONT_TYPECHECK = 'Storefront Typecheck (AKROS and N1)';
+/** The typecheck row, which also typechecks the storefronts. */
+const TYPECHECK = 'Typecheck and OntOS API Boundary Rules';
 const ROOT_TOOLING_FILE = 'app/scripts/check-local.mts';
 const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
 const TOOLING_ROWS = [1, 2, 3].map((shard) => `Repository Tooling Tests (${shard}/3)`);
@@ -96,8 +97,8 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
     const storefront = plan(`app/${directory}/src/app/page.tsx`);
     expect(storefront.mode, directory).toBe('scoped');
     expect(storefront.affectedPackages, directory).toEqual([directory]);
-    // The storefront typecheck and the tooling tests that read storefront files, nothing else from the source rows.
-    expect(names(storefront.source), directory).toEqual([...TOOLING_ROWS, STOREFRONT_TYPECHECK]);
+    // The typecheck and the tooling tests that read storefront files, nothing else from the source rows.
+    expect(names(storefront.source), directory).toEqual([TYPECHECK, ...TOOLING_ROWS]);
     expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
     expect(storefront.unit[0]?.commands, directory).toContain(`--filter ./${directory} run test:unit`);
     // A storefront is in no unit build: no build, Node proof, service, database or browser job is paid for.
@@ -140,7 +141,7 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
   // Both scopes at once run both scopes' rows.
   const both = plan(STAGE_WORKFLOW, `app/${AKROS}/src/app/page.tsx`);
   expect(both.mode).toBe('scoped');
-  expect(names(both.source)).toEqual([...TOOLING_ROWS, STOREFRONT_TYPECHECK]);
+  expect(names(both.source)).toEqual([TYPECHECK, ...TOOLING_ROWS]);
   // What the app host, the unit builds, the gates or the integration suites run is outside the scope.
   for (const changedPath of [
     'app/scripts/zerops/app-host.mts',
@@ -173,9 +174,7 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
 it('refuses a scope that names a source row the matrices do not have', () => {
   const renamed = {
     ...templates,
-    source: templates.source.map((entry) =>
-      entry.name === STOREFRONT_TYPECHECK ? { ...entry, name: 'Storefront Typecheck' } : entry,
-    ),
+    source: templates.source.map((entry) => (entry.name === TYPECHECK ? { ...entry, name: 'Typecheck' } : entry)),
   };
   expect(
     planCiChecks({ applyAffected: true, changedPaths: [`app/${AKROS}/src/app/page.tsx`], packages, templates: renamed })

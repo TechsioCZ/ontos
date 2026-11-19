@@ -54,11 +54,17 @@ import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import type { OperationalScope } from '@app/core-runtime/operations/context';
-import { recordObjectId, scopeObjectId } from '../../../../packages/core-runtime/src/access/compiler/object-id.ts';
+import {
+  ACCESS_OBJECT_KINDS,
+  objectTypeOf,
+  recordObjectId,
+  scopeObjectId,
+  tenantObjectIdPrefix,
+} from '../../../../packages/core-runtime/src/access/compiler/object-id.ts';
 import type { AccessCatalogModule } from '../../../../packages/core-runtime/src/authorization/access-declaration.ts';
 import { CORE_MIGRATION_EQUIVALENCES } from '../../../../packages/core-runtime/src/db/migration-equivalence-data.ts';
 import type { CoreDatabaseExecutor } from '../../../../packages/core-runtime/src/db/types.ts';
-import { Cause, Context, Crypto, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { Cause, Context, Crypto, DateTime, Effect, FileSystem, Layer, Option, Path, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
 import type { AuthenticationService, AuthenticationServiceContract } from '../../api/auth/service.ts';
@@ -881,8 +887,36 @@ interface AccessGraph {
 }
 
 /**
+ * Deletes every engine tuple of the given tenants. Every object the compiler derives names its tenant first, and for a
+ * UUID tenant the prefix is the whole encoded `["<tenantId>"`, so a delete never reaches another tenant's tuples.
+ */
+const releaseTenants = (client: v1.ZedClientInterface, tenantIds: ReadonlySet<string>) =>
+  Effect.forEach(
+    [...tenantIds].flatMap((tenantId) => ACCESS_OBJECT_KINDS.map((kind) => [objectTypeOf(kind), tenantId] as const)),
+    ([resourceType, tenantId]) =>
+      Effect.tryPromise(
+        async () =>
+          await client.promises.deleteRelationships(
+            v1.DeleteRelationshipsRequest.create({
+              relationshipFilter: v1.RelationshipFilter.create({
+                optionalResourceIdPrefix: Option.getOrThrow(tenantObjectIdPrefix(resourceType, tenantId)),
+                resourceType,
+              }),
+            }),
+          ),
+      ),
+    { discard: true },
+  ).pipe(Effect.orDie);
+
+/**
  * The privileged graph a tenant bootstrap needs (`scripts/bootstrap-stage-accounts.mts` composes the
  * same one): one admin pool, one engine transport and the access writers behind `runAccessWrite`.
+ *
+ * The tenants it bootstraps leave the engine with it. The integration engine is SpiceDB's memory datastore, one per
+ * lane for the whole owner row, and it answers every relationship read and every check step by scanning all tuples of
+ * that type and relation, of every tenant it holds (`iteratorForFilter` in SpiceDB's
+ * `internal/datastore/memdb/readonly.go`). A full-catalog tenant is thousands of tuples, so each one left behind made
+ * every later case and suite of the lane slower.
  */
 export const buildAccessGraph = (input: { readonly adminUrl: string; readonly configuration: SpiceDbConfigValue }) =>
   Effect.gen(function* buildGraph() {
@@ -914,8 +948,17 @@ export const buildAccessGraph = (input: { readonly adminUrl: string; readonly co
       Effect.sync(() => newSpiceDbGrpcClient(input.configuration)),
       (opened) => Effect.sync(() => opened.close()),
     );
+    const bootstrapped = new Set<string>();
+    yield* Effect.addFinalizer(() => releaseTenants(client, bootstrapped));
+    const bootstrapService = Context.get(context, TenantAccessBootstrap);
     return {
-      bootstrap: Context.get(context, TenantAccessBootstrap),
+      bootstrap: {
+        bootstrapTenantAccess: (request) =>
+          Effect.suspend(() => {
+            bootstrapped.add(request.scope.tenantId);
+            return bootstrapService.bootstrapTenantAccess(request);
+          }),
+      },
       executor: Context.get(context, CoreDatabase).executor,
       memberships: Context.get(context, AccessMembershipStore),
       project: (projection) => projectRecord(client, projection),
