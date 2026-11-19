@@ -4,7 +4,7 @@
  * built by the operation's own factory, body run with its forks joined, the handle revoked, then
  * commit or rollback. Kind-neutral: it never sees a read type (see `kernel-transactions.ts`).
  */
-import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from 'effect';
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from 'effect';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
@@ -229,15 +229,24 @@ const openOwnerScope = Effect.fn('KernelTransactions.openOwnerScope')(function* 
 });
 
 /**
- * Runs the body on its own fiber and joins it. Every child the body forked is awaited before the body
- * counts as ended (`awaitAllChildren`); a child left running when the body fiber exits is interrupted
- * and awaited by that fiber; interrupting the caller interrupts and awaits the body fiber. So no
- * statement of the body is in flight when the transaction commits or rolls back.
+ * Runs the body on its own fiber and joins it. A body that succeeds counts as ended once every child it
+ * forked finished (`awaitAllChildren`). A body that fails ends at once: its failure is reported the
+ * moment it happens, and the body fiber is interrupted, which interrupts and awaits every child still
+ * running. Interrupting the caller interrupts and awaits the body fiber the same way. So no statement
+ * of the body is in flight when the transaction commits or rolls back, and a failure never waits for
+ * a child's work.
  */
-const runJoined = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Effect.forkChild(Effect.scoped(Effect.awaitAllChildren(body))).pipe(
-    Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)))),
+const runJoined = Effect.fn('KernelTransactions.runJoined')(function* runJoined<A, E, R>(
+  body: Effect.Effect<A, E, R>,
+): Effect.fn.Return<A, E, R> {
+  const failed = yield* Deferred.make<never, E>();
+  const fiber = yield* Effect.forkChild(
+    Effect.scoped(Effect.awaitAllChildren(body.pipe(Effect.onError((cause) => Deferred.failCause(failed, cause))))),
   );
+  return yield* Effect.raceFirst(Fiber.join(fiber), Deferred.await(failed)).pipe(
+    Effect.onExit(() => Fiber.interrupt(fiber)),
+  );
+});
 
 const ownerTransaction = Effect.fn('KernelTransactions.ownerTransaction')(function* ownerTransaction<
   Services,

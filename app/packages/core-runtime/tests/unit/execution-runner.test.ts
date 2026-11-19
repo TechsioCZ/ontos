@@ -506,3 +506,30 @@ it.effect('a forked fiber of the body finishes before the transaction commits', 
     }),
   ),
 );
+
+it.effect('a body that fails interrupts the children it left running and answers its failure at once', () =>
+  Effect.scoped(
+    Effect.gen(function* failingBodyWithChild() {
+      const harness = yield* makeHarness([]);
+      const session = yield* harness.open(execution(calls));
+      const started = yield* Deferred.make<null>();
+      const childInterrupted = yield* Deferred.make<null>();
+      // A failed body that waited for its child would never answer here.
+      const exit = yield* Effect.exit(
+        session.capabilities.transaction(() =>
+          Effect.forkChild(
+            Deferred.succeed(started, null).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(childInterrupted, null)),
+            ),
+          ).pipe(Effect.andThen(Deferred.await(started)), Effect.andThen(Effect.fail('body failed' as const))),
+        ),
+      );
+      expect(Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()).toStrictEqual(
+        Option.some('body failed'),
+      );
+      expect(yield* Deferred.isDone(childInterrupted)).toBe(true);
+      expect(harness.statements.at(-1)).toMatch(/^rollback/iu);
+    }),
+  ),
+);
