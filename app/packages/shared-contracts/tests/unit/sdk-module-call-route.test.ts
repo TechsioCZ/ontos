@@ -278,6 +278,30 @@ it.effect('answers Unreachable when the provider sends its headers and then stal
   }),
 );
 
+it.effect(
+  'answers Unreachable when the body breaks after 200 headers, and unreadable for a body that is not JSON',
+  () =>
+    Effect.gen(function* brokenBody() {
+      const broken = new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (controller) => {
+            controller.error(new Error('connection reset'));
+          },
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 200 },
+      );
+      const reset = yield* sendWith({ response: Option.some(broken) }, requestOf(asPerson, revision));
+      expect(isUnreachable(reset.answer)).toBe(true);
+
+      const garbled = yield* sendWith(
+        { response: Option.some(new Response('{"ok":', { status: 200 })) },
+        requestOf(asPerson, revision),
+      );
+      expect(isProblem(garbled.answer)).toBe(true);
+      expect(garbled.answer).toMatchObject({ code: 'provider_answer_unreadable', status: 502 });
+    }),
+);
+
 it.effect('sends the idempotency key of a write call', () =>
   Effect.gen(function* idempotency() {
     const { sent } = yield* sendWith({}, { ...requestOf(asPerson, revision), idempotencyKey: 'key-1' });
