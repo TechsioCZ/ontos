@@ -523,19 +523,19 @@ const withSuite = <Value, Failure>(program: (context: SuiteContext) => Effect.Ef
       subjectId: string,
       subjectType: string = HUMAN,
     ): Effect.Effect<GraphPermissionship> =>
-      Effect.tryPromise(() =>
-        client.promises.checkPermission(
+      rpc
+        .checkPermission(
           v1.CheckPermissionRequest.create({
             consistency: fullyConsistent,
             permission,
             resource: ref(resourceType, resourceId),
             subject: subjectRef(subjectId, subjectType),
           }),
-        ),
-      ).pipe(
-        Effect.map((response) => response.permissionship),
-        Effect.orDie,
-      );
+        )
+        .pipe(
+          Effect.map((response) => response.permissionship),
+          Effect.orDie,
+        );
     return yield* program({ authorityFor: authorityPortOf, check, compile, decide, graphCheck });
   }).pipe(Effect.scoped);
 

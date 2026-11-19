@@ -1,9 +1,18 @@
 import { v1 } from '@authzed/authzed-node';
 import { Server, ServerCredentials, status } from '@grpc/grpc-js';
-import type { MethodDefinition, ServerUnaryCall, handleUnaryCall, sendUnaryData } from '@grpc/grpc-js';
-import { Data, Effect, FiberSet, FileSystem, Path, Stream } from 'effect';
+import type {
+  MethodDefinition,
+  ServerUnaryCall,
+  ServerWritableStream,
+  handleServerStreamingCall,
+  handleUnaryCall,
+  sendUnaryData,
+} from '@grpc/grpc-js';
+import { Data, Effect, FiberSet, FileSystem, Path, Schema, Stream } from 'effect';
 import type { Scope } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+
+const INVALID_PRE_SHARED_KEY = 'invalid preshared key';
 
 /** A scripted SpiceDB refusal, delivered to the client as a native gRPC UNAVAILABLE status. */
 export class ScriptedSpiceDbUnavailable extends Data.TaggedError('ScriptedSpiceDbUnavailable')<{
@@ -28,8 +37,9 @@ const unary = <Request, Response>(
   name: string,
   request: ProtobufMessage<Request>,
   response: ProtobufMessage<Response>,
+  service = 'PermissionsService',
 ): MethodDefinition<Request, Response> => ({
-  path: `/authzed.api.v1.PermissionsService/${name}`,
+  path: `/authzed.api.v1.${service}/${name}`,
   requestDeserialize: (bytes) => request.fromBinary(bytes),
   requestSerialize: (message) => Buffer.from(request.toBinary(message)),
   requestStream: false,
@@ -97,7 +107,7 @@ export const serveScriptedSpiceDb = Effect.fn('NativeSpiceDbGrpc.serve')(functio
     answer: (request: Request) => Effect.Effect<Response, ScriptedSpiceDbUnavailable>,
   ) => {
     if (!call.metadata.get('authorization').includes(`Bearer ${preSharedKey}`)) {
-      reply({ code: status.UNAUTHENTICATED, details: 'invalid preshared key' });
+      reply({ code: status.UNAUTHENTICATED, details: INVALID_PRE_SHARED_KEY });
       return;
     }
     runAnswer(
@@ -140,4 +150,124 @@ export const serveScriptedSpiceDb = Effect.fn('NativeSpiceDbGrpc.serve')(functio
     );
   });
   return { caCertificate: cert.trim(), endpoint: `localhost:${port}` };
+});
+
+/** The SpiceDB RPCs `SpiceDbRpc` sends, by their gRPC method name. */
+export const RecordedSpiceDbMethodSchema = Schema.Literals([
+  'CheckBulkPermissions',
+  'CheckPermission',
+  'ReadRelationships',
+  'WriteRelationships',
+  'WriteSchema',
+]);
+export type RecordedSpiceDbMethod = typeof RecordedSpiceDbMethodSchema.Type;
+
+/**
+ * A SpiceDB over native gRPC and TLS on localhost that records every call its handlers received, in order, and
+ * answers each through `answer`: success is SpiceDB's empty answer (a check is NO_PERMISSION, a denial). Its
+ * `recycleConnections` sends every open connection the GOAWAY SpiceDB sends at `--grpc-max-conn-age`, and the
+ * listener keeps accepting the client's next connection.
+ */
+export const serveRecordingSpiceDb = Effect.fn('NativeSpiceDbGrpc.serveRecording')(function* serveRecordingSpiceDb(
+  preSharedKey: string,
+  answer: (method: RecordedSpiceDbMethod) => Effect.Effect<void, ScriptedSpiceDbUnavailable>,
+): Effect.fn.Return<
+  {
+    readonly caCertificate: string;
+    readonly endpoint: string;
+    readonly received: RecordedSpiceDbMethod[];
+    readonly recycleConnections: Effect.Effect<void>;
+  },
+  Error,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
+> {
+  const { cert, key } = yield* loopbackCertificate.pipe(Effect.orDie);
+  const runAnswer = yield* FiberSet.makeRuntime();
+  const received: RecordedSpiceDbMethod[] = [];
+  const authorized = (metadata: ServerUnaryCall<unknown, unknown>['metadata']) =>
+    metadata.get('authorization').includes(`Bearer ${preSharedKey}`);
+  const respond =
+    <Request, Response>(method: RecordedSpiceDbMethod, response: Response): handleUnaryCall<Request, Response> =>
+    (call, reply: sendUnaryData<Response>) => {
+      if (!authorized(call.metadata)) {
+        reply({ code: status.UNAUTHENTICATED, details: INVALID_PRE_SHARED_KEY });
+        return;
+      }
+      received.push(method);
+      runAnswer(
+        answer(method).pipe(
+          Effect.match({
+            onFailure: ({ details }) => reply({ code: status.UNAVAILABLE, details }),
+            onSuccess: () => reply(null, response),
+          }),
+        ),
+      );
+    };
+  const readRelationships: handleServerStreamingCall<v1.ReadRelationshipsRequest, v1.ReadRelationshipsResponse> = (
+    call: ServerWritableStream<v1.ReadRelationshipsRequest, v1.ReadRelationshipsResponse>,
+  ) => {
+    if (!authorized(call.metadata)) {
+      call.emit('error', { code: status.UNAUTHENTICATED, details: INVALID_PRE_SHARED_KEY });
+      return;
+    }
+    received.push('ReadRelationships');
+    runAnswer(
+      answer('ReadRelationships').pipe(
+        Effect.match({
+          onFailure: ({ details }) => call.emit('error', { code: status.UNAVAILABLE, details }),
+          onSuccess: () => call.end(),
+        }),
+      ),
+    );
+  };
+  const server = yield* Effect.acquireRelease(
+    Effect.sync(() => new Server()),
+    (running) => Effect.sync(() => running.forceShutdown()),
+  );
+  server.addService(
+    {
+      checkBulkPermissions: unary(
+        'CheckBulkPermissions',
+        v1.CheckBulkPermissionsRequest,
+        v1.CheckBulkPermissionsResponse,
+      ),
+      checkPermission: unary('CheckPermission', v1.CheckPermissionRequest, v1.CheckPermissionResponse),
+      readRelationships: {
+        ...unary('ReadRelationships', v1.ReadRelationshipsRequest, v1.ReadRelationshipsResponse),
+        responseStream: true,
+      },
+      writeRelationships: unary('WriteRelationships', v1.WriteRelationshipsRequest, v1.WriteRelationshipsResponse),
+    },
+    {
+      checkBulkPermissions: respond('CheckBulkPermissions', v1.CheckBulkPermissionsResponse.create({})),
+      checkPermission: respond(
+        'CheckPermission',
+        v1.CheckPermissionResponse.create({ permissionship: v1.CheckPermissionResponse_Permissionship.NO_PERMISSION }),
+      ),
+      readRelationships,
+      writeRelationships: respond('WriteRelationships', v1.WriteRelationshipsResponse.create({})),
+    },
+  );
+  server.addService(
+    { writeSchema: unary('WriteSchema', v1.WriteSchemaRequest, v1.WriteSchemaResponse, 'SchemaService') },
+    { writeSchema: respond('WriteSchema', v1.WriteSchemaResponse.create({})) },
+  );
+  const credentials = ServerCredentials.createSsl(
+    null,
+    [{ cert_chain: Buffer.from(cert), private_key: Buffer.from(key) }],
+    false,
+  );
+  const port = yield* Effect.callback<number, Error>((resume) => {
+    server.bindAsync('localhost:0', credentials, (failure, bound) =>
+      resume(failure === null ? Effect.succeed(bound) : Effect.fail(failure)),
+    );
+  });
+  const endpoint = `localhost:${port}`;
+  return {
+    caCertificate: cert.trim(),
+    endpoint,
+    received,
+    // `drain` sends GOAWAY on every open connection and leaves the listener open, as SpiceDB's age limit does.
+    recycleConnections: Effect.sync(() => server.drain(endpoint, 1000)),
+  };
 });

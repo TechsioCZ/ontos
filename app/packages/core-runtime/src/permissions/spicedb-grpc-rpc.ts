@@ -18,6 +18,32 @@ export const spiceDbCaCertificate = (configuration: Pick<SpiceDbConfigValue, 'ca
   return Buffer.from(configuration.caCertificate);
 };
 
+/**
+ * SpiceDB recycles every gRPC connection after `--grpc-max-conn-age` (30 s by default; no stage sets it) with a
+ * GOAWAY. A call queued on that connection in the turn the GOAWAY arrives is refused by the client's own HTTP/2
+ * session and never sent, but grpc-js reports it as a write error (UNAVAILABLE) and skips the transparent retry
+ * it gives other refused streams. The read-only calls are therefore retried on UNAVAILABLE, on the next
+ * connection and within the call's deadline: a read changes nothing, and every other answer, a denial included,
+ * is returned as SpiceDB gave it. Writes are never repeated, because UNAVAILABLE cannot tell a refused write from
+ * one SpiceDB applied, and an applied `TOUCH` repeated after a concurrent `DELETE` would restore a revoked grant.
+ */
+const SPICEDB_READ_RETRY_SERVICE_CONFIG = `{
+  "methodConfig": [{
+    "name": [
+      { "service": "authzed.api.v1.PermissionsService", "method": "CheckPermission" },
+      { "service": "authzed.api.v1.PermissionsService", "method": "CheckBulkPermissions" },
+      { "service": "authzed.api.v1.PermissionsService", "method": "ReadRelationships" }
+    ],
+    "retryPolicy": {
+      "maxAttempts": 3,
+      "initialBackoff": "0.02s",
+      "maxBackoff": "0.1s",
+      "backoffMultiplier": 2,
+      "retryableStatusCodes": ["UNAVAILABLE"]
+    }
+  }]
+}`;
+
 /** An authzed-node gRPC client that trusts only `SPICEDB_CA_CERT`. Every Node caller opens SpiceDB through it. */
 export const newSpiceDbGrpcClient = (
   configuration: Pick<SpiceDbConfigValue, 'caCertificate' | 'endpoint' | 'preSharedKey'>,
@@ -67,7 +93,14 @@ export const spiceDbGrpcCallOptions = (
 
 /** SpiceDB over gRPC through the official authzed-node client (HTTP/2, Node only). */
 export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number): SpiceDbRpc => {
-  const client = newSpiceDbGrpcClient(configuration, spiceDbGrpcCallOptions(timeoutMilliseconds));
+  // The retry policy goes only to this client, whose every call carries a deadline: a retried read gets what is
+  // left of it. A client opened without a deadline keeps single attempts, so no retry of its can wait forever.
+  // The policy is this client's own; a DNS TXT record cannot replace it.
+  const client = newSpiceDbGrpcClient(configuration, {
+    'grpc.service_config': SPICEDB_READ_RETRY_SERVICE_CONFIG,
+    'grpc.service_config_disable_resolution': 1,
+    ...spiceDbGrpcCallOptions(timeoutMilliseconds),
+  });
   const deadline = spiceDbDeadline(timeoutMilliseconds);
   const { promises } = client;
   return {

@@ -83,7 +83,11 @@ import {
 import { PLATFORM_TENANT } from '@app/core-runtime/auth/module-credentials';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
+import {
+  grantTestTenantOwnerAccess,
+  liveFixtureSpiceDb,
+  openLiveFixtureSpiceDbRpc,
+} from '@app/core-runtime/testing/tenant-access';
 import { AccessCatalogModulesSchema, buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
 import { makeAccessChangesDrizzleStore } from '@app/core-runtime/access/changes/persistence/drizzle-store';
 import {
@@ -386,70 +390,62 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
   },
 );
 
+/** The per-call deadline the live fixture gives its own SpiceDB calls. */
+const NATIVE_SPICEDB_TIMEOUT_MS = 30_000;
+
+/** SpiceDB through the production client: every call has a deadline, a refused read is retried, a write is sent once. */
+const openNativeSpiceClient = Effect.fn('ServerOwnerRelayNative.openSpiceClient')(function* openNativeSpiceClient() {
+  const environment = yield* Config.all({
+    SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
+    SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
+    SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
+  });
+  return yield* openLiveFixtureSpiceDbRpc(yield* liveFixtureSpiceDb(environment), NATIVE_SPICEDB_TIMEOUT_MS);
+});
+
 const grantNativeIdentityAdministration = Effect.fn('ServerOwnerRelayNative.grantIdentityAdministration')(
   function* grantNativeIdentityAdministration(core: Effect.Success<ReturnType<typeof makeLiveOperationFixture>>) {
-    const config = yield* Config.all({
-      certificate: Config.String('SPICEDB_CA_CERT'),
-      endpoint: Config.String('SPICEDB_ENDPOINT'),
-      key: Config.Redacted('SPICEDB_PRESHARED_KEY'),
-    });
-    const spice = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        v1.NewClientWithCustomCert(Redacted.value(config.key), config.endpoint, Buffer.from(config.certificate)),
-      ),
-      (client) => Effect.sync(() => client.close()),
-    );
+    const spice = yield* openNativeSpiceClient();
     const relationship = v1.Relationship.create({
       relation: 'identity_admin',
       resource: { objectId: core.tenantId, objectType: 'tenant' },
       subject: { object: { objectId: core.manager.principalId, objectType: 'principal' } },
     });
     const write = (operation: v1.RelationshipUpdate_Operation) =>
-      Effect.tryPromise({
-        catch: () =>
-          new PackagedOwnerStartupError({ reason: 'Native identity administration permission write failed' }),
-        try: () =>
-          spice.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: [v1.RelationshipUpdate.create({ operation, relationship })],
-            }),
+      spice
+        .writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: [v1.RelationshipUpdate.create({ operation, relationship })],
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            () => new PackagedOwnerStartupError({ reason: 'Native identity administration permission write failed' }),
           ),
-      });
+        );
     yield* Effect.acquireRelease(write(v1.RelationshipUpdate_Operation.TOUCH), () =>
       write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.orDie),
     );
-    const permission = yield* Effect.tryPromise({
-      catch: () =>
-        new PackagedOwnerStartupError({ reason: 'Native identity administration fully-consistent check failed' }),
-      try: () =>
-        spice.promises.checkPermission(
-          v1.CheckPermissionRequest.create({
-            consistency: v1.Consistency.create({
-              requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
-            }),
-            permission: 'manage_identity',
-            resource: { objectId: core.tenantId, objectType: 'tenant' },
-            subject: { object: { objectId: core.manager.principalId, objectType: 'principal' } },
+    const permission = yield* spice
+      .checkPermission(
+        v1.CheckPermissionRequest.create({
+          consistency: v1.Consistency.create({
+            requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
           }),
+          permission: 'manage_identity',
+          resource: { objectId: core.tenantId, objectType: 'tenant' },
+          subject: { object: { objectId: core.manager.principalId, objectType: 'principal' } },
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new PackagedOwnerStartupError({ reason: 'Native identity administration fully-consistent check failed' }),
         ),
-    });
+      );
     expect(permission.permissionship).toBe(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION);
   },
 );
-
-const openNativeSpiceClient = Effect.fn('ServerOwnerRelayNative.openSpiceClient')(function* openNativeSpiceClient() {
-  const settings = yield* Config.all({
-    certificate: Config.String('SPICEDB_CA_CERT'),
-    endpoint: Config.String('SPICEDB_ENDPOINT'),
-    key: Config.Redacted('SPICEDB_PRESHARED_KEY'),
-  });
-  return yield* Effect.acquireRelease(
-    Effect.sync(() =>
-      v1.NewClientWithCustomCert(Redacted.value(settings.key), settings.endpoint, Buffer.from(settings.certificate)),
-    ),
-    (client) => Effect.sync(() => client.close()),
-  );
-});
 
 const setNativeTenantRole = Effect.fn('ServerOwnerRelayNative.setTenantRole')(function* setNativeTenantRole(
   input: {
@@ -460,24 +456,22 @@ const setNativeTenantRole = Effect.fn('ServerOwnerRelayNative.setTenantRole')(fu
   enabled: boolean,
 ) {
   const client = yield* openNativeSpiceClient();
-  yield* Effect.tryPromise({
-    catch: () => new PackagedOwnerStartupError({ reason: 'Native fixture tenant role update failed' }),
-    try: () =>
-      client.promises.writeRelationships(
-        v1.WriteRelationshipsRequest.create({
-          updates: [
-            v1.RelationshipUpdate.create({
-              operation: enabled ? v1.RelationshipUpdate_Operation.TOUCH : v1.RelationshipUpdate_Operation.DELETE,
-              relationship: v1.Relationship.create({
-                relation: input.relation,
-                resource: { objectId: input.tenantId, objectType: 'tenant' },
-                subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-              }),
+  yield* client
+    .writeRelationships(
+      v1.WriteRelationshipsRequest.create({
+        updates: [
+          v1.RelationshipUpdate.create({
+            operation: enabled ? v1.RelationshipUpdate_Operation.TOUCH : v1.RelationshipUpdate_Operation.DELETE,
+            relationship: v1.Relationship.create({
+              relation: input.relation,
+              resource: { objectId: input.tenantId, objectType: 'tenant' },
+              subject: { object: { objectId: input.principalId, objectType: 'principal' } },
             }),
-          ],
-        }),
-      ),
-  });
+          }),
+        ],
+      }),
+    )
+    .pipe(Effect.mapError(() => new PackagedOwnerStartupError({ reason: 'Native fixture tenant role update failed' })));
 });
 
 const checkNativeTenantPermission = Effect.fn('ServerOwnerRelayNative.checkTenantPermission')(
@@ -487,20 +481,22 @@ const checkNativeTenantPermission = Effect.fn('ServerOwnerRelayNative.checkTenan
     readonly tenantId: string;
   }) {
     const client = yield* openNativeSpiceClient();
-    const result = yield* Effect.tryPromise({
-      catch: () => new PackagedOwnerStartupError({ reason: 'Native fixture fully-consistent permission check failed' }),
-      try: () =>
-        client.promises.checkPermission(
-          v1.CheckPermissionRequest.create({
-            consistency: v1.Consistency.create({
-              requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
-            }),
-            permission: input.permission,
-            resource: { objectId: input.tenantId, objectType: 'tenant' },
-            subject: { object: { objectId: input.principalId, objectType: 'principal' } },
+    const result = yield* client
+      .checkPermission(
+        v1.CheckPermissionRequest.create({
+          consistency: v1.Consistency.create({
+            requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
           }),
+          permission: input.permission,
+          resource: { objectId: input.tenantId, objectType: 'tenant' },
+          subject: { object: { objectId: input.principalId, objectType: 'principal' } },
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          () => new PackagedOwnerStartupError({ reason: 'Native fixture fully-consistent permission check failed' }),
         ),
-    });
+      );
     return result.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION;
   },
 );
@@ -529,15 +525,17 @@ const grantNativeCatalogModuleAccess = Effect.fn('ServerOwnerRelayNative.grantCa
       }),
     ];
     const write = (operation: v1.RelationshipUpdate_Operation) =>
-      Effect.tryPromise({
-        catch: () => new PackagedOwnerStartupError({ reason: 'Actual Catalog module permission fixture write failed' }),
-        try: () =>
-          client.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
-            }),
+      client
+        .writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            () => new PackagedOwnerStartupError({ reason: 'Actual Catalog module permission fixture write failed' }),
           ),
-      });
+        );
     yield* Effect.acquireRelease(write(v1.RelationshipUpdate_Operation.TOUCH), () =>
       write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.orDie),
     );
@@ -2555,20 +2553,22 @@ const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNativ
       return yield* new PackagedOwnerStartupError({ reason: 'Actual Core Legal Entity permission scope missing' });
     }
     const permissions = yield* openNativeSpiceClient();
-    const entityAccess = yield* Effect.tryPromise({
-      catch: () => new PackagedOwnerStartupError({ reason: 'Actual Core Legal Entity permission check failed' }),
-      try: () =>
-        permissions.promises.checkPermission(
-          v1.CheckPermissionRequest.create({
-            consistency: v1.Consistency.create({
-              requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
-            }),
-            permission: 'access',
-            resource: { objectId: entityObjectId, objectType: 'legal_entity' },
-            subject: { object: { objectId: fixture.core.manager.principalId, objectType: 'principal' } },
+    const entityAccess = yield* permissions
+      .checkPermission(
+        v1.CheckPermissionRequest.create({
+          consistency: v1.Consistency.create({
+            requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
           }),
+          permission: 'access',
+          resource: { objectId: entityObjectId, objectType: 'legal_entity' },
+          subject: { object: { objectId: fixture.core.manager.principalId, objectType: 'principal' } },
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          () => new PackagedOwnerStartupError({ reason: 'Actual Core Legal Entity permission check failed' }),
         ),
-    });
+      );
     expect(entityAccess.permissionship).toBe(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION);
     const before = yield* fixture.core.evidence(database);
     const previousPartyReads = new Set(
