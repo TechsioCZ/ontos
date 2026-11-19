@@ -1,6 +1,7 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
+import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
-import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeCommerceCustomerContextOwnerAuthorizationOverlay } from '../../src/persistence/owner-authorization-overlay.ts';
@@ -141,6 +142,49 @@ it.effect('fences a grant reauthorization against a concurrent revoke', () =>
     yield* Deferred.succeed(releaseFence, null);
 
     expect(yield* Fiber.join(decisionFiber)).toBe('denied');
+  }),
+);
+
+/**
+ * A READ ONLY owner transaction, as Core opens for every `{ run }` read: PostgreSQL refuses the grant
+ * lock (`lock_access_grant_authority` is SELECT ... FOR UPDATE, SQLSTATE 25006) and answers the plain read.
+ */
+const readOnlyTransaction = (calls: string[]): ScopedTransactionExecutor =>
+  // SAFETY: Every fixture row is decoded by the invoked owner routine schema; this harness only
+  // exercises the adapter's scoped `invoke` capability.
+  ({
+    invoke: (routine: ScopedRoutineDefinition) => {
+      calls.push(routine.routineKey);
+      if (routine.routineKey === 'counterparty-access.lock-grant-authority') {
+        return Effect.fail(
+          new ScopedRoutineInvocationError({
+            code: 'scoped_routine_invocation_failed',
+            constraint: Option.none(),
+            ownerModuleKey: 'commerce.customer-context',
+            postgresCode: Option.some('25006'),
+            reason: 'cannot execute SELECT FOR UPDATE in a read-only transaction',
+            routineKey: routine.routineKey,
+          }),
+        );
+      }
+      return Schema.decodeUnknownEffect(routine.resultSchema)({
+        ...ownerRow('ACTIVE'),
+        permission_code: 'counterparty.profile.read',
+      }).pipe(Effect.map((row) => [row]));
+    },
+  }) as unknown as ScopedTransactionExecutor;
+
+it.effect('decides a Counterparty-governed read on the grant rows without locking them', () =>
+  Effect.gen(function* readWithoutLock() {
+    const calls: string[] = [];
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const decision = yield* overlay.authorize(readOnlyTransaction(calls), {
+      ...factInput('commerce.customer-context.api.customer-price-group-resolution', { counterpartyId }),
+      operation: 'read',
+    });
+
+    expect(decision).toBe('allowed');
+    expect(calls).toEqual(['counterparty-access.list-grants']);
   }),
 );
 

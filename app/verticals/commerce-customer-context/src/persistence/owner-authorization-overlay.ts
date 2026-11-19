@@ -17,7 +17,7 @@ import type { CounterpartyPermissionCode } from '../../shared/domain/permission-
 import { RetailAccessDecisionRequestSchema } from '../../shared/apis/retail-access-decision.ts';
 import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { RetailPortalPermissionCodeSchema } from '../../shared/domain/profile-contracts.ts';
-import { lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
+import { currentOwnerAccessForTransaction, lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 
 const ownerDecision = (decision: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE'): OwnerAuthorizationDecision => {
@@ -97,7 +97,12 @@ const checkCounterpartyFacts = (
   if (legalEntityId === undefined) {
     return Effect.succeed('unavailable' as const);
   }
-  return lockingCurrentOwnerAccessForTransaction(transaction, { legalEntityId, tenantId: input.scope.tenantId })({
+  // An Action locks the grant rows it relies on until it commits, so a concurrent revoke waits for it.
+  // A Read decides on the same rows without a lock: its transactions are READ ONLY, where PostgreSQL
+  // refuses SELECT FOR UPDATE, and a read writes nothing a revoke would have to wait for.
+  const ownerAccess =
+    input.operation === 'read' ? currentOwnerAccessForTransaction : lockingCurrentOwnerAccessForTransaction;
+  return ownerAccess(transaction, { legalEntityId, tenantId: input.scope.tenantId })({
     counterpartyRef: counterpartyRef.success,
     legalEntityId,
     permission,
