@@ -312,7 +312,11 @@ describe("OntOS gateway assertions", () => {
       await gateway.callAction('merchandise', 'order', {}, 'retry');
     `,
       async (statuses) => {
-        expect(statuses).toEqual(["rejected", "fulfilled"]);
+        // Whichever concurrent mint arrives first takes the failing answer: one rejects, the other succeeds.
+        expect([
+          ["rejected", "fulfilled"],
+          ["fulfilled", "rejected"],
+        ]).toContainEqual(statuses);
         await network.idle();
         expect(network.requests).toHaveLength(3);
       },
@@ -385,10 +389,17 @@ describe("OntOS gateway assertions", () => {
       return await read();
     `,
       (actions) => {
-        expect(actions).toEqual([
-          { ok: "Bearer t2", query: { second: true } },
-          { ok: "Bearer t3", query: { third: true } },
-        ]);
+        // Each concurrent action mints its own assertion; which of the two mints first is not ordered.
+        expect([
+          [
+            { ok: "Bearer t2", query: { second: true } },
+            { ok: "Bearer t3", query: { third: true } },
+          ],
+          [
+            { ok: "Bearer t3", query: { second: true } },
+            { ok: "Bearer t2", query: { third: true } },
+          ],
+        ]).toContainEqual(actions);
       },
     );
     expect(result.value).toEqual({ ok: "Bearer t4", query: {} });
@@ -396,11 +407,11 @@ describe("OntOS gateway assertions", () => {
     const calls = network.requests.filter((request) =>
       request.url.endsWith("/actions/apply-command"),
     );
-    expect(calls.map((request) => request.headers.get("idempotency-key"))).toEqual([
-      "first",
-      "second",
-      "third",
-    ]);
+    // The two concurrent actions reach the owner in either order; only the sequential one is ordered.
+    const keys = calls.map((request) => request.headers.get("idempotency-key"));
+    expect(keys[0]).toBe("first");
+    expect(keys.slice(1).toSorted()).toEqual(["second", "third"]);
+    expect(keys).toHaveLength(3);
     expect(minted).toBe(4);
   });
   it("never retries an action after an authentication rejection", async () => {
