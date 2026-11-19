@@ -129,10 +129,11 @@ it('exposes no storage location, provider or key in either Action payload or res
   }
 });
 
-it('adds exactly two Core Media entrypoints: no read, no delete, no link, no rename and no integrity Action here', () => {
+it('adds only the upload legs and the display-name rename as Core Media Actions: no delete, link or integrity Action', () => {
   const mediaActions = coreActionCatalog.filter(({ owningModuleKey }) => owningModuleKey === 'core.media');
   expect(mediaActions.map(({ actionKey }) => actionKey).toSorted()).toEqual([
     'core.media.confirm-asset',
+    'core.media.rename-display-filename',
     'core.media.upload-asset',
   ]);
 });

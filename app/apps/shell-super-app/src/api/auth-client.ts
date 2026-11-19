@@ -57,6 +57,9 @@ import type {
   LegalEntityDetailRequest,
   LegalEntityDetailResponse,
 } from '../../shared/core-reads/legal-entity-detail.ts';
+
+// @ontos-core-read asset-metadata
+import type { AssetMetadataRequest, AssetMetadataResponse } from '../../shared/core-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-client-imports:end
 import type {
   AvailableLegalEntitiesResponse,
@@ -478,6 +481,13 @@ export const executeLegalEntityDetail = (
   invokeShellAuthenticationClient(options, (client) =>
     client.coreReadLegalEntityDetail.executeLegalEntityDetail({ payload }),
   );
+
+// @ontos-core-read asset-metadata
+export const executeAssetMetadata = (
+  payload: AssetMetadataRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<AssetMetadataResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.coreReadAssetMetadata.executeAssetMetadata({ payload }));
 // @ontos-codesmith-core-read-client-operations:end
 
 // All administration calls use the typed native HttpApi client. The authenticated tenant is

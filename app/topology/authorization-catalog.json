@@ -14752,6 +14752,34 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "core.media.asset-metadata.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.api.asset-metadata",
+            "moduleKey": "core.media",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "core.media.asset.confirm",
             "kind": "action",
             "modes": [
@@ -14797,6 +14825,36 @@
               "kind": "protected"
             },
             "entrypointKey": "core.media.upload-asset",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.display-filename.rename",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.rename-display-filename",
             "moduleKey": "core.media",
             "role": "action",
             "scope": "system"

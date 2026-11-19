@@ -13,6 +13,9 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 
 // @ontos-core-read legal-entity-detail
 import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from './core-reads/legal-entity-detail.ts';
+
+// @ontos-core-read asset-metadata
+import { AssetMetadataRequestSchema, AssetMetadataResponseSchema } from './core-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-contract-imports:end
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
@@ -880,6 +883,17 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         error: identityErrors,
         payload: LegalEntityDetailRequestSchema,
         success: LegalEntityDetailResponseSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-read asset-metadata
+  .add(
+    HttpApiGroup.make('coreReadAssetMetadata').add(
+      HttpApiEndpoint.post('executeAssetMetadata', '/core/reads/asset-metadata', {
+        error: identityErrors,
+        payload: AssetMetadataRequestSchema,
+        success: AssetMetadataResponseSchema,
       }),
     ),
   )

@@ -59,6 +59,7 @@ import {
   selfApiKeyBindingsRead,
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
+  assetMetadataRead,
 } from '@app/core-runtime';
 import {
   AccessDecisionLive,
@@ -227,6 +228,9 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 
 // @ontos-core-read legal-entity-detail
 // legalEntityDetailRead uses the canonical @app/core-runtime import
+
+// @ontos-core-read asset-metadata
+// assetMetadataRead uses the canonical @app/core-runtime import
 // @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
@@ -2398,6 +2402,38 @@ const coreReadLegalEntityDetailGroupLive = HttpApiBuilder.group(
       ),
     ),
 );
+
+// @ontos-core-read asset-metadata
+const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreReadAssetMetadata',
+  (handlers) =>
+    handlers.handle('executeAssetMetadata', ({ payload, request }) =>
+      Effect.gen(function* executeAssetMetadataCoreRead() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const runtime = yield* ReadRuntime;
+        return yield* runtime
+          .runRead({
+            input: payload,
+            principal: resolved.principal,
+            registration: assetMetadataRead,
+            transport: { correlationId: correlationFromRequest(request) },
+          })
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core read defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
 // @ontos-codesmith-core-read-server-groups:end
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -2862,6 +2898,9 @@ export const makeShellAuthenticationApiRuntime = (
 
     // @ontos-core-read legal-entity-detail
     coreReadLegalEntityDetailGroupLive,
+
+    // @ontos-core-read asset-metadata
+    coreReadAssetMetadataGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
     accessAdminHandlersLive,
