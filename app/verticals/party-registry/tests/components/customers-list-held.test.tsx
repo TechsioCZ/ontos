@@ -165,6 +165,13 @@ it.layer(network, { excludeTestServices: true })('customers list held', (suite) 
       yield* Deferred.succeed(gate, true);
       yield* waitUntil(() => customersData.snapshot(customersQuery(company)).state === 'ready');
       yield* networkIdle;
+      // Flush the switched consumer's React commit after the old cache's completion, not just its HTTP task.
+      yield* Effect.promise(() => act(() => Promise.resolve()));
+      expect(result.current).toBe('pending');
+      expect(customersData.snapshot(customersQuery(otherCompany)).state).toBe('pending');
+      expect(shown).not.toContain('rows:Before');
+      expect(shown).not.toContain('rows:Theirs');
+      expect(new Set(shown)).toEqual(new Set(['pending']));
     }),
   );
 

@@ -204,6 +204,8 @@ let invoiceAnswer: Effect.Effect<typeof emptyInvoices, typeof LeaseInvoicesForbi
   Effect.succeed(emptyInvoices);
 let counterpartyAnswer: Effect.Effect<typeof counterpartyResponse, typeof CounterpartyReadForbiddenProblemSchema.Type> =
   Effect.succeed(counterpartyResponse);
+let counterpartyDelivery: (payload: typeof CounterpartyReadRequestSchema.Type) => Effect.Effect<void> = (_payload) =>
+  Effect.void;
 let recordsAnswer = records;
 interface ReceivedReads {
   counterparty: (typeof CounterpartyReadRequestSchema.Type)[];
@@ -282,7 +284,7 @@ const network = streamingBrowserNetwork(
     HttpApiBuilder.group(Counterparty, 'counterpartyRead', (g) =>
       g.handle('execute', ({ payload }) => {
         reads.counterparty.push(payload);
-        return counterpartyAnswer;
+        return counterpartyDelivery(payload).pipe(Effect.andThen(counterpartyAnswer));
       }),
     ),
   ),
@@ -300,6 +302,7 @@ beforeEach(() => {
   workAnswer = Effect.succeed(workResponse);
   invoiceAnswer = Effect.succeed(emptyInvoices);
   counterpartyAnswer = Effect.succeed(counterpartyResponse);
+  counterpartyDelivery = (_payload) => Effect.void;
   recordsAnswer = records;
   window.dispatchEvent(new Event(moduleChangeEvent));
 });
@@ -307,17 +310,56 @@ const warm = (rows = canonicalRecords().occupancies) => preloadLeaseOccupants(in
 const seed = leaseRecords.read(input).pipe(Effect.asVoid);
 
 it.layer(network, { excludeTestServices: true })('lease related preload', (suite) => {
-  suite.effect('warms only final rendered rows with exact per-row reads and no company-wide ledger query', () =>
+  suite.effect.each([false, true])('warms final rendered rows with unordered exact reads (overtake: %s)', (overtake) =>
     Effect.gen(function* finalRows() {
       yield* pinTestDocument;
       yield* seed;
       const visible = [detail(3).record, detail(1).record];
-      yield* warm(renderedLeaseOccupantRows(undefined, undefined, visible));
+      const rendered = renderedLeaseOccupantRows(undefined, undefined, visible);
+      expect(rendered).toEqual(visible);
+      const release = yield* Deferred.make<boolean>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
+      const firstWaiting = yield* Deferred.make<boolean>();
+      const secondArrived = yield* Deferred.make<boolean>();
+      counterpartyDelivery = ({ counterpartyRef }) =>
+        overtake && counterpartyRef.resourceId === id(13)
+          ? Deferred.succeed(firstWaiting, true).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void;
+      workAnswer = Deferred.succeed(secondArrived, true).pipe(Effect.as(workResponse));
+      const warming = yield* warm(rendered).pipe(Effect.forkChild);
+      if (overtake) {
+        yield* Deferred.await(firstWaiting);
+        yield* Deferred.await(secondArrived);
+        expect(reads.work).toEqual([{ contextResourceId: row(1).unitRef.resourceId }]);
+      }
+      yield* Deferred.succeed(release, true);
+      yield* Fiber.join(warming);
       yield* networkIdle;
-      expect(reads.work).toEqual([
-        { contextResourceId: row(3).unitRef.resourceId },
-        { contextResourceId: row(1).unitRef.resourceId },
-      ]);
+      expect(reads.work).toHaveLength(2);
+      expect(reads.work).toEqual(
+        expect.arrayContaining([
+          { contextResourceId: row(3).unitRef.resourceId },
+          { contextResourceId: row(1).unitRef.resourceId },
+        ]),
+      );
+      expect(reads.counterparty).toEqual(
+        expect.arrayContaining(
+          visible.map((record) => ({
+            counterpartyRef: record.customerCounterpartyRef,
+          })),
+        ),
+      );
+      expect(reads.leaseInvoices).toEqual(
+        expect.arrayContaining(
+          visible.map((record) => ({
+            counterpartyRef: record.customerCounterpartyRef,
+            limit: 200,
+            occupancyRef: record.occupancyRef,
+            unitRef: record.unitRef,
+          })),
+        ),
+      );
+
       expect(reads.counterparty).toHaveLength(2);
       expect(leaseTasks.snapshot(detail(2))).toBe(pageDataPending);
       expect(leaseInvoicesExact.snapshot(detail(2))).toBe(pageDataPending);

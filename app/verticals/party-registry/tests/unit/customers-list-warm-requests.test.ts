@@ -284,16 +284,25 @@ it.layer(network, { excludeTestServices: true })('customers list warm requests',
       yield* Deferred.await(started);
       yield* networkQuietExcept(heldCounterpartyReads);
       expect(detailsStarted()).toBe(INTENT_READ_CONCURRENCY);
+      expect(counterpartyReads).toEqual(
+        expect.arrayContaining([
+          { counterpartyRef: counterpartyRefOf(LIST_WARM_ROWS) },
+          { counterpartyRef: counterpartyRefOf(LIST_WARM_ROWS + 1) },
+        ]),
+      );
       gate = null;
       yield* Deferred.succeed(release, true);
       yield* idle(5);
       expect(reads()).toBe((INTENT_READ_CONCURRENCY + 1) * DETAIL_READS);
-      // Every detail ever started, in order: the two the limiter admitted while held, then only the last row.
-      expect(counterpartyReads.map((input) => input.counterpartyRef)).toEqual([
-        counterpartyRefOf(LIST_WARM_ROWS),
-        counterpartyRefOf(LIST_WARM_ROWS + 1),
-        counterpartyRefOf(ROWS - 1),
-      ]);
+      // The first pair runs concurrently; only membership, not its HTTP arrival order, is contractual.
+      expect(counterpartyReads).toHaveLength(INTENT_READ_CONCURRENCY + 1);
+      expect(counterpartyReads).toEqual(
+        expect.arrayContaining([
+          { counterpartyRef: counterpartyRefOf(LIST_WARM_ROWS) },
+          { counterpartyRef: counterpartyRefOf(LIST_WARM_ROWS + 1) },
+          { counterpartyRef: counterpartyRefOf(ROWS - 1) },
+        ]),
+      );
     }),
   );
 });

@@ -148,6 +148,30 @@ const network = browserNetwork(
   ),
 );
 
+const comboboxNamed = (name: string) =>
+  Option.getOrThrow(
+    Option.fromUndefinedOr(
+      [...document.querySelectorAll<HTMLElement>('[role="combobox"]')].find(
+        (element) =>
+          element
+            .getAttribute('aria-labelledby')
+            ?.split(/\s+/u)
+            .map((id) => document.querySelector(`#${CSS.escape(id)}`)?.textContent?.trim())
+            .join(' ') === name,
+      ),
+    ),
+  );
+const optionNamed = (name: string) =>
+  [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (element) => element.closest('[hidden]') === null && element.textContent?.trim() === name,
+  );
+const choose = (label: string, name: string) =>
+  Effect.gen(function* chooseVisibleOption() {
+    yield* acted(() => comboboxNamed(label).click());
+    yield* waitUntil(() => optionNamed(name) !== undefined);
+    yield* acted(() => Option.getOrThrow(Option.fromUndefinedOr(optionNamed(name))).click());
+  });
+
 const shown = (select: HTMLSelectElement) =>
   document
     .querySelector(`[role="combobox"][aria-labelledby="${select.getAttribute('aria-labelledby') ?? ''}"]`)
@@ -194,10 +218,7 @@ it.live(
       );
       expect(option.textContent).toBe('Domluvit prohlídku Nájemparku');
       const select = Option.getOrThrow(Option.fromNullOr(option.closest('select')));
-      yield* acted(() => {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, 'task-456');
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      yield* choose(moduleText('cs')('crm-activities.pages.records.followUp'), 'Domluvit prohlídku Nájemparku');
       yield* waitUntil(() => select.value === 'task-456' && shown(select) === 'Domluvit prohlídku Nájemparku');
       expect(select.value).toBe('task-456');
       expect(shown(select)).toBe('Domluvit prohlídku Nájemparku');
@@ -234,10 +255,7 @@ it.live(
       );
       expect(option.textContent).toBe('Jiří Šťastný');
       const select = Option.getOrThrow(Option.fromNullOr(option.closest('select')));
-      yield* acted(() => {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, contactId);
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      yield* choose(moduleText('cs')('crm-activities.pages.records.contact'), 'Jiří Šťastný');
       yield* waitUntil(() => select.value === contactId && shown(select) === 'Jiří Šťastný');
       expect(select.value).toBe(contactId);
       expect(shown(select)).toBe('Jiří Šťastný');

@@ -100,6 +100,19 @@ const mountLinks = (
 
 const ready = () => screen.getByRole('status').textContent === 'ready';
 
+/** A FIFO turn of the actual browser Effect scheduler, then its route queue's terminal disposition. */
+const blockedIntentProcessed = Effect.gen(function* observeBlockedIntent() {
+  // runFork starts immediately, but an event can yield before entering schedule/preloadRoute. Queue this
+  // continuation after that event's continuation; awaitIdle alone could otherwise inspect an empty queue too early.
+  yield* Effect.promise(() => browserRuntime.runPromise(Effect.yieldNow));
+  const disposition = browserRuntime.runFork(staffRoutePreloads.awaitIdle);
+  expect(
+    disposition.pollUnsafe(),
+    'the blocked intent must be rejected, not left queued behind foreground work',
+  ).toBeDefined();
+  yield* Fiber.join(disposition);
+});
+
 beforeEach(() => {
   browserRuntime.runSync(staffRoutePreloads.invalidate);
   browserRuntime.runSync(staffRoutePreloads.resume);
@@ -211,6 +224,7 @@ it.live('waits for the current primary reads, then prepares the pointed link and
   Effect.gen(function* primaryFirst() {
     const release = yield* Deferred.make<boolean>();
     const reading = yield* Deferred.make<boolean>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
     const foreground = yield* withPrimaryModulePreparation(
       window.location.pathname,
       Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(release))),
@@ -218,6 +232,8 @@ it.live('waits for the current primary reads, then prepares the pointed link and
     yield* Deferred.await(reading);
     const { prepared, starts } = yield* mountLinks(<IntentContext />);
     fireEvent.mouseEnter(screen.getByRole('link'));
+    yield* blockedIntentProcessed;
+    expect(foreground.pollUnsafe()).toBeUndefined();
     expect(starts).toEqual([]);
     expect(prepared).toEqual([]);
     yield* Deferred.succeed(release, true);
@@ -270,11 +286,13 @@ it.live('does not prepare during navigation, switching or sign-out', () =>
   Effect.gen(function* foregroundPriority() {
     const release = yield* Deferred.make<boolean>();
     const navigating = yield* Deferred.make<boolean>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
     const { prepared, router, starts } = yield* mountLinks(
       <IntentContext initiallyDisabled />,
       Deferred.succeed(navigating, true).pipe(Effect.andThen(Deferred.await(release))),
     );
     fireEvent.focus(screen.getByRole('link'));
+    yield* blockedIntentProcessed;
     expect(starts).toEqual([]);
     expect(prepared).toEqual([]);
     const navigation = yield* Effect.promise(() => router.navigate({ to: '/en/operations' })).pipe(Effect.forkChild);
@@ -283,6 +301,9 @@ it.live('does not prepare during navigation, switching or sign-out', () =>
       fireEvent.click(screen.getByRole('button', { name: 'Enable intents' }));
     });
     fireEvent.focus(screen.getByRole('link'));
+    yield* blockedIntentProcessed;
+    expect(navigation.pollUnsafe()).toBeUndefined();
+    expect(router.state.isLoading).toBe(true);
     expect(starts).toEqual([]);
     expect(prepared).toEqual([]);
     yield* Deferred.succeed(release, true);

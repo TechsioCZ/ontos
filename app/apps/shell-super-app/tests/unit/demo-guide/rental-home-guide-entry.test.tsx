@@ -25,7 +25,7 @@ it.live('offers the rental company a home entry that opens its demo guide', () =
     });
     yield* renderShellRoute(router, shellLocaleCopy('cs'));
     yield* settle;
-    const entry = screen.getByRole('button');
+    const entry = screen.getByRole('button', { name: 'Otevřít průvodce' });
     expect(entry.getAttribute('disabled')).toBeNull();
     expect(localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBeNull();
     const user = userEvent.setup();

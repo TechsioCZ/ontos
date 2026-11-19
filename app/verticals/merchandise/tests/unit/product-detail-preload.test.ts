@@ -1,4 +1,5 @@
 // @rstest-environment happy-dom
+import { GatewayContextApi, shellGatewayContextContract } from '@app/shared-contracts';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
@@ -12,6 +13,7 @@ import {
   shellGatewayIssuer,
   streamingBrowserNetwork,
 } from '@app/shared-contracts/testing/http-double';
+import { HttpApi } from 'effect/http-api';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { mountInRoute } from '../support/module-ui.ts';
 import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
@@ -159,6 +161,38 @@ const network = browserNetwork(...applications);
 /** The same servers, with the window request's abort reaching its handler, as a dropped connection does. */
 const cancellationNetwork = streamingBrowserNetwork(...applications);
 
+/** Holds the first row's actual gateway prerequisite, before its Records request can be sent. */
+const Gateway = HttpApi.make('productPreloadIssuer')
+  .add(GatewayContextApi.groups.gatewayContext)
+  .prefix(shellGatewayContextContract.apiPrefix);
+const delayedFirstGateway = (waiting: Deferred.Deferred<boolean>, release: Deferred.Deferred<boolean>) => {
+  let issued = 0;
+  return serveApi(
+    Gateway,
+    HttpApiBuilder.group(Gateway, 'gatewayContext', (group) =>
+      group
+        .handle('issueGatewayContext', ({ payload }) =>
+          Effect.gen(function* issueAfterPrerequisite() {
+            issued += 1;
+            const token = `merchandise-assertion-${issued}`;
+            if (issued === 1) {
+              yield* Deferred.succeed(waiting, true);
+              yield* Deferred.await(release);
+            }
+            return {
+              apiBaseUrl: '/merchandise-api',
+              compositionRevision: payload.compositionRevision,
+              expiresAt: 2_147_483_647,
+              token,
+            };
+          }),
+        )
+        .handle('issueApiKeyGatewayContext', () => Effect.die('Browser reads never issue API-key contexts'))
+        .handle('issueDelegatedGatewayContext', () => Effect.die('Browser reads never issue delegated contexts')),
+    ),
+  );
+};
+
 beforeEach(() => {
   reads.length = 0;
   commands.length = 0;
@@ -239,22 +273,65 @@ it.live(
     }).pipe(Effect.provide(network)),
 );
 
-it.live('prefetch follows the final kit row order, not a source-array page slice', () =>
-  Effect.gen(function* finalRowModel() {
-    yield* pinTestDocument;
-    const final: ProductRecord[] = [];
-    for (const row of products.slice(2, 4)) {
-      final.unshift(row);
-    }
-    const table = { getRowModel: () => ({ rows: final.map((original) => ({ original })) }) };
-    const rows = currentProductRows(table, products);
-    expect(rows).toEqual(final);
-    const preloadRows = rows;
-    yield* preloadProductDetails(context, 7, preloadRows);
-    yield* networkIdle;
-    expect(reads.map((request) => request.view?.productId)).toEqual(final.map((row) => row.id));
-    expect(commands).toHaveLength(0);
-  }).pipe(Effect.provide(network)),
+it.live.each([false, true])(
+  'prefetch uses final kit rows regardless of HTTP delivery order (overtake: %s)',
+  (overtake) =>
+    Effect.gen(function* finalRowModel() {
+      yield* pinTestDocument;
+      const final: ProductRecord[] = [];
+      for (const row of products.slice(2, 4)) {
+        final.unshift(row);
+      }
+      const table = { getRowModel: () => ({ rows: final.map((original) => ({ original })) }) };
+      const rows = currentProductRows(table, products);
+      expect(rows).toEqual(final);
+      const [first, second] = rows;
+      if (first === undefined || second === undefined) {
+        throw new Error('Two final rows required');
+      }
+      const release = yield* Deferred.make<boolean>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
+      const firstWaiting = yield* Deferred.make<boolean>();
+      const secondDelivered = yield* Deferred.make<boolean>();
+      const answer = readAnswer;
+      readAnswer = (payload) =>
+        payload.view?.productId === second.id
+          ? Deferred.succeed(secondDelivered, true).pipe(Effect.andThen(answer(payload)))
+          : answer(payload);
+      const deliveryNetwork = browserNetwork(
+        delayedFirstGateway(firstWaiting, release),
+        applications[1],
+        applications[2],
+      );
+      yield* Effect.gen(function* deliveredRows() {
+        if (!overtake) {
+          yield* Deferred.succeed(release, true);
+        }
+        // In the overtake control only, start this row alone so the held issuer request is unambiguously
+        // its prerequisite. The ordinary case starts both rows solely through the real batch.
+        const firstInput = Option.getOrThrow(detailInput(context.legalEntityId, first.id, context, 7));
+        const firstRead = overtake ? yield* productDetailData.read(firstInput).pipe(Effect.forkChild) : undefined;
+        if (overtake) {
+          yield* Deferred.await(firstWaiting);
+        }
+        const warming = yield* preloadProductDetails(context, 7, rows).pipe(Effect.forkChild);
+        if (overtake) {
+          yield* Deferred.await(secondDelivered);
+          expect(reads).toEqual([{ view: { categoryTrails: true, ordersLimit: 0, productId: second.id } }]);
+        }
+        yield* Deferred.succeed(release, true);
+        if (firstRead !== undefined) {
+          yield* Fiber.join(firstRead);
+        }
+        yield* Fiber.join(warming);
+        yield* networkIdle;
+        const expected = final.map((row) => ({ view: { categoryTrails: true, ordersLimit: 0, productId: row.id } }));
+        expect(reads).toHaveLength(expected.length);
+        expect(reads).toEqual(expect.arrayContaining(expected));
+        expect(currentProductRows(table, products)).toEqual(final);
+        expect(commands).toHaveLength(0);
+      }).pipe(Effect.provide(deliveryNetwork));
+    }),
 );
 
 it.live('warming preserves read-only capabilities without requesting mutations or wider catalog data', () =>

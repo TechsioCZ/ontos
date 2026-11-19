@@ -14,13 +14,19 @@ import {
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { moduleChangeEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Effect, Schema } from 'effect';
+import { Effect, Layer, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { OrderSchema, ProductRecordSchema, RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { OrderIdSchema } from '../../shared/domain/merchandise-model.ts';
+import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
+import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
+import type { ManageCatalogPayloadSchema } from '../../shared/apis/manage-catalog-action.ts';
+import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
 import { customerDirectoryData } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
 import {
+  editOrder,
   firstOrdersPage,
   orderCountsData,
   orderDetailData,
@@ -83,18 +89,18 @@ const product = Schema.encodeSync(ProductRecordSchema)(
 );
 
 /** The owner's current revision, advanced when another write changes the register. */
-const register = { revision: 7 };
+const register = { note: '', revision: 7 };
 const responseOf = (rows: { readonly orders?: typeof orders; readonly products?: (typeof product)[] }) =>
   Schema.decodeSync(RecordsResponseSchema)({
     actorPrincipalRef: {
       principalId: '20000000-0000-4000-8000-000000000002',
       tenantId: '20000000-0000-4000-8000-000000000001',
     },
-    canEditOrders: false,
+    canEditOrders: true,
     canWrite: true,
     indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: ROWS, productCount: 1, stockValueMinor: 0 },
     movements: [],
-    orders: rows.orders ?? [],
+    orders: rows.orders?.map((order) => (order.id === 'order-1' ? { ...order, note: register.note } : order)) ?? [],
     products: rows.products ?? [],
     revision: register.revision,
     totalOrders: ROWS,
@@ -102,7 +108,9 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
 
 /** Every records read the page sent, by what it asked for. */
 const reads: string[] = [];
+const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
 const OwnerRecordsApi = RecordsApi.prefix('/merchandise-api');
+const OwnerCatalogApi = ManageCatalogActionApi.prefix('/merchandise-api');
 const network = browserNetwork(
   shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
   serveApi(
@@ -123,6 +131,25 @@ const network = browserNetwork(
         }),
       ),
     ),
+  ),
+  serveApi(
+    OwnerCatalogApi,
+    HttpApiBuilder.group(OwnerCatalogApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          commands.push(payload);
+          if (!Predicate.isTagged(payload.command, 'EditOrder') || payload.expectedRevision !== register.revision) {
+            throw new Error('Fixture requires an edit against the current owner revision');
+          }
+          register.note = payload.command.note ?? '';
+          register.revision += 1;
+          return Schema.decodeSync(ApplyCommandResultSchema)({
+            entityIds: [payload.command.id],
+            revision: register.revision,
+          });
+        }),
+      ),
+    ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
   ),
 );
 const count = (kind: string) => reads.filter((read) => read === kind).length;
@@ -180,6 +207,8 @@ beforeEach(() => {
   orderDetailData.invalidate();
   customerDirectoryData.invalidate();
   register.revision = 7;
+  register.note = '';
+  commands.length = 0;
   reads.length = 0;
 });
 
@@ -258,13 +287,33 @@ it.live('a write that moves the revision reloads the page and warms its rows aga
     yield* idle(5);
     reads.length = 0;
 
-    register.revision = 8;
-    yield* Effect.sync(() => {
-      ordersPageData.invalidate();
-      orderDetailData.invalidate();
-    });
+    const scope = pageDataScopeKey(company, 'demo.merchandise');
+    if (scope === undefined) {
+      throw new Error('Fixture requires the complete company scope');
+    }
+    const source = { legalEntityId: company.legalEntityId, query: firstOrdersPage(PAGE_SIZE), scope };
+    const orderId = Schema.decodeSync(OrderIdSchema)('order-1');
+    const previousDetail = { orderId, revision: 7, scope, source };
+    expect(orderDetailData.snapshot(previousDetail).state).toBe('ready');
+    yield* editOrder({ _tag: 'EditOrder', id: orderId, note: 'Edited through the owner' }, 7);
+    expect(commands).toEqual([
+      {
+        command: { _tag: 'EditOrder', id: 'order-1', note: 'Edited through the owner' },
+        expectedRevision: 7,
+      },
+    ]);
+    // A new list revision would create new detail keys even if the old detail cache were not invalidated.
+    // Check the old entry too, so removing either production invalidation breaks this case.
+    expect(orderDetailData.snapshot(previousDetail).state).toBe('pending');
     yield* idle(5);
     expect([count('list'), count('detail')]).toEqual([1, WARMED * DETAIL_READS]);
+    expect(ordersPageData.snapshot(source)).toMatchObject({
+      state: 'ready',
+      value: {
+        orders: expect.arrayContaining([expect.objectContaining({ id: 'order-1', note: 'Edited through the owner' })]),
+        revision: 8,
+      },
+    });
   }).pipe(Effect.provide(network)),
 );
 
