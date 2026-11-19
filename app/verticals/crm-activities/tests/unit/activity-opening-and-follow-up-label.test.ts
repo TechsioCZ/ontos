@@ -148,6 +148,11 @@ const network = browserNetwork(
   ),
 );
 
+const shown = (select: HTMLSelectElement) =>
+  document
+    .querySelector(`[role="combobox"][aria-labelledby="${select.getAttribute('aria-labelledby') ?? ''}"]`)
+    ?.textContent?.trim();
+
 afterEach(unmountAll);
 
 it.live('opening an activity link preloads its records, leaving follow-up tasks until the form is shown', () =>
@@ -193,11 +198,9 @@ it.live(
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, 'task-456');
         select.dispatchEvent(new Event('change', { bubbles: true }));
       });
+      yield* waitUntil(() => select.value === 'task-456' && shown(select) === 'Domluvit prohlídku Nájemparku');
       expect(select.value).toBe('task-456');
-      const trigger = document.querySelector(
-        `[role="combobox"][aria-labelledby="${select.getAttribute('aria-labelledby') ?? ''}"]`,
-      );
-      expect(trigger?.textContent?.trim()).toBe('Domluvit prohlídku Nájemparku');
+      expect(shown(select)).toBe('Domluvit prohlídku Nájemparku');
     }).pipe(Effect.provide(network)),
 );
 
@@ -235,10 +238,8 @@ it.live(
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, contactId);
         select.dispatchEvent(new Event('change', { bubbles: true }));
       });
+      yield* waitUntil(() => select.value === contactId && shown(select) === 'Jiří Šťastný');
       expect(select.value).toBe(contactId);
-      const trigger = document.querySelector(
-        `[role="combobox"][aria-labelledby="${select.getAttribute('aria-labelledby') ?? ''}"]`,
-      );
-      expect(trigger?.textContent?.trim()).toBe('Jiří Šťastný');
+      expect(shown(select)).toBe('Jiří Šťastný');
     }).pipe(Effect.provide(network)),
 );

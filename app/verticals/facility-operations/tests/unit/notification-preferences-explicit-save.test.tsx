@@ -74,8 +74,8 @@ it.live('keeps a changed email preference local until Save and sends the complet
     expect(saveButton().disabled).toBe(true);
     const email = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="switch"]')));
     yield* acted(() => email.click());
+    yield* waitUntil(() => !saveButton().disabled);
     expect(saveButton().disabled).toBe(false);
-    yield* Effect.sleep('1 second');
     yield* networkIdle;
     expect(requests).toEqual([]);
     yield* acted(() => saveButton().click());

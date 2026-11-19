@@ -83,6 +83,11 @@ it.live('the page header choice opens a real opportunity as a non-blocking quick
     const { router } = yield* mount;
     expect(button(czech('sales-pipeline.detailView.page')).getAttribute('aria-pressed')).toBe('true');
     yield* acted(() => button(czech('sales-pipeline.detailView.panel')).click());
+    yield* waitUntil(
+      () =>
+        button(czech('sales-pipeline.detailView.panel')).getAttribute('aria-pressed') === 'true' &&
+        localStorage.getItem(DETAIL_VIEW_MODE_KEY) === 'panel',
+    );
     expect(button(czech('sales-pipeline.detailView.panel')).getAttribute('aria-pressed')).toBe('true');
     expect(localStorage.getItem(DETAIL_VIEW_MODE_KEY)).toBe('panel');
     yield* openRecord();

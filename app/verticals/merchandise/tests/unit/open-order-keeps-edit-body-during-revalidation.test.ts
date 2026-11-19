@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { acted, text, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { acted, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   networkIdle,
@@ -116,6 +116,7 @@ const open = Effect.gen(function* openDetail() {
   yield* pinTestDocument;
   const view = yield* mountInRoute(createElement(Detail, { id: 'order-1' }));
   yield* networkIdle;
+  yield* waitUntil(() => text() === 'Before');
   expect(text()).toBe('Before');
   return view;
 });
@@ -148,6 +149,7 @@ it.live('an open order preserves the same edit input and unsaved draft until rev
     expect(field()?.value).toBe('Unsaved draft');
     yield* Deferred.succeed(release, true);
     yield* networkIdle;
+    yield* waitUntil(() => text() === 'After');
     expect(text()).toBe('After');
     expect(field()).toBe(original);
     expect(field()?.value).toBe('Unsaved draft');
@@ -178,6 +180,7 @@ it.live('closing an order clears the held note so reopening cannot show it while
     expect(field()).toBeNull();
     yield* Deferred.succeed(gate, true);
     yield* networkIdle;
+    yield* waitUntil(() => text() === 'After');
     expect(text()).toBe('After');
     expect(field()?.value).toBe('');
     expect(oldNoteRendered).toBe(false);

@@ -86,7 +86,7 @@ it.live('mounting the activity card requests its feed and a live change reloads 
     actor = 'AI agent C – první';
     yield* aiActivityData.preload(otherCompany);
     yield* mountInRoute(<AiActivityCard legalEntityId={company} />, { url: '/cs/prodej/zamestnanci' });
-    yield* waitUntil(() => document.querySelector('tbody') !== null);
+    yield* waitUntil(() => document.querySelector('tbody')?.textContent?.includes('AI agent C – první') === true);
     yield* networkIdle;
     expect(document.querySelector('tbody')?.textContent).toContain('AI agent C – první');
     expect(reads).toEqual([{ includeAiActivity: true }, { includeAiActivity: true }]);

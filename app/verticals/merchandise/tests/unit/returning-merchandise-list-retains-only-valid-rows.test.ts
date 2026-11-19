@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-import { text, unmountAll } from '@app/admin-ui/testing/module-ui';
+import { text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   networkIdle,
@@ -116,7 +116,8 @@ const returnToList = (kind: 'orders' | 'products', event?: Event) =>
     yield* pinTestDocument;
     const mount = () => mountInRoute(createElement(kind === 'orders' ? Orders : Products));
     yield* mount();
-    yield* idle(5);
+    yield* networkIdle;
+    yield* waitUntil(() => text() === (kind === 'orders' ? 'ORD-1' : 'Cable'));
     expect(text()).toBe(kind === 'orders' ? 'ORD-1' : 'Cable');
     unmountAll();
     yield* networkIdle;
@@ -132,7 +133,9 @@ const returnToList = (kind: 'orders' | 'products', event?: Event) =>
       expect(phases).not.toContain('loading');
       expect(text()).toBe(kind === 'orders' ? 'ORD-1' : 'Cable');
     }
-    yield* idle(5);
+    yield* waitUntil(() => reads.filter((read) => read === kind).length === 1);
+    yield* networkIdle;
+    yield* waitUntil(() => text() === (kind === 'orders' ? 'ORD-1' : 'Cable'));
     expect(reads.filter((read) => read === kind)).toHaveLength(1);
     expect(text()).toBe(kind === 'orders' ? 'ORD-1' : 'Cable');
   });

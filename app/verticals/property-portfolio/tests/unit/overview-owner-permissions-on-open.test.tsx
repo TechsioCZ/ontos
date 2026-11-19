@@ -70,8 +70,8 @@ it.layer(network, { excludeTestServices: true })('overview owner permissions', (
       yield* pinTestDocument;
       yield* Effect.promise(() => preloadPage(props));
       yield* mountInRoute(<OverviewPage {...props} />, { path: 'nemovitosti/prehled', url: '/cs/nemovitosti/prehled' });
-      yield* waitUntil(() => text().includes('Smlouvy: bez oprávnění'));
       for (const owner of ['Smlouvy', 'Finance', 'Nájmy a pobyty', 'Nemovitosti', 'Úkoly']) {
+        yield* waitUntil(() => text().includes(`${owner}: bez oprávnění`));
         expect(text()).toContain(`${owner}: bez oprávnění`);
       }
     }).pipe(Effect.ensuring(Effect.sync(unmountAll))),

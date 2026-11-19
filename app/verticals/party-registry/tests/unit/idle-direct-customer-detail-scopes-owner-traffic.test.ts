@@ -3,7 +3,7 @@ import { cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Schema } from 'effect';
 import { useEffect, useSyncExternalStore } from 'react';
-import { acted } from '@app/admin-ui/testing/module-ui';
+import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   networkIdle,
@@ -185,7 +185,8 @@ const readsPerBusyMinute = (change: () => Event) =>
   Effect.gen(function* busyMinute() {
     yield* pinTestDocument;
     const { result, unmount } = renderHook(useDetailPage);
-    yield* idle(5);
+    yield* waitUntil(() => result.current.state === 'ready');
+    yield* networkIdle;
     expect(result.current.state).toBe('ready');
     if (result.current.state === 'ready') {
       expect(result.current.value.counterparty.party.displayName).toBe('Before');
