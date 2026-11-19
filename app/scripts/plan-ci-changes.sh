@@ -12,7 +12,7 @@ mode=full
 reason='This event requires the complete suite.'
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
-  reason='The merge queue already proved this exact commit.'
+  reason="Run ${PROOF_RUN:-} already proved this exact commit."
 elif [[ "${FORCE_FULL:-false}" != true &&
   ("${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ||
   ("${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${CANDIDATE_DISPATCH:-false}" == true)) ]]; then
@@ -25,14 +25,14 @@ elif [[ "${FORCE_FULL:-false}" != true &&
       BASE_SHA="$(git rev-parse 'HEAD^1')"
     fi
   fi
-  # A push the queue-proof job skipped (QUEUE_PROOF=skipped) is on a branch without a merge queue. GitHub keeps
+  # A push with NEWEST_GREEN_BASE=true is on a branch without a merge queue. GitHub keeps
   # one pending run per concurrency group there, so the commit before the push may never have had a run, or a red
   # or cancelled one. Such a push compares with the newest commit whose push run of this workflow on this branch
   # succeeded: every green run compared with an earlier green commit, so the diff covers every commit not yet
   # proven. No such ancestor among the 100 newest push runs, or any failed lookup, leaves no base: every gate runs.
   # The list is read unfiltered by status: with `status=success` it omitted a run that had ended green 24 s before,
   # and a queued push run starts exactly when the one before it ends.
-  if [[ "${GITHUB_EVENT_NAME:-}" == push && "${QUEUE_PROOF:-}" == skipped ]]; then
+  if [[ "${GITHUB_EVENT_NAME:-}" == push && "${NEWEST_GREEN_BASE:-false}" == true ]]; then
     BASE_SHA=
     workflow_id="$(gh api "repos/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}" --jq '.workflow_id')" || workflow_id=''
     proven=''

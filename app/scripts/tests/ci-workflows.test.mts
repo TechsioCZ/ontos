@@ -237,13 +237,24 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 
 it('selects work before gates and starts source checks without waiting for artifacts', () => {
   const proof = readTargetWorkflow().jobs[QUEUE_PROOF_JOB];
-  expect(proof.if).toContain('inputs.force-ci-full != true');
-  // Limited to main: a push it skips (the demo trunk) is what turns on plan-ci-changes.sh's newest-green-push lookup.
-  expect(proof.if).toContain("github.ref == 'refs/heads/main'");
-  expect(proof.permissions).toEqual({ actions: 'read' });
-  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven'));
-  const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
-  expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
+  // A forced run is never skipped. Main looks for its merge queue proof; a push to the demo trunk, which has no merge
+  // queue, for a candidate run of the same commit (scripts/tests/ci-commit-proof.test.mts proves the decision).
+  expect(proof.if.replaceAll(/\s+/gu, ' ')).toBe(
+    "inputs.force-ci-full != true && ( (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' || github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm')",
+  );
+  expect(proof.permissions).toEqual({ actions: 'read', contents: 'read' });
+  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven || steps.candidate-proof.outputs.proven'));
+  expect(proof.outputs.run).toBe(expression('steps.proof.outputs.run || steps.candidate-proof.outputs.run'));
+  const lookup = proof.steps.find(({ id }) => id === 'proof');
+  expect(lookup?.if).toBe("github.ref == 'refs/heads/main'");
+  expect(lookup?.run).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
+  const candidateProof = proof.steps.find(({ id }) => id === 'candidate-proof');
+  expect(candidateProof?.if).toBe("github.ref == 'refs/heads/demo/sales-crm'");
+  expect(candidateProof?.run).toBe('bash app/scripts/ci/commit-proof.sh find');
+  expect(candidateProof?.env).toEqual({
+    BEFORE_SHA: expression('github.event.before'),
+    GH_TOKEN: expression('github.token'),
+  });
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
   // Artifact dependencies belong to the scheduler, not a polling process holding a runner.
@@ -314,14 +325,53 @@ it('classifies documentation before installation and schedules full regression w
   );
   expect(steps[candidate]?.env).toEqual({ BASE_REF: expression('inputs.base-ref') });
   // A demo trunk push compares with the newest commit whose push run succeeded, never with the commit before it:
-  // queue-proof runs only on main, so its skipped result on a push turns on the lookup in plan-ci-changes.sh.
+  // every push branch but main has no merge queue, which turns on the lookup in plan-ci-changes.sh.
   expect(steps.some(({ id }) => id === 'proven-base')).toBe(false);
   expect(steps[classify]?.env?.BASE_SHA).toBe(
     expression('steps.candidate.outputs.base || github.event.merge_group.base_sha || github.event.before'),
   );
-  expect(steps[classify]?.env?.QUEUE_PROOF).toBe(expression('needs.queue-proof.result'));
+  expect(steps[classify]?.env?.NEWEST_GREEN_BASE).toBe(expression("github.ref != 'refs/heads/main'"));
+  expect(steps[classify]?.env?.QUEUE_PROVEN).toBe(expression('needs.queue-proof.outputs.proven'));
+  expect(steps[classify]?.env?.PROOF_RUN).toBe(expression('needs.queue-proof.outputs.run'));
   expect(steps[classify]?.env?.GH_TOKEN).toBe(expression('github.token'));
   expect(steps[classify]?.env?.CANDIDATE_DISPATCH).toBe(expression("steps.candidate.outputs.base != ''"));
+});
+
+it('records what a candidate plan compared with, last in the plan job, for the demo trunk proof finder', () => {
+  const { steps } = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [CI_PLAN_JOB]: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+              if: Schema.optional(Schema.String),
+              run: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(readGateWorkflow()).jobs[CI_PLAN_JOB];
+  // Last, so only a plan that completed is recorded. scripts/tests/ci-commit-proof.test.mts reads the record back.
+  const candidateDispatch =
+    "github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/')";
+  const [record, publish] = steps.slice(-2);
+  expect(record?.if).toBe(candidateDispatch);
+  expect(record?.run).toBe('bash app/scripts/ci/commit-proof.sh record "$RUNNER_TEMP/ci-comparison/comparison.json"');
+  expect(record?.env).toEqual({
+    BASE_REF: expression('inputs.base-ref'),
+    BASE_SHA: expression('steps.candidate.outputs.base'),
+    HEAD_SHA: expression('github.sha'),
+    PLAN_MODE: expression('steps.selection.outputs.mode || steps.changes.outputs.mode'),
+  });
+  expect(publish?.if).toBe(candidateDispatch);
+  expect(publish?.with).toMatchObject({
+    name: 'ci-comparison',
+    overwrite: true,
+    path: `${RUNNER_TEMP_EXPRESSION}/ci-comparison/comparison.json`,
+  });
 });
 
 it('runs one candidate at a time without changing main, pull request or merge queue concurrency', () => {
