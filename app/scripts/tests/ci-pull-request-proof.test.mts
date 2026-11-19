@@ -99,16 +99,18 @@ interface Route {
 interface Entry {
   /** The event's base commit. */
   readonly base: string;
+  /** The commit the checkout holds, when it is not the queue entry the event names. */
+  readonly checkout?: string;
   /** The queue entry ref. */
   readonly ref: string;
-  /** The checked-out queue entry. */
+  /** The queue entry the event names; the checkout holds it unless `checkout` says otherwise. */
   readonly sha: string;
 }
 
 /** Runs the finder in the queue checkout with a fake gh that answers only the given calls. */
 const find = (directory: string, routes: Readonly<Record<string, Route>>, entry: Entry) => {
   const queue = path.join(directory, 'queue');
-  git(queue, 'checkout', '--quiet', '--detach', entry.sha);
+  git(queue, 'checkout', '--quiet', '--detach', entry.checkout ?? entry.sha);
   const bin = path.join(directory, 'bin');
   rmSync(bin, { force: true, recursive: true });
   mkdirSync(bin);
@@ -271,7 +273,8 @@ it('skips the gates of a merge queue entry only on a sound pull request run of t
       ['not a queue ref', { ...single, ref: 'refs/heads/main' }],
       ['a queue entry of another branch', { ...single, ref: `refs/heads/gh-readonly-queue/demo/pr-7-${base}` }],
       ['a ref of another base', { ...single, base: movedBase }],
-      ['a checkout of another commit', { ...single, sha: group }],
+      // The checkout holds the sound entry, whose tree is proven; the event names another commit.
+      ['a checkout of another commit', { ...single, checkout: single.sha, sha: group }],
       ['a pull request without a head', { ...single, ref: queueRef(9, base) }],
     ] as const) {
       expect(unproven(directory, sound(), wrong, label).calls, label).toEqual([]);
