@@ -1,26 +1,10 @@
-import type { OperationalScope } from '@app/core-runtime';
-import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
-import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
-import type { Crypto } from 'effect';
-import { Effect, Option, Schema } from 'effect';
+import { Option } from 'effect';
 
-import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
-import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
-
-type PurchasingSubject = typeof PurchasingSubjectRefSchema.Type;
 type OwnerCurrentRestrictions = Extract<
   MarketSubjectRestrictionsCurrentResponse,
   { readonly outcome: 'SUBJECT_RESTRICTIONS_CURRENT' }
 >;
-
-export class MarketSubjectRestrictionsUnavailable extends Schema.TaggedError<MarketSubjectRestrictionsUnavailable>()(
-  'MarketSubjectRestrictionsUnavailable',
-  {
-    code: Schema.Literal('market_subject_restrictions_unavailable'),
-    reason: Schema.String,
-  },
-) {}
 
 export interface MarketSubjectRestrictionSnapshot {
   readonly allowedChannels: readonly ('B2B' | 'B2C')[];
@@ -34,22 +18,6 @@ export interface MarketSubjectRestrictionSnapshot {
   readonly subjectIdentityRef: string;
   readonly subjectKind: 'COUNTERPARTY' | 'RETAIL_PROFILE';
 }
-
-export interface MarketSubjectRestrictionsReader {
-  readonly current: (
-    subject: Exclude<PurchasingSubject, { readonly kind: 'GUEST' }>,
-    requestCorrelation: string,
-  ) => Effect.Effect<MarketSubjectRestrictionSnapshot, MarketSubjectRestrictionsUnavailable>;
-}
-
-const unavailable = (cause: unknown): MarketSubjectRestrictionsUnavailable => {
-  const failure = new MarketSubjectRestrictionsUnavailable({
-    code: 'market_subject_restrictions_unavailable',
-    reason: 'Current purchasing-subject Market restrictions could not be established',
-  });
-  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  return failure;
-};
 
 /** The owner's answer as the snapshot Market resolution uses: only a current restriction set is one. */
 export const currentSubjectRestrictionSnapshot = (
@@ -81,61 +49,3 @@ export const currentSubjectRestrictionSnapshot = (
       : base,
   );
 };
-
-const toSnapshot = (
-  response: MarketSubjectRestrictionsCurrentResponse,
-): Effect.Effect<MarketSubjectRestrictionSnapshot, MarketSubjectRestrictionsUnavailable> =>
-  Option.match(currentSubjectRestrictionSnapshot(response), {
-    onNone: () => Effect.fail(unavailable(response)),
-    onSome: Effect.succeed,
-  });
-
-/**
- * Reads the purchasing subject's restrictions from Customer Context for the requester this scope
- * carries: the subject is the verified requester, this Market owner is the actor.
- */
-export const makeServerMarketSubjectRestrictionsReader = ({
-  compositionRevision,
-  crypto,
-  scope,
-}: {
-  readonly compositionRevision: string | undefined;
-  readonly crypto: Crypto.Crypto;
-  readonly scope: OperationalScope;
-}): MarketSubjectRestrictionsReader => ({
-  current: Effect.fn('MarketSubjectRestrictionsReader.current')(function* current(
-    subject: Parameters<MarketSubjectRestrictionsReader['current']>[0],
-    requestCorrelation: string,
-  ) {
-    if (scope.legalEntityId === undefined) {
-      return yield* unavailable('Cross-owner subject restrictions require the original verified Legal Entity');
-    }
-    if (compositionRevision === undefined) {
-      return yield* unavailable('Cross-owner subject restrictions require the admitted composition revision');
-    }
-    if (subject.profileRef.tenantId !== scope.tenantId || requestCorrelation !== scope.correlationId) {
-      return yield* unavailable('Subject restrictions require the original trusted Tenant and request correlation');
-    }
-    const payload = yield* Schema.decodeEffect(MarketSubjectRestrictionsCurrentRequestSchema)({ subject }).pipe(
-      Effect.mapError(unavailable),
-    );
-    const response = yield* Effect.gen(function* executeCustomerOwnerRead() {
-      const admitted = yield* acquireMarketOwnerDelegation(
-        scope,
-        crypto,
-        'commerce-customer-context',
-        compositionRevision,
-      );
-      return yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
-        payload,
-        admitted.authorization,
-        requestCorrelation,
-        {
-          baseUrl: new URL(admitted.apiBaseUrl),
-          compositionRevision: admitted.compositionRevision,
-        },
-      );
-    }).pipe(Effect.mapError(unavailable));
-    return yield* toSnapshot(response);
-  }),
-});
