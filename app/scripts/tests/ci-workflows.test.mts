@@ -1992,9 +1992,16 @@ const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { enc
 it('uses a restored workspace only when pnpm would run in it without installing', () => {
   const verify = readInstallAction().find(({ id }) => id === 'restored')?.run ?? 'exit 1';
   // The step needs mapfile, which bash has since version 4 and macOS's /bin/bash (3.2) lacks, so take the
-  // first bash on PATH that has it instead of the first bash.
+  // first bash on PATH that has it instead of the first bash. An empty or relative entry is read from the
+  // current directory, as the shell reads it, and printed absolute because the fixture runs elsewhere.
   const bash = lookup(
-    'IFS=:; for d in $PATH; do if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi; done',
+    [
+      'entries="$PATH:"; IFS=:',
+      'for d in $entries; do',
+      '  case "$d" in /*) ;; *) d="$PWD/$d" ;; esac',
+      '  if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi',
+      'done',
+    ].join('\n'),
   );
   expect(bash).not.toBe('');
   const pnpm = lookup('command -v pnpm');
