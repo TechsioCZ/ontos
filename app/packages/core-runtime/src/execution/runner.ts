@@ -458,6 +458,9 @@ const openSession = Effect.fn('KernelSessions.open')(function* openSession<
     ),
     capabilities: Object.freeze(capabilities),
     ownerDenied: Effect.sync(() => ledger.ownerDenied),
+    remainingMillis: Clock.currentTimeMillis.pipe(
+      Effect.map((now) => Math.max(0, startedAt + execution.budget.maxDurationMillis - now)),
+    ),
     settle: Effect.sync(() => {
       ledger.closed = true;
     }).pipe(
