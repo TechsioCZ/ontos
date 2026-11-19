@@ -26,9 +26,10 @@ import {
   executeDuplicateCandidateDetailWithAuthorization,
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { SignJWT, decodeJwt, exportJWK, generateKeyPair } from 'jose';
 import {
+  Clock,
   Config,
   Context,
   Crypto,
@@ -405,6 +406,8 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
   const baseUrl = `http://127.0.0.1:${ready.port}/party-registry-api`;
   const authorization = Effect.fn('ControllerOwnerTest.authorization')(function* freshAuthorization() {
     const id = yield* nextId();
+    // The child Party owner uses live time, independently of the domain TestClock.
+    const issuedAt = Math.floor((yield* Clock.Clock.defaultValue().currentTimeMillis) / 1000);
     const token = yield* Effect.tryPromise(() =>
       new SignJWT({
         compositionRevision: snapshot.composition.revision,
@@ -416,8 +419,8 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
         .setIssuer(issuer)
         .setAudience('party-registry')
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(id)
         .sign(pair.privateKey),
     );

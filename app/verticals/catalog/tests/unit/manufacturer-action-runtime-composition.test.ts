@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { ConfigProvider, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, ConfigProvider, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -51,6 +52,7 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
       kid: 'catalog-manufacturer-runtime-test',
       use: 'sig',
     };
+    const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: compositionSnapshot.composition.revision,
@@ -62,8 +64,8 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
         .setIssuer(issuer)
         .setAudience('catalog')
         .setSubject(principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(randomUUID())
         .sign(privateKey),
     );

@@ -5,6 +5,7 @@ import {
   ReadHandlerUnavailable,
   ReadRuntime,
 } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { ActionRuntimeService } from '@app/core-runtime';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
@@ -17,7 +18,7 @@ import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bf
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Crypto, Effect, Layer, Result, Schema } from 'effect';
+import { DateTime, ConfigProvider, Context, Crypto, Effect, Layer, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -76,6 +77,7 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       use: 'sig',
     };
     const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+    const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: composition.composition.revision,
@@ -95,8 +97,8 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
         .setIssuer(issuer)
         .setAudience('inventory')
         .setSubject(scope.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(jti)
         .sign(privateKey),
     );
