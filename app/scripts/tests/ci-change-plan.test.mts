@@ -896,7 +896,7 @@ it('keeps every unit and integration template resolvable so one glob cannot disa
 
 const WEIGHTED_SHARD_LINE =
   /^pnpm --filter \.\/[a-z0-9/-]+ exec bash \S*rstest-weighted-shard\.sh"? (?<index>\d+)\/(?<count>\d+) (?<project>[a-z-]+)(?:\s|$)/u;
-const RECURSIVE_SCRIPT_LINE = / run (?<script>test:[a-z]+)(?:\s|$)/u;
+const RECURSIVE_SCRIPT_LINE = / run (?<script>test(?::[a-z]+)?)(?:\s|$)/u;
 
 // Demo carries many verticals the engineered line does not have: a matrix that names packages one by one would
 // silently skip a new one, so the catch-all rows must keep every suite in exactly one place.
@@ -931,7 +931,13 @@ it('runs every unit and component suite of every workspace package exactly once 
       .filter((script) => scripts[script] !== undefined)
       .map((script) => `${directory} ${script}`),
   );
-  expect(required.filter((run) => !runs.includes(run))).toEqual([]);
+  const fullSuites = workspacePackages
+    .filter(
+      ({ scripts }) =>
+        scripts.test !== undefined && scripts['test:unit'] === undefined && scripts['test:component'] === undefined,
+    )
+    .map(({ directory }) => `${directory} test`);
+  expect([...required, ...fullSuites].filter((run) => !runs.includes(run))).toEqual([]);
 });
 
 it('runs the integration suite of every workspace package that declares one in some integration row', () => {

@@ -43,6 +43,13 @@ import { grantAccess } from './purchasing-approval-native.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { NodeHttpServerRequest, NodeCrypto, NodeHttpServer } from '@effect/platform-node';
+import {
+  bindHttpPlacementDiagnostic,
+  bindNativeChildDiagnostic,
+  httpDiagnostic,
+  httpDiagnosticRequestId,
+} from './preproposal-http-diagnostics.mts';
 
 import {
   executeCreateCartDraftWithAuthorization,
@@ -114,7 +121,6 @@ import { readBuiltDocument, resolveOwnerReleaseIdentity } from '../../../../scri
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import {
   FetchHttpClient,
   HttpClient,
@@ -1062,8 +1068,11 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
     stdin: Stream.fromQueue(standardInput),
     stdout: 'pipe',
   });
+  bindNativeChildDiagnostic(input.stage, child.pid);
   yield* Effect.addFinalizer(() =>
-    Effect.all([Queue.end(credentialChannel), Queue.end(commands), Queue.end(standardInput)]),
+    Effect.sync(() => httpDiagnostic(input.stage, 'scope-closing', { ownerPid: child.pid })).pipe(
+      Effect.andThen(Effect.all([Queue.end(credentialChannel), Queue.end(commands), Queue.end(standardInput)])),
+    ),
   );
   yield* child.stdout.pipe(
     Stream.decodeText(),
@@ -1197,6 +1206,7 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
         code === 0 ? Effect.void : Effect.flatMap(childFailure(`${input.stage}:exit-code`), Effect.fail),
       ),
     ),
+    pid: child.pid,
     /** Queues one module credential handover line on file descriptor 3; its key never enters a diagnostic. */
     handOver: (line: string, key: Redacted.Redacted, end = false) =>
       Effect.gen(function* handOverModuleCredential() {
@@ -1266,11 +1276,17 @@ const startHostedOwner = Effect.fn('PreproposalNative.startHostedOwner')(functio
     async () => await stat(`${applicationRoot}${input.owner}/dist/zerops-entry.mjs`),
   );
   const child = yield* openNativeChild({
-    args: ['scripts/zerops/serve-units.mts', input.appId],
+    args: [
+      '--import',
+      fileURLToPath(new URL('preproposal-http-diagnostics.mts', import.meta.url)),
+      'scripts/zerops/serve-units.mts',
+      input.appId,
+    ],
     environment: {
       ...input.environment,
       APP_ENV_PATH: '/dev/null',
       NODE_ENV: 'production',
+      ONTOS_PREPROPOSAL_HTTP_OWNER: input.appId,
       // The app host's switch: the channel lives as long as the harness, so its end stops the process.
       ONTOS_MODULE_CREDENTIAL_HANDOVER: 'fd3-lifetime',
     },
@@ -1303,6 +1319,7 @@ const startHostedOwner = Effect.fn('PreproposalNative.startHostedOwner')(functio
     contract.deployment.appId === input.appId && contract.deployment.buildMarker === input.marker.buildMarker,
     `exact-hosted-owner:${input.appId}`,
   );
+  httpDiagnostic(input.appId, 'owner-port-bound', { ownerPid: child.pid, port });
   return port;
 });
 
@@ -1334,8 +1351,13 @@ const startNativeOwner = Effect.fn('PreproposalNative.startOwner')(function* sta
     return yield* safeFailure(`receiver-fixture:${owner.appId}`);
   }
   const receiver = yield* openNativeChild({
-    args: [owner.artifact, owner.serve],
-    environment,
+    args: [
+      '--import',
+      fileURLToPath(new URL('preproposal-http-diagnostics.mts', import.meta.url)),
+      owner.artifact,
+      owner.serve,
+    ],
+    environment: { ...environment, ONTOS_PREPROPOSAL_HTTP_OWNER: owner.appId },
     stage: `receiver:${owner.appId}`,
   });
   const ready = yield* receiver.read(ReadySchema, 'public');
@@ -1343,6 +1365,7 @@ const startNativeOwner = Effect.fn('PreproposalNative.startOwner')(function* sta
     ready.marker.appId === owner.appId && ready.marker.buildMarker === owner.marker.buildMarker,
     `exact-receiver:${owner.appId}`,
   );
+  httpDiagnostic(owner.appId, 'owner-port-bound', { ownerPid: receiver.pid, port: ready.port });
   return yield* owner.bind(ready.port);
 });
 
@@ -1857,30 +1880,38 @@ const makeOwnerPlacement = Effect.fn('PreproposalNative.ownerPlacement')(functio
       for (const name of ['connection', 'content-length', 'host', 'keep-alive', 'transfer-encoding', 'upgrade']) {
         headers.delete(name);
       }
+      const requestId = httpDiagnosticRequestId(NodeHttpServerRequest.toIncomingMessage(incoming));
+      if (requestId !== undefined) {
+        headers.set('x-ontos-preproposal-request-id', String(requestId));
+      }
       const forwarded = new Request(url, {
         body: body.byteLength === 0 ? null : body,
         headers,
         method: request.method,
       });
-      const response = yield* client.execute(HttpClientRequest.fromWeb(forwarded));
-      return HttpServerResponse.fromClientResponse(response);
-    }).pipe(
-      Effect.tapCause((cause) =>
-        Effect.sync(() =>
-          process.stderr.write(
-            `placement-cause ${appId}: ${Cause.pretty(cause)
-              .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, '[REDACTED]')
-              .slice(0, 4096)}\n`,
+      const hop = { port: Number(destination.port), requestId };
+      httpDiagnostic(appId, 'owner-request-start', hop);
+      const response = yield* client
+        .execute(HttpClientRequest.fromWeb(forwarded))
+        .pipe(
+          Effect.onExit((exit) =>
+            Effect.sync(() =>
+              httpDiagnostic(appId, Exit.isSuccess(exit) ? 'owner-response-headers' : 'owner-request-abort', hop),
+            ),
           ),
-        ),
-      ),
-    ),
+        );
+      return HttpServerResponse.fromClientResponse(response);
+    }).pipe(Effect.tapCause(() => Effect.sync(() => httpDiagnostic(appId, 'placement-failure')))),
   );
+  yield* Effect.addFinalizer(() => Effect.sync(() => httpDiagnostic(appId, 'placement-scope-closing')));
   const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(server.address);
+  const unbindDiagnostics = bindHttpPlacementDiagnostic(appId, address.port);
+  yield* Effect.addFinalizer(() => Effect.sync(unbindDiagnostics));
   return {
     bind: (port: number) =>
       Effect.sync(() => {
         destination = new URL(`http://127.0.0.1:${port}/`);
+        httpDiagnostic(appId, 'placement-bound', { peerPort: port, port: address.port });
       }),
     origin: `http://127.0.0.1:${address.port}`,
   };

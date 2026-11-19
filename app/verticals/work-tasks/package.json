@@ -26,6 +26,7 @@
     "db:verify": "node scripts/verify-db-schema.mts",
     "dev": "node ../../scripts/prepare-dev-module-contract.mts work-tasks && modern dev",
     "serve": "modern serve",
+    "test:integration": "node --import ../../scripts/ci/integration-worker-setup.mts ../../node_modules/@rstest/core/bin/rstest.js --project integration",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"

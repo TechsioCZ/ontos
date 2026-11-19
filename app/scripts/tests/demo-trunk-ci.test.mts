@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { Result, Schema } from 'effect';
@@ -39,7 +39,7 @@ const tracked = execFileSync('/usr/bin/git', ['ls-files', '-z'], {
   maxBuffer: 268_435_456,
 })
   .split('\0')
-  .filter(Boolean);
+  .filter((file) => file.length > 0 && existsSync(path.join(repository, file)));
 const documentation = (file: string) => file.endsWith('.md') || /(?:^|\/)(?:docs|specs)\//u.test(file);
 /** The repository tooling tests: the Rstest `scripts` project (app/rstest.config.ts), which every scope runs. */
 const toolingTest = (file: string) =>
@@ -135,6 +135,14 @@ it('keeps every stage-delivery file out of everything a scoped plan skips', () =
   ).toEqual(['app/docs/architecture/MERGING.md', 'app/scripts/tests/zerops-deployment.fixture.mts']);
 });
 
+it('runs both storefront linters in the source row every storefront scope selects', () => {
+  const row = templates.source.find(({ name }) => name === 'Typecheck and OntOS API Boundary Rules');
+  expect(STOREFRONTS.source).toContain(row?.name);
+  for (const directory of rootLevelPackageDirectories) {
+    expect(row?.commands).toContain(`pnpm --filter ./${directory} run lint`);
+  }
+});
+
 it('keeps every scoped storefront file out of everything a scoped plan skips', () => {
   const storefronts = rootLevelPackageDirectories.map((directory) => `app/${directory}/`);
   expect(STOREFRONTS.paths.filter((glob) => !glob.startsWith('!'))).toEqual(storefronts.map((root) => `${root}**`));
@@ -222,6 +230,8 @@ const PACKAGES = 'packages/';
 const VERTICALS = 'verticals/';
 const WORKSPACE = ['apps/', PACKAGES, VERTICALS, 'topology/'];
 const skippedCommandInputs = new Map<string, readonly string[]>([
+  ['pnpm --filter ./akros-storefront run lint', ['akros-storefront/src/', 'akros-storefront/tests/']],
+  ['pnpm --filter ./n1-storefront run lint', ['n1-storefront/src/', 'n1-storefront/tests/']],
   ['pnpm --filter ./packages/shared-contracts test:types', ['packages/shared-contracts/']],
   // Each storefront's tsconfig.typecheck.json also references workspace packages and verticals.
   [

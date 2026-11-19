@@ -131,16 +131,28 @@
     "reviewed-people-apply.test.ts": 23,
     "shell-member-baseline-real-gate.test.ts": 29
   },
+  "integration": [
+    {
+      "suite": "integration",
+      "name": "Owner Integration (Work Tasks and Workforce)",
+      "native-composition": true,
+      "lanes": 2,
+      "tasks": [
+        "./verticals/work-tasks",
+        "./verticals/workforce"
+      ]
+    }
+  ],
   "unit": [
     {
-      "name": "Unit and Component Tests (Core Runtime, Merchandise, and Party Registry)",
-      "commands": "pnpm -r --no-sort --if-present --filter ./packages/core-runtime --filter ./verticals/merchandise --filter ./verticals/party-registry run test:unit\npnpm -r --no-sort --if-present --filter ./packages/core-runtime --filter ./verticals/merchandise --filter ./verticals/party-registry run test:component\n"
+      "name": "N1 storefront tests",
+      "commands": "pnpm --filter ./n1-storefront run test run\n"
     },
     {
       "name": "Unit and Component Tests (every other package)",
       "fetch_depth": 512,
       "setup": "mise exec -- pnpm provision:pohoda-xsd\n",
-      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:component\n"
+      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' run test:component\n"
     }
   ]
 }

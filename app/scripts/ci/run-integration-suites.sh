@@ -3,6 +3,31 @@
 # Package processes keep their own working directory and Rstest configuration.
 set -euo pipefail
 
+# timeout signals only this supervisor; capture live state BEFORE signalling the separate task process group.
+if [[ "${1:-}" == --shell-shard ]]; then
+  task="${2:?}"
+  shift 2
+  task_pid=''
+  terminate_shell_shard() {
+    trap '' TERM
+    diagnostic="${RUNNER_TEMP:-/tmp}/shell-hang-${ONTOS_CI_WORKER_SLOT}-$$.diag.log"
+    timeout --kill-after=1s 10s bash scripts/ci/capture-integration-hang.sh "$task" >"$diagnostic" 2>&1 || true
+    cat "$diagnostic"
+    if [[ -n "$task_pid" ]]; then
+      kill -TERM -- "-$task_pid" 2>/dev/null || true
+      timeout --kill-after=1s 3s tail --pid="$task_pid" -f /dev/null || true
+      kill -KILL -- "-$task_pid" 2>/dev/null || true
+    fi
+    exit 124
+  }
+  trap terminate_shell_shard TERM
+  setsid "$@" &
+  task_pid=$!
+  status=0
+  wait "$task_pid" || status=$?
+  exit "$status"
+fi
+
 if [[ "${1:-}" == --task ]]; then
   task="${2:?}"
   [[ "${ONTOS_CI_WORKER_SLOT:?}" =~ ^[0-3]$ ]] || exit 2
@@ -125,6 +150,10 @@ if [[ "${1:-}" == --execute ]]; then
     excluding "${customer_context_migrations[@]}"
     exec mise exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 \
       --shard "${task##*#}" "${excluded[@]}"
+  fi
+  if [[ "$task" == ./apps/shell-super-app#* ]]; then
+    exec timeout --foreground --kill-after=20s 12m bash "${BASH_SOURCE[0]}" --shell-shard "$task" \
+      mise exec -- pnpm --filter "${task%#*}" run test:integration --pool.maxWorkers 1 --shard "${task##*#}"
   fi
   if [[ "$task" == *#* ]]; then
     if [[ "${task%#*}" == ./verticals/privacy ]]; then

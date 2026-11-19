@@ -47,6 +47,7 @@ const OWNER_INTEGRATION_JOB = 'owner-integration';
 const NODE_TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
+const INTEGRATION_SCHEDULER = '../ci/run-integration-suites.sh';
 const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
 const RESTORE_INTEGRATION_WORKERS = 'bash scripts/ci/restore-integration-workers.sh';
 const INTEGRATION_WORKERS_STEP_ID = 'integration-workers';
@@ -958,6 +959,8 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm shell:ui-candidates:check',
     'pnpm module-entrypoints:check',
     'pnpm test:generation',
+    'pnpm --filter ./n1-storefront run lint',
+    'pnpm --filter ./akros-storefront run lint',
   ]) {
     expect(commands).toContain(check);
   }
@@ -983,6 +986,18 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     parallel ? parallel.map((step) => step.run) : [run ?? ''],
   );
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
+});
+
+it('runs N1 once in its own plain unit row without duplicating AKROS tests', () => {
+  const rows = readGateCommandJobs()[WORKSPACE_UNIT_JOB].strategy.matrix.include;
+  expect(rows.filter(({ name }) => name === 'N1 storefront tests').map(({ commands }) => commands)).toEqual([
+    'pnpm --filter ./n1-storefront run test run\n',
+  ]);
+  expect(
+    rows
+      .flatMap(({ commands }) => commands.split('\n'))
+      .filter((line) => line.includes('./akros-storefront run test run')),
+  ).toEqual([]);
 });
 
 it('restores same-run Node metadata only for unit rows that execute public contract fixtures', () => {
@@ -1533,7 +1548,7 @@ it('names every package integration suite and keeps native proofs one per runner
   );
   expect(sorted(tested)).toEqual(sorted(namedPackages));
   // Native preproposal proofs supplement the ordinary package suites, one case per runner.
-  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  const scheduler = readFileSync(new URL(INTEGRATION_SCHEDULER, import.meta.url), 'utf-8');
   expect(scheduler).toContain(
     "exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal -t 'produces an exact preproposal basis'",
   );
@@ -1551,7 +1566,7 @@ it('names every package integration suite and keeps native proofs one per runner
 
 it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
   const jobs = readIntegrationJobs();
-  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  const scheduler = readFileSync(new URL(INTEGRATION_SCHEDULER, import.meta.url), 'utf-8');
   const excluded = ['whole:organization', 'whole:pricing', 'whole:privacy'];
   const proofs = integrationRows()
     .flatMap((row) => row.tasks ?? [])
@@ -1959,6 +1974,7 @@ const AnyStepSchema = Schema.Struct({
   if: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
   run: Schema.optional(Schema.String),
+  'timeout-minutes': Schema.optional(Schema.Number),
   uses: Schema.optional(Schema.String),
   with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
@@ -2393,4 +2409,29 @@ it('runs Quality Audit without its duplicate self-test on the pinned runner imag
   expect(audit?.['runs-on']).toBe('ubuntu-24.04');
   expect(audit?.steps.some(({ run }) => run?.includes('quality:audit:test') === true)).toBe(false);
   expect(audit?.steps.some(({ run }) => run?.includes('quality:audit:gate --summary') === true)).toBe(true);
+});
+
+it('keys browser apt archives by OS and pinned Playwright, and preserves bounded failure diagnostics', () => {
+  const steps = readJobsOf(GATES_WORKFLOW)[BROWSER_INTEGRATION_JOB]?.steps ?? [];
+  const key = steps.find(({ id }) => id === 'chromium-debs')?.run ?? '';
+  expect(key).toContain('playwright --version');
+  expect(key).toContain(`playwright-apt-debs-$ImageOS-\${version// /-}`);
+  expect(key).not.toContain('ImageVersion');
+  expect(key).not.toContain('hashFiles');
+  const restore = steps.find(({ name }) => name === 'Restore the Chromium system-library packages');
+  expect(restore?.with?.key).toBe(expression('steps.chromium-debs.outputs.key'));
+  expect(restore?.with?.['restore-keys']).toBeUndefined();
+  const save = steps.find(({ name }) => name === 'Save the Chromium system-library packages of the demo trunk');
+  expect(save?.with?.key).toBe(expression('steps.chromium-debs.outputs.key'));
+  expect(save?.if).toContain(DEMO_REF);
+  const install = steps.find(({ id }) => id === 'chromium-install');
+  expect(install?.['timeout-minutes']).toBe(10);
+  expect(install?.run).toBe('bash scripts/ci/install-chromium-with-diagnostics.sh');
+  const upload = steps.find(({ name }) => name === 'Upload closed native startup and owner HTTP diagnostics');
+  for (const artifact of ['preproposal-http-*.diag.log', 'shell-hang-*.diag.log', 'chromium-install']) {
+    expect(upload?.with?.path).toContain(artifact);
+  }
+  const scheduler = readFileSync(new URL(INTEGRATION_SCHEDULER, import.meta.url), 'utf-8');
+  expect(scheduler).toContain('timeout --foreground --kill-after=20s 12m');
+  expect(scheduler.indexOf('capture-integration-hang.sh')).toBeLessThan(scheduler.indexOf('kill -TERM'));
 });

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { diagnosticScope, finalizing } from './access-admin-finalizer-diagnostics.ts';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { PgClient as PgClientService } from '@effect/sql-pg';
@@ -353,8 +355,11 @@ const cloneDatabase = (admin: PgClient.PgClient, database: string) =>
 const makeClient = (connectionString: string, maxConnections: number) =>
   Effect.gen(function* openClient() {
     const reactivity = yield* Reactivity.make;
-    return yield* PgClientService.make({ maxConnections, url: Redacted.make(connectionString) }).pipe(
-      Effect.provideService(Reactivity.Reactivity, reactivity),
+    return yield* diagnosticScope(
+      `pg-pool:${new URL(connectionString).pathname.slice(1)}`,
+      PgClientService.make({ maxConnections, url: Redacted.make(connectionString) }).pipe(
+        Effect.provideService(Reactivity.Reactivity, reactivity),
+      ),
     );
   }).pipe(Effect.orDie);
 
@@ -442,7 +447,7 @@ export const accessAdminTemplateLayer = Layer.effectDiscard(
     () =>
       Effect.sync(() => {
         accessAdminTemplateReady = false;
-      }).pipe(Effect.andThen(dropTemplateDatabase(ACCESS_ADMIN_TEMPLATE_DATABASE))),
+      }).pipe(Effect.andThen(finalizing('template-drop', dropTemplateDatabase(ACCESS_ADMIN_TEMPLATE_DATABASE)))),
   ),
 );
 
@@ -463,7 +468,11 @@ const writeEngineSchema = (configuration: SpiceDbConfigValue) =>
       Effect.tryPromise(
         async () => await client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
       ).pipe(Effect.orDie),
-    (client) => Effect.sync(() => client.close()),
+    (client) =>
+      finalizing(
+        'schema-grpc-close',
+        Effect.sync(() => client.close()),
+      ),
   );
 
 // ---------------------------------------------------------------------------------------------
@@ -926,7 +935,11 @@ export const buildAccessGraph = (input: { readonly adminUrl: string; readonly co
       AccessProjectionCompiler,
       Effect.acquireRelease(
         Effect.sync(() => makeAccessProjectionTransport(input.configuration)),
-        (transport) => Effect.sync(() => transport.close()),
+        (transport) =>
+          finalizing(
+            'projection-transport-close',
+            Effect.sync(() => transport.close()),
+          ),
       ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
     );
     const platform = Layer.mergeAll(
@@ -943,13 +956,20 @@ export const buildAccessGraph = (input: { readonly adminUrl: string; readonly co
     const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores));
     const writer = AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(stores, platform)));
     const bootstrap = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(stores, platform, catalog, writer)));
-    const context = yield* Layer.build(Layer.mergeAll(stores, platform, catalog, writer, bootstrap));
+    const context = yield* diagnosticScope(
+      'access-graph-layers',
+      Layer.build(Layer.mergeAll(stores, platform, catalog, writer, bootstrap)),
+    );
     const client = yield* Effect.acquireRelease(
       Effect.sync(() => newSpiceDbGrpcClient(input.configuration)),
-      (opened) => Effect.sync(() => opened.close()),
+      (opened) =>
+        finalizing(
+          'tenant-grpc-close',
+          Effect.sync(() => opened.close()),
+        ),
     );
     const bootstrapped = new Set<string>();
-    yield* Effect.addFinalizer(() => releaseTenants(client, bootstrapped));
+    yield* Effect.addFinalizer(() => finalizing('tenant-tuples-delete', releaseTenants(client, bootstrapped)));
     const bootstrapService = Context.get(context, TenantAccessBootstrap);
     return {
       bootstrap: {
@@ -977,7 +997,11 @@ const buildGateContext = (input: {
   Effect.gen(function* buildGateService() {
     const transport = yield* Effect.acquireRelease(
       Effect.sync(() => makeAccessProjectionTransport(input.configuration)),
-      (opened) => Effect.sync(() => opened.close()),
+      (opened) =>
+        finalizing(
+          'gate-transport-close',
+          Effect.sync(() => opened.close()),
+        ),
     );
     const compiler = makeAccessProjectionCompiler(transport);
     const base = Layer.mergeAll(
@@ -993,7 +1017,11 @@ const buildGateContext = (input: {
       DecisionCheck,
       Effect.acquireRelease(
         Effect.sync(() => spiceDbTransport.open(input.configuration, SPICEDB_CHECK_TIMEOUT_MS)),
-        (rpc) => Effect.sync(() => rpc.close()),
+        (rpc) =>
+          finalizing(
+            'gate-rpc-close',
+            Effect.sync(() => rpc.close()),
+          ),
       ).pipe(Effect.map(enginePortOf)),
     );
     const ports = Layer.mergeAll(
@@ -1005,7 +1033,7 @@ const buildGateContext = (input: {
       AccessWorkloadBindingSourceLive,
     );
     const enforcement = AccessDecisionLive.pipe(Layer.provideMerge(ports), Layer.provide(stores));
-    return yield* Layer.build(Layer.mergeAll(stores, enforcement));
+    return yield* diagnosticScope('gate-layers', Layer.build(Layer.mergeAll(stores, enforcement)));
   });
 
 export const buildGate = (input: Parameters<typeof buildGateContext>[0]) =>
@@ -1319,11 +1347,21 @@ export const withAccessAdminCase = <Value, Failure>(
       const [companyA, companyB] = companies;
 
       const caseDatabase = `${CASE_DATABASE_PREFIX}${seedSuffix}`;
+      yield* Effect.sync(() =>
+        process.stderr.write(`access-admin case start pid=${process.pid} database=${caseDatabase}\n`),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          process.stderr.write(`access-admin case scope closed pid=${process.pid} database=${caseDatabase}\n`);
+        }),
+      );
       const adminUrl = yield* serverAdminUrl;
       yield* requireTemplate;
       const server = yield* makeClient(adminUrl, 1);
       yield* cloneDatabase(server, caseDatabase);
-      yield* Effect.addFinalizer(() => dropDatabase(server, caseDatabase));
+      yield* Effect.addFinalizer(() =>
+        finalizing(`case-database-drop:${caseDatabase}`, dropDatabase(server, caseDatabase)),
+      );
       const caseAdminUrl = replacedDatabase(adminUrl, caseDatabase);
       const admin = yield* makeClient(caseAdminUrl, 2);
       const databases = yield* parseDatabaseConnectionPair({
@@ -1781,7 +1819,7 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     Effect.promise(
       async () => await bff.createEffectBffTestHandler({ module: { default: runtime }, prefix: apiPrefix }),
     ),
-    (created) => Effect.promise(created.dispose.bind(created)),
+    (created) => finalizing('shell-handler-dispose', Effect.promise(created.dispose.bind(created))),
   );
   const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
   const send = (request: ShellHttpRequest, method: 'GET' | 'POST') =>
@@ -1804,8 +1842,16 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
         method === 'POST'
           ? { body: yield* encodeJson(request.payload).pipe(Effect.orDie), headers, method }
           : { headers };
+      // Do not record payloads, session headers or response bodies.
+      const requestId = randomUUID();
+      yield* Effect.sync(() =>
+        process.stderr.write(`access-admin request start pid=${process.pid} id=${requestId} method=${method}\n`),
+      );
       const response = yield* Effect.promise(async () => await handler.handler(new Request(url, init)));
       const text = yield* Effect.promise(async () => await response.text());
+      yield* Effect.sync(() =>
+        process.stderr.write(`access-admin request end pid=${process.pid} id=${requestId} status=${response.status}\n`),
+      );
       return { status: response.status, text } satisfies ShellHttpAnswer;
     });
   const post = (request: ShellHttpRequest) => send(request, 'POST');

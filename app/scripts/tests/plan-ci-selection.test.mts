@@ -100,8 +100,20 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
     expect(storefront.affectedPackages, directory).toEqual([directory]);
     // The typecheck and the tooling tests that read storefront files, nothing else from the source rows.
     expect(names(storefront.source), directory).toEqual([TYPECHECK, ...TOOLING_ROWS]);
-    expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
-    expect(storefront.unit[0]?.commands, directory).toContain(`--filter ./${directory} run test:unit`);
+    expect(names(storefront.unit), directory).toEqual(
+      directory === N1 ? ['N1 storefront tests', EVERY_OTHER_PACKAGE] : [EVERY_OTHER_PACKAGE],
+    );
+    expect(storefront.unit.find(({ name }) => name === EVERY_OTHER_PACKAGE)?.commands, directory).toContain(
+      `--filter ./${directory} run test:unit`,
+    );
+    expect(storefront.unit.find(({ name }) => name === 'N1 storefront tests')?.commands, directory).toBe(
+      directory === N1 ? 'pnpm --filter ./n1-storefront run test run\n' : undefined,
+    );
+    for (const storefrontDirectory of [AKROS, N1]) {
+      expect(storefront.source.find(({ name }) => name === TYPECHECK)?.commands).toContain(
+        `pnpm --filter ./${storefrontDirectory} run lint`,
+      );
+    }
     // A storefront is in no unit build: no build, Node proof, service, database or browser job is paid for.
     expect(storefront.integration, directory).toEqual([]);
     expect(storefront.expected, directory).toEqual(SCOPED_WITH_UNIT);
@@ -109,7 +121,9 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
   const both = plan(`app/${AKROS}/src/lib/cart.ts`, `app/${N1}/src/catalog/view.tsx`, 'README.md');
   expect(both.mode).toBe('scoped');
   expect(both.affectedPackages).toEqual([AKROS, N1]);
-  expect(both.unit[0]?.commands).toContain(`--filter ./${AKROS} --filter ./${N1} run test:unit`);
+  expect(both.unit.find(({ name }) => name === EVERY_OTHER_PACKAGE)?.commands).toContain(
+    `--filter ./${AKROS} --filter ./${N1} run test:unit`,
+  );
   // The generated catalogue a Merchandise script reads is outside the scope.
   expect(plan(`app/${AKROS}/src/catalog-import/generated/catalog.generated.json`).mode).toBe('affected');
 });
@@ -303,7 +317,7 @@ const BASE_FRESH_DATABASE_TESTS = [
   'packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts',
   'packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts',
   'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
-  'verticals/work-tasks/tests/integration/assignment-migration.test.mts',
+  'verticals/work-tasks/tests/integration/assignment-migration.test.ts',
   'verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts',
   'verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts',
   'verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts',
@@ -398,14 +412,14 @@ it('runs every file of the former Fresh Database rows for every path that select
   }
 });
 
-it('starts no owner row for a package with no integration task', () => {
-  // A package without `test:integration` has no task in the matrices: no owner row and no database is paid for,
-  // only the bootstrap row every affected plan keeps.
+it('selects each newly collected owner integration task without running its neighbour', () => {
   const taskState = plan(`app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`);
   expect(taskState.mode).toBe('affected');
   expect(taskState.affectedPackages).toEqual([WORK_TASKS]);
-  expect(taskState.integration).toEqual(BOOTSTRAP);
-  expect(taskState.expected['service-integration']).toBe('skipped');
+  expect(ownerTasks(taskState.integration)).toEqual([`./${WORK_TASKS_DIRECTORY}`]);
+  expect(taskState.expected['service-integration']).toBe('success');
+  const workforce = plan('app/verticals/workforce/src/services/workforce-state.ts');
+  expect(ownerTasks(workforce.integration)).toEqual(['./verticals/workforce']);
   // A package that has one selects exactly its own task, on the row that holds it.
   const invoices = plan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
   expect(ownerTasks(invoices.integration)).toEqual([`./${FINANCE_DIRECTORY}`]);

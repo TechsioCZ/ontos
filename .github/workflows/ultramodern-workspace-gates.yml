@@ -992,19 +992,22 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
 
       # Chromium's system libraries come from apt, whose mirror can serve them at 100 kB/s; their downloaded
-      # packages are cached per runner image. apt reuses a cached package only when it matches the index.
+      # packages are cached by image OS and Playwright version, as in stage delivery. apt validates against its index.
       - name: Name the Chromium system-library package cache
         id: chromium-debs
         if: matrix.suite == 'browser'
-        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ hashFiles('app/pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
+        working-directory: app
+        run: |
+          version="$(mise exec -- pnpm --filter @app/shell-super-app exec playwright --version)"
+          echo "key=playwright-apt-debs-$ImageOS-${version// /-}" >> "$GITHUB_OUTPUT"
 
       - name: Restore the Chromium system-library packages
+        id: chromium-debs-cache
         if: matrix.suite == 'browser'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/playwright-apt-debs
           key: ${{ steps.chromium-debs.outputs.key }}
-          restore-keys: playwright-apt-debs-
 
       # The system-library install goes through apt and can take minutes on a slow mirror, so it runs in the
       # background while the services start and the migrations run; the browser tests wait for it below.
@@ -1016,16 +1019,7 @@ jobs:
         working-directory: app
         env:
           CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
-        run: |
-          if [ -d ~/.cache/playwright-apt-debs ]; then
-            sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
-          fi
-          if [ "$CHROMIUM_CACHED" = true ]; then
-            set -- install-deps chromium
-          else
-            set -- install --with-deps chromium
-          fi
-          mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
+        run: bash scripts/ci/install-chromium-with-diagnostics.sh
 
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
@@ -1288,6 +1282,15 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
+      - name: Save the Chromium system-library packages of the demo trunk
+        if: >-
+          success() && matrix.suite == 'browser' && steps.chromium-debs-cache.outputs.cache-hit != 'true' &&
+          github.ref == 'refs/heads/demo/sales-crm'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
+
       - name: Run parallel authenticated browser tests without retries
         if: matrix.suite == 'browser'
         working-directory: app
@@ -1327,6 +1330,9 @@ jobs:
           path: |
             app/verticals/commerce-market-catalog/.cache/ontos-1250/startup-diagnostic-*.json
             /tmp/commerce-org-http-*.diag.log
+            /tmp/preproposal-http-*.diag.log
+            ${{ runner.temp }}/shell-hang-*.diag.log
+            ${{ runner.temp }}/chromium-install
           if-no-files-found: ignore
           retention-days: 1
 
