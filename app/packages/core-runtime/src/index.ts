@@ -962,11 +962,13 @@ export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action
 export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+export { confirmAssetAction } from './modules/actions/confirm-asset.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
+export { uploadAssetAction } from './modules/actions/upload-asset.action.ts';
 // </generated-core-action-exports>
 
 export {

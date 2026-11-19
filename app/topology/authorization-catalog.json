@@ -14752,6 +14752,63 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "core.media.asset.confirm",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.confirm-asset",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset.upload",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.upload-asset",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        }
+      ],
+      "moduleId": "core.media"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
             "key": "core.modules.tenant-module.change-state",
             "kind": "admin",
             "modes": [
