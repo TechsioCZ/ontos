@@ -11,6 +11,7 @@ import {
   runAction,
   TrustedPrincipalContextSchema,
   ReadRuntime,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
@@ -846,7 +847,7 @@ it.live(
             recordConsentDecisionAction.descriptor.actionKey,
           ],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
-          applicationComposition: { load: Effect.succeed(snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
           expectedDeployment: ultramodernDeliveryUnit,

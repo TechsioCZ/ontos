@@ -1,6 +1,7 @@
 import {
   ActiveApplicationCompositionService,
   ContextAccessLive,
+  loadActiveApplicationComposition,
   CorePersistenceLive,
   DatabaseConfig,
   makeReadRuntimeLive,
@@ -255,9 +256,9 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
           Scope.provide(ownedScope),
           Effect.mapError((cause) => unavailable('activation', cause)),
         );
-        const snapshot = yield* Context.get(current, ActiveApplicationCompositionService).load.pipe(
-          Effect.mapError((cause) => unavailable('activation', cause)),
-        );
+        const snapshot = yield* loadActiveApplicationComposition(
+          Context.get(current, ActiveApplicationCompositionService),
+        ).pipe(Effect.mapError((cause) => unavailable('activation', cause)));
         if (
           snapshot.composition.revision !== configuration.compositionRevision ||
           !snapshot.composition.modules.some(

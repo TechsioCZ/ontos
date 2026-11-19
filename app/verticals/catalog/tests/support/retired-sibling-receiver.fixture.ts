@@ -7,6 +7,7 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   makeContextPermissionRelationshipMutationLive,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -658,7 +659,7 @@ export const makeRetiredSiblingFixture = Effect.fn('RetiredSibling.makeFixture')
       actionKeys: [retireVariantAction.descriptor.actionKey],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['catalog'],
-      applicationComposition: { load: Effect.succeed(composition) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
       expectedDeployment: ultramodernDeliveryUnit,

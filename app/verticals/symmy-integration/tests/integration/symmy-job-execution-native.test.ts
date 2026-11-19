@@ -12,6 +12,7 @@ import {
   SystemPrincipalContextResolverLive,
   TrustedPrincipalContextSchema,
   matchOutboxMessages,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { OutboxCycleError, OutboxCycleResult } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -242,7 +243,12 @@ it.live(
               environment: { ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks },
               redemption,
             })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+            .pipe(
+              Effect.provideService(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+              ),
+            );
         });
         const originalTarget = {
           moduleId: 'integration.symmy',
@@ -458,7 +464,10 @@ it.live(
                 expectedDeployment: ultramodernApiMarker,
                 layer: Layer.mergeAll(
                   Layer.succeedContext(workerServices),
-                  Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+                  Layer.succeed(
+                    ActiveApplicationCompositionService,
+                    makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+                  ),
                   Layer.succeed(OutboxRuntime, {
                     ...outbox,
                     runCycle: () =>

@@ -35,6 +35,7 @@ import {
   makeContextAccessLive,
   PrincipalResolverLive,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -164,7 +165,7 @@ const makeShellRuntimeForDatabase =
       scopedStates,
       external,
       gate,
-      { load },
+      makeActiveApplicationCompositionService(load),
       runtimeDatabase,
     );
   };
@@ -1524,7 +1525,12 @@ it.live(
           }),
         },
         redemption: { consume: () => Effect.void },
-      }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: installedSnapshot(['testing.one']) })),
+      }).pipe(
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(installedSnapshot(['testing.one'])),
+        ),
+      ),
     );
     expect(generatedPrincipal.authBindingId).toBe(fixtureAuthBindingId);
     expect(optionalText(generatedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);

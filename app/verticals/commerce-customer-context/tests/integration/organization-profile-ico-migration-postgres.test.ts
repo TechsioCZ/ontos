@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { ContextAccessLive, findPostgresFailure, ReadRuntime, runAction } from '@app/core-runtime';
+import {
+  ContextAccessLive,
+  findPostgresFailure,
+  ReadRuntime,
+  runAction,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { ActionInvocationIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -76,7 +82,7 @@ it.live(
             additionalLegalEntity: 'same-tenant',
             adminConnectionString: Redacted.make(owned.connections.admin.connectionString),
             allowedAudiences: ['commerce-customer-context'],
-            applicationComposition: { load: Effect.succeed(snapshot) },
+            applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
             authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: snapshot.composition.revision,
             expectedDeployment: ultramodernApiMarker,

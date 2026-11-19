@@ -17,6 +17,7 @@ import {
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   PARTY_REGISTRY_REQUEST_IDENTITY,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
@@ -1521,7 +1522,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   // The Privacy runtime attaches to the creator's own identities, so it attaches before the reader is repurposed.
   const privacyFixture = yield* Effect.acquireRelease(
     makeLiveOperationFixtureRuntime({
-      applicationComposition: { load: Effect.succeed(initialSnapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(initialSnapshot)),
       configuration: fixture.runtimeHandoff.configuration,
       expectedDeployment: privacyOwner.deployment,
       handoff: fixture.runtimeHandoff,

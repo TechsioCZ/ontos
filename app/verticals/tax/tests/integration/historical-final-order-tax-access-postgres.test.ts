@@ -20,6 +20,7 @@ import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   trustVerifiedGatewayPrincipalContext,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import {
   ActionPermissionLive,
@@ -315,7 +316,10 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessGate.layer)),
   );
   const dependencies = Layer.mergeAll(CorePersistenceLive, ContextAccessLive, gateway, resolver, accessGate.layer);
-  const compositionSource = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  const compositionSource = Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+  );
   const runtimes = Layer.mergeAll(
     makeReadRuntimeLive(deployment, taxRegistration).pipe(
       Layer.provide(dependencies),

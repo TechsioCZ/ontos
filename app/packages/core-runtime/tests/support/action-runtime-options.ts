@@ -12,6 +12,7 @@ import {
   buildNativeOutboxWorkerComposition,
 } from './outbox-worker-native-composition.ts';
 import { freshOutboxWorkerCompositionSnapshot } from './outbox-worker-composition.ts';
+import { makeActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 
 import type { ActionRuntimeOptions } from '../../src/actions/runtime.ts';
 import type { ContextAccess } from '../../src/permissions/context-access.ts';
@@ -116,7 +117,7 @@ export const makeTestOperationOwner = ({
   );
   const snapshot = freshOutboxWorkerCompositionSnapshot(composition);
   return {
-    applicationComposition: { load: snapshot },
+    applicationComposition: makeActiveApplicationCompositionService(snapshot),
     composition,
     expectedDeployment: contract.deployment,
     ownerRegistration,

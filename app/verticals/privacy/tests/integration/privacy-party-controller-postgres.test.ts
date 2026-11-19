@@ -16,6 +16,7 @@ import {
   ReadRuntime,
   runAction,
   TrustedPrincipalContextSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { CreatePartyPayloadSchema } from '@app/party-registry/api';
@@ -307,7 +308,7 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['party-registry', 'privacy'],
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: description.privacyContract.deployment,

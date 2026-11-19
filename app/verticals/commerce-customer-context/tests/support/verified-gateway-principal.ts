@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActiveApplicationCompositionService, GatewayAssertionRedemptionService } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  GatewayAssertionRedemptionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot, TrustedPrincipalContext } from '@app/core-runtime';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
@@ -81,6 +85,11 @@ export const makeVerifiedGatewayPrincipals = Effect.fn('VerifiedGatewayPrincipal
         },
         redemption,
       })
-      .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(input.snapshot) }));
+      .pipe(
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(input.snapshot)),
+        ),
+      );
   });
 });

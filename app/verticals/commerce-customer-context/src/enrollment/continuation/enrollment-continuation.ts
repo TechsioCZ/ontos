@@ -1,6 +1,6 @@
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime/modules/active-application-composition';
 import { ApplicationCompositionModuleSchema } from '@app/core-runtime';
@@ -565,8 +565,7 @@ export const CommerceEnrollmentContinuationLive = (
       // approved release, so unrelated modules can change without replacing this process.
       const admit = admissionPermit.withPermit(
         Effect.gen(function* admitContinuationProcess() {
-          const snapshot = yield* authority.load.pipe(
-            Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+          const snapshot = yield* loadActiveApplicationComposition(authority).pipe(
             Effect.mapError((cause) =>
               attemptUnavailable('The continuation awaits a valid Application Composition', undefined, cause),
             ),

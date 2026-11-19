@@ -11,6 +11,7 @@ import {
   TrustedPrincipalContextSchema,
   makeContextPermissionRelationshipMutationLive,
   runAction,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -112,7 +113,7 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
       actionExecutor: 'manager-only',
       actionKeys,
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
-      applicationComposition: { load: Effect.succeed(snapshot) },
+      applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       expectedDeployment: ultramodernDeliveryUnit,

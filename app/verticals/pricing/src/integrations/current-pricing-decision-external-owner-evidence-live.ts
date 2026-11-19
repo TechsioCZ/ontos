@@ -27,7 +27,7 @@ import {
 } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
 import { executePricingCurrentMarketEvidenceWithAuthorization } from '@app/commerce-market-catalog/api/pricing-current-market-evidence-client';
 import type { ActiveApplicationCompositionServiceContract, OperationalScope } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, loadActiveApplicationComposition } from '@app/core-runtime';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
 import {
@@ -828,7 +828,9 @@ const makePromotionReader = (
       );
     }
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const gateway = makePromotionModuleNotInstalledFinalFenceGateway(applicationComposition.load);
+    const gateway = makePromotionModuleNotInstalledFinalFenceGateway(
+      loadActiveApplicationComposition(applicationComposition),
+    );
     yield* gateway
       .verifyOpaqueProofsAgainstCurrentState({
         candidateRef: context.commercialTotal.candidateRef,

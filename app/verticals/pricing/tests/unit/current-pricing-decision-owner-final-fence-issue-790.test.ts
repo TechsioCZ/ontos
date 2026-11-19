@@ -25,7 +25,11 @@ import {
   PricingContractualDiscountSetPredicateSchema,
   pricingContractualDiscountSetPredicateRef,
 } from '@app/pricing-contracts/domain/contractual-discount-set';
-import { ActiveApplicationCompositionService, ActiveApplicationCompositionUnavailableError } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionUnavailableError,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 
 import {
@@ -1328,11 +1332,14 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         const context = yield* Layer.build(
           pricingCurrentDecisionOwnerFinalFenceGatewaysLive.pipe(
             Layer.provide(
-              Layer.succeed(ActiveApplicationCompositionService, {
-                load: Effect.fail(
-                  new ActiveApplicationCompositionUnavailableError({ reason: 'Composition unavailable in test' }),
+              Layer.succeed(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(
+                  Effect.fail(
+                    new ActiveApplicationCompositionUnavailableError({ reason: 'Composition unavailable in test' }),
+                  ),
                 ),
-              }),
+              ),
             ),
           ),
         );
@@ -1381,9 +1388,12 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         const context = yield* Layer.build(
           live.pipe(
             Layer.provide(
-              Layer.succeed(ActiveApplicationCompositionService, {
-                load: Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Unused in this test' })),
-              }),
+              Layer.succeed(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(
+                  Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Unused in this test' })),
+                ),
+              ),
             ),
           ),
         );
@@ -1424,9 +1434,12 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         const context = yield* Layer.build(
           live.pipe(
             Layer.provide(
-              Layer.succeed(ActiveApplicationCompositionService, {
-                load: Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Unused in this test' })),
-              }),
+              Layer.succeed(
+                ActiveApplicationCompositionService,
+                makeActiveApplicationCompositionService(
+                  Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'Unused in this test' })),
+                ),
+              ),
             ),
           ),
         );

@@ -1,4 +1,4 @@
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -324,7 +324,10 @@ it.effect('resolves through a delegated Assertion subject and the authorized Par
 
     expect(
       yield* resolve({ counterpartyResourceId, tenantId }).pipe(
-        Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
         Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       ),
     ).toEqual({
@@ -379,7 +382,10 @@ it.effect('fails closed when the delegated admission is refused, before any Part
       acquire: failingDelegatedAcquire('Shell refused the delegated admission'),
       crypto: testCrypto,
     })({ counterpartyResourceId, tenantId }).pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       Effect.flip,
     );
@@ -405,13 +411,16 @@ it.effect('rejects an expired server composition before requesting any admission
       },
       crypto: testCrypto,
     })({ counterpartyResourceId, tenantId }).pipe(
-      Effect.provideService(ActiveApplicationCompositionService, {
-        load: Effect.succeed({
-          ...snapshot,
-          observedAt: DateTime.makeUnsafe(Date.parse(now) - 2000),
-          validUntil: DateTime.makeUnsafe(Date.parse(now) - 1000),
-        }),
-      }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(
+          Effect.succeed({
+            ...snapshot,
+            observedAt: DateTime.makeUnsafe(Date.parse(now) - 2000),
+            validUntil: DateTime.makeUnsafe(Date.parse(now) - 1000),
+          }),
+        ),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       Effect.flip,
     );
@@ -439,12 +448,45 @@ it.effect('rejects a mismatched admitted revision before the Party read', () =>
       },
       crypto: testCrypto,
     })({ counterpartyResourceId, tenantId }).pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       Effect.flip,
     );
     expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
     expect(admissions).toBe(1);
+    expect(reads).toBe(0);
+  }),
+);
+
+it.effect('rejects a composition whose lease ends while the Party credential is issued', () =>
+  Effect.gen(function* leaseEndsDuringAdmission() {
+    yield* TestClock.setTime(Date.parse(now));
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    let reads = 0;
+    const fakeFetch: typeof fetch = () => {
+      reads += 1;
+      return Promise.resolve(Response.json({}));
+    };
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver(serverScope, {
+      acquire: () =>
+        TestClock.setTime(DateTime.toEpochMillis(snapshot.validUntil)).pipe(
+          Effect.as(
+            issuedDelegatedContext({ compositionRevision: snapshot.composition.revision, token: 'late-assertion' }),
+          ),
+        ),
+      crypto: testCrypto,
+    })({ counterpartyResourceId, tenantId }).pipe(
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
     expect(reads).toBe(0);
   }),
 );
@@ -473,7 +515,10 @@ it.effect('preserves a denied public Party read as a dependency failure after ad
         Effect.succeed(issuedDelegatedContext({ compositionRevision: snapshot.composition.revision, token: 'fresh' })),
       crypto: testCrypto,
     })({ counterpartyResourceId, tenantId }).pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       Effect.flip,
     );

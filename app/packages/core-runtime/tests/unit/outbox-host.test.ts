@@ -4,7 +4,10 @@ import { TestClock } from 'effect/testing';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
-import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { OntosOutboxSubscriptionContractSchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -305,12 +308,15 @@ it.effect('admits a fresh revision each cycle without restarting an unchanged co
       claimOwnerPrefix: 'worker-fixture',
       expectedDeployment,
       layer: Layer.merge(
-        Layer.succeed(ActiveApplicationCompositionService, {
-          load: Effect.suspend(() => {
-            loads += 1;
-            return freshOutboxWorkerCompositionSnapshot(activeComposition);
-          }),
-        }),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(
+            Effect.suspend(() => {
+              loads += 1;
+              return freshOutboxWorkerCompositionSnapshot(activeComposition);
+            }),
+          ),
+        ),
         observedRuntimeLayer(loop, (input) =>
           runCycleFor(loop)(input).pipe(
             Effect.andThen(Ref.update(revisions, (observed) => [...observed, input.compositionRevision])),
@@ -361,20 +367,23 @@ it.effect('keeps health alive during an authority outage and admits later revisi
         ),
       ).pipe(
         Layer.merge(
-          Layer.succeed(ActiveApplicationCompositionService, {
-            load: Effect.suspend(() => {
-              loads += 1;
-              return Deferred.succeed(firstLoad, null).pipe(
-                Effect.andThen(
-                  available
-                    ? freshOutboxWorkerCompositionSnapshot(activeComposition)
-                    : Effect.fail(
-                        new ActiveApplicationCompositionUnavailableError({ reason: 'Initial source is absent' }),
-                      ),
-                ),
-              );
-            }),
-          }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(
+              Effect.suspend(() => {
+                loads += 1;
+                return Deferred.succeed(firstLoad, null).pipe(
+                  Effect.andThen(
+                    available
+                      ? freshOutboxWorkerCompositionSnapshot(activeComposition)
+                      : Effect.fail(
+                          new ActiveApplicationCompositionUnavailableError({ reason: 'Initial source is absent' }),
+                        ),
+                  ),
+                );
+              }),
+            ),
+          ),
         ),
       ),
       registrations: [registration],
@@ -442,9 +451,12 @@ it.effect('blocks new claims when a later revision changes this owner build', ()
         ),
       ).pipe(
         Layer.merge(
-          Layer.succeed(ActiveApplicationCompositionService, {
-            load: Effect.suspend(() => freshOutboxWorkerCompositionSnapshot(activeComposition)),
-          }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(
+              Effect.suspend(() => freshOutboxWorkerCompositionSnapshot(activeComposition)),
+            ),
+          ),
         ),
       ),
       registrations: [registration],
@@ -532,20 +544,23 @@ it.effect('rejects a stale compiled owner when initial authority recovers withou
       expectedDeployment: { ...expectedDeployment, buildMarker: 'retired-worker-build' },
       layer: observedRuntimeLayer(loop).pipe(
         Layer.merge(
-          Layer.succeed(ActiveApplicationCompositionService, {
-            load: Effect.suspend(() => {
-              loads += 1;
-              return Deferred.succeed(firstLoad, null).pipe(
-                Effect.andThen(
-                  loads === 1
-                    ? Effect.fail(
-                        new ActiveApplicationCompositionUnavailableError({ reason: 'Initial source is absent' }),
-                      )
-                    : freshOutboxWorkerCompositionSnapshot(workerComposition),
-                ),
-              );
-            }),
-          }),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(
+              Effect.suspend(() => {
+                loads += 1;
+                return Deferred.succeed(firstLoad, null).pipe(
+                  Effect.andThen(
+                    loads === 1
+                      ? Effect.fail(
+                          new ActiveApplicationCompositionUnavailableError({ reason: 'Initial source is absent' }),
+                        )
+                      : freshOutboxWorkerCompositionSnapshot(workerComposition),
+                  ),
+                );
+              }),
+            ),
+          ),
         ),
       ),
       registrations: [registration],
@@ -593,17 +608,20 @@ it.effect('blocks claims and remains cancellable while injected authority is exp
         expectedDeployment,
         layer: observedRuntimeLayer(loop).pipe(
           Layer.merge(
-            Layer.succeed(ActiveApplicationCompositionService, {
-              load: Ref.update(loads, (value) => value + 1).pipe(
-                Effect.andThen(Deferred.succeed(firstLoad, null)),
-                Effect.andThen(Clock.currentTimeMillis),
-                Effect.map((now) => ({
-                  composition,
-                  observedAt: DateTime.makeUnsafe(now - 200),
-                  validUntil: DateTime.makeUnsafe(defect === 'expired' ? now - 100 : now + 1000),
-                })),
+            Layer.succeed(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(
+                Ref.update(loads, (value) => value + 1).pipe(
+                  Effect.andThen(Deferred.succeed(firstLoad, null)),
+                  Effect.andThen(Clock.currentTimeMillis),
+                  Effect.map((now) => ({
+                    composition,
+                    observedAt: DateTime.makeUnsafe(now - 200),
+                    validUntil: DateTime.makeUnsafe(defect === 'expired' ? now - 100 : now + 1000),
+                  })),
+                ),
               ),
-            }),
+            ),
           ),
         ),
         registrations: [registration],

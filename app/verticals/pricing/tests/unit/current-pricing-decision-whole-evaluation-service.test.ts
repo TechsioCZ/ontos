@@ -23,7 +23,7 @@ import { makeCurrentPricingDecisionWholeComposition } from '../../src/integratio
 import { makePricingExternalOwnerEvidenceValidationService } from '../../src/services/external-owner-evidence-validation.service.ts';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { TrustedPrincipalContextSchema, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import type { PricingEvaluationAttempt } from '@app/pricing-contracts/domain/material-change';
 import {
   PricingEvaluationAttemptSchema,
@@ -994,7 +994,7 @@ for (const variant of [
           tenantId: decision.tenantId,
         },
         {
-          applicationComposition: { load: Effect.succeed(activeComposition) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(activeComposition)),
           catalog: catalogContract1225(questions, inputs),
           customerContext: {
             acquire: () => Effect.die('Guest must not request Profile credential'),

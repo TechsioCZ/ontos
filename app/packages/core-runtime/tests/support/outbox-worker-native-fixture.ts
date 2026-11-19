@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { Option } from 'effect';
 import type { Effect } from 'effect';
 
@@ -104,7 +105,7 @@ export const makeNativeOutboxWorkerFixture = (
     contracts,
     `native-worker-fixture-shell-${options.buildSuffix ?? 'original'}`,
   );
-  const authority = { load: freshOutboxWorkerCompositionSnapshot(composition) };
+  const authority = makeActiveApplicationCompositionService(freshOutboxWorkerCompositionSnapshot(composition));
   const bind = <Value, Failure, Requirements>(
     actual: readonly AnyOutboxWorkerRegistration[],
     effect: Effect.Effect<Value, Failure, Requirements>,

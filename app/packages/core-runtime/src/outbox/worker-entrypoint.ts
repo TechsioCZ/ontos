@@ -40,6 +40,9 @@ export { readModuleOperationRequirement, requireModuleOperation } from '../modul
 export {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+  loadCheckedActiveApplicationComposition,
+  requireLiveActiveApplicationCompositionLease,
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 export { ApplicationCompositionSchema } from '../modules/application-composition.ts';

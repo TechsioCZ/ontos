@@ -12,6 +12,7 @@ import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
   ReadRuntime,
+  loadActiveApplicationComposition,
   loadDatabaseConnectionPair,
   makeActiveApplicationCompositionLayer,
   validateActiveApplicationCompositionSnapshot,
@@ -345,7 +346,7 @@ const GatewayPrivateJwkSchema = Schema.Struct({
 const makeProductionAssertion = (audience = 'price-group-catalog') =>
   Effect.gen(function* signConfiguredPriceGroupReadAssertion() {
     const snapshot = yield* ActiveApplicationCompositionService.pipe(
-      Effect.flatMap((service) => service.load),
+      Effect.flatMap(loadActiveApplicationComposition),
       Effect.provide(
         ActiveApplicationCompositionConfigLive.pipe(
           Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),

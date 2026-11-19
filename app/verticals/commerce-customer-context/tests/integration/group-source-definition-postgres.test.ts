@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { ReadRuntime, ReadPermissionDenied, loadDatabaseConnectionPair, runAction } from '@app/core-runtime';
+import {
+  ReadRuntime,
+  ReadPermissionDenied,
+  loadDatabaseConnectionPair,
+  runAction,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -69,7 +75,7 @@ it.live('commits and recovers source Group definitions through the registered ow
           actionKeys: [createCustomerGroupAction.descriptor.actionKey, updateCustomerGroupAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           allowedAudiences: ['commerce-customer-context'],
-          applicationComposition: { load: Effect.succeed(snapshot) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
           expectedDeployment: ultramodernApiMarker,

@@ -1,5 +1,8 @@
 import { ActiveApplicationCompositionUnavailableError } from '@app/core-runtime';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import {
@@ -3052,19 +3055,22 @@ it.effect('preserves governed execution outcomes and pending recovery without ow
 it.effect('refuses unlisted owner targets before consulting release authority', () =>
   Effect.gen(function* refusesUnlistedReleaseTargets() {
     let lookups = 0;
-    const authority = Layer.succeed(ActiveApplicationCompositionService, {
-      load: Effect.sync(() => {
-        lookups += 1;
-      }).pipe(
-        Effect.andThen(
-          Effect.fail(
-            new ActiveApplicationCompositionUnavailableError({
-              reason: 'Fixture has no configured Symmy executable',
-            }),
+    const authority = Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        Effect.sync(() => {
+          lookups += 1;
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ActiveApplicationCompositionUnavailableError({
+                reason: 'Fixture has no configured Symmy executable',
+              }),
+            ),
           ),
         ),
       ),
-    });
+    );
     const relayOrigin = 'https://symmy-owner-relay.invalid';
     const denied = [
       `https://foreign.example.test${releasePath}/symmy-integration/actions/admit-symmy-job`,

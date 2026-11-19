@@ -2,6 +2,7 @@ import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionUnavailableError,
   OntosModuleDeploymentContractSchema,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import {
@@ -163,13 +164,16 @@ const makeHarness = Effect.fn('DriverTest.harness')(function* makeHarness(option
   const snapshot: Effect.Effect<ActiveApplicationCompositionSnapshot, unknown> =
     options.snapshot ?? snapshotFor(DEPLOYMENT.buildMarker);
   const layer = Layer.mergeAll(
-    Layer.succeed(ActiveApplicationCompositionService, {
-      load: snapshot.pipe(
-        Effect.mapError(
-          (cause) => new ActiveApplicationCompositionUnavailableError({ cause, reason: 'Fake authority' }),
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(
+        snapshot.pipe(
+          Effect.mapError(
+            (cause) => new ActiveApplicationCompositionUnavailableError({ cause, reason: 'Fake authority' }),
+          ),
         ),
       ),
-    }),
+    ),
     Layer.succeed(
       GatewayReconciliationDueSource,
       GatewayReconciliationDueSource.of({
@@ -480,7 +484,10 @@ it.effect('#1158 a failing listing or purge is reported and never fails the tick
     const calls = yield* Ref.make(0);
     const snapshot = yield* snapshotFor(DEPLOYMENT.buildMarker);
     const layer = Layer.mergeAll(
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
       Layer.succeed(GatewayReconciliationDueSource, {
         listDue: () => Effect.fail(new GatewayReconciliationDueUnavailable({ reason: 'listing down' })),
         purgeExpiredPayerContacts: () => Effect.fail(new GatewayReconciliationDueUnavailable({ reason: 'purge down' })),

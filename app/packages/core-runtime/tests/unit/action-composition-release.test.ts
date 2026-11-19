@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { Effect, Ref, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -24,7 +25,7 @@ it.effect('never relabels an admitted gateway request after membership changes w
     expect(first.composition.shell.deployment).toEqual(replacement.composition.shell.deployment);
     const active = yield* Ref.make(first);
     const resolve = makeActionCompositionRevisionResolver(
-      { load: Ref.get(active) },
+      makeActiveApplicationCompositionService(Ref.get(active)),
       first.composition.shell.deployment,
     );
     const admitted = trustVerifiedGatewayPrincipalContext(principal, first.composition.revision);
@@ -42,7 +43,7 @@ it.effect('rejects an old owner artifact even when a cold process observes the n
     yield* TestClock.setTime(Date.parse('2026-10-02T16:00:00.000Z'));
     const snapshot = yield* makeApplicationCompositionSnapshotFixture(['party-registry'], 'approved-build');
     const resolve = makeActionCompositionRevisionResolver(
-      { load: Effect.succeed(snapshot) },
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
       { appId: 'party-registry', buildMarker: 'old-build' },
     );
     const failure = yield* resolve(principal).pipe(Effect.flip);

@@ -1,3 +1,4 @@
+import { makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { FetchHttpClient } from 'effect/http';
 import {
   PricingCurrentMarketEvidenceRequestSchema,
@@ -307,7 +308,7 @@ it.effect('actual Catalog reader acquires a fresh credential for compatibility a
         tenantId: input.request.decision.tenantId,
       },
       {
-        applicationComposition: { load: Effect.never },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.never),
         catalog: {
           acquire: () =>
             Effect.sync(() => {
@@ -434,7 +435,7 @@ it.effect('actual Catalog reader reaches compatibility with a later unchanged ow
         tenantId: input.request.decision.tenantId,
       },
       {
-        applicationComposition: { load: Effect.never },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.never),
         catalog: {
           acquire: () =>
             Effect.sync(() => {

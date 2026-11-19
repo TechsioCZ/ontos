@@ -20,6 +20,7 @@ import {
   makeActionRuntimeLive,
   makeReadRuntimeLive,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
@@ -323,7 +324,10 @@ export const nativeGovernedRuntimes = (
     OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, enforcement))),
     enforcement,
   );
-  const composition = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  const composition = Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+  );
   return Layer.mergeAll(
     makeActionRuntimeLive(ultramodernDeliveryUnit, owner).pipe(
       Layer.provide(

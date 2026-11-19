@@ -20,6 +20,7 @@ import { ApplicationCompositionAuthorityError } from '../../packages/core-runtim
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../../packages/core-runtime/src/modules/manifest.ts';
 import {
@@ -210,7 +211,10 @@ const fixture = Effect.gen(function* deadDeliveryDrainFixture() {
     expectedDeployment: contract.deployment,
     layer: Layer.mergeAll(
       Layer.succeed(OutboxRuntime, makeOutboxRuntime(repository)),
-      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(
+        ActiveApplicationCompositionService,
+        makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+      ),
     ),
     registrations: workers,
     subscriptions,

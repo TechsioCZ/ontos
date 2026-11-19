@@ -8,6 +8,7 @@ import { expect, it } from 'effect-rstest';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { ActiveApplicationCompositionSource } from '../../packages/core-runtime/src/modules/active-application-composition-source-service.ts';
@@ -395,7 +396,7 @@ it.live('layer acquisition is independent of absent, unavailable, and malformed 
       );
       const unavailable = yield* Effect.flip(
         ActiveApplicationCompositionService.pipe(
-          Effect.flatMap(({ load }) => load),
+          Effect.flatMap(loadActiveApplicationComposition),
           Effect.provide(runtime),
           Effect.provideService(FetchHttpClient.Fetch, authorityFetch),
         ),

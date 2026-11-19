@@ -19,6 +19,7 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -330,7 +331,10 @@ export const privacyDsrOwnerRuntimeLive = (snapshot: ActiveApplicationCompositio
             gate,
             gateway,
             scope,
-            Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+            Layer.succeed(
+              ActiveApplicationCompositionService,
+              makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+            ),
           ),
         ),
       );

@@ -2,7 +2,7 @@ import { delegationSubject } from '../services/order-module-call.ts';
 import type { OrderFinalizationCall } from '../services/order-module-call.ts';
 import {
   ActiveApplicationCompositionService,
-  validateActiveApplicationCompositionSnapshot,
+  loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   FinalCartCandidateRequestSchema,
@@ -209,10 +209,7 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
       if (Option.isNone(configured)) {
         return yield* unavailable();
       }
-      const active = yield* composition.load.pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.mapError(unavailable),
-      );
+      const active = yield* loadActiveApplicationComposition(composition).pipe(Effect.mapError(unavailable));
       const issued = yield* acquireDelegatedGatewayContext(
         {
           audience,

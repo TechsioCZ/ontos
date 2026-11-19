@@ -4,6 +4,7 @@ import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionUnavailableError,
   DatabaseConfig,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -108,18 +109,21 @@ describe('generated Promotion receiving HTTP boundary', () => {
         fixture.layer,
         Layer.succeed(ActionRuntime, fixture.actionRuntime),
         verifier,
-        Layer.succeed(ActiveApplicationCompositionService, {
-          load: Effect.suspend(() =>
-            compositionSource.available
-              ? Effect.succeed(test.authority.snapshot)
-              : Effect.fail(
-                  new ActiveApplicationCompositionUnavailableError({
-                    cause: new Error('controlled private source diagnostic'),
-                    reason: 'Native source outage',
-                  }),
-                ),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(
+            Effect.suspend(() =>
+              compositionSource.available
+                ? Effect.succeed(test.authority.snapshot)
+                : Effect.fail(
+                    new ActiveApplicationCompositionUnavailableError({
+                      cause: new Error('controlled private source diagnostic'),
+                      reason: 'Native source outage',
+                    }),
+                  ),
+            ),
           ),
-        }),
+        ),
         GatewayAssertionRedemptionLive.pipe(Layer.provide(database)),
       );
       const api = HttpApi.make('PromotionApi')

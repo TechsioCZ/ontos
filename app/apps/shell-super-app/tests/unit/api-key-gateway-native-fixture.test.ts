@@ -465,13 +465,13 @@ it.effect(
       ).toBe(failure);
       const observed = yield* Ref.make<readonly string[]>([]);
       expect(
-        yield* withShellGatewayReleaseDiagnostic('catalog_invalid', Effect.succeed(value)).pipe(
+        yield* withShellGatewayReleaseDiagnostic('composition_revision_mismatch', Effect.succeed(value)).pipe(
           Effect.provideService(ShellGatewayReleaseObserver, (reason) =>
             Ref.update(observed, (previous) => [...previous, reason]),
           ),
         ),
       ).toBe(value);
-      expect(yield* Ref.get(observed)).toEqual(['catalog_invalid']);
+      expect(yield* Ref.get(observed)).toEqual(['composition_revision_mismatch']);
       for (const observation of [Effect.fail(new ShellGatewayReleaseObservationError()), Effect.die(failure)]) {
         expect(
           yield* withShellGatewayReleaseDiagnostic('catalog_unavailable', Effect.succeed(value)).pipe(
@@ -479,7 +479,7 @@ it.effect(
           ),
         ).toBe(value);
         expect(
-          yield* withShellGatewayReleaseDiagnostic('catalog_invalid', Effect.fail(failure)).pipe(
+          yield* withShellGatewayReleaseDiagnostic('composition_revision_mismatch', Effect.fail(failure)).pipe(
             Effect.provideService(ShellGatewayReleaseObserver, () => observation),
             Effect.flip,
           ),

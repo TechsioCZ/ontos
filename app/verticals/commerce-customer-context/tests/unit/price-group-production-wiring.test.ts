@@ -20,6 +20,7 @@ import {
   applicationCompositionContentRevision,
   extractVerticalRuntimeSafeDescriptors,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { PriceGroupInstantSchema, PriceGroupRefSchema } from '@app/price-group-catalog-contracts';
@@ -317,7 +318,7 @@ it.effect(
       };
       const harness = yield* makeActionTestHarness({
         access: 'allowed',
-        applicationComposition: { load: Effect.succeed(snapshot) },
+        applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
         expectedDeployment: deployment,
         ownerRegistration: commerceCustomerContextRegistration,
         resourcePermission: 'allowed',

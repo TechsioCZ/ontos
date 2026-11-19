@@ -10,6 +10,7 @@ import {
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   validateActiveApplicationCompositionSnapshot,
+  makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Schema } from 'effect';
@@ -269,9 +270,10 @@ export const enrollmentApplicationCompositionSnapshot = makeEnrollmentApplicatio
 export const enrollmentApplicationCompositionRevision = enrollmentApplicationCompositionSnapshot.pipe(
   Effect.map((snapshot) => snapshot.composition.revision),
 );
-export const enrollmentApplicationCompositionLayer = Layer.succeed(ActiveApplicationCompositionService, {
-  load: enrollmentApplicationCompositionSnapshot,
-});
+export const enrollmentApplicationCompositionLayer = Layer.succeed(
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService(enrollmentApplicationCompositionSnapshot),
+);
 
 const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/active';
 

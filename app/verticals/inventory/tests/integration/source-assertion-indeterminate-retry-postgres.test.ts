@@ -3,7 +3,12 @@ import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
-import { GatewayAssertionRedemptionService, GatewayAssertionReplayError, findPostgresFailure } from '@app/core-runtime';
+import {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionReplayError,
+  findPostgresFailure,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import type { OwnerAuthorizationInput } from '@app/core-runtime';
 import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -99,7 +104,7 @@ it.live(
           actionKeys: [importSourceAssertionAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(connections.admin.connectionString),
           allowedAudiences: ['inventory'],
-          applicationComposition: { load: Effect.succeed(composition) },
+          applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           expectedDeployment: ultramodernApiMarker,

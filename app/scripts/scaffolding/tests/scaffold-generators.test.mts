@@ -39,6 +39,7 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
 } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
 import type {
+  makeActiveApplicationCompositionService,
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionServiceContract,
 } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
@@ -383,7 +384,14 @@ type GeneratedOwnerActionHttp = (
   input: Omit<Parameters<ReturnType<typeof ActionHttpRunnerBinding>>[0], 'registration'>,
 ) => Effect.Effect<typeof GeneratedBindingResultSchema.Type, EndpointProblem, unknown>;
 
+type MakeCompositionService = typeof makeActiveApplicationCompositionService;
+
 const GeneratedOwnerActionHarnessModuleSchema = Schema.Struct({
+  // A composition service is read only by the module instance that built it. The generated code runs on the fixture's
+  // own instance of Core Runtime, so the service it reads has to be built by that instance, not by this test's.
+  makeCompositionService: Schema.declare<MakeCompositionService>((value): value is MakeCompositionService =>
+    Predicate.isFunction(value),
+  ),
   makeHarness: Schema.declare<GeneratedOwnerHarnessFactory>((value): value is GeneratedOwnerHarnessFactory =>
     Predicate.isFunction(value),
   ),
@@ -2950,13 +2958,14 @@ it.live(
         yield* write(
           fixture.root,
           'generated-owner-action-harness.mts',
-          `import { getVerticalRuntimeActions, isActionRegistration } from '@app/core-runtime';
+          `import { getVerticalRuntimeActions, isActionRegistration, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { inventoryStockRegistration } from './verticals/inventory-stock/vertical.registration.ts';
 import { ultramodernDeliveryUnit } from './verticals/inventory-stock/shared/ultramodern-build.ts';
 const registration = getVerticalRuntimeActions(inventoryStockRegistration).find(({ descriptor }) => descriptor.actionKey === 'inventory.stock.generated-binding');
 if (registration === undefined || !isActionRegistration(registration)) throw new Error('The generated owner Action is missing or invalid');
 export const moduleId = inventoryStockRegistration.moduleId;
+export const makeCompositionService = makeActiveApplicationCompositionService;
 export const runWithOwnedAction = (runner, input) => runner({ ...input, registration });
 export const makeHarness = (applicationComposition) => makeActionTestHarness({
   access: 'allowed', actionPermission: 'allowed', tenantPermission: 'allowed', applicationComposition,
@@ -3029,7 +3038,7 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
           },
           validity: Duration.hours(1),
         });
-        const compositionService = { load: Effect.succeed(approvedSnapshot) };
+        const compositionService = ownerHarnessModule.makeCompositionService(Effect.succeed(approvedSnapshot));
         const encodedComposition = yield* Schema.encodeEffect(
           Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
         )(approvedSnapshot);

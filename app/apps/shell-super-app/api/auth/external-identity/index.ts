@@ -666,7 +666,6 @@ const captureExternalIdentityRelease = Effect.fn('ExternalIdentityHttp.captureRe
     const authority = yield* ShellInstalledModuleCatalog;
     const catalog = yield* authority.load.pipe(
       Effect.catchTags({
-        InstalledModuleCatalogInvalidError: () => Effect.fail(unavailableProblem()),
         InstalledModuleCatalogUnavailableError: () => Effect.fail(unavailableProblem()),
       }),
     );
