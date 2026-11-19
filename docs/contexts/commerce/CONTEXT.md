@@ -660,7 +660,8 @@ not create the absent translation.
 Product or Variant. At Launch the referenced Resource is a Core Media Asset. Live use follows the
 same Resource's owner-issued Current, subject to applicability and Permission. A compatible revision
 requires no new Catalog approval. Using a different Resource requires an explicit change to the
-Catalog relation. Evidence for an Accepted result retains the exact revision and bytes used.
+Catalog relation. Evidence for an Accepted result pins the exact revision and content used. The file
+stays with its owner.
 
 **Catalog Media Assignment** — Catalog-owned relation recording media Resource, Product/Variant
 applicability, purpose and explicit order. Variant media takes precedence; absent Variant media uses
