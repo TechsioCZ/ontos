@@ -446,11 +446,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
       };
       const rows = [readRow, ...callEvidenceRows([call], base)];
 
-      // A row the installed scope may not write fails the whole settle.
+      // A row PostgreSQL refuses, written after two it accepted, fails the whole settle: its principal
+      // belongs to another tenant, which the (tenant_id, principal_id) foreign key rejects. (A row of
+      // another tenant is not refused: the runtime role's policy on core.data_access_events is open.)
       const mixed = yield* Effect.exit(
         evidence.settle({
           admittedRevision: activeRevision,
-          rows: [...rows, { ...readRow, scope: other.scope }],
+          rows: [...rows, { ...readRow, scope: { ...scope, principalId: other.scope.principalId } }],
           scope,
         }),
       );
