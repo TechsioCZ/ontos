@@ -463,6 +463,8 @@ runs:
     # Shared by both delivery paths. Unconditional: missing proofs or a failed checkout quote fail verification.
     - name: Verify every service and finish the proofs
       shell: bash
+      env:
+        PUSH_N1: ${{ inputs.n1 }}
       working-directory: app
       run: bash scripts/zerops/stage-proofs.sh finish
 

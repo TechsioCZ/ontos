@@ -283,7 +283,7 @@ case "$*" in
     echo oauth-output
     exit "$OAUTH_EXIT"
     ;;
-  *"scripts/ops/stage-n1-checkout.mts quote") echo checkout-output; exit "$CHECKOUT_EXIT" ;;
+  *"scripts/ops/stage-n1-checkout.mts quote "*) echo checkout-output; exit "$CHECKOUT_EXIT" ;;
   *"scripts/zerops/verify-service.mjs "*) echo "service-output $*"; exit "$SERVICE_EXIT" ;;
   *) echo "unexpected mise invocation: $*" >&2; exit 98 ;;
 esac
@@ -312,6 +312,7 @@ for (const scenario of [
   { checkout: 0, name: 'OAuth fails', oauth: 23, services: 0, status: 1, warmup: 0 },
   { checkout: 0, name: 'both fail', oauth: 23, services: 0, status: 1, warmup: 17 },
   { checkout: 0, name: 'a service verification fails', oauth: 0, services: 29, status: 1, warmup: 0 },
+  { checkout: 3, name: 'N1 catalogue has no purchasable fixture', oauth: 0, services: 0, status: 0, warmup: 0 },
   { checkout: 31, name: 'N1 checkout quote fails', oauth: 0, services: 0, status: 1, warmup: 0 },
 ]) {
   for (const app of ['pushed', 'kept'] as const) {
@@ -365,9 +366,12 @@ for (const scenario of [
           OAUTH_EXIT: String(scenario.oauth),
           OAUTH_STARTED: path.join(directory, 'oauth-started'),
           PATH: `${bin}:${yield* Config.String('PATH')}`,
+          PUSH_N1: app === 'pushed' ? 'true' : 'false',
           RUNNER_TEMP: directory,
           SERVICE_EXIT: String(scenario.services),
           SETUP_CALLS: calls,
+          STAGE_N1_BUILD_ID: 'packaged-build',
+          STAGE_N1_URL: 'https://n1.example.test',
           STAGE_SHELL_URL: 'https://shell.example.test',
           WARMUP_EXIT: String(scenario.warmup),
           WARMUP_STARTED: path.join(directory, 'warmup-started'),
@@ -424,7 +428,11 @@ for (const scenario of [
           expect(recorded).toContain(`exec -- node scripts/zerops/verify-service.mjs ${service}`);
         }
         expect(
-          invocations.filter((call) => call === 'exec -- node scripts/ops/stage-n1-checkout.mts quote'),
+          invocations.filter(
+            (call) =>
+              call ===
+              `exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id packaged-build' : ''}`,
+          ),
         ).toHaveLength(1);
         expect(recorded).not.toContain('stage-n1-checkout.mts place');
         expect(recorded).toContain('sudo find ');
@@ -454,9 +462,12 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
             OAUTH_EXIT: '0',
             OAUTH_STARTED: path.join(directory, 'oauth-started'),
             PATH: searchPath,
+            PUSH_N1: 'false',
             RUNNER_TEMP: directory,
             SERVICE_EXIT: '0',
             SETUP_CALLS: path.join(directory, 'calls'),
+            STAGE_N1_BUILD_ID: 'packaged-build',
+            STAGE_N1_URL: 'https://n1.example.test',
             STAGE_SHELL_URL: 'https://shell.example.test',
             WARMUP_EXIT: '0',
             WARMUP_STARTED: path.join(directory, 'warmup-started'),

@@ -28,6 +28,12 @@ mise exec -- pnpm --filter "$package" run typecheck
 # default heap (about 2 GiB), so the build gets 4 GiB of the runner's 16 GB. AKROS gets the same.
 if [ "$package" = akros-storefront ]; then export STOREFRONT_IMAGE_HOSTS=''; fi
 NODE_OPTIONS=--max-old-space-size=4096 mise exec -- pnpm --filter "$package" run build
+# Identity of the exact Next output packaged below, not the workflow commit or a separate build.
+if [ "$setup" = n1 ]; then
+  build_id="$(cat "$package/.next/BUILD_ID")"
+  test -n "$build_id"
+  printf 'STAGE_N1_BUILD_ID=%s\n' "$build_id" >>"${GITHUB_ENV:?GITHUB_ENV is required}"
+fi
 
 # The archive unpacks to app/.zerops/runtime/<package> on Zerops, where `start` runs <package>/server.js. Zerops runs
 # Alpine (musl) and this runner is glibc: a native addon would load on neither side safely, so any `.node` file fails

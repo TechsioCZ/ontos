@@ -64,6 +64,7 @@ verify_services() {
 
 finish() {
   local verified=0 checkout=0 warmup oauth
+  local checkout_args=(--origin "${STAGE_N1_URL:?STAGE_N1_URL is required}")
   if [ ! -d "$state" ]; then
     echo '::error::the warm-up and the MCP OAuth proof never started in this job'
     return 1
@@ -72,7 +73,12 @@ finish() {
   # All selected services are live here in both delivery paths. Quote never confirms a stock-debiting order.
   E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
   export E2E_PLAYWRIGHT_MODULE
-  mise exec -- node scripts/ops/stage-n1-checkout.mts quote >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 || checkout=$?
+  if [ "${PUSH_N1:-false}" = true ]; then
+    checkout_args+=(--expect-build-id "${STAGE_N1_BUILD_ID:?packaged N1 build id is required}")
+  else
+    echo 'N1 kept: quote proves the currently served build and live owner contract, not this commit.'
+  fi
+  mise exec -- node scripts/ops/stage-n1-checkout.mts quote "${checkout_args[@]}" >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 || checkout=$?
   until [ -e "$state/warmup.status" ] && [ -e "$state/oauth.status" ]; do sleep 1; done
   warmup="$(cat "$state/warmup.status")"
   oauth="$(cat "$state/oauth.status")"
@@ -87,9 +93,15 @@ finish() {
   echo '::group::N1 checkout quote'
   cat "$E2E_OUT_DIR/n1-checkout.log"
   echo "N1 checkout quote exit: $checkout"
+  # An empty/out-of-stock demo catalogue cannot prove checkout, but must not mark an unrelated healthy
+  # deployment broken. It is loud and distinct (3); service verification still owns catalogue readiness.
+  # Broken transport/contracts/build identity (1) always fail delivery, after pushes, without rollback.
+  if [ "$checkout" -eq 3 ]; then
+    echo '::warning title=N1 checkout not proved::No purchasable fixture on stage; catalogue/stock needs attention. Deployment remains valid; checkout coverage is missing.'
+  fi
   echo '::endgroup::'
   echo "Service verification exit: $verified"
-  test "$verified" -eq 0 && test "$checkout" -eq 0 && test "$warmup" -eq 0 && test "$oauth" -eq 0
+  test "$verified" -eq 0 && { test "$checkout" -eq 0 || test "$checkout" -eq 3; } && test "$warmup" -eq 0 && test "$oauth" -eq 0
 }
 
 case "${1:-}" in

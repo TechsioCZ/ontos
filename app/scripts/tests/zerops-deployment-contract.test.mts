@@ -872,3 +872,18 @@ it('counts a module as a caller by its declared requirement callers or registere
   ).toBe(true);
   expect(declaresModuleCalls({ registeredWorkloadCalls: [{ workloadKey: 'commerce.catalog.read' }] })).toBe(true);
 });
+
+it('binds N1 pushes to the packaged Next build and configured origin, not an unrelated app commit', () => {
+  const build = readFileSync(new URL('../zerops/build-storefront.sh', import.meta.url), 'utf-8');
+  expect(build).toContain('build_id="$(cat "$package/.next/BUILD_ID")"');
+  expect(build).toContain(String.raw`printf 'STAGE_N1_BUILD_ID=%s\n'`);
+  expect(build.indexOf('STAGE_N1_BUILD_ID')).toBeLessThan(build.indexOf('mv "$package/.next/standalone"'));
+  const finish = deliverySteps().find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
+  expect(finish?.env?.PUSH_N1).toBe(`\${{ inputs.n1 }}`);
+  const proofs = readFileSync(stageProofsPath, 'utf-8');
+  expect(proofs).toContain(`checkout_args=(--origin "\${STAGE_N1_URL:?STAGE_N1_URL is required}")`);
+  expect(proofs).toContain(`if [ "\${PUSH_N1:-false}" = true ]; then`);
+  expect(proofs).toContain(`--expect-build-id "\${STAGE_N1_BUILD_ID:?packaged N1 build id is required}"`);
+  expect(proofs).toContain('N1 kept: quote proves the currently served build');
+  expect(proofs).not.toContain('--expect-build-id "$GITHUB_SHA"');
+});
