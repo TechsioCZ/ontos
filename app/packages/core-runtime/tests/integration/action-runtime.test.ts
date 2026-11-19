@@ -781,6 +781,7 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
             replayExecutions += 1;
           },
         }),
+        savedReply: 'answer',
         transport: transport(key, moduleStateKey),
       });
       const [replayStates, replayInvocations, replayAudits, replayAccesses, replayEvents, replayMessages] =
@@ -917,6 +918,7 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
             mode: 'commit-reject',
             moduleStateKey,
           }),
+          savedReply: 'answer',
           transport: transport(key, moduleStateKey),
         }),
       );
@@ -1470,6 +1472,7 @@ const testProgram9 = () =>
       const sharedInput = {
         payload: { value: 'same' },
         principal,
+        savedReply: 'answer' as const,
         transport: transport(key, moduleStateKey),
       };
 
@@ -1531,6 +1534,7 @@ const testProgram10 = () =>
           },
           onExecuteEffect: Deferred.succeed(handlerStarted, null),
         }),
+        savedReply: 'answer' as const,
         transport: transport(concurrentKey, concurrentModule),
       };
       const firstAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(Effect.forkChild);
@@ -1804,6 +1808,7 @@ const testProgram12 = () =>
         payload: { value: 'committed-with-lost-ack' },
         principal,
         registration: actionRegistration,
+        savedReply: 'answer',
         transport: transport(key, moduleStateKey),
       });
       const states = yield* database.executor
@@ -1832,6 +1837,7 @@ const testProgram12 = () =>
           payload: { value: 'committed-with-lost-ack' },
           principal,
           registration: actionRegistration,
+          savedReply: 'answer',
           transport: transport(key, moduleStateKey),
         }),
       );

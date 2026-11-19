@@ -609,20 +609,24 @@ describe('Pricing management Actions acceptance', () => {
         registration: setSupportedCurrenciesAction,
         transport: { correlationId: 'currency-support-first-create', idempotencyKey: 'currency-support:create' },
       } as const;
-      const [first, second] = yield* Effect.all(
+      const outcomes = yield* Effect.forEach(
         [harness.runtime.runAction(request), harness.runtime.runAction(request)],
-        {
-          concurrency: 'unbounded',
-        },
+        (operation) =>
+          operation.pipe(
+            Effect.match({
+              onFailure: (failure) =>
+                Predicate.isTagged(failure, 'ActionAlreadyCommitted') ? 'already_committed' : 'unexpected_failure',
+              onSuccess: () => 'business_result',
+            }),
+          ),
+        { concurrency: 'unbounded' },
       );
 
-      // The loser is answered with the reply Core saved with the winner's commit.
-      expect(first).toEqual(supportResult);
-      expect(second).toEqual(first);
+      expect(outcomes).toContain('business_result');
+      expect(outcomes).toContain('already_committed');
       expect(writes).toBe(1);
       expect(harness.snapshot().committed).toHaveLength(1);
-      // One write transaction, plus the loser's scoped read of the saved reply.
-      expect(harness.snapshot().transactionCount).toBe(2);
+      expect(harness.snapshot().transactionCount).toBe(1);
     }),
   );
 

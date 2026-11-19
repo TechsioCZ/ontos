@@ -2,6 +2,7 @@ import { privacyRegistration } from '../../vertical.registration.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import {
+  ActionAlreadyCommitted,
   ActiveApplicationCompositionSnapshotSchema,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
@@ -726,8 +727,8 @@ it.live(
         const retained = yield* native.read();
         expect(retained.items[0].responses).toEqual([interim, final]);
         const beforeReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
-        const replay = yield* native.respond(true, finalKey, native.evidenceRef);
-        expect(replay).toEqual(final);
+        const replay = yield* native.respond(true, finalKey, native.evidenceRef).pipe(Effect.flip);
+        expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
         const afterReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
         expect(afterReplay.invocations).toEqual(beforeReplay.invocations);
         expect(afterReplay.audits).toEqual(beforeReplay.audits);

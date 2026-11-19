@@ -473,17 +473,7 @@ it.live('#1148 the same intent key recovers the same Payment; a changed meaning 
       const coreKey = randomUUID();
       const created = yield* scenario.create(payload, coreKey);
 
-      // Same Core key + same request: Core answers the saved reply of the committed invocation; nothing runs again.
-      const sameKey = yield* scenario.create(payload, coreKey);
-      expect(sameKey.replayed).toBe(false);
-      expect(sameKey.payment.paymentId).toBe(created.payment.paymentId);
-      expect(sameKey.payment.provenance).toStrictEqual(created.payment.provenance);
-      // Same Core key + different request: a request-hash conflict, never a second execution.
-      expect(
-        yield* failureCodeOf(
-          scenario.create({ ...payload, payableAmount: { amountMinor: 120_000, currency: 'CZK' } }, coreKey),
-        ),
-      ).toBe('action_request_hash_conflict');
+      expect(yield* failureCodeOf(scenario.create(payload, coreKey))).toBe('action_already_committed');
       const recovered = yield* scenario.create(payload);
       expect(recovered.replayed).toBe(true);
       expect(recovered.payment.paymentId).toBe(created.payment.paymentId);
@@ -1382,7 +1372,7 @@ it.live('#1148 Retrying a collection: an INDETERMINATE COLLECT replayed by a new
 );
 
 it.live(
-  '#1148 A new Core invocation recovers the same business operation; the same Core key answers the saved reply',
+  '#1148 A new Core invocation recovers the same business operation; the same Core key is an already-committed replay',
   () =>
     runNative(
       Effect.gen(function* coreKeyVersusNewInvocation() {
@@ -1391,11 +1381,12 @@ it.live(
         const coreKey = randomUUID();
         const original = yield* scenario.collect(request('collect-e'), coreKey);
 
-        // Same Core idempotency key + same request: Core answers the saved reply of the committed invocation.
-        const sameKey = yield* scenario.collect(request('collect-e'), coreKey);
-        expect(sameKey.replayed).toBe(original.replayed);
-        expect(sameKey.operation.operationId).toBe(original.operation.operationId);
-        expect(sameKey.operation.provenance).toStrictEqual(original.operation.provenance);
+        // Same Core idempotency key + same request: Core answers from the committed invocation.
+        const sameKey = yield* Effect.flip(scenario.collect(request('collect-e'), coreKey));
+        expect(sameKey).toMatchObject({
+          code: 'action_already_committed',
+          invocationId: original.operation.provenance.actionInvocationId,
+        });
         // Same Core key + different request: a request-hash conflict, never a second execution.
         expect(yield* failureCodeOf(scenario.collect(request('collect-other'), coreKey))).toBe(
           'action_request_hash_conflict',

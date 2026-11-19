@@ -908,10 +908,9 @@ it.layer(NodeServices.layer)('access approvals canonical owner over live intent 
         });
         expect((yield* invocationReceipt(admin, mandateId))?.status).toBe('succeeded');
 
-        // A committed retry answers the saved reply instead of writing the owner a second time.
-        expect(yield* runtime.runAction(mandateRequest(eva, mandateId))).toEqual(result);
+        // A committed retry answers the receipt instead of writing the owner a second time.
+        expect(yield* refusalOf(runtime.runAction(mandateRequest(eva, mandateId)))).toBe('action_already_committed');
         expect(yield* brandCount(admin)).toBe(1);
-        expect((yield* proposalReceipt(admin, parked.proposalId))?.status).toBe('executed');
       }),
     ),
   );

@@ -78,8 +78,8 @@ it.effect('registered dispatch emits one linked event and targeted message only 
     expect(committed[1]?.evidence.domainEvents).toEqual([]);
     expect(committed[1]?.evidence.outboxMessages).toEqual([]);
     expect(calls).toBe(2);
-    // A same-key retry gets Core's saved reply without reaching the owner or emitting evidence.
-    expect(yield* harness.runtime.runAction(request('transport:1'))).toEqual(handoff);
+    const replay = yield* Effect.result(harness.runtime.runAction(request('transport:1')));
+    expect(replay).toMatchObject({ failure: { _tag: 'ActionAlreadyCommitted' } });
     expect(calls).toBe(2);
     expect(harness.snapshot().committed).toHaveLength(2);
   }).pipe(Effect.provide(NodeCrypto.layer)),

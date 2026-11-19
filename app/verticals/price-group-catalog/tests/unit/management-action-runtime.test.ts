@@ -10,7 +10,6 @@ import {
 } from '../../../../packages/core-runtime/src/index.ts';
 import { defineAction, getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type {
-  ActionCommittedReplyJson,
   ActionInvocationRecord,
   ActionRepositoryService,
   FlushActionSuccessInput,
@@ -264,13 +263,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     requestHash: '',
     status: 'received',
   };
-  // The reply Core saves with the success, bound like the real row to its tenant and principal.
-  let savedReply: Option.Option<{
-    readonly principalId: string;
-    readonly reply: ActionCommittedReplyJson | null;
-    readonly tenantId: string;
-  }> = Option.none();
-  const loadCommittedReplyInputs: Parameters<ActionRepositoryService['loadCommittedReply']>[1][] = [];
 
   const repository: ActionRepositoryService = {
     createOrResolveInvocation: (_executor, input) => {
@@ -292,11 +284,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       }
       successfulFlushes.push(input);
-      savedReply = Option.some({
-        principalId: input.principal.principalId,
-        reply: input.committedReply,
-        tenantId: input.principal.tenantId,
-      });
       currentInvocation = {
         ...currentInvocation,
         completedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-23T12:00:00.000Z')),
@@ -304,22 +291,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       };
       return Effect.void;
     },
-    loadCommittedReply: (_executor, input) => {
-      loadCommittedReplyInputs.push(input);
-      return Effect.succeed(
-        savedReply.pipe(
-          Option.filter(
-            (saved) =>
-              currentInvocation.status === 'succeeded' &&
-              input.actionInvocationId === currentInvocation.actionInvocationId &&
-              input.requestHash === currentInvocation.requestHash &&
-              input.principal.tenantId === saved.tenantId &&
-              input.principal.principalId === saved.principalId,
-          ),
-          Option.flatMap((saved) => Option.fromNullishOr(saved.reply)),
-        ),
-      );
-    },
+    loadCommittedReply: () => Effect.succeedNone,
     loadRecordedRejection: () => Effect.succeed(Option.some({ stage: 'authz' as const })),
     lockInvocation: () => Effect.succeed(currentInvocation),
     rejectPermissionDenied: () => {
@@ -539,7 +511,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   return {
     askedCapabilities: () =>
       accessGate.accessDecision.askedDecisions.map((one) => one.carrier.accessDeclaration?.key ?? '<missing>'),
-    committedRequestHash: () => currentInvocation.requestHash,
     counts: () => ({
       commitCount,
       createInvocationCount,
@@ -548,7 +519,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       serviceResolutionCount,
     }),
     flushAttempts,
-    loadCommittedReplyInputs,
     resolveCommit: () => runtime.resolveActionCommit({ invocationId, principal: admittedTenantPrincipal }),
     runCreate,
     runRetirement,
@@ -603,29 +573,11 @@ describe('Price Group management Actions through the Core runtime', () => {
     }),
   );
 
-  it.effect('answers equivalent retries with the saved reply and executes each management Action once', () =>
+  it.effect('executes each management Action once across equivalent retries', () =>
     Effect.gen(function* enforceEquivalentRetryIdempotency() {
       const create = yield* makeHarness();
-      const createReply = yield* create.runCreate();
-      expect(yield* create.runCreate()).toEqual(createReply);
-      // Every saved-reply read is bound to exactly this invocation, tenant, principal and request.
-      expect(create.loadCommittedReplyInputs.length).toBeGreaterThan(0);
-      const boundFacts = create.loadCommittedReplyInputs.map((input) =>
-        JSON.stringify({
-          actionInvocationId: input.actionInvocationId,
-          principal: { principalId: input.principal.principalId, tenantId: input.principal.tenantId },
-          requestHash: input.requestHash,
-        }),
-      );
-      expect(new Set(boundFacts)).toEqual(
-        new Set([
-          JSON.stringify({
-            actionInvocationId: invocationId,
-            principal: { principalId, tenantId },
-            requestHash: create.committedRequestHash(),
-          }),
-        ]),
-      );
+      yield* create.runCreate();
+      expect(Predicate.isTagged(yield* Effect.flip(create.runCreate()), 'ActionAlreadyCommitted')).toBe(true);
       expect(create.counts()).toMatchObject({ handlerResolutionCount: 1, serviceResolutionCount: 1 });
       expect(create.successfulFlushes).toHaveLength(1);
       expect(create.successfulFlushes[0]?.evidence).toMatchObject({
@@ -634,8 +586,8 @@ describe('Price Group management Actions through the Core runtime', () => {
       });
 
       const revision = yield* makeHarness();
-      const revisionReply = yield* revision.runRevision();
-      expect(yield* revision.runRevision()).toEqual(revisionReply);
+      yield* revision.runRevision();
+      expect(Predicate.isTagged(yield* Effect.flip(revision.runRevision()), 'ActionAlreadyCommitted')).toBe(true);
       expect(revision.counts()).toMatchObject({ handlerResolutionCount: 1, serviceResolutionCount: 1 });
       expect(revision.successfulFlushes).toHaveLength(1);
       expect(revision.successfulFlushes[0]?.evidence).toMatchObject({
@@ -644,8 +596,8 @@ describe('Price Group management Actions through the Core runtime', () => {
       });
 
       const retirement = yield* makeHarness();
-      const retirementReply = yield* retirement.runRetirement();
-      expect(yield* retirement.runRetirement()).toEqual(retirementReply);
+      yield* retirement.runRetirement();
+      expect(Predicate.isTagged(yield* Effect.flip(retirement.runRetirement()), 'ActionAlreadyCommitted')).toBe(true);
       expect(retirement.counts()).toMatchObject({ handlerResolutionCount: 1, serviceResolutionCount: 1 });
       expect(retirement.successfulFlushes).toHaveLength(1);
       expect(retirement.successfulFlushes[0]?.evidence).toMatchObject({
@@ -692,15 +644,21 @@ describe('Price Group management Actions through the Core runtime', () => {
     }),
   );
 
-  it.effect('serializes concurrent exact retries to one business execution with one shared reply', () =>
+  it.effect('serializes concurrent exact retries to one business execution', () =>
     Effect.gen(function* serializeConcurrentRetries() {
       const harness = yield* makeHarness();
+      const observe = harness.runCreate().pipe(
+        Effect.match({
+          onFailure: (failure) =>
+            Predicate.isTagged(failure, 'ActionAlreadyCommitted') ? 'already_committed' : 'unexpected_failure',
+          onSuccess: () => 'business_result',
+        }),
+      );
 
-      const [first, second] = yield* Effect.all([harness.runCreate(), harness.runCreate()], {
-        concurrency: 'unbounded',
-      });
+      const outcomes = yield* Effect.all([observe, observe], { concurrency: 'unbounded' });
 
-      expect(second).toEqual(first);
+      expect(outcomes.filter((outcome) => outcome === 'already_committed')).toHaveLength(1);
+      expect(outcomes.filter((outcome) => outcome === 'business_result')).toHaveLength(1);
       expect(harness.counts()).toMatchObject({ handlerResolutionCount: 1, serviceResolutionCount: 1 });
       expect(harness.successfulFlushes).toHaveLength(1);
       expect(harness.successfulFlushes[0]?.evidence.domainEvents).toHaveLength(1);
