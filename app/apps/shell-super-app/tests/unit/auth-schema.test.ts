@@ -24,7 +24,6 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'apikey',
     'support_impersonation_recovery',
     'gateway_relay_exchanges',
-    'support_impersonation_starts',
   ]);
   expect(expectedAuthTableCatalog).toEqual([
     'auth.user',
@@ -34,7 +33,6 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'auth.apikey',
     'auth.support_impersonation_recovery',
     'auth.gateway_relay_exchanges',
-    'auth.support_impersonation_starts',
   ]);
 });
 
@@ -126,7 +124,6 @@ test('reports missing and unexpected authentication tables', () => {
       'auth.apikey',
       'auth.gateway_relay_exchanges',
       'auth.support_impersonation_recovery',
-      'auth.support_impersonation_starts',
       'auth.verification',
     ],
     unexpected: ['auth.unexpected'],

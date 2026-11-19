@@ -3,17 +3,12 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Cause, DateTime, Effect, Option, Redacted, Ref, Schema } from 'effect';
+import { Cause, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import type { HttpServerRequest } from 'effect/http';
 
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
-import type {
-  ActionRegistration,
-  ActionReplay,
-  DomainEventContractMap,
-  TrustedPrincipalContext,
-} from '@app/core-runtime';
+import type { ActionRegistration, DomainEventContractMap, TrustedPrincipalContext } from '@app/core-runtime';
 
 import {
   authenticateOperationPrincipal,
@@ -21,10 +16,6 @@ import {
 } from '../../auth/action-principal.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { claimPortalEnrollmentTransitionAction } from '../../../src/actions/claim-portal-enrollment-transition.action.ts';
-import type {
-  ClaimPortalEnrollmentTransitionPayload,
-  ClaimPortalEnrollmentTransitionResultSchema,
-} from '../../../shared/actions/claim-portal-enrollment-transition.ts';
 import { startPortalEnrollmentAction } from '../../../src/actions/start-portal-enrollment.action.ts';
 import { CommerceEnrollmentContinuation } from '../../../src/enrollment/continuation/enrollment-continuation.ts';
 import type { CommerceEnrollmentContinuationResult } from '../../../src/enrollment/continuation/enrollment-continuation.ts';
@@ -370,10 +361,11 @@ const PORTAL_ACCOUNT_CREATION_REJECTED_FAILURE_CODE = 'provider_account_rejected
 /**
  * Whether this start still owes the effect its claim authorized.
  *
- * A same-key retry that Core answers with the saved `CLAIMED` of an earlier request never gets here
- * (see `commercePortalAuthEnrollmentCreateAccount`). For a claim this request committed, the durable
- * owner journal still decides: a transition this request's own owner invocation holds `IN_PROGRESS`
- * has an effect left to run, and one whose outcome is already recorded is never dispatched again.
+ * The claim is a governed Action, and a governed Action replays a recorded result verbatim: a retry
+ * presenting the same Idempotency-Key is handed the very `CLAIMED` answer of the request that
+ * already created the account. Only the durable owner journal separates the two — a transition this
+ * request's own owner invocation still holds `IN_PROGRESS` has an effect left to run, and one whose
+ * outcome is already recorded must never be dispatched a second time.
  */
 export const commercePortalAuthEnrollmentOwesTransitionOutcome = (
   operation: EnrollmentOwnerOperationSnapshot,
@@ -612,7 +604,7 @@ const isAccountCreationUnavailable = Schema.is(CommercePortalAuthAccountCreation
 
 const settleRejectedAccountCreation = Effect.fn('CommercePortalAuthEnrollmentHttp.settleRejectedAccountCreation')(
   function* settleRejectedAccountCreationEffect(
-    store: CommercePortalAuthEnrollmentJournal,
+    store: ReturnType<typeof commerceEnrollmentOwnerAttemptStoreForRun>,
     claim: Parameters<typeof commercePortalAuthEnrollmentAccountCreationRejectionOutcome>[0],
     claimedState: {
       readonly attempt: Parameters<typeof commercePortalAuthEnrollmentAccountCreationRejectionOutcome>[1];
@@ -629,142 +621,6 @@ const settleRejectedAccountCreation = Effect.fn('CommercePortalAuthEnrollmentHtt
       .recordOutcome(outcome)
       .pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
     return yield* rejection;
-  },
-);
-
-/** The owner journal rows the account-creation phase reads and records, in their own transactions. */
-export type CommercePortalAuthEnrollmentJournal = Pick<
-  ReturnType<typeof commerceEnrollmentOwnerAttemptStoreForRun>,
-  'read' | 'readOwnerOperation' | 'recordOutcome'
->;
-
-/** The journeys whose start creates the provider account; see `commercePortalAuthEnrollmentCreatesAccount`. */
-type AccountCreatingStartInput = Exclude<
-  CommercePortalAuthEnrollmentStartInput,
-  { readonly journey: 'EXISTING_ACCOUNT' }
->;
-
-export interface CommercePortalAuthEnrollmentAccountCreationInput<ClaimFailure, ClaimRequirements> {
-  /** The governed claim Action; `onReplay` runs when Core answers it with the saved reply of an earlier request. */
-  readonly claimTransition: (
-    payload: ClaimPortalEnrollmentTransitionPayload,
-    onReplay: (replay: ActionReplay) => Effect.Effect<void>,
-  ) => Effect.Effect<typeof ClaimPortalEnrollmentTransitionResultSchema.Type, ClaimFailure, ClaimRequirements>;
-  readonly journal: CommercePortalAuthEnrollmentJournal;
-  readonly start: AccountCreatingStartInput;
-  readonly started: EnrollmentAttemptSnapshot;
-}
-
-/**
- * The account-creation phase of a Retail or Counterparty start: durably claim
- * `provider.account.create`, run the one provider sign-up that claim authorized, and journal it.
- * It answers the Attempt as this request leaves it.
- *
- * Only the request whose claim committed may sign up. A same-key retry is answered with that
- * request's saved `CLAIMED`, which Core reports as a replay, whether the first request finished, is
- * still signing up or died before journalling: the retry dispatches nothing and answers the Attempt
- * as the journal has it. A first request that died leaves its claim to the continuation, whose owner
- * reconciliation resolves a lapsed transition by the exact owner invocation.
- */
-export const commercePortalAuthEnrollmentCreateAccount = Effect.fn('CommercePortalAuthEnrollmentHttp.createAccount')(
-  function* createAccountEffect<ClaimFailure, ClaimRequirements>(
-    input: CommercePortalAuthEnrollmentAccountCreationInput<ClaimFailure, ClaimRequirements>,
-  ) {
-    const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
-      input.start,
-      input.started.portalEnrollmentAttemptId,
-    ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
-    const replayed = yield* Ref.make(false);
-    const claimed = yield* input.claimTransition(
-      {
-        expectedRevision: input.started.revision,
-        ownerInvocationId: claim.ownerInvocationId,
-        ownerModuleKey: claim.ownerModuleKey,
-        portalEnrollmentAttemptId: input.started.portalEnrollmentAttemptId,
-        requestDigest: claim.requestDigest,
-        transitionKey: claim.transitionKey,
-      },
-      () => Ref.set(replayed, true),
-    );
-
-    // A transition the owner reports as replayed or already claimed has its provider effect owned by
-    // the invocation that claimed it; dispatching a second one would create a second account.
-    if (claimed.outcome !== 'CLAIMED') {
-      return claimed.attempt;
-    }
-    const identity = {
-      portalEnrollmentAttemptId: claimed.attempt.portalEnrollmentAttemptId,
-      tenantId: claimed.attempt.tenantId,
-    };
-    if (yield* Ref.get(replayed)) {
-      // Core answered the saved `CLAIMED` of the request that took this claim: that request owns the
-      // sign-up, so this one answers the Attempt as the journal now has it.
-      return yield* input.journal
-        .read(identity)
-        .pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
-    }
-
-    // Both owner rows are re-read from the journal rather than taken from the Action's answer, and
-    // through the same runner the read route uses: one committed transaction per owner phase, so the
-    // provider call below never runs inside an Attempt transaction.
-    const claimedState = yield* Effect.all(
-      {
-        attempt: input.journal.read(identity),
-        operation: input.journal.readOwnerOperation({
-          ...identity,
-          ownerModuleKey: claim.ownerModuleKey,
-          transitionKey: claim.transitionKey,
-        }),
-        // Two durable reads of the Attempt this request just claimed, in their own transactions.
-      },
-      { concurrency: 2 },
-    ).pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
-
-    if (!commercePortalAuthEnrollmentOwesTransitionOutcome(claimedState.operation, claim)) {
-      // The transition already carries a recorded outcome: answer the Attempt as the journal has it.
-      return claimedState.attempt;
-    }
-
-    const accountCreation = yield* CommercePortalAuthAccountCreationService;
-    const created = yield* accountCreation
-      .createAccount({
-        email: input.start.email,
-        enrollmentAttemptId: claimedState.attempt.portalEnrollmentAttemptId,
-        name: input.start.displayName,
-        ownerInvocationId: claim.ownerInvocationId,
-        // The credential stays `Redacted` across the port boundary: the private capability decodes
-        // it itself, so nothing here ever holds the plain value.
-        password: input.start.password,
-        tenantId: claimedState.attempt.tenantId,
-      })
-      .pipe(
-        // A definitive rejection is terminal for the claimed transition: recorded here, or the lease
-        // fences it indeterminate and no correlation ever appears to resolve it.
-        Effect.catchTag('CommercePortalAuthAccountCreationRejected', (rejection) =>
-          settleRejectedAccountCreation(input.journal, claim, claimedState, rejection),
-        ),
-        Effect.catch((error) =>
-          answerEnrollmentOwnerFailure(
-            isAccountCreationUnavailable(error),
-            error,
-            commercePortalAuthEnrollmentRejectedProblem,
-          ),
-        ),
-      );
-
-    // The created subject is the whole point of the dispatch: until it is journalled the Attempt has
-    // an account nothing can name, its completion can never derive, and a reconciliation has no
-    // subject to correlate the provider effect by.
-    const outcome = yield* commercePortalAuthEnrollmentAccountCreationOutcome(
-      claim,
-      claimedState.attempt,
-      claimedState.operation,
-      created,
-    );
-    const recorded = yield* input.journal
-      .recordOutcome(outcome)
-      .pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
-    return recorded.attempt;
   },
 );
 
@@ -837,17 +693,18 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       HandlerRequirements
     >,
     actionPayload: PayloadSchema['Type'],
-    onReplay?: (replay: ActionReplay) => Effect.Effect<void>,
   ) =>
     runActionHttp({
       endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
       internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
       invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
       mapError: actionProblem,
-      onReplay,
       payload: actionPayload,
       registration,
       requestHeaders: actionRequestHeaders(request),
+      // The start signs up a provider account after its claim Action, which only the request that
+      // committed the claim may do: a same-key retry keeps ActionAlreadyCommitted, never the saved CLAIMED.
+      savedReply: 'withhold',
     });
 
   const continuation = yield* CommerceEnrollmentContinuation;
@@ -941,18 +798,98 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     return { attempt: commercePortalAuthEnrollmentAttemptProjection(journalled.attempt), outcome: started.outcome };
   }
 
-  const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
-  const attempt = yield* commercePortalAuthEnrollmentCreateAccount({
-    claimTransition: (claimPayload, onReplay) =>
-      runEnrollmentAction(claimPortalEnrollmentTransitionAction, claimPayload, onReplay),
-    journal: commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: started.attempt.tenantId }, runner.run),
-    start: input,
-    started: started.attempt,
+  const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
+    input,
+    started.attempt.portalEnrollmentAttemptId,
+  ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
+  const claimed = yield* runEnrollmentAction(claimPortalEnrollmentTransitionAction, {
+    expectedRevision: started.attempt.revision,
+    ownerInvocationId: claim.ownerInvocationId,
+    ownerModuleKey: claim.ownerModuleKey,
+    portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
+    requestDigest: claim.requestDigest,
+    transitionKey: claim.transitionKey,
   });
-  // The journey still has to be advanced whatever this request dispatched, so the continuation is
-  // triggered on every path.
-  yield* triggerEnrollmentContinuation(continuation, attempt);
-  return { attempt: commercePortalAuthEnrollmentAttemptProjection(attempt), outcome: started.outcome };
+
+  // A replayed or already-claimed transition has its provider effect recorded already; dispatching
+  // a second one would create a second account for the same Attempt. The journey still has to be
+  // advanced, so the continuation is triggered on this path too.
+  if (claimed.outcome !== 'CLAIMED') {
+    yield* triggerEnrollmentContinuation(continuation, claimed.attempt);
+    return { attempt: commercePortalAuthEnrollmentAttemptProjection(claimed.attempt), outcome: started.outcome };
+  }
+
+  // Both owner rows are re-read from the journal rather than taken from the Action's answer, and
+  // through the same runner the read route uses: one committed transaction per owner phase, so the
+  // provider call below never runs inside an Attempt transaction.
+  const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
+  const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: claimed.attempt.tenantId }, runner.run);
+  const claimedState = yield* Effect.all(
+    {
+      attempt: store.read({
+        portalEnrollmentAttemptId: claimed.attempt.portalEnrollmentAttemptId,
+        tenantId: claimed.attempt.tenantId,
+      }),
+      operation: store.readOwnerOperation({
+        ownerModuleKey: claim.ownerModuleKey,
+        portalEnrollmentAttemptId: claimed.attempt.portalEnrollmentAttemptId,
+        tenantId: claimed.attempt.tenantId,
+        transitionKey: claim.transitionKey,
+      }),
+      // Two durable reads of the Attempt this request just claimed, in their own transactions.
+    },
+    { concurrency: 2 },
+  ).pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
+
+  if (!commercePortalAuthEnrollmentOwesTransitionOutcome(claimedState.operation, claim)) {
+    // The transition already carries a recorded outcome, so this start is a retry of one that
+    // dispatched: it answers with the Attempt as the journal now has it and dispatches nothing.
+    yield* triggerEnrollmentContinuation(continuation, claimedState.attempt);
+    return { attempt: commercePortalAuthEnrollmentAttemptProjection(claimedState.attempt), outcome: started.outcome };
+  }
+
+  const accountCreation = yield* CommercePortalAuthAccountCreationService;
+  const created = yield* accountCreation
+    .createAccount({
+      email: input.email,
+      enrollmentAttemptId: claimedState.attempt.portalEnrollmentAttemptId,
+      name: input.displayName,
+      ownerInvocationId: claim.ownerInvocationId,
+      // The credential stays `Redacted` across the port boundary: the private capability decodes
+      // it itself, so nothing here ever holds the plain value.
+      password: input.password,
+      tenantId: claimedState.attempt.tenantId,
+    })
+    .pipe(
+      // A definitive rejection is terminal for the claimed transition: recorded here, or the lease
+      // fences it indeterminate and no correlation ever appears to resolve it.
+      Effect.catchTag('CommercePortalAuthAccountCreationRejected', (rejection) =>
+        settleRejectedAccountCreation(store, claim, claimedState, rejection),
+      ),
+      Effect.catch((error) =>
+        answerEnrollmentOwnerFailure(
+          isAccountCreationUnavailable(error),
+          error,
+          commercePortalAuthEnrollmentRejectedProblem,
+        ),
+      ),
+    );
+
+  // The created subject is the whole point of the dispatch: until it is journalled the Attempt has
+  // an account nothing can name, its completion can never derive, and a reconciliation has no
+  // subject to correlate the provider effect by.
+  const outcome = yield* commercePortalAuthEnrollmentAccountCreationOutcome(
+    claim,
+    claimedState.attempt,
+    claimedState.operation,
+    created,
+  );
+  const recorded = yield* store
+    .recordOutcome(outcome)
+    .pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
+
+  yield* triggerEnrollmentContinuation(continuation, recorded.attempt);
+  return { attempt: commercePortalAuthEnrollmentAttemptProjection(recorded.attempt), outcome: started.outcome };
 });
 
 /**
