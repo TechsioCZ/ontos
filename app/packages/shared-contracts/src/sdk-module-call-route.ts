@@ -78,6 +78,9 @@ const ProblemBodySchema = Schema.Struct({
 });
 type ProblemBody = typeof ProblemBodySchema.Type;
 
+/** A received body read as JSON. */
+const JsonBodySchema = Schema.fromJsonString(Schema.Unknown);
+
 const problemOf = (status: number, body: Option.Option<ProblemBody>): RouteAnswer => {
   const parsed = Option.getOrUndefined(body);
   return problem(
@@ -113,21 +116,18 @@ export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* m
       HttpClientRequest.bodyJsonUnsafe(request.encodedInput),
     );
     // The read budget bounds the whole execution; one provider exchange (request, headers and the whole
-    // body) may take at most this long. A body that is not JSON is `None`; a stalled one is unreachable.
+    // body) may take at most this long. A body that could not be received, like a stalled one, is
+    // unreachable; a body received whole that is not JSON is `None`.
     const exchanged = yield* http.execute(httpRequest).pipe(
-      Effect.flatMap((response) =>
-        response.json.pipe(
-          Effect.option,
-          Effect.map((body) => ({ body, status: response.status })),
-        ),
-      ),
+      Effect.flatMap((response) => response.text.pipe(Effect.map((text) => ({ status: response.status, text })))),
       Effect.timeout(PROVIDER_ANSWER_TIMEOUT),
       Effect.option,
     );
     if (Option.isNone(exchanged)) {
       return unreachable.make({ reason: 'The provider could not be reached' });
     }
-    const { body, status } = exchanged.value;
+    const { status, text } = exchanged.value;
+    const body = Schema.decodeUnknownOption(JsonBodySchema)(text);
     if (status >= 200 && status < 300) {
       return Option.match(body, {
         onNone: () => problem(502, 'The provider answer is not JSON', 'provider_answer_unreadable'),
