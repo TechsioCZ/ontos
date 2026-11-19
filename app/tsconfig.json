@@ -92,6 +92,9 @@
       "path": "packages/commerce-order-contracts"
     },
     {
+      "path": "packages/communications-contracts"
+    },
+    {
       "path": "verticals/commerce-order"
     },
     {
@@ -99,6 +102,9 @@
     },
     {
       "path": "verticals/symmy-integration"
+    },
+    {
+      "path": "verticals/communications"
     }
   ]
 }

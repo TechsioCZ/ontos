@@ -7014,6 +7014,337 @@
           ]
         }
       }
+    },
+    {
+      "id": "communications",
+      "kind": "vertical",
+      "renderer": "none",
+      "surfaceProfile": "api-only",
+      "domain": "communications",
+      "package": "@app/communications",
+      "path": "verticals/communications",
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalCommunicationsBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/communications",
+          "packageName": "@app/communications",
+          "version": "0.1.0",
+          "buildMarker": "f8da4cabfbb5119c",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/communications/shared/api.ts",
+            "runtime": "verticals/communications/api/index.ts",
+            "client": "verticals/communications/src/api/communications-client.ts",
+            "openapi": "/communications-api/openapi.json",
+            "readiness": "/communications-api/communications/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/communications",
+          "api": {
+            "readiness": "/communications-api/communications/readiness",
+            "buildMarker": "verticals/communications/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMUNICATIONS"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-communications",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMUNICATIONS",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_COMMUNICATIONS_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_COMMUNICATIONS_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_COMMUNICATIONS_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_COMMUNICATIONS_WORKER",
+              "serviceBindingEnv": "VERTICAL_COMMUNICATIONS_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_COMMUNICATIONS_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_COMMUNICATIONS_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalCommunicationsBackend",
+            "manifestEnv": "VERTICAL_COMMUNICATIONS_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4120/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4120/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/communications",
+              "buildMarker": "f8da4cabfbb5119c"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/communications",
+          "effectVersion": "4.0.7",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/communications",
+        "packageName": "@app/communications",
+        "version": "0.1.0",
+        "buildMarker": "f8da4cabfbb5119c",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/communications-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/communications/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/communications/src/api/communications-client.ts"
+        },
+        "serverEntry": "verticals/communications/api/index.ts",
+        "basePath": "/communications-api/communications",
+        "consumedBy": [
+          "shell-super-app",
+          "communications"
+        ],
+        "readiness": {
+          "endpoint": "/communications/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listCommunications",
+            "method": "GET",
+            "path": "/communications",
+            "resource": "workspace-items",
+            "owner": "communications"
+          },
+          "workspaceDetail": {
+            "client": "getCommunications",
+            "method": "GET",
+            "path": "/communications/:id",
+            "resource": "workspace-item",
+            "owner": "communications"
+          },
+          "workspaceCreate": {
+            "client": "createCommunications",
+            "method": "POST",
+            "path": "/communications",
+            "resource": "communications",
+            "owner": "communications"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-communications",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMUNICATIONS",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public",
+          "enable_request_signal"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "apiReadiness": "/communications-api/communications/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "communications-readiness-smoke",
+            "route": "/communications-api/communications/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/communications.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#communications",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#communications"
+          ]
+        }
+      }
     }
   ],
   "sharedPackages": [
@@ -7112,6 +7443,12 @@
       "package": "@app/commerce-cart-finalization-contracts",
       "path": "packages/commerce-cart-finalization-contracts",
       "description": "Cart-owned immutable final candidate contracts and generated client."
+    },
+    {
+      "id": "communications-contracts",
+      "package": "@app/communications-contracts",
+      "path": "packages/communications-contracts",
+      "description": "Communications-owned, schema-only Communication Request contract that source MicroVerticals import."
     }
   ],
   "validation": {

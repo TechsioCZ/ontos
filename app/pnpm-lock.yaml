@@ -737,6 +737,25 @@ importers:
         specifier: 4.0.7
         version: 4.0.7
 
+  packages/communications-contracts:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@rstest/core':
+        specifier: 0.12.6
+        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)
+      '@types/node':
+        specifier: 20.19.43
+        version: 20.19.43
+      effect-rstest:
+        specifier: 1.0.0
+        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
+
   packages/core-runtime:
     dependencies:
       '@authzed/authzed-node':
@@ -1862,6 +1881,82 @@ importers:
       wrangler:
         specifier: 4.137.0
         version: 4.137.0(@cloudflare/workers-types@5.20260923.1)(@types/node@26.6.3)
+
+  verticals/communications:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../../packages/core-runtime
+      '@app/gateway-principal-verifier':
+        specifier: workspace:*
+        version: link:../../packages/gateway-principal-verifier
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../../packages/shared-contracts
+      '@effect/opentelemetry':
+        specifier: 4.0.7
+        version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
+      '@effect/platform-node':
+        specifier: 4.0.7
+        version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
+      '@effect/sql-pg':
+        specifier: 4.0.7
+        version: 4.0.7(effect@4.0.7)
+      '@modern-js/backend-federation-contracts':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
+      '@modern-js/bff-effect':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-bff-effect@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
+      '@modern-js/plugin-bff':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-bff@3.11.3-ultramodern.1(patch_hash=4408b8b4a2005248f2418da5a5a4dbdae327012d44bda1404c763d83319fa531)(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(patch_hash=055ed232a0b29bdb46cae3b30639d7d4a7de2550d9f41461ce89a253ea90c475)(5eb618b32626f1148a0c26edd78c9512))(@swc/helpers@0.5.24)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
+      '@modern-js/plugin-bff-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-bff-extensions@3.11.3-ultramodern.1(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.24)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
+      '@module-federation/runtime':
+        specifier: npm:@bleedingdev/mf-runtime@2.9.3
+        version: '@bleedingdev/mf-runtime@2.9.3'
+      drizzle-orm:
+        specifier: 1.0.0-rc.5-ab785fc
+        version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@modern-js/app-tools':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(patch_hash=055ed232a0b29bdb46cae3b30639d7d4a7de2550d9f41461ce89a253ea90c475)(5eb618b32626f1148a0c26edd78c9512)'
+      '@modern-js/app-tools-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=486a95ad0c9bde29018b6f097fc2c90a9eaf553dd91d3ed1ae8ed8b0eea78685)(6d9d79651e25fec204cf74e5412c861b)'
+      '@modern-js/plugin-bff-build-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(patch_hash=055ed232a0b29bdb46cae3b30639d7d4a7de2550d9f41461ce89a253ea90c475)(5eb618b32626f1148a0c26edd78c9512))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.24)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
+      '@modern-js/ultramodern-app-tools':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(3bad4acc8dac14aa279d7e3c40229be4)'
+      '@rstest/core':
+        specifier: 0.12.6
+        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)
+      '@types/node':
+        specifier: 26.6.4
+        version: 26.6.4
+      drizzle-kit:
+        specifier: 1.0.0-rc.5-ab785fc
+        version: 1.0.0-rc.5-ab785fc
+      effect-rstest:
+        specifier: 1.0.0
+        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      wrangler:
+        specifier: 4.137.0
+        version: 4.137.0(@cloudflare/workers-types@5.20260923.1)(@types/node@26.6.4)
 
   verticals/inventory:
     dependencies:

@@ -120,4 +120,7 @@ services:
   - hostname: symmyintegration
     type: nodejs@24
     enableSubdomainAccess: true
+  - hostname: communications
+    type: nodejs@24
+    enableSubdomainAccess: true
   # </generated-vertical-provider-imports>

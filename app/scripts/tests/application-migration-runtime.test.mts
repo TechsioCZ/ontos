@@ -184,6 +184,7 @@ it.effect(
         'commerce-order',
         'payment',
         'promotion',
+        'communications',
       ]);
       // Controller metadata is asserted at its actual source inventory, rather than its former inline location.
       expect(
@@ -199,6 +200,7 @@ it.effect(
         'commerce_customer_context',
         'commerce_market_catalog',
         'commerce_order',
+        'communications',
         'contacts',
         'core',
         'inventory',

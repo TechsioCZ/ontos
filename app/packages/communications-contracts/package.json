@@ -1,0 +1,29 @@
+{
+  "name": "@app/communications-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Communications-owned, schema-only Communication Request contract that source MicroVerticals import.",
+  "type": "module",
+  "exports": {
+    "./communication-request": "./src/communication-request.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*",
+    "effect": "4.0.7"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.12.6",
+    "@types/node": "20.19.43",
+    "effect-rstest": "1.0.0"
+  },
+  "ontosContractOwner": {
+    "appId": "communications",
+    "moduleApis": [],
+    "moduleId": "communications.core",
+    "packageName": "@app/communications"
+  }
+}

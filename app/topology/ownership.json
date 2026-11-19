@@ -598,6 +598,24 @@
       }
     },
     {
+      "id": "communications-contracts",
+      "package": "@app/communications-contracts",
+      "path": "packages/communications-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/communications.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#communications",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#communications"
+          ]
+        }
+      }
+    },
+    {
       "id": "payment",
       "package": "@app/payment",
       "path": "verticals/payment",
@@ -647,6 +665,24 @@
           "tier": "tier-2-vertical",
           "references": [
             "docs/super-app-rfc-adr/blast-radius.md#symmy-integration"
+          ]
+        }
+      }
+    },
+    {
+      "id": "communications",
+      "package": "@app/communications",
+      "path": "verticals/communications",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/communications.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#communications",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#communications"
           ]
         }
       }
