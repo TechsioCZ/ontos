@@ -17,6 +17,7 @@ import {
   makeActiveApplicationCompositionLayer,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type {
   ActionRuntimeService,
   GatewayAssertionRedemption,
@@ -28,7 +29,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
-import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { Clock, Config, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
@@ -308,6 +309,8 @@ const makeAssertion = (
   Effect.gen(function* signPriceGroupReadAssertion() {
     const composition = yield* priceGroupComposition;
     const { privateKey, publicJwks } = yield* priceGroupGatewaySigner;
+    // The mounted HTTP runtime uses live time, independently of the domain TestClock.
+    const issuedAt = Math.floor((yield* Clock.Clock.defaultValue().currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: releaseClaims.compositionRevision ?? composition.revision,
@@ -319,8 +322,8 @@ const makeAssertion = (
         .setIssuer(issuer)
         .setAudience(audience)
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(randomUUID())
         .sign(privateKey),
     );
@@ -359,6 +362,7 @@ const makeProductionAssertion = (audience = 'price-group-catalog') =>
       Redacted.value(encodedPrivateJwk),
     );
     const privateKey = yield* Effect.promise(() => importJWK(privateJwk, 'EdDSA'));
+    const issuedAt = Math.floor((yield* Clock.Clock.defaultValue().currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: snapshot.composition.revision,
@@ -370,8 +374,8 @@ const makeProductionAssertion = (audience = 'price-group-catalog') =>
         .setIssuer(configuredIssuer)
         .setAudience(audience)
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(randomUUID())
         .sign(privateKey),
     );

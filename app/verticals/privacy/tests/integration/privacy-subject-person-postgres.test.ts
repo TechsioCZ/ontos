@@ -25,9 +25,10 @@ import {
   executeDuplicateCandidateDetailWithAuthorization,
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { SignJWT, decodeJwt, exportJWK, generateKeyPair } from 'jose';
 import {
+  DateTime,
   Config,
   Context,
   Crypto,
@@ -488,6 +489,7 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
       const baseUrl = `http://127.0.0.1:${ready.port}/party-registry-api`;
       const authorization = Effect.fn('PersonOwnerTest.authorization')(function* freshAuthorization() {
         const id = yield* nextId();
+        const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
         const token = yield* Effect.tryPromise(() =>
           new SignJWT({
             compositionRevision: snapshot.composition.revision,
@@ -499,8 +501,8 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
             .setIssuer(issuer)
             .setAudience('party-registry')
             .setSubject(principal.principalId)
-            .setIssuedAt()
-            .setExpirationTime('5m')
+            .setIssuedAt(issuedAt)
+            .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
             .setJti(id)
             .sign(pair.privateKey),
         );

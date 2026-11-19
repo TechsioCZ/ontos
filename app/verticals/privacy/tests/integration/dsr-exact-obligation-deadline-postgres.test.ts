@@ -43,7 +43,7 @@ import {
 } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { createHttpApiHandler } from '@modern-js/bff-effect/effect-edge';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import {
@@ -443,6 +443,7 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     principal = native.principal,
   ) {
     const jti = yield* nextId;
+    const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
     const token = yield* Effect.tryPromise({
       catch: authorityFailure,
       try: async () =>
@@ -456,8 +457,8 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
           .setIssuer(issuer)
           .setAudience('privacy')
           .setSubject(principal.principalId)
-          .setIssuedAt()
-          .setExpirationTime('5m')
+          .setIssuedAt(issuedAt)
+          .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
           .setJti(jti)
           .sign(pair.privateKey),
     });
