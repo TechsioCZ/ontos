@@ -2,6 +2,7 @@ import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-r
 import { defineDatabaseIdentityEnrollment, ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
@@ -9,7 +10,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, count, eq } from 'drizzle-orm';
-import { ConfigProvider, Crypto, Effect, Layer, Schema } from 'effect';
+import { DateTime, ConfigProvider, Crypto, Effect, Layer, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -162,6 +163,7 @@ const mountPaymentTransport = Effect.fn('AcceptanceIngress.mount')(function* mou
     principal: ReturnType<typeof principalOf>,
   ) {
     const jti = randomUUID();
+    const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: compositionSnapshot.composition.revision,
@@ -181,8 +183,8 @@ const mountPaymentTransport = Effect.fn('AcceptanceIngress.mount')(function* mou
         .setIssuer(ISSUER)
         .setAudience('payment')
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(jti)
         .sign(privateKey),
     );

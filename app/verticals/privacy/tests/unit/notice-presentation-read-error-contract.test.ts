@@ -15,7 +15,7 @@ import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '@app/commerce-customer-context/portal-auth/contracts';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { Clock, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -26,7 +26,7 @@ import {
 } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import { privacyApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -241,6 +241,7 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
         kid: 'notice-get',
         use: 'sig',
       };
+      const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
       const token = yield* Effect.promise(() =>
         new SignJWT({
           compositionRevision: composition.composition.revision,
@@ -252,8 +253,8 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
           .setIssuer(issuer)
           .setAudience('privacy')
           .setSubject(principal.principalId)
-          .setIssuedAt()
-          .setExpirationTime('5m')
+          .setIssuedAt(issuedAt)
+          .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
           .setJti('10000000-0000-4000-8000-000000000009')
           .sign(privateKey),
       );

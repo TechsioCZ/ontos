@@ -2,6 +2,7 @@ import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-r
 import { defineDatabaseIdentityEnrollment, ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
+import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import {
   ActiveApplicationCompositionSnapshotSchema,
@@ -282,29 +283,32 @@ const mountPaymentTransport = Effect.fn('AcceptanceCompositionFence.mount')(func
     Effect.sync(() => assembled.createHandler()),
     (resource) => Effect.promise(() => resource.dispose()).pipe(Effect.orDie),
   );
-  const signAssertion = Effect.promise(() =>
-    new SignJWT({
-      compositionRevision: payment.revision,
-      principal: {
-        authBindingId: payment.principal.authBindingId,
-        authContextRef: payment.principal.authContextRef,
-        authMethod: payment.principal.authMethod,
-        legalEntityId: payment.principal.legalEntityId,
-        principalId: payment.principal.principalId,
-        tenantId: payment.principal.tenantId,
-      },
-      targetBuildMarker: ultramodernApiMarker.buildMarker,
-      ver: 1,
-    })
-      .setProtectedHeader({ alg: 'EdDSA', kid: publicJwk.kid, typ: 'JWT' })
-      .setIssuer(ISSUER)
-      .setAudience('payment')
-      .setSubject(payment.principal.principalId)
-      .setIssuedAt()
-      .setExpirationTime('5m')
-      .setJti(randomUUID())
-      .sign(privateKey),
-  );
+  const signAssertion = Effect.gen(function* signAssertion() {
+    const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
+    return yield* Effect.promise(() =>
+      new SignJWT({
+        compositionRevision: payment.revision,
+        principal: {
+          authBindingId: payment.principal.authBindingId,
+          authContextRef: payment.principal.authContextRef,
+          authMethod: payment.principal.authMethod,
+          legalEntityId: payment.principal.legalEntityId,
+          principalId: payment.principal.principalId,
+          tenantId: payment.principal.tenantId,
+        },
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
+        .setProtectedHeader({ alg: 'EdDSA', kid: publicJwk.kid, typ: 'JWT' })
+        .setIssuer(ISSUER)
+        .setAudience('payment')
+        .setSubject(payment.principal.principalId)
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
+        .setJti(randomUUID())
+        .sign(privateKey),
+    );
+  });
   /** One public call with a fresh assertion; the status and Problem body are what a client sees. */
   const post = Effect.fn('AcceptanceCompositionFence.post')(function* post(path: string, body: PublicCallBody) {
     const token = yield* signAssertion;
