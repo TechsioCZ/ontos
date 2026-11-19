@@ -92,7 +92,8 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "@rstest/core": "0.12.6",
     "effect-rstest": "1.0.0",
-    "tsrs": "0.25.0-ts7.1.0-beta"
+    "tsrs": "0.25.0-ts7.1.0-beta",
+    "xmllint-wasm": "5.3.0"
   },
   "modernjs": {
     "preset": "presetUltramodern",
