@@ -18,7 +18,7 @@ import {
   typeBundleMismatch,
 } from '../ci/unit-output-cache.mts';
 import type { CacheProfile } from '../ci/unit-output-cache.mts';
-import { CacheReceiptSchema, KEEP_PROOF, RECEIPT } from '../ci/unit-output-receipt.mts';
+import { CacheReceiptSchema, KEEP_PROOF, RECEIPT, RECEIPT_SCHEMA_VERSION } from '../ci/unit-output-receipt.mts';
 import type { CacheIdentity, CacheReceipt, OutputFile } from '../ci/unit-output-receipt.mts';
 import { unitInputGraph } from '../ci/unit-inputs.mts';
 import type { GitEntry, WorkspacePackage } from '../ci/unit-inputs.mts';
@@ -100,7 +100,14 @@ const files: readonly OutputFile[] = [
   { mode: 0o644, path: FILE, sha256: HASH, size: 42 },
   { mode: 0o644, path: 'dist/source.js.map', sha256: OTHER_HASH, size: 120 },
 ];
-const receipt: CacheReceipt = { digest: HASH, files, identity, inputs: OTHER_HASH, schemaVersion: 3, unit: UNIT };
+const receipt: CacheReceipt = {
+  digest: HASH,
+  files,
+  identity,
+  inputs: OTHER_HASH,
+  schemaVersion: RECEIPT_SCHEMA_VERSION,
+  unit: UNIT,
+};
 const check = (overrides: Partial<Parameters<typeof firstOutputMismatch>[0]> = {}) =>
   firstOutputMismatch({ digest: HASH, files, identity, receipt, unit: UNIT, ...overrides });
 

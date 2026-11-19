@@ -8,7 +8,13 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
 import { KeptUnitIdentityError, readBuiltDocument, resolveOwnerReleaseIdentity } from '../ci/kept-unit-identity.mts';
-import { CacheReceiptSchema, KEEP_PROOF, KeepProofSchema, RECEIPT } from '../ci/unit-output-receipt.mts';
+import {
+  CacheReceiptSchema,
+  KEEP_PROOF,
+  KeepProofSchema,
+  RECEIPT,
+  RECEIPT_SCHEMA_VERSION,
+} from '../ci/unit-output-receipt.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const SHELL = 'apps/shell-super-app';
@@ -87,7 +93,7 @@ const fixture = Effect.gen(function* keptUnitFixture() {
           ],
           identity: { ...identity, ...options.receiptIdentity },
           inputs: INPUTS,
-          schemaVersion: 2,
+          schemaVersion: RECEIPT_SCHEMA_VERSION,
           unit: APP_ID,
           ...options.receipt,
         };
