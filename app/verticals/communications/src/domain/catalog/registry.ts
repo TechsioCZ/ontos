@@ -26,9 +26,6 @@ export interface MessageTypeRegistry {
   readonly types: readonly TransactionalMessageType[];
 }
 
-/** The registry that approves nothing. Every purpose is unknown to it, so nothing is sendable. */
-export const emptyMessageTypeRegistry: MessageTypeRegistry = { byPurpose: new Map(), types: [] };
-
 const duplicates = <A>(values: readonly A[]) =>
   EffectArray.filter(EffectArray.dedupe(values), (value) => values.filter((other) => other === value).length > 1);
 

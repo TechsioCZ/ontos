@@ -1,13 +1,15 @@
 import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { decideCommunication } from '../../src/domain/catalog/decision.ts';
+import { CommunicationRequirednessUnknown } from '../../src/domain/catalog/required-errors.ts';
 import {
   requiredOutcomeOf,
   RequiredCommunicationNotPrepared,
   requireCommunicationPrepared,
 } from '../../src/domain/catalog/required-outcome.ts';
 import {
+  decideOrThrow,
+  FIXTURE_CLOSED_STATE,
   FIXTURE_ORIGINAL_ROLE,
   FIXTURE_SECONDARY_ROLE,
   fixtureContext,
@@ -25,7 +27,7 @@ const original = recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original');
 const secondary = recipient(FIXTURE_SECONDARY_ROLE, 'contact-secondary');
 
 const decisionFor = (...recipients: Parameters<typeof fixtureContext>[0]) =>
-  decideCommunication(registry, requiredRequest, fixtureContext(recipients));
+  decideOrThrow(registry, requiredRequest, fixtureContext(recipients));
 const outcomeFor = (...recipients: Parameters<typeof fixtureContext>[0]) =>
   requiredSummary(requiredOutcomeOf(decisionFor(...recipients)));
 
@@ -51,7 +53,9 @@ describe('#1394 Rule: a required message does not replace the source business de
       // The source owner receives the typed failure and applies its own recovery rule; the request and the
       // occurrence it describes are untouched by Communications.
       expect(failure).toBeInstanceOf(RequiredCommunicationNotPrepared);
-      expect(failure.outcome.reasons).toMatchObject([{ reason: 'RECIPIENT_AUTHORITY_MISSING', slotKey: 'secondary' }]);
+      expect(failure).toMatchObject({
+        outcome: { reasons: [{ reason: 'RECIPIENT_AUTHORITY_MISSING', slotKey: 'secondary' }] },
+      });
       expect(decision.request.occurrence).toEqual(requiredRequest.occurrence);
     }),
   );
@@ -102,7 +106,7 @@ describe('#1394 Rule: a required message does not replace the source business de
 
   it('BR-07: a required type whose approved rule went stale reports why and leaves the source decision to its owner', () => {
     const stale = fixtureRegistry(requiredTwoSlotTypeWith({ status: 'STALE' }));
-    const decision = decideCommunication(stale, requiredRequest, fixtureContext([original, secondary]));
+    const decision = decideOrThrow(stale, requiredRequest, fixtureContext([original, secondary]));
 
     expect(requiredSummary(requiredOutcomeOf(decision))).toMatchObject({
       kind: 'Failed',
@@ -111,12 +115,63 @@ describe('#1394 Rule: a required message does not replace the source business de
     });
   });
 
-  it('BR-06: an optional type owes the source nothing and an unknown purpose asserts nothing', () => {
+  it('Scenario: a required slot with an ambiguous recipient fails truthfully and never picks one', () => {
+    const outcome = outcomeFor(original, recipient(FIXTURE_ORIGINAL_ROLE, 'contact-other'), secondary);
+
+    expect(outcome).toEqual({
+      kind: 'Failed',
+      partial: true,
+      preparedSlots: ['secondary'],
+      reasons: [{ kind: 'SlotUnresolved', reason: 'RECIPIENT_AMBIGUOUS', slotKey: 'primary' }],
+      sourceImpact: 'SOURCE_OWNER_DECIDES',
+    });
+  });
+
+  it.effect('BR-08: a stale source is a stop, not a required-communication failure caused by Communications', () =>
+    Effect.gen(function* staleSourceIsNotAFailure() {
+      const decision = decideOrThrow(
+        registry,
+        requiredRequest,
+        fixtureContext([original, secondary], { state: FIXTURE_CLOSED_STATE }),
+      );
+
+      expect(requiredSummary(requiredOutcomeOf(decision))).toEqual({
+        kind: 'SourceStale',
+        reason: 'SOURCE_STATE_INELIGIBLE',
+      });
+      // The source owner caused the change itself, so the channel form raises no failure.
+      expect(yield* requireCommunicationPrepared(decision)).toBe(decision);
+    }),
+  );
+
+  it('BR-06: an optional type owes the source nothing', () => {
     const blocked = recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', 'PRIVACY_NOT_ALLOWED');
-    const optional = decideCommunication(registry, fixtureRequest(), fixtureContext([blocked]));
-    const unknown = decideCommunication(registry, fixtureRequest({ purpose: 'fixture.unknown' }), fixtureContext([]));
+    const optional = decideOrThrow(registry, fixtureRequest(), fixtureContext([blocked]));
 
     expect(requiredSummary(requiredOutcomeOf(optional))).toEqual({ kind: 'NotRequired' });
-    expect(requiredSummary(requiredOutcomeOf(unknown))).toEqual({ kind: 'RequirednessUnknown' });
   });
+
+  it.effect('an unknown purpose is never a prepared required communication and fails visibly', () =>
+    Effect.gen(function* unknownPurposeFails() {
+      const unknown = decideOrThrow(registry, fixtureRequest({ purpose: 'fixture.unknown' }), fixtureContext([]));
+      const failure = yield* Effect.flip(requireCommunicationPrepared(unknown));
+
+      expect(requiredSummary(requiredOutcomeOf(unknown))).toEqual({ kind: 'RequirednessUnknown' });
+      expect(failure).toBeInstanceOf(CommunicationRequirednessUnknown);
+      expect(failure).toMatchObject({ purpose: 'fixture.unknown' });
+    }),
+  );
+
+  it.effect('a type owned by another source is not described to the issuer and fails as unknown', () =>
+    Effect.gen(function* foreignTypeIsUnknown() {
+      const foreign = decideOrThrow(
+        registry,
+        fixtureRequest({ moduleKey: 'fixture.other-source', purpose: 'fixture.paired' }),
+        fixtureContext([original, secondary]),
+      );
+      const failure = yield* Effect.flip(requireCommunicationPrepared(foreign));
+
+      expect(failure).toBeInstanceOf(CommunicationRequirednessUnknown);
+    }),
+  );
 });

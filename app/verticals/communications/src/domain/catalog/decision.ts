@@ -1,4 +1,4 @@
-import { Array as EffectArray, Data, Option, Schema } from 'effect';
+import { Array as EffectArray, Data, Option, Order, Result, Schema } from 'effect';
 
 import type { CommunicationDecisionContext, CommunicationDecisionRequest, RecipientFact } from './decision-request.ts';
 import type { AudienceSlot, TransactionalMessageType } from './message-type.ts';
@@ -11,6 +11,7 @@ import type {
   CommunicationOccurrenceId,
   CommunicationPurposeKey,
   CommunicationResourceRef,
+  CommunicationTenantId,
   MessageTypeId,
   PrivacyPurposeKey,
   RecipientRole,
@@ -48,6 +49,16 @@ export const NoMessageReasonSchema = Schema.Literals([
 ]);
 export type NoMessageReason = typeof NoMessageReasonSchema.Type;
 
+type SourceModuleId = CommunicationDecisionRequest['source']['moduleKey'];
+
+/**
+ * BR-08: a source state or revision that moved on makes the request stale. The source owner caused that change and
+ * already knows it, so it is a stop with its reason, never a failure Communications reports against a required type.
+ */
+export const StaleSourceReasonSchema = Schema.Literals(['SOURCE_REVISION_NOT_CURRENT', 'SOURCE_STATE_INELIGIBLE']);
+export type StaleSourceReason = typeof StaleSourceReasonSchema.Type;
+export const isStaleSourceReason = Schema.is(StaleSourceReasonSchema);
+
 /** Why an audience slot produced no candidate; the slot is skipped and no fallback recipient is invented. */
 export const UnresolvedSlotReasonSchema = Schema.Literals(['RECIPIENT_AMBIGUOUS', 'RECIPIENT_AUTHORITY_MISSING']);
 export type UnresolvedSlotReason = typeof UnresolvedSlotReasonSchema.Type;
@@ -65,12 +76,20 @@ export interface MessageTypePin {
   readonly typeId: MessageTypeId;
 }
 
-/** Identity of one candidate; durable idempotency over it belongs to d21-07. Equal input gives equal identities. */
+/**
+ * Identity of one candidate; durable idempotency over it belongs to #1401. Equal input gives equal identities, in any
+ * input order. It names every part that makes a candidate distinct: tenant, issuing source module, source occurrence
+ * and its revision, approved type, audience slot and the FULL recipient reference (module, type and id), so two
+ * recipients that merely share a resource id never collide. The type revision is deliberately not part of it: a
+ * later catalog revision must not re-identify an occurrence already decided (BR-09); the decision pins it instead.
+ */
 export interface MessageIntentIdentity {
   readonly occurrenceId: CommunicationOccurrenceId;
-  readonly recipientResourceId: CommunicationResourceRef['resourceId'];
+  readonly recipient: CommunicationResourceRef;
   readonly revision: number;
   readonly slotKey: AudienceSlotKey;
+  readonly sourceModule: SourceModuleId;
+  readonly tenantId: CommunicationTenantId;
   readonly typeId: MessageTypeId;
 }
 
@@ -114,6 +133,35 @@ export interface CommunicationDecision {
   readonly type: Option.Option<MessageTypePin>;
 }
 
+/** One kind of evaluated fact that was gathered for another occurrence or tenant than the request. */
+export interface ContextMismatch {
+  readonly fact: 'RECIPIENT_FACT' | 'SOURCE_FACTS';
+  readonly field: 'occurrenceId' | 'tenantId';
+}
+
+/** Expected failure: the facts do not belong to the request, so no decision is made on them. */
+export class CommunicationContextMismatch extends Data.TaggedError('CommunicationContextMismatch')<{
+  readonly mismatches: readonly ContextMismatch[];
+}> {}
+
+const mismatchesOf = (
+  fact: ContextMismatch['fact'],
+  bound: { readonly occurrenceId: CommunicationOccurrenceId; readonly tenantId: CommunicationTenantId },
+  request: CommunicationDecisionRequest,
+): readonly ContextMismatch[] => [
+  ...(bound.occurrenceId === request.occurrence.occurrenceId ? [] : [{ fact, field: 'occurrenceId' as const }]),
+  ...(bound.tenantId === request.tenantId ? [] : [{ fact, field: 'tenantId' as const }]),
+];
+
+const contextMismatches = (request: CommunicationDecisionRequest, context: CommunicationDecisionContext) =>
+  EffectArray.dedupeWith(
+    [
+      ...mismatchesOf('SOURCE_FACTS', context.source, request),
+      ...context.recipients.flatMap((fact) => mismatchesOf('RECIPIENT_FACT', fact, request)),
+    ],
+    (a, b) => a.fact === b.fact && a.field === b.field,
+  );
+
 const pinOf = (type: TransactionalMessageType): MessageTypePin => ({
   privacyPurposeRefs: type.privacyPurposeRefs,
   requiredness: type.requiredness,
@@ -127,9 +175,6 @@ const admissionBlock = (
   request: CommunicationDecisionRequest,
   context: CommunicationDecisionContext,
 ): NoMessageReason | undefined => {
-  if (type.sourceOwner !== request.source.moduleKey) {
-    return 'SOURCE_NOT_AUTHORIZED_FOR_TYPE';
-  }
   if (type.status === 'DEACTIVATED') {
     return 'TYPE_DEACTIVATED';
   }
@@ -148,18 +193,44 @@ const admissionBlock = (
   return undefined;
 };
 
+/** Module, type and id never contain `|` (closed key vocabularies), so this joins a full reference unambiguously. */
 const refKey = (ref: CommunicationResourceRef) => `${ref.moduleId}|${ref.resourceType}|${ref.resourceId}`;
 
-/** One fact per distinct recipient; when duplicates disagree the blocking one wins, so a stop is never lost. */
-const distinctRecipients = (facts: readonly RecipientFact[]) =>
-  Object.values(EffectArray.groupBy(facts, (fact) => refKey(fact.ref))).map(
-    (group) => group.find((fact) => fact.stop !== undefined) ?? group[0],
-  );
+/**
+ * When duplicate facts for one recipient disagree, the strongest stop wins so a stop is never lost: Privacy
+ * NOT_ALLOWED, then Privacy INDETERMINATE, then the recipient stops. Only an explicit ALLOWED with no other stop is
+ * eligible.
+ */
+const STOP_PRECEDENCE: readonly CandidateStopReason[] = [
+  'PRIVACY_NOT_ALLOWED',
+  'PRIVACY_INDETERMINATE',
+  'RECIPIENT_NOT_ELIGIBLE',
+  'RECIPIENT_BASIS_MISSING',
+];
 
-const recipientDecisionOf = (fact: RecipientFact): RecipientDecisionCase =>
-  fact.stop === undefined
-    ? RecipientDecision.Eligible({ ref: fact.ref, role: fact.role })
-    : RecipientDecision.Suppressed({ reason: fact.stop, ref: fact.ref, role: fact.role });
+const stopOf = (fact: RecipientFact): CandidateStopReason | undefined => {
+  if (fact.privacy === 'NOT_ALLOWED') {
+    return 'PRIVACY_NOT_ALLOWED';
+  }
+  return fact.privacy === 'INDETERMINATE' ? 'PRIVACY_INDETERMINATE' : fact.recipientStop;
+};
+
+/** One entry per distinct full recipient reference, sorted by it so the candidate order ignores the input order. */
+const distinctRecipients = (facts: readonly RecipientFact[]) =>
+  Object.entries(EffectArray.groupBy(facts, (fact) => refKey(fact.ref)))
+    .toSorted(([a], [b]) => Order.String(a, b))
+    .map(([, group]) => {
+      const stops = new Set(group.flatMap((fact) => stopOf(fact) ?? []));
+      return { ref: group[0].ref, stop: STOP_PRECEDENCE.find((reason) => stops.has(reason)) };
+    });
+
+const recipientDecisionOf = (
+  { ref, stop }: { readonly ref: CommunicationResourceRef; readonly stop: CandidateStopReason | undefined },
+  role: RecipientRole,
+): RecipientDecisionCase =>
+  stop === undefined
+    ? RecipientDecision.Eligible({ ref, role })
+    : RecipientDecision.Suppressed({ reason: stop, ref, role });
 
 interface SlotResolution {
   readonly candidates: readonly MessageIntentCandidate[];
@@ -184,16 +255,18 @@ const resolveSlot = (
     return unresolved('RECIPIENT_AMBIGUOUS');
   }
   return {
-    candidates: matching.map((fact) => ({
+    candidates: matching.map((entry) => ({
       identity: {
         occurrenceId: request.occurrence.occurrenceId,
-        recipientResourceId: fact.ref.resourceId,
+        recipient: entry.ref,
         revision: request.occurrence.revision,
         slotKey: slot.slotKey,
+        sourceModule: request.source.moduleKey,
+        tenantId: request.tenantId,
         typeId: type.typeId,
       },
       purpose: type.purpose,
-      recipient: recipientDecisionOf(fact),
+      recipient: recipientDecisionOf(entry, slot.recipientRole),
     })),
     unresolved: [],
   };
@@ -225,25 +298,42 @@ const outcomeOf = (
 
 /**
  * Decide what one committed source request becomes. Pure and deterministic: the same request, context and
- * registry always give the same decision and candidate identities, and a catalog revision is pinned in the result.
- * An unknown purpose, a deactivated or stale type, an inactive onboarding contract or an ineligible source state
- * ends in NO_MESSAGE with its reason; nothing is ever sent implicitly and the source business fact is untouched.
+ * registry always give the same decision and candidate identities whatever the recipient input order, and a
+ * catalog revision is pinned in the result. Facts gathered for another occurrence or tenant fail with
+ * CommunicationContextMismatch and decide nothing. An unknown purpose, a type owned by another source (no type
+ * details are returned to that issuer), a deactivated or stale type, an inactive onboarding contract or an
+ * ineligible source state ends in NO_MESSAGE with its reason; nothing is ever sent implicitly and the source
+ * business fact is untouched.
  */
 export const decideCommunication = (
   registry: MessageTypeRegistry,
   request: CommunicationDecisionRequest,
   context: CommunicationDecisionContext,
-): CommunicationDecision => {
+): Result.Result<CommunicationDecision, CommunicationContextMismatch> => {
+  const mismatches = contextMismatches(request, context);
+  if (mismatches.length > 0) {
+    return Result.fail(new CommunicationContextMismatch({ mismatches }));
+  }
   const head = {
     purpose: request.purpose,
     request: { occurrence: request.occurrence, source: request.source, tenantId: request.tenantId },
   };
-  return Option.match(findMessageTypeByPurpose(registry, request.purpose), {
-    onNone: () => ({
+  const noType = (reason: NoMessageReason) =>
+    Result.succeed<CommunicationDecision>({
       ...head,
-      outcome: CommunicationOutcome.NoMessage({ reason: 'UNKNOWN_PURPOSE', unresolvedSlots: [] }),
+      outcome: CommunicationOutcome.NoMessage({ reason, unresolvedSlots: [] }),
       type: Option.none(),
-    }),
-    onSome: (type) => ({ ...head, outcome: outcomeOf(type, request, context), type: Option.some(pinOf(type)) }),
+    });
+  return Option.match(findMessageTypeByPurpose(registry, request.purpose), {
+    onNone: () => noType('UNKNOWN_PURPOSE'),
+    onSome: (type) =>
+      // Another owner's type is never described to this issuer: no pin, so no id, requiredness or Privacy refs.
+      type.sourceOwner === request.source.moduleKey
+        ? Result.succeed<CommunicationDecision>({
+            ...head,
+            outcome: outcomeOf(type, request, context),
+            type: Option.some(pinOf(type)),
+          })
+        : noType('SOURCE_NOT_AUTHORIZED_FOR_TYPE'),
   });
 };

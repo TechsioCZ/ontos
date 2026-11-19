@@ -5,6 +5,7 @@ import {
   RecipientFactSchema,
   SourceOccurrenceFactsSchema,
 } from '../../../src/domain/catalog/decision-request.ts';
+import { decideCommunication } from '../../../src/domain/catalog/decision.ts';
 import type { CommunicationDecisionContext, RecipientFact } from '../../../src/domain/catalog/decision-request.ts';
 import { TransactionalMessageTypeSchema } from '../../../src/domain/catalog/message-type.ts';
 import type { TransactionalMessageType } from '../../../src/domain/catalog/message-type.ts';
@@ -23,7 +24,9 @@ export const FIXTURE_ORIGINAL_ROLE = 'original-recipient';
 export const FIXTURE_SECONDARY_ROLE = 'fixture-secondary';
 export const FIXTURE_APPROVER_ROLE = 'fixture-approver';
 
-const tenantId = '11111111-1111-4111-8111-111111111111';
+export const FIXTURE_OCCURRENCE_ID = 'fixture-occurrence-1';
+export const FIXTURE_TENANT_ID = '11111111-1111-4111-8111-111111111111';
+export const FIXTURE_OTHER_TENANT_ID = '22222222-2222-4222-8222-222222222222';
 
 const decodeType = Schema.decodeUnknownSync(TransactionalMessageTypeSchema);
 const decodeRequest = Schema.decodeSync(CommunicationDecisionRequestSchema);
@@ -109,26 +112,75 @@ export const fixtureRequest = (
     readonly occurrenceId?: string;
     readonly purpose?: string;
     readonly revision?: number;
+    readonly tenantId?: string;
   } = {},
 ) =>
   decodeRequest({
-    occurrence: { occurrenceId: overrides.occurrenceId ?? 'fixture-occurrence-1', revision: overrides.revision ?? 1 },
+    occurrence: {
+      occurrenceId: overrides.occurrenceId ?? FIXTURE_OCCURRENCE_ID,
+      revision: overrides.revision ?? 1,
+    },
     purpose: overrides.purpose ?? 'fixture.single',
     source: { moduleKey: overrides.moduleKey ?? FIXTURE_SOURCE_MODULE },
-    tenantId,
+    tenantId: overrides.tenantId ?? FIXTURE_TENANT_ID,
   });
 
-export const recipient = (role: string, contactId: string, stop?: CandidateStopReason): RecipientFact =>
+interface RecipientOverrides {
+  readonly moduleId?: string;
+  readonly occurrenceId?: string;
+  readonly privacy?: 'ALLOWED' | 'INDETERMINATE' | 'NOT_ALLOWED';
+  readonly resourceType?: string;
+  readonly tenantId?: string;
+}
+
+const PRIVACY_BY_STOP = {
+  PRIVACY_INDETERMINATE: 'INDETERMINATE',
+  PRIVACY_NOT_ALLOWED: 'NOT_ALLOWED',
+} as const;
+const privacyFor = (stop: CandidateStopReason | undefined) =>
+  stop === 'PRIVACY_INDETERMINATE' || stop === 'PRIVACY_NOT_ALLOWED' ? PRIVACY_BY_STOP[stop] : 'ALLOWED';
+
+/**
+ * A recipient fact for the fixture request. `stop` maps onto the required Privacy evidence (or the recipient stop);
+ * without one the fixture reports an explicit Privacy ALLOWED, the only evidence that can yield eligibility.
+ */
+export const recipient = (
+  role: string,
+  contactId: string,
+  stop?: CandidateStopReason,
+  overrides: RecipientOverrides = {},
+): RecipientFact =>
   decodeFact({
-    ref: { moduleId: 'fixture.party', resourceId: contactId, resourceType: 'fixture.contact-point' },
+    occurrenceId: overrides.occurrenceId ?? FIXTURE_OCCURRENCE_ID,
+    privacy: overrides.privacy ?? privacyFor(stop),
+    recipientStop: stop === 'RECIPIENT_NOT_ELIGIBLE' || stop === 'RECIPIENT_BASIS_MISSING' ? stop : undefined,
+    ref: {
+      moduleId: overrides.moduleId ?? 'fixture.party',
+      resourceId: contactId,
+      resourceType: overrides.resourceType ?? 'fixture.contact-point',
+    },
     role,
-    stop,
+    tenantId: overrides.tenantId ?? FIXTURE_TENANT_ID,
   });
 
 export const fixtureContext = (
   recipients: readonly RecipientFact[],
-  source: { readonly latestRevision?: number; readonly state?: string } = {},
+  source: {
+    readonly latestRevision?: number;
+    readonly occurrenceId?: string;
+    readonly state?: string;
+    readonly tenantId?: string;
+  } = {},
 ): CommunicationDecisionContext => ({
   recipients,
-  source: decodeSource({ latestRevision: source.latestRevision ?? 1, state: source.state ?? FIXTURE_OPEN_STATE }),
+  source: decodeSource({
+    latestRevision: source.latestRevision ?? 1,
+    occurrenceId: source.occurrenceId ?? FIXTURE_OCCURRENCE_ID,
+    state: source.state ?? FIXTURE_OPEN_STATE,
+    tenantId: source.tenantId ?? FIXTURE_TENANT_ID,
+  }),
 });
+
+/** Evaluate facts that belong to the request; a mismatch here is a test-authoring defect and surfaces as a throw. */
+export const decideOrThrow = (...args: Parameters<typeof decideCommunication>) =>
+  Result.getOrThrow(decideCommunication(...args));

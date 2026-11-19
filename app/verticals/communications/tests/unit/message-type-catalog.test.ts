@@ -1,16 +1,17 @@
-import { Option, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { approvedMessageTypeRegistry, approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
-import { decideCommunication } from '../../src/domain/catalog/decision.ts';
+import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
+import { approvedTypesDecisionLayer, CommunicationDecisionService } from '../../src/domain/catalog/decision-service.ts';
 import { TransactionalMessageTypeSchema } from '../../src/domain/catalog/message-type.ts';
 import {
-  emptyMessageTypeRegistry,
   extendMessageTypeRegistry,
   findMessageTypeByPurpose,
   buildMessageTypeRegistry,
+  MessageTypeRegistryInvalid,
 } from '../../src/domain/catalog/registry.ts';
 import {
+  decideOrThrow,
   FIXTURE_ORIGINAL_ROLE,
   fixtureContext,
   fixtureRegistry,
@@ -32,13 +33,19 @@ const violationTags = (types: Parameters<typeof buildMessageTypeRegistry>[0]) =>
 const decodeType = Schema.decodeUnknownResult(TransactionalMessageTypeSchema, { onExcessProperty: 'error' });
 const original = recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original');
 
-const decideAll = (registry: Parameters<typeof decideCommunication>[0], purposes: readonly string[]) =>
-  purposes.map((purpose) => decideCommunication(registry, fixtureRequest({ purpose }), fixtureContext([original])));
+/** The evaluator built by the same approved-list builder the production layer uses. */
+const evaluatorOver = (types: Parameters<typeof approvedTypesDecisionLayer>[0]) =>
+  Effect.gen(function* evaluatorFromService() {
+    return yield* CommunicationDecisionService;
+  }).pipe(Effect.provide(approvedTypesDecisionLayer(types)));
+
+const decideAll = (registry: Parameters<typeof decideOrThrow>[0], purposes: readonly string[]) =>
+  purposes.map((purpose) => decideOrThrow(registry, fixtureRequest({ purpose }), fixtureContext([original])));
 
 describe('#1394 Rule: the catalog approves types explicitly', () => {
-  it('ships no production type: the approved registry is empty until an owner activation approves one', () => {
+  it('ships no production type, and the approved list is a valid registry (module-load assertion for CI)', () => {
     expect(approvedMessageTypes).toEqual([]);
-    expect(approvedMessageTypeRegistry).toEqual(emptyMessageTypeRegistry);
+    // Fails CI when a later owner activation adds an invalid type to the approved list.
     expect(Result.isSuccess(buildMessageTypeRegistry(approvedMessageTypes))).toBe(true);
   });
 
@@ -61,6 +68,34 @@ describe('#1394 Rule: the catalog approves types explicitly', () => {
       violationTags([fixtureTypeNamed('required-quiet', { requiredness: 'REQUIRED', result: noMessageType.result })]),
     ).toEqual(['RequiredTypeWithoutMessages']);
   });
+
+  it.effect('BR-05/AC-04: one invalid added type fails loudly at construction and never empties the registry', () =>
+    Effect.gen(function* invalidAdditionIsLoud() {
+      const valid = fixtureTypeNamed('good-addition');
+      const invalid = fixtureTypeNamed('bad-addition', { privacyPurposeRefs: [] });
+      const base = fixtureRegistry(fixtureType());
+      const decideBase = () => decideOrThrow(base, fixtureRequest(), fixtureContext([original]));
+
+      // The builder the production layer uses reports the invalid candidate explicitly instead of approving nothing.
+      const failure = yield* Effect.flip(evaluatorOver([fixtureType(), valid, invalid]));
+      expect(failure).toBeInstanceOf(MessageTypeRegistryInvalid);
+      expect(failure.violations).toMatchObject([
+        { _tag: 'ActiveTypeWithoutPrivacyPurpose', typeId: 'fixture.bad-addition-message' },
+      ]);
+
+      // Extending an existing registry fails the same way, and the registry it was extending stays fully usable.
+      expect(Result.isFailure(extendMessageTypeRegistry(base, [valid, invalid]))).toBe(true);
+      expect(candidatesOf(decideBase())).toHaveLength(1);
+
+      // Without the invalid candidate the same builder yields a working evaluator over every valid type.
+      const service = yield* evaluatorOver([fixtureType(), valid]);
+      const decision = yield* service.decide(
+        fixtureRequest({ purpose: 'fixture.good-addition' }),
+        fixtureContext([original]),
+      );
+      expect(candidatesOf(decision)).toHaveLength(1);
+    }),
+  );
 
   it('allows an inactive type without a Privacy purpose, since it can never be sent', () => {
     expect(violationTags([fixtureType({ privacyPurposeRefs: [], status: 'DEACTIVATED' })])).toEqual([]);

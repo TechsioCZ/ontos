@@ -1,10 +1,12 @@
 import { Data, Effect, Option } from 'effect';
 
-import { CommunicationOutcome, RecipientDecision } from './decision.ts';
+import { CommunicationOutcome, isStaleSourceReason, RecipientDecision } from './decision.ts';
+import { CommunicationRequirednessUnknown } from './required-errors.ts';
 import type {
   CommunicationDecision,
   MessageIntentIdentity,
   NoMessageReason,
+  StaleSourceReason,
   UnresolvedSlot,
   UnresolvedSlotReason,
 } from './decision.ts';
@@ -37,8 +39,16 @@ export type RequiredCommunicationOutcomeCase = Data.TaggedEnum<{
   NotRequired: { readonly requiredness: 'OPTIONAL' };
   /** Every required candidate is prepared and eligible. This is not delivery. */
   Prepared: { readonly prepared: readonly MessageIntentIdentity[] };
-  /** No approved type carries the purpose, so requiredness cannot be asserted. */
+  /**
+   * No approved type usable by this issuer carries the purpose (unknown, or owned by another source), so requiredness
+   * cannot be asserted and nothing was prepared. It is never a prepared required communication.
+   */
   RequirednessUnknown: { readonly purpose: CommunicationPurposeKey };
+  /**
+   * BR-08: the source owner's own state or revision change made the request stale before the last stoppable boundary.
+   * The stop is truthful but not a Communications failure; the source owner already knows its own change.
+   */
+  SourceStale: { readonly reason: StaleSourceReason };
 }>;
 export const RequiredCommunicationOutcome = Data.taggedEnum<RequiredCommunicationOutcomeCase>();
 type FailedOutcome = Data.TaggedEnum.Value<RequiredCommunicationOutcomeCase, 'Failed'>;
@@ -85,6 +95,12 @@ const outcomeFor = ({ prepared, reasons }: RequiredEvaluation): RequiredCommunic
       });
 };
 
+const staleSourceReasonOf = (decision: CommunicationDecision) =>
+  CommunicationOutcome.$match(decision.outcome, {
+    Candidates: () => Option.none<StaleSourceReason>(),
+    NoMessage: ({ reason }) => (isStaleSourceReason(reason) ? Option.some(reason) : Option.none()),
+  });
+
 /** Derive the typed outcome the source workflow receives for the decision of one request. */
 export const requiredOutcomeOf = (decision: CommunicationDecision): RequiredCommunicationOutcomeCase =>
   Option.match(decision.type, {
@@ -92,7 +108,10 @@ export const requiredOutcomeOf = (decision: CommunicationDecision): RequiredComm
     onSome: ({ requiredness }) =>
       requiredness === 'OPTIONAL'
         ? RequiredCommunicationOutcome.NotRequired({ requiredness })
-        : outcomeFor(evaluate(decision)),
+        : Option.match(staleSourceReasonOf(decision), {
+            onNone: () => outcomeFor(evaluate(decision)),
+            onSome: (reason) => RequiredCommunicationOutcome.SourceStale({ reason }),
+          }),
   });
 
 /**
@@ -103,11 +122,16 @@ export class RequiredCommunicationNotPrepared extends Data.TaggedError('Required
   readonly outcome: FailedOutcome;
 }> {}
 
-/** Succeeds with the decision unless a required communication could not be fully prepared. */
+/**
+ * Succeeds with the decision unless a required communication could not be fully prepared (RequiredCommunicationNotPrepared)
+ * or the purpose is not an approved type for this issuer (CommunicationRequirednessUnknown). A stale source (BR-08)
+ * and an optional type succeed: Communications owes the source no failure there; read `requiredOutcomeOf` for detail.
+ */
 export const requireCommunicationPrepared = (decision: CommunicationDecision) =>
   RequiredCommunicationOutcome.$match(requiredOutcomeOf(decision), {
     Failed: (outcome) => Effect.fail(new RequiredCommunicationNotPrepared({ outcome })),
     NotRequired: () => Effect.succeed(decision),
     Prepared: () => Effect.succeed(decision),
-    RequirednessUnknown: () => Effect.succeed(decision),
+    RequirednessUnknown: ({ purpose }) => Effect.fail(new CommunicationRequirednessUnknown({ purpose })),
+    SourceStale: () => Effect.succeed(decision),
   });

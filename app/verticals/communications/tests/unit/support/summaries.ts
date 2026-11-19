@@ -58,4 +58,5 @@ export const requiredSummary = (outcome: RequiredCommunicationOutcomeCase) =>
     NotRequired: () => ({ kind: 'NotRequired' as const }),
     Prepared: ({ prepared }) => ({ kind: 'Prepared' as const, preparedSlots: prepared.map(({ slotKey }) => slotKey) }),
     RequirednessUnknown: () => ({ kind: 'RequirednessUnknown' as const }),
+    SourceStale: ({ reason }) => ({ kind: 'SourceStale' as const, reason }),
   });

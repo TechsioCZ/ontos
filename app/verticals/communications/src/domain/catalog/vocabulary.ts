@@ -74,6 +74,25 @@ export const SourceOnboardingSchema = Schema.Literals(['ACTIVE', 'NOT_ACTIVATED'
 export const RequirednessSchema = Schema.Literals(['REQUIRED', 'OPTIONAL']);
 export type Requiredness = typeof RequirednessSchema.Type;
 
+/** Current tenant of a request and of every fact evaluated for it. */
+export const CommunicationTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('CommunicationTenantId'),
+);
+export type CommunicationTenantId = typeof CommunicationTenantIdSchema.Type;
+
+/**
+ * Current Privacy Processing Eligibility for one candidate's exact purpose and scope, as the Privacy gate reported it.
+ * It is positive evidence: only an explicit `ALLOWED` can ever lead to an eligible candidate. A caller that never
+ * consulted Privacy has no value to supply, so absence of a verdict can never be read as permission (#1396).
+ * `NOT_ALLOWED` (a proven prohibition) and `INDETERMINATE` (uncertainty) stay distinct and are never merged.
+ */
+export const PrivacyEvidenceSchema = Schema.Literals(['ALLOWED', 'NOT_ALLOWED', 'INDETERMINATE']);
+export type PrivacyEvidence = typeof PrivacyEvidenceSchema.Type;
+
+/** Stop facts the recipient algorithm (d21-03) can report besides Privacy. */
+export const RecipientStopReasonSchema = Schema.Literals(['RECIPIENT_NOT_ELIGIBLE', 'RECIPIENT_BASIS_MISSING']);
+export type RecipientStopReason = typeof RecipientStopReasonSchema.Type;
+
 /** Why one concrete candidate was stopped. Each is a distinct, current, owner-decided fact. */
 export const CandidateStopReasonSchema = Schema.Literals([
   'PRIVACY_NOT_ALLOWED',

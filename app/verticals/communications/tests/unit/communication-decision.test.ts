@@ -1,19 +1,22 @@
 import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { approvedMessageTypeRegistry } from '../../src/domain/catalog/approved-registry.ts';
-import { decideCommunication } from '../../src/domain/catalog/decision.ts';
-import { CommunicationDecisionRequestSchema } from '../../src/domain/catalog/decision-request.ts';
+import { CommunicationContextMismatch, decideCommunication } from '../../src/domain/catalog/decision.ts';
+import { CommunicationDecisionRequestSchema, RecipientFactSchema } from '../../src/domain/catalog/decision-request.ts';
 import {
   approvedCommunicationDecisionLayer,
   communicationDecisionLayer,
   CommunicationDecisionService,
 } from '../../src/domain/catalog/decision-service.ts';
 import {
+  decideOrThrow,
   FIXTURE_APPROVER_ROLE,
   FIXTURE_CLOSED_STATE,
+  FIXTURE_OCCURRENCE_ID,
   FIXTURE_ORIGINAL_ROLE,
+  FIXTURE_OTHER_TENANT_ID,
   FIXTURE_SECONDARY_ROLE,
+  FIXTURE_TENANT_ID,
   fixtureContext,
   fixtureRegistry,
   fixtureRequest,
@@ -26,17 +29,29 @@ import {
 } from './support/catalog-fixtures.ts';
 import { candidatesOf, outcomeSummary, pinOf, recipientSummary } from './support/summaries.ts';
 
-const decodeRequest = Schema.decodeUnknownResult(CommunicationDecisionRequestSchema, { onExcessProperty: 'error' });
+const decodeRequest = Schema.decodeUnknownResult(CommunicationDecisionRequestSchema);
+const decodeFact = Schema.decodeUnknownResult(RecipientFactSchema);
 
 const registry = fixtureRegistry(fixtureType(), noMessageType, requiredTwoSlotType, nRecipientPolicyType);
 const original = recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original');
 const secondary = recipient(FIXTURE_SECONDARY_ROLE, 'contact-secondary');
 
 const decide = (purpose: string, ...recipients: Parameters<typeof fixtureContext>[0]) =>
-  decideCommunication(registry, fixtureRequest({ purpose }), fixtureContext(recipients));
+  decideOrThrow(registry, fixtureRequest({ purpose }), fixtureContext(recipients));
 
 const stopped = (reason: 'PRIVACY_INDETERMINATE' | 'PRIVACY_NOT_ALLOWED') =>
   outcomeSummary(decide('fixture.single', recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', reason)));
+
+const summaries = (...facts: Parameters<typeof fixtureContext>[0]) =>
+  outcomeSummary(decide('fixture.single', ...facts));
+const summaryFor = (ordered: Parameters<typeof fixtureContext>[0]) =>
+  outcomeSummary(decide('fixture.approvers', ...ordered));
+const sameId = (moduleId: string, resourceType: string) =>
+  recipient(FIXTURE_APPROVER_ROLE, 'shared-id', undefined, { moduleId, resourceType });
+const identities = (...facts: Parameters<typeof fixtureContext>[0]) =>
+  candidatesOf(decide('fixture.approvers', ...facts)).map(({ identity }) => identity);
+const mismatchesFor = (...args: Parameters<typeof fixtureContext>) =>
+  Option.getOrThrow(Result.getFailure(decideCommunication(registry, fixtureRequest(), fixtureContext(...args))));
 
 const approvers = (count: number) =>
   Array.from({ length: count }, (_unused, index) => recipient(FIXTURE_APPROVER_ROLE, `approver-${index}`));
@@ -44,7 +59,7 @@ const approvers = (count: number) =>
 describe('#1394 Rule: the source of communication is only an authorized owner request', () => {
   it('Scenario: a source event with a request leads to the prescribed communication', () => {
     const request = fixtureRequest();
-    const decision = decideCommunication(registry, request, fixtureContext([original]));
+    const decision = decideOrThrow(registry, request, fixtureContext([original]));
 
     // The explainable decision names the approved rule it used, and the candidate stays linked to the source request.
     expect(pinOf(decision)).toMatchObject({ requiredness: 'OPTIONAL', revision: 1, typeId: 'fixture.single-message' });
@@ -54,8 +69,11 @@ describe('#1394 Rule: the source of communication is only an authorized owner re
     expect(candidatesOf(decision)[0]).toMatchObject({
       identity: {
         occurrenceId: 'fixture-occurrence-1',
+        recipient: { moduleId: 'fixture.party', resourceId: 'contact-original', resourceType: 'fixture.contact-point' },
         revision: 1,
         slotKey: 'primary',
+        sourceModule: 'fixture.source',
+        tenantId: FIXTURE_TENANT_ID,
         typeId: 'fixture.single-message',
       },
       purpose: 'fixture.single',
@@ -67,18 +85,29 @@ describe('#1394 Rule: the source of communication is only an authorized owner re
   });
 
   it('Scenario: a domain event without a communication request sends no message', () => {
-    // A confirmed business event has no occurrence, purpose or issuing owner, so it can never reach the evaluator.
-    expect(Result.isFailure(decodeRequest({ eventType: 'fixture.order.confirmed', orderId: 'order-fixture-1' }))).toBe(
-      true,
-    );
+    const bareEvent = { eventType: 'fixture.order.confirmed', orderId: 'order-fixture-1' };
+    // @ts-expect-error The evaluator input type requires a decoded request; a bare domain event is not one.
+    const evaluateBareEvent = () => decideCommunication(registry, bareEvent, fixtureContext([]));
+
+    // The only way to obtain a request is decoding it, and a bare event has no occurrence, purpose, issuer or tenant.
+    expect(Object.keys(CommunicationDecisionRequestSchema.fields).toSorted()).toEqual([
+      'occurrence',
+      'purpose',
+      'source',
+      'tenantId',
+    ]);
+    expect(Result.isFailure(decodeRequest(bareEvent))).toBe(true);
+    expect(evaluateBareEvent).toBeInstanceOf(Function);
   });
 
-  it.each([
-    ['template', { templateKey: 'fixture.template' }],
-    ['recipient address', { recipientAddress: 'someone@example.invalid' }],
-    ['language', { language: 'cs' }],
-  ])('AC-01: a source never prescribes the final message, recipient, language or template (%s)', (_name, extra) => {
-    expect(Result.isFailure(decodeRequest({ ...fixtureRequest(), ...extra }))).toBe(true);
+  it('AC-01 (schema key space): a request has no field for a final message, recipient, language or template', () => {
+    // Rejecting unknown properties is a decoder option of the intake Action (a later plan), which owns that claim;
+    // here only the request shape the evaluator consumes is proven to have no such field.
+    const fields = Object.keys(CommunicationDecisionRequestSchema.fields);
+
+    for (const forbidden of ['template', 'recipient', 'address', 'email', 'language', 'locale', 'message']) {
+      expect(fields.filter((field) => field.toLowerCase().includes(forbidden))).toEqual([]);
+    }
     expect(Result.isSuccess(decodeRequest(fixtureRequest()))).toBe(true);
   });
 });
@@ -139,7 +168,7 @@ describe('#1394 Rule: one request may have 0 to N results', () => {
     expect(outcomeSummary(decide('fixture.approvers'))).toMatchObject({ kind: 'NoMessage' });
     expect(candidatesOf(decide('fixture.approvers', ...approvers(1)))).toHaveLength(1);
     expect(many).toHaveLength(40);
-    expect(new Set(many.map(({ identity }) => identity.recipientResourceId)).size).toBe(40);
+    expect(new Set(many.map(({ identity }) => identity.recipient.resourceId)).size).toBe(40);
   });
 
   it('AC-03: one person is one message however many times the recipient algorithm names them', () => {
@@ -168,7 +197,7 @@ describe('#1394 Rule: one request may have 0 to N results', () => {
 describe('#1394 Rule: the catalog is extended explicitly without a fixed quota', () => {
   const extended = fixtureRegistry(fixtureType(), fixtureTypeNamed('new-kind'));
   const decideExtended = (purpose: string) =>
-    decideCommunication(extended, fixtureRequest({ purpose }), fixtureContext([original]));
+    decideOrThrow(extended, fixtureRequest({ purpose }), fixtureContext([original]));
 
   it('Scenario: a newly approved type uses the same decision boundaries', () => {
     expect(candidatesOf(decideExtended('fixture.new-kind'))).toHaveLength(1);
@@ -195,7 +224,7 @@ describe('#1394 Rule: the catalog is extended explicitly without a fixed quota',
     'Scenario: an unknown or inactive purpose does not open delivery (%s)',
     (_name, request, type, reason) => {
       // Recipients are present on purpose: an addressable audience never rescues an inadmissible purpose.
-      const decision = decideCommunication(fixtureRegistry(type), request, fixtureContext([original]));
+      const decision = decideOrThrow(fixtureRegistry(type), request, fixtureContext([original]));
 
       expect(outcomeSummary(decision)).toMatchObject({ kind: 'NoMessage', reason });
       expect(candidatesOf(decision)).toEqual([]);
@@ -205,7 +234,7 @@ describe('#1394 Rule: the catalog is extended explicitly without a fixed quota',
   it('Scenario: a not yet activated future domain does not send on its own', () => {
     // A future owner declares its type but has no activated communication-request producer.
     const futureRegistry = fixtureRegistry(fixtureTypeNamed('future-owner', { onboarding: 'NOT_ACTIVATED' }));
-    const decision = decideCommunication(
+    const decision = decideOrThrow(
       futureRegistry,
       fixtureRequest({ purpose: 'fixture.future-owner' }),
       fixtureContext([original]),
@@ -213,25 +242,15 @@ describe('#1394 Rule: the catalog is extended explicitly without a fixed quota',
 
     expect(outcomeSummary(decision)).toMatchObject({ kind: 'NoMessage', reason: 'SOURCE_ONBOARDING_INACTIVE' });
   });
-
-  it('AC-02: the production approved registry approves no purpose, so every request ends in no message', () => {
-    const decision = decideCommunication(approvedMessageTypeRegistry, fixtureRequest(), fixtureContext([original]));
-
-    expect(outcomeSummary(decision)).toMatchObject({ kind: 'NoMessage', reason: 'UNKNOWN_PURPOSE' });
-    expect(Option.isNone(decision.type)).toBe(true);
-  });
 });
 
 describe('#1394 Rule: an approved request does not overcome current prohibitions', () => {
   it('Scenario: an invitation was revoked before handoff', () => {
+    // BR-08: a stale source stops the handoff and records the stale-source reason; the source owner decides the rest.
     const request = fixtureRequest();
-    const beforeRevoke = decideCommunication(registry, request, fixtureContext([original]));
+    const beforeRevoke = decideOrThrow(registry, request, fixtureContext([original]));
     // Delayed or retried processing re-evaluates against the current source state and now stops (AC-06).
-    const afterRevoke = decideCommunication(
-      registry,
-      request,
-      fixtureContext([original], { state: FIXTURE_CLOSED_STATE }),
-    );
+    const afterRevoke = decideOrThrow(registry, request, fixtureContext([original], { state: FIXTURE_CLOSED_STATE }));
 
     expect(candidatesOf(beforeRevoke)).toHaveLength(1);
     expect(outcomeSummary(afterRevoke)).toMatchObject({ kind: 'NoMessage', reason: 'SOURCE_STATE_INELIGIBLE' });
@@ -242,11 +261,11 @@ describe('#1394 Rule: an approved request does not overcome current prohibitions
     const newerSource = fixtureContext([original], { latestRevision: 2 });
     const tolerant = fixtureRegistry(fixtureType({ currentness: { requireLatestSourceRevision: false } }));
 
-    expect(outcomeSummary(decideCommunication(registry, request, newerSource))).toMatchObject({
+    expect(outcomeSummary(decideOrThrow(registry, request, newerSource))).toMatchObject({
       kind: 'NoMessage',
       reason: 'SOURCE_REVISION_NOT_CURRENT',
     });
-    expect(candidatesOf(decideCommunication(tolerant, request, newerSource))).toHaveLength(1);
+    expect(candidatesOf(decideOrThrow(tolerant, request, newerSource))).toHaveLength(1);
   });
 
   it('Scenario: Privacy is neither allowed nor determinable', () => {
@@ -281,24 +300,180 @@ describe('#1394 Rule: an approved request does not overcome current prohibitions
 
 describe('#1394 Rule: repetition must not create independent duplicate messages', () => {
   it('Scenario: an identical source request arrives again (AC-07 evaluation part)', () => {
-    const first = decideCommunication(registry, fixtureRequest(), fixtureContext([original]));
-    const replay = decideCommunication(registry, fixtureRequest(), fixtureContext([original]));
+    const first = decideOrThrow(registry, fixtureRequest(), fixtureContext([original]));
+    const replay = decideOrThrow(registry, fixtureRequest(), fixtureContext([original]));
 
     // The same occurrence yields the same decision and the same candidate identities; durable idempotency is d21-07.
     expect(replay).toEqual(first);
   });
 
-  it('Scenario: the catalog changed after the first decision keeps the first decision explainable', () => {
-    const first = decideCommunication(registry, fixtureRequest(), fixtureContext([original]));
-    const revised = decideCommunication(
+  it('the decision pins the type revision it was made under (durable first-decision proof is deferred to #1401)', () => {
+    const first = decideOrThrow(registry, fixtureRequest(), fixtureContext([original]));
+    const revised = decideOrThrow(
       fixtureRegistry(fixtureType({ revision: 2 })),
       fixtureRequest(),
       fixtureContext([original]),
     );
 
-    // The pinned type revision is what lets the durable layer prove which revision made the first decision.
+    // Only the pinned revision inside each decision is proven here; persisting the first decision of an occurrence
+    // and refusing to re-decide it under a newer revision belongs to #1401.
     expect(pinOf(first)?.revision).toBe(1);
     expect(pinOf(revised)?.revision).toBe(2);
+  });
+});
+
+describe('#1394 Rule: Privacy evidence is positive and never assumed', () => {
+  const { privacy: _privacy, ...withoutPrivacy } = recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original');
+
+  it('a recipient fact without Privacy evidence cannot be built, so a caller that never asked Privacy is not eligible', () => {
+    expect(Result.isFailure(decodeFact(withoutPrivacy))).toBe(true);
+    expect(Result.isFailure(decodeFact({ ...withoutPrivacy, privacy: 'ASSUMED' }))).toBe(true);
+    expect(Result.isSuccess(decodeFact({ ...withoutPrivacy, privacy: 'ALLOWED' }))).toBe(true);
+  });
+
+  it('only an explicit ALLOWED with no other stop is eligible; NOT_ALLOWED and INDETERMINATE stay distinct', () => {
+    expect(summaries(recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original'))).toMatchObject({
+      candidates: [{ kind: 'Eligible' }],
+    });
+    expect(
+      summaries(recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', undefined, { privacy: 'NOT_ALLOWED' })),
+    ).toMatchObject({ candidates: [{ kind: 'Suppressed', reason: 'PRIVACY_NOT_ALLOWED' }] });
+    expect(
+      summaries(recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', undefined, { privacy: 'INDETERMINATE' })),
+    ).toMatchObject({ candidates: [{ kind: 'Suppressed', reason: 'PRIVACY_INDETERMINATE' }] });
+    // Privacy ALLOWED does not outrank a recipient stop.
+    expect(summaries(recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', 'RECIPIENT_BASIS_MISSING'))).toMatchObject({
+      candidates: [{ kind: 'Suppressed', reason: 'RECIPIENT_BASIS_MISSING' }],
+    });
+  });
+});
+
+describe('#1394 Rule: candidate identity is collision-free and independent of input order', () => {
+  it('two recipients sharing a resource id but not module or type in one slot get distinct identities', () => {
+    const found = identities(
+      sameId('fixture.party', 'fixture.contact-point'),
+      sameId('fixture.party', 'fixture.person'),
+      sameId('fixture.other-party', 'fixture.contact-point'),
+    );
+
+    expect(found).toHaveLength(3);
+    expect(new Set(found.map((identity) => JSON.stringify(identity))).size).toBe(3);
+    expect(found.map(({ recipient: ref }) => `${ref.moduleId}|${ref.resourceType}`).toSorted()).toEqual([
+      'fixture.other-party|fixture.contact-point',
+      'fixture.party|fixture.contact-point',
+      'fixture.party|fixture.person',
+    ]);
+  });
+
+  it('names tenant, source module, occurrence, revision, type, slot and the full recipient reference', () => {
+    const [identity] = identities(recipient(FIXTURE_APPROVER_ROLE, 'approver-1'));
+
+    expect(identity).toEqual({
+      occurrenceId: FIXTURE_OCCURRENCE_ID,
+      recipient: { moduleId: 'fixture.party', resourceId: 'approver-1', resourceType: 'fixture.contact-point' },
+      revision: 1,
+      slotKey: 'approvers',
+      sourceModule: 'fixture.source',
+      tenantId: FIXTURE_TENANT_ID,
+      typeId: 'fixture.approvers-message',
+    });
+  });
+
+  it('does not depend on the order the recipient facts arrive in', () => {
+    const facts = [
+      sameId('fixture.party', 'fixture.person'),
+      recipient(FIXTURE_APPROVER_ROLE, 'approver-2'),
+      sameId('fixture.other-party', 'fixture.contact-point'),
+      recipient(FIXTURE_APPROVER_ROLE, 'approver-1'),
+    ];
+    const forward = decide('fixture.approvers', ...facts);
+
+    expect(decide('fixture.approvers', ...facts.toReversed())).toEqual(forward);
+    expect(decide('fixture.approvers', ...facts.toSpliced(0, 0, ...facts.slice(2)))).toEqual(forward);
+    expect(candidatesOf(forward).map(({ identity }) => identity.recipient.moduleId)).toEqual([
+      'fixture.other-party',
+      'fixture.party',
+      'fixture.party',
+      'fixture.party',
+    ]);
+  });
+
+  it('keeps the winning stop reason independent of order when duplicate facts disagree', () => {
+    const facts = [
+      recipient(FIXTURE_APPROVER_ROLE, 'approver-1'),
+      recipient(FIXTURE_APPROVER_ROLE, 'approver-1', 'RECIPIENT_BASIS_MISSING'),
+      recipient(FIXTURE_APPROVER_ROLE, 'approver-1', 'PRIVACY_INDETERMINATE'),
+      recipient(FIXTURE_APPROVER_ROLE, 'approver-1', 'RECIPIENT_NOT_ELIGIBLE'),
+    ];
+    const permutations = [facts, facts.toReversed(), [...facts.slice(2), ...facts.slice(0, 2)]];
+
+    // Privacy INDETERMINATE outranks the recipient stops and an ALLOWED duplicate; NOT_ALLOWED would outrank it.
+    for (const ordered of permutations) {
+      expect(summaryFor(ordered)).toMatchObject({
+        candidates: [{ kind: 'Suppressed', reason: 'PRIVACY_INDETERMINATE' }],
+      });
+    }
+    const withProhibition = [...facts, recipient(FIXTURE_APPROVER_ROLE, 'approver-1', 'PRIVACY_NOT_ALLOWED')];
+    for (const ordered of [withProhibition, withProhibition.toReversed()]) {
+      expect(summaryFor(ordered)).toMatchObject({
+        candidates: [{ kind: 'Suppressed', reason: 'PRIVACY_NOT_ALLOWED' }],
+      });
+    }
+  });
+});
+
+describe('#1394 Rule: facts must belong to the request they are evaluated for', () => {
+  it('rejects source facts read for another occurrence', () => {
+    const failure = mismatchesFor([original], { occurrenceId: 'fixture-occurrence-2' });
+
+    expect(failure).toBeInstanceOf(CommunicationContextMismatch);
+    expect(failure.mismatches).toEqual([{ fact: 'SOURCE_FACTS', field: 'occurrenceId' }]);
+  });
+
+  it('rejects a recipient fact gathered for another occurrence', () => {
+    const failure = mismatchesFor([
+      recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', undefined, { occurrenceId: 'fixture-occurrence-2' }),
+    ]);
+
+    expect(failure.mismatches).toEqual([{ fact: 'RECIPIENT_FACT', field: 'occurrenceId' }]);
+  });
+
+  it('rejects source facts and a recipient fact from another tenant', () => {
+    const failure = mismatchesFor(
+      [recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original', undefined, { tenantId: FIXTURE_OTHER_TENANT_ID })],
+      { tenantId: FIXTURE_OTHER_TENANT_ID },
+    );
+
+    expect(failure.mismatches).toEqual([
+      { fact: 'SOURCE_FACTS', field: 'tenantId' },
+      { fact: 'RECIPIENT_FACT', field: 'tenantId' },
+    ]);
+  });
+
+  it.effect('the service fails with the typed mismatch and decides nothing', () =>
+    Effect.gen(function* serviceRejectsMismatch() {
+      const service = yield* CommunicationDecisionService;
+      const failure = yield* Effect.flip(
+        service.decide(fixtureRequest(), fixtureContext([original], { tenantId: FIXTURE_OTHER_TENANT_ID })),
+      );
+
+      expect(failure).toBeInstanceOf(CommunicationContextMismatch);
+    }).pipe(Effect.provide(communicationDecisionLayer(registry))),
+  );
+});
+
+describe('#1394 Rule: another owner type is never described to the issuer', () => {
+  it('SOURCE_NOT_AUTHORIZED_FOR_TYPE returns no type pin', () => {
+    const decision = decideOrThrow(
+      registry,
+      fixtureRequest({ moduleKey: 'fixture.other-source', purpose: 'fixture.paired' }),
+      fixtureContext([original, secondary]),
+    );
+
+    expect(outcomeSummary(decision)).toMatchObject({ kind: 'NoMessage', reason: 'SOURCE_NOT_AUTHORIZED_FOR_TYPE' });
+    expect(Option.isNone(decision.type)).toBe(true);
+    // Nothing of the required type (id, requiredness, Privacy purposes) is reachable from the decision.
+    expect(JSON.stringify(decision)).not.toMatch(/fixture\.paired-message|REQUIRED|fixture\.privacy\.purpose/u);
   });
 });
 

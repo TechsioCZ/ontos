@@ -2,11 +2,13 @@ import { OntosModuleIdSchema } from '@app/core-runtime/modules/manifest';
 import { Schema } from 'effect';
 
 import {
-  CandidateStopReasonSchema,
   CommunicationOccurrenceIdSchema,
   CommunicationPurposeKeySchema,
   CommunicationResourceRefSchema,
+  CommunicationTenantIdSchema,
+  PrivacyEvidenceSchema,
   RecipientRoleSchema,
+  RecipientStopReasonSchema,
   RevisionSchema,
   SourceStateKeySchema,
 } from './vocabulary.ts';
@@ -21,25 +23,37 @@ export const CommunicationDecisionRequestSchema = Schema.Struct({
   occurrence: Schema.Struct({ occurrenceId: CommunicationOccurrenceIdSchema, revision: RevisionSchema }),
   purpose: CommunicationPurposeKeySchema,
   source: Schema.Struct({ moduleKey: OntosModuleIdSchema }),
-  tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CommunicationTenantId')),
+  tenantId: CommunicationTenantIdSchema,
 });
 export type CommunicationDecisionRequest = typeof CommunicationDecisionRequestSchema.Type;
 
-/** Current facts about the source occurrence, read from its owner at decision time. */
+/**
+ * Current facts about the source occurrence, read from its owner at decision time. They name the occurrence and
+ * tenant they were read for, so facts read for another request are rejected instead of silently applied.
+ */
 export const SourceOccurrenceFactsSchema = Schema.Struct({
   latestRevision: RevisionSchema,
+  occurrenceId: CommunicationOccurrenceIdSchema,
   state: SourceStateKeySchema,
+  tenantId: CommunicationTenantIdSchema,
 });
 export type SourceOccurrenceFacts = typeof SourceOccurrenceFactsSchema.Type;
 
 /**
- * One candidate recipient the recipient algorithm (d21-03) supplies for a role, with the current blocking fact if
- * one exists. The catalog never derives recipients or Privacy outcomes itself.
+ * One candidate recipient the recipient algorithm (d21-03) supplies for a role. This is the contract d21-03/d21-04
+ * build on. The catalog never derives recipients or Privacy outcomes itself, but it never assumes them either:
+ * - `privacy` is REQUIRED positive evidence from the Privacy gate; only `ALLOWED` with no `recipientStop` yields an
+ *   eligible candidate, so a caller that never consulted Privacy cannot obtain eligibility;
+ * - `recipientStop` is the optional recipient/basis stop fact besides Privacy;
+ * - `occurrenceId` and `tenantId` bind the fact to the request it was gathered for.
  */
 export const RecipientFactSchema = Schema.Struct({
+  occurrenceId: CommunicationOccurrenceIdSchema,
+  privacy: PrivacyEvidenceSchema,
+  recipientStop: Schema.optional(RecipientStopReasonSchema),
   ref: CommunicationResourceRefSchema,
   role: RecipientRoleSchema,
-  stop: Schema.optional(CandidateStopReasonSchema),
+  tenantId: CommunicationTenantIdSchema,
 });
 export type RecipientFact = typeof RecipientFactSchema.Type;
 
