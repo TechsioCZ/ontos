@@ -4,6 +4,7 @@ import {
   makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { pricingRegistration } from '../vertical.registration.ts';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -217,6 +218,7 @@ const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegi
   Layer.provide(databaseIdentitiesLive),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );
 
 const governedReadRuntimeLive = readRuntimeLive;

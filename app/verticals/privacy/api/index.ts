@@ -5,6 +5,7 @@ import {
   makeOwnerActionApproveHandler,
   makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';
 import { PrivacySubjectPartyCredentialsLive } from '../src/persistence/privacy-subject-party-credentials.ts';
 import { PrivacySubjectPartyOwnerLive } from '../src/persistence/privacy-subject-party-owner.ts';
@@ -221,6 +222,10 @@ const privacySubjectPartyOwnerLive = PrivacySubjectPartyOwnerLive.pipe(
   Layer.provide(PrivacySubjectPartyCredentialsLive.pipe(Layer.provide(nodeCryptoLayer))),
 );
 
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
 const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -243,6 +248,7 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, p
     ),
   ),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)))),
 );
 
 const privacyActionAuthorityUnavailableLive = Layer.mergeAll(

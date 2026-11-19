@@ -68,6 +68,7 @@ import {
   PreparedMarketRetirementImpactLive,
 } from '../src/services/market-retirement-admission.service.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
@@ -254,6 +255,10 @@ const baseProductionActionRuntimeLive = makeActionRuntimeLive(
   Layer.provide(Layer.mergeAll(accessEnforcementLive, actionRuntimeDependenciesLive)),
   Layer.provide(databaseIdentitiesLive),
 );
+/** The module route's fetch client: no cache, no redirect, so the delegated credential reaches only the named provider. */
+const moduleCallHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
 const productionReadRuntimeLive = makeReadRuntimeLive(
   ultramodernDeliveryUnit,
   commerceMarketCatalogBackendRegistration,
@@ -270,6 +275,7 @@ const productionReadRuntimeLive = makeReadRuntimeLive(
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, moduleCallHttpClientLive)))),
 );
 
 const productionMarketSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(

@@ -16,9 +16,12 @@ const commandResultRequirementKey = partySourcePrivacyRequirementKey(commandResu
 
 const installedCatalog = () => {
   const operations = ownerDescriptors.requirements?.operations ?? [];
-  const modules = new Map<string, unknown>([[ownerDescriptors.moduleId, { manifest: ownerDescriptors }]]);
+  const modules = new Map<string, unknown>([
+    [ownerDescriptors.moduleId, { deployment: { appId: 'party-registry' }, manifest: ownerDescriptors }],
+  ]);
   for (const { provider } of operations) {
     modules.set(provider.moduleId, {
+      deployment: { appId: provider.moduleId.replaceAll('.', '-') },
       manifest: {
         publicSurface: {
           operationContracts: operations.map((operation) => ({
@@ -29,7 +32,8 @@ const installedCatalog = () => {
       },
     });
   }
-  // SAFETY: the operation requirement check reads only getByModuleId(...).manifest requirements and contracts.
+  // SAFETY: the operation requirement check reads only getByModuleId(...).manifest requirements and contracts,
+  // and each module's deployment app id.
   return { getByModuleId: (moduleId: string) => modules.get(moduleId) } as unknown as InstalledModuleCatalog;
 };
 

@@ -3,7 +3,9 @@ import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contra
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { DateTime, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { moduleOperation } from '@app/core-runtime/sdk';
 
+const CUSTOMER_CONTEXT_MODULE_ID = 'commerce.customer-context';
 const boundedOwnerReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const profileResourceId = <Brand extends 'CounterpartyPurchasingProfileResourceId' | 'RetailCustomerProfileResourceId'>(
   brand: Parameters<typeof Schema.brand<Brand>>[0],
@@ -25,13 +27,13 @@ const CounterpartyRefSchema = Schema.Struct({
   tenantId,
 });
 const CounterpartyPurchasingProfileRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('commerce.customer-context'),
+  moduleId: Schema.Literal(CUSTOMER_CONTEXT_MODULE_ID),
   resourceId: profileResourceId('CounterpartyPurchasingProfileResourceId'),
   resourceType: Schema.Literal('commerce.customer-context.counterparty-purchasing-profile'),
   tenantId,
 });
 const RetailCustomerProfileRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('commerce.customer-context'),
+  moduleId: Schema.Literal(CUSTOMER_CONTEXT_MODULE_ID),
   resourceId: profileResourceId('RetailCustomerProfileResourceId'),
   resourceType: Schema.Literal('commerce.customer-context.retail-customer-profile'),
   tenantId,
@@ -215,3 +217,16 @@ export const MarketSubjectRestrictionsCurrentApi = HttpApi.make('MarketSubjectRe
     }),
   ),
 );
+
+/** The typed operation reference a consumer passes to the Core SDK's `call`. */
+export const marketSubjectRestrictionsCurrentOperation = moduleOperation({
+  kind: 'read',
+  path: '/reads/market-subject-restrictions-current',
+  provider: {
+    entrypointKey: 'commerce.customer-context.api.market-subject-restrictions-current',
+    moduleId: CUSTOMER_CONTEXT_MODULE_ID,
+    schemaVersion: '1',
+  },
+  request: MarketSubjectRestrictionsCurrentRequestSchema,
+  response: MarketSubjectRestrictionsCurrentResponseSchema,
+});

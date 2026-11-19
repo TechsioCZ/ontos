@@ -22,7 +22,23 @@ import {
 import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
 import type { ShellSystemReadRegistrations } from '../modules/module-operation-execution.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import { getVerticalRuntimeReads } from '../modules/runtime-registration.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import { KernelCallsLive } from '../execution/call.ts';
+import { ExecutionRuleViolation } from '../execution/contract.ts';
+import type { CallRoute, CoreRunRead } from '../execution/contract.ts';
+import { CoreCallRoute } from '../execution/core-call-route.ts';
+import { coreCallRouteFor } from '../execution/core-route.ts';
+import { ModuleCallRoute } from '../execution/module-call-route.ts';
+import { CallRequirementsLive } from '../execution/requirements.ts';
+import { KernelSessionsLive } from '../execution/runner.ts';
+import { KernelTransactionsLive } from '../execution/transaction.ts';
+import { ModuleOperationRouteSchema, RequestExecutionSchema } from '../sdk/index.ts';
+import type { RequestExecution } from '../sdk/index.ts';
+import type { AccessAnswers, AccessQuestions } from '../sdk/read.ts';
+import { answerAccessQuestions } from './access-questions.ts';
+import { ReadRunEvidenceLive } from './run-evidence-live.ts';
+import { executeRunFormRead, preserveFailureCause, sanitizeReadHandlerFailure } from './run-form.ts';
 import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
@@ -79,9 +95,13 @@ import type {
   ResolvedReadPermissionTarget,
 } from './definition.ts';
 import {
+  getReadAccessQuestions,
   getReadAccessTargetResolver,
+  getReadCalls,
   getReadOwnerFactsResolver,
   getReadConditionalPermissionPlan,
+  getReadRun,
+  governedReadRegistration,
   isReadRegistration,
   getReadDomainErrorSchema,
   getReadPermissionTargetResolver,
@@ -96,7 +116,6 @@ import type { ReadCoreError } from './errors.ts';
 import {
   ReadEvidencePersistenceError,
   ReadHandlerExecutionError,
-  ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadInputValidationError,
   ReadPermissionDenied,
@@ -168,6 +187,12 @@ export interface ReadRuntimeOptions {
    */
   readonly databaseIdentities: DatabaseIdentityEnrollment;
   readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
+  /**
+   * The governed HTTP route to verticals a host provides (`ModuleCallRoute`). A `{ run }` read's call
+   * to a vertical goes through it; a host whose reads declare such a call and has none refuses to
+   * start (`makeReadRuntimeLive`).
+   */
+  readonly moduleCallRoute?: CallRoute;
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
   readonly ownerRegistration?: VerticalRuntimeRegistration;
@@ -586,42 +611,6 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     .contextPermissions(request)
     .pipe(Effect.map((decisions) => decisionFor(decisions, toContextPermissionAccessKey(target))));
 };
-
-const sanitizeReadHandlerFailure = <DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>>(
-  domainErrorSchema: DomainErrorSchema | undefined,
-  failure: unknown,
-):
-  | DomainErrorSchema['Type']
-  | ReadHandlerExecutionError
-  | ReadHandlerNotFound
-  | ReadHandlerUnavailable
-  | ReadPermissionDenied => {
-  if (
-    Schema.is(ReadHandlerUnavailable)(failure) ||
-    Schema.is(ReadHandlerNotFound)(failure) ||
-    Schema.is(ReadPermissionDenied)(failure)
-  ) {
-    return failure;
-  }
-  if (domainErrorSchema !== undefined) {
-    const decoded = Schema.decodeUnknownOption(domainErrorSchema)(failure);
-    if (Option.isSome(decoded)) {
-      return decoded.value;
-    }
-  }
-  return new ReadHandlerExecutionError({
-    code: 'read_handler_execution_failed',
-    reason: 'The read handler failed unexpectedly',
-  });
-};
-
-const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  Object.defineProperty(failure, 'cause', {
-    configurable: false,
-    enumerable: false,
-    value: cause,
-    writable: false,
-  });
 
 const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
   preserveFailureCause(
@@ -1100,6 +1089,8 @@ const NO_FIELD_PATHS: readonly (readonly string[])[] = Object.freeze([]);
  * list hands to its owner (O25) and the declared result paths this caller may not see (O17).
  */
 interface ReadGateAuthorization {
+  /** The `now` an allowed decision was taken at; its access questions are asked at the same instant. */
+  readonly decidedAt?: Date;
   readonly decision: PermissionDecision;
   /** The declared result paths this caller may not see; empty when every field group is granted. */
   readonly deniedFieldPaths: readonly (readonly string[])[];
@@ -1205,6 +1196,51 @@ const persistReadEvidenceForComposition = (
         SqlError: (cause) => Effect.fail(readEvidenceFailure(cause)),
       }),
     );
+};
+
+const isModuleRoute = Schema.is(ModuleOperationRouteSchema);
+
+/** No access question was declared: the `{ run }` context still carries an (empty) answer record. */
+const NO_ACCESS_ANSWERS: AccessAnswers<AccessQuestions> = Object.freeze({});
+
+/**
+ * The verified provenance of the request principal a read executes for (`RequestExecutionSchema`):
+ * a recovery, then a verified workload, then a Core system principal, otherwise a person.
+ */
+const requestExecutionOf = (principal: TrustedPrincipalContext): RequestExecution => {
+  if (readVerifiedGatewayRecovery(principal) !== undefined) {
+    return RequestExecutionSchema.make({ via: 'recovery' });
+  }
+  if (readVerifiedGatewayWorkload(principal) !== undefined) {
+    return RequestExecutionSchema.make({ via: 'workload' });
+  }
+  return RequestExecutionSchema.make({ via: principal.authMethod === 'system' ? 'system' : 'person' });
+};
+
+/**
+ * A vertical host whose reads declare a call to another vertical needs the governed HTTP route to it.
+ * Without one, every such call could only answer unavailable, so the host refuses to start instead.
+ */
+export const requireHostedModuleCallRoute = (
+  hosted: VerticalRuntimeRegistration | undefined,
+  route: Option.Option<CallRoute>,
+): Effect.Effect<void> => {
+  if (hosted === undefined || Option.isSome(route)) {
+    return Effect.void;
+  }
+  const callingReads = getVerticalRuntimeReads(hosted).filter((read) =>
+    Object.values(getReadCalls(read)).some((declared) => isModuleRoute(declared.operation.route)),
+  );
+  return callingReads.length === 0
+    ? Effect.void
+    : Effect.die(
+        new ExecutionRuleViolation({
+          detail: `Module ${hosted.moduleId} hosts reads that call other modules (${callingReads
+            .map((read) => read.descriptor.readKey)
+            .join(', ')}) and provides no ModuleCallRoute`,
+          rule: 'module_call_without_route',
+        }),
+      );
 };
 
 const readRuntimeFromDependencies = <
@@ -1485,7 +1521,7 @@ const readRuntimeFromDependencies = <
       }
       const deniedFieldPaths = yield* decideReadFieldPaths(now, readScope, readTarget);
       return withOptionalProperty(
-        { decision: 'allowed' as const, deniedFieldPaths, mainAccessDecision: decision },
+        { decidedAt: now, decision: 'allowed' as const, deniedFieldPaths, mainAccessDecision: decision },
         listAccess !== undefined,
         'listAccess',
         listAccess,
@@ -1687,6 +1723,131 @@ const readRuntimeFromDependencies = <
       return admittedCompositionRevision;
     });
 
+    /**
+     * Core's answers to the descriptor's extra access questions, asked only after the read's own decision
+     * was ALLOWED: at the same instant and in the same scope as the own decision. None declared: none.
+     */
+    const answerReadAccessQuestions = Effect.fn('ReadRuntime.answerReadAccessQuestions')(
+      function* answerReadAccessQuestionsEffect(
+        gateAuthorization: ReadGateAuthorization,
+        readScope: OperationalScope,
+      ): Effect.fn.Return<AccessAnswers<AccessQuestions> | undefined, ReadPermissionUnavailable> {
+        const accessQuestions = getReadAccessQuestions(input.registration);
+        if (accessQuestions.length === 0) {
+          return undefined;
+        }
+        const { decidedAt, mainAccessDecision } = gateAuthorization;
+        if (decidedAt === undefined || mainAccessDecision === undefined) {
+          // Definition time admits questions only on a protected read, which the gate decided allowed.
+          return yield* new ReadPermissionUnavailable({
+            code: 'read_permission_unavailable',
+            reason: 'The access questions of this Read could not be asked',
+          });
+        }
+        // The gate owns its scoped reads here, as for the read's own decision: no owner transaction is held.
+        return yield* answerAccessQuestions({
+          gate: accessDecision,
+          now: decidedAt,
+          own: withOptional({ decision: mainAccessDecision }, 'listAccess', gateAuthorization.listAccess),
+          questions: accessQuestions,
+          scope: readScope,
+        });
+      },
+    );
+
+    /** The owner rule's question, completed with the `operationAt` of each transaction that asks it. */
+    const ownerQuestionOf = (
+      readScope: OperationalScope,
+      ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[],
+      accessTarget: Option.Option<AccessRecordTarget>,
+      accessOwnerFacts: Option.Option<OwnerAccessFacts>,
+    ) =>
+      withOptionalProperty(
+        withOptionalProperty(
+          {
+            capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+            operation: 'read' as const,
+            operationKey: input.registration.descriptor.readKey,
+            owningModuleKey: input.registration.descriptor.owningModuleKey,
+            scope: readScope,
+            targets: ownerAuthorizationTargets,
+          },
+          Option.isSome(accessTarget),
+          'target',
+          Option.getOrUndefined(accessTarget),
+          {},
+        ),
+        Option.isSome(accessOwnerFacts),
+        'ownerFacts',
+        Option.getOrUndefined(accessOwnerFacts),
+        {},
+      );
+
+    /**
+     * The `{ run }` form, after admission: no transaction is held here. The kernel decides the owner rule
+     * before the module's code and fences the admitted revision in every transaction it opens, and the
+     * run-form executor writes the read's evidence in its own fenced transaction.
+     */
+    const executeRunForm = (admitted: {
+      readonly accessAnswers: AccessAnswers<AccessQuestions> | undefined;
+      readonly admittedCompositionRevision: string | undefined;
+      readonly executionRevision: string;
+      readonly gateAuthorization: ReadGateAuthorization;
+      readonly ownerQuestion: ReturnType<typeof ownerQuestionOf>;
+      readonly permissionTargetMetadata: ActionPolicyTarget;
+      readonly scope: OperationalScope;
+    }) =>
+      Effect.scoped(
+        buildKernel.pipe(
+          Effect.flatMap((kernel) =>
+            executeRunFormRead(
+              input.registration,
+              withOptional(
+                withOptional(
+                  {
+                    access: admitted.accessAnswers ?? NO_ACCESS_ANSWERS,
+                    decodedInput,
+                    deniedFieldPaths: admitted.gateAuthorization.deniedFieldPaths,
+                    facts: {
+                      compositionRevision: admitted.admittedCompositionRevision,
+                      identity: requestExecutionOf(principal),
+                      operationKey: descriptor.readKey,
+                      owningModuleKey: descriptor.owningModuleKey,
+                    },
+                    lease: (effect) =>
+                      withReadExecution(
+                        {
+                          loadCatalog: operationCatalogLoader(operationAuthority, admitted.executionRevision),
+                          ownerRegistration: options.ownerRegistration,
+                          phase: 'execution',
+                          registration: input.registration,
+                          revision: admitted.executionRevision,
+                          scope: admitted.scope,
+                        },
+                        effect,
+                      ),
+                    ownerQuestion: admitted.ownerQuestion,
+                    permissionTargetMetadata: admitted.permissionTargetMetadata,
+                    queryHash,
+                    scope: admitted.scope,
+                    usesAccessGate,
+                    workloadAdmission: withOptional(
+                      { carrier: accessCarrier },
+                      'decision',
+                      admitted.gateAuthorization.mainAccessDecision,
+                    ),
+                  },
+                  'listAccess',
+                  admitted.gateAuthorization.listAccess,
+                ),
+                'audience',
+                input.audience,
+              ),
+            ).pipe(Effect.provideContext(kernel)),
+          ),
+        ),
+      );
+
     const executeTrustedRead = Effect.fn('ReadRuntime.executeTrustedRead')(function* executeTrustedReadEffect(
       executor: CoreDbExecutor,
     ) {
@@ -1792,7 +1953,6 @@ const readRuntimeFromDependencies = <
           reason: 'Read authorization is temporarily unavailable',
         });
       }
-
       const admittedCompositionRevision = yield* admitReadComposition(earlyCompositionRevision);
       const executionRevision = admittedCompositionRevision ?? '';
       const policies = getReadPolicyImplementations(input.registration);
@@ -1880,6 +2040,22 @@ const readRuntimeFromDependencies = <
         ),
       );
       stage('policies_checked');
+      // Only now, with the read's own decision ALLOWED (and its policies passed), Core asks the
+      // descriptor's extra access questions.
+      const accessAnswers = yield* answerReadAccessQuestions(gateAuthorization, scope);
+      if (getReadRun(input.registration) !== undefined) {
+        // Admitted, and no transaction is held here: the governed admission fence already committed, so
+        // `run` starts with no transaction or composition lock open across its module code.
+        return yield* executeRunForm({
+          accessAnswers,
+          admittedCompositionRevision,
+          executionRevision,
+          gateAuthorization,
+          ownerQuestion: ownerQuestionOf(scope, ownerAuthorizationTargets, accessTarget, accessOwnerFacts),
+          permissionTargetMetadata,
+          scope,
+        });
+      }
 
       const trustedSettlement = makeReadSettlementRecovery();
       const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
@@ -1914,9 +2090,14 @@ const readRuntimeFromDependencies = <
         withOptional(
           withOptional(
             withOptional(
-              { readKey: descriptor.readKey, scope, transaction: ownerTransaction },
-              'compositionRevision',
-              admittedCompositionRevision,
+              withOptional(
+                { readKey: descriptor.readKey, scope, transaction: ownerTransaction },
+                'compositionRevision',
+                admittedCompositionRevision,
+              ),
+              // Core's answers to the descriptor's access questions (a `{ load }` read that declares them).
+              'access',
+              accessAnswers,
             ),
             'listAccess',
             gateAuthorization.listAccess,
@@ -2222,6 +2403,39 @@ const readRuntimeFromDependencies = <
   });
 
   const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
+  /** Core's own operations run in-process through `runRead`, which clears the caller's lease. */
+  const coreRunRead: CoreRunRead = (request) =>
+    runRead(
+      withOptional(
+        {
+          input: request.input,
+          principal: request.principal,
+          registration: governedReadRegistration(request.registration),
+          transport: request.transport,
+        },
+        'audience',
+        request.audience,
+      ),
+    );
+  /**
+   * The execution kernel a `{ run }` read executes on, built over this runtime's own dependencies: each
+   * engine layer is built with exactly the services it requires, and the read gets their context.
+   */
+  const buildKernel = Effect.gen(function* buildReadKernel() {
+    const owned = Context.make(CoreDatabase, database).pipe(
+      Context.add(DatabaseIdentityEnrollmentContext, options.databaseIdentities),
+      Context.add(CoreCallRoute, coreCallRouteFor(coreRunRead)),
+      Context.add(OwnerAuthorizationOverlay, ownerAuthorizationOverlay),
+    );
+    const routed =
+      options.moduleCallRoute === undefined ? owned : Context.add(owned, ModuleCallRoute, options.moduleCallRoute);
+    const engines = yield* Layer.build(
+      Layer.mergeAll(KernelTransactionsLive, CallRequirementsLive, ReadRunEvidenceLive),
+    ).pipe(Effect.provideContext(routed));
+    const calls = yield* Layer.build(KernelCallsLive).pipe(Effect.provideContext(Context.merge(routed, engines)));
+    const sessions = yield* Layer.build(KernelSessionsLive).pipe(Effect.provideContext(Context.merge(engines, calls)));
+    return Context.merge(Context.merge(routed, engines), sessions);
+  });
   return Object.freeze({ runRead });
 };
 
@@ -2242,12 +2456,14 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
   const contextAccess = yield* ContextAccess;
   const accessDecision = yield* bindLiveAccessGate;
   const principalKinds = yield* AccessPrincipalKindSource;
+  const moduleCallRoute = yield* Effect.serviceOption(ModuleCallRoute);
   return {
     accessDecision,
     contextAccess,
     database,
     databaseIdentities,
     gateway,
+    moduleCallRoute,
     ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
       ? ownerAuthorizationOverlay.value
       : failClosedOwnerAuthorizationOverlay,
@@ -2267,16 +2483,22 @@ export const ReadRuntimeLive = Layer.effect(
         database,
         databaseIdentities,
         gateway,
+        moduleCallRoute,
         ownerAuthorizationOverlay,
         principalKinds,
         scopeResolver,
       }) =>
-        readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
-          accessDecision,
-          databaseIdentities,
-          ownerAuthorizationOverlay,
-          principalKinds,
-        }),
+        readRuntimeFromDependencies(
+          database,
+          gateway,
+          scopeResolver,
+          contextAccess,
+          withOptional(
+            { accessDecision, databaseIdentities, ownerAuthorizationOverlay, principalKinds },
+            'moduleCallRoute',
+            Option.getOrUndefined(moduleCallRoute),
+          ),
+        ),
     ),
   ),
 );
@@ -2289,6 +2511,10 @@ export const makeReadRuntimeLive = (
   Layer.effect(
     ReadRuntime,
     Effect.gen(function* makeOwnedReadRuntimeService() {
+      const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
+      // First, before anything else is acquired: a host whose reads call another vertical starts only
+      // with the governed route to it.
+      yield* requireHostedModuleCallRoute(ownerRegistration, yield* Effect.serviceOption(ModuleCallRoute));
       const applicationComposition = yield* ActiveApplicationCompositionService;
       const {
         accessDecision,
@@ -2296,32 +2522,27 @@ export const makeReadRuntimeLive = (
         database,
         databaseIdentities,
         gateway,
+        moduleCallRoute,
         ownerAuthorizationOverlay,
         principalKinds,
         scopeResolver,
       } = yield* readRuntimeDependencies;
-      const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
       const shellSystemReads =
         hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
+      const baseOptions: ReadRuntimeOptions = withOptional(
+        {
+          accessDecision,
+          applicationComposition,
+          databaseIdentities,
+          expectedDeployment,
+          ownerAuthorizationOverlay,
+          principalKinds,
+        },
+        'moduleCallRoute',
+        Option.getOrUndefined(moduleCallRoute),
+      );
       const options: ReadRuntimeOptions =
-        ownerRegistration === undefined
-          ? {
-              accessDecision,
-              applicationComposition,
-              databaseIdentities,
-              expectedDeployment,
-              ownerAuthorizationOverlay,
-              principalKinds,
-            }
-          : {
-              accessDecision,
-              applicationComposition,
-              databaseIdentities,
-              expectedDeployment,
-              ownerAuthorizationOverlay,
-              ownerRegistration,
-              principalKinds,
-            };
+        ownerRegistration === undefined ? baseOptions : { ...baseOptions, ownerRegistration };
       return readRuntimeFromDependencies(
         database,
         gateway,

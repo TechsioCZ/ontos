@@ -181,6 +181,7 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
   Layer.provide(databaseIdentitiesLive),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(ModuleCallRouteLive.pipe(Layer.provide(Layer.mergeAll(nodeCryptoLayer, compositionHttpClientLive)))),
 );`;
     expect(handler).toContain(ownerRuntime);
     const directReadImport = handler.replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,');

@@ -6,21 +6,12 @@ import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '../reads/errors.ts';
-import { LegalEntityRefSchema } from '../resources/legal-entity.ts';
+import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from '../sdk/core-operations.ts';
 
-export const LegalEntityDetailRequestSchema = Schema.Struct({ legalEntityRef: LegalEntityRefSchema });
-export type LegalEntityDetailRequest = typeof LegalEntityDetailRequestSchema.Type;
-const LegalEntityStatusSchema = Schema.Literals(['active', 'suspended', 'archived']);
-export const LegalEntityDetailResponseSchema = Schema.Struct({
-  legalEntityRef: LegalEntityRefSchema,
-  // Governed by the personal-data field group (O17, O84): a caller without the field grant receives
-  // the identity and status without the sole-trader name.
-  legalName: Schema.optionalKey(Schema.String),
-  status: LegalEntityStatusSchema,
-  /** What the company does, shown on Home; absent when the company provides no text. */
-  welcome: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400))),
-});
-export type LegalEntityDetailResponse = typeof LegalEntityDetailResponseSchema.Type;
+// The wire schemas are the Core operation reference's (`sdk/core-operations.ts`): one definition.
+type LegalEntityDetailRequest = typeof LegalEntityDetailRequestSchema.Type;
+type LegalEntityDetailResponse = typeof LegalEntityDetailResponseSchema.Type;
+const LegalEntityStatusSchema = LegalEntityDetailResponseSchema.fields.status;
 
 const unavailable = (cause?: unknown): ReadHandlerUnavailable => {
   const failure = new ReadHandlerUnavailable({
