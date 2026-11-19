@@ -28,6 +28,11 @@ const CommunicationResourceTypeSchema = lowerDottedText.pipe(Schema.brand('Commu
 const CommunicationCorrelationIdSchema = opaqueText.pipe(Schema.brand('CommunicationCorrelationId'));
 const CommunicationIdempotencyKeySchema = opaqueText.pipe(Schema.brand('CommunicationIdempotencyKey'));
 const CommunicationSafeReferenceKeySchema = lowerDottedText.pipe(Schema.brand('CommunicationSafeReferenceKey'));
+const CommunicationRecipientRoleSchema = lowerDottedText.pipe(Schema.brand('CommunicationRecipientRole'));
+const CommunicationRevisionSchema = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(2_147_483_647),
+);
 
 /** Exact source of the request: the business module whose committed fact caused it. */
 export const CommunicationRequestSourceSchema = Schema.Struct({
@@ -42,7 +47,7 @@ export type CommunicationPurposeKey = typeof CommunicationPurposeKeySchema.Type;
 /** The one committed source occurrence and the revision of it this request reflects. */
 export const CommunicationSourceOccurrenceSchema = Schema.Struct({
   occurrenceId: CommunicationOccurrenceIdSchema,
-  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(2_147_483_647)),
+  revision: CommunicationRevisionSchema,
 });
 export type CommunicationSourceOccurrence = typeof CommunicationSourceOccurrenceSchema.Type;
 
@@ -66,6 +71,44 @@ export const CommunicationRequestScopeSchema = Schema.Struct({
   tenantId: CommunicationTenantIdSchema,
 });
 export type CommunicationRequestScope = typeof CommunicationRequestScopeSchema.Type;
+
+/**
+ * How the source owner evidences the contact that was valid at the original event. Only these three evidence kinds
+ * exist, and each names a reference or a revision, never an address: the endpoint itself stays with its owner.
+ * - HISTORICAL_SNAPSHOT: the owner keeps a snapshot of the contact taken at the event;
+ * - VERSIONED_SNAPSHOT: the contact record is correctly versioned and `contactRevision` was the one valid then;
+ * - AUTHORITATIVE_REFERENCE: a safe owner reference that keeps the same meaning ("the endpoint of the event").
+ * A source that cannot evidence the original contact sends none (`originalContact` absent); Communications never
+ * reconstructs it from a Current profile, so the recipient stays unresolved.
+ */
+export const OriginalContactEvidenceSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('HISTORICAL_SNAPSHOT'), snapshotRef: CommunicationResourceRefSchema }),
+  Schema.Struct({ contactRevision: CommunicationRevisionSchema, kind: Schema.Literal('VERSIONED_SNAPSHOT') }),
+  Schema.Struct({ kind: Schema.Literal('AUTHORITATIVE_REFERENCE') }),
+]);
+export type OriginalContactEvidence = typeof OriginalContactEvidenceSchema.Type;
+
+/** The contact reference valid at the original event and the evidence that it was. Never an address. */
+export const OriginalContactBindingSchema = Schema.Struct({
+  contactRef: CommunicationResourceRefSchema,
+  evidence: OriginalContactEvidenceSchema,
+});
+export type OriginalContactBinding = typeof OriginalContactBindingSchema.Type;
+
+/**
+ * One Message Recipient exactly as the source event fixed it: who (`recipientRef`), in which audience `role`, the
+ * trusted `scope` the pair was evidenced in, the instant the source event fixed it and, when evidenced, the original
+ * contact. It is neither a Privacy Recipient nor a Party, Principal or Customer Profile, and a later contact
+ * correction never rewrites it: a different recipient needs a new source request with its own correlation.
+ */
+export const OriginalRecipientBindingSchema = Schema.Struct({
+  originalContact: Schema.optionalKey(OriginalContactBindingSchema),
+  recipientRef: CommunicationResourceRefSchema,
+  role: CommunicationRecipientRoleSchema,
+  scope: CommunicationRequestScopeSchema,
+  validAt: Schema.DateTimeUtcFromString,
+});
+export type OriginalRecipientBinding = typeof OriginalRecipientBindingSchema.Type;
 
 /** A named reference the message may link to or render from, resolved later through its owner. */
 export const CommunicationSafeReferenceSchema = Schema.Struct({
@@ -95,7 +138,7 @@ export type CommunicationIdempotency = typeof CommunicationIdempotencySchema.Typ
 export const CommunicationRequestSchema = Schema.Struct({
   idempotency: CommunicationIdempotencySchema,
   occurrence: CommunicationSourceOccurrenceSchema,
-  originalRecipientRef: CommunicationResourceRefSchema,
+  originalRecipients: Schema.NonEmptyArray(OriginalRecipientBindingSchema),
   purpose: CommunicationPurposeKeySchema,
   safeReferences: SafeReferencesSchema,
   schemaVersion: Schema.Literal(1),

@@ -1,7 +1,12 @@
-import { Option } from 'effect';
+import { Option, Redacted } from 'effect';
 
 import { CommunicationOutcome, RecipientDecision } from '../../../src/domain/catalog/decision.ts';
 import type { CommunicationDecision, MessageIntentCandidate } from '../../../src/domain/catalog/decision.ts';
+import { HandoffVerdict } from '../../../src/domain/recipient/recheck-before-handoff.ts';
+import type { HandoffVerdictCase } from '../../../src/domain/recipient/recheck-before-handoff.ts';
+import type { EvaluatedRecipient } from '../../../src/domain/recipient/assess-recipients.ts';
+import { RecipientAssessment } from '../../../src/domain/recipient/recipient-assessment.ts';
+import type { RecipientAssessmentCase } from '../../../src/domain/recipient/recipient-assessment.ts';
 import { RequiredCommunicationOutcome, RequiredFailureReason } from '../../../src/domain/catalog/required-outcome.ts';
 import type { RequiredCommunicationOutcomeCase } from '../../../src/domain/catalog/required-outcome.ts';
 
@@ -60,3 +65,52 @@ export const requiredSummary = (outcome: RequiredCommunicationOutcomeCase) =>
     RequirednessUnknown: () => ({ kind: 'RequirednessUnknown' as const }),
     SourceStale: ({ reason }) => ({ kind: 'SourceStale' as const, reason }),
   });
+
+/** Plain view of one recipient assessment: its business outcome, recipient id and reason, never the endpoint. */
+export const assessmentSummary = (assessment: RecipientAssessmentCase) =>
+  RecipientAssessment.$match(assessment, {
+    RecipientAllowed: ({ subject }) => ({
+      outcome: 'recipient-allowed' as const,
+      recipient: subject.binding.recipientRef.resourceId,
+    }),
+    RecipientNotAllowed: ({ reason, subject }) => ({
+      outcome: 'recipient-not-allowed' as const,
+      reason,
+      recipient: subject.binding.recipientRef.resourceId,
+    }),
+    RecipientUnresolved: ({ reason, subject }) => ({
+      outcome: 'recipient-unresolved' as const,
+      reason,
+      recipient: subject.binding.recipientRef.resourceId,
+    }),
+    SourceUnavailable: ({ authority, subject }) => ({
+      authority,
+      outcome: 'source-unavailable' as const,
+      recipient: subject.binding.recipientRef.resourceId,
+    }),
+  });
+
+/**
+ * The usable endpoint values of the allowed assessments, revealed only here in tests to prove which endpoint was kept.
+ * Production code never unwraps it outside the handoff adapter.
+ */
+export const revealedAddresses = (evaluated: readonly EvaluatedRecipient[]) =>
+  evaluated.flatMap(({ assessment }) =>
+    RecipientAssessment.$match(assessment, {
+      RecipientAllowed: ({ endpoint }) => [Redacted.value(endpoint.value)],
+      RecipientNotAllowed: () => [],
+      RecipientUnresolved: () => [],
+      SourceUnavailable: () => [],
+    }),
+  );
+
+/** Plain, tag-free view of one handoff verdict. A proceeding verdict reveals which endpoint it would hand off to. */
+export const verdictSummary = (verdict: HandoffVerdictCase) =>
+  HandoffVerdict.$match(verdict, {
+    AlreadyHandedOff: ({ reconciliationRequired }) => ({ kind: 'AlreadyHandedOff' as const, reconciliationRequired }),
+    GroupStopped: ({ evidence }) => ({ kind: 'GroupStopped' as const, reason: evidence.reason }),
+    Proceed: ({ endpoint }) => ({ address: Redacted.value(endpoint.value), kind: 'Proceed' as const }),
+    Stopped: ({ assessment }) => ({ assessment: assessmentSummary(assessment), kind: 'Stopped' as const }),
+  });
+
+export const verdictSummaries = (verdicts: readonly HandoffVerdictCase[]) => verdicts.map(verdictSummary);

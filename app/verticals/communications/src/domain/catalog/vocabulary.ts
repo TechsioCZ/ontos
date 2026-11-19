@@ -50,13 +50,20 @@ export type CommunicationOccurrenceId = typeof CommunicationOccurrenceIdSchema.T
 
 export const CommunicationResourceIdSchema = opaqueText.pipe(Schema.brand('CommunicationResourceId'));
 
+/** Type key of an owner resource, for example `party.registry.contact-point`. */
+export const CommunicationResourceTypeSchema = lowerDottedText;
+
 /** Structural reference to an owner resource; never a copy of it and never an address. */
 export const CommunicationResourceRefSchema = Schema.Struct({
   moduleId: OntosModuleIdSchema,
   resourceId: CommunicationResourceIdSchema,
-  resourceType: lowerDottedText,
+  resourceType: CommunicationResourceTypeSchema,
 });
 export type CommunicationResourceRef = typeof CommunicationResourceRefSchema.Type;
+
+/** Module, type and id never contain `|` (closed key vocabularies), so this joins a full reference unambiguously. */
+export const resourceRefKey = (ref: CommunicationResourceRef) =>
+  `${ref.moduleId}|${ref.resourceType}|${ref.resourceId}`;
 
 /** Positive revision counter shared by source occurrences and catalog types. */
 export const RevisionSchema = Schema.Int.check(
@@ -89,15 +96,24 @@ export type CommunicationTenantId = typeof CommunicationTenantIdSchema.Type;
 export const PrivacyEvidenceSchema = Schema.Literals(['ALLOWED', 'NOT_ALLOWED', 'INDETERMINATE']);
 export type PrivacyEvidence = typeof PrivacyEvidenceSchema.Type;
 
-/** Stop facts the recipient algorithm (d21-03) can report besides Privacy. */
-export const RecipientStopReasonSchema = Schema.Literals(['RECIPIENT_NOT_ELIGIBLE', 'RECIPIENT_BASIS_MISSING']);
-export type RecipientStopReason = typeof RecipientStopReasonSchema.Type;
+/** Stop facts the recipient algorithm (#1395, `domain/recipient`) can report besides Privacy. */
+export const RecipientStopReasonSchema = Schema.Literals([
+  'RECIPIENT_NOT_ELIGIBLE',
+  'RECIPIENT_AUTHORITY_UNAVAILABLE',
+  'RECIPIENT_BASIS_MISSING',
+]);
 
-/** Why one concrete candidate was stopped. Each is a distinct, current, owner-decided fact. */
+/**
+ * Why one concrete candidate was stopped. Each is a distinct, current, owner-decided fact. RECIPIENT_AUTHORITY_UNAVAILABLE
+ * is uncertainty about a mandatory owner, never a proven prohibition; AUDIENCE_GROUP_INCOMPLETE stops an otherwise
+ * eligible member of an approved indivisible audience because another required member could not proceed.
+ */
 export const CandidateStopReasonSchema = Schema.Literals([
   'PRIVACY_NOT_ALLOWED',
   'PRIVACY_INDETERMINATE',
   'RECIPIENT_NOT_ELIGIBLE',
+  'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_BASIS_MISSING',
+  'AUDIENCE_GROUP_INCOMPLETE',
 ]);
 export type CandidateStopReason = typeof CandidateStopReasonSchema.Type;

@@ -1,9 +1,12 @@
 import { Array as EffectArray, Data, Option, Order, Result, Schema } from 'effect';
 
+import { isGroupComplete, isGroupMember } from './audience.ts';
+import type { AudiencePolicy } from './audience.ts';
 import type { CommunicationDecisionContext, CommunicationDecisionRequest, RecipientFact } from './decision-request.ts';
 import type { AudienceSlot, TransactionalMessageType } from './message-type.ts';
 import { findMessageTypeByPurpose } from './registry.ts';
 import type { MessageTypeRegistry } from './registry.ts';
+import { resourceRefKey } from './vocabulary.ts';
 import type {
   ApprovedRuleKey,
   AudienceSlotKey,
@@ -70,6 +73,8 @@ export interface UnresolvedSlot {
 
 /** The approved type a decision was made under; pinned so a later catalog change cannot rewrite the decision. */
 export interface MessageTypePin {
+  /** The audience rule the decision was made under, so a recheck before handoff cannot be rewritten by a catalog change. */
+  readonly audience: AudiencePolicy;
   readonly privacyPurposeRefs: readonly PrivacyPurposeKey[];
   readonly requiredness: Requiredness;
   readonly revision: number;
@@ -163,6 +168,7 @@ const contextMismatches = (request: CommunicationDecisionRequest, context: Commu
   );
 
 const pinOf = (type: TransactionalMessageType): MessageTypePin => ({
+  audience: type.audience,
   privacyPurposeRefs: type.privacyPurposeRefs,
   requiredness: type.requiredness,
   revision: type.revision,
@@ -193,9 +199,6 @@ const admissionBlock = (
   return undefined;
 };
 
-/** Module, type and id never contain `|` (closed key vocabularies), so this joins a full reference unambiguously. */
-const refKey = (ref: CommunicationResourceRef) => `${ref.moduleId}|${ref.resourceType}|${ref.resourceId}`;
-
 /**
  * When duplicate facts for one recipient disagree, the strongest stop wins so a stop is never lost: Privacy
  * NOT_ALLOWED, then Privacy INDETERMINATE, then the recipient stops. Only an explicit ALLOWED with no other stop is
@@ -205,6 +208,7 @@ const STOP_PRECEDENCE: readonly CandidateStopReason[] = [
   'PRIVACY_NOT_ALLOWED',
   'PRIVACY_INDETERMINATE',
   'RECIPIENT_NOT_ELIGIBLE',
+  'RECIPIENT_AUTHORITY_UNAVAILABLE',
   'RECIPIENT_BASIS_MISSING',
 ];
 
@@ -217,7 +221,7 @@ const stopOf = (fact: RecipientFact): CandidateStopReason | undefined => {
 
 /** One entry per distinct full recipient reference, sorted by it so the candidate order ignores the input order. */
 const distinctRecipients = (facts: readonly RecipientFact[]) =>
-  Object.entries(EffectArray.groupBy(facts, (fact) => refKey(fact.ref)))
+  Object.entries(EffectArray.groupBy(facts, (fact) => resourceRefKey(fact.ref)))
     .toSorted(([a], [b]) => Order.String(a, b))
     .map(([, group]) => {
       const stops = new Set(group.flatMap((fact) => stopOf(fact) ?? []));
@@ -272,6 +276,40 @@ const resolveSlot = (
   };
 };
 
+/**
+ * An approved indivisible audience (#1395, BR-07) prepares nothing unless every slot it covers has at least one
+ * member and every member is eligible: otherwise each eligible member is stopped with AUDIENCE_GROUP_INCOMPLETE.
+ * A member that is already suppressed keeps its own, more specific reason. Members outside the group, and any
+ * individual audience, are untouched.
+ */
+const applyAudiencePolicy = (
+  audience: AudiencePolicy,
+  candidates: readonly MessageIntentCandidate[],
+): readonly MessageIntentCandidate[] => {
+  const members = candidates.filter(({ identity }) => isGroupMember(audience, identity.slotKey));
+  const complete = isGroupComplete(
+    audience,
+    members.map(({ identity, recipient }) => ({
+      ready: RecipientDecision.$is('Eligible')(recipient),
+      slotKey: identity.slotKey,
+    })),
+  );
+  return complete
+    ? candidates
+    : candidates.map((candidate) =>
+        isGroupMember(audience, candidate.identity.slotKey) && RecipientDecision.$is('Eligible')(candidate.recipient)
+          ? {
+              ...candidate,
+              recipient: RecipientDecision.Suppressed({
+                reason: 'AUDIENCE_GROUP_INCOMPLETE',
+                ref: candidate.recipient.ref,
+                role: candidate.recipient.role,
+              }),
+            }
+          : candidate,
+      );
+};
+
 const outcomeOf = (
   type: TransactionalMessageType,
   request: CommunicationDecisionRequest,
@@ -289,7 +327,10 @@ const outcomeOf = (
     });
   }
   const resolutions = type.result.slots.map((slot) => resolveSlot(slot, type, request, context.recipients));
-  const candidates = resolutions.flatMap((resolution) => resolution.candidates);
+  const candidates = applyAudiencePolicy(
+    type.audience,
+    resolutions.flatMap((resolution) => resolution.candidates),
+  );
   const unresolvedSlots = resolutions.flatMap((resolution) => resolution.unresolved);
   return EffectArray.isReadonlyArrayNonEmpty(candidates)
     ? CommunicationOutcome.Candidates({ candidates, unresolvedSlots })

@@ -28,12 +28,33 @@ export const FIXTURE_OCCURRENCE_ID = 'fixture-occurrence-1';
 export const FIXTURE_TENANT_ID = '11111111-1111-4111-8111-111111111111';
 export const FIXTURE_OTHER_TENANT_ID = '22222222-2222-4222-8222-222222222222';
 
+export const FIXTURE_CONTACT_OWNER = 'fixture.party';
+export const FIXTURE_CONTACT_RESOURCE_TYPE = 'fixture.contact-point';
+
+/** TEST-ONLY declaration of where a slot's original contact comes from at event time. */
+export const fixtureContactSource = (
+  evidenceKinds: readonly string[] = ['HISTORICAL_SNAPSHOT', 'VERSIONED_SNAPSHOT', 'AUTHORITATIVE_REFERENCE'],
+) => ({
+  contactOwner: FIXTURE_CONTACT_OWNER,
+  contactResourceType: FIXTURE_CONTACT_RESOURCE_TYPE,
+  evidenceKinds,
+});
+
+/** One audience slot of a fixture type with the fixture contact source. */
+export const fixtureSlot = (
+  slotKey: string,
+  recipientRole: string,
+  cardinality: 'EACH_MATCHING' | 'EXACTLY_ONE',
+  source: ReturnType<typeof fixtureContactSource> = fixtureContactSource(),
+) => ({ cardinality, recipientRole, slotKey, source });
+
 const decodeType = Schema.decodeUnknownSync(TransactionalMessageTypeSchema);
 const decodeRequest = Schema.decodeSync(CommunicationDecisionRequestSchema);
 const decodeFact = Schema.decodeSync(RecipientFactSchema);
 const decodeSource = Schema.decodeSync(SourceOccurrenceFactsSchema);
 
 interface TypeOverrides {
+  readonly audience?: unknown;
   readonly currentness?: { readonly requireLatestSourceRevision: boolean };
   readonly eligibleSourceStates?: readonly string[];
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
@@ -49,12 +70,13 @@ interface TypeOverrides {
 
 const oneOriginalRecipient = {
   kind: 'MESSAGE_INTENTS',
-  slots: [{ cardinality: 'EXACTLY_ONE', recipientRole: FIXTURE_ORIGINAL_ROLE, slotKey: 'primary' }],
+  slots: [fixtureSlot('primary', FIXTURE_ORIGINAL_ROLE, 'EXACTLY_ONE')],
 };
 
 /** An ACTIVE, onboarded, optional type with one original-recipient slot; override any facet per scenario. */
 export const fixtureType = (overrides: TypeOverrides = {}): TransactionalMessageType =>
   decodeType({
+    audience: { mode: 'INDIVIDUAL' },
     currentness: { requireLatestSourceRevision: true },
     eligibleSourceStates: [FIXTURE_OPEN_STATE],
     meaning: 'Fictional test type used only by unit tests.',
@@ -86,8 +108,8 @@ export const requiredTwoSlotTypeWith = (overrides: TypeOverrides = {}) =>
     result: {
       kind: 'MESSAGE_INTENTS',
       slots: [
-        { cardinality: 'EXACTLY_ONE', recipientRole: FIXTURE_ORIGINAL_ROLE, slotKey: 'primary' },
-        { cardinality: 'EXACTLY_ONE', recipientRole: FIXTURE_SECONDARY_ROLE, slotKey: 'secondary' },
+        fixtureSlot('primary', FIXTURE_ORIGINAL_ROLE, 'EXACTLY_ONE'),
+        fixtureSlot('secondary', FIXTURE_SECONDARY_ROLE, 'EXACTLY_ONE'),
       ],
     },
     ...overrides,
@@ -98,7 +120,7 @@ export const requiredTwoSlotType = requiredTwoSlotTypeWith();
 export const nRecipientPolicyType = fixtureTypeNamed('approvers', {
   result: {
     kind: 'MESSAGE_INTENTS',
-    slots: [{ cardinality: 'EACH_MATCHING', recipientRole: FIXTURE_APPROVER_ROLE, slotKey: 'approvers' }],
+    slots: [fixtureSlot('approvers', FIXTURE_APPROVER_ROLE, 'EACH_MATCHING')],
   },
 });
 

@@ -10,6 +10,10 @@ export type MessageTypeRegistryViolationCase = Data.TaggedEnum<{
   /** Two types claim the same purpose, so the approved rule for it would be ambiguous. */
   DuplicatePurpose: { readonly purpose: string };
   DuplicateTypeId: { readonly typeId: string };
+  /** An indivisible audience may only bind audience slots the type really has, and only once each. */
+  IndivisibleGroupSlotInvalid: { readonly slotKey: string; readonly typeId: string };
+  /** An indivisible audience needs messages to hold together; a no-message type has no audience. */
+  IndivisibleGroupWithoutMessages: { readonly typeId: string };
   /** A business-required type must produce messages; a required no-message rule would never be a failure. */
   RequiredTypeWithoutMessages: { readonly typeId: string };
 }>;
@@ -29,6 +33,23 @@ export interface MessageTypeRegistry {
 const duplicates = <A>(values: readonly A[]) =>
   EffectArray.filter(EffectArray.dedupe(values), (value) => values.filter((other) => other === value).length > 1);
 
+const groupViolations = (
+  audience: TransactionalMessageType['audience'],
+  result: TransactionalMessageType['result'],
+  typeId: string,
+): readonly MessageTypeRegistryViolationCase[] => {
+  if (audience.mode !== 'INDIVISIBLE') {
+    return [];
+  }
+  if (result.kind !== 'MESSAGE_INTENTS') {
+    return [MessageTypeRegistryViolation.IndivisibleGroupWithoutMessages({ typeId })];
+  }
+  const known = new Set<string>(result.slots.map(({ slotKey }) => slotKey));
+  return [...audience.slotKeys.filter((slotKey) => !known.has(slotKey)), ...duplicates(audience.slotKeys)].map(
+    (slotKey) => MessageTypeRegistryViolation.IndivisibleGroupSlotInvalid({ slotKey, typeId }),
+  );
+};
+
 const violationsOf = (types: readonly TransactionalMessageType[]): readonly MessageTypeRegistryViolationCase[] => [
   ...duplicates(types.map((type) => type.typeId)).map((typeId) =>
     MessageTypeRegistryViolation.DuplicateTypeId({ typeId }),
@@ -41,6 +62,7 @@ const violationsOf = (types: readonly TransactionalMessageType[]): readonly Mess
       ? [MessageTypeRegistryViolation.ActiveTypeWithoutPrivacyPurpose({ typeId })]
       : [],
   ),
+  ...types.flatMap(({ audience, result, typeId }) => groupViolations(audience, result, typeId)),
   ...types.flatMap(({ requiredness, result, typeId }) =>
     requiredness === 'REQUIRED' && result.kind === 'NO_MESSAGE'
       ? [MessageTypeRegistryViolation.RequiredTypeWithoutMessages({ typeId })]

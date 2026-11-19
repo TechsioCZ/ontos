@@ -16,11 +16,13 @@ import {
   fixtureContext,
   fixtureRegistry,
   fixtureRequest,
+  fixtureSlot,
   fixtureType,
   fixtureTypeNamed,
   noMessageType,
   recipient,
   requiredTwoSlotType,
+  requiredTwoSlotTypeWith,
 } from './support/catalog-fixtures.ts';
 import { candidatesOf, outcomeSummary } from './support/summaries.ts';
 
@@ -29,6 +31,12 @@ const violationTags = (types: Parameters<typeof buildMessageTypeRegistry>[0]) =>
     onFailure: (error) => error.violations.map((violation) => violation._tag),
     onSuccess: () => [],
   });
+
+const group = (slotKeys: readonly string[]) => ({
+  approvalRuleKey: 'fixture.rule.indivisible',
+  mode: 'INDIVISIBLE' as const,
+  slotKeys,
+});
 
 const decodeType = Schema.decodeUnknownResult(TransactionalMessageTypeSchema, { onExcessProperty: 'error' });
 const original = recipient(FIXTURE_ORIGINAL_ROLE, 'contact-original');
@@ -111,14 +119,32 @@ describe('#1394 Rule: the catalog approves types explicitly', () => {
     expect(Result.isFailure(decodeType(withSecret))).toBe(true);
   });
 
+  it('#1395 Rule: an indivisible audience binds only slots the type has, once each, and only for messages', () => {
+    expect(violationTags([requiredTwoSlotTypeWith({ audience: group(['primary', 'secondary']) })])).toEqual([]);
+    expect(violationTags([requiredTwoSlotTypeWith({ audience: group(['primary', 'unknown-slot']) })])).toEqual([
+      'IndivisibleGroupSlotInvalid',
+    ]);
+    expect(violationTags([requiredTwoSlotTypeWith({ audience: group(['primary', 'primary']) })])).toEqual([
+      'IndivisibleGroupSlotInvalid',
+    ]);
+    expect(
+      violationTags([
+        fixtureTypeNamed('quiet-group', {
+          audience: group(['primary']),
+          result: { kind: 'NO_MESSAGE', ruleKey: 'fixture.rule.quiet' },
+        }),
+      ]),
+    ).toEqual(['IndivisibleGroupWithoutMessages']);
+  });
+
   it('keeps audience slot keys unique inside one type', () => {
     const duplicateSlots = {
       ...fixtureType(),
       result: {
         kind: 'MESSAGE_INTENTS',
         slots: [
-          { cardinality: 'EXACTLY_ONE', recipientRole: 'original-recipient', slotKey: 'primary' },
-          { cardinality: 'EXACTLY_ONE', recipientRole: 'fixture-secondary', slotKey: 'primary' },
+          fixtureSlot('primary', 'original-recipient', 'EXACTLY_ONE'),
+          fixtureSlot('primary', 'fixture-secondary', 'EXACTLY_ONE'),
         ],
       },
     };

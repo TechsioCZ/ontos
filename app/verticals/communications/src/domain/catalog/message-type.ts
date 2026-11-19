@@ -1,10 +1,12 @@
 import { OntosModuleIdSchema } from '@app/core-runtime/modules/manifest';
 import { Schema } from 'effect';
 
+import { AudiencePolicySchema } from './audience.ts';
 import {
   ApprovedRuleKeySchema,
   AudienceSlotKeySchema,
   CommunicationPurposeKeySchema,
+  CommunicationResourceTypeSchema,
   MessageTypeIdSchema,
   MessageTypeStatusSchema,
   PrivacyPurposeKeySchema,
@@ -14,6 +16,24 @@ import {
   SourceOnboardingSchema,
   SourceStateKeySchema,
 } from './vocabulary.ts';
+
+/** Closed set of ways a source owner can evidence the contact that was valid at the original event (#1395, 1B). */
+export const OriginalContactEvidenceKindSchema = Schema.Literals([
+  'HISTORICAL_SNAPSHOT',
+  'VERSIONED_SNAPSHOT',
+  'AUTHORITATIVE_REFERENCE',
+]);
+
+/**
+ * Where the original recipient's contact comes from at event time, declared per audience slot: the owner module and
+ * resource type of the contact, and which evidence kinds that owner is approved to supply. Evidence outside the
+ * declaration is never accepted, and a missing contact is never replaced by a Current one.
+ */
+export const OriginalContactSourceSchema = Schema.Struct({
+  contactOwner: OntosModuleIdSchema,
+  contactResourceType: CommunicationResourceTypeSchema,
+  evidenceKinds: Schema.NonEmptyArray(OriginalContactEvidenceKindSchema),
+});
 
 /**
  * One approved audience slot of a type. Every slot yields its own Message Intent candidate(s) with their own
@@ -25,6 +45,8 @@ export const AudienceSlotSchema = Schema.Struct({
   cardinality: Schema.Literals(['EXACTLY_ONE', 'EACH_MATCHING']),
   recipientRole: RecipientRoleSchema,
   slotKey: AudienceSlotKeySchema,
+  /** Where the original recipient's contact comes from at event time (#1395). */
+  source: OriginalContactSourceSchema,
 });
 export type AudienceSlot = typeof AudienceSlotSchema.Type;
 
@@ -53,6 +75,8 @@ export const CurrentnessSchema = Schema.Struct({ requireLatestSourceRevision: Sc
  * claims transport success.
  */
 export const TransactionalMessageTypeSchema = Schema.Struct({
+  /** Individual evaluation by default; an indivisible group only as an explicitly approved per-type exception. */
+  audience: AudiencePolicySchema,
   currentness: CurrentnessSchema,
   eligibleSourceStates: Schema.NonEmptyArray(SourceStateKeySchema),
   /** Stable plain-language statement of what the type means; documentation, not message copy. */
