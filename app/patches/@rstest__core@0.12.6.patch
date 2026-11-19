@@ -1,0 +1,19 @@
+diff --git a/dist/happyDom~0.js b/dist/happyDom~0.js
+--- a/dist/happyDom~0.js
++++ b/dist/happyDom~0.js
+@@ -41,6 +41,7 @@
+     const cleanupObjectURLs = installObjectURLTracker(win.URL, context);
+     const cleanupGlobal = installGlobal(global, win, {
+         additionalKeys: [
++            'Headers',
+             'Request',
+             'Response',
+             'MessagePort',
+@@ -76,6 +77,7 @@
+     const cleanupObjectURLs = installObjectURLTracker(win.URL, context);
+     const cleanupGlobal = installGlobal(vmGlobal, win, {
+         additionalKeys: [
++            'Headers',
+             'Request',
+             'Response',
+             'MessagePort',

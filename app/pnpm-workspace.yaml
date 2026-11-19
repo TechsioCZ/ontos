@@ -194,6 +194,9 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  # upstream: https://github.com/web-infra-dev/rstest/blob/75b848b384a9e47ac48e805ed239b1655a31e57c/packages/core/src/runtime/worker/env/happyDom.ts
+  # Keep the happy-dom fetch family coherent: Node Headers loses credentials when read by happy-dom Request.
+  '@rstest/core@0.12.6': patches/@rstest__core@0.12.6.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils
   # Compile each BFF server closure once from the TS 7 module graph, with an rspack build cache and incremental tsgo.
   # ONTOS_CI_TYPECHECK_SEPARATE=1 (the gates' and the stage's unit builds, scripts/zerops/build-app.sh; also drops source

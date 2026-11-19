@@ -1431,30 +1431,6 @@ export default defineConfig({
         'typescript/strict-void-return': 'off',
       },
     },
-    // Test-integrity baseline, recorded at the merge of main #1507. Main's rules arrived with main's own tests
-    // already rewritten; the demo-only tests were rewritten after it. These few still replace a module or a global,
-    // each for a reason its test names. The lists only shrink: no test is added to one.
-    {
-      // Demo-only tests that replace an imported module.
-      files: [
-        'apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts',
-        'apps/shell-super-app/tests/unit/routes/browser-request-cache-reauthorization.test.ts',
-      ],
-      rules: { 'anti-slop/no-module-mocking': 'off' },
-    },
-    {
-      // Demo-only tests that replace a browser or process global.
-      files: [
-        'apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts',
-        'apps/shell-super-app/tests/unit/routes/browser-request-cache-reauthorization.test.ts',
-      ],
-      rules: { 'effect-native/no-global-test-replacements': 'off' },
-    },
-    {
-      // Demo-only tests that wait by polling a spy.
-      files: ['apps/shell-super-app/tests/unit/routes/browser-request-cache-intent.test.ts'],
-      rules: { 'effect-native/no-unsignaled-spy-poll': 'off' },
-    },
     // Demo exceptions recorded at the main→demo merge. Each block names the approved exception or the
     // fence whose behaviour a rewrite would change. The code stays as reviewed; only the named rules are off.
     {

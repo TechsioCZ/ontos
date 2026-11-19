@@ -1,11 +1,13 @@
+// @rstest-environment happy-dom
 import { definePageData, modulePagePreload, moduleWriteEvent } from '@app/shared-contracts/page-data';
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { waitFor } from '@testing-library/react';
+import { waitUntil } from '@app/admin-ui/testing/module-ui';
+import { networkIdle, networkQuietExcept } from '@app/shared-contracts/testing/http-double';
+import { HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Clock, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeAll, expect, it, rstest } from 'effect-rstest';
 
 import { ResolvedModuleTargetSchema } from '../../../shared/browser-api.ts';
-import type { issueDocumentGatewayContexts as IssueDocumentGatewayContexts } from '../../../src/api/auth-client.ts';
 import { browserRuntime } from '../../../src/runtime/browser-effect-runtime.ts';
 import {
   awaitPrimaryModuleReads,
@@ -15,35 +17,14 @@ import {
   withoutRecordedPageReads,
 } from '../../../src/routes/browser-request-cache.ts';
 import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
-import type { makeRoutePreloadScheduler } from '../../../src/routes/route-preload-scheduler.ts';
-import { warmDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
+import { makeBrowserCacheNetwork } from '../../support/browser-cache-network.ts';
 import { prepareModulePage, RemotePagePreparation } from '../../../src/routes/remote-page-loader.ts';
-
-rstest.mock('../../../src/routes/route-preload-scheduler.ts', () => {
-  const actual = rstest.requireActual<{ readonly makeRoutePreloadScheduler: typeof makeRoutePreloadScheduler }>(
-    '../../../src/routes/route-preload-scheduler.ts',
-  );
-  return {
-    ...actual,
-    // The production default: one background slot. The single-slot retention tests below depend on this width.
-    staffRoutePreloads: actual.makeRoutePreloadScheduler(1),
-  };
-});
-
-const { issueDocumentGatewayContexts } = rstest.hoisted(() => ({
-  issueDocumentGatewayContexts: rstest.fn<typeof IssueDocumentGatewayContexts>(),
-}));
-rstest.mock('../../../src/api/auth-client.ts', () => ({ issueDocumentGatewayContexts }));
 
 const revision = 'a'.repeat(64);
 const audience = 'intent-fixture';
-/** Each case's document batch issues its own token. */
-let token = 'intent-fixture-token';
-let issuedBatches = 0;
-const base = `/shell-super-app-api/module-api/${audience}/build/fixture`;
+const fixture = makeBrowserCacheNetwork(audience, revision);
+const { base } = fixture;
 const manifestKey = 'ontos.page-reads.v1:/en/home';
-const platformFetch = rstest.fn<typeof globalThis.fetch>();
-const originalFetch = globalThis.fetch;
 const BodyJson = Schema.fromJsonString(Schema.Struct({ context: Schema.String, refreshToken: Schema.String }));
 
 const read = (name: string, refreshToken = '', context = 'company-a', signal?: AbortSignal) =>
@@ -51,7 +32,7 @@ const read = (name: string, refreshToken = '', context = 'company-a', signal?: A
     globalThis.fetch(`${base}/reads/${name}`, {
       body: Schema.encodeSync(BodyJson)({ context, refreshToken }),
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${fixture.token}`,
         'content-type': 'application/json',
         'x-ontos-composition-revision': revision,
       },
@@ -60,44 +41,17 @@ const read = (name: string, refreshToken = '', context = 'company-a', signal?: A
     }),
   );
 const prepareRead = (name: string) => withoutRecordedPageReads(() => browserRuntime.runPromise(read(name)));
-const gatewayRequest = () =>
-  globalThis.fetch('/shell-super-app-api/auth/gateway-context', {
-    body: JSON.stringify({ audience, compositionRevision: revision }),
-    method: 'POST',
-  });
-
 beforeAll(() => {
-  globalThis.fetch = platformFetch;
   installBrowserRequestCache();
-});
-afterAll(() => {
-  globalThis.fetch = originalFetch;
 });
 afterEach(() => {
   rstest.restoreAllMocks();
-});
-beforeEach(async () => {
-  globalThis.history.replaceState(null, '', '/en/home');
-  globalThis.localStorage.clear();
-  platformFetch.mockReset();
-  issuedBatches += 1;
-  token = `intent-fixture-token-${issuedBatches}`;
-  issueDocumentGatewayContexts.mockReturnValue(Effect.succeed({ assertions: [] }));
-  issueDocumentGatewayContexts.mockReturnValueOnce(
-    Effect.succeed({
-      assertions: [{ apiBaseUrl: base, audience, compositionRevision: revision, expiresAt: 4_102_444_800, token }],
-    }),
-  );
-  platformFetch.mockImplementation(async () => Response.json({ value: 'fresh' }));
-  await browserRuntime.runPromise(
-    clearBrowserRequestCache.pipe(Effect.andThen(warmDocumentGatewayAssertions(revision, [audience]))),
-  );
-  await gatewayRequest();
 });
 
 for (const firstToSettle of ['owner', 'dataset'] as const) {
   it.live(`keeps the single background slot until owner and detached dataset settle (${firstToSettle} first)`, () =>
     Effect.gen(function* retainedPreparationSlot() {
+      yield* fixture.reset(true);
       const ownerRelease = yield* Deferred.make<boolean>();
       const datasetRelease = yield* Deferred.make<boolean>();
       const ownerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
@@ -167,12 +121,13 @@ for (const firstToSettle of ['owner', 'dataset'] as const) {
           }),
         ),
       );
-    }),
+    }).pipe(Effect.provide(fixture.network)),
   );
 }
 
 it.live('excludes several concurrent destinations without polluting the current visit replay', () =>
   Effect.gen(function* concurrentRecorderIsolation() {
+    yield* fixture.reset(true);
     yield* read('current-page');
     const before = globalThis.localStorage.getItem(manifestKey);
     expect(before).toContain('/reads/current-page');
@@ -194,7 +149,8 @@ it.live('excludes several concurrent destinations without polluting the current 
       { concurrency: 3 },
     );
     yield* Deferred.await(started);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(4)));
+    yield* networkIdle;
+    expect(fixture.requests).toHaveLength(4);
     expect(globalThis.localStorage.getItem(manifestKey)).toBe(before);
     for (let index = 0; index < releases.length; index += 1) {
       const release = releases[index];
@@ -210,62 +166,66 @@ it.live('excludes several concurrent destinations without polluting the current 
     }
     yield* read('foreground-after-settlement');
     expect(globalThis.localStorage.getItem(manifestKey)).toContain('/reads/foreground-after-settlement');
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('joins complete-body IO while foreground callers retain independent abort signals', () =>
   Effect.gen(function* foregroundJoin() {
-    const release = yield* Deferred.make<Response>();
-    platformFetch.mockImplementation(() => browserRuntime.runPromise(Deferred.await(release)));
+    yield* fixture.reset(true);
+    const pending = yield* fixture.hold('/reads/joined');
     const preparing = yield* prepareRead('joined').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
+    yield* Deferred.await(pending.entered);
     const controller = new AbortController();
     const canceled = yield* read('joined', '', 'company-a', controller.signal).pipe(Effect.exit, Effect.forkChild);
     controller.abort();
     expect(Exit.isFailure(yield* Fiber.join(canceled))).toBe(true);
     const foreground = yield* read('joined').pipe(Effect.forkChild);
-    yield* Deferred.succeed(release, Response.json({ value: 'fresh' }));
+    yield* Deferred.succeed(pending.release, HttpServerResponse.jsonUnsafe({ value: 'fresh' }));
     expect((yield* Fiber.join(preparing)).status).toBe(200);
     expect((yield* Fiber.join(foreground)).status).toBe(200);
-    expect(platformFetch).toHaveBeenCalledTimes(1);
-    expect(platformFetch.mock.calls[0]?.[1]?.signal).toBeUndefined();
-  }),
+    yield* networkIdle;
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.requests[0]?.signal.aborted).toBe(false);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('does not merge refresh tokens or company bodies into the cache key', () =>
   Effect.gen(function* completeBodyKeys() {
+    yield* fixture.reset(true);
     yield* withoutRecordedPageReads(() => browserRuntime.runPromise(read('keys', 'refresh-a', 'company-a')));
     yield* read('keys', 'refresh-a', 'company-a');
-    expect(platformFetch).toHaveBeenCalledTimes(1);
+    yield* networkIdle;
+    expect(fixture.count).toBe(1);
     yield* read('keys', 'refresh-b', 'company-a');
     yield* read('keys', 'refresh-a', 'company-b');
-    expect(platformFetch).toHaveBeenCalledTimes(3);
-  }),
+    yield* networkIdle;
+    expect(fixture.count).toBe(3);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('the primary-read gate ignores speculative requests issued after its snapshot', () =>
   Effect.gen(function* primarySnapshot() {
-    const primary = yield* Deferred.make<Response>();
-    const speculative = yield* Deferred.make<Response>();
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(primary)));
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(speculative)));
+    yield* fixture.reset(true);
+    const primary = yield* fixture.hold('/reads/primary');
+    const speculative = yield* fixture.hold('/reads/later-speculation');
     const current = yield* read('primary').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
+    yield* Deferred.await(primary.entered);
     const ready = yield* awaitPrimaryModuleReads.pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     const other = yield* prepareRead('later-speculation').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(2)));
-    yield* Deferred.succeed(primary, Response.json({ value: 'primary' }));
+    yield* Deferred.await(speculative.entered);
+    yield* Deferred.succeed(primary.release, HttpServerResponse.jsonUnsafe({ value: 'primary' }));
     expect(yield* Fiber.join(ready)).toBe(true);
     expect(other.pollUnsafe()).toBeUndefined();
-    yield* Deferred.succeed(speculative, Response.json({ value: 'destination' }));
+    yield* Deferred.succeed(speculative.release, HttpServerResponse.jsonUnsafe({ value: 'destination' }));
     yield* Fiber.join(current);
     yield* Fiber.join(other);
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('a timed-out declared owner cannot pollute replay or quarantine another preparation', () =>
   Effect.gen(function* independentOwnerLifetimes() {
+    yield* fixture.reset(true);
     yield* read('before-owner');
     const before = globalThis.localStorage.getItem(manifestKey);
     const release = yield* Deferred.make<boolean>();
@@ -314,146 +274,131 @@ it.live('a timed-out declared owner cannot pollute replay or quarantine another 
     yield* Deferred.await(finished);
     yield* Effect.yieldNow;
     expect(globalThis.localStorage.getItem(manifestKey)).toBe(before);
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('a mutation restarts prepared reads that were still in flight, never returning the old answer as fresh', () =>
   Effect.gen(function* writeInvalidation() {
+    yield* fixture.reset(true);
     yield* pinDocumentCompositionRevision(revision);
-    const old = yield* Deferred.make<Response>();
-    const authorizations: (string | null)[] = [];
-    platformFetch.mockImplementation(async (input, init) => {
-      const { url } = new Request(input, init);
-      if (url.endsWith('/auth/gateway-context')) {
-        return Response.json({
-          apiBaseUrl: base,
-          compositionRevision: revision,
-          expiresAt: 4_102_444_800,
-          token: 'retry-token',
-        });
-      }
-      if (url.includes('/reads/')) {
-        authorizations.push(new Headers(init?.headers).get('authorization'));
-      }
-      return Response.json({ value: 'fresh' });
-    });
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(old)));
+    const pending = yield* fixture.hold('/reads/mutated');
     const preparing = yield* prepareRead('mutated').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
+    yield* Deferred.await(pending.entered);
     yield* Effect.promise(() => globalThis.fetch(`${base}/commands/change`, { body: '{}', method: 'POST' }));
-    yield* Deferred.succeed(old, Response.json({ value: 'old' }));
+    yield* Deferred.succeed(pending.release, HttpServerResponse.jsonUnsafe({ value: 'old' }));
     const response = yield* Fiber.join(preparing);
     expect(yield* Effect.promise(() => response.json())).toEqual({ value: 'fresh' });
-    expect(platformFetch).toHaveBeenCalledTimes(4);
-    expect(authorizations).toEqual(['Bearer retry-token']);
+    yield* networkIdle;
+    expect(fixture.count).toBe(4);
+    expect(
+      fixture.requests.filter(({ path }) => path.startsWith('/reads/')).map(({ authorization }) => authorization),
+    ).toEqual([`Bearer ${fixture.token}`, 'Bearer t1']);
     yield* read('mutated');
     // Reads during write quiet time are joinable but are not retained as fresh settled data.
-    expect(platformFetch).toHaveBeenCalledTimes(5);
-  }),
+    yield* networkIdle;
+    expect(fixture.count).toBe(5);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('clears prepared data on company/context changes and rejects pending old-context answers', () =>
   Effect.gen(function* contextInvalidation() {
-    const old = yield* Deferred.make<Response>();
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(old)));
+    yield* fixture.reset(true);
+    const pending = yield* fixture.hold('/reads/context');
     const preparing = yield* prepareRead('context').pipe(Effect.exit, Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
+    yield* Deferred.await(pending.entered);
     yield* clearBrowserRequestCache;
-    yield* Deferred.succeed(old, Response.json({ value: 'old-context' }));
+    yield* Deferred.succeed(pending.release, HttpServerResponse.jsonUnsafe({ value: 'old-context' }));
     expect(Exit.isFailure(yield* Fiber.join(preparing))).toBe(true);
     yield* read('context');
-    expect(platformFetch).toHaveBeenCalledTimes(2);
-  }),
+    yield* networkIdle;
+    expect(fixture.count).toBe(2);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('the native sign-out cleanup drops memory reads, gateway assertions and every persisted visit', () =>
   Effect.gen(function* signOutInvalidation() {
+    yield* fixture.reset(true);
     yield* read('signed-in');
     yield* read('signed-in');
-    expect(platformFetch).toHaveBeenCalledTimes(1);
+    yield* networkIdle;
+    expect(fixture.count).toBe(1);
     expect(globalThis.localStorage.getItem(manifestKey)).not.toBeNull();
     yield* forgetRecordedPageReads;
     expect(globalThis.localStorage.getItem(manifestKey)).toBeNull();
     yield* read('signed-in');
-    platformFetch.mockResolvedValueOnce(Response.json({ apiBaseUrl: base, expiresAt: 4_102_444_800, token }));
-    yield* Effect.promise(gatewayRequest);
-    expect(platformFetch).toHaveBeenCalledTimes(3);
-  }),
+    yield* Effect.promise(fixture.gatewayRequest);
+    yield* networkIdle;
+    expect(fixture.count).toBe(3);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('does not wait for an already-started speculative destination when opening another page', () =>
   Effect.gen(function* noSpeculativeGate() {
-    const release = yield* Deferred.make<Response>();
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(release)));
+    yield* fixture.reset(true);
+    const pending = yield* fixture.hold('/reads/slow-destination');
     const preparing = yield* prepareRead('slow-destination').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
+    yield* Deferred.await(pending.entered);
     expect(yield* awaitPrimaryModuleReads).toBe(true);
-    yield* Deferred.succeed(release, Response.json({ value: 'fresh' }));
+    yield* Deferred.succeed(pending.release, HttpServerResponse.jsonUnsafe({ value: 'fresh' }));
     yield* Fiber.join(preparing);
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('buffers the complete response body before either a preload or its foreground join receives data', () =>
   Effect.gen(function* completeBody() {
-    const release = yield* Deferred.make<ArrayBuffer>();
-    const bodyStarted = yield* Deferred.make<boolean>();
-    const response = Response.json({ value: 'fresh' });
-    const bytes = yield* Effect.promise(() => response.clone().arrayBuffer());
-    rstest
-      .spyOn(response, 'arrayBuffer')
-      .mockImplementation(() =>
-        browserRuntime.runPromise(Deferred.succeed(bodyStarted, true).pipe(Effect.andThen(Deferred.await(release)))),
-      );
-    platformFetch.mockResolvedValueOnce(response);
+    yield* fixture.reset(true);
+    const pending = yield* fixture.stream('/reads/body', JSON.stringify({ value: 'fresh' }));
     const preparing = yield* prepareRead('body').pipe(Effect.forkChild);
-    yield* Deferred.await(bodyStarted);
+    yield* Deferred.await(pending.started);
     const foreground = yield* read('body').pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     expect(preparing.pollUnsafe()).toBeUndefined();
     expect(foreground.pollUnsafe()).toBeUndefined();
-    yield* Deferred.succeed(release, bytes);
+    yield* Deferred.succeed(pending.release, true);
     const preparedResponse = yield* Fiber.join(preparing);
     const foregroundResponse = yield* Fiber.join(foreground);
     expect(yield* Effect.promise(() => preparedResponse.json())).toEqual({ value: 'fresh' });
     expect(yield* Effect.promise(() => foregroundResponse.json())).toEqual({ value: 'fresh' });
-    expect(platformFetch).toHaveBeenCalledTimes(1);
-  }),
+    yield* networkIdle;
+    expect(fixture.count).toBe(1);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('waits for fresh data after expiry instead of labeling an old prepared answer fresh', () =>
   Effect.gen(function* expiry() {
+    yield* fixture.reset(true);
     const clock = browserRuntime.runSync(Clock.Clock);
     const now = rstest.spyOn(clock, 'currentTimeMillisUnsafe').mockReturnValue(100_000);
     yield* prepareRead('expiry');
     now.mockReturnValue(120_001);
-    const fresh = yield* Deferred.make<Response>();
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(fresh)));
+    const pending = yield* fixture.hold('/reads/expiry');
     const foreground = yield* read('expiry').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(2)));
+    yield* Deferred.await(pending.entered);
     expect(foreground.pollUnsafe()).toBeUndefined();
-    yield* Deferred.succeed(fresh, Response.json({ value: 'new' }));
+    yield* Deferred.succeed(pending.release, HttpServerResponse.jsonUnsafe({ value: 'new' }));
     const response = yield* Fiber.join(foreground);
     expect(yield* Effect.promise(() => response.json())).toEqual({ value: 'new' });
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('shares a still-pending compatible request even after the freshness window has elapsed', () =>
   Effect.gen(function* slowJoin() {
+    yield* fixture.reset(true);
     const clock = browserRuntime.runSync(Clock.Clock);
     const now = rstest.spyOn(clock, 'currentTimeMillisUnsafe').mockReturnValue(100_000);
-    const release = yield* Deferred.make<Response>();
-    platformFetch.mockImplementationOnce(() => browserRuntime.runPromise(Deferred.await(release)));
+    const pending = yield* fixture.hold('/reads/slow-join');
     const preparing = yield* prepareRead('slow-join').pipe(Effect.forkChild);
-    yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(1)));
+    yield* Deferred.await(pending.entered);
     now.mockReturnValue(120_001);
     const foreground = yield* read('slow-join').pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    expect(platformFetch).toHaveBeenCalledTimes(1);
-    yield* Deferred.succeed(release, Response.json({ value: 'fresh' }));
+    yield* networkQuietExcept(1);
+    expect(fixture.count).toBe(1);
+    yield* Deferred.succeed(pending.release, HttpServerResponse.jsonUnsafe({ value: 'fresh' }));
     yield* Fiber.join(preparing);
     yield* Fiber.join(foreground);
-    expect(platformFetch).toHaveBeenCalledTimes(1);
-  }),
+    yield* networkIdle;
+    expect(fixture.count).toBe(1);
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 const datasetTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
@@ -473,9 +418,10 @@ const datasetTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
 
 it.live('restarts the entire declared dataset across a write', () =>
   Effect.gen(function* datasetWriteReproducer() {
+    yield* fixture.reset(true);
     const firstRead = yield* Deferred.make<boolean>();
     const releaseSecond = yield* Deferred.make<boolean>();
-    platformFetch.mockImplementationOnce(async () => Response.json({ value: 'old' }));
+    fixture.enqueue('/reads/dataset-first', Effect.succeed(HttpServerResponse.jsonUnsafe({ value: 'old' })));
     const data = definePageData({
       key: (input: string) => input,
       load: () =>
@@ -510,11 +456,12 @@ it.live('restarts the entire declared dataset across a write', () =>
       state: 'ready',
       value: { first: { value: 'fresh' }, second: { value: 'fresh' } },
     });
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('excludes detached stale revalidation after declared preload returns', () =>
   Effect.gen(function* detachedRecorderReproducer() {
+    yield* fixture.reset(true);
     const renewal = yield* Deferred.make<boolean>();
     const refreshed = yield* Deferred.make<boolean>();
     let runs = 0;
@@ -546,11 +493,12 @@ it.live('excludes detached stale revalidation after declared preload returns', (
     yield* Deferred.succeed(renewal, true);
     yield* Deferred.await(refreshed);
     expect(globalThis.localStorage.getItem(manifestKey)).toBe(before);
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('releases detached-work exclusion on settlement without delaying stale-ready preload', () =>
   Effect.gen(function* detachedExclusionRelease() {
+    yield* fixture.reset(true);
     const renewal = yield* Deferred.make<boolean>();
     let runs = 0;
     const data = definePageData({
@@ -574,17 +522,20 @@ it.live('releases detached-work exclusion on settlement without delaying stale-r
     // The public preload has resolved while revalidation remains blocked.
     expect(data.snapshot('destination')).toEqual({ refreshing: true, state: 'ready', value: 1 });
     yield* Deferred.succeed(renewal, true);
-    yield* Effect.promise(() =>
-      waitFor(() => expect(data.snapshot('destination')).toEqual({ refreshing: false, state: 'ready', value: 2 })),
-    );
+    yield* waitUntil(() => {
+      const snapshot = data.snapshot('destination');
+      return snapshot.state === 'ready' && !snapshot.refreshing && snapshot.value === 2;
+    });
+    expect(data.snapshot('destination')).toEqual({ refreshing: false, state: 'ready', value: 2 });
     expect(globalThis.localStorage.getItem(manifestKey)).toBe(before);
     yield* read('foreground-after-detached');
     expect(globalThis.localStorage.getItem(manifestKey)).toContain('/reads/foreground-after-detached');
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live('a synchronous dataset factory defect cannot leak recorder exclusion into later visits', () =>
   Effect.gen(function* factoryExclusionRecovery() {
+    yield* fixture.reset(true);
     const release = yield* Deferred.make<boolean>();
     let runs = 0;
     const data = definePageData({
@@ -603,32 +554,25 @@ it.live('a synchronous dataset factory defect cannot leak recorder exclusion int
     const preparing = yield* withoutRecordedPageReads(() => preloadPage({ routeParams: {}, search: '' })).pipe(
       Effect.forkChild,
     );
-    yield* Effect.promise(() => waitFor(() => expect(runs).toBe(2)));
+    yield* waitUntil(() => runs === 2);
+    expect(runs).toBe(2);
     yield* Deferred.succeed(release, true);
     yield* Fiber.join(preparing);
     expect(data.snapshot('destination')).toEqual({ refreshing: false, state: 'ready', value: 2 });
     yield* read('foreground-after-factory-defect');
     expect(globalThis.localStorage.getItem(manifestKey)).toContain('/reads/foreground-after-factory-defect');
-  }),
+  }).pipe(Effect.provide(fixture.network)),
 );
 
 it.live(
   'obsolete datasets neither retry overtaken reads nor issue later reads, while their transport stays excluded',
   () =>
     Effect.gen(function* obsoleteDatasetTransport() {
+      yield* fixture.reset(true);
       yield* read('before-obsolete-transport');
       const before = globalThis.localStorage.getItem(manifestKey);
-      platformFetch.mockClear();
-      const release = yield* Deferred.make<ArrayBuffer>();
-      const bodyStarted = yield* Deferred.make<boolean>();
-      const response = Response.json({ value: 'old' });
-      const bytes = yield* Effect.promise(() => response.clone().arrayBuffer());
-      rstest
-        .spyOn(response, 'arrayBuffer')
-        .mockImplementation(() =>
-          browserRuntime.runPromise(Deferred.succeed(bodyStarted, true).pipe(Effect.andThen(Deferred.await(release)))),
-        );
-      platformFetch.mockResolvedValueOnce(response);
+      const beforeRequests = fixture.count;
+      const pending = yield* fixture.stream('/reads/obsolete-first', JSON.stringify({ value: 'old' }));
       let runs = 0;
       let obsoleteContinuations = 0;
       const data = definePageData({
@@ -650,20 +594,25 @@ it.live(
       const preparing = yield* withoutRecordedPageReads(() => preloadPage({ routeParams: {}, search: '' })).pipe(
         Effect.forkChild,
       );
-      yield* Deferred.await(bodyStarted);
+      yield* Deferred.await(pending.started);
       yield* Effect.promise(() => globalThis.fetch(`${base}/commands/obsolete-change`, { body: '{}', method: 'POST' }));
       yield* Fiber.join(preparing);
       expect(data.snapshot('destination')).toEqual({ refreshing: false, state: 'ready', value: { value: 'fresh' } });
       // Old read + write + replacement's two reads. The body of the old read is still pending.
-      expect(platformFetch).toHaveBeenCalledTimes(4);
+      yield* networkIdle;
+      expect(fixture.count - beforeRequests).toBe(4);
       yield* read('foreground-during-obsolete-body');
       expect(globalThis.localStorage.getItem(manifestKey)).toBe(before);
-      yield* Deferred.succeed(release, bytes);
+      yield* Deferred.succeed(pending.release, true);
+      yield* Deferred.await(pending.finished);
+      yield* networkIdle;
       yield* Effect.yieldNow;
       expect(obsoleteContinuations).toBe(0);
-      expect(platformFetch).toHaveBeenCalledTimes(5);
+      yield* networkIdle;
+      expect(fixture.count - beforeRequests).toBe(5);
       yield* read('foreground-after-obsolete-body');
-      expect(platformFetch).toHaveBeenCalledTimes(6);
+      yield* networkIdle;
+      expect(fixture.count - beforeRequests).toBe(6);
       expect(globalThis.localStorage.getItem(manifestKey)).toContain('/reads/foreground-after-obsolete-body');
-    }),
+    }).pipe(Effect.provide(fixture.network)),
 );

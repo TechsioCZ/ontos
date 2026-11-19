@@ -264,6 +264,7 @@ patchedDependencies:
   '@bleedingdev/modern-js-server-utils@3.11.3-ultramodern.1': f42c697ccae23cb22fe39fc283ba46f3bc61339ca628764823961efee9937762
   '@bleedingdev/modern-js-ultramodern-create@3.11.3-ultramodern.1': 4baf3d94df7c594c0e0db68bb31f8d87d0c28585f15e242508bd863577c113dd
   '@effect/sql-pg@4.0.7': 99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0
+  '@rstest/core@0.12.6': 93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527
   '@tanstack/router-core@1.171.32': fda52ecfa3ec46559d44ba037067cae400755912bd53fba786b26c1bc4732ef3
   drizzle-orm@1.0.0-rc.5-ab785fc: e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466
   ndepe@0.1.13: 563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2
@@ -435,7 +436,7 @@ importers:
         version: 1.94.0
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@tailwindcss/node':
         specifier: 4.3.3
         version: 4.3.3
@@ -456,7 +457,7 @@ importers:
         version: 4.0.7
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -560,6 +561,9 @@ importers:
       fflate:
         specifier: 0.8.3
         version: 0.8.3
+      happy-dom:
+        specifier: 21.0.4
+        version: 21.0.4
       jsdom:
         specifier: 30.1.1
         version: 30.1.1(@noble/hashes@2.2.0)
@@ -755,7 +759,7 @@ importers:
         version: 2.3.1
       '@modern-js/adapter-rstest':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1(b512868a6885ae13b67b34181f6225d0)'
+        version: '@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1(2ea35cb626495c0bb287a6ec50443adf)'
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(patch_hash=055ed232a0b29bdb46cae3b30639d7d4a7de2550d9f41461ce89a253ea90c475)(f871ad5607b2df76334c2da3e3f64e43)'
@@ -776,7 +780,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@testing-library/dom':
         specifier: 10.4.1
         version: 10.4.1
@@ -803,7 +807,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       happy-dom:
         specifier: 21.0.4
         version: 21.0.4
@@ -861,7 +865,7 @@ importers:
         version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@tailwindcss/postcss':
         specifier: 4.3.3
         version: 4.3.3
@@ -876,7 +880,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       oxfmt:
         specifier: 0.66.0
         version: 0.66.0
@@ -910,7 +914,7 @@ importers:
         version: '@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@techsio/ui-kit':
         specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
@@ -928,7 +932,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       happy-dom:
         specifier: 21.0.4
         version: 21.0.4
@@ -966,13 +970,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/commerce-cart-contracts:
     dependencies:
@@ -1057,7 +1061,7 @@ importers:
         version: 1.14.5
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -1066,7 +1070,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -1085,13 +1089,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/customer-payment-term-contracts:
     dependencies:
@@ -1107,13 +1111,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/email-delivery:
     dependencies:
@@ -1135,13 +1139,13 @@ importers:
         version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/gateway-principal-verifier:
     dependencies:
@@ -1163,13 +1167,13 @@ importers:
         version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/party-registry-identity-contracts:
     dependencies:
@@ -1191,13 +1195,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/price-group-catalog-contracts:
     dependencies:
@@ -1213,13 +1217,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/pricing-contracts:
     dependencies:
@@ -1244,13 +1248,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/shared-contracts:
     dependencies:
@@ -1269,13 +1273,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   packages/shared-design-tokens: {}
 
@@ -1290,13 +1294,13 @@ importers:
     devDependencies:
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
 
   verticals/assortment:
     dependencies:
@@ -1417,7 +1421,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -1438,7 +1442,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -1514,13 +1518,13 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(5415197a5ffec302c83e074823631f71)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1638,7 +1642,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -1656,7 +1660,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -1747,7 +1751,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e080ceb5d645bfe054c101a8283e158c)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -1756,7 +1760,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -1895,7 +1899,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(5415197a5ffec302c83e074823631f71)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -1910,7 +1914,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -2046,7 +2050,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -2064,7 +2068,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -2279,7 +2283,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -2297,7 +2301,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -2427,7 +2431,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -2445,7 +2449,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -2593,7 +2597,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -2611,7 +2615,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -2768,7 +2772,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -2786,7 +2790,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -2916,7 +2920,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -2940,7 +2944,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -3073,7 +3077,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -3091,7 +3095,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -3224,7 +3228,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -3242,7 +3246,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -3366,7 +3370,7 @@ importers:
         version: 0.70.0
       '@modern-js/adapter-rstest':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1(b512868a6885ae13b67b34181f6225d0)'
+        version: '@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1(2ea35cb626495c0bb287a6ec50443adf)'
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(patch_hash=055ed232a0b29bdb46cae3b30639d7d4a7de2550d9f41461ce89a253ea90c475)(f871ad5607b2df76334c2da3e3f64e43)'
@@ -3384,7 +3388,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@testing-library/dom':
         specifier: 10.4.1
         version: 10.4.1
@@ -3408,7 +3412,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       happy-dom:
         specifier: 21.0.4
         version: 21.0.4
@@ -3496,7 +3500,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7a3f4623b262b035ebed20b4cb360fdf)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^20
         version: 20.19.43
@@ -3505,7 +3509,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -3578,7 +3582,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7a3f4623b262b035ebed20b4cb360fdf)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^20
         version: 20.19.43
@@ -3587,7 +3591,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -3663,7 +3667,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(5415197a5ffec302c83e074823631f71)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -3672,7 +3676,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -3763,7 +3767,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e080ceb5d645bfe054c101a8283e158c)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -3775,7 +3779,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -3911,7 +3915,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -3932,7 +3936,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -4050,7 +4054,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -4068,7 +4072,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -4144,7 +4148,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e080ceb5d645bfe054c101a8283e158c)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -4153,7 +4157,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -4286,7 +4290,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -4304,7 +4308,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -4443,7 +4447,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -4461,7 +4465,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -4606,7 +4610,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -4624,7 +4628,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -4766,7 +4770,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -4784,7 +4788,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -4857,7 +4861,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7a3f4623b262b035ebed20b4cb360fdf)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
@@ -4866,7 +4870,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -4960,7 +4964,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(e080ceb5d645bfe054c101a8283e158c)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -4969,7 +4973,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -5099,7 +5103,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -5117,7 +5121,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -5193,7 +5197,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(7a3f4623b262b035ebed20b4cb360fdf)'
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: 20.19.43
         version: 20.19.43
@@ -5205,7 +5209,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       jose:
         specifier: 6.2.5
         version: 6.2.5
@@ -5338,7 +5342,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -5356,7 +5360,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -5483,7 +5487,7 @@ importers:
         version: 2.0.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24))(webpack@5.112.0(@swc/core@1.16.21(@swc/helpers@0.5.24))(clean-css@5.3.3)(cssnano@9.8.0(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.2)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.4))(svgo@4.1.0))
       '@rstest/core':
         specifier: 0.12.6
-        version: 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.4
@@ -5501,7 +5505,7 @@ importers:
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
         specifier: 1.0.0
-        version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: 1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -16236,10 +16240,10 @@ snapshots:
       '@module-federation/runtime': '@bleedingdev/mf-runtime@2.9.3'
       '@module-federation/sdk': '@bleedingdev/mf-sdk@2.9.2'
 
-  '@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1(b512868a6885ae13b67b34181f6225d0)':
+  '@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1(2ea35cb626495c0bb287a6ec50443adf)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(patch_hash=055ed232a0b29bdb46cae3b30639d7d4a7de2550d9f41461ce89a253ea90c475)(f871ad5607b2df76334c2da3e3f64e43)'
-      '@rstest/adapter-rsbuild': 0.12.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))
+      '@rstest/adapter-rsbuild': 0.12.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))
     transitivePeerDependencies:
       - '@loadable/component'
       - '@microsoft/api-extractor'
@@ -21008,12 +21012,12 @@ snapshots:
     optionalDependencies:
       '@rspack/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.24)
 
-  '@rstest/adapter-rsbuild@0.12.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))':
+  '@rstest/adapter-rsbuild@0.12.3(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))':
     dependencies:
       '@rsbuild/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
-      '@rstest/core': 0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
+      '@rstest/core': 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
 
-  '@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))':
+  '@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))':
     dependencies:
       '@rsbuild/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
       '@types/chai': 5.2.3
@@ -21025,7 +21029,7 @@ snapshots:
       - '@module-federation/runtime-tools'
       - core-js
 
-  '@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))':
+  '@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))':
     dependencies:
       '@rsbuild/core': 2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
       '@types/chai': 5.2.3
@@ -22769,7 +22773,7 @@ snapshots:
 
   buffer-image-size@0.6.4:
     dependencies:
-      '@types/node': 26.6.3
+      '@types/node': 26.4.1
 
   buffer@5.7.1:
     dependencies:
@@ -23593,14 +23597,14 @@ snapshots:
 
   eastasianwidth@0.2.0: {}
 
-  effect-rstest@1.0.0(@rstest/core@0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7):
+  effect-rstest@1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7):
     dependencies:
-      '@rstest/core': 0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
+      '@rstest/core': 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
       effect: 4.0.7
 
-  effect-rstest@1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7):
+  effect-rstest@1.0.0(@rstest/core@0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7):
     dependencies:
-      '@rstest/core': 0.12.6(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+      '@rstest/core': 0.12.6(patch_hash=93e1cce0ded4d1d0ca24fedbacdf6ec93a6f85adfb3033b2e16b0ecee71a2527)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       effect: 4.0.7
 
   effect@4.0.7: {}
@@ -24436,7 +24440,7 @@ snapshots:
 
   happy-dom@21.0.4:
     dependencies:
-      '@types/node': 26.6.3
+      '@types/node': 26.4.1
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.2
       buffer-image-size: 0.6.4
