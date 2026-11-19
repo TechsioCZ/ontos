@@ -267,6 +267,7 @@
       "lanes": 2,
       "tasks": [
         "./verticals/commerce-customer-context#19/56",
+        "./verticals/privacy#1/8",
         "root:9/27",
         "./apps/shell-super-app#23/24",
         "./apps/shell-super-app#24/24",
@@ -449,7 +450,6 @@
         "./verticals/commerce-customer-context#5/56",
         "root:13/27",
         "./verticals/party-registry#1/4",
-        "./verticals/privacy#1/8",
         "whole:pricing",
         "./verticals/commerce-customer-context#21/56",
         "./verticals/commerce-customer-context#8/56",
