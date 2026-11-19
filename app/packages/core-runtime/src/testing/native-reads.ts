@@ -791,7 +791,7 @@ export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.with
     const namespace = yield* namespaceRegistry
       .lookup(STAFF_AUTHENTICATION_NAMESPACE_ID)
       .pipe(Effect.mapError(unavailable));
-    if (Option.isNone(namespace) || namespace.value.provider !== 'better-auth') {
+    if (Option.isNone(namespace) || namespace.value.provider !== 'better_auth') {
       return yield* unavailable(undefined, 'The production Staff authentication namespace is required');
     }
     const configuration = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: SHARED_RUNTIME_IDENTITY }).pipe(
