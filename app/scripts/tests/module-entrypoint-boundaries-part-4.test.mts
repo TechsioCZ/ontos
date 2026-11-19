@@ -505,10 +505,18 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
           'packages/customer-payment-term-contracts',
           // customer-price-group-resolution calls the Catalog's operation reference from this package.
           'packages/price-group-catalog-contracts',
+          // Both payment-terms resolutions call the Payment Term Catalog's operation reference from this package.
+          'packages/payment-term-catalog-contracts',
         ].map((folder) => readPricingSourceTree(root, folder)),
       ),
       Effect.all(
-        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+        [
+          `${owner}/package.json`,
+          `${owner}/vertical.manifest.ts`,
+          `${owner}/vertical.registration.ts`,
+          // market-bootstrap-resolution calls the Market Catalog's published module-api contracts.
+          'verticals/commerce-market-catalog/package.json',
+        ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
           ),

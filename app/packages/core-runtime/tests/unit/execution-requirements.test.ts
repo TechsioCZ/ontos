@@ -163,17 +163,26 @@ it('takes a registered caller declaration key as a plain string, checked as an a
  */
 const recoveryHash = 'f'.repeat(64);
 const compatibilityDeclaration = 'pricing.price-group-catalog.price-group.read.compatibility';
-const convertedReads = [
-  {
-    callers: callersOf([{ kind: 'person', legalEntityScope: 'subject' }]),
-    expected: {
-      person: { kind: 'person', legalEntityScope: 'subject' },
-      recovery: { kind: 'person', legalEntityScope: 'subject' },
-      system: { kind: 'person', legalEntityScope: 'subject' },
-      workload: { kind: 'person', legalEntityScope: 'subject' },
-    },
-    read: 'commerce.market-catalog.api.verify-market-eligibility-v1',
+const subjectRelay = {
+  callers: callersOf([{ kind: 'person', legalEntityScope: 'subject' }]),
+  expected: {
+    person: { kind: 'person', legalEntityScope: 'subject' },
+    recovery: { kind: 'person', legalEntityScope: 'subject' },
+    system: { kind: 'person', legalEntityScope: 'subject' },
+    workload: { kind: 'person', legalEntityScope: 'subject' },
   },
+} as const;
+
+const convertedReads = [
+  ...[
+    'commerce.market-catalog.api.verify-market-eligibility-v1',
+    'commerce.market-catalog.api.eligible-market-tuples',
+    'commerce.market-catalog.api.resolve-commerce-market',
+    'commerce.customer-context.api.payment-terms-resolution',
+    'commerce.customer-context.api.guest-payment-terms-resolution',
+    'commerce.customer-context.api.market-bootstrap-resolution',
+    'commerce.catalog.api.manufacturer-relation-current',
+  ].map((read) => ({ ...subjectRelay, read })),
   {
     callers: callersOf([
       { kind: 'person', legalEntityScope: 'tenant' },
@@ -192,9 +201,9 @@ const convertedReads = [
     },
     read: 'commerce.customer-context.api.customer-price-group-resolution',
   },
-] as const;
+];
 
-it.effect('selects for every request kind of both converted reads what main delegated', () =>
+it.effect('selects for every request kind of every converted read what main delegated', () =>
   Effect.gen(function* convertedReadSelection() {
     for (const { callers, expected, read } of convertedReads) {
       for (const via of ['person', 'recovery', 'system', 'workload'] as const) {

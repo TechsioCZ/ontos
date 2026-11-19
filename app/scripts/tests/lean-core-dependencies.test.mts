@@ -126,9 +126,6 @@ it.live(
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const files = {
-        // Market Catalog: allowed exact owner-client composition seam.
-        'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts':
-          "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
         // Shell: allowed documented composition seams.
         'apps/shell-super-app/api/auth/commerce-external-identity.ts':
           "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
@@ -209,7 +206,7 @@ it.live(
         // party-registry: violates via direct api/ import.
         'verticals/party-registry/api/uses-commerce-api.ts':
           "import { OwnerTransition } from '../../commerce-customer-context/api/owner-transition.ts';\n",
-        // The narrow owner client is accepted only at the exact documented Market composition seam.
+        // The narrow subject-restrictions owner client has no documented composition seam.
         'verticals/party-registry/api/uses-subject-restrictions-client.ts':
           "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
         // Pricing: only these four exact importer/client pairs are documented composition seams.

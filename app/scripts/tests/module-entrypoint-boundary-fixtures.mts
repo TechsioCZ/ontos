@@ -1133,6 +1133,24 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
   return root;
 });
 
+const CORE_SDK_SOURCE_PATH = 'packages/core-runtime/src/sdk/index.ts';
+
+/** Generated module-api contracts export operation references built by the Core SDK's `moduleOperation`. */
+const writeLinkedCoreSdk = Effect.fn(function* writeLinkedCoreSdk(root: string, workspace: string) {
+  for (const file of ['packages/core-runtime/package.json', CORE_SDK_SOURCE_PATH]) {
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
+  }
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(
+    async () =>
+      await symlink(
+        path.join(root, 'packages/core-runtime'),
+        path.join(root, APP_PACKAGE_LINK_DIRECTORY, 'core-runtime'),
+        'dir',
+      ),
+  );
+});
+
 export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClientFixture() {
   const root = yield* makeFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
@@ -1181,6 +1199,7 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
         'dir',
       ),
   );
+  yield* writeLinkedCoreSdk(root, workspace);
   return root;
 });
 
@@ -1255,6 +1274,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       async () => await symlink(path.join(root, directory), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
     );
   }
+  yield* writeLinkedCoreSdk(root, workspace);
   return root;
 });
 
@@ -1353,8 +1373,6 @@ export const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFix
   return root;
 });
 
-const CORE_SDK_SOURCE_PATH = 'packages/core-runtime/src/sdk/index.ts';
-
 export const CATALOG_QUANTITY_CONTRACT = 'verticals/catalog/shared/domain/catalog-quantity-handoff.ts';
 
 export const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
@@ -1374,11 +1392,10 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
       yield* write(root, file, source);
     }
   }
-  // Public contracts export operation references built by the Core SDK's `moduleOperation`.
-  yield* write(
-    root,
-    CORE_SDK_SOURCE_PATH,
-    yield* Effect.promise(async () => await readFile(path.join(workspace, CORE_SDK_SOURCE_PATH), 'utf-8')),
-  );
+  // Public contracts export operation references built by the Core SDK's `moduleOperation`, and
+  // market-bootstrap-resolution calls the Market Catalog's published module-api contracts.
+  for (const file of [CORE_SDK_SOURCE_PATH, 'verticals/commerce-market-catalog/package.json']) {
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
+  }
   return root;
 });

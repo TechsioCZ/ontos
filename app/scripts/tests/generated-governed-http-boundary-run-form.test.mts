@@ -105,6 +105,30 @@ const violations = (fixture: ReadFixture): readonly string[] =>
 
 const BOTH_CALLS = `{ provider: ${PROVIDER_CALL}, assignees: ${CORE_CALL} }`;
 
+/* A module package that publishes its generated module-api contract under its own subpath. */
+const MODULE_PACKAGE_FILE = 'verticals/provider/package.json';
+const PROVIDER_MODULE_SUBPATH = '@app/provider/api/provider-facts';
+const NO_SUBPATH = 'is no public subpath of one contract package or module-api contract of one module';
+const modulePackage = (exports: Readonly<Record<string, string>>): string =>
+  JSON.stringify({ exports, name: '@app/provider' });
+const moduleCall = (specifier: string, packages: readonly (readonly [string, string])[]): readonly string[] =>
+  readSdkFormViolations({
+    readFile,
+    readName,
+    sources: new Map([
+      [
+        readFile,
+        readSource({
+          calls: `{ provider: declaredCall(providerFactsModuleOperation, '${providerRequirement}') }`,
+          definition: RUN_HANDLER,
+          extraImports: `import { providerFactsOperation as providerFactsModuleOperation } from '${specifier}';`,
+        }),
+      ],
+      [PROVIDER_PACKAGE_FILE, providerPackage],
+      ...packages,
+    ]),
+  });
+
 describe('the read SDK form gate', () => {
   it('accepts a bare handler', () => {
     expect(violations({ definition: BARE_HANDLER })).toEqual([]);
@@ -238,6 +262,31 @@ describe('the read SDK form gate', () => {
       ).toBe(true);
     });
   }
+
+  describe('an operation reference a module package publishes', () => {
+    const published = { './api/provider-facts': './shared/apis/provider-facts.ts' };
+
+    it('accepts its generated module-api contract subpath', () => {
+      expect(moduleCall(PROVIDER_MODULE_SUBPATH, [[MODULE_PACKAGE_FILE, modulePackage(published)]])).toEqual([]);
+    });
+    it('refuses a subpath that is not its generated module-api contract', () => {
+      const found = moduleCall(PROVIDER_MODULE_SUBPATH, [
+        [MODULE_PACKAGE_FILE, modulePackage({ './api/provider-facts': './src/api/provider-facts.read.ts' })],
+      ]);
+      expect(found.some((violation) => violation.includes(NO_SUBPATH))).toBe(true);
+    });
+    it('refuses a subpath the module package does not export', () => {
+      const found = moduleCall('@app/provider/api/other-facts', [[MODULE_PACKAGE_FILE, modulePackage(published)]]);
+      expect(found.some((violation) => violation.includes(NO_SUBPATH))).toBe(true);
+    });
+    it('refuses a package name two module packages claim', () => {
+      const found = moduleCall(PROVIDER_MODULE_SUBPATH, [
+        [MODULE_PACKAGE_FILE, modulePackage(published)],
+        ['verticals/provider-copy/package.json', modulePackage(published)],
+      ]);
+      expect(found.some((violation) => violation.includes(NO_SUBPATH))).toBe(true);
+    });
+  });
 
   it('refuses a declaredCall imported from elsewhere', () => {
     const source = readSource({ calls: BOTH_CALLS, definition: RUN_HANDLER }).replace(
