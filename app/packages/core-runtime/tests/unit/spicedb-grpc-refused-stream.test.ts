@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Duration, Effect, Exit, Option, Predicate, Ref } from 'effect';
+import { Duration, Effect, Exit, Layer, Option, Predicate, Ref } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
@@ -11,6 +11,13 @@ import type { RecordedSpiceDbMethod } from '../support/native-spicedb-grpc.ts';
 const PRE_SHARED_KEY = 'refused-stream-key';
 const GRPC_UNAVAILABLE = 14;
 const REFUSED_STREAM = 'Write error: Stream closed with error code NGHTTP2_REFUSED_STREAM';
+
+/** Node's services for one test, built and released with it. */
+const onNode = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+  Layer.build(NodeServices.layer).pipe(
+    Effect.flatMap((nodeServices) => body.pipe(Effect.provide(nodeServices))),
+    Effect.scoped,
+  );
 
 const answered = () => Effect.void;
 const unavailable = () => Effect.fail(new ScriptedSpiceDbUnavailable({ details: 'scripted unavailable' }));
@@ -81,7 +88,7 @@ it.live(
       }
       const denial = yield* rpc.checkPermission(v1.CheckPermissionRequest.create({}));
       expect(denial.permissionship).toBe(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(onNode),
   { timeout: 10_000 },
 );
 
@@ -100,7 +107,7 @@ it.live(
           status: { code: GRPC_UNAVAILABLE, details: 'scripted unavailable' },
         });
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(onNode),
   { timeout: 10_000 },
 );
 
@@ -122,6 +129,6 @@ it.live(
       expect(Exit.isFailure(exit)).toBe(true);
       expect(Duration.toMillis(elapsed)).toBeLessThan(400);
       expect(spiceDb.received).toEqual(['CheckPermission', 'CheckPermission']);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(onNode),
   { timeout: 10_000 },
 );

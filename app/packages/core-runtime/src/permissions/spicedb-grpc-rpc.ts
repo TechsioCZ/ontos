@@ -26,7 +26,7 @@ export const spiceDbCaCertificate = (configuration: Pick<SpiceDbConfigValue, 'ca
  * is returned as SpiceDB gave it. Writes are never repeated, because UNAVAILABLE cannot tell a refused write from
  * one SpiceDB applied, and an applied `TOUCH` repeated after a concurrent `DELETE` would restore a revoked grant.
  */
-const SPICEDB_SERVICE_CONFIG = `{
+const SPICEDB_READ_RETRY_SERVICE_CONFIG = `{
   "methodConfig": [{
     "name": [
       { "service": "authzed.api.v1.PermissionsService", "method": "CheckPermission" },
@@ -53,8 +53,7 @@ export const newSpiceDbGrpcClient = (
     configuration.endpoint,
     spiceDbCaCertificate(configuration),
     undefined,
-    // The retry policy is this client's own; a DNS TXT record cannot replace it.
-    { ...options, 'grpc.service_config': SPICEDB_SERVICE_CONFIG, 'grpc.service_config_disable_resolution': 1 },
+    options,
   );
 
 const rpcFailure = (cause: unknown): SpiceDbRpcError =>
@@ -66,7 +65,14 @@ const rpcFailure = (cause: unknown): SpiceDbRpcError =>
 
 /** SpiceDB over gRPC through the official authzed-node client (HTTP/2, Node only). */
 export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number): SpiceDbRpc => {
-  const client = newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(timeoutMilliseconds)] });
+  // The retry policy goes only to this client, whose every call carries a deadline: a retried read gets what is
+  // left of it. A client opened without a deadline keeps single attempts, so no retry of its can wait forever.
+  // The policy is this client's own; a DNS TXT record cannot replace it.
+  const client = newSpiceDbGrpcClient(configuration, {
+    'grpc.service_config': SPICEDB_READ_RETRY_SERVICE_CONFIG,
+    'grpc.service_config_disable_resolution': 1,
+    interceptors: [deadlineInterceptor(timeoutMilliseconds)],
+  });
   const deadline = spiceDbDeadline(timeoutMilliseconds);
   const call =
     <Request, Response>(rpc: (request: Request) => Promise<Response>) =>
