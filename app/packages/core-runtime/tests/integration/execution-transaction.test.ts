@@ -18,6 +18,7 @@ import { KernelTransactions } from '../../src/execution/kernel-transactions.ts';
 import { KernelTransactionsLive } from '../../src/execution/transaction.ts';
 import { findPostgresFailure } from '../../src/index.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
+import { ReadEvidencePersistenceError } from '../../src/reads/read-evidence-persistence-error.ts';
 import type { PersistReadEvidenceInput } from '../../src/reads/repository.ts';
 import { ReadRunEvidence } from '../../src/reads/run-evidence.ts';
 import { ReadRunEvidenceLive, callEvidenceRows } from '../../src/reads/run-evidence-live.ts';
@@ -456,7 +457,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
           scope,
         }),
       );
-      expect(Exit.isFailure(mixed)).toBe(true);
+      // The refusal is PostgreSQL's foreign-key violation on the third row, not an earlier fence or
+      // scope failure that would have written nothing anyway.
+      const mixedFailure = Exit.isFailure(mixed)
+        ? Option.getOrUndefined(Cause.findErrorOption(mixed.cause))
+        : undefined;
+      expect(Schema.is(ReadEvidencePersistenceError)(mixedFailure)).toBe(true);
+      expect(Option.map(findPostgresFailure(mixedFailure), ({ code }) => code)).toEqual(Option.some('23503'));
       expect(yield* countEvidence(admin, tenantId)).toBe(0);
 
       const stale = yield* Effect.exit(evidence.settle({ admittedRevision: staleRevision, rows, scope }));
