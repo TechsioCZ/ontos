@@ -23,6 +23,7 @@ import { LanguageDecisionSchema } from '../domain/language/vocabulary.ts';
 import { ProcessingScopeSchema } from '../domain/privacy/processing-scope.ts';
 import { OriginalRecipientBindingSchema } from '../domain/recipient/original-binding.ts';
 import { languagePolicyPortOverRoutines } from '../persistence/snapshot-ports.ts';
+import { CommunicationIntakePort } from './communication-intake-port.service.ts';
 import type {
   CommunicationIntakePortContract,
   StoredCommunicationDecision,
@@ -278,7 +279,7 @@ export const postgresCommunicationIntakePort = (
  */
 export const communicationIntakeService = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
   Effect.succeed({
-    intake: postgresCommunicationIntakePort(transaction, scope),
+    intake: CommunicationIntakePort.of(postgresCommunicationIntakePort(transaction, scope)),
     policies: languagePolicyPortOverRoutines(transaction),
     templates: postgresTemplateRevisionPort(transaction, scope),
   });

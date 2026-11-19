@@ -2,8 +2,6 @@ import { CommunicationRequestSchema } from '@app/communications-contracts/commun
 import type { CommunicationRequest } from '@app/communications-contracts/communication-request';
 import { Effect, Layer, Ref, Schema } from 'effect';
 
-import { TemplateRevisionIdSchema } from '../../shared/template-revision.ts';
-import { MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import type { TransactionalMessageType } from '../../src/domain/catalog/message-type.ts';
 import { SourceStateKeySchema } from '../../src/domain/catalog/vocabulary.ts';
 import { MessageHandoff } from '../../src/domain/handoff/message-handoff.ts';
@@ -42,8 +40,6 @@ import type { OwnerAnswer } from '../unit/support/recipient-fixtures.ts';
  * Adapter): it proves how Communications reacts to an answer, never that a real owner answers so. No test using these
  * doubles is delivery, Privacy or provider evidence.
  */
-
-export { FIXTURE_OPEN_STATE, FIXTURE_OTHER_TENANT_ID, FIXTURE_TENANT_ID } from '../unit/support/catalog-fixtures.ts';
 
 const decodeRequest = Schema.decodeUnknownSync(CommunicationRequestSchema, { onExcessProperty: 'error' });
 const encodeBinding = Schema.encodeSync(OriginalRecipientBindingSchema);
@@ -198,6 +194,3 @@ export const recipientLanguageDouble = () => {
   const layer = Layer.succeed(RecipientLanguageAuthority, { languageOf: () => Ref.get(ref) });
   return { layer, ref };
 };
-
-export const revisionIdOf = (value: string) => TemplateRevisionIdSchema.make(value);
-export const intentIdOf = (value: string) => MessageIntentIdSchema.make(value);
