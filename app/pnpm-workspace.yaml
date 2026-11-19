@@ -196,8 +196,9 @@ allowBuilds:
 patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils
   # Compile each BFF server closure once from the TS 7 module graph, with an rspack build cache and incremental tsgo.
-  # ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 (deploy builds) or ONTOS_CI_TYPECHECK_SEPARATE=1 (CI, also drops source maps)
-  # skips the server declaration emit and TS-Go check; CI gates typecheck every unit.
+  # ONTOS_CI_TYPECHECK_SEPARATE=1 (the gates' and the stage's unit builds, scripts/zerops/build-app.sh; also drops source
+  # maps) or ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 skips the server declaration emit and TS-Go check; CI gates typecheck
+  # every unit.
   '@bleedingdev/modern-js-server-utils@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-server-utils@3.11.3-ultramodern.1.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
   # compiler-prepare accepts the reviewed @effect/tsgo 0.70.0 tsrs contract (tsrs 0.25.0, Oxlint 1.91-1.94; adds win32-arm64).

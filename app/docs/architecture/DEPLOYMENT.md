@@ -76,6 +76,7 @@ Probes:
 
 - Node builds and runtimes use Zerops' `alpine/nodejs@26` image and its `node` executable. Builds install the workspace's pinned pnpm version; no Node archive is downloaded or included in the deployment. The local and CI Node patch pin remains in `.mise.toml`, while Zerops manages its image's Node 26 patch version.
 - GitHub Actions builds the units, in eight parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time, and the shards are dealt so the slowest of those two-wide lanes is as short as the measured unit costs allow.
+- Units build in the gates' mode (`build-app.sh` sets `ONTOS_CI_TYPECHECK_SEPARATE=1`): no bundler or server typecheck, which the gates run, and no JavaScript source maps, which nothing on stage reads.
 - Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
 - A unit whose committed inputs are unchanged keeps its previous `dist/`. The digest is in `dist/.zerops-build-digest`. Each shard keeps its builds in the Actions cache, outside the checkout: any untracked file in the tree turns every release identity into `workspace`.
 - The deploy job packs every shard's `dist/` (no source maps, type bundles or precompressed copies) into `app/.zerops-prebuilt.tar.zst` and pushes it with the checkout.

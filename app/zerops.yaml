@@ -148,7 +148,6 @@ zerops:
         # Peer-context copies of identical packages share inodes, so tar ships the bytes once.
         PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl tar unzip zstd

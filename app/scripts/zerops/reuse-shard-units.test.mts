@@ -339,7 +339,6 @@ it.effect('reuses only by identity, builds whenever any unit is unproven, and re
       'ONTOS_SHOP_STOREFRONT_ORIGIN',
       'ONTOS_STOREFRONT_ORIGIN',
       'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
-      'ULTRAMODERN_SKIP_SERVER_TYPECHECK',
     ]) {
       expect(identityStep?.env?.[name], name).toBe(build.env?.[name]);
     }

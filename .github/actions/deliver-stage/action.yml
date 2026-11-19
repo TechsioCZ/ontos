@@ -198,7 +198,6 @@ runs:
         ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
       run: |
         dirty="$(git status --porcelain --untracked-files=all)"
         if [ -n "$dirty" ]; then

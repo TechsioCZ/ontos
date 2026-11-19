@@ -146,7 +146,6 @@ jobs:
           ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
           ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-          ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         run: |
           out="$RUNNER_TEMP/zerops-unit-identities"
           mkdir -p "$out"
@@ -284,7 +283,6 @@ jobs:
       ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
       ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
       ZEROPS_FORCE_BUILD: ${{ inputs.rebuild_units == true }}
     steps:
       - name: Checkout
