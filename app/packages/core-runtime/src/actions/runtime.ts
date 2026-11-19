@@ -273,9 +273,9 @@ export interface RunActionInput<
   /**
    * Runs once, just before the request answers, when the answer is the saved reply of an invocation
    * that already committed (its result, or its committed domain rejection) instead of a commit made
-   * by this request. A caller that performs an effect only the committing request may perform (a
-   * provider call after a checkpoint Action) uses it to know that this request did not commit. It is
-   * never told to a client: what a transport answers stays its declared contract.
+   * by this request; only for a request that asks for the saved reply. A transport whose answer is
+   * read again at answer time uses it to know that this request did not commit. It is never told to
+   * a client: what a transport answers stays its declared contract.
    */
   readonly onReplay?: ((replay: ActionReplay) => Effect.Effect<void>) | undefined;
   readonly payload: unknown;
@@ -289,6 +289,13 @@ export interface RunActionInput<
     Services,
     HandlerRequirements
   >;
+  /**
+   * `'answer'`: a same-key request that meets its committed invocation is answered with the reply that
+   * invocation saved (see `decideReplay`). Only a transport asks: its client can lose a reply on the
+   * network and retries to get it. An in-process caller cannot lose a reply and leaves it unset, so
+   * such a request fails with ActionAlreadyCommitted, the stop signal its own recovery is built on.
+   */
+  readonly savedReply?: 'answer' | undefined;
   /**
    * O85: the transport's own declared success contract. Only `'result-or-proposal'` states that the
    * endpoint's contract carries the parked-proposal 202, and only there does an explicit `propose`
@@ -1375,7 +1382,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
      * Records that this request met its committed invocation, then decodes the reply the invocation
      * saved and keeps it for this attempt's answer. A missing reply (committed before replies were
      * saved, or one PostgreSQL could not hold) or one the current schemas no longer accept prepares
-     * nothing, so the request keeps answering ActionAlreadyCommitted; nothing runs again.
+     * nothing, so the request keeps answering ActionAlreadyCommitted; nothing runs again. A request that
+     * does not ask for the saved reply (`savedReply`) stages nothing and answers ActionAlreadyCommitted.
      */
     const stageSavedReply = (
       load: Effect.Effect<
@@ -1384,37 +1392,39 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       >,
       invocationId: string,
     ): Effect.Effect<void, ActionInvocationPersistenceError> =>
-      Effect.sync(() => {
-        attempt.commitObserved = true;
-      }).pipe(
-        Effect.andThen(load),
-        Effect.flatMap((saved) => {
-          if (Option.isNone(saved)) {
-            return Effect.void;
-          }
-          const { encoded, kind } = saved.value;
-          const decoded: Effect.Effect<
-            Result.Result<ResultSchema['Type'], DomainErrorSchema['Type']>,
-            Schema.SchemaError
-          > = kind === 'result'
-            ? Schema.decodeUnknownEffect(Schema.toCodecJson(input.registration.descriptor.resultSchema))(encoded).pipe(
-                Effect.map((result) => Result.succeed(result)),
-              )
-            : Schema.decodeUnknownEffect(Schema.toCodecJson(input.registration.descriptor.domainErrorSchema))(
-                encoded,
-              ).pipe(Effect.map((rejection) => Result.fail(rejection)));
-          return decoded.pipe(
-            Effect.matchEffect({
-              // The schema error quotes the saved values, which can be personal data: log only its kind.
-              onFailure: (failure) => Effect.logWarning('A saved Action reply no longer decodes', failure._tag),
-              onSuccess: (reply) =>
-                Effect.sync(() => {
-                  attempt.savedReply = { invocationId, reply };
+      input.savedReply === 'answer'
+        ? Effect.sync(() => {
+            attempt.commitObserved = true;
+          }).pipe(
+            Effect.andThen(load),
+            Effect.flatMap((saved) => {
+              if (Option.isNone(saved)) {
+                return Effect.void;
+              }
+              const { encoded, kind } = saved.value;
+              const decoded: Effect.Effect<
+                Result.Result<ResultSchema['Type'], DomainErrorSchema['Type']>,
+                Schema.SchemaError
+              > = kind === 'result'
+                ? Schema.decodeUnknownEffect(Schema.toCodecJson(input.registration.descriptor.resultSchema))(
+                    encoded,
+                  ).pipe(Effect.map((result) => Result.succeed(result)))
+                : Schema.decodeUnknownEffect(Schema.toCodecJson(input.registration.descriptor.domainErrorSchema))(
+                    encoded,
+                  ).pipe(Effect.map((rejection) => Result.fail(rejection)));
+              return decoded.pipe(
+                Effect.matchEffect({
+                  // The schema error quotes the saved values, which can be personal data: log only its kind.
+                  onFailure: (failure) => Effect.logWarning('A saved Action reply no longer decodes', failure._tag),
+                  onSuccess: (reply) =>
+                    Effect.sync(() => {
+                      attempt.savedReply = { invocationId, reply };
+                    }),
                 }),
+              );
             }),
-          );
-        }),
-      );
+          )
+        : Effect.void;
     /**
      * The one place a saved reply becomes the answer, for a replay `decideReplay` allowed. What
      * happens exactly once, on the transaction that committed the invocation and never for a replay:
@@ -2277,9 +2287,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
        * the first lookup, and after waiting on the invocation lock while a concurrent first attempt
        * committed it. It runs when the reply is about to be answered, after any wait on the lock.
        *
-       * The rule: a saved reply is the original caller's own committed answer. It is answered only when
-       * the tenant, Action, principal, idempotency key and request hash are the original request's (the
-       * lookup and `loadCommittedReply` bind all of them), the invocation committed inside the recovery
+       * The rule: a saved reply is the original caller's own committed answer, lost on its way back over a
+       * transport. It is answered only to a request that asks for it (`savedReply: 'answer'`, which the
+       * Action HTTP runner sets; an in-process caller cannot lose a reply and keeps ActionAlreadyCommitted
+       * as its stop signal, exactly as before replies were saved), and only when the tenant, Action,
+       * principal, idempotency key and request hash are the original request's (the lookup and
+       * `loadCommittedReply` bind all of them), the invocation committed inside the recovery
        * window, and Core's current admission and access for this caller are decided here and allow it:
        * module state, deployment admission and composition revision as a first attempt gets them, then
        * the read-only access decision (the gate with its field-write groups, or the older permission

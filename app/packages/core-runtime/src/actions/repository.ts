@@ -253,7 +253,7 @@ export interface FinalizeActionPolicyDenialInput {
 }
 
 /** The reply a succeeded invocation saved: its encoded result or its committed domain rejection. */
-export type ActionCommittedReplyJson = NonNullable<(typeof actionInvocations.$inferSelect)['committedReplyJson']>;
+type ActionCommittedReplyJson = NonNullable<(typeof actionInvocations.$inferSelect)['committedReplyJson']>;
 
 export interface FlushActionSuccessInput {
   readonly actionInvocationId: string;

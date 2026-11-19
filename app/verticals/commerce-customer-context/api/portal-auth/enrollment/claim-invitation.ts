@@ -607,6 +607,9 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
         authorization: Redacted.make(request.headers['authorization']),
         'x-correlation-id': request.headers['x-correlation-id'],
       },
+      // The claim is the checkpoint of an owner-effect driver that journals its outcome and settles a
+      // committed claim through its own reconciliation, so a same-key retry keeps ActionAlreadyCommitted.
+      savedReply: 'withhold',
     }).pipe(Effect.provideContext(claimActionServices));
 
   const claimCorrelation = `commerce-enrollment-invitation-claim:${portalEnrollmentAttemptId}`;
