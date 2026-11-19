@@ -335,12 +335,16 @@ export interface ActionRepositoryService {
     transaction: CoreTransaction,
     invocationId: string,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
+  /**
+   * Records a permission denial on the still-open invocation. One a concurrent same-key attempt
+   * committed meanwhile is not rejected: it fails with ActionAlreadyCommitted, as a Policy denial does.
+   */
   readonly rejectPermissionDenied: (
     executor: ActionInvocationScopeExecutor,
     input: RejectPermissionDeniedInput,
   ) => Effect.Effect<
     Option.Option<ActionRecordedRejection>,
-    ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
+    ActionAlreadyCommitted | ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
   >;
   readonly resolveInvocation: (
     executor: ActionInvocationScopeExecutor,
@@ -772,6 +776,15 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
 
         if (invocation.status === 'rejected' && invocation.completedAt !== null) {
           return yield* earlierRejection(transaction, input.actionInvocationId);
+        }
+        // A same-key attempt that held the invocation lock committed while this request was denied
+        // against the state before that commit: the write happened, so this is a replay.
+        if (invocation.status === 'succeeded') {
+          return yield* new ActionAlreadyCommitted({
+            code: 'action_already_committed',
+            invocationId: input.actionInvocationId,
+            reason: 'This idempotency key already committed successfully',
+          });
         }
         if (invocation.status !== 'received' || invocation.completedAt !== null) {
           return yield* new ActionInvocationStateError({

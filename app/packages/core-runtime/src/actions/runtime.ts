@@ -2036,6 +2036,19 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           .pipe(
             Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
             Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
+            // The permission was denied against the state before a concurrent same-key attempt committed:
+            // this request met that commit and stages its saved reply for `decideReplay`, as a Policy
+            // denial does.
+            Effect.catchTag('ActionAlreadyCommitted', (committed) =>
+              stageSavedReply(
+                loadCommittedReplyInScope(scope, {
+                  actionInvocationId: committed.invocationId,
+                  principal,
+                  requestHash,
+                }),
+                committed.invocationId,
+              ).pipe(Effect.andThen(Effect.fail(committed))),
+            ),
             Effect.flatMap((earlierRejection) =>
               Effect.fail(Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : failure),
             ),
@@ -2302,9 +2315,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
        * already happened, they often cannot pass again precisely because it did, and running them would
        * turn a lost reply back into manual work.
        *
-       * A refused replay is terminal for this request: a denied caller answers the bodyless
-       * ActionAlreadyCommitted, an undecidable admission or access answers the retryable failure a
-       * first attempt would get, and neither a post-attempt recovery nor a hook failure replaces it.
+       * A refused replay is terminal for this request: a denied caller (a module state that denies the
+       * entrypoint included) answers the bodyless ActionAlreadyCommitted, an undecidable admission or
+       * access answers the retryable failure a first attempt would get, and neither a post-attempt
+       * recovery nor a hook failure replaces it.
        */
       const decideReplay = Effect.fn('ActionRuntime.decideReplay')(function* decideReplayEffect(invocationId: string) {
         const committed = alreadyCommitted(invocationId);
@@ -2322,7 +2336,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             yield* moduleEntrypointGateway.check(moduleStateSnapshot, entrypoint);
             attempt.revision = yield* admitComposition();
             return yield* replayAccessAllowed();
-          }),
+          }).pipe(
+            // A module state that definitely denies the entrypoint refuses the replay; one that cannot be
+            // read stays the retryable failure.
+            Effect.catchIf(Schema.is(ModuleStateDeniedError), () => Effect.succeed(false)),
+          ),
         );
         attempt.replayAllowed = Exit.isSuccess(allowed) && allowed.value;
         return yield* Exit.isSuccess(allowed) ? Effect.fail(committed) : Effect.failCause(allowed.cause);
