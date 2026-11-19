@@ -153,8 +153,13 @@ export interface KernelExecution<Calls extends DeclaredCalls, Identity extends E
   readonly facts: ExecutionFacts<Identity>;
   /** The resolved operational scope every transaction installs. */
   readonly scope: OperationalScope;
-  /** `read_only` for every read; `read_write` is reserved for the Action adapter. */
-  readonly transactionMode: 'read_only' | 'read_write';
+  /**
+   * How each transaction opens. `session_default` is a plain BEGIN: the isolation and access mode the
+   * database session's defaults give, as main opens every read transaction (the fence then requires
+   * READ COMMITTED). `read_only` and `read_write` set READ COMMITTED and that access mode after BEGIN.
+   * The fence admits the transaction as a write only for `read_write`.
+   */
+  readonly transactionMode: 'read_only' | 'read_write' | 'session_default';
 }
 
 /* ------------------------------------------------------------------------------------------------ */

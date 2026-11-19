@@ -102,14 +102,15 @@ const insertFixture = Effect.fn('ExecutionTransactionTest.insertFixture')(functi
   return { principalId, scope, tenantId };
 });
 
+/** A transaction opened as the read adapter opens every `{ run }` read transaction. */
 const request = (
   scope: OperationalScope,
-  options: { readonly admittedRevision?: string; readonly mode?: 'read_only' | 'read_write' } = {},
+  options: { readonly admittedRevision?: string } = {},
 ): TransactionRequest => ({
   execution: {
     facts: { compositionRevision: options.admittedRevision },
     scope,
-    transactionMode: options.mode ?? 'read_only',
+    transactionMode: 'session_default',
   },
   sequence: 1,
 });
@@ -160,7 +161,7 @@ const owner = (decide: OwnerBinding<Services, never>['decide'] = allow) => {
 const postgresCode = (failure: EffectDrizzleQueryError | TransactionAborted) =>
   Option.getOrNull(Option.map(findPostgresFailure(failure), ({ code }) => code));
 
-/** An owner rule that writes a marker row: refused in READ ONLY, rolled back by the owner check. */
+/** An owner rule that writes a marker row: it decides allowed, and the owner check rolls the row back. */
 const writingDecide =
   (
     scope: OperationalScope,
@@ -227,35 +228,33 @@ const holdCompositionAuthority = (admin: PgClient.PgClient, locked: Deferred.Def
   );
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', (suite) => {
-  suite.effect('sets READ ONLY and READ COMMITTED first: a write fails in the owner rule and in the body', () =>
-    Effect.gen(function* readOnlyFirst() {
+  suite.effect('opens as main opens a read: READ COMMITTED and not READ ONLY, so an owner rule may write or lock', () =>
+    Effect.gen(function* readTransactionMode() {
       const { admin, runtime } = yield* kernelClients;
-      const { scope } = yield* insertFixture(admin);
+      const { scope, tenantId } = yield* insertFixture(admin);
       const transactions = yield* kernelTransactionsFor(runtime);
-
-      const observed = { code: null };
-      const writingOwner = owner(writingDecide(scope, 'owner-write', observed));
-      const ownerExit = yield* Effect.exit(transactions.open(request(scope), writingOwner.binding, () => Effect.void));
-      expect(observed.code).toBe('25006');
-      expect(abortedReason(ownerExit)).toBe('owner_unavailable');
-      expect(writingOwner.counts.built).toBe(0);
-
-      const bodyFailure = yield* Effect.flip(
-        transactions.open(request(scope), owner().binding, insertMarker(scope, 'body-write')),
-      );
-      expect(postgresCode(bodyFailure)).toBe('25006');
 
       const settings = yield* transactions.open(request(scope), owner().binding, () =>
         runtime.unsafe<{ readonly isolation: string; readonly read_only: string }>(
           "select current_setting('transaction_isolation') as isolation, current_setting('transaction_read_only') as read_only",
         ),
       );
-      expect(settings).toEqual([{ isolation: 'read committed', read_only: 'on' }]);
+      expect(settings).toEqual([{ isolation: 'read committed', read_only: 'off' }]);
+
+      // An owner rule that writes (as one that locks rows with FOR UPDATE) is not refused: it decides,
+      // and its row commits with the body's.
+      const observed = { code: null };
+      const writingOwner = owner(writingDecide(scope, 'owner-write', observed));
+      yield* transactions.open(request(scope), writingOwner.binding, insertMarker(scope, 'body-write'));
+      expect(observed.code).toBeNull();
+      expect(writingOwner.counts.built).toBe(1);
+      expect(yield* countEvidence(admin, tenantId, 'owner-write')).toBe(1);
+      expect(yield* countEvidence(admin, tenantId, 'body-write')).toBe(1);
     }),
   );
 
-  suite.effect('installs a gateway-grant scope inside READ ONLY and still refuses a write', () =>
-    Effect.gen(function* gatewayGrantReadOnly() {
+  suite.effect('installs a gateway-grant scope in the read transaction', () =>
+    Effect.gen(function* gatewayGrantScope() {
       const { admin, issuer, party } = yield* kernelClients;
       const { principalId, scope: sessionScope, tenantId } = yield* insertFixture(admin);
       const grant = yield* registerTestGatewayScopeGrant(issuer, { audience: gatewayAudience, principalId, tenantId });
@@ -269,11 +268,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
         Effect.succeed(services.executor.scope),
       );
       expect(installed).toEqual({ tenantId });
-
-      const bodyFailure = yield* Effect.flip(
-        transactions.open(request(scope), owner().binding, insertMarker(scope, 'gateway-write')),
-      );
-      expect(postgresCode(bodyFailure)).toBe('25006');
     }),
   );
 
@@ -352,16 +346,20 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
       const { admin, runtime } = yield* kernelClients;
       const { scope } = yield* insertFixture(admin);
       const transactions = yield* kernelTransactionsFor(runtime);
-      const forked = yield* transactions.open(request(scope), owner().binding, () =>
-        Effect.forkChild(
-          runtime.unsafe<{ readonly read_only: string }>(
-            "select current_setting('transaction_read_only') as read_only from pg_sleep(0.3)",
-          ),
-        ),
+      const xidStatement = 'select txid_current()::text as xid';
+      const { forked, own } = yield* transactions.open(request(scope), owner().binding, () =>
+        Effect.gen(function* forkAfterOwnStatement() {
+          const [ownRow] = yield* runtime.unsafe<{ readonly xid: string }>(xidStatement);
+          const fiber = yield* Effect.forkChild(
+            runtime.unsafe<{ readonly xid: string }>(`${xidStatement} from pg_sleep(0.3)`),
+          );
+          return { forked: fiber, own: ownRow?.xid };
+        }),
       );
       // The body returned while the statement ran; the transaction settled only after it answered, and
-      // it ran inside the owner transaction, not on a pooled connection after it.
-      expect(yield* Fiber.await(forked)).toEqual(Exit.succeed([{ read_only: 'on' }]));
+      // it ran inside the owner transaction (the same transaction id), not on a pooled connection after it.
+      expect(own).toBeDefined();
+      expect(yield* Fiber.await(forked)).toEqual(Exit.succeed([{ xid: own }]));
     }),
   );
 
@@ -398,15 +396,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('kernel transaction', 
       const transactions = yield* kernelTransactionsFor(runtime);
       const observed = { code: null };
       const writingOwner = owner(writingDecide(scope, 'check-owner', observed));
-      yield* transactions.checkOwner(request(scope, { mode: 'read_write' }), writingOwner.binding);
+      yield* transactions.checkOwner(request(scope), writingOwner.binding);
       expect(observed.code).toBeNull();
       expect(yield* countEvidence(admin, tenantId, 'check-owner')).toBe(0);
 
-      yield* transactions.open(
-        request(scope, { mode: 'read_write' }),
-        owner().binding,
-        insertMarker(scope, 'committed'),
-      );
+      yield* transactions.open(request(scope), owner().binding, insertMarker(scope, 'committed'));
       expect(yield* countEvidence(admin, tenantId, 'committed')).toBe(1);
     }),
   );

@@ -428,9 +428,10 @@ export class TransactionAborted extends Schema.TaggedError<TransactionAborted>()
 }) {}
 
 /**
- * Runs `body` in one new owner transaction with the operation's services. A read's transaction is READ
- * ONLY from BEGIN. The services and the transaction handle are unusable once `body` ends. It dies (a
- * programming error) when called inside another transaction of the same execution.
+ * Runs `body` in one new owner transaction with the operation's services. A read's transaction opens
+ * exactly as every other read transaction does (a plain BEGIN, READ COMMITTED), so its owner rule
+ * decides as it does for any read. The services and the transaction handle are unusable once `body`
+ * ends. It dies (a programming error) when called inside another transaction of the same execution.
  */
 export type TransactionCapability<Services> = <A, E, R>(
   body: (services: Services, facts: TransactionFacts) => Effect.Effect<A, E, R>,

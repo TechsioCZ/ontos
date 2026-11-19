@@ -33,7 +33,7 @@ export type CallEvidenceRows = (
  * one `CoreDatabase` write transaction (`executor.transaction(body, { accessMode: 'read write',
  * isolationLevel: 'read committed' })`) that fences `admittedRevision` exactly as the opener does
  * (failing `TransactionAborted('composition_changed')`), installs `scope`, and inserts every row with
- * `persistReadEvidence`. All rows or none. Separate from the module's READ ONLY transactions.
+ * `persistReadEvidence`. All rows or none. Separate from the module's own transactions.
  */
 export interface ReadRunEvidenceService {
   readonly settle: (input: {

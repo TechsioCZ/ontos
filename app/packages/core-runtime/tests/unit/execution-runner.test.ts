@@ -85,7 +85,7 @@ const execution = <Calls extends DeclaredCalls>(
     owningModuleKey: 'test.consumer',
   },
   scope,
-  transactionMode: 'read_only',
+  transactionMode: 'session_default',
 });
 
 class FactoryDependency extends Context.Service<FactoryDependency, { readonly label: string }>()(
@@ -443,7 +443,7 @@ it.effect("the factory's requirements come from open's context", () =>
   ),
 );
 
-it.effect('a transaction is READ ONLY and READ COMMITTED from its first statement and commits on success', () =>
+it.effect('a session_default transaction is a plain BEGIN, as main opens a read, and commits on success', () =>
   Effect.scoped(
     Effect.gen(function* transactionMode() {
       const harness = yield* makeHarness([]);
@@ -451,12 +451,12 @@ it.effect('a transaction is READ ONLY and READ COMMITTED from its first statemen
       const from = harness.statements.length;
       yield* session.capabilities.transaction(() => Effect.void);
       const statements = harness.statements.slice(from);
-      expect(statements[0]).toMatch(/^begin/iu);
-      expect(statements[1]?.toLowerCase()).toContain('read only');
-      expect(statements[1]?.toLowerCase()).toContain('read committed');
+      expect(statements[0]).toMatch(/^begin$/iu);
+      // No access mode or isolation is set: the session's defaults hold, as for every read on main.
+      expect(statements.filter((statement) => /set transaction|read only|read write/iu.test(statement))).toEqual([]);
       const clock = statements.findIndex((statement) => statement.includes('statement_timestamp()'));
       const scopeInstall = statements.findIndex((statement) => statement.includes('set_config'));
-      expect(scopeInstall).toBeGreaterThan(1);
+      expect(scopeInstall).toBeGreaterThan(0);
       expect(clock).toBeGreaterThan(scopeInstall);
       expect(statements.at(-1)).toMatch(/^commit/iu);
       // Seal closed for the owner check and for the transaction.
