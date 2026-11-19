@@ -74,3 +74,46 @@ export const workerFinishAttemptRoutine = defineScopedRoutine({
   routineKey: 'communications.worker-finish-attempt',
   schema: ROUTINE_SCHEMA,
 });
+
+/**
+ * The history routines (#1402, migration `enforce-message-history`). Same rules as above: no executor, the Core-verified Tenant
+ * is the first argument and each routine refuses another one. `ingestProviderObservation` carries the Tenant the CALLER claims
+ * as an input too, so a callback that names another Tenant is answered `UNBOUND` and never reaches another Tenant's rows.
+ */
+export const ingestProviderObservationRoutine = defineScopedRoutine({
+  name: 'ingest_provider_observation',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    tenant,
+    input('uuid'),
+    input('uuid'),
+    input('uuid'),
+    input('uuid'),
+    input('text'),
+    input('text'),
+    { nullable: true, source: 'input', type: 'text' },
+    input('text'),
+    { source: 'input', type: 'timestamptz' },
+    input('jsonb'),
+  ] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.ingest-provider-observation',
+  schema: ROUTINE_SCHEMA,
+});
+
+export const workerLinkRetryAttemptRoutine = defineScopedRoutine({
+  name: 'worker_link_retry_attempt',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    tenant,
+    input('uuid'),
+    input('uuid'),
+    input('uuid'),
+    input('text'),
+    input('text'),
+    { nullable: true, source: 'input', type: 'uuid' },
+  ] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-link-retry-attempt',
+  schema: ROUTINE_SCHEMA,
+});
