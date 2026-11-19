@@ -2075,6 +2075,77 @@ it('carries one record file per run attempt, around the install and only on the 
   }
 });
 
+/** Runs one lockfile-verdict step of the install action with bash, as the composite step does. */
+const runVerdictStep = (name: string, env: Readonly<Record<string, string>>) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-verdict-output-'));
+  const output = path.join(scratch, 'github-output');
+  writeFileSync(output, '');
+  const run = readInstallAction().find((step) => step.name === name)?.run ?? 'exit 1';
+  try {
+    const stdout = execFileSync('/bin/bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], {
+      encoding: 'utf-8',
+      env: { GITHUB_OUTPUT: output, PATH: STEP_PATH, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const outputs = Object.fromEntries(
+      readFileSync(output, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+    );
+    return { outputs, status: 0, stdout };
+  } catch (error) {
+    const failed = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.Number, stdout: Schema.String }))(error);
+    return { outputs: {}, status: failed.status, stdout: failed.stdout };
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+};
+
+// pnpm reads and writes its record in ${XDG_CACHE_HOME:-$HOME/.cache}/pnpm on Linux; a record put anywhere else,
+// or a publish that uploads nothing, would silently bring the supply-chain check back to every job.
+it('moves only pnpm’s lockfile record between pnpm’s cache directory and the artifact', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'install-app-verdict-'));
+  const locateStep = "Locate pnpm's lockfile verdict";
+  const placeStep = 'Put the lockfile verdict in place';
+  const stageStep = 'Stage the lockfile verdict this install recorded';
+  try {
+    const temp = path.join(home, 'runner-temp');
+    const locate = (mode: string, xdg?: string) => {
+      const env = { HOME: home, MODE: mode, RUNNER_TEMP: temp };
+      return runVerdictStep(locateStep, xdg === undefined ? env : { ...env, XDG_CACHE_HOME: xdg });
+    };
+    expect(locate('reuse', path.join(home, 'xdg')).outputs.record).toBe(path.join(home, 'xdg/pnpm', LOCKFILE_RECORD));
+    expect(locate('publish').status).toBe(0);
+    expect(locate('save').status).not.toBe(0);
+    const { record = '', staging = '' } = locate('reuse').outputs;
+    expect(record).toBe(path.join(home, '.cache/pnpm', LOCKFILE_RECORD));
+    expect(staging).toBe(path.join(temp, 'pnpm-lockfile-verdict'));
+    const env = { HOME: home, RECORD: record, STAGING: staging };
+
+    // Nothing published in this attempt: no record, and pnpm runs its check.
+    expect(runVerdictStep(placeStep, env).status).toBe(0);
+    expect(existsSync(record)).toBe(false);
+    // A publisher whose pnpm wrote no record fails instead of uploading nothing.
+    expect(runVerdictStep(stageStep, env).stdout).toContain('wrote no record');
+
+    mkdirSync(path.dirname(record), { recursive: true });
+    writeFileSync(record, '{"lockfile":{"hash":"published"}}\n');
+    expect(runVerdictStep(stageStep, env).status).toBe(0);
+    expect(readdirSync(staging)).toEqual([LOCKFILE_RECORD]);
+    rmSync(path.join(home, '.cache'), { force: true, recursive: true });
+
+    // The downloaded artifact may hold more than the record; only the record reaches pnpm's cache directory.
+    mkdirSync(path.join(staging, 'v12/metadata'), { recursive: true });
+    writeFileSync(path.join(staging, 'v12/metadata/forged.json'), '{}');
+    expect(runVerdictStep(placeStep, env).stdout).toContain('reuses the lockfile check');
+    expect(readFileSync(record, 'utf-8')).toBe('{"lockfile":{"hash":"published"}}\n');
+    expect(readdirSync(path.dirname(record))).toEqual([LOCKFILE_RECORD]);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 it('saves the installed workspace from the typecheck row alone, and restores it only for a complete install', () => {
   const install = readInstallAction();
   // A caller with its own install arguments (the quality audit, the stage deploy) installs from the store as before.
@@ -2120,10 +2191,13 @@ it('uses a restored workspace only when pnpm would run in it without installing'
   );
   expect(bash).not.toBe('');
   const pnpm = lookup('command -v pnpm');
+  const node = lookup('command -v node');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
   const bin = path.join(directory, 'bin');
   const workspace = path.join(directory, 'app');
-  const env = { HOME: directory, PATH: `${bin}:${path.dirname(pnpm)}:${STEP_PATH}` };
+  const bareModules = path.join(workspace, 'packages/bare/node_modules');
+  const linkedModules = path.join(workspace, 'packages/linked/node_modules');
+  const env = { CI: 'true', HOME: directory, PATH: `${bin}:${path.dirname(pnpm)}:${path.dirname(node)}:${STEP_PATH}` };
   const usable = () => {
     const output = path.join(directory, 'output');
     writeFileSync(output, '');
@@ -2136,8 +2210,8 @@ it('uses a restored workspace only when pnpm would run in it without installing'
   };
   try {
     mkdirSync(bin);
-    // The action runs pnpm through mise; this mise runs the command it is given.
-    writeFileSync(path.join(bin, 'mise'), '#!/bin/bash\n[ "$1 $2" = "exec --" ] || exit 2\nshift 2\nexec "$@"\n');
+    // Only mise is substituted; the dependency check runs the real pnpm against the installed fixture.
+    writeFileSync(path.join(bin, 'mise'), '#!/bin/sh\n[ "$1 $2" = "exec --" ] || exit 2\nshift 2\nexec "$@"\n');
     chmodSync(path.join(bin, 'mise'), 0o755);
     for (const [member, dependencies] of [
       ['bare', {}],
@@ -2149,13 +2223,18 @@ it('uses a restored workspace only when pnpm would run in it without installing'
     writeFileSync(path.join(workspace, 'package.json'), workspaceManifest('workspace', {}));
     writeFileSync(path.join(workspace, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
     execFileSync(pnpm, ['install', '--offline', '--no-frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    // The action's own install is frozen; the restored tree is the one that install leaves.
+    execFileSync(pnpm, ['install', '--offline', '--frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
     // A package without dependencies gets no node_modules, and a complete tree is still used.
-    expect(existsSync(path.join(workspace, 'packages/bare/node_modules'))).toBe(false);
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(true);
     expect(usable()).toBe('usable=true');
     // A package that declares dependencies but lost its node_modules: pnpm refuses to run, so it is a clean miss.
-    rmSync(path.join(workspace, 'packages/linked/node_modules'), { force: true, recursive: true });
+    rmSync(linkedModules, { force: true, recursive: true });
     expect(usable()).toBe('usable=false');
     expect(existsSync(path.join(workspace, 'node_modules'))).toBe(false);
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(false);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
