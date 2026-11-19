@@ -23,7 +23,6 @@ import {
   CommunicationOccurrenceIdSchema,
   MessageTypeIdSchema,
 } from '../../src/domain/catalog/vocabulary.ts';
-import { fixtureRequest } from './support/catalog-fixtures.ts';
 import { binding } from './support/recipient-fixtures.ts';
 
 const decodeFixture = Schema.decodeUnknownSync(CommunicationRequestSchema, { onExcessProperty: 'error' });
@@ -172,23 +171,50 @@ describe('Request identity and fingerprint (I-02, I-04)', () => {
     ),
   );
 
-  it('names a Message Intent by the catalog candidate identity: tenant, source, occurrence, type, slot and FULL recipient', () => {
-    const request = fixtureRequest();
+  it('names a Message Intent by its REQUEST identity (source, scope, purpose, occurrence) plus type, slot and FULL recipient', () => {
+    const request = communicationRequest({ bindings: [originalRecipient('r-1')] });
+    const requestKey = requestIdentityKeyOf(request);
     const identity: MessageIntentIdentity = {
       occurrenceId: CommunicationOccurrenceIdSchema.make('o-1'),
       recipient: binding('original-recipient', 'r-1').recipientRef,
       revision: 1,
       slotKey: AudienceSlotKeySchema.make('primary'),
       sourceModule: request.source.moduleKey,
-      tenantId: request.tenantId,
+      tenantId: request.scope.tenantId,
       typeId: MessageTypeIdSchema.make('fixture.single-message'),
     };
-    const key = intentKeyOf(identity);
-    expect(intentKeyOf({ ...identity, recipient: { ...identity.recipient, resourceType: 'fixture.other' } })).not.toBe(
-      key,
-    );
-    expect(intentKeyOf({ ...identity, occurrenceId: CommunicationOccurrenceIdSchema.make('o-2') })).not.toBe(key);
+    const key = intentKeyOf(requestKey, identity);
+    expect(intentKeyOf(requestKey, identity)).toBe(key);
+    expect(
+      intentKeyOf(requestKey, { ...identity, recipient: { ...identity.recipient, resourceType: 'fixture.other' } }),
+    ).not.toBe(key);
     // a later catalog revision does not re-identify the occurrence: the revision is not part of the key
     expect(Option.isNone(Option.fromNullishOr(/revision/u.exec(key)))).toBe(true);
+  });
+
+  it('keeps one occurrence under two scopes or two purposes apart in the request key AND in the intent key (F1)', () => {
+    const recipients = [originalRecipient('r-1')];
+    const request = communicationRequest({ bindings: recipients, profileId: 'profile-a' });
+    const otherScope = communicationRequest({ bindings: recipients, profileId: 'profile-b' });
+    const otherPurpose = communicationRequest({
+      bindings: recipients,
+      profileId: 'profile-a',
+      purpose: 'fixture.other',
+    });
+    const identity: MessageIntentIdentity = {
+      occurrenceId: request.occurrence.occurrenceId,
+      recipient: binding('original-recipient', 'r-1').recipientRef,
+      revision: request.occurrence.revision,
+      slotKey: AudienceSlotKeySchema.make('primary'),
+      sourceModule: request.source.moduleKey,
+      tenantId: request.scope.tenantId,
+      typeId: MessageTypeIdSchema.make('fixture.single-message'),
+    };
+    const keyOf = (candidate: typeof request) => intentKeyOf(requestIdentityKeyOf(candidate), identity);
+    expect(requestIdentityKeyOf(otherScope)).not.toBe(requestIdentityKeyOf(request));
+    expect(keyOf(otherScope)).not.toBe(keyOf(request));
+    expect(keyOf(otherPurpose)).not.toBe(keyOf(request));
+    // the same request again, however often it is recomputed, names the same intent
+    expect(keyOf(communicationRequest({ bindings: recipients, profileId: 'profile-a' }))).toBe(keyOf(request));
   });
 });

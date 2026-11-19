@@ -27,13 +27,14 @@ import { assessRecipients, recipientFactOf } from '../recipient/assess-recipient
 import type { EvaluatedRecipient } from '../recipient/assess-recipients.ts';
 import { handoffPinOf } from '../recipient/recheck-before-handoff.ts';
 import { RecipientAssessment } from '../recipient/recipient-assessment.ts';
-import { decisionIdOf, intentIdOf, requestIdOf } from './identity.ts';
+import { decisionIdOf, intentIdOf, requestIdentityKeyOf, requestIdOf } from './identity.ts';
 import { decodeIntakeInput } from './intake-input.ts';
 import type { IntakeInput } from './intake-input.ts';
 import { MessageTypeCatalog } from './message-type-catalog.ts';
 import { intentKeyOf } from './plan.ts';
 import type { DecisionPlan, EndpointPin, IntentPlan } from './plan.ts';
 import { RecipientLanguageAuthority } from './recipient-language.ts';
+import { safeCauseOf } from './safe-cause.ts';
 import { ProcessingScopeDeclaration } from './scope-declaration.ts';
 import { SourceOccurrenceAuthority } from './source-authority.ts';
 
@@ -52,7 +53,8 @@ const unavailable = (reason: string, cause?: unknown) =>
     'cause',
     {
       enumerable: false,
-      value: cause,
+      // REPLACED by its safe kind: a store or owner failure can carry the statement and its bound parameters
+      value: cause === undefined ? undefined : safeCauseOf(cause),
     },
   );
 
@@ -170,7 +172,7 @@ const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
   { asked, candidate }: Candidate,
 ) {
   const { identity } = candidate;
-  const intentKey = intentKeyOf(identity);
+  const intentKey = intentKeyOf(requestIdentityKeyOf(input.request), identity);
   const intentId = yield* intentIdOf(intentKey);
   const original =
     asked?.evaluated.assessment.subject.binding ??

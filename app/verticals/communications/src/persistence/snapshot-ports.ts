@@ -1,6 +1,7 @@
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import { Data, DateTime, Effect, Option, Schema } from 'effect';
 
+import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import { LanguagePolicyStoreUnavailable } from '../../shared/language-policy-errors.ts';
 import { LanguageModeSchema, LanguagePolicyVersionIdSchema } from '../../shared/language-policy.ts';
 import {
@@ -39,7 +40,7 @@ const templateUnavailable = (cause?: unknown) =>
       reason: 'The approved template revisions are unavailable',
     }),
     'cause',
-    { enumerable: false, value: cause },
+    { enumerable: false, value: cause === undefined ? undefined : safeCauseOf(cause) },
   );
 const policyUnavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -48,7 +49,7 @@ const policyUnavailable = (cause?: unknown) =>
       reason: 'The Tenant language mode is unavailable',
     }),
     'cause',
-    { enumerable: false, value: cause },
+    { enumerable: false, value: cause === undefined ? undefined : safeCauseOf(cause) },
   );
 
 const instant = Schema.DateTimeUtcFromString;

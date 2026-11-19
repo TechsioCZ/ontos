@@ -10,7 +10,7 @@ import { Schema } from 'effect';
 const OWNER_MODULE_KEY = 'communications.core';
 const ROUTINE_SCHEMA = 'communications';
 const tenant = { source: 'tenantId', type: 'uuid' } as const;
-const input = <Type extends 'jsonb' | 'text' | 'uuid'>(type: Type) => ({ source: 'input', type }) as const;
+const input = <Type extends 'integer' | 'jsonb' | 'text' | 'uuid'>(type: Type) => ({ source: 'input', type }) as const;
 
 /** A routine row as the invoker decodes it: the document is decoded again by the owner, never trusted as typed. */
 const documentRow = Schema.Struct({ result: Schema.Unknown });
@@ -51,7 +51,7 @@ export const workerReadTemplateSnapshotRoutine = defineScopedRoutine({
 export const workerBeginAttemptRoutine = defineScopedRoutine({
   name: 'worker_begin_attempt',
   ownerModuleKey: OWNER_MODULE_KEY,
-  parameters: [tenant, input('uuid'), input('uuid')] as const,
+  parameters: [tenant, input('uuid'), input('uuid'), input('integer')] as const,
   resultSchema: documentRow,
   routineKey: 'communications.worker-begin-attempt',
   schema: ROUTINE_SCHEMA,

@@ -50,8 +50,10 @@ export interface RequestInput {
   readonly idempotencyKey?: string;
   readonly legalEntityId?: string;
   readonly occurrenceId?: string;
+  readonly profileId?: string;
   readonly purpose?: string;
   readonly revision?: number;
+  readonly sourceModule?: string;
   readonly safeReferences?: readonly { readonly key: string; readonly resourceId: string }[];
   readonly tenantId?: string;
 }
@@ -59,9 +61,11 @@ export interface RequestInput {
 /** A fictional committed source request as the published contract carries it. */
 export const communicationRequest = (input: RequestInput): CommunicationRequest => {
   const tenantId = input.tenantId ?? FIXTURE_TENANT_ID;
-  const scope = fixtureScope(
-    input.legalEntityId === undefined ? { tenantId } : { legalEntityId: input.legalEntityId, tenantId },
-  );
+  const scope = fixtureScope({
+    ...(input.legalEntityId === undefined ? {} : { legalEntityId: input.legalEntityId }),
+    ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+    tenantId,
+  });
   const key = input.idempotencyKey ?? `fixture-key-${input.occurrenceId ?? 'occurrence-1'}`;
   return decodeRequest({
     idempotency: input.correlationId === undefined ? { key } : { correlationId: input.correlationId, key },
@@ -74,7 +78,7 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
     })),
     schemaVersion: 1,
     scope,
-    source: { moduleKey: 'fixture.source' },
+    source: { moduleKey: input.sourceModule ?? 'fixture.source' },
   });
 };
 

@@ -22,7 +22,10 @@ import { intakeRunnerOver } from '../support/intake-runner.ts';
 import { baseIdentity, seedLanguages } from '../support/language-fixtures.ts';
 import { decided, intakeWorld, requestFor } from '../support/intake-world.ts';
 import { actorWith, makeRuntimeDatabase, nativeServices, nextId } from '../support/persistence.fixture.ts';
-import { CommunicationRequestScopeMismatch } from '../../shared/communication-intake-errors.ts';
+import {
+  CommunicationRequestScopeMismatch,
+  CommunicationRequestSourceMismatch,
+} from '../../shared/communication-intake-errors.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
 
 /**
@@ -377,6 +380,69 @@ describe('Communication Request intake: one stored decision per source identity 
       expect(Schema.is(CommunicationRequestScopeMismatch)(failure)).toBe(true);
       expect(yield* t.read((tx) => tx.select().from(communicationRequests))).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[F1 I-02] one occurrence under two scopes of one Tenant is two independent decisions; the same scope again replays its own',
+    () =>
+      Effect.gen(function* twoScopes() {
+        const t = yield* setup();
+        const inScope = (profileId: string) =>
+          communicationRequest({ bindings: [originalRecipient('customer-1')], profileId, tenantId: t.tenantId });
+        const first = decided(yield* t.runner.submit(t.tenantId, inScope('profile-a')));
+        // the same source, occurrence, revision, purpose and recipient, but another scope: NOT a collision and NOT a 503
+        const other = yield* t.runner.submit(t.tenantId, inScope('profile-b'));
+        const second = decided(other);
+        expect(first.replayed).toBe(false);
+        expect(second.replayed).toBe(false);
+        expect(second.requestId).not.toBe(first.requestId);
+        expect(second.decisionId).not.toBe(first.decisionId);
+        const intentIds = [first, second].flatMap((result) =>
+          result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents.map(({ intentId }) => intentId) : [],
+        );
+        expect(new Set(intentIds).size).toBe(2);
+        // each scope queued its own pre-handoff message
+        expect(other.outbox).toHaveLength(1);
+        const rows = yield* t.read((tx) => tx.select().from(messageIntents));
+        expect(new Set(rows.map((row) => row.intentKey)).size).toBe(2);
+        expect(yield* t.read((tx) => tx.select().from(communicationRequests))).toHaveLength(2);
+        // the same scope again returns ITS original decision, and neither scope's decision is touched
+        const replay = yield* t.runner.submit(t.tenantId, inScope('profile-a'));
+        expect(decided(replay)).toEqual({ ...first, replayed: true });
+        expect(replay.outbox).toEqual([]);
+        expect(decided(yield* t.runner.submit(t.tenantId, inScope('profile-b')))).toEqual({
+          ...second,
+          replayed: true,
+        });
+        expect(yield* t.read((tx) => tx.select().from(messageIntents))).toHaveLength(2);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[F2] a request whose claimed source module is not the verified caller is refused, typed, with nothing stored or queued',
+    () =>
+      Effect.gen(function* impersonation() {
+        const t = yield* setup();
+        const request = requestFor(t.tenantId);
+        // the request names `fixture.source`; the module Core verified as the caller is another one
+        const failure = yield* Effect.flip(
+          t.runner.submit(t.tenantId, request, '00000000-0000-4000-8000-0000000000a5', 'fixture.other-source'),
+        );
+        expect(Schema.is(CommunicationRequestSourceMismatch)(failure)).toBe(true);
+        for (const table of [
+          communicationRequests,
+          communicationDecisions,
+          messageIntents,
+          communicationRequestConflicts,
+        ]) {
+          expect(yield* t.read((tx) => tx.select().from(table))).toEqual([]);
+        }
+        // no owner was asked about anyone on behalf of an impersonated source
+        expect(t.recipientAuthority.queries).toEqual([]);
+        expect(t.privacy.queries).toEqual([]);
+        // the genuine source module, calling in its own name, is decided as usual
+        expect(decided(yield* t.runner.submit(t.tenantId, request)).replayed).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
   it.live('[tenant isolation] another Tenant sees none of the requests, decisions, intents, attempts or stops', () =>

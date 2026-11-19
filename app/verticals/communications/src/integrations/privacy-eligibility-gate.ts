@@ -12,15 +12,22 @@ import {
   PrivacySourceEligibilityResponseSchema,
   unavailableReasonOfOwnerProblem,
 } from '../domain/privacy/source-eligibility-response.ts';
+import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import { PRIVACY_ELIGIBILITY_REQUIREMENT_KEY } from '../handoff/requirement-keys.ts';
 import { CurrentOwnerCall } from './owner-call.ts';
 
 const DECLARATION_KEY = 'privacy.core.source-processing-eligibility.read';
 const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
 
-/** A typed failure that keeps the failure it replaces as a non-enumerable cause, so diagnostics are not lost. */
+/**
+ * A typed failure that keeps only the SAFE kind of the failure it replaces as a non-enumerable cause: a failed owner call
+ * can carry the exact Privacy request (recipient and subject references), which no log may print.
+ */
 const unavailableBecause = (reason: ProcessingEligibilityUnavailable['reason'], cause: unknown) =>
-  Object.defineProperty(new ProcessingEligibilityUnavailable({ reason }), 'cause', { enumerable: false, value: cause });
+  Object.defineProperty(new ProcessingEligibilityUnavailable({ reason }), 'cause', {
+    enumerable: false,
+    value: safeCauseOf(cause),
+  });
 
 /** The exact Privacy request of ONE declared scope: a located source record or the Party target, and nothing else. */
 export const privacyRequestOf = (query: ProcessingEligibilityQuery) => {

@@ -35,6 +35,14 @@ const handlePrepareMessageHandoff = Effect.fn('PrepareMessageHandoffWorker.handl
   );
 });
 
+/**
+ * ACTIVATION ORDER MATTERS (ADR-0013, AC-09). Core matches an Outbox message to its consumers when the message is first
+ * observed, and a consumer created later NEVER receives it: there is no implicit historical replay or backfill, and this
+ * owner adds none. A self-outbox message that the intake Action created BEFORE this worker's subscription existed is
+ * therefore never delivered, and its intent stays PENDING_HANDOFF without an attempt. Deploy and register this worker
+ * (and let Core observe its subscription) BEFORE the first source producer is activated; anything created earlier is a
+ * cutover decision of the recovery lane (d21-10, #1403), never an automatic send.
+ */
 export const prepareMessageHandoffWorker = defineOutboxWorker(
   {
     consumerModuleKey: 'communications.core',

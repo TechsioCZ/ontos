@@ -18,10 +18,12 @@ import {
 import type { StoredJson } from '../database/schema.ts';
 import { CommunicationOutcome } from '../domain/catalog/decision.ts';
 import { deterministicUuid, encodedRequestOf } from '../domain/intake/identity.ts';
+import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import type { DecisionPlan, EndpointPin, IntentPlan } from '../domain/intake/plan.ts';
 import { LanguageDecisionSchema } from '../domain/language/vocabulary.ts';
 import { ProcessingScopeSchema } from '../domain/privacy/processing-scope.ts';
 import { OriginalRecipientBindingSchema } from '../domain/recipient/original-binding.ts';
+import { sourceCallerOf } from '../integrations/source-caller.ts';
 import { languagePolicyPortOverRoutines } from '../persistence/snapshot-ports.ts';
 import { CommunicationIntakePort } from './communication-intake-port.service.ts';
 import type {
@@ -37,7 +39,8 @@ const unavailable = (cause?: unknown) =>
       reason: 'The Communication Request store is unavailable',
     }),
     'cause',
-    { enumerable: false, value: cause },
+    // REPLACED by its safe kind: the failed statement carries the bound recipient and contact references and the mask
+    { enumerable: false, value: cause === undefined ? undefined : safeCauseOf(cause) },
   );
 
 type RequestRow = typeof communicationRequests.$inferSelect;
@@ -281,5 +284,6 @@ export const communicationIntakeService = (transaction: ScopedTransactionExecuto
   Effect.succeed({
     intake: CommunicationIntakePort.of(postgresCommunicationIntakePort(transaction, scope)),
     policies: languagePolicyPortOverRoutines(transaction),
+    sourceCaller: sourceCallerOf(scope),
     templates: postgresTemplateRevisionPort(transaction, scope),
   });

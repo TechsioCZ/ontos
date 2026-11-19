@@ -146,8 +146,11 @@ export const intentIdOf = (intentKey: string) =>
     Effect.map((id) => MessageIntentIdSchema.make(id)),
   );
 
-/** The id of the single delivery attempt of an intent in this lane. */
-export const firstAttemptIdOf = (intentId: typeof MessageIntentIdSchema.Type) =>
-  deterministicUuid('communications.delivery-attempt', `${intentId}:1`).pipe(
+/**
+ * The id of delivery attempt number `attemptNumber` of an intent. Number 1 is the only one a provider answer can ever
+ * finish; a next number begins only after a NOT_ATTEMPTED attempt, which proves that nothing was submitted.
+ */
+export const attemptIdOf = (intentId: typeof MessageIntentIdSchema.Type, attemptNumber: number) =>
+  deterministicUuid('communications.delivery-attempt', `${intentId}:${String(attemptNumber)}`).pipe(
     Effect.map((id) => DeliveryAttemptIdSchema.make(id)),
   );

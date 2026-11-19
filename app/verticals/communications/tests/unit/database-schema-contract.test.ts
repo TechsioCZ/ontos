@@ -176,7 +176,27 @@ describe('Communications intake schema contract (#1401)', () => {
     expect(unique('communication_decisions')).toContain('communications_decisions_request_uk');
     expect(unique('message_intents')).toContain('communications_intents_key_uk');
     expect(unique('delivery_attempts')).toContain('communications_attempts_number_uk');
-    expect(unique('intent_handoff_stops')).toContain('communications_handoff_stops_intent_uk');
+    // a stop is keyed by (intent, evaluation), never by the intent alone: a later Current evaluation is representable
+    expect(unique('intent_handoff_stops')).toContain('communications_handoff_stops_evaluation_uk');
+    expect(unique('intent_handoff_stops')).not.toContain('communications_handoff_stops_intent_uk');
+    expect(
+      byName['intent_handoff_stops']?.uniqueConstraints
+        .find((constraint) => constraint.getName() === 'communications_handoff_stops_evaluation_uk')
+        ?.columns.map((column) => column.name),
+    ).toEqual(['tenant_id', 'intent_id', 'evaluation_seq']);
+  });
+
+  it('derives whether a stop is proven from its reasons instead of storing a second, divergent flag', () => {
+    const proven = byName['intent_handoff_stops']?.columns.find((column) => column.name === 'proven');
+    expect(proven?.generated?.type).toBe('always');
+  });
+
+  it('keeps NOT_ATTEMPTED (no adapter, nothing submitted) a delivery attempt state of its own', () => {
+    const state = byName['delivery_attempts']?.columns.find((column) => column.name === 'state');
+    expect(state?.notNull).toBe(true);
+    expect(
+      byName['delivery_attempts']?.checks.find((check) => check.name === 'communications_attempts_state_ck'),
+    ).toBeDefined();
   });
 
   it('pins everything a pending intent needs for its last stoppable handoff', () => {

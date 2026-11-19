@@ -31,6 +31,7 @@ export const SubmitCommunicationRequestActionForbiddenProblemSchema = makeProble
       'operation_context_denied',
       'operation_context_invalid',
       'communication_request_scope_mismatch',
+      'communication_request_source_mismatch',
     ]),
     reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },

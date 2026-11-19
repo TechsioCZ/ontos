@@ -8,6 +8,7 @@ import {
   MessageIntentIdSchema,
 } from '../../shared/communication-intake.ts';
 import type { MessageIntentIdentity } from '../domain/catalog/decision.ts';
+import type { TransactionalMessageType } from '../domain/catalog/message-type.ts';
 import {
   AudienceSlotKeySchema,
   CommunicationResourceRefSchema,
@@ -15,8 +16,9 @@ import {
 } from '../domain/catalog/vocabulary.ts';
 import { MessageHandoff } from '../domain/handoff/message-handoff.ts';
 import type { PinnedHandoff, ProviderEvidence } from '../domain/handoff/message-handoff.ts';
-import { firstAttemptIdOf } from '../domain/intake/identity.ts';
+import { attemptIdOf } from '../domain/intake/identity.ts';
 import { decodeIntakeInput } from '../domain/intake/intake-input.ts';
+import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import { MessageTypeCatalog } from '../domain/intake/message-type-catalog.ts';
 import { SourceOccurrenceAuthority } from '../domain/intake/source-authority.ts';
 import { SelectedLanguageDecisionSchema } from '../domain/language/vocabulary.ts';
@@ -53,9 +55,15 @@ export class HandoffStoreUnavailable extends Data.TaggedError('HandoffStoreUnava
   readonly reason: string;
 }> {}
 
-/** The typed, retryable failure that keeps the failure it replaces as a non-enumerable cause. */
+/**
+ * The typed, retryable failure. It keeps only the SAFE kind of the failure it replaces (non-enumerable): the raw cause of a
+ * failed routine call carries its bound parameters, which include recipient references and the owner's mask.
+ */
 export const storeUnavailable = (reason: string, cause?: unknown) =>
-  Object.defineProperty(new HandoffStoreUnavailable({ reason }), 'cause', { enumerable: false, value: cause });
+  Object.defineProperty(new HandoffStoreUnavailable({ reason }), 'cause', {
+    enumerable: false,
+    value: cause === undefined ? undefined : safeCauseOf(cause),
+  });
 
 /** Why an intent stopped, in the vocabulary of the suppression lane plus the checks of this step. */
 export interface StopReason {
@@ -83,7 +91,14 @@ const skipped = (intentId: string, reason: SkipReason) =>
 const own = (category: string, cause: string, proven: boolean): StopReason => ({ category, cause, proven });
 const asStopReason = ({ category, cause, proven }: SuppressionReason): StopReason => ({ category, cause, proven });
 
-const AttemptStateSchema = Schema.Literals(['ACCEPTED', 'INDETERMINATE', 'PREPARED', 'REJECTED', 'UNAVAILABLE']);
+const AttemptStateSchema = Schema.Literals([
+  'ACCEPTED',
+  'INDETERMINATE',
+  'NOT_ATTEMPTED',
+  'PREPARED',
+  'REJECTED',
+  'UNAVAILABLE',
+]);
 const EndpointPinSchema = Schema.Struct({
   channel: Schema.String,
   contactRef: CommunicationResourceRefSchema,
@@ -91,7 +106,9 @@ const EndpointPinSchema = Schema.Struct({
   mask: Schema.String,
 });
 const IntentDocumentSchema = Schema.Struct({
-  attempt: Schema.optionalKey(Schema.Struct({ attemptId: DeliveryAttemptIdSchema, state: AttemptStateSchema })),
+  attempt: Schema.optionalKey(
+    Schema.Struct({ attemptId: DeliveryAttemptIdSchema, attemptNumber: Schema.Number, state: AttemptStateSchema }),
+  ),
   intent: Schema.Struct({
     endpointPin: Schema.optionalKey(EndpointPinSchema),
     handoffPin: HandoffPinSchema,
@@ -120,7 +137,7 @@ const StoredPinsSchema = Schema.Struct({
 });
 
 const AttemptAnswerSchema = Schema.Struct({
-  outcome: Schema.Literals(['BEGUN', 'EXISTS', 'MISSING', 'STOPPED']),
+  outcome: Schema.Literals(['BEGUN', 'EXISTS', 'MISSING', 'NOT_PENDING', 'STALE', 'STOPPED']),
   state: Schema.optionalKey(Schema.String),
 });
 const StopAnswerSchema = Schema.Struct({ outcome: Schema.String });
@@ -202,24 +219,37 @@ const languageGate = Effect.fn('Communications.languageGate')(function* checkLan
         ? Option.none<StopReason>()
         : Option.some(own('LANGUAGE_GATE', result.reason, result.reason !== 'language_policy_unreadable')),
     ),
-    Effect.catchTag('TemplatePinBlocked', (blocked) =>
-      Effect.succeed(Option.some(own('TEMPLATE_PIN', blocked.code, true))),
-    ),
-    Effect.catchTag('TemplateStoreUnavailable', (cause) =>
-      Effect.fail(storeUnavailable('The template revisions could not be verified', cause)),
-    ),
+    Effect.catchTags({
+      TemplatePinBlocked: (blocked) => Effect.succeed(Option.some(own('TEMPLATE_PIN', blocked.code, true))),
+      TemplateStoreUnavailable: (cause) =>
+        Effect.fail(storeUnavailable('The template revisions could not be verified', cause)),
+    }),
   );
 });
 
-/** Every Current gate for one intent, in cheap-and-local-first order. */
-const runGates = Effect.fn('Communications.preHandoffGates')(function* gates(
+/** What the local gates decoded: the stored pins every owner gate is asked about. */
+interface OpenPins {
+  readonly binding: typeof OriginalRecipientBindingSchema.Type;
+  readonly language: typeof SelectedLanguageDecisionSchema.Type;
+  readonly request: typeof CommunicationRequestSchema.Type;
+  readonly scope: typeof ProcessingScopeSchema.Type;
+  readonly type: TransactionalMessageType;
+}
+
+type LocalGate = { readonly open: OpenPins } | { readonly reasons: readonly StopReason[] };
+
+/**
+ * The gates that only read this owner's own store, in cheap-and-local-first order: the approved type, the stored pins and
+ * the language and template pin. They run INSIDE the first scoped transaction, which is therefore short.
+ */
+const localGates = Effect.fn('Communications.localGates')(function* gates(
   invoker: ScopedRoutineInvoker,
   document: IntentDocument,
 ) {
   const { intent } = document;
   const type = (yield* MessageTypeCatalog).byTypeId(intent.typeId);
   if (Option.isNone(type)) {
-    return { reasons: [own('TYPE_UNAVAILABLE', 'TYPE_NOT_APPROVED', true)] } satisfies GateVerdict;
+    return { reasons: [own('TYPE_UNAVAILABLE', 'TYPE_NOT_APPROVED', true)] } satisfies LocalGate;
   }
   const pins = yield* Schema.decodeUnknownEffect(StoredPinsSchema)({
     binding: intent.originalBinding,
@@ -228,13 +258,23 @@ const runGates = Effect.fn('Communications.preHandoffGates')(function* gates(
     scope: intent.processingScope,
   }).pipe(Effect.option);
   if (Option.isNone(pins)) {
-    return { reasons: [own('PIN_UNREADABLE', 'STORED_PIN_INVALID', true)] } satisfies GateVerdict;
+    return { reasons: [own('PIN_UNREADABLE', 'STORED_PIN_INVALID', true)] } satisfies LocalGate;
   }
-  const { binding, language, request, scope } = pins.value;
-  const languageStop = yield* languageGate(invoker, language);
-  if (Option.isSome(languageStop)) {
-    return { reasons: [languageStop.value] } satisfies GateVerdict;
-  }
+  const languageStop = yield* languageGate(invoker, pins.value.language);
+  return Option.isSome(languageStop)
+    ? ({ reasons: [languageStop.value] } satisfies LocalGate)
+    : ({ open: { ...pins.value, type: type.value } } satisfies LocalGate);
+});
+
+/**
+ * The gates that ask ANOTHER owner Now (source occurrence, original recipient and endpoint, Privacy for the stored scope).
+ * They run OUTSIDE any transaction: an owner call can take as long as its timeout, and no database connection of this
+ * owner may wait for it. Nothing here is transactional: what must be (a second caller, a stop, an attempt) is decided
+ * again by the routines of the next scoped transaction.
+ */
+const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(document: IntentDocument, pins: OpenPins) {
+  const { intent } = document;
+  const { binding, language, request, scope, type } = pins;
   const input = yield* decodeIntakeInput(request);
   const facts = yield* (yield* SourceOccurrenceAuthority).read(input.decisionRequest).pipe(Effect.option);
   if (Option.isNone(facts)) {
@@ -247,17 +287,17 @@ const runGates = Effect.fn('Communications.preHandoffGates')(function* gates(
     slotKey: intent.slotKey,
     sourceModule: input.decisionRequest.source.moduleKey,
     tenantId: input.decisionRequest.tenantId,
-    typeId: type.value.typeId,
+    typeId: type.typeId,
   };
   const [decision] = yield* decideMessageHandoffs(
     {
-      recipient: { bindings: input.bindings, request: input.decisionRequest, scope: input.scope, type: type.value },
-      source: sourceCurrentnessOf(type.value, request.occurrence.revision, facts.value),
+      recipient: { bindings: input.bindings, request: input.decisionRequest, scope: input.scope, type },
+      source: sourceCurrentnessOf(type, request.occurrence.revision, facts.value),
     },
     [
       {
         binding,
-        // No attempt exists yet (checked before this), so the message is asked about, never "already handed off".
+        // No attempt that may have left exists (checked before this), so the message is asked about, never "already handed off".
         handoff: HandoffFact.NotAttempted(),
         identity,
         pin: intent.handoffPin,
@@ -283,6 +323,8 @@ const finishState = (evidence: ProviderEvidence) =>
     Match.when({ kind: 'ACCEPTED' }, () => 'ACCEPTED' as const),
     Match.when({ kind: 'REJECTED' }, () => 'REJECTED' as const),
     Match.when({ kind: 'INDETERMINATE' }, () => 'INDETERMINATE' as const),
+    // no adapter exists: provably nothing was submitted, which a real provider UNAVAILABLE never proves
+    Match.when({ kind: 'NOT_ATTEMPTED' }, () => 'NOT_ATTEMPTED' as const),
     Match.orElse(() => 'UNAVAILABLE' as const),
   );
 
@@ -327,6 +369,9 @@ const notBegunReason = (answer: typeof AttemptAnswerSchema.Type): SkipReason => 
   if (answer.outcome === 'MISSING') {
     return 'INTENT_MISSING';
   }
+  if (answer.outcome === 'NOT_PENDING') {
+    return 'NOT_PENDING';
+  }
   return answer.state === 'PREPARED' ? 'RECONCILIATION_REQUIRED' : 'ALREADY_FINISHED';
 };
 
@@ -337,12 +382,21 @@ const skipOfDocument = (document: IntentDocument): Option.Option<SkipReason> => 
   if (document.stopped) {
     return Option.some('ALREADY_STOPPED');
   }
-  return document.attempt === undefined
-    ? Option.none()
-    : Option.some(document.attempt.state === 'PREPARED' ? 'RECONCILIATION_REQUIRED' : 'ALREADY_FINISHED');
+  // only an attempt that provably submitted nothing leaves the intent open for a next one
+  if (document.attempt === undefined || document.attempt.state === 'NOT_ATTEMPTED') {
+    return Option.none();
+  }
+  return Option.some(document.attempt.state === 'PREPARED' ? 'RECONCILIATION_REQUIRED' : 'ALREADY_FINISHED');
 };
 
-const prepare = Effect.fn('Communications.prepareHandoff')(function* prepareHandoff(
+/** What the first read phase found: skip, stop, or "every local gate is open, ask the other owners". */
+type Loaded =
+  | { readonly kind: 'OPEN'; readonly document: IntentDocument; readonly pins: OpenPins }
+  | { readonly kind: 'STOP'; readonly reasons: readonly StopReason[] }
+  | { readonly kind: 'SKIP'; readonly processing: HandoffProcessing };
+
+/** Phase 1a (scoped, short, own store only): read the intent, decide whether it is open, run the local gates. */
+const loadAndGate = Effect.fn('Communications.loadAndGate')(function* load(
   input: StepInput,
   invoker: ScopedRoutineInvoker,
 ) {
@@ -351,26 +405,41 @@ const prepare = Effect.fn('Communications.prepareHandoff')(function* prepareHand
     .invoke(workerReadIntentRoutine, [intentId])
     .pipe(Effect.mapError((cause) => storeUnavailable('The Message Intent could not be read', cause)));
   if (read.length === 0) {
-    return skipped(intentId, 'INTENT_MISSING') satisfies Prepared;
+    return { kind: 'SKIP', processing: skipped(intentId, 'INTENT_MISSING') } satisfies Loaded;
   }
   const document = yield* documentOf(read, IntentDocumentSchema, 'The Message Intent document was unreadable');
   const skip = skipOfDocument(document);
   if (Option.isSome(skip)) {
-    return skipped(intentId, skip.value) satisfies Prepared;
+    return { kind: 'SKIP', processing: skipped(intentId, skip.value) } satisfies Loaded;
   }
-  const verdict = yield* runGates(invoker, document);
-  if ('reasons' in verdict) {
-    return (yield* stopIntent(invoker, intentId, verdict.reasons)) satisfies Prepared;
-  }
-  const attemptId = yield* firstAttemptIdOf(intentId);
-  const begun = yield* invoker.invoke(workerBeginAttemptRoutine, [intentId, attemptId]).pipe(
+  const gate = yield* localGates(invoker, document);
+  return 'reasons' in gate
+    ? ({ kind: 'STOP', reasons: gate.reasons } satisfies Loaded)
+    : ({ document, kind: 'OPEN', pins: gate.open } satisfies Loaded);
+});
+
+/** Phase 1c (scoped, short): the one attempt of a message every gate cleared; the routine re-checks everything transactional. */
+const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
+  input: StepInput,
+  invoker: ScopedRoutineInvoker,
+  document: IntentDocument,
+  cleared: Cleared,
+) {
+  const { intentId } = input;
+  // the next attempt number: 1, or the one after an attempt that provably submitted nothing (NOT_ATTEMPTED)
+  const attemptNumber = (document.attempt?.attemptNumber ?? 0) + 1;
+  const attemptId = yield* attemptIdOf(intentId, attemptNumber);
+  const begun = yield* invoker.invoke(workerBeginAttemptRoutine, [intentId, attemptId, attemptNumber]).pipe(
     Effect.mapError((cause) => storeUnavailable('The delivery attempt could not be recorded', cause)),
     Effect.flatMap((rows) => documentOf(rows, AttemptAnswerSchema, 'The delivery attempt answer was unreadable')),
   );
+  if (begun.outcome === 'STALE') {
+    // another caller moved the attempts on between the read and this call: Core delivers again and the step re-reads
+    return yield* storeUnavailable('The delivery attempt number was stale');
+  }
   if (begun.outcome !== 'BEGUN') {
     return skipped(intentId, notBegunReason(begun)) satisfies Prepared;
   }
-  const { cleared } = verdict;
   return {
     attemptId,
     kind: 'READY',
@@ -386,13 +455,37 @@ const prepare = Effect.fn('Communications.prepareHandoff')(function* prepareHand
   } satisfies Prepared;
 });
 
+/** Phases 1b and 1c: ask the other owners with no connection held, then record the stop or the one attempt. */
+const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* decide(
+  input: StepInput,
+  scoped: ScopedRunner,
+  loaded: Loaded,
+) {
+  if (loaded.kind === 'SKIP') {
+    return loaded.processing satisfies Prepared;
+  }
+  if (loaded.kind === 'STOP') {
+    return (yield* scoped((invoker) => stopIntent(invoker, input.intentId, loaded.reasons))) satisfies Prepared;
+  }
+  const verdict = yield* ownerGates(loaded.document, loaded.pins);
+  if ('reasons' in verdict) {
+    return (yield* scoped((invoker) => stopIntent(invoker, input.intentId, verdict.reasons))) satisfies Prepared;
+  }
+  return (yield* scoped((invoker) =>
+    beginAttempt(input, invoker, loaded.document, verdict.cleared),
+  )) satisfies Prepared;
+});
+
 export const processIntentHandoff = Effect.fn('Communications.processIntentHandoff')(function* process(
   input: StepInput,
   scoped: ScopedRunner,
 ) {
-  // Phase 1 commits the attempt BEFORE the provider is asked; phase 3 commits what the provider answered. The call
-  // itself runs outside any transaction, so nothing holds a connection while a provider is slow.
-  const prepared = yield* scoped((invoker) => prepare(input, invoker));
+  // Three short scoped transactions and one call that holds none: (1a) read the intent and run the local gates, then,
+  // with NO connection held, (1b) ask the other owners, then (1c) record the stop or the attempt. The attempt is COMMITTED
+  // before the provider is asked; phase 3 commits what the provider answered. A second caller, a stop or an attempt that
+  // appeared between the phases is decided again by the routines, so nothing relies on the phases being atomic.
+  const loaded = yield* scoped((invoker) => loadAndGate(input, invoker));
+  const prepared = yield* prepareHandoff(input, scoped, loaded);
   if (prepared.kind !== 'READY') {
     return prepared;
   }

@@ -2,6 +2,7 @@ import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import type { Schema } from 'effect';
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -385,6 +386,11 @@ export const messageIntents = communicationsSchema.table.withRLS(
  * handoff call and finished with the provider evidence after it, so a crash between the two leaves a PREPARED attempt
  * that no later processing may resend without reconciliation (I-09). Written only by the worker's scoped routines;
  * the runtime role can read it. A finished attempt is immutable.
+ *
+ * `NOT_ATTEMPTED` is NOT a provider outcome: no adapter exists in the deployment, so provably nothing was submitted. It
+ * is kept apart from `UNAVAILABLE` (a real provider that could not be used, which does NOT prove it did not accept),
+ * and it is the only finished state after which a NEXT attempt number may begin: enabling the owner ports before the
+ * Messaging Adapter exists (step 22) therefore never burns the intent's only attempt.
  */
 export const deliveryAttempts = communicationsSchema.table.withRLS(
   'delivery_attempts',
@@ -395,7 +401,9 @@ export const deliveryAttempts = communicationsSchema.table.withRLS(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     intentId: uuid('intent_id').notNull(),
     preparedAt: timestamp('prepared_at', { withTimezone: true }).notNull(),
-    state: text('state').$type<'ACCEPTED' | 'INDETERMINATE' | 'PREPARED' | 'REJECTED' | 'UNAVAILABLE'>().notNull(),
+    state: text('state')
+      .$type<'ACCEPTED' | 'INDETERMINATE' | 'NOT_ATTEMPTED' | 'PREPARED' | 'REJECTED' | 'UNAVAILABLE'>()
+      .notNull(),
     tenantId: uuid('tenant_id').notNull(),
   },
   (table) => [
@@ -408,26 +416,39 @@ export const deliveryAttempts = communicationsSchema.table.withRLS(
     check('communications_attempts_number_ck', sql`${table.attemptNumber} > 0`),
     check(
       'communications_attempts_state_ck',
-      sql`${table.state} in ('ACCEPTED', 'INDETERMINATE', 'PREPARED', 'REJECTED', 'UNAVAILABLE')`,
+      sql`${table.state} in ('ACCEPTED', 'INDETERMINATE', 'NOT_ATTEMPTED', 'PREPARED', 'REJECTED', 'UNAVAILABLE')`,
     ),
     ...tenantRlsPolicies('delivery_attempts', table.tenantId),
   ],
 );
 
 /**
- * The recorded stop of one intent at its last stoppable handoff: every distinct reason, the proven ones first. At most
- * one per intent. A stop is a fact, not a verdict on the message forever: recovery after a stop is a later plan (#1403).
+ * The recorded stop of one intent at its last stoppable handoff, per EVALUATION: every distinct reason, the proven
+ * ones first. A stop is a fact, not a verdict on the message forever: recovery after a stop is a later plan (#1403, d21-10).
+ *
+ * Recoverable by design, without a rewrite: the row is keyed by (intent, `evaluation_seq`), not by the intent alone.
+ * This lane records evaluation 1 only, and its worker still treats any stop as final. `proven` (derived from the
+ * reasons, never written) separates a PROVEN stop (at least one reason is a proven prohibition: Privacy NOT_ALLOWED,
+ * recipient not eligible, source stale, template pin blocked) from an UNPROVEN one (every reason is only the inability to
+ * establish a fact: source authority, Privacy or recipient owner outage). d21-10 may supersede an unproven stop ONLY by
+ * appending a NEW Current evaluation (`evaluation_seq` + 1); it never edits or removes a row, and a proven stop is never
+ * superseded by a retry. The rows stay append-only, so history shows every evaluation that was made.
  */
 export const intentHandoffStops = communicationsSchema.table.withRLS(
   'intent_handoff_stops',
   {
+    evaluationSeq: integer('evaluation_seq').default(1).notNull(),
     intentId: uuid('intent_id').notNull(),
+    proven: boolean('proven')
+      .generatedAlwaysAs(sql`jsonb_path_exists("reasons", '$[*] ? (@.proven == true)')`)
+      .notNull(),
     reasons: jsonb('reasons').$type<StoredJson>().notNull(),
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
     tenantId: uuid('tenant_id').notNull(),
   },
   (table) => [
-    unique('communications_handoff_stops_intent_uk').on(table.tenantId, table.intentId),
+    unique('communications_handoff_stops_evaluation_uk').on(table.tenantId, table.intentId, table.evaluationSeq),
+    check('communications_handoff_stops_evaluation_ck', sql`${table.evaluationSeq} > 0`),
     foreignKey({
       columns: [table.tenantId, table.intentId],
       foreignColumns: [messageIntents.tenantId, messageIntents.intentId],

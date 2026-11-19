@@ -4,7 +4,10 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CommunicationRequestScopeMismatch } from '../../shared/communication-intake-errors.ts';
+import {
+  CommunicationRequestScopeMismatch,
+  CommunicationRequestSourceMismatch,
+} from '../../shared/communication-intake-errors.ts';
 import { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
@@ -51,7 +54,16 @@ const sourceWorkload = {
 };
 const encode = Schema.encodeSync(SubmitCommunicationRequestPayloadSchema);
 
-const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorld(types = [fixtureType()]) {
+/**
+ * The harness scripts access, so it cannot carry the sealed gateway provenance of a registered source worker, and
+ * Core's own scope installer is not reachable from it. The calling module is therefore bound as the Action's typed
+ * `sourceCaller` service, exactly the seam production binds from the verified scope (`sourceCallerOf`, proved against
+ * the real provenance carrier in `source-caller.test.ts` and the native intake suite).
+ */
+const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorld(
+  types = [fixtureType()],
+  callerModule = 'fixture.source',
+) {
   const templates = makeInMemoryTemplatePort();
   yield* seedLanguages(templates.port, ['cs', 'en'], {
     ...baseIdentity,
@@ -66,6 +78,7 @@ const world = Effect.fn('PublicBoundaryTest.world')(function* publicBoundaryWorl
       bindActionTestServices(submitCommunicationRequestAction, {
         intake: intake.port,
         policies: policies.port,
+        sourceCaller: { isClaimedSource: (claimed: string) => claimed === callerModule },
         templates: templates.port,
       }),
     ],
@@ -188,6 +201,25 @@ describe('Communication Request intake over the public Action boundary (#1401, A
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
+  it.effect(
+    '[caller binding] a caller that is not the claimed source module is refused, typed, with nothing stored or queued',
+    () =>
+      Effect.gen(function* impersonation() {
+        const t = yield* world([fixtureType()], 'fixture.other-source');
+        const failure = yield* Effect.flip(
+          t.issue(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }), 'k-impersonated'),
+        );
+        expect(Schema.is(CommunicationRequestSourceMismatch)(failure)).toBe(true);
+        expect(t.intake.stored.size).toBe(0);
+        expect(t.intake.conflicts).toEqual([]);
+        // the real source, calling in its own name, is decided as usual by the same Action
+        const own = yield* world([fixtureType()], 'fixture.source');
+        expect(
+          yield* own.issue(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }), 'k-own'),
+        ).toMatchObject({ outcome: 'DECIDED' });
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it('[AC-02] the public payload is the published contract: an extra field, an address or a language is refused', () => {
     const encoded = encode(communicationRequest({ bindings: [originalRecipient('customer-1')], tenantId }));
     const strict = Schema.decodeUnknownSync(SubmitCommunicationRequestPayloadSchema, { onExcessProperty: 'error' });
@@ -200,7 +232,15 @@ describe('Communication Request intake over the public Action boundary (#1401, A
   it('[AC-09 ADR-0013] the owner worker consumes ONLY its own pre-handoff topic: no source event is ever a request, no backfill code exists', () => {
     const subscriptions = outboxWorkers.map(({ descriptor }) => [descriptor.producerModuleKey, descriptor.topic]);
     expect(subscriptions).toEqual([['communications.core', 'communications.core.message-intent-prepared.v1']]);
-    // Core matches a new consumer only for messages it first observes after the consumer exists (proven by `outbox:test`);
-    // Communications adds no replay, redrive or matcher of its own, so the consumer's first message is its first request.
+    // The consumer is Communications itself, for its own self-outbox only: it subscribes to no producer's event, so a
+    // source event can never be turned into a send, and `matched_at` of the first-match rule only ever concerns messages
+    // observed after this consumer exists. The activation order (worker registered before the first producer) is documented
+    // on the worker; Core's own runtime tests (`outbox:test`) prove that a later consumer receives no earlier message.
+    const [worker] = outboxWorkers;
+    expect(worker?.descriptor.consumerModuleKey).toBe('communications.core');
+    expect(worker?.descriptor.consumerModuleKey).toBe(worker?.descriptor.producerModuleKey);
+    expect(worker?.descriptor.workerKey).toBe('communications.core.prepare-message-handoff');
+    // No replay, redrive or backfill entry point exists in the owner: its worker list is exactly the one pre-handoff worker.
+    expect(outboxWorkers).toHaveLength(1);
   });
 });

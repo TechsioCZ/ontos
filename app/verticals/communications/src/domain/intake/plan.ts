@@ -65,14 +65,13 @@ export interface DecisionPlan {
 
 const lengthPrefixed = (parts: readonly string[]) => parts.map((part) => `${String(part.length)}:${part}`).join('|');
 
-/** The identity text of one Message Intent: exactly the catalog's candidate identity, with the full recipient reference. */
-export const intentKeyOf = (identity: MessageIntentIdentity) =>
-  lengthPrefixed([
-    identity.tenantId,
-    identity.sourceModule,
-    identity.occurrenceId,
-    String(identity.revision),
-    identity.typeId,
-    identity.slotKey,
-    resourceRefKey(identity.recipient),
-  ]);
+/**
+ * The identity text of one Message Intent: the identity text of its REQUEST (source owner x Tenant/scope x purpose x
+ * occurrence/revision, I-02) followed by what the catalog adds for one candidate (approved type, audience slot and the
+ * FULL recipient reference). The request part carries the whole trusted scope (Legal Entity, profile, Counterparty,
+ * Storefront) and the purpose, so one occurrence decided under two scopes yields two independent intents and never
+ * collides on `communications_intents_key_uk`. It deliberately omits the catalog revision, so a later catalog revision
+ * never re-identifies an occurrence already decided.
+ */
+export const intentKeyOf = (requestIdentityKey: string, identity: MessageIntentIdentity) =>
+  lengthPrefixed([requestIdentityKey, identity.typeId, identity.slotKey, resourceRefKey(identity.recipient)]);

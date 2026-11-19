@@ -8,6 +8,7 @@ import { Effect, Option, Schema } from 'effect';
 import {
   CommunicationDecisionUnavailable,
   CommunicationRequestScopeMismatch,
+  CommunicationRequestSourceMismatch,
 } from '../../shared/communication-intake-errors.ts';
 import {
   SubmitCommunicationRequestPayloadSchema,
@@ -30,7 +31,11 @@ const MODULE_KEY = 'communications.core';
 const MESSAGE_INTENT_PREPARED = 'communications.core.message-intent-prepared.v1' as const;
 
 const domainEvents = { [MESSAGE_INTENT_PREPARED]: MessageIntentPreparedPayloadSchema } as const;
-const ErrorSchema = Schema.Union([CommunicationRequestScopeMismatch, CommunicationDecisionUnavailable]);
+const ErrorSchema = Schema.Union([
+  CommunicationRequestScopeMismatch,
+  CommunicationRequestSourceMismatch,
+  CommunicationDecisionUnavailable,
+]);
 type Services = Effect.Success<ReturnType<typeof communicationIntakeService>>;
 
 const decidedResultOf = (stored: StoredCommunicationDecision, replayed: boolean): SubmitCommunicationRequestResult => {
@@ -85,6 +90,13 @@ export const handleSubmitCommunicationRequest = Effect.fn('SubmitCommunicationRe
     payload: SubmitCommunicationRequestPayload,
     context: ActionHandlerContext<typeof domainEvents, Services>,
   ) {
+    // `source.moduleKey` is a claim until it is bound to the verified caller module (see `source-caller.ts`).
+    if (!context.services.sourceCaller.isClaimedSource(payload.source.moduleKey)) {
+      return yield* new CommunicationRequestSourceMismatch({
+        code: 'communication_request_source_mismatch',
+        reason: 'The verified calling module is not the source module the request claims',
+      });
+    }
     if (!claimsTrustedScope(payload, context)) {
       return yield* new CommunicationRequestScopeMismatch({
         code: 'communication_request_scope_mismatch',

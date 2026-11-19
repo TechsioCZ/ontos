@@ -22,6 +22,7 @@ import {
 } from '../../src/actions/submit-communication-request.action.ts';
 import { communicationIntakeService } from '../../src/services/communication-intake.service.ts';
 import type { makeRuntimeDatabase } from './persistence.fixture.ts';
+import { asSourceWorker } from './source-worker-principal.ts';
 
 export type RuntimeDatabase = Effect.Success<ReturnType<typeof makeRuntimeDatabase>>;
 /** Every service the intake handler composes: the catalog and decision evaluator, the owner ports and Crypto. */
@@ -44,14 +45,23 @@ export interface IntakeRun {
 const COMPOSITION_REVISION = 'a'.repeat(64);
 const PRINCIPAL_ID = '00000000-0000-4000-8000-0000000000b1';
 
-const principalOf = (tenantId: string) =>
+/** The module the fictional requests name as their source, and therefore the verified caller by default. */
+export const FIXTURE_SOURCE_MODULE_KEY = 'fixture.source';
+
+const principalOf = (tenantId: string, callerModule: string) =>
   Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     authContextRef: 'job:communications-intake-tests:run:1',
     authMethod: 'system',
     principalId: PRINCIPAL_ID,
     tenantId,
   }).pipe(
-    Effect.map((principal) => ({ ...principal, correlationId: 'communications-intake-tests' })),
+    Effect.map((principal) =>
+      asSourceWorker(
+        { ...principal, correlationId: 'communications-intake-tests' },
+        callerModule,
+        COMPOSITION_REVISION,
+      ),
+    ),
     Effect.orDie,
   );
 
@@ -60,8 +70,9 @@ const runHandler = Effect.fn('CommunicationIntakeTest.runHandler')(function* run
   tenantId: string,
   request: SubmitCommunicationRequestPayload,
   invocationId: string,
+  callerModule: string,
 ) {
-  const scope = yield* principalOf(tenantId);
+  const scope = yield* principalOf(tenantId, callerModule);
   const collector = createActionCollector(
     submitCommunicationRequestAction.descriptor.domainEvents,
     'communications.core',
@@ -103,8 +114,9 @@ export const intakeRunnerOver = (database: RuntimeDatabase, ownerPorts: IntakeOw
     tenantId: string,
     request: SubmitCommunicationRequestPayload,
     invocationId = '00000000-0000-4000-8000-0000000000a9',
+    callerModule = FIXTURE_SOURCE_MODULE_KEY,
   ): Effect.Effect<IntakeRun, unknown> =>
     database
-      .inTenant(tenantId, (transaction) => runHandler(transaction, tenantId, request, invocationId))
+      .inTenant(tenantId, (transaction) => runHandler(transaction, tenantId, request, invocationId, callerModule))
       .pipe(Effect.provide(ownerPorts)),
 });

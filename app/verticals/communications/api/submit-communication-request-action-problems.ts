@@ -132,6 +132,8 @@ const mapDomainProblem = (error: DomainError): SubmitCommunicationRequestActionP
         submitCommunicationRequestActionProblem.unavailable('communication_decision_unavailable'),
       CommunicationRequestScopeMismatch: () =>
         submitCommunicationRequestActionProblem.forbidden('communication_request_scope_mismatch'),
+      CommunicationRequestSourceMismatch: () =>
+        submitCommunicationRequestActionProblem.forbidden('communication_request_source_mismatch'),
     }),
     Match.exhaustive,
   );
