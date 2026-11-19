@@ -106,6 +106,16 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
       expect(steps.indexOf(step), step.name).toBeGreaterThan(index(WARMUP_CLIENT));
     }
     const script = yield* (yield* FileSystem.FileSystem).readFileString(PROOFS_SCRIPT);
+    expect(script).toContain(
+      `E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"`,
+    );
+    const checkoutTest = yield* (yield* FileSystem.FileSystem).readFileString(
+      path.join(repository, 'app/scripts/tests/stage-n1-checkout.test.mts'),
+    );
+    expect(checkoutTest).toContain(
+      "createRequire(new URL('../../apps/shell-super-app/package.json', import.meta.url)).resolve(",
+    );
+    expect(checkoutTest).toContain('E2E_PLAYWRIGHT_MODULE: playwrightModule');
     for (const command of [
       'mise exec -- node scripts/ops/stage-warmup.mts',
       'mise exec -- node scripts/zerops/verify-service.mjs app',

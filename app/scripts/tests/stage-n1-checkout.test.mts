@@ -73,6 +73,30 @@ const probe = path.resolve(import.meta.dirname, '../ops/stage-n1-checkout.mts');
 const playwrightModule = createRequire(new URL('../../apps/shell-super-app/package.json', import.meta.url)).resolve(
   '@playwright/test',
 );
+
+it.effect('fails loudly with only an allowlisted category when Chromium is missing', () =>
+  Effect.gen(function* missingCheckoutBrowser() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const result = yield* collectToolingProcess(
+      ChildProcess.make('node', [probe, 'quote', '--origin', 'http://127.0.0.1:1', '--out', directory], {
+        cwd: path.resolve(import.meta.dirname, '../..'),
+        env: {
+          E2E_PLAYWRIGHT_MODULE: playwrightModule,
+          PLAYWRIGHT_BROWSERS_PATH: path.join(directory, sentinel),
+        },
+        extendEnv: true,
+      }),
+    );
+    const output = `${result.stdout}\n${result.stderr}`;
+    expect(result.status, output).toBe(1);
+    expect(output).toContain('Checkout proof failed: browser could not start');
+    expect(output).not.toContain(sentinel);
+    expect(output).not.toContain('Executable doesn');
+    expect(yield* fs.readDirectory(directory)).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const scenario of [
   { mode: 'sequence', status: 0 },
   { mode: 'empty', status: 3 },

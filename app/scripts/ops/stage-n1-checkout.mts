@@ -580,7 +580,7 @@ const command = Command.make(
       });
       const browser = yield* Effect.acquireRelease(
         Effect.tryPromise({
-          catch: () => new CheckoutProofFailure({ cause: PROOF_FAILED, code: 1 }),
+          catch: () => new CheckoutProofFailure({ cause: 'Checkout proof failed: browser could not start', code: 1 }),
           try: async () => await playwright.chromium.launch({ headless: true }),
         }),
         (owned) => Effect.promise(async () => await owned.close()),

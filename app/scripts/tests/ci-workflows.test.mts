@@ -157,6 +157,7 @@ it('reports the required Workspace gates check on every pull request and merge g
 
 /** A GitHub Actions `${{ … }}` expression, written without JavaScript template placeholders. */
 const expression = (body: string) => `\${{ ${body} }}`;
+const MATRIX_RUN_STEP = `Run ${expression('matrix.name')}`;
 const WorkflowStepSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   id: Schema.optional(Schema.String),
@@ -989,6 +990,79 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
+it('provisions the stage proof Chromium pin only for the tooling shard that actually collects the checkout test', () => {
+  const { steps, strategy } = readGateCommandJobs()[WORKSPACE_GATE_JOB];
+  const selector = steps.find(({ id }) => id === 'checkout-browser');
+  const restore = steps.find(({ id }) => id === 'checkout-chromium-cache');
+  const install = steps.find(
+    ({ name }) => name === "Install the checkout proof's pinned Chromium and system libraries",
+  );
+  const save = steps.find(
+    ({ name }) => name === "Save the checkout proof's pinned Chromium and system-library packages",
+  );
+  const run = steps.find(({ name }) => name === MATRIX_RUN_STEP);
+  expect(selector?.if).toBe("startsWith(matrix.name, 'Repository Tooling Tests (')");
+  expect(restore?.if).toBe("steps.checkout-browser.outputs.required == 'true'");
+  expect(install?.if).toBe(restore?.if);
+  expect(save?.if).toContain(restore?.if ?? 'missing');
+  expect(save?.if).toContain(DEMO_REF);
+  expect(install?.run).toContain(
+    'mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium',
+  );
+  expect(restore?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml')");
+  expect(restore?.with?.path).toContain('~/.cache/ms-playwright');
+  expect(restore?.with?.path).toContain('~/.cache/playwright-apt-debs');
+  const order = [selector, restore, install, save, run].map((step) => (step === undefined ? -1 : steps.indexOf(step)));
+  expect(order.every((index) => index >= 0)).toBe(true);
+  expect(order).toEqual(order.toSorted((a, b) => a - b));
+
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-checkout-shard-'));
+  try {
+    writeFileSync(path.join(directory, 'mise'), '#!/bin/bash\nshift 2\nexec "$@"\n', { mode: 0o755 });
+    writeFileSync(
+      path.join(directory, 'pnpm'),
+      '#!/bin/bash\nfor last; do :; done\nprintf %s "$FAKE_LIST" >"$last"\nexit "$((FAKE_LIST_STATUS))"\n',
+      { mode: 0o755 },
+    );
+    const probe = '/w/scripts/tests/stage-n1-checkout.test.mts';
+    const rows = strategy.matrix.include.filter(({ name }) => name.startsWith('Repository Tooling Tests ('));
+    for (const size of [3, 4]) {
+      const files = [...Array.from({ length: size }, (_, index) => `/w/scripts/tests/file-${index}.test.mts`), probe];
+      const owners = rows.filter(({ commands }) => {
+        const output = path.join(directory, 'output');
+        writeFileSync(output, '');
+        execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', selector?.run ?? 'exit 99'], {
+          cwd: fileURLToPath(new URL('../..', import.meta.url)),
+          env: {
+            CI_MATRICES_OVERLAY: MATRICES_OVERLAY,
+            COMMANDS: commands,
+            FAKE_LIST: JSON.stringify(files.map((file) => ({ file, type: 'file' }))),
+            GITHUB_OUTPUT: output,
+            PATH: `${directory}:${STEP_PATH}`,
+          },
+        });
+        const required = readFileSync(output, 'utf-8') === 'required=true\n';
+        const shard = /\s(?<shard>\d+\/\d+)\s+scripts/u.exec(commands)?.groups?.shard ?? 'missing';
+        expect(required, commands).toBe(weightedShard(shard, files).includes(probe));
+        return required;
+      });
+      expect(owners).toHaveLength(1);
+    }
+    expect(() =>
+      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', selector?.run ?? 'exit 99'], {
+        cwd: fileURLToPath(new URL('../..', import.meta.url)),
+        env: {
+          COMMANDS: rows[0]?.commands ?? '',
+          FAKE_LIST_STATUS: '1',
+          PATH: `${directory}:${STEP_PATH}`,
+        },
+      }),
+    ).toThrow();
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 it('provisions pinned Chromium before running N1 once in its own unit row', () => {
   const rows = readGateCommandJobs()[WORKSPACE_UNIT_JOB].strategy.matrix.include;
   expect(rows.filter(({ name }) => name === 'N1 storefront tests').map(({ commands }) => commands)).toEqual([
@@ -1002,7 +1076,7 @@ it('provisions pinned Chromium before running N1 once in its own unit row', () =
   const seed = steps.findIndex(({ name }) => name === "Seed apt with N1's cached Chromium system-library packages");
   const setup = steps.findIndex(({ name }) => name === "Run the row's package setup");
   const save = steps.findIndex(({ name }) => name === "Save N1's pinned Chromium and system-library packages");
-  const run = steps.findIndex(({ name }) => name === `Run ${expression('matrix.name')}`);
+  const run = steps.findIndex(({ name }) => name === MATRIX_RUN_STEP);
   expect(restore).toBeGreaterThan(-1);
   expect(seed).toBeGreaterThan(restore);
   expect(setup).toBeGreaterThan(seed);
@@ -1038,7 +1112,7 @@ it('restores same-run Node metadata only for unit rows that execute public contr
     ({ name }) => name === 'Download the same-run Node artifacts for unit contract fixtures',
   );
   const unpack = job.steps.findIndex(({ name }) => name === 'Unpack the Node artifacts for unit contract fixtures');
-  const run = job.steps.findIndex(({ name }) => name === `Run ${expression('matrix.name')}`);
+  const run = job.steps.findIndex(({ name }) => name === MATRIX_RUN_STEP);
   expect(download !== -1 && download < unpack && unpack < run).toBe(true);
   expect(job.steps[download]?.uses).toBe('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
   expect(job.steps[download]?.with).toEqual({

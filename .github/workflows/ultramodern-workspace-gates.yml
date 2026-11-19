@@ -320,10 +320,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
         include:
-          - {
-              shard: 1,
-              units: apps/shell-super-app verticals/commerce-customer-context verticals/catalog,
-            }
+          - { shard: 1, units: apps/shell-super-app verticals/commerce-customer-context verticals/catalog }
           - {
               shard: 2,
               units: verticals/legal-agreements verticals/sales-insights verticals/tagging verticals/merchandise verticals/payment-term-catalog verticals/availability,
@@ -481,6 +478,62 @@ jobs:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
           save-node-modules: ${{ matrix.typescript-build == true }}
           save-store: ${{ matrix.typescript-build == true }}
+
+      # Use the same listing, weights and dealer as the tooling command; new files may move the probe to another shard.
+      - name: Find the tooling shard that runs the checkout browser proof
+        if: startsWith(matrix.name, 'Repository Tooling Tests (')
+        id: checkout-browser
+        working-directory: app
+        env:
+          COMMANDS: ${{ matrix.commands }}
+        run: |
+          [[ "$COMMANDS" =~ \ ([1-9][0-9]*)/([1-9][0-9]*)\ scripts\  ]]
+          index="${BASH_REMATCH[1]}"
+          count="${BASH_REMATCH[2]}"
+          listing="$(mktemp)"
+          trap 'rm -f "$listing"' EXIT
+          mise exec -- pnpm exec rstest list --project scripts --filesOnly --json "$listing"
+          matrices=(scripts/ci-matrices.json)
+          [ -z "${CI_MATRICES_OVERLAY:-}" ] || matrices+=("$CI_MATRICES_OVERLAY")
+          weights="$(jq -cs 'map(."test-weights" // {}) | add' "${matrices[@]}")"
+          files="$(jq -r --argjson weights "$weights" --argjson count "$count" --argjson index "$index" \
+            --argjson fallback "${CI_DEFAULT_TEST_SECONDS:-20}" -f scripts/ci/rstest-weighted-shard.jq "$listing")"
+          if grep -Eq '(^|/)scripts/tests/stage-n1-checkout\.test\.mts$' <<<"$files"; then
+            echo 'required=true' >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore the checkout proof's pinned Chromium and system-library packages
+        if: steps.checkout-browser.outputs.required == 'true'
+        id: checkout-chromium-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-apt-debs
+          key: playwright-checkout-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+      # The probe and stage-proofs.sh resolve Shell's @playwright/test, not the root playwright-core used by N1.
+      - name: Install the checkout proof's pinned Chromium and system libraries
+        if: steps.checkout-browser.outputs.required == 'true'
+        working-directory: app
+        run: |
+          if [[ -d ~/.cache/playwright-apt-debs ]]; then
+            find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec sudo cp {} /var/cache/apt/archives/ \;
+          fi
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+          mkdir -p ~/.cache/playwright-apt-debs
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
+
+      - name: Save the checkout proof's pinned Chromium and system-library packages
+        if: >-
+          success() && steps.checkout-browser.outputs.required == 'true' &&
+          steps.checkout-chromium-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/demo/sales-crm'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-apt-debs
+          key: ${{ steps.checkout-chromium-cache.outputs.cache-primary-key }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -794,7 +847,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm authorization:catalog:artifact:check
-
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.

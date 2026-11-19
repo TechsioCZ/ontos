@@ -147,6 +147,7 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
       'app/scripts/zerops/reuse-shard-units.test.mts',
     ],
     ['app/scripts/zerops/app-boot-stages.sh', 'app/scripts/zerops/app-boot-stages.test.mts'],
+    ['app/scripts/tests/stage-n1-checkout.test.mts'],
     ['app/scripts/tests/ci-workflows.test.mts', 'docs/README.md'],
     // The merge planner reads its verdict table; scripts/merge/plan.test.mts proves the table, 44284859528 ran full.
     ['app/docs/architecture/MERGING.md'],

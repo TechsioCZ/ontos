@@ -501,6 +501,7 @@ it('collects every executable test in a CI job or names its manual environment',
     }),
   );
   const collected = new Set<string>();
+  let checkoutCollections = 0;
   const weightedShards = new Map<string, string[]>();
   const collect = (
     directory: string,
@@ -523,6 +524,9 @@ it('collects every executable test in a CI job or names its manual environment',
           continue;
         }
         collected.add(file);
+        if (file === 'scripts/tests/stage-n1-checkout.test.mts') {
+          checkoutCollections += 1;
+        }
       }
     }
   };
@@ -534,7 +538,7 @@ it('collects every executable test in a CI job or names its manual environment',
     },
     runPart(directory: string, part: string, seen: readonly string[]) {
       const runner = /\b(?:rstest(?:\.js)?|vitest)\s+(?<args>.*)/u.exec(part)?.groups?.args;
-      if (runner !== undefined) {
+      if (runner !== undefined && !/^\s*list\b/u.test(runner)) {
         commands.runRunner(directory, runner);
       }
       if (part.includes('rstest-weighted-shard.sh')) {
@@ -593,7 +597,10 @@ it('collects every executable test in a CI job or names its manual environment',
         ...(weightedShards.get(family) ?? []),
         `${shard?.index ?? ''}/${shard?.count ?? ''}`,
       ]);
-      collect(target, [shard?.project ?? 'missing']);
+      // A complete weighted family collectively runs its project once, not once per shard.
+      if (weightedShards.get(family)?.length === 1) {
+        collect(target, [shard?.project ?? 'missing']);
+      }
     },
   };
   const collectIntegration = () => {
@@ -632,6 +639,7 @@ it('collects every executable test in a CI job or names its manual environment',
     );
   }
   collectIntegration();
+  expect(checkoutCollections, 'The checkout browser proof must run in exactly one CI job').toBe(1);
   for (const file of browserCollection({
     appRoot: app,
     browserEnabled: matrices.integration.some((row) => row.suite === 'browser'),
