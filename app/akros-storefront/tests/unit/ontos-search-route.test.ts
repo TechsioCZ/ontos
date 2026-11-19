@@ -250,12 +250,14 @@ async function renderSearches(query: string, concurrent = false) {
         stdio: ["pipe", "pipe", "pipe", "ipc"],
       },
     );
+    const { stdin, stdout, stderr: errors } = child;
+    if (!stdin || !stdout || !errors) throw new Error("RSC process pipes were not created");
     let stderr = "";
     let completed: RenderResult | undefined;
-    child.stderr.on("data", (chunk) => {
+    errors.on("data", (chunk) => {
       stderr += String(chunk);
     });
-    child.stdout.resume();
+    stdout.resume();
     child.on("error", reject);
     child.on("message", (message: { phase: string } | RenderResult) => {
       if (message.phase === "first-response") {
@@ -268,7 +270,7 @@ async function renderSearches(query: string, concurrent = false) {
         reject(new Error(`React server render exited ${code}: ${stderr}`));
       else resolve(completed);
     });
-    child.stdin.end(bundle.outputFiles[0].text);
+    stdin.end(bundle.outputFiles[0].text);
   });
   // This control proves the real renderer's cache dispatcher actually memoized across awaits.
   expect(result.probe).toEqual([1, 1]);

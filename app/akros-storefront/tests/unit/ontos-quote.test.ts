@@ -1,16 +1,21 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CatalogProduct } from "@/ontos/catalog-types";
 import { quoteCart } from "@/ontos/quote";
 import { POST as quoteRoute } from "@/app/api/ontos/cart/route";
 import { testMarket } from "../support/market-fixture";
 import { browserAt, serveHttp } from "../support/http";
 import { nextRequest } from "../support/next-request";
 
-const product = (variant: Record<string, unknown>) => ({
+const product = (
+  variant: Record<string, unknown>,
+  constraints: Pick<CatalogProduct, "minimumQuantity" | "packageQuantity"> = { minimumQuantity: 1 },
+) => ({
   id: "p",
   slug: "vruty",
   name: "Vruty",
   active: true,
   vatRate: 21,
+  ...constraints,
   availability: variant.availability ?? "IN_STOCK",
   variantSummary: { count: 1, minGrossPriceMinor: 121, stockOnHand: 1000, units: ["ks"] },
   variantRecords: [
@@ -175,11 +180,10 @@ describe("server cart quote", () => {
     catalog = {
       revision: 3,
       products: [
-        {
-          ...product({ minimumQuantity: 1, stockOnHand: 5 }),
-          minimumQuantity: 10,
-          packageQuantity: 10,
-        },
+        product(
+          { minimumQuantity: 1, stockOnHand: 5 },
+          { minimumQuantity: 10, packageQuantity: 10 },
+        ),
       ],
     };
     const quote = await quoteInRequest(cart(5, 121));

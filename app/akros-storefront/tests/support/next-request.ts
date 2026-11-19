@@ -7,7 +7,7 @@ import { workUnitAsyncStorage } from "next/dist/server/app-render/work-unit-asyn
 
 /** The same request/work stores Next uses for headers(), cookies() and after(). */
 export function nextRequest(url = "http://shop.test/", init?: RequestInit) {
-  const request = new NextRequest(url, init);
+  const request = new NextRequest(new Request(url, init));
   const closed: Array<() => void> = [];
   const pending: Promise<unknown>[] = [];
   const errors: unknown[] = [];
@@ -17,7 +17,7 @@ export function nextRequest(url = "http://shop.test/", init?: RequestInit) {
     buildId: "test",
     previouslyRevalidatedTags: [],
     renderOpts: {
-      cacheLifeProfiles: {},
+      cacheLifeProfiles: { default: { stale: 300, revalidate: 900, expire: 31_536_000 } },
       staticPageGenerationTimeout: 60,
       cacheComponents: false,
       validationLevel: "warning",

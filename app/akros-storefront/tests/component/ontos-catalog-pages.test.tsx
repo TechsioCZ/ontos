@@ -1,16 +1,10 @@
 // @vitest-environment node
 import { Window, type Element } from "happy-dom";
 import type { ReactNode } from "react";
-import { IncomingMessage, ServerResponse } from "node:http";
-import { Socket } from "node:net";
-import NextApp, { type AppProps } from "next/app";
-import { AppRouterContext } from "next/dist/server/route-modules/pages/vendored/contexts/app-router-context";
+import { renderToReadableStream } from "react-dom/server.node";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { adaptForAppRouterInstance } from "next/dist/shared/lib/router/adapters";
-import NextDocument from "next/document";
-import { renderToHTML, type RenderOpts } from "next/dist/server/render";
-import { PagesRouteModule } from "next/dist/server/route-modules/pages/module";
-import { RouteKind } from "next/dist/server/route-kind";
-import { imageConfigDefault } from "next/dist/shared/lib/image-config";
+import singletonRouter from "next/router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CategoryPage from "@/app/kategorie/[slug]/page";
@@ -131,107 +125,30 @@ afterEach(async () => {
   }
 });
 
-/** Next's real server renderer supplies its real ServerRouter and awaits async children via Fizz. */
-function ServerApp(props: AppProps) {
-  return (
-    <AppRouterContext.Provider value={adaptForAppRouterInstance(props.router)}>
-      <NextApp {...props} />
-    </AppRouterContext.Provider>
-  );
-}
-
+/** React's public server renderer awaits the real async page and its async children. */
 async function renderPage(page: () => Promise<ReactNode>) {
   return request.run(async () => {
     const content = await page();
-    const Component = () => (
-      <StorefrontProviders>
-        <CartProvider storage={null}>{content}</CartProvider>
-      </StorefrontProviders>
+    const errors: unknown[] = [];
+    const stream = await renderToReadableStream(
+      <AppRouterContext.Provider value={adaptForAppRouterInstance(singletonRouter)}>
+        <StorefrontProviders>
+          <CartProvider storage={null}>{content}</CartProvider>
+        </StorefrontProviders>
+      </AppRouterContext.Provider>,
+      {
+        onError: (error) => {
+          errors.push(error);
+        },
+      },
     );
-    const routeModule = new PagesRouteModule({
-      definition: {
-        kind: RouteKind.PAGES,
-        page: "/test",
-        pathname: "/test",
-        bundlePath: "pages/test",
-        filename: "test.tsx",
-      },
-      userland: { default: Component },
-      components: { App: ServerApp, Document: NextDocument },
-      distDir: ".next",
-      relativeProjectDir: ".",
-    });
-    const socket = new Socket();
-    const incoming = new IncomingMessage(socket);
-    incoming.url = "/cs";
-    incoming.method = "GET";
-    const outgoing = new ServerResponse(incoming);
-    const options: RenderOpts = {
-      Component,
-      App: ServerApp,
-      Document: NextDocument,
-      routeModule,
-      ComponentMod: {
-        default: Component,
-        routeModule,
-        getStaticProps: undefined,
-        getStaticPaths: undefined,
-        getServerSideProps: undefined,
-        config: undefined,
-        reportWebVitals: undefined,
-        unstable_getStaticProps: undefined,
-        unstable_getStaticPaths: undefined,
-        unstable_getStaticParams: undefined,
-        unstable_getServerProps: undefined,
-        unstable_getServerSideProps: undefined,
-        async handler() {
-          throw new Error("Only render is used by this SSR test route");
-        },
-      },
-      page: "/test",
-      pageConfig: {},
-      buildManifest: {
-        devFiles: [],
-        polyfillFiles: [],
-        lowPriorityFiles: [],
-        rootMainFiles: [],
-        rootMainFilesTree: {},
-        pages: { "/_app": [], "/test": [] },
-      },
-      reactLoadableManifest: {},
-      previewProps: undefined,
-      basePath: "",
-      images: imageConfigDefault,
-      optimizeCss: false,
-      nextScriptWorkers: false,
-      supportsDynamicResponse: false,
-      experimental: {},
-    };
-    try {
-      const result = await renderToHTML(
-        incoming,
-        outgoing,
-        "/test",
-        {},
-        options,
-        {
-          buildId: "catalog-pages-test",
-          deploymentId: undefined,
-          clientAssetToken: undefined,
-          customServer: undefined,
-        },
-        { isFallback: false, isDraftMode: false, developmentNotFoundSourcePage: undefined },
-      );
-      const html = await result.toUnchunkedString();
-      await network.idle();
-      // Parse the streamed HTML without replacing or writing the global document.
-      const browser = new Window();
-      browsers.push(browser);
-      const document = new browser.DOMParser().parseFromString(html, "text/html");
-      return document;
-    } finally {
-      socket.destroy();
-    }
+    await stream.allReady;
+    const html = await new Response(stream).text();
+    if (errors.length) throw new AggregateError(errors, "Catalog server render failed");
+    await network.idle();
+    const browser = new Window();
+    browsers.push(browser);
+    return new browser.DOMParser().parseFromString(html, "text/html");
   });
 }
 

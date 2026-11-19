@@ -4,6 +4,7 @@ import { fileURLToPath, URL as NodeURL } from "node:url";
 import { build } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as gateway from "@/ontos/gateway";
+import { withRetryClock } from "../support/clock";
 import { serveHttp } from "../support/http";
 import { nextRequest } from "../support/next-request";
 
@@ -95,8 +96,10 @@ async function render(
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     },
   );
+  const { stderr: errors } = child;
+  if (!errors) throw new Error("RSC process stderr pipe was not created");
   let stderr = "";
-  child.stderr.on("data", (chunk) => {
+  errors.on("data", (chunk) => {
     stderr += String(chunk);
   });
   try {
@@ -333,20 +336,24 @@ describe("OntOS gateway assertions", () => {
   it("waits out a deploy handoff of several unavailable responses before serving the read", async () => {
     for (let index = 0; index < 6; index += 1)
       responses.push(json(503, { code: "backend_unreachable" }));
-    expect(await read({ slug: "during-deploy" })).toMatchObject({
-      query: { slug: "during-deploy" },
+    await withRetryClock(async () => {
+      expect(await read({ slug: "during-deploy" })).toMatchObject({
+        query: { slug: "during-deploy" },
+      });
     });
-  }, 25_000);
+  });
   it("gives up on a read once the unavailable budget is spent", async () => {
     always = () => json(503, { code: "backend_unreachable" });
-    expect(await read().catch((error: unknown) => error)).toMatchObject({ status: 503 });
+    await withRetryClock(async () => {
+      expect(await read().catch((error: unknown) => error)).toMatchObject({ status: 503 });
+    });
     await network.idle();
     const readCalls = network.requests.filter((request) =>
       request.url.endsWith("/auth/api-key/gateway-read"),
     ).length;
     expect(readCalls).toBeGreaterThan(3);
     expect(readCalls).toBeLessThan(20);
-  }, 45_000);
+  });
   it("does not retry forbidden reads or serve an earlier result", async () => {
     await read();
     responses.push(json(403, { code: "forbidden" }));

@@ -28,9 +28,7 @@ describe("Featured card information", () => {
 
     expect(cards).toHaveLength(products.length);
     products.forEach((product, index) => {
-      expect(
-        within(cards[index]).getAllByRole("link", { name: product.name, exact: true }),
-      ).toHaveLength(2);
+      expect(within(cards[index]).getAllByRole("link", { name: product.name })).toHaveLength(2);
     });
   });
 

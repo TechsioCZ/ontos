@@ -87,7 +87,10 @@ let browser: Window | undefined;
 let screen: ReturnType<typeof within>;
 // The parser belongs to a separate happy-dom realm, not the Node test globals.
 const isRenderedElement = (value: unknown): value is HTMLElement =>
-  browser !== undefined && browser.HTMLElement.prototype.isPrototypeOf(value);
+  browser !== undefined &&
+  typeof value === "object" &&
+  value !== null &&
+  browser.HTMLElement.prototype.isPrototypeOf(value);
 const cleanup = () => {
   browser?.close();
   browser = undefined;

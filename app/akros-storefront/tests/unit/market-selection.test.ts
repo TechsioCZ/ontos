@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as MarketModule from "@/ontos/market";
 
-import { setTimeout } from "node:timers/promises";
+import { withRetryClock } from "../support/clock";
 import { Schema } from "effect";
 import { browserAt, serveHttp } from "../support/http";
 
@@ -176,6 +176,7 @@ beforeEach(async () => {
   market$ = await import("@/ontos/market");
 });
 afterEach(async () => {
+  vi.useRealTimers();
   try {
     await network.close();
   } finally {
@@ -302,15 +303,16 @@ describe("market resolution", () => {
   });
 
   it("caches the market catalog for 60 seconds", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     await market$.resolveStorefrontMarket("cs");
     await market$.resolveStorefrontMarket("sk");
     await network.idle();
     expect(catalogReads()).toBe(1);
-    await setTimeout(61_000);
+    vi.advanceTimersByTime(61_000);
     await market$.resolveStorefrontMarket("cs");
     await network.idle();
     expect(catalogReads()).toBe(2);
-  }, 80_000);
+  });
 
   it("requires merchandise to answer for the requested market in a supported currency", () => {
     expect(
@@ -391,8 +393,10 @@ describe("before any market exists", () => {
 
   it("reports a market owner outage instead of falling back", async () => {
     failure = { status: 503, code: "down" };
-    await expect(market$.resolveStorefrontMarket("cs")).rejects.toThrow(/down/);
+    await withRetryClock(() =>
+      expect(market$.resolveStorefrontMarket("cs")).rejects.toThrow(/down/),
+    );
     failure = { status: 400, code: "bad request", _tag: "OtherProblem" };
     await expect(market$.resolveStorefrontMarket("cs")).rejects.toThrow(/bad request/);
-  }, 45_000);
+  });
 });

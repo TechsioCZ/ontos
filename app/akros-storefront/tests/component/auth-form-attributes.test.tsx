@@ -27,12 +27,12 @@ const router = {
 afterEach(cleanup);
 
 function expectInput(id: string, attributes: Record<string, string>) {
-  const input = document.getElementById(id);
+  const input = document.querySelector<HTMLInputElement>(`input[id="${id}"]`);
   expect(input).toBeInstanceOf(HTMLInputElement);
   for (const [name, value] of Object.entries(attributes)) {
     expect(input?.getAttribute(name), `${id}: ${name}`).toBe(value);
   }
-  if (!(input instanceof HTMLInputElement)) throw new Error(`Missing input: ${id}`);
+  if (!input) throw new Error(`Missing input: ${id}`);
   return input;
 }
 

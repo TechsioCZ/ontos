@@ -57,7 +57,8 @@ export async function serveHttp(answer: (request: Request) => Response | Promise
       }
     },
     async close() {
-      server.closeAllConnections();
+      // server.close() drains active responses; destroying sockets first races
+      // outgoing.end() and makes Next prefetches report ECONNRESET.
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );

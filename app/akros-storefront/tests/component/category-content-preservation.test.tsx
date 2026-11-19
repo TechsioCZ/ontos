@@ -1,15 +1,9 @@
 // @vitest-environment node
-import { IncomingMessage, ServerResponse } from "node:http";
-import { Socket } from "node:net";
 import { Window, type Document } from "happy-dom";
-import NextApp, { type AppProps } from "next/app";
-import NextDocument from "next/document";
-import { AppRouterContext } from "next/dist/server/route-modules/pages/vendored/contexts/app-router-context";
+import { renderToReadableStream } from "react-dom/server.node";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { adaptForAppRouterInstance } from "next/dist/shared/lib/router/adapters";
-import { renderToHTML, type RenderOpts } from "next/dist/server/render";
-import { PagesRouteModule } from "next/dist/server/route-modules/pages/module";
-import { RouteKind } from "next/dist/server/route-kind";
-import { imageConfigDefault } from "next/dist/shared/lib/image-config";
+import singletonRouter from "next/router";
 import { expect, it, vi } from "vitest";
 
 import type { CatalogCategory } from "@/ontos/catalog-types";
@@ -62,14 +56,6 @@ const categories: CatalogCategory[] = [
     position: 2,
   },
 ];
-
-function ServerApp(props: AppProps) {
-  return (
-    <AppRouterContext.Provider value={adaptForAppRouterInstance(props.router)}>
-      <NextApp {...props} />
-    </AppRouterContext.Provider>
-  );
-}
 
 async function renderCategory(compact: boolean) {
   // Each representation gets fresh real catalog caches and the same native Next/React runtime.
@@ -134,7 +120,6 @@ async function renderCategory(compact: boolean) {
     headers: { "x-akros-market-locale": "cs" },
   });
   const browser = new Window();
-  const socket = new Socket();
   try {
     return await request.run(async () => {
       // Warm the price-free layout navigation before the category's bounded content read.
@@ -161,82 +146,21 @@ async function renderCategory(compact: boolean) {
           </BrandProvider>
         </MarketProvider>
       );
-      const routeModule = new PagesRouteModule({
-        definition: {
-          kind: RouteKind.PAGES,
-          page: "/test",
-          pathname: "/test",
-          bundlePath: "pages/test",
-          filename: "test.tsx",
-        },
-        userland: { default: Component },
-        components: { App: ServerApp, Document: NextDocument },
-        distDir: ".next",
-        relativeProjectDir: ".",
-      });
-      const incoming = new IncomingMessage(socket);
-      incoming.url = "/cs/kategorie/srouby";
-      incoming.method = "GET";
-      const outgoing = new ServerResponse(incoming);
-      const options: RenderOpts = {
-        Component,
-        App: ServerApp,
-        Document: NextDocument,
-        routeModule,
-        ComponentMod: {
-          default: Component,
-          routeModule,
-          getStaticProps: undefined,
-          getStaticPaths: undefined,
-          getServerSideProps: undefined,
-          config: undefined,
-          reportWebVitals: undefined,
-          unstable_getStaticProps: undefined,
-          unstable_getStaticPaths: undefined,
-          unstable_getStaticParams: undefined,
-          unstable_getServerProps: undefined,
-          unstable_getServerSideProps: undefined,
-          async handler() {
-            throw new Error("This route only renders the category");
+      const errors: unknown[] = [];
+      const stream = await renderToReadableStream(
+        <AppRouterContext.Provider value={adaptForAppRouterInstance(singletonRouter)}>
+          <Component />
+        </AppRouterContext.Provider>,
+        {
+          onError: (error) => {
+            errors.push(error);
           },
         },
-        page: "/test",
-        pageConfig: {},
-        buildManifest: {
-          devFiles: [],
-          polyfillFiles: [],
-          lowPriorityFiles: [],
-          rootMainFiles: [],
-          rootMainFilesTree: {},
-          pages: { "/_app": [], "/test": [] },
-        },
-        reactLoadableManifest: {},
-        previewProps: undefined,
-        basePath: "",
-        images: imageConfigDefault,
-        optimizeCss: false,
-        nextScriptWorkers: false,
-        supportsDynamicResponse: false,
-        experimental: {},
-      };
-      const result = await renderToHTML(
-        incoming,
-        outgoing,
-        "/test",
-        {},
-        options,
-        {
-          buildId: "category-content-test",
-          deploymentId: undefined,
-          clientAssetToken: undefined,
-          customServer: undefined,
-        },
-        { isFallback: false, isDraftMode: false, developmentNotFoundSourcePage: undefined },
       );
-      const document = new browser.DOMParser().parseFromString(
-        await result.toUnchunkedString(),
-        "text/html",
-      );
+      await stream.allReady;
+      const html = await new Response(stream).text();
+      if (errors.length) throw new AggregateError(errors, "Category server render failed");
+      const document = new browser.DOMParser().parseFromString(html, "text/html");
       await network.idle();
       const queries = await Promise.all(
         network.requests.map(async (read) => (await read.json()).query?.view?.storefrontCatalog),
@@ -252,7 +176,6 @@ async function renderCategory(compact: boolean) {
       return categoryInformation(document);
     });
   } finally {
-    socket.destroy();
     await request.close();
     await network.close();
     await browser.happyDOM.close();

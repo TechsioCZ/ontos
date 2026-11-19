@@ -219,12 +219,7 @@ describe("cart action notifications", () => {
     await user.click(screen.getByRole("button", { name: "Zvýšit množství: Tyč 8 mm / A4" }));
     await user.click(screen.getByRole("button", { name: "Obnovit" }));
     await waitFor(() => expect(lines()).toHaveLength(2));
-    expect(
-      lines().map((line: { variantId: string; quantity: number }) => [
-        line.variantId,
-        line.quantity,
-      ]),
-    ).toEqual([
+    expect(lines().map((line) => [line.variantId, line.quantity])).toEqual([
       ["rod-a2", 2.5],
       ["rod-a4", 1.5],
     ]);

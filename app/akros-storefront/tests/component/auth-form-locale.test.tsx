@@ -83,8 +83,8 @@ afterEach(async () => {
 });
 
 function input(id: string) {
-  const element = document.getElementById(id);
-  if (!(element instanceof HTMLInputElement)) throw new Error(`Missing input: ${id}`);
+  const element = document.querySelector<HTMLInputElement>(`input[id="${id}"]`);
+  if (!element) throw new Error(`Missing input: ${id}`);
   return element;
 }
 

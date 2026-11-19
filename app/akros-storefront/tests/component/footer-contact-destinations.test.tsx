@@ -12,7 +12,7 @@ describe("Footer contact destinations", () => {
 
     expect(
       within(screen.getByRole("contentinfo"))
-        .getByRole("link", { name: "737 591 849", exact: true })
+        .getByRole("link", { name: "737 591 849" })
         .getAttribute("href"),
     ).toBe("tel:+420737591849");
   });
@@ -22,7 +22,7 @@ describe("Footer contact destinations", () => {
 
     expect(
       within(screen.getByRole("contentinfo"))
-        .getByRole("link", { name: "akros@akros.cz", exact: true })
+        .getByRole("link", { name: "akros@akros.cz" })
         .getAttribute("href"),
     ).toBe("mailto:akros@akros.cz");
   });
@@ -54,7 +54,7 @@ describe("Footer contact destinations", () => {
 
     expect(
       within(screen.getByRole("contentinfo"))
-        .getByRole("link", { name: "Cookies", exact: true })
+        .getByRole("link", { name: "Cookies" })
         .getAttribute("href"),
     ).toBe("/cs/gdpr#cookies");
   });

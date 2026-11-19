@@ -111,8 +111,8 @@ describe("CatalogSidebar", () => {
     const rootLink = desktopNavigation.querySelector<HTMLAnchorElement>(
       'a[href="/cs/kategorie/nerezovy-spojovaci-material"]',
     );
-    const rootRow = rootLink?.closest('[data-part="row"]');
-    if (!(rootRow instanceof HTMLElement)) throw new Error("Catalog root row is missing");
+    const rootRow = rootLink?.closest<HTMLElement>('[data-part="row"]');
+    if (!rootRow) throw new Error("Catalog root row is missing");
     const trigger = within(rootRow).getByRole("button");
 
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
@@ -132,10 +132,10 @@ describe("CatalogSidebar", () => {
     const categoryLink = desktopNavigation.querySelector<HTMLAnchorElement>(
       'a[href="/cs/kategorie/koliky"]',
     );
-    const categoryRow = categoryLink?.closest('[data-part="row"]');
+    const categoryRow = categoryLink?.closest<HTMLElement>('[data-part="row"]');
 
     expect(categoryRow).not.toBeNull();
-    if (!(categoryRow instanceof HTMLElement)) throw new Error("Category row is missing");
+    if (!categoryRow) throw new Error("Category row is missing");
     expect(categoryRow.querySelector("[data-sf-branch-indicator]")).not.toBeNull();
   });
 });

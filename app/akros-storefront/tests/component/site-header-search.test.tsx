@@ -100,7 +100,7 @@ describe("SiteHeader search", () => {
           }),
     );
     browserAt(`${network.origin}/cs`);
-    if (hydrated) act(() => restore(new URL(`${network.origin}/cs`), null));
+    if (hydrated) act(() => restore(new URL(`${network.origin}/cs`), undefined));
   });
 
   it("shows BFF suggestions after two characters and closes them with Escape", async () => {
@@ -320,7 +320,7 @@ describe("SiteHeader search", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    act(() => restore(new URL("/cs/blog", network.origin), null));
+    act(() => restore(new URL("/cs/blog", network.origin), undefined));
     rendered.rerender(
       <NextRouter>
         <CartProvider storage={null}>

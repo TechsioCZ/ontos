@@ -73,7 +73,7 @@ async function serveEnrollment() {
       return;
     }
     let response: Response;
-    if (selected instanceof Response) response = selected;
+    if (!("response" in selected)) response = selected;
     else {
       active--;
       moves++;
@@ -112,7 +112,6 @@ async function serveEnrollment() {
       }
     },
     async close() {
-      server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
