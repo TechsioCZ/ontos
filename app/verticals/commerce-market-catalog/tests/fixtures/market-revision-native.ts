@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
-import { Deferred, Duration, Effect, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
+import { Deferred, Duration, Effect, Fiber, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient } from 'effect/http';
@@ -83,7 +83,10 @@ export const openMarketRevisionNativeChannel = Effect.fn('MarketRevisionNativeTr
                 ),
               ),
           ),
-          Effect.catch(() => Deferred.fail(failed, transportFailure())),
+          // A transport failure keeps its own reason (an oversized frame names itself); others are a lost channel.
+          Effect.catch((error) =>
+            Deferred.fail(failed, Schema.is(MarketRevisionNativeTransportError)(error) ? error : transportFailure()),
+          ),
         ),
       )
       .pipe(Effect.forkScoped);
@@ -239,13 +242,33 @@ export const spawnMarketRevisionNativeOwner = Effect.fn('MarketRevisionNativeLau
       stdout: 'pipe',
     });
     yield* Effect.addFinalizer(() => channel.beginClose);
-    yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+    // The last few kilobytes of the child's stderr name why it stopped (a module that failed to load, a crash).
+    const stderrTail = yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.runFold(
+        () => '',
+        (held, text) => `${held}${text}`.slice(-4000),
+      ),
+      Effect.orElseSucceed(() => ''),
+      Effect.forkScoped,
+    );
     yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
     const responseTimeout = Effect.timeoutOrElse({
       duration: Duration.seconds(60),
       orElse: () => Effect.fail(unavailable()),
     });
-    const childStopped = child.exitCode.pipe(Effect.andThen(Effect.fail(transportFailure())));
+    const childStopped = child.exitCode.pipe(
+      Effect.flatMap((code) => Effect.map(Fiber.join(stderrTail), (stderr) => ({ code, stderr }))),
+      Effect.flatMap(({ code, stderr }) =>
+        Effect.fail(
+          new MarketRevisionNativeTransportError({
+            reason: [`Market child exited with code ${String(code)} before its response`, stderr]
+              .filter((part) => part !== '')
+              .join('; stderr: '),
+          }),
+        ),
+      ),
+    );
     const nextResponse = Effect.raceFirst(channel.next, childStopped).pipe(responseTimeout);
     const ready = yield* nextResponse.pipe(
       responseTimeout,
