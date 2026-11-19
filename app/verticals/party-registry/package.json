@@ -5,6 +5,7 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/party-registry-client.ts",
+    "./api/party-detail": "./shared/apis/party-detail.ts",
     "./locales/cs": "./locales/cs/party-registry.json",
     "./locales/en": "./locales/en/party-registry.json",
     "./outbox-worker-host": "./src/worker-host/entry.ts",
