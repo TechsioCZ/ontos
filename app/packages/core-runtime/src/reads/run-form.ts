@@ -249,7 +249,10 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
     calls: getReadCalls(registration),
     facts: input.facts,
     scope: input.scope,
-    transactionMode: 'read_only' as const,
+    // Every transaction of the read, the opening owner check included, opens as main's read transaction
+    // does: a plain BEGIN, never READ ONLY. Owner rules decide inside the transaction and some lock rows
+    // (FOR UPDATE), which PostgreSQL refuses in a READ ONLY transaction.
+    transactionMode: 'session_default' as const,
   });
 
   // 2-3. The session decides the owner rule first; `run` starts only for an execution it allows. The

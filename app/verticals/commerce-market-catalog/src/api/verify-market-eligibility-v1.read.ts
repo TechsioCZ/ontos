@@ -106,7 +106,7 @@ const verifyMarketEligibilityV1Entrypoint = defineTenantModuleEntrypoint({
 
 /**
  * The trusted-scope check, then the purchasing subject's current restrictions from Customer Context
- * (before any transaction), then one READ ONLY owner transaction that verifies the observed proof.
+ * (before any transaction), then one owner transaction that verifies the observed proof.
  */
 export const runVerifyMarketEligibilityV1 = Effect.fn('VerifyMarketEligibilityV1Read.run')(function* run(
   input: VerifyMarketEligibilityV1Request,

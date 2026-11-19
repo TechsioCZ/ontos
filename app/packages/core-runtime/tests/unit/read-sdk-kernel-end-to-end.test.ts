@@ -296,12 +296,18 @@ it.layer(NodeCrypto.layer)('a { run } read on the SDK kernel', (suite) => {
       expect(openAtCall).toEqual([0]);
       // The read's own row and one row for its call, written together after run.
       expect(evidenceWrites).toBe(2);
-      // The module's transaction, the first one after the call, is READ ONLY from its first statement.
+      // The module's transaction, the first one after the call, opens as main's read transaction does: a
+      // plain BEGIN, with no access mode or isolation set.
       const [afterCall = -1] = statementsAtCall;
-      const moduleMode = statements
-        .slice(afterCall)
-        .find((statement) => /^set transaction|read (?:only|write)/iu.test(statement));
-      expect(moduleMode).toMatch(/read only/iu);
+      const afterCallStatements = statements.slice(afterCall);
+      const moduleTransaction = afterCallStatements.slice(
+        0,
+        afterCallStatements.findIndex((statement) => /^commit/iu.test(statement)),
+      );
+      expect(moduleTransaction[0]).toMatch(/^begin$/iu);
+      expect(moduleTransaction.filter((statement) => /^set transaction|read (?:only|write)/iu.test(statement))).toEqual(
+        [],
+      );
     }),
   );
 

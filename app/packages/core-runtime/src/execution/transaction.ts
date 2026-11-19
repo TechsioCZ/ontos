@@ -1,6 +1,6 @@
 /**
- * The transaction capability's engine: one owner transaction per use, READ ONLY for a read from
- * BEGIN, fenced to the admitted composition revision, scoped, sealed, owner rule decided, services
+ * The transaction capability's engine: one owner transaction per use, opened in the execution's
+ * `transactionMode`, fenced to the admitted composition revision, scoped, sealed, owner rule decided, services
  * built by the operation's own factory, body run with its forks joined, the handle revoked, then
  * commit or rollback. Kind-neutral: it never sees a read type (see `kernel-transactions.ts`).
  */
@@ -155,7 +155,7 @@ const fence = (transaction: CoreTransaction, request: TransactionRequest) => {
   return lockApplicationCompositionAuthority(
     transaction,
     revision,
-    request.execution.transactionMode === 'read_only' ? 'read' : 'write',
+    request.execution.transactionMode === 'read_write' ? 'write' : 'read',
   ).pipe(
     Effect.asVoid,
     Effect.catchIf(Schema.is(ApplicationCompositionAuthorityError), (failure) =>
@@ -191,11 +191,13 @@ const openerCause = (cause: Cause.Cause<unknown>): Cause.Cause<TransactionAborte
   return Cause.fromReasons(reasons);
 };
 
-const driverConfig = (request: TransactionRequest) =>
-  ({
-    accessMode: request.execution.transactionMode === 'read_only' ? 'read only' : 'read write',
-    isolationLevel: 'read committed',
-  }) as const;
+/** No config for `session_default`: the driver then issues BEGIN and nothing else. */
+const driverConfig = (request: TransactionRequest) => {
+  const mode = request.execution.transactionMode;
+  return mode === 'session_default'
+    ? undefined
+    : ({ accessMode: mode === 'read_only' ? 'read only' : 'read write', isolationLevel: 'read committed' } as const);
+};
 
 /**
  * The contract's steps 2 to 5 inside the driver transaction (step 1, the mode, is the driver config):

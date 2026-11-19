@@ -227,7 +227,7 @@ export interface CustomerPriceGroupResolutionSteps {
 
 /**
  * Three steps, so no Catalog call runs while the owner's transaction is open:
- * 1. one READ ONLY transaction loads the profile and its current assignment set;
+ * 1. one owner transaction loads the profile and its current assignment set;
  * 2. with no transaction open, the Catalog decides the one current assignment;
  * 3. a second transaction proves the same set is still current at the same instant, and observes.
  * Catalog failures stay unavailability: they never collapse into NONE, which would grant default pricing.

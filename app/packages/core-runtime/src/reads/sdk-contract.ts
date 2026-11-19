@@ -1,5 +1,5 @@
 /**
- * Private contract of the read adapter of the execution kernel: everything read-only that the neutral
+ * Private contract of the read adapter of the execution kernel: everything read-specific that the neutral
  * engine (`execution/contract.ts`) must not know. Not exported from the package.
  */
 import type { Effect, Schema } from 'effect';
@@ -120,9 +120,10 @@ export interface RunFormReadInput {
  *    with (`input.lease`), which the lease and the gateway delegation recognise by identity; a
  *    schema-made copy or the pre-scope principal is refused. The read runtime provides the
  *    `OwnerAuthorizationOverlay` it uses today (`failClosedOwnerAuthorizationOverlay` where it has none).
- * 2. Opens a kernel session with `READ_EXECUTION_BUDGET` and `transactionMode: 'read_only'`, inside
- *    `input.lease` so requirement lookups resolve. `open` decides the owner rule first; its failure
- *    goes to step 5 and no module code runs.
+ * 2. Opens a kernel session with `READ_EXECUTION_BUDGET` and `transactionMode: 'session_default'` (a
+ *    plain BEGIN, the access mode and isolation of main's read transaction: owner rules decide inside
+ *    it and some lock rows), inside `input.lease` so requirement lookups resolve. `open` decides the
+ *    owner rule first; its failure goes to step 5 and no module code runs.
  * 3. Runs `run(decodedInput, context)` with `context = { ...capabilities, access, deniedFieldPaths
  *    (when `usesAccessGate`), listAccess, readKey, scope }`.
  * 4. Success, and `session.ownerDenied` is false: decode the result with `Schema.toType(resultSchema)`

@@ -8,13 +8,15 @@ import type { OwnerBinding, TransactionRequest } from './contract.ts';
  * Opens one owner transaction and runs a module function in it (`execution/transaction.ts`).
  * Obligations, in this order inside one `CoreDatabase` transaction:
  *
- * 1. The mode is set by the driver's transaction config, which emits it as the first statements
- *    after BEGIN: `executor.transaction(body, { accessMode: 'read only' | 'read write', isolationLevel:
- *    'read committed' })`. The fence, the clock, the scope install (including
- *    `trust.establish_gateway_scope` for a gateway-grant role), the seal and the owner rule all run
- *    under it.
+ * 1. The mode is the execution's `transactionMode`. `session_default` is a plain BEGIN, exactly as
+ *    main opens a read transaction; `read_only` and `read_write` pass the driver's transaction config,
+ *    which emits it as the first statements after BEGIN: `executor.transaction(body, { accessMode:
+ *    'read only' | 'read write', isolationLevel: 'read committed' })`. The fence, the clock, the scope
+ *    install (including `trust.establish_gateway_scope` for a gateway-grant role), the seal and the
+ *    owner rule all run under it.
  * 2. Fence: when `facts.compositionRevision` is defined, `lockApplicationCompositionAuthority(tx, revision,
- *    'read')`; a failure is `TransactionAborted('composition_changed')`.
+ *    'read')` (`'write'` for `read_write`), which also requires READ COMMITTED; a failure is
+ *    `TransactionAborted('composition_changed')`.
  * 3. `installOperationalScope(tx, scope)`, then `owner.seal`; its `close` runs when the body ends.
  * 4. Clock: `statement_timestamp()` of one statement issued now (a new helper next to
  *    `trustedTransactionTime` in `operations/transaction-time.ts`) is `TransactionFacts.operationAt`:

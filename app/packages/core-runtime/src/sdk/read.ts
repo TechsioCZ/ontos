@@ -11,7 +11,7 @@
  *   the neutral capabilities (`call`, `transaction`) plus the read's own facts and answers, and returns
  *   the read's answer. The descriptor declares every call it can make in `calls`.
  *
- * Read-only things live here and nowhere in the neutral SDK: list access, denied fields, access
+ * Read-specific things live here and nowhere in the neutral SDK: list access, denied fields, access
  * questions and read evidence.
  */
 import { Schema } from 'effect';
