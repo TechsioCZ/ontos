@@ -1,4 +1,4 @@
-import { Cause, DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ExecutionRuleViolation } from '../../src/execution/contract.ts';
@@ -86,6 +86,53 @@ it.effect('dies as the kernel does on a call inside a transaction, a nested tran
     const after = yield* standIn.call('resolve', { id: 'a' });
     expect(Schema.is(CallUnavailableSchema)(after)).toBe(true);
     expect(Option.isNone(callAnswer(after))).toBe(true);
+  }),
+);
+
+it.effect('dies call_inside_transaction for a transaction while a forked call has not answered', () =>
+  Effect.gen(function* standInCallInFlight() {
+    const release = yield* Deferred.make<null>();
+    const standIn = makeExecutionStandIn(calls, {
+      answers: {
+        resolve: () =>
+          Deferred.await(release).pipe(Effect.as(CallUnavailableSchema.make({ reason: 'slow', retryable: true }))),
+      },
+      operationAt,
+      services: () => ({}),
+    });
+    const call = yield* Effect.forkChild(standIn.call('resolve', { id: 'a' }), { startImmediately: true });
+    expect(ruleOf(yield* Effect.exit(standIn.transaction(() => Effect.void)))).toBe('call_inside_transaction');
+    yield* Deferred.succeed(release, null);
+    yield* Fiber.join(call);
+    // Once it answered, or once it was interrupted, a transaction opens.
+    yield* standIn.transaction(() => Effect.void);
+    const stalled = makeExecutionStandIn(calls, {
+      answers: { resolve: () => Effect.never },
+      operationAt,
+      services: () => ({}),
+    });
+    const pending = yield* Effect.forkChild(stalled.call('resolve', { id: 'b' }), { startImmediately: true });
+    yield* Fiber.interrupt(pending);
+    expect(yield* stalled.transaction(() => Effect.succeed('after'))).toBe('after');
+  }),
+);
+
+it.effect('ends a transaction whose body throws before it returns an effect', () =>
+  Effect.gen(function* standInThrowingBody() {
+    const standIn = makeExecutionStandIn(calls, { answers: {}, operationAt, services: () => ({}) });
+    const thrown = yield* Effect.exit(
+      standIn.transaction((): Effect.Effect<void> => {
+        throw new Error('built badly');
+      }),
+    );
+    expect(Exit.isFailure(thrown)).toBe(true);
+    expect(yield* standIn.transaction(() => Effect.succeed('next'))).toBe('next');
+    expect(standIn.steps).toEqual([
+      { kind: 'begin', sequence: 1 },
+      { kind: 'end', sequence: 1 },
+      { kind: 'begin', sequence: 2 },
+      { kind: 'end', sequence: 2 },
+    ]);
   }),
 );
 

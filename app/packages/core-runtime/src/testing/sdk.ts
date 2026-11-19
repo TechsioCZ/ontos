@@ -3,7 +3,8 @@
  * test that runs a module's function (a `{ run }` read today) without Core's runtime.
  *
  * They keep the kernel's one runtime rule, so a module test fails the way production would: a call
- * while a transaction is open dies `call_inside_transaction`, a transaction inside another dies
+ * while a transaction is open, or a transaction while a forked call has not answered, dies
+ * `call_inside_transaction`, a transaction inside another dies
  * `nested_transaction`, a call the descriptor does not declare dies `undeclared_call`, and a write call
  * dies `write_call_reserved` until the Action adapter defines its outcomes. Every call
  * answers with the test's typed answer for that name; Core's own work (requirement, caller identity,
@@ -96,6 +97,7 @@ export const makeExecutionStandIn = <Services, const Calls extends DeclaredCalls
 ): ExecutionStandIn<Services, Calls> => {
   const steps: ExecutionStandInStep[] = [];
   let open = false;
+  let callsInFlight = 0;
   let sequence = 0;
 
   const call = asCallCapability<Calls>((name, input) =>
@@ -114,7 +116,15 @@ export const makeExecutionStandIn = <Services, const Calls extends DeclaredCalls
         return Effect.die(new ExecutionStandInAnswerMissing({ callName: name }));
       }
       steps.push({ input, kind: 'call', name });
-      return answer(input);
+      callsInFlight += 1;
+      // Until the answer is in, or the call is interrupted, no transaction opens beside it.
+      return Effect.suspend(() => answer(input)).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            callsInFlight -= 1;
+          }),
+        ),
+      );
     }),
   );
 
@@ -123,11 +133,17 @@ export const makeExecutionStandIn = <Services, const Calls extends DeclaredCalls
       if (open) {
         return violation('nested_transaction', 'A transaction opened inside another one');
       }
+      if (callsInFlight > 0) {
+        return violation('call_inside_transaction', 'A transaction opened while a call had not answered');
+      }
       open = true;
       sequence += 1;
       const current = sequence;
       steps.push({ kind: 'begin', sequence: current });
-      return body(script.services(current), { operationAt: script.operationAt, sequence: current }).pipe(
+      // Built under the same finaliser: a body that throws before it returns an effect still ends here.
+      return Effect.suspend(() =>
+        body(script.services(current), { operationAt: script.operationAt, sequence: current }),
+      ).pipe(
         Effect.ensuring(
           Effect.sync(() => {
             open = false;
