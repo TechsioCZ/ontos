@@ -1,9 +1,11 @@
 // @rstest-environment happy-dom
 // The new stay form owns the guest the person chose. A later guest search only offers other parties: whether it omits
 // the chosen guest or fails for now, the guest stays chosen and labelled in the real picker, Uložit stays enabled, and
-// the save sends the chosen guest's party reference. A newer name of the chosen guest replaces the kept one. When Party
+// the save sends the chosen guest's party reference. A failed search says so in the stay form, describes the guest
+// picker and leaves the page's own state alone. A newer name of the chosen guest replaces the kept one. When Party
 // Registry refuses the read, the form closes with its guest, the loaded records hide and no earlier search answers any
-// more. The picker's own clear action drops the guest and keeps the rest of the form. The real page, picker, router and i18n run; the lease owner's records and
+// more. The picker's own clear action, named after the guest it drops, drops the guest and keeps the rest of the form.
+// The real page, picker, router and i18n run; the lease owner's records and
 // Action, the Property register, the Agreement register and Party Registry's customer list answer in process through
 // their HttpApi contracts behind the Shell's gateway issuer.
 import { saveLabelsFor } from '@app/admin-ui';
@@ -29,8 +31,10 @@ import { Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 
+import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import {
   CustomerListApi,
+  CustomerListAuthenticationProblemSchema,
   CustomerListForbiddenProblemSchema,
   CustomerListResponseSchema,
   CustomerListUnavailableProblemSchema,
@@ -132,6 +136,21 @@ const forbidden = CustomerListForbiddenProblemSchema.make({
   title: 'Customer list forbidden',
   type: 'https://ontos.dev/problems/customer-list-forbidden',
 });
+const signedOut = CustomerListAuthenticationProblemSchema.make({
+  detail: 'The session has expired.',
+  status: 401,
+  title: 'Authentication required',
+  type: 'https://ontos.dev/problems/authentication-required',
+});
+/** The Shell's gateway refusing the Party Registry audience before any request reaches the customer list. */
+const gatewayForbidden = GatewayForbiddenProblemSchema.make({
+  detail: 'The authenticated principal cannot open this module in the current company.',
+  status: GatewayForbiddenProblemSchema.fields.status.literal,
+  title: 'Gateway context forbidden',
+  type: 'https://ontos.dev/problems/gateway-forbidden',
+});
+/** Whether the Shell's gateway refuses Party Registry; a test switches it on after the pick. */
+let gatewayRefusesDirectory = false;
 const unavailable = CustomerListUnavailableProblemSchema.make({
   detail: 'The customer list is unavailable.',
   retryable: true,
@@ -144,7 +163,8 @@ const leases = Schema.decodeUnknownSync(RecordsResponseSchema)({ canWrite: true,
 const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: occupancyRef, revision: 8 });
 
 /** What Party Registry's customer list answers next; a test switches it between searches. */
-let listAnswer: Effect.Effect<typeof directory, typeof unavailable | typeof forbidden> = Effect.succeed(directory);
+let listAnswer: Effect.Effect<typeof directory, typeof unavailable | typeof forbidden | typeof signedOut> =
+  Effect.succeed(directory);
 /** A customer-list read that answers `held` waits at the server until the test releases it. */
 let heldRelease = Deferred.makeUnsafe<boolean>();
 const held = Effect.suspend(() => Deferred.await(heldRelease)).pipe(Effect.as(directory));
@@ -159,12 +179,15 @@ const PropertiesApi = PropertyRecordsApi.prefix('/property-portfolio-api');
 const AgreementsApi = AgreementsRecordsApi.prefix('/legal-agreements-api');
 const CustomersApi = CustomerListApi.prefix('/party-registry-api');
 const network = browserNetwork(
-  shellGatewayIssuer({
-    'legal-agreements': '/legal-agreements-api',
-    'party-registry': '/party-registry-api',
-    'property-leasing': '/property-leasing-api',
-    'property-portfolio': '/property-portfolio-api',
-  }).application,
+  shellGatewayIssuer(
+    {
+      'legal-agreements': '/legal-agreements-api',
+      'party-registry': '/party-registry-api',
+      'property-leasing': '/property-leasing-api',
+      'property-portfolio': '/property-portfolio-api',
+    },
+    (audience) => (gatewayRefusesDirectory && audience === 'party-registry' ? gatewayForbidden : undefined),
+  ).application,
   serveApi(
     OwnerRecordsApi,
     HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) => group.handle('execute', () => Effect.succeed(leases))),
@@ -234,13 +257,21 @@ const pickerSelect = (label: string) =>
     ),
   );
 const guestLabel = czech('property-leasing.demo.guest');
+/** The guest picker's trigger, the combobox a screen reader announces. */
+const guestTrigger = () =>
+  document.querySelector(
+    `[role="combobox"][aria-labelledby="${pickerSelect(guestLabel).getAttribute('aria-labelledby') ?? ''}"]`,
+  );
 /** What the guest picker's trigger shows. */
-const guestShown = () =>
-  document
-    .querySelector(
-      `[role="combobox"][aria-labelledby="${pickerSelect(guestLabel).getAttribute('aria-labelledby') ?? ''}"]`,
-    )
-    ?.textContent?.trim();
+const guestShown = () => guestTrigger()?.textContent?.trim();
+/** The texts that describe the guest picker to a screen reader. */
+const guestDescriptions = () =>
+  (guestTrigger()?.getAttribute('aria-describedby') ?? '')
+    .split(' ')
+    .filter((id) => id !== '')
+    .map((id) => document.querySelector(`[id="${id}"]`)?.textContent?.trim() ?? '');
+/** The clear action of the guest picker, by the name a screen reader announces for `name`. */
+const clearGuestLabel = (name: string) => czech('property-leasing.demo.clearGuest', { name });
 
 /** Types like a person: React sees a native input event. */
 const type = (selector: string, value: string) =>
@@ -298,10 +329,8 @@ const expectRefused = () => {
   expect(commands).toEqual([]);
 };
 
-/** Opens a new stay, picks the unit, the end date and Jana Nováková from a search. */
-const chooseNovakova = Effect.gen(function* chooseNovakova() {
-  yield* pinTestDocument;
-  yield* mountInRoute(<RecordsPage context={context} />, { path: 'najmy', url: '/cs/najmy' });
+/** Opens a new stay form on the mounted page. */
+const openStay = Effect.gen(function* openStay() {
   const newStay = czech('property-leasing.demo.newBooking');
   yield* waitUntil(() => buttons(newStay).some((candidate) => !candidate.disabled));
   yield* acted(() =>
@@ -310,6 +339,21 @@ const chooseNovakova = Effect.gen(function* chooseNovakova() {
       ?.click(),
   );
   yield* waitUntil(() => panel() !== undefined);
+});
+
+/** Closes the stay form with typed input: the person drops the input when asked. */
+const closeStay = Effect.gen(function* closeStay() {
+  yield* acted(() => panelButton(czech('property-leasing.demo.close')).click());
+  yield* waitUntil(() => buttons(labels.discard).length === 1);
+  yield* acted(() => buttons(labels.discard)[0]?.click());
+  yield* waitUntil(() => panel() === undefined);
+});
+
+/** Opens a new stay, picks the unit, the end date and Jana Nováková from a search. */
+const chooseNovakova = Effect.gen(function* chooseNovakova() {
+  yield* pinTestDocument;
+  yield* mountInRoute(<RecordsPage context={context} />, { path: 'najmy', url: '/cs/najmy' });
+  yield* openStay;
   yield* pick(czech('property-leasing.demo.unit'), unitRef.resourceId, 'Apartmán Lípa');
   yield* type('#occupancy-end-date', '2099-12-31');
   // No guest yet: Uložit is held back.
@@ -332,6 +376,7 @@ beforeEach(() => {
   listAnswer = Effect.succeed(directory);
   listReads = 0;
   commands.length = 0;
+  gatewayRefusesDirectory = false;
   leaseRecords.invalidate();
 });
 
@@ -382,7 +427,7 @@ describe('the guest of a new stay', () => {
 
         listAnswer = Effect.fail(unavailable);
         yield* search('Svoboda');
-        expect(panel()?.textContent).toContain(czech('property-leasing.demo.feedback.unavailable'));
+        expect(panel()?.textContent).toContain(czech('property-leasing.demo.guestSearchUnavailable'));
         expectKept();
         // Dvořák came from the earlier search: only the chosen guest is still offered.
         expect(offered()).toEqual([novakPartyId]);
@@ -450,7 +495,7 @@ describe('the guest of a new stay', () => {
       Effect.gen(function* clearsGuest() {
         yield* chooseNovakova;
         yield* type('#stay-note', 'Pozdní příjezd');
-        yield* acted(() => panelButton(czech('property-leasing.demo.clearGuest')).click());
+        yield* acted(() => panelButton(clearGuestLabel('Jana Nováková')).click());
         yield* waitUntil(
           () =>
             pickerSelect(guestLabel).value === '' &&
@@ -484,6 +529,103 @@ describe('the guest of a new stay', () => {
         expect(commands[0]).toMatchObject({
           command: { record: { guestPartyRef: { resourceId: dvorakPartyId } } },
         });
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+  it.live(
+    "a failed search says so in the stay form, describes the guest picker and leaves the page's state alone",
+    () =>
+      Effect.gen(function* searchFailureStaysInForm() {
+        yield* chooseNovakova;
+        const searchFailed = czech('property-leasing.demo.guestSearchUnavailable');
+        const pageUnavailable = czech('property-leasing.demo.feedback.unavailable');
+        const retry = czech('property-leasing.demo.retry');
+        expect(guestDescriptions()).not.toContain(searchFailed);
+
+        listAnswer = Effect.fail(unavailable);
+        yield* search('Svoboda');
+        expect(panel()?.textContent).toContain(searchFailed);
+        expect(guestDescriptions()).toContain(searchFailed);
+        // Only the guest search failed: the leases loaded fine, so the page neither reports an outage nor offers a retry.
+        expect(text()).not.toContain(pageUnavailable);
+        expect(buttons(retry)).toHaveLength(0);
+
+        // The form closes as any form with typed input does; the page stays as its leases loaded.
+        yield* closeStay;
+        expect(text()).not.toContain(searchFailed);
+        expect(text()).not.toContain(pageUnavailable);
+        expect(buttons(retry)).toHaveLength(0);
+        expect(commands).toEqual([]);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'the clear action names the guest it drops for a screen reader',
+    () =>
+      Effect.gen(function* clearNamesGuest() {
+        yield* chooseNovakova;
+        expect(buttons(clearGuestLabel('Jana Nováková'))).toHaveLength(1);
+
+        yield* search('Dvořák');
+        yield* pick(guestLabel, dvorakPartyId, 'Petr Dvořák');
+        expect(buttons(clearGuestLabel('Petr Dvořák'))).toHaveLength(1);
+        expect(buttons(clearGuestLabel('Jana Nováková'))).toHaveLength(0);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+  it.live(
+    "a refusal by the Shell's gateway closes the form with its guest before Party Registry is asked",
+    () =>
+      Effect.gen(function* gatewayRefusal() {
+        yield* chooseNovakova;
+        const reads = listReads;
+        gatewayRefusesDirectory = true;
+        yield* type('#booking-guest-query', 'Dvořák');
+        yield* acted(() => searchButton().click());
+        yield* waitUntil(() => panel() === undefined);
+        yield* networkIdle;
+        expectRefused();
+        // The gateway answered alone: the customer list never received this search.
+        expect(listReads).toBe(reads);
+        expect(buttons(czech('property-leasing.demo.retry')).length).toBe(1);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'an expired login closes the form with its guest',
+    () =>
+      Effect.gen(function* expiredLogin() {
+        yield* chooseNovakova;
+        listAnswer = Effect.fail(signedOut);
+        yield* ask('Dvořák');
+        yield* waitUntil(() => panel() === undefined);
+        yield* networkIdle;
+        expect(document.querySelector('#booking-guest-query')).toBeNull();
+        expect(text()).not.toContain('Jana Nováková');
+        expect(buttons(czech('property-leasing.demo.retry')).length).toBe(1);
+        expect(commands).toEqual([]);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'a search that answers after its stay closed does not fill the next stay',
+    () =>
+      Effect.gen(function* lateAnswerAfterReopen() {
+        yield* chooseNovakova;
+        listAnswer = held;
+        yield* ask('Dvořák');
+        yield* closeStay;
+        yield* openStay;
+
+        releaseHeld();
+        yield* networkIdle;
+        expect(panel()).not.toBeUndefined();
+        expect(offered()).toEqual([]);
+        expect(pickerSelect(guestLabel).value).toBe('');
+        expect(document.querySelector<HTMLInputElement>('#booking-guest-query')?.value).toBe('');
       }).pipe(Effect.provide(network)),
     { timeout: 20_000 },
   );

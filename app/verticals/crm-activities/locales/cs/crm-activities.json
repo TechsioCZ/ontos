@@ -33,6 +33,7 @@
         "saved": "Aktivita uložena.",
         "unavailable": "Aktivity se nepodařilo načíst.",
         "forbidden": "K požadovanému kontaktu nemáte oprávnění.",
+        "signedOut": "Přihlášení vypršelo. Přihlaste se znovu.",
         "invalid": "Aktivitu nelze uložit. Ověřte kontakt i úkol.",
         "kinds": {
           "CALL": "Hovor",
@@ -41,7 +42,7 @@
           "NOTE": "Poznámka"
         },
         "choose": "Vyberte",
-        "clearContact": "Zrušit výběr kontaktu",
+        "clearContact": "Zrušit výběr kontaktu {{name}}",
         "searchUnavailable": "Kontakty se teď nepodařilo vyhledat. Zkuste to znovu.",
         "intro": "Přehled komunikace, kontaktů a navazujících úkolů.",
         "empty": "Zatím nejsou zaznamenané žádné aktivity.",

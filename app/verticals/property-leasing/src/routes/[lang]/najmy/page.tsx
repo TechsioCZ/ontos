@@ -117,6 +117,8 @@ const propertyLeasingI18nResources = {
   en: { 'property-leasing': enResource },
 } as const;
 type FailureLike = Parameters<typeof failureFeedback>[0];
+/** The read was refused: the login expired (401), or the Shell's gateway or the owner denied it (403). */
+const refusedRead = (failure: FailureLike) => failure.status === 401 || failure.status === 403;
 const loadFeedbackOf = <A, E extends FailureLike>(snapshot: PageDataSnapshot<A, E>): Feedback => {
   if (snapshot.state === 'pending') {
     return 'loading';
@@ -207,8 +209,18 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const setUnitId = (value: string) => dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'unitId', value }));
   const setCustomerOpen = (open: boolean) => dispatchEditor(occupancyEditorActions.SET_CUSTOMER_OPEN({ open }));
   const setRentEditorOpen = (open: boolean) => dispatchEditor(occupancyEditorActions.SET_RENT_EDITOR_OPEN({ open }));
-  const setEditor = (mode: OccupancyEditorMode | undefined) =>
+  /**
+   * Counts the guest lookups of the open form: only the latest one's answer changes what the form offers. Closing or
+   * replacing the form ends its lookup, so a late answer never fills the next stay.
+   */
+  const guestSearches = useRef(0);
+  const endGuestLookup = () => {
+    guestSearches.current += 1;
+  };
+  const setEditor = (mode: OccupancyEditorMode | undefined) => {
+    endGuestLookup();
     dispatchEditor(occupancyEditorActions.SET_EDITOR({ mode: Option.fromUndefinedOr(mode) }));
+  };
   /** Outcome of the person's own action; the page's read state shows when there is none. */
   const [actionFeedback, setActionFeedback] = useState<Feedback>();
   const feedback: Feedback = actionFeedback ?? (cleared ? 'forbidden' : loadFeedbackOf(records));
@@ -223,6 +235,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       : { ...leaseInput, record: selected, revision: snapshot.revision },
   );
   const clearSensitiveState = () => {
+    endGuestLookup();
     dispatchEditor(occupancyEditorActions.CLEAR({ startDate: DEFAULT_START_DATE }));
   };
   /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
@@ -502,6 +515,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     );
   };
   const newDraft = (mode: OccupancyEditorMode = 'lease', initialUnitId = '') => {
+    endGuestLookup();
     dispatchEditor(occupancyEditorActions.OPEN_DRAFT({ initialUnitId, mode, startDate: DEFAULT_START_DATE }));
     if (mode === 'lease') {
       loadCustomers();
@@ -542,8 +556,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       occupancyRef: record.occupancyRef,
     });
   };
-  /** Counts guest searches: only the latest one's answer changes what the form offers. */
-  const guestSearches = useRef(0);
   const searchGuests = () => {
     if (guestQuery.trim().length === 0) {
       setActionFeedback('validation');
@@ -555,17 +567,17 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       findCustomers(guestQuery).pipe(
         Effect.match({
           onFailure: (failure) => {
-            const next = failureFeedback(failure);
-            if (next === 'forbidden') {
-              // Party Registry refused the read: as after any refused read, the form with its chosen guest goes and
-              // every outstanding read, an earlier search too, is aborted.
+            if (refusedRead(failure)) {
+              // The lookup was refused, by the Shell's gateway or by Party Registry, or the login expired: as after any
+              // refused read, the form with its chosen guest goes and every outstanding read, an earlier search too, is
+              // aborted.
               reportFailure(failure);
               return;
             }
             if (asked === guestSearches.current) {
-              // The lookup failed for now: the form says so, keeps the chosen guest and offers no earlier hits.
-              dispatchEditor(occupancyEditorActions.GUESTS_LOADED({ guests: [] }));
-              setActionFeedback(next);
+              // The lookup failed for now: the stay form says so next to the guest picker, keeps the chosen guest and
+              // offers no earlier hits. The leases themselves loaded, so the page's own state stays as it is.
+              dispatchEditor(occupancyEditorActions.GUEST_SEARCH_FAILED());
             }
           },
           onSuccess: (values) => {
@@ -636,6 +648,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     guestId,
     guestQuery,
     guests,
+    guestSearchFailed: draftEditor.guestSearchFailed,
     kindFilter,
     language,
     linkedCounterpartyId,
@@ -1345,6 +1358,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
       }
       guests={{
         busy: state.busy,
+        failure: state.guestSearchFailed ? t('property-leasing.demo.guestSearchUnavailable') : undefined,
         items: state.guests.map((record) => ({
           label: record.displayName ?? t('property-leasing.demo.unnamedGuest'),
           value: record.partyRef.resourceId,

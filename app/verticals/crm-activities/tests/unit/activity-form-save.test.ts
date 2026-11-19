@@ -2,18 +2,23 @@
 // The activity form owns the contact the user chose. A later search only offers other contacts: whether it omits the
 // chosen one, finds nobody or fails for now, the choice stays chosen and labelled in the real picker, Uložit stays
 // enabled, and the save sends the chosen contact's full reference. A newer name of the chosen contact replaces the kept
-// one. When the directory refuses the user, nothing it returned stays chosen or on offer. The picker's own clear action
-// drops the contact and keeps the rest of the form. Before a contact and a summary exist, Uložit is held back. The real
+// one. When the directory refuses the user, nothing it returned stays chosen, on offer or in the version the form last
+// saved, also when a save lands after the refusal, so leaving asks nothing. The picker's own clear action, named after
+// the contact it drops, drops the contact and keeps the rest of the form; a failed search describes the picker. Before
+// a contact and a summary exist, Uložit is held back. The real
 // page, picker, router and i18n run; the owner's Records and Action, Work Tasks Records and the Party Registry
 // counterparty search answer in process through their HttpApi contracts behind the Shell's gateway issuer.
+import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
+  CounterpartiesProviderAuthenticationProblemSchema,
   CounterpartiesProviderForbiddenProblemSchema,
   CounterpartiesProviderResponseSchema,
   CounterpartiesProviderUnavailableProblemSchema,
   CounterpartiesSearchApi,
 } from '@app/party-registry/api';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
+import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import {
   browserNetwork,
   networkIdle,
@@ -44,6 +49,7 @@ const principalId = '72000000-0000-4000-8000-000000000021';
 const props: ModulePageProps = { context: { legalEntityId, principalId, tenantId }, routeParams: {}, search: '' };
 const key = 'crm-activities.pages.records';
 const copy = moduleText('cs', { cs: { 'crm-activities': csResource } });
+const labels = saveLabelsFor('cs');
 
 const contact = (title: string, partyId: string, counterpartyId: string) => ({
   currentRoles: ['CUSTOMER'],
@@ -131,25 +137,48 @@ const forbidden = CounterpartiesProviderForbiddenProblemSchema.make({
   type: 'https://ontos.dev/problems/search-forbidden',
 });
 
+const signedOut = CounterpartiesProviderAuthenticationProblemSchema.make({
+  detail: 'The session has expired.',
+  status: 401,
+  title: 'Authentication required',
+  type: 'https://ontos.dev/problems/authentication-required',
+});
+
+/** The Shell's gateway refusing the Party Registry audience before any request reaches the directory. */
+const gatewayForbidden = GatewayForbiddenProblemSchema.make({
+  detail: 'The authenticated principal cannot open this module in the current company.',
+  status: GatewayForbiddenProblemSchema.fields.status.literal,
+  title: 'Gateway context forbidden',
+  type: 'https://ontos.dev/problems/gateway-forbidden',
+});
+/** Whether the Shell's gateway refuses Party Registry; a test switches it on after the pick. */
+let gatewayRefusesDirectory = false;
+
 /** The search for Pozdě waits at the server until the test releases it. */
 let lateRelease = Deferred.makeUnsafe<boolean>();
 const releaseLate = () => Deferred.doneUnsafe(lateRelease, Effect.succeed(true));
 
 /**
  * What the counterparty search answers per query: Dolce lists Dolce and Novák, Novák only Novák, Vita Dolce under its
- * newer name, Pozdě Dolce and Novák once released, Výpadek is unavailable, Zákaz refuses the user, anything else finds
- * nobody.
+ * newer name, Pozdě Dolce and Novák once released, Výpadek is unavailable, Zákaz refuses the user, Odhlášen answers
+ * that the login expired, anything else finds nobody.
  */
 const answerFor = (query: string) =>
   Match.value(query).pipe(
     Match.when('Výpadek', () => Effect.fail(unavailable)),
     Match.when('Zákaz', () => Effect.fail(forbidden)),
+    Match.when('Odhlášen', () => Effect.fail(signedOut)),
     Match.when('Dolce', () => Effect.succeed([kept, other])),
     Match.when('Novák', () => Effect.succeed([other])),
     Match.when('Vita', () => Effect.succeed([renamed])),
     Match.when('Pozdě', () => Deferred.await(lateRelease).pipe(Effect.as([kept, other]))),
     Match.orElse(() => Effect.succeed([])),
   );
+
+/** Whether the owner's Action holds each command it took until the test releases it. */
+let holdSaves = false;
+let saveRelease = Deferred.makeUnsafe<boolean>();
+const releaseSave = () => Deferred.doneUnsafe(saveRelease, Effect.succeed(true));
 
 /** Every query the search received and every command the owner's Action received, in order. */
 const queries: string[] = [];
@@ -159,11 +188,14 @@ const OwnerRecordsApi = RecordsApi.prefix('/crm-activities-api');
 const OwnerActionApi = ApplyCommandActionApi.prefix('/crm-activities-api');
 const TasksApi = WorkRecordsApi.prefix('/work-tasks-api');
 const SearchApi = CounterpartiesSearchApi.prefix('/party-registry-api');
-const issuer = shellGatewayIssuer({
-  'crm-activities': '/crm-activities-api',
-  'party-registry': '/party-registry-api',
-  'work-tasks': '/work-tasks-api',
-});
+const issuer = shellGatewayIssuer(
+  {
+    'crm-activities': '/crm-activities-api',
+    'party-registry': '/party-registry-api',
+    'work-tasks': '/work-tasks-api',
+  },
+  (audience) => (gatewayRefusesDirectory && audience === 'party-registry' ? gatewayForbidden : undefined),
+);
 const network = browserNetwork(
   issuer.application,
   serveApi(
@@ -178,8 +210,10 @@ const network = browserNetwork(
       group.handle('execute', ({ payload }) =>
         Effect.sync(() => {
           commands.push(payload);
-          return recorded;
-        }),
+        }).pipe(
+          Effect.andThen(Effect.suspend(() => (holdSaves ? Deferred.await(saveRelease) : Effect.void))),
+          Effect.as(recorded),
+        ),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
   ),
@@ -224,11 +258,22 @@ const offered = () => [...contactSelect().options].map((option) => option.value)
 /** The record form; a failed search says so inside it. */
 const form = () => Option.getOrThrow(Option.fromNullOr(element('#activity-summary').closest('form')));
 
+/** The contact picker's trigger, the combobox a screen reader announces. */
+const contactTrigger = () =>
+  element<HTMLElement>(`[role="combobox"][aria-labelledby="${contactSelect().getAttribute('aria-labelledby') ?? ''}"]`);
+
 /** What the contact picker's trigger shows. */
-const contactShown = () =>
-  document
-    .querySelector(`[role="combobox"][aria-labelledby="${contactSelect().getAttribute('aria-labelledby') ?? ''}"]`)
-    ?.textContent?.trim();
+const contactShown = () => contactTrigger().textContent?.trim();
+
+/** The texts that describe the contact picker to a screen reader. */
+const contactDescriptions = () =>
+  (contactTrigger().getAttribute('aria-describedby') ?? '')
+    .split(' ')
+    .filter((id) => id !== '')
+    .map((id) => document.querySelector(`[id="${id}"]`)?.textContent?.trim() ?? '');
+
+/** The clear action of the picker, by the name a screen reader announces for `name`. */
+const clearButton = (name: string) => button(copy(`${key}.clearContact`, { name }));
 
 /** Types like a user: React sees a native input event. */
 const typeInto = (selector: string, value: string) =>
@@ -263,10 +308,10 @@ const chooseContact = (resourceId: string, label: string) =>
     select.dispatchEvent(new Event('change', { bubbles: true }));
   }).pipe(Effect.andThen(waitUntil(() => contactShown() === label)), Effect.andThen(settle));
 
-/** Mounts the page, picks Dolce from a search and types the summary. */
+/** Mounts the page, picks Dolce from a search and types the summary; gives the router the page runs in. */
 const chooseDolce = Effect.gen(function* chooseDolce() {
   yield* pinTestDocument;
-  yield* mountInRoute(createElement(RecordsPage, props), { path: 'aktivity', url: '/cs/aktivity' });
+  const { router } = yield* mountInRoute(createElement(RecordsPage, props), { path: 'aktivity', url: '/cs/aktivity' });
   yield* waitUntil(() => document.querySelector('#activity-summary') !== null);
   // Nothing chosen, nothing typed: Uložit is held back.
   expect(saveButton().disabled).toBe(true);
@@ -277,7 +322,21 @@ const chooseDolce = Effect.gen(function* chooseDolce() {
   yield* typeInto('#activity-summary', 'Domluvená ochutnávka');
   expect(saveButton().disabled).toBe(false);
   expect(contactShown()).toBe('Kavárna Dolce');
+  return router;
 });
+
+type PageRouter = Effect.Success<ReturnType<typeof mountInRoute>>['router'];
+
+/** Leaves the page through its router and checks that nothing unsaved held the person back. */
+const leavesWithoutAsking = (router: PageRouter) =>
+  Effect.gen(function* leaveThroughRouter() {
+    yield* acted(() => {
+      void router.navigate({ to: '/cs' });
+    });
+    yield* waitUntil(() => router.state.location.href === '/cs' || buttons(labels.discard).length > 0);
+    expect(buttons(labels.discard)).toHaveLength(0);
+    expect(router.state.location.href).toBe('/cs');
+  });
 
 /** The choice as the user sees it: chosen in the native control, labelled in the trigger, Uložit enabled. */
 const expectKept = () => {
@@ -288,11 +347,18 @@ const expectKept = () => {
 
 beforeEach(() => {
   lateRelease = Deferred.makeUnsafe<boolean>();
+  holdSaves = false;
+  saveRelease = Deferred.makeUnsafe<boolean>();
+  gatewayRefusesDirectory = false;
   queries.length = 0;
   commands.length = 0;
 });
 
-afterEach(unmountAll);
+afterEach(() => {
+  // A save a test held never outlives it.
+  releaseSave();
+  unmountAll();
+});
 
 it.layer(network, { excludeTestServices: true })('the activity form', (suite) => {
   suite.effect('a chosen contact survives a search that omits it and one that finds nobody', () =>
@@ -432,7 +498,7 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
     Effect.gen(function* clearsContact() {
       yield* chooseDolce;
       yield* search('Novák');
-      yield* acted(() => button(copy(`${key}.clearContact`)).click());
+      yield* acted(() => clearButton('Kavárna Dolce').click());
       yield* waitUntil(() => contactSelect().value === '' && contactShown() === copy(`${key}.choose`));
       expect(saveButton().disabled).toBe(true);
       expect(element<HTMLInputElement>('#activity-summary').value).toBe('Domluvená ochutnávka');
@@ -440,6 +506,135 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
       // Nothing is kept any more: the picker offers only what the last search found.
       expect(offered()).toEqual([other.ref.resourceId]);
       expect(commands).toEqual([]);
+    }),
+  );
+  suite.effect('after a refusal the saved version holds no contact, so leaving asks nothing', () =>
+    Effect.gen(function* refusalLeavesNothingToRestore() {
+      const router = yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      // Recorded: the summary starts empty and Dolce stays chosen for the next activity.
+      yield* waitUntil(
+        () => text().includes(copy(`${key}.saved`)) && element<HTMLInputElement>('#activity-summary').value === '',
+      );
+      yield* waitUntil(() => !findButton().disabled);
+      expect(contactSelect().value).toBe(kept.ref.resourceId);
+
+      yield* search('Zákaz');
+      expect(contactSelect().value).toBe('');
+      // The person changed nothing since the save: "Zahodit změny" has nothing to restore, Dolce least of all.
+      yield* leavesWithoutAsking(router);
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a save that lands after a refusal does not bring the refused contact back', () =>
+    Effect.gen(function* lateSaveAfterRefusal() {
+      const router = yield* chooseDolce;
+      holdSaves = true;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 1);
+
+      // Find stays usable while the save runs; the directory refuses the user meanwhile. The held save keeps the
+      // network busy, so the refusal is awaited on screen.
+      yield* ask('Zákaz');
+      yield* waitUntil(() => contactSelect().value === '' && !findButton().disabled);
+
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(() => text().includes(copy(`${key}.saved`)));
+      expect(contactSelect().value).toBe('');
+      expect(contactShown()).toBe(copy(`${key}.choose`));
+      expect(offered()).toEqual([]);
+      expect(saveButton().disabled).toBe(true);
+      // What the save recorded keeps no contact either: nothing is left to restore, so leaving asks nothing.
+      yield* leavesWithoutAsking(router);
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('the clear action names the contact it drops for a screen reader', () =>
+    Effect.gen(function* clearNamesContact() {
+      yield* chooseDolce;
+      expect(buttons(copy(`${key}.clearContact`, { name: 'Kavárna Dolce' }))).toHaveLength(1);
+
+      yield* search('Novák');
+      yield* chooseContact(other.ref.resourceId, 'Pekárna Novák');
+      expect(buttons(copy(`${key}.clearContact`, { name: 'Pekárna Novák' }))).toHaveLength(1);
+      expect(buttons(copy(`${key}.clearContact`, { name: 'Kavárna Dolce' }))).toHaveLength(0);
+    }),
+  );
+
+  suite.effect('a failed search describes the contact picker until a search succeeds', () =>
+    Effect.gen(function* failureDescribesPicker() {
+      yield* chooseDolce;
+      expect(contactDescriptions()).not.toContain(copy(`${key}.searchUnavailable`));
+
+      yield* search('Výpadek');
+      expect(contactDescriptions()).toContain(copy(`${key}.searchUnavailable`));
+
+      yield* search('Novák');
+      expect(contactDescriptions()).not.toContain(copy(`${key}.searchUnavailable`));
+    }),
+  );
+  suite.effect("a refusal by the Shell's gateway drops the chosen contact before the directory is asked", () =>
+    Effect.gen(function* gatewayRefusal() {
+      yield* chooseDolce;
+      gatewayRefusesDirectory = true;
+      yield* typeInto('#counterparty-query', 'Novák');
+      yield* acted(() => findButton().click());
+      yield* waitUntil(() => !findButton().disabled && text().includes(copy(`${key}.forbidden`)));
+      yield* networkIdle;
+      // The gateway answered alone: the directory never received this search.
+      expect(queries).toEqual(['Dolce']);
+      expect(contactSelect().value).toBe('');
+      expect(contactShown()).toBe(copy(`${key}.choose`));
+      expect(offered()).toEqual([]);
+      expect(saveButton().disabled).toBe(true);
+      expect(form().textContent).not.toContain(copy(`${key}.searchUnavailable`));
+      expect(element<HTMLInputElement>('#activity-summary').value).toBe('Domluvená ochutnávka');
+      expect(commands).toEqual([]);
+    }),
+  );
+
+  suite.effect('an expired login drops the chosen contact and says to sign in again', () =>
+    Effect.gen(function* expiredLogin() {
+      yield* chooseDolce;
+      yield* search('Odhlášen');
+      expect(text()).toContain(copy(`${key}.signedOut`));
+      expect(contactSelect().value).toBe('');
+      expect(contactShown()).toBe(copy(`${key}.choose`));
+      expect(offered()).toEqual([]);
+      expect(saveButton().disabled).toBe(true);
+      expect(form().textContent).not.toContain(copy(`${key}.searchUnavailable`));
+      expect(commands).toEqual([]);
+    }),
+  );
+
+  suite.effect("a save that ends keeps the chosen contact's newer name a search returned meanwhile", () =>
+    Effect.gen(function* saveKeepsNewerName() {
+      yield* chooseDolce;
+      holdSaves = true;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 1);
+
+      // The held save keeps the network busy, so the rename is awaited on screen.
+      yield* ask('Vita');
+      yield* waitUntil(() => contactShown() === 'Kavárna Dolce Vita' && !findButton().disabled);
+
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(
+        () => text().includes(copy(`${key}.saved`)) && element<HTMLInputElement>('#activity-summary').value === '',
+      );
+      expect(contactSelect().value).toBe(kept.ref.resourceId);
+      expect(contactShown()).toBe('Kavárna Dolce Vita');
+
+      // A later search that omits Dolce still shows its newer name.
+      yield* search('Novák');
+      expect(contactSelect().value).toBe(kept.ref.resourceId);
+      expect(contactShown()).toBe('Kavárna Dolce Vita');
+      expect(commands).toHaveLength(1);
     }),
   );
 });

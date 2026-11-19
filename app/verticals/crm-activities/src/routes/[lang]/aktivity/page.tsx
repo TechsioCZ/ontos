@@ -17,7 +17,7 @@ import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effe
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+import type { DraftSave, SaveOutcome } from '@app/admin-ui';
 import { constVoid } from 'effect/Function';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
@@ -111,6 +111,16 @@ const sameActivity = (left: ActivityDraft, right: ActivityDraft) =>
 const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterparty: null });
 
 /**
+ * The lookup was refused rather than unavailable: the login expired (401), or the Shell's gateway or the contact
+ * directory denied the person (403). Only a transport or availability failure keeps the chosen contact.
+ */
+const refusedLookup = (error: SearchError) =>
+  Predicate.hasProperty(error, 'status') && (error.status === 401 || error.status === 403);
+
+/** How the picker and its clear action name a contact. */
+const contactName = (contact: Counterparty) => contact.party.title ?? contact.ref.resourceId;
+
+/**
  * A newer answer about the chosen contact replaces the kept one, so a later search that omits the contact still shows
  * its current name.
  */
@@ -179,11 +189,42 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     setMessage('');
     void browserRuntime.runPromise(activities.refresh(input));
   };
-  /** The directory refused the user: nothing it returned earlier stays chosen or on offer. */
-  const refuseContacts = () => {
+  /** The form's save state as of the latest render, for a refusal that lands later. */
+  const latestRecord = useRef<DraftSave<ActivityDraft>>(undefined);
+  /** Counts the directory's refusals, so a save that ends after one keeps no contact. */
+  const refusals = useRef(0);
+  /**
+   * The latest entry each search returned per contact since the last refusal, so a save that ends keeps the chosen
+   * contact's newest name instead of the copy it sent.
+   */
+  const newestContacts = useRef(new Map<string, Counterparty>());
+  const newest = (value: ActivityDraft): ActivityDraft => ({
+    ...value,
+    counterparty:
+      value.counterparty === null
+        ? null
+        : (newestContacts.current.get(value.counterparty.ref.resourceId) ?? value.counterparty),
+  });
+  /** Whether a save of the form runs; when it ends it settles a refusal that came meanwhile. */
+  const saving = useRef(false);
+  /** What the last save that ran ended in; the save status alone cannot tell once a refusal changed the draft. */
+  const lastOutcome = useRef<SaveOutcome | null>(null);
+  /**
+   * The directory refused the user: nothing it returned earlier stays chosen, on offer or in the version the form last
+   * saved, so neither "Zahodit změny" nor the unsaved-changes check brings the contact back.
+   */
+  const refuseContacts = (error: SearchError) => {
+    refusals.current += 1;
+    newestContacts.current.clear();
     setSearchFailure('');
     setDraft(withoutContact);
-    setMessage(t(`${key}.forbidden`));
+    setMessage(
+      Predicate.hasProperty(error, 'status') && error.status === 401 ? t(`${key}.signedOut`) : t(`${key}.forbidden`),
+    );
+    const { current } = latestRecord;
+    if (!saving.current && current !== undefined) {
+      current.adopt(withoutContact(current.confirmed));
+    }
   };
   const searchFailed = (error: SearchError) => {
     setPending(false);
@@ -192,40 +233,29 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     const proposal = pendingProposalMessage(error);
     if (proposal !== undefined) {
       setMessage(proposal);
-    } else if (Predicate.isTagged(error, 'CounterpartiesProviderForbiddenProblem')) {
-      refuseContacts();
+    } else if (refusedLookup(error)) {
+      refuseContacts(error);
     } else {
       // The lookup failed for now: the chosen contact stays chosen and the form says the search did not run.
       setSearchFailure(t(`${key}.searchUnavailable`));
     }
   };
   const searchFound = (result: Counterparties) => {
+    for (const item of result) {
+      newestContacts.current.set(item.ref.resourceId, item);
+    }
     setCounterparties(result);
     setSearchFailure('');
     setDraft(withNewerContact(result));
     setPending(false);
   };
-  /** Counts contact searches: only the latest one's answer changes what the form offers or keeps. */
-  const searches = useRef(0);
+  // Find stays disabled while a search runs, so every answer is the answer to the only search outstanding.
   const findCounterparty = () => {
     setPending(true);
-    searches.current += 1;
-    const asked = searches.current;
     void browserRuntime.runPromise(
       requestId.pipe(
         Effect.flatMap((id) => loadCounterpartiesClient({ query }, id)),
-        Effect.match({
-          onFailure: (error) => {
-            if (asked === searches.current) {
-              searchFailed(error);
-            }
-          },
-          onSuccess: (result) => {
-            if (asked === searches.current) {
-              searchFound(result);
-            }
-          },
-        }),
+        Effect.match({ onFailure: searchFailed, onSuccess: searchFound }),
       ),
     );
   };
@@ -322,9 +352,19 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     initial: blankActivity,
     isValid: (value) => value.summary.trim() !== '' && value.counterparty !== null,
     runtime: browserRuntime,
-    save: send,
+    save: (value) =>
+      send(value).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            lastOutcome.current = outcome;
+          }),
+        ),
+      ),
     value: draft,
   });
+  useEffect(() => {
+    latestRecord.current = record;
+  }, [record]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft: record,
@@ -333,25 +373,42 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       setDraft(record.confirmed);
     },
   });
-  // A recorded activity keeps the contact and the follow-up for the next one; its summary starts empty.
+  // A recorded activity keeps the contact and the follow-up for the next one; its summary starts empty. A refusal of the
+  // contact directory while the save ran drops the contact from what the save leaves behind.
   const handleSave = () => {
     const sent = draft;
+    const refusedBefore = refusals.current;
     setMessage('');
+    saving.current = true;
+    lastOutcome.current = null;
     record.save();
     record.afterSave((status) => {
-      if (status === 'saved') {
-        const next = { ...sent, summary: '' };
-        setDraft(next);
-        record.adopt(next);
+      saving.current = false;
+      if (refusals.current === refusedBefore) {
+        if (status === 'saved') {
+          const next = { ...newest(sent), summary: '' };
+          setDraft(next);
+          record.adopt(next);
+        }
+        return;
       }
+      if (lastOutcome.current === 'saved') {
+        // Recorded, but the contact is refused now: the next activity starts without it.
+        const recorded = withoutContact(sent);
+        const next = { ...recorded, summary: '' };
+        setDraft((current) => (sameActivity(current, recorded) ? next : current));
+        record.adopt(next);
+        return;
+      }
+      // Nothing was recorded: the confirmed version stays, without the refused contact.
+      record.adopt(withoutContact(record.confirmed));
     });
   };
-  const partyItems = contactChoices.map((item) =>
-    selectItem(item.ref.resourceId, item.party.title ?? item.ref.resourceId),
-  );
+  const partyItems = contactChoices.map((item) => selectItem(item.ref.resourceId, contactName(item)));
   const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
   return {
     card,
+    clearContactLabel: t(`${key}.clearContact`, { name: counterparty === null ? '' : contactName(counterparty) }),
     counterpartyId,
     findCounterparty,
     guard,
@@ -382,6 +439,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
 const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
   const {
     card,
+    clearContactLabel,
     counterpartyId,
     findCounterparty,
     guard,
@@ -585,8 +643,11 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           <Select.Trigger>
                             <Select.ValueText placeholder={t(`${key}.choose`)} />
                           </Select.Trigger>
-                          <Select.ClearTrigger aria-label={t(`${key}.clearContact`)} />
+                          <Select.ClearTrigger aria-label={clearContactLabel} />
                         </Select.Control>
+                        {searchFailure !== '' && (
+                          <Select.StatusText status="warning">{searchFailure}</Select.StatusText>
+                        )}
                         <Select.Positioner>
                           <Select.Content>
                             {partyItems.map((item) => (
@@ -597,9 +658,6 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           </Select.Content>
                         </Select.Positioner>
                       </Select>
-                      <output aria-live="polite" className="crmactivities:block crmactivities:text-sm">
-                        {searchFailure}
-                      </output>
                     </div>
                     <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
                       <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={[...taskId]}>

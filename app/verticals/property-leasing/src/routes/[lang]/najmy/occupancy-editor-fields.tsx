@@ -17,19 +17,24 @@ type Change = (field: keyof OccupancyDraft, value: string) => void;
 
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
 
-/** One single-choice select; an empty `value` means nothing chosen. With `clearLabel` the choice can be cleared. */
+/**
+ * One single-choice select; an empty `value` means nothing chosen. With `clearLabel` the choice can be cleared; it
+ * names the chosen item. `warning` describes the picker, such as a search for its items that failed.
+ */
 export const ChoiceSelect = ({
   clearLabel,
   items,
   label,
   onChange,
   value,
+  warning,
 }: {
-  readonly clearLabel?: string;
+  readonly clearLabel?: (chosen: string) => string;
   readonly items: readonly Choice[];
   readonly label: string;
   readonly onChange: (value: string) => void;
   readonly value: string;
+  readonly warning?: string | undefined;
 }) => {
   const { t } = useModernI18n();
   return (
@@ -43,8 +48,11 @@ export const ChoiceSelect = ({
         <Select.Trigger>
           <Select.ValueText placeholder={t(LABEL_CHOOSE)} />
         </Select.Trigger>
-        {clearLabel !== undefined && <Select.ClearTrigger aria-label={clearLabel} />}
+        {clearLabel !== undefined && (
+          <Select.ClearTrigger aria-label={clearLabel(items.find((item) => item.value === value)?.label ?? '')} />
+        )}
       </Select.Control>
+      {warning !== undefined && <Select.StatusText status="warning">{warning}</Select.StatusText>}
       <Select.Positioner>
         <Select.Content>
           {items.map((item) => (
@@ -166,6 +174,8 @@ export const RentFields = ({ draft, onChange }: { readonly draft: OccupancyDraft
 /** The guest search of a new stay: looking parties up is a read, not part of the draft. */
 export interface GuestSearch {
   readonly busy: boolean;
+  /** Why the latest search found nothing to offer, when it failed. */
+  readonly failure?: string | undefined;
   readonly items: readonly Choice[];
   readonly onQueryChange: (query: string) => void;
   readonly onSearch: () => void;
@@ -202,11 +212,12 @@ export const StayFields = ({
         </Button>
       </div>
       <ChoiceSelect
-        clearLabel={t('property-leasing.demo.clearGuest')}
+        clearLabel={(name) => t('property-leasing.demo.clearGuest', { name })}
         items={guests.items}
         label={t('property-leasing.demo.guest')}
         onChange={(value) => onChange('guestId', value)}
         value={draft.guestId}
+        warning={guests.failure}
       />
       <FormInput
         id="stay-people-count"

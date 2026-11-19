@@ -33,6 +33,7 @@
         "saved": "Activity saved.",
         "unavailable": "Activities could not be loaded.",
         "forbidden": "You do not have permission to read this contact.",
+        "signedOut": "Your sign-in has expired. Sign in again.",
         "invalid": "Activity could not be saved. Verify the contact and Task.",
         "kinds": {
           "CALL": "Call",
@@ -41,7 +42,7 @@
           "NOTE": "Note"
         },
         "choose": "Choose",
-        "clearContact": "Clear the contact",
+        "clearContact": "Clear the contact {{name}}",
         "searchUnavailable": "Contacts could not be searched right now. Try again.",
         "intro": "Communication history, contacts and follow-up tasks.",
         "empty": "No activities have been recorded yet.",

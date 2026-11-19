@@ -54,6 +54,8 @@ export interface OccupancyEditorState extends EditorInputs {
   readonly guest: Option.Option<Guest>;
   /** What the latest guest search found. */
   readonly guests: readonly Guest[];
+  /** The latest guest search failed for now; the stay form says so next to the guest picker. */
+  readonly guestSearchFailed: boolean;
   readonly rentEditorOpen: boolean;
 }
 export type OccupancyEditorMode = Option.Option.Value<OccupancyEditorState['editor']>;
@@ -62,6 +64,8 @@ export type OccupancyEditorAction = Data.TaggedEnum<{
   CUSTOMERS_LOADED: { readonly customers: OccupancyEditorState['customers'] };
   CUSTOMERS_LOADING: { readonly loading: boolean };
   EDIT_DRAFT: { readonly record: Occupancy };
+  /** The guest search failed for now: no earlier hit stays on offer, the chosen guest stays. */
+  GUEST_SEARCH_FAILED: Readonly<Record<never, never>>;
   GUESTS_LOADED: { readonly guests: OccupancyEditorState['guests'] };
   OPEN_DRAFT: {
     readonly initialUnitId: string;
@@ -90,6 +94,7 @@ export const initialEditorState = (startDate: EditorInputs['startDate']): Occupa
   guestId: '',
   guestQuery: '',
   guests: [],
+  guestSearchFailed: false,
   peopleCount: '2',
   rentEditorOpen: false,
   rentMonthly: '',
@@ -151,6 +156,7 @@ export const occupancyEditorReducer = (
         guestId: '',
         guestQuery: '',
         guests: [],
+        guestSearchFailed: false,
         rentEditorOpen: false,
         startDate,
         unitId: '',
@@ -165,6 +171,7 @@ export const occupancyEditorReducer = (
         endDate: record.endDate ?? '',
         startDate: record.startDate,
       }),
+      GUEST_SEARCH_FAILED: () => ({ ...state, guests: [], guestSearchFailed: true }),
       // A newer answer about the chosen guest replaces the kept one, so a later search that omits the guest still
       // shows the current name.
       GUESTS_LOADED: ({ guests }) => ({
@@ -175,6 +182,7 @@ export const occupancyEditorReducer = (
           ),
         ),
         guests,
+        guestSearchFailed: false,
       }),
       OPEN_DRAFT: ({ initialUnitId, mode, startDate }) => ({
         ...state,
@@ -188,6 +196,7 @@ export const occupancyEditorReducer = (
         guestId: '',
         guestQuery: '',
         guests: [],
+        guestSearchFailed: false,
         peopleCount: '2',
         rentMonthly: '',
         rentPaymentDay: '15',
