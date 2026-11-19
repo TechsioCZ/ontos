@@ -6,7 +6,8 @@ import {
   defineDatabaseIdentityEnrollment,
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
+import type { ActionServicePreparationContext, ActionTargetSetAdmission, OperationalScope } from '@app/core-runtime';
+import { ModuleKeySchema, RecordKeySchema } from '@app/core-runtime/access/ids';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Crypto, Effect, Redacted, Schema } from 'effect';
@@ -65,7 +66,34 @@ const nativeWorkforceCommands = Effect.scoped(
       expectedRevision: 1,
     });
     const createFactory = yield* prepareApplyCommandServices(create, context);
-    const updateFactory = yield* prepareApplyCommandServices(update, context);
+    const withoutAdmission = yield* prepareApplyCommandServices(update, context).pipe(Effect.flip);
+    expect(Schema.is(OperationContextUnavailable)(withoutAdmission)).toBe(true);
+    expect(withoutAdmission.reason).toBe('Workforce requires its complete invocation-local employee target set');
+    // This owner-SQL test starts after Core admitted the exact employee update.
+    const decision: ActionTargetSetAdmission['decision'] = {
+      evidence: [],
+      outcome: 'ALLOWED',
+      reasons: [{ code: 'allow.granted' }],
+      selectors: [],
+    };
+    const targetSetAdmission: ActionTargetSetAdmission = {
+      actionInvocationId: context.actionInvocationId,
+      actionKey: 'demo.workforce.update-employee',
+      decision,
+      fieldDecisions: [],
+      mode: 'run',
+      requestHash: 'workforce-command-test-request',
+      targetDecisions: [decision],
+      targetSet: {
+        hash: 'workforce-command-test-target-set',
+        targets: [{ moduleKey: ModuleKeySchema.make('demo.workforce'), recordKey: RecordKeySchema.make(resourceId) }],
+      },
+    };
+    const updateFactory = yield* prepareApplyCommandServices(update, { ...context, targetSetAdmission });
+    const changedUpdate = yield* Schema.decodeEffect(WorkforceCommandPayloadSchema)({
+      command: { _tag: 'UpdateEmployee', id: resourceId, patch: { department: 'Unadmitted change' } },
+      expectedRevision: 1,
+    });
 
     const result = yield* database
       .transaction(
@@ -75,8 +103,14 @@ const nativeWorkforceCommands = Effect.scoped(
           const created = yield* creator.apply(create.command, 0);
           expect(created.revision).toBe(1);
           const updater = yield* updateFactory(scoped, scope, context.compositionRevision);
+          expect(
+            Schema.is(WorkforceReferenceUnavailable)(yield* updater.apply(changedUpdate.command, 1).pipe(Effect.flip)),
+          ).toBe(true);
           const updated = yield* updater.apply(update.command, 1);
           expect(updated).toMatchObject({ employees: [{ department: 'Správa' }], revision: 2 });
+          expect(
+            Schema.is(WorkforceReferenceUnavailable)(yield* updater.apply(update.command, 2).pipe(Effect.flip)),
+          ).toBe(true);
           const stale = yield* updater.apply(update.command, 1).pipe(Effect.flip);
           expect(Schema.is(WorkforceRevisionConflict)(stale)).toBe(true);
           const changed = yield* updater.apply(create.command, 1).pipe(Effect.flip);
