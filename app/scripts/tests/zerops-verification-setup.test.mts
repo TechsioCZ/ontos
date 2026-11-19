@@ -22,6 +22,7 @@ const FINISH_PROOFS = 'Verify every service and finish the proofs';
 const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
 const PROOFS_FINISH = 'bash scripts/zerops/stage-proofs.sh finish';
 const PROOFS_SCRIPT = path.resolve(import.meta.dirname, '../zerops/stage-proofs.sh');
+const OAUTH_SIGNAL = 'oauth-started';
 const CACHE_KEY = `zerops-verify-browsers-v1-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}`;
 const Step = Schema.Struct({
   'continue-on-error': Schema.optionalKey(Schema.Boolean),
@@ -280,16 +281,13 @@ case "$*" in
   *"scripts/ops/stage-warmup.mts")
     touch "$WARMUP_STARTED"
     # A serial implementation cannot complete the success case: OAuth must start before warm-up can finish.
-    for ((attempt=0; attempt<100; attempt++)); do
-      [ ! -f "$OAUTH_STARTED" ] || break
-      sleep 0.01
-    done
-    test -f "$OAUTH_STARTED"
+    IFS= read -r started <"$OAUTH_STARTED"
+    test "$started" = oauth-started
     echo warmup-output
     exit "$WARMUP_EXIT"
     ;;
   *"scripts/demo/prove-mcp-oauth.mts --variant=1 --verification")
-    touch "$OAUTH_STARTED"
+    printf 'oauth-started\\n' >"$OAUTH_STARTED"
     echo oauth-output
     exit "$OAUTH_EXIT"
     ;;
@@ -315,6 +313,14 @@ set -euo pipefail
 printf 'sudo %s\\n' "$*" >>"$SETUP_CALLS"
 exec "$@"
 `;
+const workflowTimeout = `#!/usr/bin/env bash
+set -euo pipefail
+printf 'timeout %s\\n' "$*" >>"$SETUP_CALLS"
+test "$1" = --kill-after=3s
+test "$2" = 10m
+shift 2
+exec "$@"
+`;
 
 for (const scenario of [
   { checkout: 0, name: 'both succeed', oauth: 0, services: 0, status: 0, warmup: 0 },
@@ -322,8 +328,11 @@ for (const scenario of [
   { checkout: 0, name: 'OAuth fails', oauth: 23, services: 0, status: 1, warmup: 0 },
   { checkout: 0, name: 'both fail', oauth: 23, services: 0, status: 1, warmup: 17 },
   { checkout: 0, name: 'a service verification fails', oauth: 0, services: 29, status: 1, warmup: 0 },
-  { checkout: 3, name: 'N1 catalogue has no purchasable fixture', oauth: 0, services: 0, status: 0, warmup: 0 },
+  { checkout: 3, name: 'N1 catalogue has no purchasable fixture', oauth: 0, services: 0, status: 1, warmup: 0 },
   { checkout: 31, name: 'N1 checkout quote fails', oauth: 0, services: 0, status: 1, warmup: 0 },
+  { checkout: 4, name: 'N1 probe deadline expires', oauth: 0, services: 0, status: 1, warmup: 0 },
+  { checkout: 124, name: 'N1 caller timeout expires', oauth: 0, services: 0, status: 1, warmup: 0 },
+  { checkout: 137, name: 'N1 caller kills the timed-out probe', oauth: 0, services: 0, status: 1, warmup: 0 },
 ]) {
   for (const app of ['pushed', 'kept'] as const) {
     it.effect(`executes Verify scripts under strict Bash when ${scenario.name} and the app is ${app}`, () =>
@@ -360,11 +369,15 @@ for (const scenario of [
           find: workflowFind,
           mise: workflowMise,
           sudo: workflowSudo,
+          timeout: workflowTimeout,
         })) {
           const executable = path.join(bin, name);
           yield* fs.writeFileString(executable, source);
           yield* fs.chmod(executable, 0o700);
         }
+        expect(
+          (yield* collectToolingProcess(ChildProcess.make('mkfifo', [path.join(directory, OAUTH_SIGNAL)]))).status,
+        ).toBe(0);
         const environment = {
           APT_ARCHIVES: archives,
           CHECKOUT_EXIT: String(scenario.checkout),
@@ -374,7 +387,7 @@ for (const scenario of [
           ImageOS: 'ubuntu24',
           ImageVersion: '20261115',
           OAUTH_EXIT: String(scenario.oauth),
-          OAUTH_STARTED: path.join(directory, 'oauth-started'),
+          OAUTH_STARTED: path.join(directory, OAUTH_SIGNAL),
           PATH: `${bin}:${yield* Config.String('PATH')}`,
           PUSH_N1: app === 'pushed' ? 'true' : 'false',
           RUNNER_TEMP: directory,
@@ -414,6 +427,10 @@ for (const scenario of [
             expect(result.stdout).toContain('oauth-output');
             expect(result.stdout).toContain('checkout-output');
             expect(result.stdout).toContain(`N1 checkout quote exit: ${scenario.checkout}`);
+            if (scenario.checkout === 3) {
+              expect(result.stdout).toContain('checkout verification failed (including when N1 was kept)');
+              expect(result.stdout).not.toContain('Deployment remains valid');
+            }
             expect(yield* fs.readFileString(path.join(proofs, 'n1-checkout.log'))).toContain('checkout-output');
             expect(result.stdout).toContain(`Warm-up exit: ${scenario.warmup}`);
             expect(result.stdout).toContain(`MCP OAuth exit: ${scenario.oauth}`);
@@ -445,6 +462,9 @@ for (const scenario of [
           ),
         ).toHaveLength(1);
         expect(recorded).not.toContain('stage-n1-checkout.mts place');
+        expect(invocations.filter((call) => call.startsWith('timeout '))).toEqual([
+          `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id packaged-build' : ''}`,
+        ]);
         expect(recorded).toContain('sudo find ');
         expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
         expect(yield* fs.readFileString(path.join(cached, 'downloaded.deb'))).toBe('downloaded package');
@@ -463,6 +483,9 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
     yield* fs.writeFileString(path.join(bin, 'mise'), workflowMise);
     yield* fs.chmod(path.join(bin, 'mise'), 0o700);
     const searchPath = `${bin}:${yield* Config.String('PATH')}`;
+    expect(
+      (yield* collectToolingProcess(ChildProcess.make('mkfifo', [path.join(directory, OAUTH_SIGNAL)]))).status,
+    ).toBe(0);
     const run = (command: string) =>
       collectToolingProcess(
         ChildProcess.make('bash', [PROOFS_SCRIPT, command], {
@@ -470,7 +493,7 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
           env: {
             CHECKOUT_EXIT: '0',
             OAUTH_EXIT: '0',
-            OAUTH_STARTED: path.join(directory, 'oauth-started'),
+            OAUTH_STARTED: path.join(directory, OAUTH_SIGNAL),
             PATH: searchPath,
             PUSH_N1: 'false',
             RUNNER_TEMP: directory,

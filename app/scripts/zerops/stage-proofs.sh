@@ -76,9 +76,10 @@ finish() {
   if [ "${PUSH_N1:-false}" = true ]; then
     checkout_args+=(--expect-build-id "${STAGE_N1_BUILD_ID:?packaged N1 build id is required}")
   else
-    echo 'N1 kept: quote proves the currently served build and live owner contract, not this commit.'
+    echo 'N1 kept: checkout is not verified yet; a VALID quote is required for the currently served build and live owner contract, not this commit.'
   fi
-  mise exec -- node scripts/ops/stage-n1-checkout.mts quote "${checkout_args[@]}" >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 || checkout=$?
+  # A bound on the check, not a retry: the probe also owns a 10-minute total deadline (exit 4).
+  timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote "${checkout_args[@]}" >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 || checkout=$?
   until [ -e "$state/warmup.status" ] && [ -e "$state/oauth.status" ]; do sleep 1; done
   warmup="$(cat "$state/warmup.status")"
   oauth="$(cat "$state/oauth.status")"
@@ -93,15 +94,16 @@ finish() {
   echo '::group::N1 checkout quote'
   cat "$E2E_OUT_DIR/n1-checkout.log"
   echo "N1 checkout quote exit: $checkout"
-  # An empty/out-of-stock demo catalogue cannot prove checkout, but must not mark an unrelated healthy
-  # deployment broken. It is loud and distinct (3); service verification still owns catalogue readiness.
-  # Broken transport/contracts/build identity (1) always fail delivery, after pushes, without rollback.
+  # A push of N1 needs a VALID quote. A kept N1 with no fixture is also NOT verified: exit 3 fails
+  # this verification, without rolling back already-pushed services, and stays distinct in the log.
+  # Broken transport/contracts/build identity (1), probe deadline (4), and caller timeout (124/137)
+  # always fail delivery, after pushes, without rollback.
   if [ "$checkout" -eq 3 ]; then
-    echo '::warning title=N1 checkout not proved::No purchasable fixture on stage; catalogue/stock needs attention. Deployment remains valid; checkout coverage is missing.'
+    echo '::error title=N1 checkout not proved::No purchasable fixture within the check bounds; checkout verification failed (including when N1 was kept). Catalogue/stock or coverage needs attention; no rollback is attempted.'
   fi
   echo '::endgroup::'
   echo "Service verification exit: $verified"
-  test "$verified" -eq 0 && { test "$checkout" -eq 0 || test "$checkout" -eq 3; } && test "$warmup" -eq 0 && test "$oauth" -eq 0
+  test "$verified" -eq 0 && test "$checkout" -eq 0 && test "$warmup" -eq 0 && test "$oauth" -eq 0
 }
 
 case "${1:-}" in

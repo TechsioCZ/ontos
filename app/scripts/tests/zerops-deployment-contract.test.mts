@@ -884,6 +884,13 @@ it('binds N1 pushes to the packaged Next build and configured origin, not an unr
   expect(proofs).toContain(`checkout_args=(--origin "\${STAGE_N1_URL:?STAGE_N1_URL is required}")`);
   expect(proofs).toContain(`if [ "\${PUSH_N1:-false}" = true ]; then`);
   expect(proofs).toContain(`--expect-build-id "\${STAGE_N1_BUILD_ID:?packaged N1 build id is required}"`);
-  expect(proofs).toContain('N1 kept: quote proves the currently served build');
+  expect(proofs).toContain(
+    'N1 kept: checkout is not verified yet; a VALID quote is required for the currently served build',
+  );
+  expect(proofs).toContain('test "$checkout" -eq 0 && test "$warmup" -eq 0');
+  expect(proofs).not.toContain('test "$checkout" -eq 3;');
+  expect(proofs).toContain(
+    `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote "\${checkout_args[@]}"`,
+  );
   expect(proofs).not.toContain('--expect-build-id "$GITHUB_SHA"');
 });

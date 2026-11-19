@@ -1,5 +1,10 @@
 #!/usr/bin/env node
-/** Live guest checkout proof. Quote is deploy-safe; place creates stock-debiting orders requiring staff cleanup. */
+/**
+ * Live guest checkout proof. Quote is deploy-safe; place creates stock-debiting orders requiring staff cleanup.
+ * Check bounds: at most 50 catalogue documents and 25 product/variant documents, within 10 minutes total.
+ * Place appends clientRequestId, scope and lines to place-requests.jsonl BEFORE dispatch, and order identifiers
+ * to place-responses.jsonl when the response body arrives. These are cleanup records, never browser storage.
+ */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -9,11 +14,14 @@ import {
   Clock,
   Config,
   Console,
+  Duration,
   Effect,
+  Fiber,
   FileSystem,
   Layer,
   Option,
   Predicate,
+  Queue,
   Result as ParseResult,
   Schema,
   Runtime,
@@ -33,6 +41,9 @@ const cartEndpoint = (response: Response) => endpoint(response, CART_PATH);
 const statusEndpoint = (response: Response) => endpoint(response, STATUS_PATH);
 const DEFAULT_ORIGIN = 'https://ontos-stage-n1.web-revolution.cz';
 const NO_FIXTURE = 'no-purchasable-fixture';
+const MAX_CATALOGUE_PAGES = 50;
+const MAX_PRODUCT_PAGES = 25;
+const MAX_BUDGET_MS = Duration.toMillis(Duration.minutes(10));
 const PROOF_FAILED = 'Checkout proof failed; see allowlisted result.json';
 const Scope = Schema.Struct({
   currency: Schema.String,
@@ -126,6 +137,31 @@ const issueCodes = new Set([
   'NOT_OFFERED_IN_MARKET',
 ]);
 type Save = (name: string, value: Schema.Json) => void;
+interface CleanupWrite {
+  acknowledge: (written: boolean) => void;
+  name: string;
+  value: Schema.Json;
+}
+const appendCleanup = (directory: string, name: string, value: Schema.Json) =>
+  Effect.gen(function* persistCleanup() {
+    const fs = yield* FileSystem.FileSystem;
+    const text = ParseResult.getOrThrow(Schema.encodeUnknownResult(Schema.fromJsonString(Schema.Json))(value));
+    const file = yield* fs.open(path.join(directory, name), { flag: 'a', mode: 0o600 });
+    yield* file.writeAll(new TextEncoder().encode(`${text}\n`));
+    yield* file.sync;
+  }).pipe(Effect.scoped);
+const cleanupWriter = (queue: Queue.Queue<CleanupWrite>, directory: string) =>
+  Queue.take(queue).pipe(
+    Effect.flatMap(({ acknowledge, name, value }) =>
+      appendCleanup(directory, name, value).pipe(
+        Effect.match({
+          onFailure: () => acknowledge(false),
+          onSuccess: () => acknowledge(true),
+        }),
+      ),
+    ),
+    Effect.forever,
+  );
 interface Selection {
   amounts: typeof Amounts.Type;
   cart: typeof Cart.Type;
@@ -192,6 +228,7 @@ const readBrowserGuards = () =>
 const browserProof = ({
   artifacts,
   browser,
+  cleanupQueue,
   expectedBuild,
   mode,
   observedAt,
@@ -199,6 +236,7 @@ const browserProof = ({
 }: {
   artifacts: Map<string, string>;
   browser: Browser;
+  cleanupQueue: Queue.Queue<CleanupWrite>;
   expectedBuild: Option.Option<string>;
   mode: 'quote' | 'place';
   observedAt: number;
@@ -210,6 +248,16 @@ const browserProof = ({
   return Effect.tryPromise({
     catch: () => new CheckoutProofFailure({ cause: PROOF_FAILED, code: 1 }),
     try: async () => {
+      const queue = cleanupQueue;
+      const recordCleanup = async (name: string, value: Schema.Json) => {
+        const { promise, reject, resolve } = Promise.withResolvers<boolean>();
+        Queue.offerUnsafe(queue, {
+          acknowledge: (written) => (written ? resolve(true) : reject(new Error(PROOF_FAILED))),
+          name,
+          value,
+        });
+        await promise;
+      };
       const context = await browser.newContext({ serviceWorkers: 'block', viewport: { height: 1000, width: 1440 } });
       const page = await context.newPage();
       page.setDefaultTimeout(30_000);
@@ -220,6 +268,7 @@ const browserProof = ({
         const responses: Schema.JsonObject[] = [];
         const blocked: string[] = [];
         const pending: Promise<void>[] = [];
+        let cleanupRecordFailed = false;
         // Safety fence only: allowed exchanges reach the real server without replacement.
         await context.route('**/*', async (route) => {
           const request = route.request();
@@ -244,8 +293,9 @@ const browserProof = ({
           requests.push({ mode: requestMode, path: url.pathname });
           if (requestMode === 'place' && ParseResult.isSuccess(decoded)) {
             // Cleanup identity only; never persist a browser session, address, contact or whole request.
-            save('place-request.json', {
+            await recordCleanup('place-requests.jsonl', {
               clientRequestId: decoded.success.clientRequestId,
+              lines: decoded.success.lines,
               scope: decoded.success.scope,
             });
           }
@@ -264,17 +314,45 @@ const browserProof = ({
             (async () => {
               const metadata = { path: url.pathname, status: response.status() };
               try {
-                const decoded = Schema.decodeUnknownResult(Schema.fromJsonString(CartResponse))(await response.text());
+                const body = await response.text();
+                const decoded = Schema.decodeUnknownResult(Schema.fromJsonString(CartResponse))(body);
                 responses.push(
                   ParseResult.isSuccess(decoded) ? { ...metadata, ...evidence(decoded.success) } : metadata,
                 );
+                const intent = Schema.decodeUnknownResult(Schema.fromJsonString(Request))(
+                  response.request().postData(),
+                );
+                if (
+                  url.pathname === CHECKOUT_PATH &&
+                  ParseResult.isSuccess(intent) &&
+                  intent.success.mode === 'place'
+                ) {
+                  const placed = Schema.decodeUnknownResult(Schema.fromJsonString(CheckoutResponse))(body);
+                  if (ParseResult.isSuccess(placed)) {
+                    try {
+                      await recordCleanup('place-responses.jsonl', {
+                        clientRequestId: intent.success.clientRequestId,
+                        orderId: placed.success.orderId,
+                        orderNumber: placed.success.orderNumber,
+                      });
+                    } catch {
+                      cleanupRecordFailed = true;
+                    }
+                  }
+                }
               } catch {
                 responses.push(metadata);
               }
             })(),
           );
         });
-        return { blocked, pending, requests, responses };
+        return {
+          assertCleanupRecorded: () => assert.ok(!cleanupRecordFailed, PROOF_FAILED),
+          blocked,
+          pending,
+          requests,
+          responses,
+        };
       };
 
       const fillAndQuote = async (tab: Page, selection: Selection): Promise<Option.Option<Quote>> => {
@@ -286,6 +364,7 @@ const browserProof = ({
         await tab.locator('input[name="postalCode"]').fill('11000');
         await tab.locator('input[name="street"]').fill('TEST neodesílat 1');
         const methods = tab.locator('input[name="shippingMethod"]:enabled');
+        assert.ok((await methods.count()) > 0, 'Checkout has no offered shipping control');
         const choose = async (index: number): Promise<Option.Option<Quote>> => {
           if (index >= (await methods.count())) {
             return Option.none();
@@ -339,6 +418,7 @@ const browserProof = ({
         const candidates = new Set<string>();
         let attempted = 0;
         let examined = 0;
+        let products = 0;
         const discover = async () => {
           for (const href of await page.locator('a[href]').evaluateAll(documentLinks)) {
             const url = new URL(href, origin);
@@ -352,26 +432,46 @@ const browserProof = ({
         };
         await discover();
         candidates.add(`${origin}/cs/vyhledavani`);
-        // Sequential traversal: one minimum-quantity cart, every product/variant and catalogue page once.
+        // Bounds on this check, not on the catalogue: exhaustion or either cap means checkout is not proved.
         const choose = async (index: number): Promise<Option.Option<Fixture>> => {
           const href = [...candidates][index];
-          if (href === undefined) {
+          if (href === undefined || examined >= MAX_CATALOGUE_PAGES || products >= MAX_PRODUCT_PAGES) {
             return Option.none();
           }
+          const isProduct = new URL(href).pathname.startsWith('/cs/produkt/');
           examined += 1;
-          save('catalogue.json', { attempted, examined });
+          products += isProduct ? 1 : 0;
+          save('catalogue.json', {
+            attempted,
+            examined,
+            maxPages: MAX_CATALOGUE_PAGES,
+            maxProducts: MAX_PRODUCT_PAGES,
+            products,
+          });
           phase = 'catalogue-document';
           const document = await page.goto(href);
           assert.ok(document !== null && document.ok(), 'Catalogue document HTTP failure');
           await page.locator('main').waitFor({ state: 'attached' });
           await discover();
-          if (!new URL(href).pathname.startsWith('/cs/produkt/')) {
+          if (!isProduct) {
             return await choose(index + 1);
           }
+          const stock = page.locator('.n1-product-stock-desktop');
+          const availability = (await stock.count()) === 1 ? await stock.textContent() : '';
+          if (availability?.trim() === 'Vyprodáno') {
+            return await choose(index + 1);
+          }
+          // The storefront explicitly asks for a variant on a parent product. Its linked variants are candidates.
+          if ((await page.getByRole('button', { exact: true, name: 'Vyberte variantu' }).count()) === 1) {
+            assert.ok((await page.locator('a[href*="variantId="]').count()) > 0, 'Variant selection has no variants');
+            return await choose(index + 1);
+          }
+          phase = 'purchase-control';
           const add = page.getByRole('button', { exact: true, name: 'Přidat do košíku' });
-          if ((await add.count()) !== 1 || !(await add.isEnabled())) {
-            return await choose(index + 1);
-          }
+          assert.equal(await add.count(), 1, 'Expected exactly one purchase control');
+          // Playwright's real actionability wait includes cart hydration enabling the button.
+          // Missing, duplicate or permanently disabled controls are errors, never stock evidence.
+          await add.click({ trial: true });
           const quantity = page.getByRole('spinbutton');
           const minimum = await quantity.getAttribute('aria-valuemin');
           assert.ok(minimum !== null && minimum.length > 0, 'Missing minimum quantity');
@@ -380,7 +480,13 @@ const browserProof = ({
           await add.click();
           await page.getByText('Zboží je ve vašem košíku.', { exact: true }).waitFor();
           attempted += 1;
-          save('catalogue.json', { attempted, examined });
+          save('catalogue.json', {
+            attempted,
+            examined,
+            maxPages: MAX_CATALOGUE_PAGES,
+            maxProducts: MAX_PRODUCT_PAGES,
+            products,
+          });
           phase = 'cart-response';
           const pending = page.waitForResponse(cartEndpoint);
           await page.goto(`${origin}/cs/kosik`);
@@ -416,7 +522,6 @@ const browserProof = ({
         const pending = page.waitForResponse(checkoutEndpoint);
         await page.getByRole('button', { exact: true, name: 'Objednat' }).click({ clickCount: 2 });
         const http = await pending;
-        save('place-response.json', { status: http.status() });
         assert.ok(http.ok(), 'Placement uncertain/refused; use cleanup identity, DO NOT rerun place');
         const intent = ParseResult.getOrThrow(Schema.decodeUnknownResult(Request)(http.request().postDataJSON()));
         const placed = ParseResult.getOrThrow(Schema.decodeUnknownResult(Result)(readCheckout(await http.text())));
@@ -426,7 +531,6 @@ const browserProof = ({
           orderNumber: placed.orderNumber,
           scope: intent.scope,
         };
-        save('place-response.json', identity);
         assert.equal(intent.mode, 'place');
         assert.deepEqual(intent.lines, fixture.quote.request.lines);
         assert.deepEqual(intent.scope, fixture.quote.request.scope);
@@ -527,13 +631,114 @@ const browserProof = ({
         save('responses.json', network.responses);
         save('blocked.json', network.blocked);
         save(RESULT_FILE, summary);
+        network.assertCleanupRecorded();
       }
     },
   });
 };
+interface ProofOptions {
+  cleanup: boolean;
+  expectedBuild: Option.Option<string>;
+  mode: 'quote' | 'place';
+  origin: string;
+}
+const persistEvidence = (artifacts: Map<string, string>, directory: string) =>
+  Effect.gen(function* flushEvidence() {
+    const fs = yield* FileSystem.FileSystem;
+    for (const [name, text] of artifacts) {
+      // The result has one writer: the command, after completion or deadline, never a late worker.
+      if (name !== RESULT_FILE) {
+        yield* fs.writeFileString(path.join(directory, name), text);
+      }
+    }
+  });
+const persistResult = (
+  artifacts: Map<string, string>,
+  directory: string,
+  mode: ProofOptions['mode'],
+  expired: boolean,
+) =>
+  Effect.gen(function* flushResult() {
+    const summary = expired ? `{"mode":"${mode}","state":"deadline"}` : artifacts.get(RESULT_FILE);
+    if (summary !== undefined) {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(path.join(directory, RESULT_FILE), summary);
+      yield* Console.log(summary);
+    }
+  });
+const checkoutProof = ({
+  artifacts,
+  cleanup,
+  directory,
+  expectedBuild,
+  mode,
+  origin,
+}: ProofOptions & {
+  artifacts: Map<string, string>;
+  directory: string;
+}) =>
+  Effect.gen(function* runCheckoutProof() {
+    const ci = yield* Config.String('CI').pipe(Config.option);
+    if (mode === 'place' && (Option.isSome(ci) || !cleanup)) {
+      return yield* new CheckoutProofFailure({
+        cause: 'place requires --i-will-clean-up and CI unset; no order sent',
+        code: 1,
+      });
+    }
+    const modulePath = yield* Config.String('E2E_PLAYWRIGHT_MODULE').pipe(
+      Config.withDefault(
+        createRequire(new URL('../../apps/shell-super-app/package.json', import.meta.url)).resolve('@playwright/test'),
+      ),
+    );
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(directory, { recursive: true });
+    const observedAt = yield* Clock.currentTimeMillis;
+    const cleanupQueue = yield* Queue.unbounded<CleanupWrite>();
+    yield* cleanupWriter(cleanupQueue, directory).pipe(Effect.forkScoped);
+    const playwright = yield* Effect.tryPromise({
+      catch: () => new CheckoutProofFailure({ cause: PROOF_FAILED, code: 1 }),
+      try: async () => {
+        const loaded: unknown = await import(modulePath);
+        const normalized =
+          Predicate.hasProperty(loaded, 'default') && Predicate.hasProperty(loaded.default, 'chromium')
+            ? { chromium: loaded.default.chromium }
+            : loaded;
+        assert.ok(Schema.is(Launcher)(normalized), 'Pinned Playwright has no chromium.launch');
+        return normalized;
+      },
+    });
+    const browser = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        catch: () => new CheckoutProofFailure({ cause: 'Checkout proof failed: browser could not start', code: 1 }),
+        try: async () => await playwright.chromium.launch({ headless: true }),
+      }),
+      (owned) => Effect.promise(async () => await owned.close()),
+    );
+    const result = yield* browserProof({
+      artifacts,
+      browser,
+      cleanupQueue,
+      expectedBuild,
+      mode,
+      observedAt,
+      origin: new URL(origin).origin,
+    }).pipe(Effect.ensuring(persistEvidence(artifacts, directory).pipe(Effect.orDie)));
+    if (result.state === NO_FIXTURE) {
+      return yield* new CheckoutProofFailure({
+        cause: 'NO_PURCHASABLE_FIXTURE: no purchasable fixture on stage; checkout not proved',
+        code: 3,
+      });
+    }
+    return result;
+  }).pipe(Effect.scoped);
 const command = Command.make(
   'stage-n1-checkout',
   {
+    budgetMs: Flag.Int('budget-ms').pipe(
+      Flag.withSchema(Schema.Int.check(Schema.isBetween({ maximum: MAX_BUDGET_MS, minimum: 1 }))),
+      Flag.withDefault(MAX_BUDGET_MS),
+    ),
     cleanup: Flag.Boolean('i-will-clean-up').pipe(Flag.withDefault(false)),
     expectedBuild: Flag.String('expect-build-id').pipe(Flag.optional),
     mode: Argument.ChoiceWithValue('mode', [
@@ -543,76 +748,33 @@ const command = Command.make(
     origin: Flag.String('origin').pipe(Flag.withDefault(DEFAULT_ORIGIN)),
     out: Flag.String('out').pipe(Flag.optional),
   },
-  ({ cleanup, expectedBuild, mode, origin, out }) =>
-    Effect.gen(function* checkoutProof() {
-      const ci = yield* Config.String('CI').pipe(Config.option);
-      if (mode === 'place' && (Option.isSome(ci) || !cleanup)) {
-        return yield* new CheckoutProofFailure({
-          cause: 'place requires --i-will-clean-up and CI unset; no order sent',
-          code: 1,
-        });
-      }
+  ({ budgetMs, cleanup, expectedBuild, mode, origin, out }) =>
+    Effect.gen(function* boundedCheckoutProof() {
       const runnerTemp = yield* Config.String('RUNNER_TEMP').pipe(Config.withDefault('/tmp'));
       const root = yield* Config.String('E2E_OUT_DIR').pipe(Config.withDefault(path.join(runnerTemp, 'mcp-oauth-e2e')));
       const directory = path.resolve(Option.getOrElse(out, () => path.join(root, `n1-checkout-${mode}`)));
-      const modulePath = yield* Config.String('E2E_PLAYWRIGHT_MODULE').pipe(
-        Config.withDefault(
-          createRequire(new URL('../../apps/shell-super-app/package.json', import.meta.url)).resolve(
-            '@playwright/test',
-          ),
-        ),
-      );
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(directory, { recursive: true });
-      const observedAt = yield* Clock.currentTimeMillis;
+      let expired = false;
       const artifacts = new Map<string, string>();
-      const playwright = yield* Effect.tryPromise({
-        catch: () => new CheckoutProofFailure({ cause: PROOF_FAILED, code: 1 }),
-        try: async () => {
-          const loaded: unknown = await import(modulePath);
-          const normalized =
-            Predicate.hasProperty(loaded, 'default') && Predicate.hasProperty(loaded.default, 'chromium')
-              ? { chromium: loaded.default.chromium }
-              : loaded;
-          assert.ok(Schema.is(Launcher)(normalized), 'Pinned Playwright has no chromium.launch');
-          return normalized;
-        },
-      });
-      const browser = yield* Effect.acquireRelease(
-        Effect.tryPromise({
-          catch: () => new CheckoutProofFailure({ cause: 'Checkout proof failed: browser could not start', code: 1 }),
-          try: async () => await playwright.chromium.launch({ headless: true }),
+      const work = checkoutProof({ artifacts, cleanup, directory, expectedBuild, mode, origin });
+      // Own the complete run, including launch, response-body capture and browser teardown.
+      // A detached worker lets the deadline report even if an uninterruptible finalizer hangs.
+      const worker = yield* work.pipe(Effect.forkDetach);
+      return yield* Fiber.join(worker).pipe(
+        Effect.timeoutOrElse({
+          duration: budgetMs,
+          orElse: () =>
+            Effect.gen(function* checkoutDeadline() {
+              expired = true;
+              return yield* new CheckoutProofFailure({
+                cause: 'Checkout proof deadline; see allowlisted result.json',
+                code: 4,
+              });
+            }),
         }),
-        (owned) => Effect.promise(async () => await owned.close()),
+        Effect.ensuring(Fiber.interrupt(worker).pipe(Effect.forkDetach, Effect.asVoid)),
+        Effect.ensuring(Effect.suspend(() => persistResult(artifacts, directory, mode, expired)).pipe(Effect.orDie)),
       );
-      const result = yield* browserProof({
-        artifacts,
-        browser,
-        expectedBuild,
-        mode,
-        observedAt,
-        origin: new URL(origin).origin,
-      }).pipe(
-        Effect.ensuring(
-          Effect.gen(function* persistEvidence() {
-            for (const [name, text] of artifacts) {
-              yield* fs.writeFileString(path.join(directory, name), text);
-            }
-            const summary = artifacts.get(RESULT_FILE);
-            if (summary !== undefined) {
-              yield* Console.log(summary);
-            }
-          }).pipe(Effect.orDie),
-        ),
-      );
-      if (result.state === NO_FIXTURE) {
-        return yield* new CheckoutProofFailure({
-          cause: 'NO_PURCHASABLE_FIXTURE: no purchasable fixture on stage; checkout not proved',
-          code: 3,
-        });
-      }
-      return result;
-    }).pipe(Effect.scoped),
+    }),
 );
 NodeRuntime.runMain(
   Layer.build(
