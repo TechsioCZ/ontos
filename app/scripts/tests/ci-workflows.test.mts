@@ -1066,6 +1066,77 @@ it('saves no toolchain under a merge group ref, which no later run can read', ()
   expect(mise.map((step) => step.with?.cache_save)).toEqual([expression("github.event_name != 'merge_group'")]);
 });
 
+const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { encoding: 'utf-8' }).trim();
+
+it('uses a restored workspace only when pnpm would run in it without installing', () => {
+  const schema = Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(PublicationWorkflowStepSchema) }) });
+  const action = Schema.decodeUnknownSync(schema)(
+    parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
+  );
+  const verify = action.runs.steps.find(({ id }) => id === 'restored')?.run ?? 'exit 1';
+  // The step needs mapfile, which bash has since version 4 and macOS's /bin/bash (3.2) lacks, so take the
+  // first bash on PATH that has it instead of the first bash. An empty or relative entry is read from the
+  // current directory, as the shell reads it, and printed absolute because the fixture runs elsewhere.
+  const bash = lookup(
+    [
+      'entries="$PATH:"; IFS=:; set -f',
+      'for d in $entries; do',
+      '  case "$d" in /*) ;; *) d="$PWD/$d" ;; esac',
+      '  if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi',
+      'done',
+    ].join('\n'),
+  );
+  expect(bash).not.toBe('');
+  const pnpm = lookup('command -v pnpm');
+  const node = lookup('command -v node');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
+  const bin = path.join(directory, 'bin');
+  const workspace = path.join(directory, 'app');
+  const bareModules = path.join(workspace, 'packages/bare/node_modules');
+  const linkedModules = path.join(workspace, 'packages/linked/node_modules');
+  const env = { CI: 'true', HOME: directory, PATH: `${bin}:${path.dirname(pnpm)}:${path.dirname(node)}:${STEP_PATH}` };
+  const usable = () => {
+    const output = path.join(directory, 'output');
+    writeFileSync(output, '');
+    execFileSync(bash, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', verify], {
+      cwd: workspace,
+      env: { ...env, GITHUB_OUTPUT: output, PACKAGES: 'packages/bare\npackages/linked', RESTORED: 'true' },
+      stdio: 'pipe',
+    });
+    return readFileSync(output, 'utf-8').trim();
+  };
+  try {
+    mkdirSync(bin);
+    // Only mise is substituted; the dependency check runs the real pnpm against the installed fixture.
+    writeFileSync(path.join(bin, 'mise'), '#!/bin/sh\n[ "$1 $2" = "exec --" ] || exit 2\nshift 2\nexec "$@"\n');
+    chmodSync(path.join(bin, 'mise'), 0o755);
+    for (const [member, dependencies] of [
+      ['bare', {}],
+      ['linked', { bare: 'workspace:*' }],
+    ] as const) {
+      mkdirSync(path.join(workspace, 'packages', member), { recursive: true });
+      writeFileSync(
+        path.join(workspace, 'packages', member, 'package.json'),
+        JSON.stringify({ dependencies, name: member, private: true, version: '1.0.0' }),
+      );
+    }
+    writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ name: 'workspace', private: true }));
+    writeFileSync(path.join(workspace, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+    execFileSync(pnpm, ['install', '--offline', '--no-frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    execFileSync(pnpm, ['install', '--offline', '--frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(true);
+    expect(usable()).toBe('usable=true');
+    rmSync(linkedModules, { force: true, recursive: true });
+    expect(usable()).toBe('usable=false');
+    expect(existsSync(path.join(workspace, 'node_modules'))).toBe(false);
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 const CommandMatrixJobSchema = Schema.Struct({
   steps: Schema.Array(PublicationWorkflowStepSchema),
   strategy: Schema.Struct({

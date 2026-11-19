@@ -169,11 +169,13 @@ runs:
         path: ${{ steps.packages.outputs.paths }}
         key: ${{ steps.workspace-key.outputs.key }}
 
-    # A restored tree is used only if it resolves: the virtual store and pnpm's own state file are present
-    # and no dependency link of the root or of a workspace package dangles. Anything else is removed and
-    # installed from the store below, so a bad entry costs one install instead of failing 34 jobs with a
-    # module-resolution error. It catches a broken tree, not every tree pnpm refuses: an entry that missed a
-    # workspace package passed it and failed every job (demo 353b91df5), which the derived list above prevents.
+    # A restored tree is used only if it resolves and pnpm would run in it: the virtual store and pnpm's own
+    # state file are present, no dependency link of the root or of a workspace package dangles, and pnpm's
+    # own verifyDepsBeforeRun check passes without installing (about 0.5 s). That check refuses a workspace
+    # package that declares dependencies but has no node_modules, the tree an entry that missed a workspace
+    # package hands out (demo 353b91df5 failed every job with ERR_PNPM_VERIFY_DEPS_BEFORE_RUN), and accepts
+    # one with no dependencies, which pnpm gives none. Anything else is removed and installed from the store
+    # below, so a bad entry costs one install instead of failing 34 jobs.
     - name: Verify the restored workspace resolves
       id: restored
       if: inputs.restore-node-modules == 'true'
@@ -194,10 +196,12 @@ runs:
           # Each farm's direct dependency links and the links inside its @scope directories, such as
           # node_modules/@effect/sql-pg; with -L, `-type l` matches only the links that do not resolve.
           dangling="$(find -L "${farms[@]}" -mindepth 1 -maxdepth 2 \( -path '*/node_modules/@*/*' -o ! -path '*/node_modules/*/*' \) -type l -print | wc -l | tr -d ' ')"
-          if [[ "$dangling" == '0' ]]; then
+          if [[ "$dangling" != '0' ]]; then
+            echo "::warning::$dangling dependency links of the restored app/ workspace do not resolve."
+          elif PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=error mise exec -- pnpm exec true; then
             usable=true
           else
-            echo "::warning::$dangling dependency links of the restored app/ workspace do not resolve."
+            echo '::warning::pnpm would not run in the restored app/ workspace without installing.'
           fi
         fi
         if [[ "$RESTORED" == 'true' && "$usable" != 'true' ]]; then
