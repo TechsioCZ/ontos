@@ -21,6 +21,9 @@ const zeropsImportPath = new URL('../../zerops-import.yaml', import.meta.url);
 const stageWorkflowPath = new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url);
 const deliverStageActionPath = new URL('../../../.github/actions/deliver-stage/action.yml', import.meta.url);
 const stagePushPath = new URL('../zerops/stage-push.sh', import.meta.url);
+const DELIVER_STAGE = './.github/actions/deliver-stage';
+const INSTALL_APP = './.github/actions/install-app';
+const INSTALL_WORKSPACE = 'Install the app workspace';
 
 const ZeropsYamlSchema = Schema.Struct({
   zerops: Schema.Array(Schema.Struct({ run: Schema.Struct({ base: Schema.String }), setup: Schema.String })),
@@ -632,7 +635,7 @@ it('marks the attempt after the plan is retained and before any remote mutation,
     const mark = job.steps[index(MUTATION_MARKER)];
     // The mark refuses a remote head that moved on: a run never deploys an older branch head.
     expect(mark?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
-    const deliver = job.steps.findIndex(({ uses }) => uses === './.github/actions/deliver-stage');
+    const deliver = job.steps.findIndex(({ uses }) => uses === DELIVER_STAGE);
     expect(deliver).toBeGreaterThan(index(MUTATION_MARKER));
     expect(mark?.if).toBe(job.steps[deliver]?.if);
     // Nothing before the mark syncs a secret or pushes.
@@ -689,7 +692,7 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
   const at = (predicate: (step: DeliveryStep) => boolean) => steps.findIndex(predicate);
   const appPush = at(({ id }) => id === 'push-app');
   const aside = at(({ name }) => name === 'Set the pushed unit builds aside');
-  const install = at(({ name }) => name === 'Install the app workspace');
+  const install = at(({ name }) => name === INSTALL_WORKSPACE);
   const build = at(({ name }) => name === 'Build the units the Zerops build builds, for the next push');
   const kept = at(({ with: options }) => options?.name === 'zerops-units-0');
   const storefront = at(({ run }) => run?.includes('build-storefront.sh') === true);
@@ -715,16 +718,101 @@ it('keeps every unit of an app push for the next one, building those the Zerops 
   }
   expect(steps[build]?.run).toContain('zerops-unit-identities/digests.tsv');
   // The units it builds are the ones the front path could not lend.
-  const delivery = deliver.steps.find(({ uses }) => uses === './.github/actions/deliver-stage');
+  const delivery = deliver.steps.find(({ uses }) => uses === DELIVER_STAGE);
   expect(delivery?.with?.['build-units']).toBe(`\${{ steps.taken.outputs.missing }}`);
+});
+
+/** Lines that run, without comments: a comment may name node or pnpm. */
+const code = (source: string) =>
+  source
+    .split('\n')
+    .filter((line) => !/^\s*#/u.test(line))
+    .join('\n');
+/** What exists only once a toolchain is installed: none of it may run before the app upload. */
+const TOOLCHAIN = /\b(?:mise|pnpm|npm|npx|node|zcli|playwright)\b/u;
+/**
+ * Every script a command runs (bash, sh), sources (source, .) or assigns to run, and every script those reach in turn
+ * (stage-push.sh starts push-service.sh).
+ */
+const scriptsReachedBy = (command: string): readonly string[] => {
+  const reached = new Set<string>();
+  const visit = (source: string) => {
+    for (const [, name] of source.matchAll(
+      /(?:\b(?:bash|sh|source) +"?|(?:^|[\s;&|(])\. +"?|=)(?:\$script_dir\/|(?:app\/)?scripts\/zerops\/)(?<script>[\w-]+\.sh)/gmu,
+    )) {
+      if (name === undefined || reached.has(name)) {
+        continue;
+      }
+      reached.add(name);
+      visit(code(readFileSync(new URL(`../zerops/${name}`, import.meta.url), 'utf-8')));
+    }
+  };
+  visit(command);
+  return [...reached];
+};
+/** Where a job runs the shared delivery. */
+const delivery = (job: { steps: readonly DeliveryStep[] }) => job.steps.findIndex(({ uses }) => uses === DELIVER_STAGE);
+
+it('pushes the app before any install: nothing up to the upload needs the toolchain, and each caller declares its own', () => {
+  const steps = deliverySteps();
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const appPush = steps.findIndex(({ id }) => id === 'push-app');
+  const setup = index('Set up the toolchain and install the app workspace');
+  const install = index(INSTALL_WORKSPACE);
+  // A caller that installed nothing gets the toolchain, the pnpm store and the whole workspace here; one that ran the
+  // root importer install gets the whole workspace from its store. Exactly one of the two runs.
+  expect(steps[setup]?.uses).toBe(INSTALL_APP);
+  expect(steps[setup]?.with?.['install-args']).toBe('--trust-lockfile');
+  expect(steps[setup]?.if).toBe("inputs.toolchain == 'none'");
+  expect(steps[install]?.if).toBe("inputs.toolchain == 'installed'");
+  expect(steps[0]?.run).toContain('installed | none) ;;');
+  expect(appPush).toBeGreaterThanOrEqual(0);
+  const firstInstall = Math.min(setup, install);
+  expect(firstInstall).toBeGreaterThan(appPush);
+  // The boot reader starts right after the upload in both paths (a reader started after the new boot loses it) and
+  // is the one step before the install that brings its own tool: the pinned zcli, from the npm on PATH there.
+  const reader = index("Read the new app container's boot stages");
+  expect(reader).toBe(appPush + 1);
+  expect(steps[reader]?.run).toBe('bash app/scripts/zerops/app-boot-stages.sh start');
+  const readerScript = code(readFileSync(new URL('../zerops/app-boot-stages.sh', import.meta.url), 'utf-8'));
+  expect(readerScript.match(/\bnpm install\b/gu)).toEqual(['npm install']);
+  expect(readerScript).toContain('npm install --global @zerops/zcli@1.1.3');
+  expect(readerScript).not.toMatch(/\b(?:mise|pnpm|npx|playwright)\b/u);
+  // Nothing else before the install runs the toolchain or its tools, in the step or in any script it reaches.
+  const reached = new Set<string>();
+  for (const step of steps.slice(0, firstInstall).filter((_, position) => position !== reader)) {
+    expect(step.uses, step.name).toBeUndefined();
+    expect(code(step.run ?? ''), step.name).not.toMatch(TOOLCHAIN);
+    for (const script of scriptsReachedBy(step.run ?? '')) {
+      reached.add(script);
+    }
+  }
+  for (const script of reached) {
+    expect(code(readFileSync(new URL(`../zerops/${script}`, import.meta.url), 'utf-8')), script).not.toMatch(TOOLCHAIN);
+  }
+  expect([...reached].toSorted()).toEqual([
+    'pack-prebuilt-units.sh',
+    'push-service.sh',
+    'stage-push.sh',
+    'sync-service-secret.sh',
+  ]);
+  // The job after the unit builds installs nothing before it pushes; the planning job installed the root importer.
+  const { deliver, deliver_app: deliverApp } = stageJobs();
+  expect(deliverApp.steps[delivery(deliverApp)]?.with?.toolchain).toBe('none');
+  for (const step of deliverApp.steps.slice(0, delivery(deliverApp))) {
+    expect(step.uses ?? '', step.name).not.toBe(INSTALL_APP);
+    expect(code(step.run ?? ''), step.name).not.toMatch(TOOLCHAIN);
+  }
+  expect(deliver.steps[delivery(deliver)]?.with?.toolchain).toBe('installed');
+  const planInstall = deliver.steps.findIndex(({ uses }) => uses === INSTALL_APP);
+  expect(planInstall).toBeGreaterThanOrEqual(0);
+  expect(planInstall).toBeLessThan(delivery(deliver));
 });
 
 it('plans from the run history with only the root importer and a depth-1 checkout', () => {
   const { steps } = stageJobs().deliver;
   expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
-  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
-    '--trust-lockfile --filter app',
-  );
+  expect(steps.find(({ uses }) => uses === INSTALL_APP)?.with?.['install-args']).toBe('--trust-lockfile --filter app');
   // The changes come from GitHub's compare API: the checkout the app push ships stays shallow.
   const source = readFileSync(stageWorkflowPath, 'utf-8');
   expect(source).not.toContain('--unshallow');
@@ -740,8 +828,8 @@ const verificationSteps = deliverySteps;
 
 it('installs the full verification workspace and caches the frozen browser graph plus image-specific apt archives', () => {
   const steps = verificationSteps();
-  // The whole workspace, once the app upload is done; the caller installed the root importer first.
-  expect(steps.find(({ name }) => name === 'Install the app workspace')?.run).toBe(
+  // The whole workspace, once the app upload is done, from the store of the caller's root importer install.
+  expect(steps.find(({ name }) => name === INSTALL_WORKSPACE)?.run).toBe(
     'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
   );
   const versions = steps.find(({ id }) => id === 'verification-browser-versions');
