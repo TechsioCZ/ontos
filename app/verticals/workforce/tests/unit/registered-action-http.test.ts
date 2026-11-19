@@ -19,14 +19,19 @@ for (const { command, slug } of cases) {
         const { harness, request, writes } = yield* makeFixture();
         const response = yield* request(`/workforce/actions/${slug}`, command, slug);
         expect(response.status).toBe(200);
-        expect(yield* Effect.promise(() => response.json())).toMatchObject({ revision: 2 });
+        const reply: unknown = yield* Effect.promise(() => response.json());
+        expect(reply).toMatchObject({ revision: 2 });
         expect(harness.snapshot().committed).toHaveLength(1);
         expect(harness.snapshot().invocations[0]?.actionKey).toBe(`demo.workforce.${slug}`);
         expect(harness.snapshot().committed[0]?.actionKey).toBe(`demo.workforce.${slug}`);
         expect(writes.at(-1)).toEqual(command);
+        const writesBeforeReplay = writes.length;
+        // A same-key retry over HTTP answers the reply Core saved with the commit, and nothing runs again.
         const replay = yield* request(`/workforce/actions/${slug}`, command, slug);
-        expect(replay.status).toBe(409);
+        expect(replay.status).toBe(200);
+        expect(yield* Effect.promise(() => replay.json())).toEqual(reply);
         expect(harness.snapshot().committed).toHaveLength(1);
+        expect(writes).toHaveLength(writesBeforeReplay);
         if (slug !== 'apply-command') {
           const rejected = yield* request('/workforce/actions/apply-command', command, `${slug}-old`);
           expect(rejected.status).toBe(400);

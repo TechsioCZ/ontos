@@ -899,6 +899,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
         recoverAlreadyCommitted: () => null,
         registration: startPortalEnrollmentAction,
         requestHeaders: actionRequestHeaders(request),
+        // A repeated restart reuses its deterministic key and must continue from the Attempt as it is now: the
+        // committed start is reread below, never answered from the saved reply of the first restart.
+        savedReply: 'withhold',
       }).pipe(
         Effect.filterOrElse(
           (result) => result !== null,
