@@ -1,11 +1,13 @@
 // @rstest-environment happy-dom
 // The new stay form owns the guest the person chose. A later guest search only offers other parties: whether it omits
-// the chosen guest or fails, the guest stays chosen and labelled in the real picker, Uložit stays enabled, and the save
-// sends the chosen guest's party reference. The real page, picker, router and i18n run; the lease owner's records and
+// the chosen guest or fails for now, the guest stays chosen and labelled in the real picker, Uložit stays enabled, and
+// the save sends the chosen guest's party reference. A newer name of the chosen guest replaces the kept one. When Party
+// Registry refuses the read, the form closes with its guest, the loaded records hide and no earlier search answers any
+// more. The picker's own clear action drops the guest and keeps the rest of the form. The real page, picker, router and i18n run; the lease owner's records and
 // Action, the Property register, the Agreement register and Party Registry's customer list answer in process through
 // their HttpApi contracts behind the Shell's gateway issuer.
 import { saveLabelsFor } from '@app/admin-ui';
-import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   RecordsApi as AgreementsRecordsApi,
   RecordsResponseSchema as AgreementsRecordsSchema,
@@ -23,11 +25,13 @@ import {
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Layer, Option, Schema } from 'effect';
-import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
+import { Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import { act } from 'react';
 
 import {
   CustomerListApi,
+  CustomerListForbiddenProblemSchema,
   CustomerListResponseSchema,
   CustomerListUnavailableProblemSchema,
 } from '../../../party-registry/shared/apis/customer-list.ts';
@@ -115,6 +119,19 @@ const directory = Schema.decodeUnknownSync(CustomerListResponseSchema)({
     customer('Petr Dvořák', dvorakPartyId, '66666666-6666-4666-8666-666666666662'),
   ],
 });
+/** The same directory a moment later: Jana Nováková is now called Jana Nová. */
+const renamedDirectory = Schema.decodeUnknownSync(CustomerListResponseSchema)({
+  items: [
+    customer('Jana Nová', novakPartyId, '66666666-6666-4666-8666-666666666661'),
+    customer('Petr Dvořák', dvorakPartyId, '66666666-6666-4666-8666-666666666662'),
+  ],
+});
+const forbidden = CustomerListForbiddenProblemSchema.make({
+  detail: 'The customer list is not allowed for this principal.',
+  status: 403,
+  title: 'Customer list forbidden',
+  type: 'https://ontos.dev/problems/customer-list-forbidden',
+});
 const unavailable = CustomerListUnavailableProblemSchema.make({
   detail: 'The customer list is unavailable.',
   retryable: true,
@@ -126,8 +143,12 @@ const unavailable = CustomerListUnavailableProblemSchema.make({
 const leases = Schema.decodeUnknownSync(RecordsResponseSchema)({ canWrite: true, occupancies: [], revision: 7 });
 const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: occupancyRef, revision: 8 });
 
-/** Whether Party Registry's customer list answers; a failed search sets it to false. */
-let listAnswers = true;
+/** What Party Registry's customer list answers next; a test switches it between searches. */
+let listAnswer: Effect.Effect<typeof directory, typeof unavailable | typeof forbidden> = Effect.succeed(directory);
+/** A customer-list read that answers `held` waits at the server until the test releases it. */
+let heldRelease = Deferred.makeUnsafe<boolean>();
+const held = Effect.suspend(() => Deferred.await(heldRelease)).pipe(Effect.as(directory));
+const releaseHeld = () => Deferred.doneUnsafe(heldRelease, Effect.succeed(true));
 /** Every customer-list read and every command the lease owner received, in order. */
 let listReads = 0;
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
@@ -165,7 +186,7 @@ const network = browserNetwork(
       group.handle('execute', () =>
         Effect.suspend(() => {
           listReads += 1;
-          return listAnswers ? Effect.succeed(directory) : Effect.fail(unavailable);
+          return listAnswer;
         }),
       ),
     ),
@@ -194,7 +215,7 @@ const panelButton = (label: string) =>
   Option.getOrThrow(
     Option.fromUndefinedOr(
       [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
-        (candidate) => candidate.textContent?.trim() === label,
+        (candidate) => candidate.textContent?.trim() === label || candidate.getAttribute('aria-label') === label,
       ),
     ),
   );
@@ -229,25 +250,53 @@ const type = (selector: string, value: string) =>
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-/** Picks a value through the real picker's native control and lets the picker report it. */
-const pick = (label: string, value: string) =>
+/** Waits for the real picker to report the choice in both the native control and visible trigger. */
+const pick = (label: string, value: string, shown: string) =>
   acted(() => {
     const select = pickerSelect(label);
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
     select.dispatchEvent(new Event('change', { bubbles: true }));
-  }).pipe(Effect.andThen(settle), Effect.andThen(settle));
+  }).pipe(
+    Effect.andThen(
+      Effect.promise(() =>
+        rstest.waitFor(async () => {
+          await act(async () => {});
+          expect(pickerSelect(label).value).toBe(value);
+          expect(
+            document
+              .querySelector(
+                `[role="combobox"][aria-labelledby="${pickerSelect(label).getAttribute('aria-labelledby') ?? ''}"]`,
+              )
+              ?.textContent?.trim(),
+          ).toBe(shown);
+        }),
+      ),
+    ),
+  );
 
-/** Searches the guests and waits until the answer arrived and the page took it. */
-const search = (query: string) =>
-  Effect.gen(function* searchGuests() {
+/** Asks for the guests matching `query` and waits until Party Registry received the read. */
+const ask = (query: string) =>
+  Effect.gen(function* askGuests() {
     const read = listReads;
     yield* type('#booking-guest-query', query);
     yield* acted(() => searchButton().click());
     yield* waitUntil(() => listReads === read + 1);
-    yield* networkIdle;
-    yield* settle;
-    yield* settle;
   });
+
+/** Searches the guests and waits until the answer arrived and the page took it. */
+const search = (query: string) =>
+  ask(query).pipe(Effect.andThen(networkIdle), Effect.andThen(waitUntil(() => !searchButton().disabled)));
+
+/** The guests the picker offers, by party id. */
+const offered = () => [...pickerSelect(guestLabel).options].map((option) => option.value).filter(Boolean);
+
+/** After a refused read: the form is gone, the page says so and offers a retry, and no stay or lease shows. */
+const expectRefused = () => {
+  expect(panel()).toBeUndefined();
+  expect(text()).toContain(czech('property-leasing.demo.feedback.forbidden'));
+  expect(document.querySelector('#booking-guest-query')).toBeNull();
+  expect(commands).toEqual([]);
+};
 
 /** Opens a new stay, picks the unit, the end date and Jana Nováková from a search. */
 const chooseNovakova = Effect.gen(function* chooseNovakova() {
@@ -261,13 +310,13 @@ const chooseNovakova = Effect.gen(function* chooseNovakova() {
       ?.click(),
   );
   yield* waitUntil(() => panel() !== undefined);
-  yield* pick(czech('property-leasing.demo.unit'), unitRef.resourceId);
+  yield* pick(czech('property-leasing.demo.unit'), unitRef.resourceId, 'Apartmán Lípa');
   yield* type('#occupancy-end-date', '2099-12-31');
   // No guest yet: Uložit is held back.
   expect(saveButton().disabled).toBe(true);
   yield* search('Nováková');
-  yield* pick(guestLabel, novakPartyId);
-  yield* waitUntil(() => guestShown() === 'Jana Nováková');
+  yield* pick(guestLabel, novakPartyId, 'Jana Nováková');
+  yield* waitUntil(() => !saveButton().disabled);
   expect(saveButton().disabled).toBe(false);
 });
 
@@ -279,7 +328,8 @@ const expectKept = () => {
 };
 
 beforeEach(() => {
-  listAnswers = true;
+  heldRelease = Deferred.makeUnsafe<boolean>();
+  listAnswer = Effect.succeed(directory);
   listReads = 0;
   commands.length = 0;
   leaseRecords.invalidate();
@@ -289,18 +339,12 @@ afterEach(unmountAll);
 
 describe('the guest of a new stay', () => {
   it.live(
-    'stays chosen after a search that omits it and a failed search, and Uložit sends it',
+    'stays chosen after a search that omits it, and Uložit sends it',
     () =>
-      Effect.gen(function* guestSurvives() {
+      Effect.gen(function* survivesOmission() {
         yield* chooseNovakova;
 
         yield* search('Dvořák');
-        expectKept();
-
-        listAnswers = false;
-        yield* search('Svoboda');
-        expect(panel()).toBeDefined();
-        expect(text()).toContain(czech('property-leasing.demo.feedback.unavailable'));
         expectKept();
         // Searching and choosing never record anything: only Uložit does.
         expect(commands).toEqual([]);
@@ -324,7 +368,103 @@ describe('the guest of a new stay', () => {
           expectedRevision: 7,
         });
       }).pipe(Effect.provide(network)),
-    // Mounts the real lease page, searches three times and saves.
+    // Mounts the real lease page, searches twice and saves.
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'stays chosen after a search that fails for now, which says so in the form and offers no earlier hit',
+    () =>
+      Effect.gen(function* survivesOutage() {
+        yield* chooseNovakova;
+        yield* search('Dvořák');
+        expect(offered()).toEqual([novakPartyId, dvorakPartyId]);
+
+        listAnswer = Effect.fail(unavailable);
+        yield* search('Svoboda');
+        expect(panel()?.textContent).toContain(czech('property-leasing.demo.feedback.unavailable'));
+        expectKept();
+        // Dvořák came from the earlier search: only the chosen guest is still offered.
+        expect(offered()).toEqual([novakPartyId]);
+        expect(commands).toEqual([]);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'a refused search closes the form with its guest and hides the loaded records',
+    () =>
+      Effect.gen(function* refusalClears() {
+        yield* chooseNovakova;
+        yield* search('Dvořák');
+
+        listAnswer = Effect.fail(forbidden);
+        yield* ask('Svoboda');
+        yield* networkIdle;
+        yield* waitUntil(() => panel() === undefined);
+        expectRefused();
+        expect(buttons(czech('property-leasing.demo.retry')).length).toBe(1);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'an earlier search that answers after a refusal does not bring the form or its guests back',
+    () =>
+      Effect.gen(function* noLateAnswer() {
+        yield* chooseNovakova;
+        listAnswer = held;
+        yield* ask('Dvořák');
+
+        listAnswer = Effect.fail(forbidden);
+        yield* ask('Svoboda');
+        yield* waitUntil(() => panel() === undefined);
+
+        releaseHeld();
+        yield* networkIdle;
+        expectRefused();
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    "keeps the chosen guest's newer name after a later search omits the guest",
+    () =>
+      Effect.gen(function* renameSticks() {
+        yield* chooseNovakova;
+        listAnswer = Effect.succeed(renamedDirectory);
+        yield* search('Nová');
+        yield* waitUntil(() => guestShown() === 'Jana Nová');
+
+        yield* search('Dvořák');
+        expect(pickerSelect(guestLabel).value).toBe(novakPartyId);
+        expect(guestShown()).toBe('Jana Nová');
+        expect(saveButton().disabled).toBe(false);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    "the picker's clear action drops the guest, holds Uložit back and keeps the rest of the form",
+    () =>
+      Effect.gen(function* clearsGuest() {
+        yield* chooseNovakova;
+        yield* type('#stay-note', 'Pozdní příjezd');
+        yield* acted(() => panelButton(czech('property-leasing.demo.clearGuest')).click());
+        yield* waitUntil(
+          () =>
+            pickerSelect(guestLabel).value === '' &&
+            guestShown() === czech('property-leasing.demo.choose') &&
+            saveButton().disabled,
+        );
+        expect(guestShown()).toBe(czech('property-leasing.demo.choose'));
+        expect(saveButton().disabled).toBe(true);
+        expect(pickerSelect(czech('property-leasing.demo.unit')).value).toBe(unitRef.resourceId);
+        expect(document.querySelector<HTMLInputElement>('#occupancy-end-date')?.value).toBe('2099-12-31');
+        expect(document.querySelector<HTMLInputElement>('#stay-note')?.value).toBe('Pozdní příjezd');
+        expect(document.querySelector<HTMLInputElement>('#booking-guest-query')?.value).toBe('Nováková');
+        expect(commands).toEqual([]);
+      }).pipe(Effect.provide(network)),
     { timeout: 20_000 },
   );
 
@@ -334,8 +474,7 @@ describe('the guest of a new stay', () => {
       Effect.gen(function* picksAnother() {
         yield* chooseNovakova;
         yield* search('Dvořák');
-        yield* pick(guestLabel, dvorakPartyId);
-        yield* waitUntil(() => guestShown() === 'Petr Dvořák');
+        yield* pick(guestLabel, dvorakPartyId, 'Petr Dvořák');
         // Nováková is no longer kept: the picker offers only what the last search found.
         expect([...pickerSelect(guestLabel).options].map((option) => option.value).filter(Boolean)).toEqual([
           dvorakPartyId,

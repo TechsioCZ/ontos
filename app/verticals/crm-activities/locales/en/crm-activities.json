@@ -41,6 +41,8 @@
           "NOTE": "Note"
         },
         "choose": "Choose",
+        "clearContact": "Clear the contact",
+        "searchUnavailable": "Contacts could not be searched right now. Try again.",
         "intro": "Communication history, contacts and follow-up tasks.",
         "empty": "No activities have been recorded yet.",
         "kind": "Activity type",

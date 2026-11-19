@@ -17,13 +17,15 @@ type Change = (field: keyof OccupancyDraft, value: string) => void;
 
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
 
-/** One single-choice select; an empty `value` means nothing chosen. */
+/** One single-choice select; an empty `value` means nothing chosen. With `clearLabel` the choice can be cleared. */
 export const ChoiceSelect = ({
+  clearLabel,
   items,
   label,
   onChange,
   value,
 }: {
+  readonly clearLabel?: string;
   readonly items: readonly Choice[];
   readonly label: string;
   readonly onChange: (value: string) => void;
@@ -41,6 +43,7 @@ export const ChoiceSelect = ({
         <Select.Trigger>
           <Select.ValueText placeholder={t(LABEL_CHOOSE)} />
         </Select.Trigger>
+        {clearLabel !== undefined && <Select.ClearTrigger aria-label={clearLabel} />}
       </Select.Control>
       <Select.Positioner>
         <Select.Content>
@@ -199,6 +202,7 @@ export const StayFields = ({
         </Button>
       </div>
       <ChoiceSelect
+        clearLabel={t('property-leasing.demo.clearGuest')}
         items={guests.items}
         label={t('property-leasing.demo.guest')}
         onChange={(value) => onChange('guestId', value)}

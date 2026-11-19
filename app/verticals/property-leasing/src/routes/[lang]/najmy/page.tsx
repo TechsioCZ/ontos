@@ -542,19 +542,37 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       occupancyRef: record.occupancyRef,
     });
   };
+  /** Counts guest searches: only the latest one's answer changes what the form offers. */
+  const guestSearches = useRef(0);
   const searchGuests = () => {
     if (guestQuery.trim().length === 0) {
       setActionFeedback('validation');
       return;
     }
+    guestSearches.current += 1;
+    const asked = guestSearches.current;
     run(
       findCustomers(guestQuery).pipe(
         Effect.match({
-          // A failed guest search says so in the form; it is a lookup, so the open stay and its chosen guest stay.
-          onFailure: (failure) => setActionFeedback(failureFeedback(failure)),
+          onFailure: (failure) => {
+            const next = failureFeedback(failure);
+            if (next === 'forbidden') {
+              // Party Registry refused the read: as after any refused read, the form with its chosen guest goes and
+              // every outstanding read, an earlier search too, is aborted.
+              reportFailure(failure);
+              return;
+            }
+            if (asked === guestSearches.current) {
+              // The lookup failed for now: the form says so, keeps the chosen guest and offers no earlier hits.
+              dispatchEditor(occupancyEditorActions.GUESTS_LOADED({ guests: [] }));
+              setActionFeedback(next);
+            }
+          },
           onSuccess: (values) => {
-            dispatchEditor(occupancyEditorActions.GUESTS_LOADED({ guests: values }));
-            setActionFeedback(undefined);
+            if (asked === guestSearches.current) {
+              dispatchEditor(occupancyEditorActions.GUESTS_LOADED({ guests: values }));
+              setActionFeedback(undefined);
+            }
           },
         }),
       ),

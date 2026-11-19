@@ -41,6 +41,8 @@
           "NOTE": "Poznámka"
         },
         "choose": "Vyberte",
+        "clearContact": "Zrušit výběr kontaktu",
+        "searchUnavailable": "Kontakty se teď nepodařilo vyhledat. Zkuste to znovu.",
         "intro": "Přehled komunikace, kontaktů a navazujících úkolů.",
         "empty": "Zatím nejsou zaznamenané žádné aktivity.",
         "kind": "Typ aktivity",

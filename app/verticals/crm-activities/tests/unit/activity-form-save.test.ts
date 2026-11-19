@@ -1,11 +1,14 @@
 // @rstest-environment happy-dom
 // The activity form owns the contact the user chose. A later search only offers other contacts: whether it omits the
-// chosen one, finds nobody or fails, the choice stays chosen and labelled in the real picker, Uložit stays enabled, and
-// the save sends the chosen contact's full reference. Before a contact and a summary exist, Uložit is held back. The real
+// chosen one, finds nobody or fails for now, the choice stays chosen and labelled in the real picker, Uložit stays
+// enabled, and the save sends the chosen contact's full reference. A newer name of the chosen contact replaces the kept
+// one. When the directory refuses the user, nothing it returned stays chosen or on offer. The picker's own clear action
+// drops the contact and keeps the rest of the form. Before a contact and a summary exist, Uložit is held back. The real
 // page, picker, router and i18n run; the owner's Records and Action, Work Tasks Records and the Party Registry
 // counterparty search answer in process through their HttpApi contracts behind the Shell's gateway issuer.
 import { acted, buttons, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
+  CounterpartiesProviderForbiddenProblemSchema,
   CounterpartiesProviderResponseSchema,
   CounterpartiesProviderUnavailableProblemSchema,
   CounterpartiesSearchApi,
@@ -23,7 +26,7 @@ import {
   RecordsResponseSchema as WorkRecordsResponseSchema,
 } from '@app/work-tasks/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Deferred, Effect, Layer, Match, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
@@ -58,12 +61,15 @@ const contact = (title: string, partyId: string, counterpartyId: string) => ({
     tenantId,
   },
 });
-const [dolce, novak] = Schema.decodeUnknownSync(CounterpartiesProviderResponseSchema)([
+const [dolce, novak, dolceRenamed] = Schema.decodeUnknownSync(CounterpartiesProviderResponseSchema)([
   contact('Kavárna Dolce', '44440000-0000-4000-8000-000000000001', '44444444-4444-4444-8444-444444444444'),
   contact('Pekárna Novák', '55550000-0000-4000-8000-000000000001', '55555555-5555-4555-8555-555555555555'),
+  contact('Kavárna Dolce Vita', '44440000-0000-4000-8000-000000000001', '44444444-4444-4444-8444-444444444444'),
 ]).map((row) => row);
 const kept = Option.getOrThrow(Option.fromUndefinedOr(dolce));
 const other = Option.getOrThrow(Option.fromUndefinedOr(novak));
+/** Dolce under the newer name a later search returns: the same contact. */
+const renamed = Option.getOrThrow(Option.fromUndefinedOr(dolceRenamed));
 
 const actorPrincipalRef = { principalId, tenantId };
 const activityRecords = Schema.decodeUnknownSync(RecordsResponseSchema)({
@@ -118,16 +124,32 @@ const unavailable = CounterpartiesProviderUnavailableProblemSchema.make({
   type: 'https://ontos.dev/problems/search-unavailable',
 });
 
-/** What the counterparty search answers per query: Dolce lists Dolce and Novák, Novák only Novák, Nikdo nobody. */
-const answerFor = (query: string) => {
-  if (query === 'Výpadek') {
-    return Effect.fail(unavailable);
-  }
-  if (query === 'Dolce') {
-    return Effect.succeed([kept, other]);
-  }
-  return Effect.succeed(query === 'Novák' ? [other] : []);
-};
+const forbidden = CounterpartiesProviderForbiddenProblemSchema.make({
+  detail: 'The counterparty search is not allowed for this principal.',
+  status: 403,
+  title: 'Search forbidden',
+  type: 'https://ontos.dev/problems/search-forbidden',
+});
+
+/** The search for Pozdě waits at the server until the test releases it. */
+let lateRelease = Deferred.makeUnsafe<boolean>();
+const releaseLate = () => Deferred.doneUnsafe(lateRelease, Effect.succeed(true));
+
+/**
+ * What the counterparty search answers per query: Dolce lists Dolce and Novák, Novák only Novák, Vita Dolce under its
+ * newer name, Pozdě Dolce and Novák once released, Výpadek is unavailable, Zákaz refuses the user, anything else finds
+ * nobody.
+ */
+const answerFor = (query: string) =>
+  Match.value(query).pipe(
+    Match.when('Výpadek', () => Effect.fail(unavailable)),
+    Match.when('Zákaz', () => Effect.fail(forbidden)),
+    Match.when('Dolce', () => Effect.succeed([kept, other])),
+    Match.when('Novák', () => Effect.succeed([other])),
+    Match.when('Vita', () => Effect.succeed([renamed])),
+    Match.when('Pozdě', () => Deferred.await(lateRelease).pipe(Effect.as([kept, other]))),
+    Match.orElse(() => Effect.succeed([])),
+  );
 
 /** Every query the search received and every command the owner's Action received, in order. */
 const queries: string[] = [];
@@ -196,6 +218,12 @@ const contactSelect = () =>
     ),
   );
 
+/** The contacts the picker offers, by id. */
+const offered = () => [...contactSelect().options].map((option) => option.value).filter((value) => value !== '');
+
+/** The record form; a failed search says so inside it. */
+const form = () => Option.getOrThrow(Option.fromNullOr(element('#activity-summary').closest('form')));
+
 /** What the contact picker's trigger shows. */
 const contactShown = () =>
   document
@@ -210,16 +238,18 @@ const typeInto = (selector: string, value: string) =>
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-/** Searches the contacts and waits until the answer arrived and the page took it. */
-const search = (query: string) =>
-  Effect.gen(function* searchContacts() {
+/** Asks the search for `query` and waits until the search received it. */
+const ask = (query: string) =>
+  Effect.gen(function* askContacts() {
     const asked = queries.length;
     yield* typeInto('#counterparty-query', query);
     yield* acted(() => findButton().click());
     yield* waitUntil(() => queries.length === asked + 1);
-    yield* networkIdle;
-    yield* waitUntil(() => !findButton().disabled);
   });
+
+/** Searches the contacts and waits until the answer arrived and the page took it. */
+const search = (query: string) =>
+  ask(query).pipe(Effect.andThen(networkIdle), Effect.andThen(waitUntil(() => !findButton().disabled)));
 
 /**
  * Picks a contact through the real picker's native control and waits until the trigger shows it. The picker reports the
@@ -257,6 +287,7 @@ const expectKept = () => {
 };
 
 beforeEach(() => {
+  lateRelease = Deferred.makeUnsafe<boolean>();
   queries.length = 0;
   commands.length = 0;
 });
@@ -264,8 +295,8 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 it.layer(network, { excludeTestServices: true })('the activity form', (suite) => {
-  suite.effect('a chosen contact survives a search that omits it, an empty result and a failed search', () =>
-    Effect.gen(function* choiceSurvives() {
+  suite.effect('a chosen contact survives a search that omits it and one that finds nobody', () =>
+    Effect.gen(function* survivesOmission() {
       yield* chooseDolce;
 
       yield* search('Novák');
@@ -274,13 +305,75 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
       yield* search('Nikdo');
       expectKept();
 
-      yield* search('Výpadek');
-      expect(text()).toContain(copy(`${key}.unavailable`));
-      expectKept();
-
-      expect(queries).toEqual(['Dolce', 'Novák', 'Nikdo', 'Výpadek']);
+      expect(queries).toEqual(['Dolce', 'Novák', 'Nikdo']);
       // Searching and choosing never record anything: only Uložit does.
       expect(commands).toEqual([]);
+    }),
+  );
+
+  suite.effect('a search that fails for now keeps the contact, says so in the form and offers no earlier hit', () =>
+    Effect.gen(function* survivesOutage() {
+      yield* chooseDolce;
+      yield* search('Novák');
+      expect(offered()).toEqual([kept.ref.resourceId, other.ref.resourceId]);
+
+      yield* search('Výpadek');
+      expect(form().textContent).toContain(copy(`${key}.searchUnavailable`));
+      expectKept();
+      // Novák came from the earlier search: only the chosen contact is still offered.
+      expect(offered()).toEqual([kept.ref.resourceId]);
+      expect(commands).toEqual([]);
+    }),
+  );
+
+  suite.effect('a refused search drops the chosen contact and every earlier hit and keeps the summary', () =>
+    Effect.gen(function* refusalClears() {
+      yield* chooseDolce;
+      yield* search('Novák');
+
+      yield* search('Zákaz');
+      expect(text()).toContain(copy(`${key}.forbidden`));
+      expect(contactSelect().value).toBe('');
+      expect(contactShown()).toBe(copy(`${key}.choose`));
+      expect(offered()).toEqual([]);
+      expect(saveButton().disabled).toBe(true);
+      expect(element<HTMLInputElement>('#activity-summary').value).toBe('Domluvená ochutnávka');
+      expect(commands).toEqual([]);
+    }),
+  );
+
+  suite.effect('no earlier search answers after a refusal: Find waits until the outstanding search answered', () =>
+    Effect.gen(function* noLateAnswer() {
+      yield* chooseDolce;
+      yield* ask('Pozdě');
+      // While Pozdě is outstanding no other search can be asked, so none can be refused before Pozdě answers.
+      yield* typeInto('#counterparty-query', 'Zákaz');
+      expect(findButton().disabled).toBe(true);
+      yield* acted(() => findButton().click());
+      expect(queries).toEqual(['Dolce', 'Pozdě']);
+
+      releaseLate();
+      yield* networkIdle;
+      yield* waitUntil(() => !findButton().disabled);
+      yield* search('Zákaz');
+      yield* networkIdle;
+      expect(contactSelect().value).toBe('');
+      expect(offered()).toEqual([]);
+      expect(saveButton().disabled).toBe(true);
+      expect(queries).toEqual(['Dolce', 'Pozdě', 'Zákaz']);
+    }),
+  );
+
+  suite.effect("the chosen contact's newer name stays after a later search omits it", () =>
+    Effect.gen(function* renameSticks() {
+      yield* chooseDolce;
+      yield* search('Vita');
+      expect(contactShown()).toBe('Kavárna Dolce Vita');
+
+      yield* search('Novák');
+      expect(contactSelect().value).toBe(kept.ref.resourceId);
+      expect(contactShown()).toBe('Kavárna Dolce Vita');
+      expect(saveButton().disabled).toBe(false);
     }),
   );
 
@@ -335,17 +428,17 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
     }),
   );
 
-  suite.effect('clearing the contact drops the kept one and holds Uložit back', () =>
+  suite.effect("the picker's clear action drops the contact, holds Uložit back and keeps the rest of the form", () =>
     Effect.gen(function* clearsContact() {
       yield* chooseDolce;
       yield* search('Novák');
-      yield* chooseContact('', copy(`${key}.choose`));
-      expect(contactSelect().value).toBe('');
+      yield* acted(() => button(copy(`${key}.clearContact`)).click());
+      yield* waitUntil(() => contactSelect().value === '' && contactShown() === copy(`${key}.choose`));
       expect(saveButton().disabled).toBe(true);
+      expect(element<HTMLInputElement>('#activity-summary').value).toBe('Domluvená ochutnávka');
+      expect(element<HTMLInputElement>('#counterparty-query').value).toBe('Novák');
       // Nothing is kept any more: the picker offers only what the last search found.
-      expect([...contactSelect().options].map((option) => option.value).filter((value) => value !== '')).toEqual([
-        other.ref.resourceId,
-      ]);
+      expect(offered()).toEqual([other.ref.resourceId]);
       expect(commands).toEqual([]);
     }),
   );

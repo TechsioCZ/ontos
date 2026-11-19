@@ -49,7 +49,7 @@ export interface OccupancyEditorState extends EditorInputs {
   readonly editor: Option.Option<'lease' | 'stay'>;
   /**
    * The guest the person chose. The form owns it: a later guest search only offers others, so the guest stays chosen
-   * until the person picks another one or clears it.
+   * until the person picks another one or clears it, or a refused read clears the whole form.
    */
   readonly guest: Option.Option<Guest>;
   /** What the latest guest search found. */
@@ -165,7 +165,17 @@ export const occupancyEditorReducer = (
         endDate: record.endDate ?? '',
         startDate: record.startDate,
       }),
-      GUESTS_LOADED: ({ guests }) => ({ ...state, guests }),
+      // A newer answer about the chosen guest replaces the kept one, so a later search that omits the guest still
+      // shows the current name.
+      GUESTS_LOADED: ({ guests }) => ({
+        ...state,
+        guest: state.guest.pipe(
+          Option.map(
+            (chosen) => guests.find((item) => item.partyRef.resourceId === chosen.partyRef.resourceId) ?? chosen,
+          ),
+        ),
+        guests,
+      }),
       OPEN_DRAFT: ({ initialUnitId, mode, startDate }) => ({
         ...state,
         customerId: '',
