@@ -25,11 +25,12 @@ export const OutputFileSchema = Schema.Struct({
 });
 export type OutputFile = typeof OutputFileSchema.Type;
 /**
- * The receipt format. The gates cache entry's digest is salted with it (gatesDigestSalt in unit-output-cache.mts), so a
- * new format names new cache keys: an entry written in an older format can only be restored through the key prefix,
- * where `plan` rejects it and the shard saves a new entry, instead of being an exact hit that never saves again.
+ * The receipt format. The unit digest is salted with it (gatesDigestSalt in unit-output-cache.mts), so `plan` rejects a
+ * receipt of an older format and the unit builds. Version 3 marks the change of where kept outputs may come from:
+ * version 2 receipts could be written from a candidate ref's own Actions cache, which an unlanded fix round could fill,
+ * so no version 2 output becomes a seed (scripts/ci/seed-units.sh).
  */
-export const RECEIPT_SCHEMA_VERSION = 2;
+export const RECEIPT_SCHEMA_VERSION = 3;
 export const CacheReceiptSchema = Schema.Struct({
   digest: DIGEST,
   files: Schema.Array(OutputFileSchema),
