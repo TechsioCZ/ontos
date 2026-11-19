@@ -98,6 +98,21 @@ it('requires the displayFilename and keeps it a safe presentation name', () => {
   expect(() => decodePayload(withoutName)).toThrow();
 });
 
+/** Format and invisible code points that let a name display as something it is not. */
+const INVISIBLE_CODE_POINTS = [
+  0x00_ad, 0x03_4f, 0x18_0e, 0x20_60, 0x20_61, 0x20_62, 0x20_63, 0x20_64, 0x20_6a, 0x20_6b, 0x20_6c, 0x20_6d, 0x20_6e,
+  0x20_6f, 0xff_f9, 0xff_fa, 0xff_fb,
+] as const;
+
+it('rejects the soft hyphen, joiner, word-joiner, deprecated format and annotation characters in a display name', () => {
+  const decodeName = Schema.decodeUnknownSync(MediaDisplayFilenameSchema);
+  for (const codePoint of INVISIBLE_CODE_POINTS) {
+    const invisible = String.fromCodePoint(codePoint);
+    expect(() => decodeName(`invoice${invisible}.pdf`)).toThrow();
+    expect(() => decodePayload({ ...validPayload, displayFilename: `invoice${invisible}.pdf` })).toThrow();
+  }
+});
+
 it('keeps an honest original name free of control characters but never forces a display-style rewrite', () => {
   expect(decodePayload({ ...validPayload, originalFilename: 'scan (1).PDF' }).originalFilename).toBe('scan (1).PDF');
   expect(() => decodePayload({ ...validPayload, originalFilename: 'a\u0000b' })).toThrow();

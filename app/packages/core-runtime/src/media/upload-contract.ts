@@ -11,7 +11,9 @@ import { MediaByteSizeSchema, MediaContentSha256Schema, MediaIngestionSourceSche
 /** Control characters (NUL included, which PostgreSQL text cannot hold) have no place in any recorded name. */
 const CONTROL_CHARACTER = /\p{Cc}/u;
 /** Invisible, line-breaking and bidirectional characters: they let a name display as something it is not. */
-const INVISIBLE_OR_DIRECTION_CONTROL = /[\u200B\u200E\u200F\u061C\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/u;
+// U+034F is a combining mark, so it sits outside the class: a combining code point inside one is ambiguous.
+const INVISIBLE_OR_DIRECTION_CONTROL =
+  /[\u00AD\u061C\u180E\u200B\u200E\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB]|\u034F/u;
 const PATH_SEPARATOR = /[/\\]/u;
 
 const isRecordedText = Schema.makeFilter<string>((value) => {

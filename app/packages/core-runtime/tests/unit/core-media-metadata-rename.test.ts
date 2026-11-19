@@ -168,6 +168,10 @@ it('accepts a safe display name and only the asset ref and the name in the renam
   ]) {
     expect(Result.isFailure(decode({ displayFilename: unsafe, mediaAssetRef: ref }))).toBe(true);
   }
+  for (const codePoint of [0x00_ad, 0x03_4f, 0x18_0e, 0x20_60, 0x20_64, 0x20_6a, 0x20_6f, 0xff_f9, 0xff_fb]) {
+    const displayFilename = `na${String.fromCodePoint(codePoint)}me.pdf`;
+    expect(Result.isFailure(decode({ displayFilename, mediaAssetRef: ref }))).toBe(true);
+  }
   // No other field is editable through the payload: unknown keys are not part of the contract.
   const extra = decode({ displayFilename: 'x', mediaAssetRef: ref, mimeType: 'text/plain', originalFilename: 'o' });
   expect(Result.isSuccess(extra) && Object.keys(extra.success).toSorted()).toEqual([
