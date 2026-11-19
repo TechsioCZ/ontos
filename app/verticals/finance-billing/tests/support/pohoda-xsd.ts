@@ -18,12 +18,16 @@ const workspaceSchemaDirectory = new URL('../../../../node_modules/.cache/pohoda
  * without iconv, so each is decoded with the encoding its own XML declaration names and handed over re-declared as
  * UTF-8: the same characters, so the same schema. The pins of scripts/provision-pohoda-xsd.sh still check the bytes.
  */
+const XML_DECLARATION = /^<\?xml[^>]*\?>/u;
+const DECLARED_ENCODING = /(?<before>\sencoding=)(?<quote>["'])(?<encoding>[^"']+)\k<quote>/u;
+
 const asUtf8Schema = (bytes: Uint8Array) => {
-  const declared = /encoding="(?<encoding>[^"]+)"/u.exec(new TextDecoder('latin1').decode(bytes.subarray(0, 100)))
-    ?.groups?.['encoding'];
+  // Only the leading XML declaration names the encoding; it is ASCII, after an optional UTF-8 byte-order mark.
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 200)).replace(/^\u00EF\u00BB\u00BF/u, '');
+  const declared = DECLARED_ENCODING.exec(XML_DECLARATION.exec(head)?.[0] ?? '')?.groups?.['encoding'];
   return new TextDecoder(declared ?? 'utf-8', { fatal: true })
     .decode(bytes)
-    .replace(/^(?<declaration><\?xml[^>]*encoding=")[^"]+"/u, '$<declaration>UTF-8"');
+    .replace(XML_DECLARATION, (declaration) => declaration.replace(DECLARED_ENCODING, '$<before>"UTF-8"'));
 };
 
 /**
