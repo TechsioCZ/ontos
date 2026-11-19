@@ -246,9 +246,25 @@ describe('Manufacturer Current relation read', () => {
         ]) {
           const failure = yield* Effect.flip(fixture.run());
           expect(Predicate.isTagged(failure, expected)).toBe(true);
-          // No recheck after the owner refused or could not answer.
-          expect(fixture.steps().filter((step) => step === 'begin')).toHaveLength(1);
+          // The refusal is rechecked against the same relation revision before it is answered.
+          expect(fixture.steps().filter((step) => step === 'begin')).toHaveLength(2);
         }
+      }
+    }),
+  );
+
+  it.effect('is unavailable, not the owner refusal, when the relation revision changed meanwhile', () =>
+    Effect.gen(function* refusalSuperseded() {
+      const later = rowsFor({ ...head, currentRevision: 2 });
+      later.set(manufacturerRelationRevisions, [revisionRow(1), revisionRow(2)]);
+      for (const outcome of [
+        CallNotFoundSchema.make({ reason: 'absent' }),
+        CallForbiddenSchema.make({ reason: 'denied' }),
+      ]) {
+        const fixture = harness({ legalEntity: outcome, rows: [rowsFor(head), later] });
+        const failure = yield* Effect.flip(fixture.run());
+        expect(Predicate.isTagged(failure, 'ReadHandlerUnavailable')).toBe(true);
+        expect(fixture.steps()).toHaveLength(5);
       }
     }),
   );
