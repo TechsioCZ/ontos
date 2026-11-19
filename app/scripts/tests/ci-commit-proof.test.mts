@@ -245,10 +245,25 @@ it.live('skips the gates of a push only on a sound candidate proof of the same c
         expect(result.calls, label).not.toContain(artifactList(CANDIDATE_RUN));
       }
 
-      // Rule 2: the candidate compared with this branch at exactly the commit the push starts from.
+      // Rule 2: a full plan ran every gate whatever it compared with, so a forced-full run, which records no base,
+      // proves the commit, as does a full plan against an older merge base.
+      for (const [label, fields] of [
+        ['a forced-full run with no merge base', { BASE_SHA: '', PLAN_MODE: 'full' }],
+        ['a full plan against an older merge base', { BASE_SHA: OLDER, PLAN_MODE: 'full' }],
+      ] as const) {
+        const proven = find(sound(recorded(fields)));
+        expect(proven.proven, label).toBe('true');
+        expect(proven.run, label).toBe(runUrl(CANDIDATE_RUN));
+        expect(proven.log, label).toContain('whose full plan ran every gate');
+      }
+      // A narrowed plan compared with this branch at exactly the commit the push starts from; a full one still planned
+      // against this branch, for this commit.
       for (const [label, fields] of [
         ['an older merge base', { BASE_SHA: OLDER }],
-        ['a forced-full run with no merge base', { BASE_SHA: '', PLAN_MODE: 'full' }],
+        ['a scoped plan against an older merge base', { BASE_SHA: OLDER, PLAN_MODE: 'scoped' }],
+        ['a narrowed plan with no merge base', { BASE_SHA: '' }],
+        ['a forced-full run against another base branch', { BASE_REF: 'main', BASE_SHA: '', PLAN_MODE: 'full' }],
+        ['a forced-full record of another commit', { BASE_SHA: '', HEAD_SHA: OLDER, PLAN_MODE: 'full' }],
         ['a narrower custom base-ref', { BASE_REF: 'candidate/earlier-round' }],
         ['another base branch', { BASE_REF: 'main' }],
         ['a record of another commit', { HEAD_SHA: OLDER }],
