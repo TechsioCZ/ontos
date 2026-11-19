@@ -115,12 +115,12 @@ const handleConfirmAsset = Effect.fn('ConfirmAssetAction.handle')(function* hand
       reason: `The stored bytes could not be verified (${verification.reason})`,
     });
   }
-  // Verified bytes seal the row only when they are also the content the reservation declared.
-  if (
-    verification.outcome === 'verified' &&
-    verification.byteSize === Number(asset.byteSize) &&
-    (asset.contentSha256 === null || asset.contentSha256 === verification.contentSha256)
-  ) {
+  // The row's own claim judges the finding: bytes that equal it can only seal, bytes that differ can only fail.
+  const observed = verification.outcome === 'verified' ? verification : verification.observed;
+  const matchesClaim =
+    observed.byteSize === Number(asset.byteSize) &&
+    (asset.contentSha256 === null || asset.contentSha256 === observed.contentSha256);
+  if (verification.outcome === 'verified' && matchesClaim) {
     const moved = yield* repository.transition(mediaAssetId, {
       confirmed: {
         byteSize: verification.byteSize,
@@ -132,6 +132,13 @@ const handleConfirmAsset = Effect.fn('ConfirmAssetAction.handle')(function* hand
     return moved.kind === 'applied'
       ? yield* readyResultOf(payload.mediaAssetRef, moved.asset)
       : yield* followRow(moved.current);
+  }
+  if (matchesClaim) {
+    // A mismatch finding that the reservation itself contradicts was made against another expectation: it proves nothing.
+    return yield* new MediaIngestUncertain({
+      code: 'media_ingest_uncertain',
+      reason: 'The verification disagrees with the reservation and cannot close the asset',
+    });
   }
   const moved = yield* repository.transition(mediaAssetId, { to: 'failed' });
   if (moved.kind === 'rejected') {

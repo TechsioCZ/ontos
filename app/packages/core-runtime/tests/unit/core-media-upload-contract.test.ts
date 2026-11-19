@@ -88,6 +88,9 @@ it('requires the displayFilename and keeps it a safe presentation name', () => {
     'name\n.pdf',
     'name\u007F.pdf',
     'invoice‮fdp.exe',
+    '​',
+    `a${String.fromCodePoint(8232)}b`,
+    '﻿.pdf',
   ]) {
     expect(() => decodeName(unsafe)).toThrow();
   }

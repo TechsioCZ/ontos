@@ -10,8 +10,8 @@ import { MediaByteSizeSchema, MediaContentSha256Schema, MediaIngestionSourceSche
 
 /** Control characters (NUL included, which PostgreSQL text cannot hold) have no place in any recorded name. */
 const CONTROL_CHARACTER = /\p{Cc}/u;
-/** Bidirectional overrides and isolates: they let a name display as something it is not. */
-const BIDIRECTIONAL_CONTROL = /[‪-‮⁦-⁩]/u;
+/** Invisible, line-breaking and bidirectional characters: they let a name display as something it is not. */
+const INVISIBLE_OR_DIRECTION_CONTROL = /[\u200B\u200E\u200F\u061C\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/u;
 const PATH_SEPARATOR = /[/\\]/u;
 
 const isRecordedText = Schema.makeFilter<string>((value) => {
@@ -32,7 +32,9 @@ export const MediaDisplayFilenameSchema = Schema.String.check(
     if (PATH_SEPARATOR.test(value) || value === '.' || value === '..') {
       return 'Must be a plain file name, not a path';
     }
-    return BIDIRECTIONAL_CONTROL.test(value) ? 'Must not contain bidirectional override characters' : undefined;
+    return INVISIBLE_OR_DIRECTION_CONTROL.test(value)
+      ? 'Must not contain invisible or direction-control characters'
+      : undefined;
   }),
 ).pipe(Schema.brand('MediaDisplayFilename'));
 export type MediaDisplayFilename = typeof MediaDisplayFilenameSchema.Type;
