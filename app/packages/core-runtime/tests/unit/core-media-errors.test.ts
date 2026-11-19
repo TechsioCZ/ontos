@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 import { ActionRequestHashConflict } from '../../src/actions/errors.ts';
 import {
   MediaAssetNotFound,
+  MediaContentConflict,
   MediaFailureSchema,
   MediaForbidden,
   MediaIngestUncertain,
@@ -21,6 +22,7 @@ const reason = 'safe reason';
 const everyFailure = {
   ActionRequestHashConflict: new ActionRequestHashConflict({ code: 'action_request_hash_conflict', reason }),
   MediaAssetNotFound: new MediaAssetNotFound({ code: 'media_asset_not_found', reason }),
+  MediaContentConflict: new MediaContentConflict({ code: 'media_content_conflict', reason }),
   MediaForbidden: new MediaForbidden({ code: 'media_forbidden', reason }),
   MediaIngestUncertain: new MediaIngestUncertain({ code: 'media_ingest_uncertain', reason }),
   MediaIntegrityFailed: new MediaIntegrityFailed({ code: 'media_integrity_failed', reason }),
@@ -40,6 +42,7 @@ it('maps every media failure to exactly one declared HTTP status, exhaustively',
   ).toEqual({
     ActionRequestHashConflict: 409,
     MediaAssetNotFound: 404,
+    MediaContentConflict: 409,
     MediaForbidden: 403,
     MediaIngestUncertain: 503,
     MediaIntegrityFailed: 422,

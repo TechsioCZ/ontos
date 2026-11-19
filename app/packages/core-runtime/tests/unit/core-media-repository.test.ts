@@ -7,7 +7,7 @@ import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import { MediaAssetNotFound, MediaUnavailable } from '../../src/media/errors.ts';
 import { MediaAssetIdSchema } from '../../src/media/identity.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
-import { makeMediaAssetRepository } from '../../src/media/repository.ts';
+import { mediaAssetRepositoryFromTransaction } from '../../src/media/repository.ts';
 import type { MediaAssetRecord } from '../../src/media/repository.ts';
 import { MediaStorageKeySchema, deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { makeTestDatabase } from '../support/database.ts';
@@ -107,7 +107,7 @@ const fixture = Effect.fn('MediaRepositoryFixture.make')(function* fixture(
     return Effect.succeed([]);
   });
   const installed = yield* installOperationalScope(database, scope);
-  return { repository: makeMediaAssetRepository(installed), statements };
+  return { repository: mediaAssetRepositoryFromTransaction(installed), statements };
 });
 
 it.effect('finds an asset only by the scope tenant and its id, tenant-wide when no company is selected', () =>

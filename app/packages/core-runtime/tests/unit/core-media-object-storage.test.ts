@@ -139,7 +139,8 @@ it.effect('gives every stored version, an overwrite included, a fresh technical 
 it.effect('exposes no delete or revision operation on the port', () =>
   Effect.gen(function* surface() {
     const storage = yield* makeInMemoryObjectStorage();
-    expect(Object.keys(storage.service).toSorted()).toEqual(['get', 'put', 'stat']);
+    // `providerId` is the provider's identity, not an operation: the operations stay get, put and stat only.
+    expect(Object.keys(storage.service).toSorted()).toEqual(['get', 'providerId', 'put', 'stat']);
   }),
 );
 
