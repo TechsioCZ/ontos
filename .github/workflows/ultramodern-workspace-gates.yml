@@ -476,11 +476,16 @@ jobs:
           fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
 
+      # The typecheck row, the one source row with typescript-build, saves a missed installed workspace, right after its
+      # install, in its run's branch scope: it ends long before the last build shard, so every job that waits for the
+      # shards (owner, bootstrap and artifact unit rows) restores it instead of installing. A candidate branch cannot
+      # read the demo trunk's caches, so this is the entry its second wave uses.
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
+          save-node-modules: ${{ matrix.typescript-build == true }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app

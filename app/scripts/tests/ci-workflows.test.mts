@@ -1960,6 +1960,30 @@ it('saves the pnpm store from the one planner install, on the trunks only', () =
   expect(planInstall?.with).toEqual({ 'save-store': 'true' });
 });
 
+it('saves the installed workspace from the typecheck row alone, and restores it only for a complete install', () => {
+  const install = readInstallAction();
+  // A caller with its own install arguments (the quality audit, the stage deploy) installs from the store as before.
+  for (const name of [
+    'List the workspace packages',
+    'Name the installed workspace',
+    'Restore the installed workspace',
+  ]) {
+    expect(install.find((step) => step.name === name)?.if, name).toBe(
+      "inputs.restore-node-modules == 'true' && inputs.install-args == ''",
+    );
+  }
+  // One first-wave job saves, so parallel jobs never race; the jobs after the build shards restore what it saved.
+  const savers = Object.entries(readJobsOf(GATES_WORKFLOW)).flatMap(([job, { steps }]) =>
+    steps
+      .filter((step) => step.uses === INSTALL_APP_ACTION && step.with?.['save-node-modules'] !== undefined)
+      .map((step) => [job, step.with?.['save-node-modules']]),
+  );
+  expect(savers).toEqual([[WORKSPACE_GATE_JOB, expression('matrix.typescript-build == true')]]);
+  expect(MATRICES.source.filter((row) => row['typescript-build'] === true).map(({ name }) => name)).toEqual([
+    'Typecheck and OntOS API Boundary Rules',
+  ]);
+});
+
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
   const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
   const upload = plan?.steps.find(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true);
