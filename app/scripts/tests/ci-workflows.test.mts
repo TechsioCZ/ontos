@@ -357,12 +357,15 @@ it('classifies documentation before installation and schedules full regression w
   expect(workflow.jobs[WORKSPACE_GATES_JOB].permissions).toEqual({ contents: 'read' });
   const { steps } = workflow.jobs[CI_PLAN_JOB];
   const classify = steps.findIndex(({ id }) => id === 'changes');
-  const install = steps.findIndex(({ name }) => name === 'Install the app workspace for code impact analysis');
+  // The planner runs on the runner image's Node, with nothing installed (scripts/plan-ci-without-install.sh).
+  const runtime = steps.findIndex(
+    ({ name }) => name === 'Select the preinstalled Node runtime for dependency-free planning',
+  );
   const selection = steps.find(({ id }) => id === 'selection');
   expect(classify).toBeGreaterThan(-1);
-  expect(install).toBeGreaterThan(classify);
+  expect(runtime).toBeGreaterThan(classify);
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
-  expect(steps[install]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
+  expect(steps[runtime]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
   // A candidate dispatch that is not forced full and a push to the demo trunk narrow the gates to the changed owners;
   // pull requests, merge groups and pushes to main still run the complete suite.
   expect(selection?.env?.APPLY_AFFECTED).toBe(
@@ -1952,13 +1955,33 @@ const readInstallAction = () =>
 const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
 const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 
-it('saves the pnpm store from the one planner install, on the trunks only', () => {
+it("plans on the runner image's Node with nothing installed, only where it plans at all", () => {
+  const steps = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB]?.steps ?? [];
+  const runtime = steps.find(
+    ({ name }) => name === 'Select the preinstalled Node runtime for dependency-free planning',
+  );
+  const selection = steps.find(({ id }) => id === 'selection');
+  expect(runtime?.uses).toBe('actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38');
+  expect(runtime?.with).toEqual({ 'node-version': '24' });
+  expect(selection?.if).toBe(runtime?.if);
+  expect(selection?.run).toContain('bash scripts/plan-ci-without-install.sh');
+  expect(selection?.run).not.toContain('mise');
+});
+
+// The plan job installs nothing, so the typecheck row, which already saves the installed workspace, saves a missed
+// store too: one row of one job, so no two jobs of a run race to save it.
+it('saves the pnpm store from the typecheck row alone, on the trunks only', () => {
   const store = readInstallAction().find(({ name }) => name === 'Save the pnpm store');
   expect(store?.if).toContain(DEMO_REF);
   expect(store?.if).toContain("github.ref == 'refs/heads/main'");
   const gates = readJobsOf(GATES_WORKFLOW);
-  const planInstall = gates[CI_PLAN_JOB]?.steps.find(({ uses }) => uses === INSTALL_APP_ACTION);
-  expect(planInstall?.with).toEqual({ 'lockfile-verdict': 'publish', 'save-store': 'true' });
+  expect(gates[CI_PLAN_JOB]?.steps.some(({ uses }) => uses === INSTALL_APP_ACTION)).toBe(false);
+  const savers = Object.entries(gates).flatMap(([job, { steps }]) =>
+    steps
+      .filter((step) => step.uses === INSTALL_APP_ACTION && step.with?.['save-store'] !== undefined)
+      .map((step) => [job, step.with?.['save-store']]),
+  );
+  expect(savers).toEqual([[WORKSPACE_GATE_JOB, expression('matrix.typescript-build == true')]]);
 });
 
 const LOCKFILE_VERDICT = 'lockfile-verdict';
@@ -1970,31 +1993,36 @@ const VerdictJobsSchema = Schema.Struct({
   ),
 });
 
-// pnpm skips its supply-chain check of the lockfile when it finds its own record of a passed check. The plan job
-// installs first in every run, so its check is the one fresh check of the attempt. A reader that does not need it
-// could start before the record exists; a second publisher would race the first; a gate left on the default pays
-// the check again for nothing.
-it('publishes the lockfile verdict from the plan job and reuses it in every gate that needs the plan', () => {
+const PUBLISH_LOCKFILE_VERDICT = expression("strategy.job-index == 0 && 'publish' || ''");
+const REUSE_LOCKFILE_VERDICT = expression(`needs.${NODE_ARTIFACT_BUILD_JOB}.result == 'success' && 'reuse' || ''`);
+
+// pnpm skips its supply-chain check of the lockfile when it finds its own record of a passed check. A record read by a
+// job that does not need the publisher could come from nothing (a slower publisher) or, with a plain 'reuse', be read
+// in a job that runs beside the publisher; a second publisher would race the first.
+it('publishes the lockfile verdict from one build shard and reuses it only in jobs that need the build', () => {
   const { jobs } = Schema.decodeUnknownSync(VerdictJobsSchema)(
     parse(readFileSync(new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url), 'utf-8')),
   );
   const verdicts = Object.entries(jobs).flatMap(([job, { needs = [], steps }]) =>
     steps
       .filter(({ uses }) => uses === INSTALL_APP_ACTION)
-      .map((step) => ({ args: step.with?.['install-args'], job, needs, verdict: step.with?.[LOCKFILE_VERDICT] })),
+      .map((step) => ({ job, needs, verdict: step.with?.[LOCKFILE_VERDICT] })),
   );
-  expect(verdicts.filter(({ verdict }) => verdict === 'publish').map(({ job }) => job)).toEqual([CI_PLAN_JOB]);
-  for (const { args, job, needs, verdict } of verdicts) {
-    expect([undefined, 'publish', 'reuse'], job).toContain(verdict);
-    if (verdict === 'reuse') {
-      expect(needs, job).toContain(CI_PLAN_JOB);
-      expect(args, job).toBeUndefined();
-    }
-    if (job !== CI_PLAN_JOB && needs.includes(CI_PLAN_JOB) && args === undefined) {
-      expect(verdict, job).toBe('reuse');
-    }
+  expect(verdicts.filter(({ verdict }) => verdict === PUBLISH_LOCKFILE_VERDICT).map(({ job }) => job)).toEqual([
+    NODE_ARTIFACT_BUILD_JOB,
+  ]);
+  for (const { job, verdict } of verdicts) {
+    expect([undefined, PUBLISH_LOCKFILE_VERDICT, REUSE_LOCKFILE_VERDICT], job).toContain(verdict);
   }
-  expect(verdicts.filter(({ verdict }) => verdict === 'reuse').length).toBeGreaterThan(5);
+  // Every job that waits for the build job reuses the verdict, and only those resolve 'reuse': a job sharing their
+  // steps without that need reads a missing needs entry and checks freshly, as every first-wave job does.
+  const readers = verdicts.filter(({ needs }) => needs.includes(NODE_ARTIFACT_BUILD_JOB));
+  expect(readers.map(({ job }) => job).toSorted()).toEqual(
+    [NODE_TOPOLOGY_PROOF_JOB, OWNER_INTEGRATION_JOB, WORKSPACE_UNIT_ARTIFACTS_JOB].toSorted(),
+  );
+  for (const { job, verdict } of readers) {
+    expect(verdict, job).toBe(REUSE_LOCKFILE_VERDICT);
+  }
   // Other workflows install on their own and keep the default.
   for (const file of ['quality-audit.yml', 'zerops-stage.yml', 'merge-adaptation-check.yml']) {
     const steps = Object.values(readJobsOf(file)).flatMap(({ steps: jobSteps }) => jobSteps);

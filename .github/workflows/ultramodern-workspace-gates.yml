@@ -200,17 +200,13 @@ jobs:
           if-no-files-found: warn
           overwrite: true
           retention-days: 1
-      # Every gate installs the workspace from the pnpm store. On the trunks this one install saves a missed store
-      # before the gates fan out; it runs once per run, so no two jobs race to save. It is also the one fresh pnpm
-      # check of the lockfile in each run attempt: it publishes pnpm's record of the pass, and every later job, all
-      # of which need this one, reuses it (install-app lockfile-verdict). In docs and proven modes, or from a
-      # restored workspace, nothing is published and every installing gate checks the lockfile itself.
-      - name: Install the app workspace for code impact analysis
+      # The planner reads authored JSON and imports nothing outside the repository, so it runs on the runner image's
+      # own Node, which strips its types, before anything is installed (scripts/plan-ci-without-install.sh).
+      - name: Select the preinstalled Node runtime for dependency-free planning
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
-        uses: ./.github/actions/install-app
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          lockfile-verdict: publish
-          save-store: 'true'
+          node-version: '24'
       - name: Resolve affected packages and required matrices
         id: selection
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
@@ -225,7 +221,7 @@ jobs:
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
-          mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
+          bash scripts/plan-ci-without-install.sh "${args[@]}"
       # A narrowed (affected or scoped) run lints only its changed files, on one runner (shard 0), through the same
       # hook. The one real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
       # configuration, which changes the result for files nobody touched: such a change, an empty or oversized list and
@@ -355,10 +351,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # The first shard publishes its lockfile check to the jobs that need this one (install-app lockfile-verdict).
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
-          lockfile-verdict: reuse
+          lockfile-verdict: ${{ strategy.job-index == 0 && 'publish' || '' }}
 
       # Per-unit output cache (scripts/ci/unit-output-cache.mts). The Actions key only locates a candidate archive:
       # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
@@ -485,14 +482,15 @@ jobs:
       # The typecheck row, the one source row with typescript-build, saves a missed installed workspace, right after its
       # install, in its run's branch scope: it ends long before the last build shard, so every job that waits for the
       # shards (owner, bootstrap and artifact unit rows) restores it instead of installing. A candidate branch cannot
-      # read the demo trunk's caches, so this is the entry its second wave uses.
+      # read the demo trunk's caches, so this is the entry its second wave uses. On the trunks the same install saves a
+      # missed pnpm store; no other job saves one, so no two jobs race to save it.
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
         with:
-          lockfile-verdict: reuse
           restore-typescript-build: ${{ matrix.typescript-build == true }}
           save-node-modules: ${{ matrix.typescript-build == true }}
+          save-store: ${{ matrix.typescript-build == true }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -556,7 +554,6 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
-          lockfile-verdict: reuse
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
       # A row may need system tools or provisioned fixtures before its tests run (the matrices' `setup`).
@@ -617,10 +614,12 @@ jobs:
           fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
 
+      # Reuses the lockfile check of the first build shard (install-app lockfile-verdict); only a job that needs
+      # the build job reads it, and a job without that need, or whose build job did not succeed, checks freshly.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
-          lockfile-verdict: reuse
+          lockfile-verdict: ${{ needs.node-artifact-build.result == 'success' && 'reuse' || '' }}
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
       - name: Download the same-run Node artifacts for unit contract fixtures
@@ -706,8 +705,6 @@ jobs:
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
-        with:
-          lockfile-verdict: reuse
 
       # Separate the two memory-heavy analyzers instead of serializing them on one runner.
       # The remaining independent checks share the contracts runner and retain individual logs.
@@ -824,8 +821,6 @@ jobs:
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
-        with:
-          lockfile-verdict: reuse
 
       - name: Format and Lint the shard's files through the pre-commit hook
         if: matrix.shard != 0
@@ -988,10 +983,13 @@ jobs:
         working-directory: app
         run: docker compose pull
 
+      # Reuses the lockfile check of the first build shard (install-app lockfile-verdict) in the bootstrap and owner
+      # rows, which need the build job; the database producer and the browser checks share these steps without that
+      # need, read a missing needs entry and check freshly.
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
-          lockfile-verdict: reuse
+          lockfile-verdict: ${{ needs.node-artifact-build.result == 'success' && 'reuse' || '' }}
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # main's cache warmer saves it for main's lockfile; the demo trunk saves its own below, from its one browser row.

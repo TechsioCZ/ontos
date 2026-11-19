@@ -957,3 +957,104 @@ it('checks the matrices without installing against the keys the installed decode
   expect(declared(fields.integration.value.fields)).toEqual(CI_MATRICES_KEYS.integration);
   expect(declared(fields.scopes.schema.value.fields)).toEqual(CI_MATRICES_KEYS.scope);
 });
+
+const NO_INSTALL_PLANNER = 'scripts/plan-ci-without-install.sh';
+const DEMO_OVERLAY = 'scripts/ci-matrices.demo.json';
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const PNPM_WORKSPACE = 'pnpm-workspace.yaml';
+const APPLY_AFFECTED = '--apply-affected';
+/** The value of one GITHUB_OUTPUT line. */
+const outputLine = (output: string, key: string) =>
+  output
+    .split('\n')
+    .find((entry) => entry.startsWith(`${key}=`))
+    ?.slice(key.length + 1);
+
+it('plans with nothing installed, from the matrices rows as the installed tools decode them', () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-without-deps-'));
+  const copy = (file: string) => {
+    const target = path.join(fixture, file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, readFileSync(path.join(appRoot, file)));
+  };
+  const outputs = path.join(fixture, 'output');
+  const paths = path.join(fixture, 'paths');
+  const plan = (cwd: string, flags: readonly string[]) => {
+    writeFileSync(outputs, '');
+    const log = execFileSync('/bin/bash', [NO_INSTALL_PLANNER, '--paths-file', paths, ...flags], {
+      cwd,
+      encoding: 'utf-8',
+      env: {
+        CI_MATRICES_OVERLAY: DEMO_OVERLAY,
+        GITHUB_OUTPUT: outputs,
+        GITHUB_STEP_SUMMARY: path.join(fixture, 'summary'),
+        PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+      stdio: 'pipe',
+    });
+    return { log, output: readFileSync(outputs, 'utf-8') };
+  };
+  try {
+    for (const file of [
+      PACKAGE_MANIFEST,
+      PNPM_WORKSPACE,
+      'topology/ownership.json',
+      'topology/reference-topology.json',
+      'scripts/ci-matrices.json',
+      DEMO_OVERLAY,
+      'scripts/ci/ci-matrices-rules.mts',
+      'scripts/plan-ci-checks.mts',
+      'scripts/workspace-consumer-closure.mts',
+      NO_INSTALL_PLANNER,
+    ]) {
+      copy(file);
+    }
+    for (const { directory } of workspacePackages) {
+      copy(path.join(directory, PACKAGE_MANIFEST));
+    }
+    expect(existsSync(path.join(fixture, 'node_modules'))).toBe(false);
+    for (const [changed, flags] of [
+      [CATALOG_SOURCE, [APPLY_AFFECTED]],
+      ['app/scripts/check.mts', [APPLY_AFFECTED]],
+      [CATALOG_SOURCE, ['--full', APPLY_AFFECTED]],
+    ] as const) {
+      writeFileSync(paths, `${changed}\0`);
+      // Only the copied files: the same plan as in the installed workspace.
+      expect(plan(fixture, flags), changed).toEqual(plan(appRoot, flags));
+    }
+    // A complete plan hands every row on exactly as the installed tools' strict decode reads it, key order included.
+    const { output } = plan(fixture, ['--full']);
+    expect(outputLine(output, 'mode')).toBe('full');
+    expect(outputLine(output, 'source')).toBe(encodeJson(templates.source));
+    expect(outputLine(output, 'unit')).toBe(encodeJson(templates.unit.filter((row) => row['node-artifacts'] !== true)));
+    expect(outputLine(output, 'integrationOwners')).toBe(
+      encodeJson(templates.integration.filter(({ suite }) => suite === 'integration')),
+    );
+    // Matrices the planner cannot plan from fail the plan job.
+    const overlay = readFileSync(path.join(appRoot, DEMO_OVERLAY), 'utf-8');
+    for (const [broken, reason] of [
+      [overlay.replace('{', '{"unknown": [],'), /the overlay has the unknown key unknown/u],
+      [
+        `{"integration": [{"name": "Unrunnable", "suite": "integration", "tasks": ["nowhere"]}]}`,
+        /runnable task form/u,
+      ],
+      [`{"integration": [{"name": "Unknown suite", "suite": "smoke"}]}`, /names no known suite/u],
+      [`{"source": [{"commands": "true"}]}`, /lacks the key name/u],
+    ] as const) {
+      writeFileSync(path.join(fixture, DEMO_OVERLAY), broken);
+      expect(() => plan(fixture, []), broken).toThrow(reason);
+    }
+    writeFileSync(path.join(fixture, DEMO_OVERLAY), overlay);
+    // A workspace the planner cannot resolve runs the complete suite.
+    const workspace = readFileSync(path.join(appRoot, PNPM_WORKSPACE), 'utf-8');
+    writeFileSync(path.join(fixture, PNPM_WORKSPACE), workspace.replace('  - apps/*', '  - apps/**'));
+    writeFileSync(paths, `${CATALOG_SOURCE}\0`);
+    const unresolved = plan(fixture, [APPLY_AFFECTED]);
+    expect(unresolved.log).toContain(
+      'unsupported pnpm-workspace.yaml package entry apps/**. Running the complete suite.',
+    );
+    expect(outputLine(unresolved.output, 'mode')).toBe('full');
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});
