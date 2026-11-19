@@ -115,8 +115,70 @@ const pathOwners = (changedPath: string, packages: readonly CiWorkspacePackage[]
       : changedPath.startsWith(`app/${directory}/`),
   );
 
-/** A shared package, a manifest or configuration, or an authority or database file: no scope or owner narrows it. */
+/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
+const GLOBSTAR = '<<globstar>>';
+const pathGlobMatcher = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .replaceAll('**', GLOBSTAR)
+      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
+      .replaceAll('*', '[^/]*')
+      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
+      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
+      .replaceAll(GLOBSTAR, '.*')}$`,
+    'u',
+  );
+
+/**
+ * What a migration, a database bootstrap or a recovery proves, and those proofs themselves: the migrations and their
+ * runner, the database identities and grants, the access catalog, the service images and the lane scripts that prepare
+ * every owner row's database, and every migration or recovery test. Each such test runs in its owner's suite, where
+ * Rstest deals it to a shard by hash, so no owner narrows a change to these: it runs the complete suite. These are the
+ * inputs that selected the demo trunk's former Fresh Database rows (app/scripts/tests/plan-ci-selection.test.mts).
+ */
+const migrationProofInputs = [
+  'app/**/drizzle*/**',
+  'app/**/drizzle*.config.ts',
+  'app/database/**',
+  'app/scripts/postgres/**',
+  'app/scripts/run-zerops-migrator.mjs',
+  'app/scripts/migration-convergence*',
+  'app/scripts/access-release-activation*',
+  'app/scripts/activate-access-catalog-release.mts',
+  'app/scripts/application-migration-pending.mts',
+  'app/verticals/commerce-customer-context/scripts/**',
+  'app/scripts/run-optional-commerce-portal-auth-db.mts',
+  'app/scripts/verify-application-db-schema.mts',
+  'app/scripts/audit-database-trust-boundaries.mts',
+  'app/scripts/prove-zerops-migrator-artifact.sh',
+  // The prepared database every owner row restores: its export, restore, per-task reset and lane environment.
+  'app/scripts/ci/*integration*',
+  'app/scripts/ci-matrices*.json',
+  'app/scripts/ci/ci-matrices.mts',
+  'app/packages/core-runtime/spicedb/**',
+  'app/topology/**',
+  'app/docker-compose.yml',
+  'app/zerops.yaml',
+  'app/package.json',
+  'app/pnpm-lock.yaml',
+  'app/.mise.toml',
+  'app/**/tests/integration/*migration*',
+  'app/scripts/integration/*migration*',
+  'app/**/*stage-recovery*',
+  'app/scripts/integration/vat-deploy-sequence.test.mts',
+  'app/scripts/integration/migrator-runtime-owner-access.test.mts',
+];
+const migrationProofExclusions = ['app/**/node_modules/**', 'app/tools/**'];
+const migrationProofInput = (changedPath: string) =>
+  migrationProofInputs.some((glob) => pathGlobMatcher(glob).test(changedPath)) &&
+  !migrationProofExclusions.some((glob) => pathGlobMatcher(glob).test(changedPath));
+
+/**
+ * A shared package, a manifest or configuration, an authority or database file, or a migration proof input: no scope
+ * or owner narrows it.
+ */
 const sensitivePath = (changedPath: string) =>
+  migrationProofInput(changedPath) ||
   /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
     changedPath,
   ) ||
@@ -171,20 +233,6 @@ const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
     (owner.exportTargets ?? []).includes(relative)
   );
 };
-
-/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
-const GLOBSTAR = '<<globstar>>';
-const pathGlobMatcher = (glob: string) =>
-  new RegExp(
-    `^${glob
-      .replaceAll('**', GLOBSTAR)
-      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
-      .replaceAll('*', '[^/]*')
-      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
-      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
-      .replaceAll(GLOBSTAR, '.*')}$`,
-    'u',
-  );
 
 /** Whether a path is one of the scope's paths: some glob matches it and no `!` glob does. */
 export const inScope = (scope: CiScope, changedPath: string) =>

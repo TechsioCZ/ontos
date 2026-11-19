@@ -242,6 +242,119 @@ it('selects the root suites for a change confined to app/scripts and keeps the r
   }
 });
 
+/** Migration equivalence runs on the bootstrap row, in app/rstest.config.ts's owned-cluster project. */
+const MIGRATION_EQUIVALENCE_TEST = 'scripts/integration/migration-equivalence.test.mts';
+/**
+ * The demo trunk's Fresh Database rows (9d6c775b4), read from its planner and matrices: every changed path that
+ * named a new integration seed (`integrationSeedInputs` of scripts/plan-ci-checks.mts) or one of the
+ * fresh-database tests (`fresh-database-tests` of both matrices files) selected them, and they ran these files. The owner rows must still run every one of them for
+ * those paths, never fewer tests than that planner.
+ */
+const BASE_FRESH_DATABASE_INPUTS: readonly string[] = [
+  'app/**/drizzle*/**',
+  'app/**/drizzle*.config.ts',
+  'app/database/**',
+  'app/scripts/postgres/**',
+  'app/scripts/run-zerops-migrator.mjs',
+  'app/scripts/migration-convergence*',
+  'app/scripts/access-release-activation*',
+  'app/scripts/activate-access-catalog-release.mts',
+  'app/scripts/application-migration-pending.mts',
+  'app/verticals/commerce-customer-context/scripts/**',
+  'app/scripts/run-optional-commerce-portal-auth-db.mts',
+  'app/scripts/verify-application-db-schema.mts',
+  'app/scripts/audit-database-trust-boundaries.mts',
+  'app/scripts/prove-zerops-migrator-artifact.sh',
+  'app/scripts/ci/integration-seed*.mts',
+  // The fresh-database tests: a change to that list changes which rows may restore the seed.
+  'app/scripts/ci-matrices*.json',
+  'app/scripts/ci/ci-matrices.mts',
+  'app/packages/core-runtime/spicedb/**',
+  'app/packages/core-runtime/src/install/**',
+  'app/packages/core-runtime/src/access/**',
+  'app/packages/core-runtime/src/permissions/**',
+  'app/packages/core-runtime/src/db/**',
+  'app/topology/**',
+  'app/docker-compose.yml',
+  'app/zerops.yaml',
+  'app/package.json',
+  'app/pnpm-lock.yaml',
+  'app/.mise.toml',
+  '!app/**/node_modules/**',
+  '!app/tools/**',
+];
+const BASE_FRESH_DATABASE_TESTS = [
+  'scripts/integration/migrator-runtime-owner-access.test.mts',
+  'packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts',
+  'packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts',
+  'packages/core-runtime/tests/integration/auth-namespace-migration.test.ts',
+  'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
+  'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
+  'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
+  'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
+  MIGRATION_EQUIVALENCE_TEST,
+  'scripts/integration/stage-recovery-lifecycle.test.mts',
+  'scripts/integration/vat-deploy-sequence.test.mts',
+  'packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts',
+  'packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts',
+  'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
+  'verticals/work-tasks/tests/integration/assignment-migration.test.mts',
+  'verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts',
+  'verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts',
+  'verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts',
+];
+/** The files those rows ran: their fresh-database tests of the root suite, Core Runtime, Customer Context and Party. */
+const BASE_FRESH_ROW_FILES = [
+  MIGRATION_EQUIVALENCE_TEST,
+  'scripts/integration/migrator-runtime-owner-access.test.mts',
+  'scripts/integration/stage-recovery-lifecycle.test.mts',
+  'scripts/integration/vat-deploy-sequence.test.mts',
+  'packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts',
+  'packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts',
+  'packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts',
+  'packages/core-runtime/tests/integration/auth-namespace-migration.test.ts',
+  'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
+  'packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts',
+  'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
+  'verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts',
+  'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
+  'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
+];
+/** A concrete changed path a glob of that list matches. */
+const samplePath = (glob: string) => glob.replaceAll('**', 'sample').replaceAll('*', 'sample');
+/**
+ * The tasks that can carry a file: Rstest deals a family's files to its shards by hash, so every task of the file's
+ * family; migration equivalence runs on the bootstrap row (app/rstest.config.ts, owned-cluster project).
+ */
+const carriers = (testFile: string) => {
+  if (testFile === MIGRATION_EQUIVALENCE_TEST) {
+    return BOOTSTRAP.map(({ name }) => name);
+  }
+  const directory = testFile.startsWith('scripts/') ? undefined : testFile.split('/').slice(0, 2).join('/');
+  return ownerTasks(templates.integration).filter((task) =>
+    directory === undefined ? task.startsWith('root:') : taskDirectory(task) === directory,
+  );
+};
+
+it('runs every file of the former Fresh Database rows for every path that selected them', () => {
+  const inputs = [
+    ...BASE_FRESH_DATABASE_INPUTS.filter((glob) => !glob.startsWith('!')).map(samplePath),
+    ...BASE_FRESH_DATABASE_TESTS.map((testFile) => `app/${testFile}`),
+  ];
+  for (const changedPath of inputs) {
+    const selected = plan(changedPath);
+    const planned = new Set([...ownerTasks(selected.integration), ...names(selected.integration)]);
+    for (const testFile of BASE_FRESH_ROW_FILES) {
+      const missing = carriers(testFile).filter((carrier) => !planned.has(carrier));
+      expect(missing, `${changedPath} ${testFile}`).toEqual([]);
+    }
+  }
+  // The carriers are real: every family those rows ran still has its tasks.
+  for (const testFile of BASE_FRESH_ROW_FILES) {
+    expect(carriers(testFile).length, testFile).toBeGreaterThan(0);
+  }
+});
+
 it('starts no owner row for a package with no integration task', () => {
   // A package without `test:integration` has no task in the matrices: no owner row and no database is paid for,
   // only the bootstrap row every affected plan keeps.
@@ -263,7 +376,7 @@ it('satisfies the gate aggregator for every narrowed plan it can produce', () =>
   const optional = new Set(['workspace-unit', 'workspace-unit-artifacts', 'service-integration']);
   for (const changedPath of [
     ROOT_TOOLING_FILE,
-    'app/scripts/ci/run-integration-suites.sh',
+    'app/scripts/ci/build-units.sh',
     `app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`,
     `app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`,
   ]) {
