@@ -780,8 +780,14 @@ jobs:
   # those files touch, once, under whichever program reaches it first: a vertical test importing a script checked the
   # script under the vertical's options, and a script importing vertical source checked that source under the script
   # options, so the result depended on which files a run listed. Interleaved shards would each load nearly every program,
-  # so each shard takes one contiguous third of the tracked files: a slice loads only the programs of the packages in it,
-  # and lefthook still cuts a slice into command lines that each fit a runner (one run over all verticals did not). The
+  # so each shard takes one contiguous slice of the tracked files that starts at a package root: a slice loads only the
+  # programs of the packages in it, and lefthook still cuts a slice into command lines that each fit a runner (one run
+  # over all verticals did not). The slices are cut by measured lint seconds, not file counts: a scripts file costs about
+  # 0.13 s, a Shell or Core Runtime file 0.07 s and a vertical file 0.04 to 0.08 s (the 24 lint command lines of runs
+  # 44523282275, 44508998551 and 44498704633). Shard 1 holds the Shell, Core Runtime and the contracts packages and runs
+  # the lint rule tests and the repository policy (37 to 56 s); shard 2 the scripts, the lint rules and the verticals up
+  # to Finance Billing; shard 3 Inventory and the verticals after it. Replayed, the slowest shard of those runs falls from
+  # 359, 410 and 287 s to 357, 358 and 302 s: the whole programs of the scripts and of the large verticals are the limit. The
   # separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace,
   # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
   # outside its project graph (`pnpm lint:effect-diagnostics`).
@@ -827,16 +833,24 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: 3
         run: |
-          total="$(git ls-files -z | tr -cd '\0' | wc -c)"
-          first=$(((SHARD - 1) * total / SHARDS))
-          end=$((SHARD * total / SHARDS))
-          index=0
-          git ls-files -z | while IFS= read -r -d '' file; do
-            if ((index >= first && index < end)); then
-              printf '%s\0' "$file"
-            fi
-            index=$((index + 1))
-          done >"$RUNNER_TEMP/shard-files"
+          # Shard k takes the tracked files from the (k-1)-th start up to the k-th, in `git ls-files` byte order.
+          starts=(app/scripts/ app/verticals/inventory/)
+          if ((${#starts[@]} + 1 != SHARDS)); then
+            echo "::error title=Lint shards::SHARDS is $SHARDS, but the slice starts make $((${#starts[@]} + 1)) shards."
+            exit 1
+          fi
+          (
+            export LC_ALL=C
+            shard=1
+            git ls-files -z | while IFS= read -r -d '' file; do
+              while ((shard < SHARDS)) && [[ ! "$file" < "${starts[shard - 1]}" ]]; do
+                shard=$((shard + 1))
+              done
+              if ((shard == SHARD)); then
+                printf '%s\0' "$file"
+              fi
+            done
+          ) >"$RUNNER_TEMP/shard-files"
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$RUNNER_TEMP/shard-files"
           git diff --exit-code HEAD
