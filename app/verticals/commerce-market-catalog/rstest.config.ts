@@ -1,5 +1,7 @@
 import { defineConfig } from '@rstest/core';
 
+const root = import.meta.dirname;
+
 const swc = {
   jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
 } as const;
@@ -14,7 +16,7 @@ export default defineConfig({
     {
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
-      root: new URL('.', import.meta.url).pathname,
+      root,
       setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',
       // The real-owner Market suites take about 20 s on an idle runner (23 s on main), so 30 s left no margin
@@ -25,7 +27,7 @@ export default defineConfig({
     {
       include: ['tests/unit/**/*.test.{ts,tsx}'],
       name: 'unit',
-      root: new URL('.', import.meta.url).pathname,
+      root,
       testEnvironment: 'node',
       // Main's unit tests measured 568 ms at most (gates runs 43616061381 and 43844802542), which gave the
       // shared 2400 ms floor. Demo's component tests (.tsx) were not in that measurement: the first one of a file
@@ -34,5 +36,5 @@ export default defineConfig({
       tools: { swc: unitSwc },
     },
   ],
-  root: new URL('.', import.meta.url).pathname,
+  root,
 });

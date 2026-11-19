@@ -28,6 +28,7 @@
   --height-form-control-lg: var(--dimension-60);
   --padding-button-md: var(--padding-button-y-md) var(--dimension-16);
   --padding-input-md: var(--spacing-150) var(--dimension-4);
+  --padding-input-inline-md: var(--dimension-4);
   --padding-numeric-input-input-lg: var(--dimension-4);
   --padding-numeric-input-trigger-x: var(--dimension-8);
   --radius-button-md: var(--radius-sm);
@@ -84,6 +85,8 @@
   --padding-numeric-input-input-sm: var(--dimension-2);
   --padding-input-sm: var(--dimension-2);
   --padding-input-md: var(--dimension-2);
+  --padding-input-inline-sm: var(--dimension-2);
+  --padding-input-inline-md: var(--dimension-2);
   --color-numeric-input-input-bg: var(--color-base);
   --spacing-slider: var(--dimension-6);
   --size-slider-track-sm: var(--dimension-2);

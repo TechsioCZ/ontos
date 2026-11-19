@@ -54,6 +54,8 @@
   --color-numeric-input-input-bg-focus: var(--color-base);
   --font-weight-input: var(--font-weight-bold);
   --padding-input-md: var(--spacing-150) var(--dimension-4);
+  --padding-input-inline-sm: var(--dimension-4);
+  --padding-input-inline-md: var(--dimension-4);
   --padding-numeric-input-input-sm: var(--dimension-4);
 }
 

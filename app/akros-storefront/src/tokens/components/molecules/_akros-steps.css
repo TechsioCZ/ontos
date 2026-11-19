@@ -22,3 +22,8 @@
   --spacing-steps-content-padding-md: 0px;
   --text-steps-content-md: var(--text-sm);
 }
+
+/* Steps uses an unstyled Button; unavailable steps keep the page background. */
+[data-sf-checkout] [data-scope="steps"][data-part="list"] {
+  --color-button-bg-disabled-treatment: var(--color-transparent);
+}

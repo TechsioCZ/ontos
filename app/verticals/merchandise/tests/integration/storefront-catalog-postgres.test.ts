@@ -14,6 +14,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 import {
+  ManageCatalogPayloadSchema,
   MerchandiseCommandSchema,
   MerchandiseNotFound,
   MerchandiseRevisionConflict,
@@ -42,6 +43,7 @@ import {
   products,
 } from '../../src/database/schema.ts';
 import { resetToAkrosBaseline } from '../../src/services/akros-demo-reset.ts';
+import { buildAkrosEncoded } from '../../scripts/akros-catalog.mts';
 import { applyMarketCommand } from '../../src/services/market-commands.ts';
 import {
   catalogMarketScope,
@@ -55,6 +57,7 @@ import {
   loadHead,
   loadWorkingSet,
   persistChange,
+  replaceSnapshot,
   productSearchText,
   whereScope,
 } from '../../src/services/merchandise-store.ts';
@@ -68,7 +71,7 @@ import {
   encodeState,
   withMerchandise,
 } from './support/merchandise-database.ts';
-import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 type RecordsViewInput = typeof RecordsViewSchema.Encoded;
 type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
@@ -98,6 +101,152 @@ const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQueryInput) 
 
 const onCatalog = <A, E>(run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
   withMerchandise(catalogState, run);
+
+/** Exercise the same head lock, state evolution and revisioned write as ManageCatalog. */
+const configureListing = (fixture: MerchandiseFixture, storefrontAppId: string, mainSourceProductsOnly: boolean) =>
+  fixture.db.transaction((transaction) =>
+    Effect.gen(function* configureStorefrontListing() {
+      const { command } = Schema.decodeUnknownSync(ManageCatalogPayloadSchema)({
+        command: {
+          _tag: 'ConfigureStorefrontCatalog',
+          mainSourceProductsOnly,
+          storefrontAppId,
+        },
+        expectedRevision: fixture.revision,
+      });
+      const head = yield* loadHead(transaction, fixture.scope, { lock: true });
+      if (head === undefined) {
+        return yield* Effect.die('The listing fixture must have a catalog head');
+      }
+      const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, 'settings'));
+      const change = yield* evolveMerchandiseState(working.state, command, {
+        actor: { principalId: '20000000-0000-4000-8000-000000000002', tenantId: fixture.scope.tenantId },
+        now: DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
+        resourceId: 'settings',
+        tax: TEST_TAX,
+      });
+      return yield* persistChange(
+        transaction,
+        fixture.scope,
+        working,
+        change.state,
+        DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
+        TEST_RATES,
+        {},
+      );
+    }),
+  );
+
+it.live('lists only main source products where the storefront policy says so and keeps direct reads', () => {
+  const [base] = catalogInput.products;
+  const state = decodeState({
+    ...catalogInput,
+    movements: [],
+    orders: [],
+    products: [
+      {
+        ...base,
+        id: 'orphan',
+        name: 'A orphan',
+        sku: 'ORPHAN',
+        slug: 'orphan',
+        sourceBaseProduct: false,
+        variants: [],
+      },
+      { ...base, id: 'main', name: 'B main', sku: 'MAIN', slug: 'main', sourceBaseProduct: true, variants: [] },
+      { ...base, id: 'legacy', name: 'C legacy', sku: 'LEGACY', slug: 'legacy', variants: [] },
+    ],
+  });
+  const akros = { sort: 'name' as const, storefrontAppId: 'akros-storefront' };
+  const sroubshop = { sort: 'name' as const, storefrontAppId: 'sroubshop-storefront' };
+  const n1 = { sort: 'name' as const, storefrontAppId: 'n1-storefront' };
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* listingSourceIdentity() {
+      const unfiltered = yield* catalogPage(fixture, { fields: 'card', page: 1, pageSize: 1, sort: 'name' });
+      expect([unfiltered.total, staffProductIds(unfiltered)]).toEqual([3, ['orphan']]);
+      // The filter applies before count and pagination.
+      const first = yield* catalogPage(fixture, { ...akros, fields: 'card', page: 1, pageSize: 1 });
+      const second = yield* catalogPage(fixture, { ...akros, fields: 'card', page: 2, pageSize: 1 });
+      expect([first.total, staffProductIds(first), second.total, staffProductIds(second)]).toEqual([
+        2,
+        ['main'],
+        2,
+        ['legacy'],
+      ]);
+      expect(yield* idsOf(fixture, { ...akros, categorySlug: 'srouby' })).toEqual(['main', 'legacy']);
+      expect(yield* idsOf(fixture, { ...akros, q: 'orphan' })).toEqual([]);
+      expect(yield* idsOf(fixture, { ...akros, slug: 'orphan' })).toEqual(['orphan']);
+      expect(yield* idsOf(fixture, { ...akros, productIds: ['orphan'] })).toEqual(['orphan']);
+      expect(yield* idsOf(fixture, sroubshop)).toEqual(['main', 'legacy']);
+      expect(yield* idsOf(fixture, n1)).toHaveLength(3);
+      const staff = yield* staffProducts(fixture.db, fixture.scope, Schema.decodeSync(RecordsViewSchema)({}), false);
+      expect(staff.total).toBe(3);
+      // Saved choices are isolated per shop.
+      yield* configureListing(fixture, 'akros-storefront', false);
+      const all = yield* catalogPage(fixture, { ...akros, fields: 'card', page: 3, pageSize: 1 });
+      expect([all.total, staffProductIds(all)]).toEqual([3, ['legacy']]);
+      yield* configureListing(fixture, 'n1-storefront', true);
+      expect(yield* idsOf(fixture, n1)).toEqual(['main', 'legacy']);
+      expect(yield* idsOf(fixture, sroubshop)).toEqual(['main', 'legacy']);
+      // A fresh import keeps staff choices.
+      yield* fixture.db.transaction((transaction) => replaceSnapshot(transaction, fixture.scope, state, TEST_PRICING));
+      expect((yield* loadHead(fixture.db, fixture.scope))?.storefrontCatalogSettings).toEqual({
+        'akros-storefront': { mainSourceProductsOnly: false },
+        'n1-storefront': { mainSourceProductsOnly: true },
+      });
+      expect(yield* idsOf(fixture, akros)).toHaveLength(3);
+      yield* configureListing(fixture, 'akros-storefront', true);
+      expect(yield* idsOf(fixture, akros)).toEqual(['main', 'legacy']);
+      // Another company keeps the defaults.
+      yield* withMerchandise(state, (other) =>
+        Effect.gen(function* otherCompanyListing() {
+          expect(yield* idsOf(other, akros)).toEqual(['main', 'legacy']);
+          expect(yield* idsOf(other, n1)).toHaveLength(3);
+        }),
+      );
+    }),
+  );
+});
+
+it.live('filters the real Akros Matice import while retaining standalone main products and unfiltered reads', () =>
+  Effect.gen(function* importedAkrosListings() {
+    const state = decodeState(yield* buildAkrosEncoded());
+    expect(state.products).toHaveLength(1289);
+    expect(state.products.filter((product) => product.sourceBaseProduct === true)).toHaveLength(1057);
+    const visible = state.products.filter((product) => product.active && product.published !== false);
+    const main = visible.filter((product) => product.sourceBaseProduct !== false);
+    const matice = state.categories?.find((category) => category.slug === 'matice');
+    expect(matice).toBeDefined();
+    const mainNuts = main.filter((product) => product.categoryPathIds?.some((id) => id === matice?.id) === true);
+    const single = main.find((product) => (product.variants?.length ?? 0) === 0);
+    if (single === undefined) {
+      return yield* Effect.die('The AKROS import must contain a product without variants');
+    }
+    const akros = { storefrontAppId: 'akros-storefront' };
+    return yield* withMerchandise(state, (fixture) =>
+      Effect.gen(function* realAkrosPostgresQueries() {
+        const unfiltered = yield* catalogPage(fixture, { fields: 'card', pageSize: 1 });
+        const filtered = yield* catalogPage(fixture, { ...akros, fields: 'card', pageSize: 1 });
+        expect(unfiltered.total).toBe(visible.length);
+        expect(filtered.total).toBe(main.length);
+        const originalNuts = yield* idsOf(fixture, { categorySlug: 'matice', pageSize: 250 });
+        const listedNuts = yield* catalogPage(fixture, {
+          ...akros,
+          categorySlug: 'matice',
+          fields: 'card',
+          pageSize: 250,
+        });
+        expect(originalNuts).toContain('product-31935');
+        expect(originalNuts).toHaveLength(101);
+        expect(staffProductIds(listedNuts)).not.toContain('product-31935');
+        expect(listedNuts.total).toBe(84);
+        expect(new Set(staffProductIds(listedNuts))).toEqual(new Set(mainNuts.map((product) => product.id)));
+        expect(yield* idsOf(fixture, { ...akros, productIds: ['product-31935'] })).toEqual(['product-31935']);
+        expect(yield* idsOf(fixture, { ...akros, q: single.sku })).toContain(single.id);
+      }),
+    );
+  }),
+);
 
 it.live('previews only the first three active sellable variant names without hydrating card variants', () => {
   const variants = [

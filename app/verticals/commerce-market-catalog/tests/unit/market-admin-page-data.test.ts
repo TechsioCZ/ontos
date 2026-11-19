@@ -1,9 +1,15 @@
 // @rstest-environment happy-dom
-// The market screens' write to Merchandise: the narrow ManageMarkets payload under one fresh correlation that is also
+// The market screens' writes to Merchandise: narrow Market/Catalog payloads under one fresh correlation that is also
 // the idempotency key, a committed answer or a 202 proposal receipt passed back as Merchandise sent it, and malformed
 // input refused before anything is sent. The generated Merchandise client runs for real; the Shell's gateway issuer
-// and Merchandise's ManageMarkets endpoint answer in process through their HttpApi contracts.
+// and Merchandise's Action endpoints answer in process through their HttpApi contracts.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import {
+  ManageCatalogActionApi,
+  ManageCatalogActionInvalidProblemSchema,
+  ManageCatalogActionSchemaErrorMiddleware,
+  ManageCatalogPayloadSchema,
+} from '@app/merchandise/apis/manage-catalog-action';
 import { ManageMarketsActionApi, ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
 import { ApplyCommandResultSchema } from '@app/merchandise/contracts/apply-command';
 import {
@@ -12,12 +18,12 @@ import {
   serveApi,
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
-import { HttpApiBuilder, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
+import { HttpApiBuilder, HttpApiMiddleware, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Schema } from 'effect';
 import { beforeEach, expect, it } from 'effect-rstest';
 
 import { manageMarketsActionSchemaErrorLive } from '../../../merchandise/api/manage-markets-action-problems.ts';
-import { merchandiseCommand } from '../../src/market-admin/page-data.ts';
+import { merchandiseCommand, saveStorefrontCatalog } from '../../src/market-admin/page-data.ts';
 import type { MarketCommandInput } from '../../src/market-admin/page-data.ts';
 
 const command: MarketCommandInput = {
@@ -49,10 +55,17 @@ interface Received {
   readonly payload: typeof ManageMarketsPayloadSchema.Encoded;
 }
 const received: Received[] = [];
-/** What Merchandise answers the next ManageMarkets request with; each test scripts it. */
+interface CatalogReceived {
+  readonly correlation: string | undefined;
+  readonly idempotencyKey: string | undefined;
+  readonly payload: typeof ManageCatalogPayloadSchema.Encoded;
+}
+const catalogReceived: CatalogReceived[] = [];
+/** What Merchandise answers the next Action request with; each test scripts it. */
 let answer: typeof committed | typeof proposal = committed;
 
 const OwnerApi = ManageMarketsActionApi.prefix('/merchandise-api');
+const CatalogApi = ManageCatalogActionApi.prefix('/merchandise-api');
 const network = browserNetwork(
   shellGatewayIssuer({ merchandise: '/merchandise-api' }).application,
   serveApi(
@@ -72,12 +85,73 @@ const network = browserNetwork(
       ),
     ).pipe(Layer.provide(manageMarketsActionSchemaErrorLive)),
   ),
+  serveApi(
+    CatalogApi,
+    HttpApiBuilder.group(CatalogApi, 'manageCatalogAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        HttpServerRequest.HttpServerRequest.pipe(
+          Effect.map(({ headers }) => {
+            catalogReceived.push({
+              correlation: headers['x-correlation-id'],
+              idempotencyKey: headers['idempotency-key'],
+              payload,
+            });
+            return answer;
+          }),
+        ),
+      ),
+    ).pipe(
+      Layer.provide(
+        HttpApiMiddleware.layerSchemaErrorTransform(ManageCatalogActionSchemaErrorMiddleware, () =>
+          Effect.fail(
+            ManageCatalogActionInvalidProblemSchema.make({
+              detail: 'The test endpoint received an invalid request.',
+              status: 400,
+              title: 'Invalid request',
+              type: 'https://ontos.dev/problems/action-invalid',
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
 );
 
 beforeEach(() => {
   received.length = 0;
+  catalogReceived.length = 0;
   answer = committed;
 });
+
+it.live('saves one e-shop preference with catalogue authority, revision and idempotency', () =>
+  Effect.gen(function* storefrontCatalogSetting() {
+    yield* pinTestDocument;
+    expect(yield* saveStorefrontCatalog('akros-storefront', false, 17)).toEqual({ ok: true, value: committed });
+    expect(catalogReceived).toHaveLength(1);
+    const [request] = catalogReceived;
+    expect(Schema.decodeUnknownSync(ManageCatalogPayloadSchema)(request?.payload)).toEqual(
+      Schema.decodeUnknownSync(ManageCatalogPayloadSchema)({
+        command: {
+          _tag: 'ConfigureStorefrontCatalog',
+          mainSourceProductsOnly: false,
+          storefrontAppId: 'akros-storefront',
+        },
+        expectedRevision: 17,
+      }),
+    );
+    expect(request?.correlation).toMatch(/^commerce-market-catalog:/u);
+    expect(request?.idempotencyKey).toBe(request?.correlation);
+    expect(received).toEqual([]);
+  }).pipe(Effect.provide(network)),
+);
+
+it.live('rejects a malformed storefront id before calling Merchandise', () =>
+  Effect.gen(function* invalidStorefrontCatalogSetting() {
+    yield* pinTestDocument;
+    expect(yield* saveStorefrontCatalog('../invalid', true, 17)).toEqual({ ok: false, reason: 'invalid' });
+    expect(catalogReceived).toEqual([]);
+  }).pipe(Effect.provide(network)),
+);
 
 it.live('uses the narrow ManageMarkets payload and one fresh correlation/idempotency identity', () =>
   Effect.gen(function* currentMarketCommand() {

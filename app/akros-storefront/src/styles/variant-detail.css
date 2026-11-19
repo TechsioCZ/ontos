@@ -1,15 +1,23 @@
+[data-scope="dialog"][data-part="positioner"]:has(> .sf-variant-detail) {
+  --padding-dialog-positioner: var(--dimension-0);
+}
+
 .sf-variant-detail {
   width: calc(100% - var(--dimension-32));
   max-width: var(--container-dialog-center-w-max);
   min-height: 0;
-  max-height: var(--container-dialog-center-h-max);
+  max-height: var(--height-dialog-center-h-max);
   overflow: hidden;
 }
-.sf-variant-detail > h2 {
+.sf-variant-detail [data-scope="dialog"][data-part="title"] {
   margin: 0;
   padding-inline-end: var(--dimension-44);
   overflow-wrap: anywhere;
   flex-shrink: 0;
+}
+.sf-variant-detail > :has(> .sf-variant-detail__body) {
+  min-height: 0;
+  overflow: hidden;
 }
 /* This heading receives initial focus for reading; it is not an interactive tab stop. */
 .sf-variant-detail__title:focus {

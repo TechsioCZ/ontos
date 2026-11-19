@@ -5,7 +5,9 @@ import { normalizeCategoryName } from '../shared/domain/category-search.ts';
 import { applyDemoPriceTiers } from './akros-price-tiers.ts';
 
 type DiscountContentPatch = { -readonly [K in 'description' | 'shortDescription']?: Product[K] };
-type ProductContentBackfill = { -readonly [K in 'imageSrc' | 'imageAlt' | 'shortDescription']?: Product[K] };
+type ProductContentBackfill = {
+  -readonly [K in 'imageSrc' | 'imageAlt' | 'shortDescription' | 'sourceBaseProduct']?: Product[K];
+};
 type VariantFlagsPatch = { -readonly [K in 'isAction' | 'isRecommended' | 'isSale' | 'isNew']?: ProductVariant[K] };
 
 const namedEntities = EffectRecord.fromEntries([
@@ -134,6 +136,14 @@ export const orderCategoryPositions = <
 /** Fills catalog content an older seed did not store; never overwrites a value that already exists. */
 export const backfillProduct = (current: Product, seed: Product): Product => {
   const missing: ProductContentBackfill = {};
+  if (
+    current.sourceBaseProduct === undefined &&
+    seed.sourceBaseProduct !== undefined &&
+    current.sourceGroupId === seed.sourceGroupId &&
+    seed.sourceGroupId !== undefined
+  ) {
+    missing.sourceBaseProduct = seed.sourceBaseProduct;
+  }
   if (current.imageSrc === undefined && seed.imageSrc !== undefined) {
     missing.imageSrc = seed.imageSrc;
   }

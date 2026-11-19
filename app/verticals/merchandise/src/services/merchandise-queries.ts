@@ -28,6 +28,7 @@ import {
   StorefrontVariantPreviewSchema,
   VariantIdSchema,
   VariantSummarySchema,
+  mainSourceProductsOnlyFor,
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Order,
@@ -575,6 +576,18 @@ const storefrontPriceOrder = (sort: StorefrontCatalogQuery['sort'], ranked: SQL[
 };
 
 const IN_STOCK = ['IN_STOCK', 'LOW_STOCK'];
+
+/**
+ * Hides orphan source variants from the storefront's listings when its saved policy says so, read in the same
+ * snapshot as the filtered count and page. Exact reads still resolve them for saved links and carts.
+ */
+const mainSourceListingFilter = (scope: StoreScope, catalog: StorefrontCatalogQuery): SQL | undefined =>
+  catalog.storefrontAppId === undefined || catalog.slug !== undefined || catalog.productIds !== undefined
+    ? undefined
+    : sql`(not coalesce((select (${catalogHeads.storefrontCatalogSettings}->${catalog.storefrontAppId}->>'mainSourceProductsOnly')::boolean
+        from ${catalogHeads} where ${whereScope(catalogHeads, scope)}),
+        ${mainSourceProductsOnlyFor({}, catalog.storefrontAppId)})
+      or coalesce((${products.document}->>'sourceBaseProduct')::boolean, true))`;
 
 const storefrontFilters = (
   catalog: StorefrontCatalogQuery,
@@ -1205,6 +1218,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const needle = normalizeSearchText(catalog.q ?? '');
   const baseFilters = [
     ...storefrontFilters(catalog, featuredIds, categoryId),
+    mainSourceListingFilter(scope, catalog),
     sellableClassificationFilter(scope),
     Option.getOrUndefined(offer),
   ];

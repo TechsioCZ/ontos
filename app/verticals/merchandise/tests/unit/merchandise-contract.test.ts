@@ -158,6 +158,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
                 bootstrapCheckpoint: null,
                 homepageFeaturedProductIds: ['private-product-id'],
                 revision: 7,
+                storefrontCatalogSettings: {},
                 taxRates: null,
               },
             ]);

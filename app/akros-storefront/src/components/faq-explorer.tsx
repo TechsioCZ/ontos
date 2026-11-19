@@ -53,6 +53,7 @@ export function FaqExplorer({ faq }: { faq: FaqCopy }) {
           </span>
           <Input
             aria-label={chrome.searchLabel}
+            className="pe-(--dimension-16)"
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder={chrome.searchPlaceholder}
             size="md"

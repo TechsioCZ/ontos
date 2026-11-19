@@ -21,8 +21,15 @@ import {
   ProductVariantSchema,
   StockMovementSchema,
   grossUnitPriceMinor,
+  StorefrontCatalogSettingsSchema,
 } from '../../shared/domain/merchandise-model.ts';
-import type { CatalogCategory, Order, Product, StockMovement } from '../../shared/domain/merchandise-model.ts';
+import type {
+  CatalogCategory,
+  Order,
+  Product,
+  StockMovement,
+  StorefrontCatalogSettings,
+} from '../../shared/domain/merchandise-model.ts';
 import { ORDER_NUMBER_PREFIX } from '../../shared/domain/order-totals.ts';
 import {
   catalogHeads,
@@ -876,6 +883,7 @@ export interface CatalogHead {
   readonly aiChanges: MerchandiseAiSlice | undefined;
   readonly homepageFeaturedProductIds: readonly (typeof ProductIdReferenceSchema.Type)[];
   readonly revision: number;
+  readonly storefrontCatalogSettings: StorefrontCatalogSettings;
   /** The company's VAT rates as last synced from Tax; absent before the first sync. */
   readonly taxRates: CompanyTaxRates | undefined;
 }
@@ -888,6 +896,7 @@ export const EMPTY_CATALOG_HEAD: CatalogHead = Object.freeze({
   aiChanges: Option.getOrUndefined(Option.none<MerchandiseAiSlice>()),
   homepageFeaturedProductIds: [],
   revision: 0,
+  storefrontCatalogSettings: {},
   taxRates: Option.getOrUndefined(Option.none<CompanyTaxRates>()),
 });
 
@@ -1345,6 +1354,7 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
       bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint,
       homepageFeaturedProductIds: catalogHeads.homepageFeaturedProductIds,
       revision: catalogHeads.revision,
+      storefrontCatalogSettings: catalogHeads.storefrontCatalogSettings,
       taxRates: catalogHeads.taxRates,
     })
     .from(catalogHeads)
@@ -1374,7 +1384,17 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
     ],
     { concurrency: 1 },
   );
-  return { aiChanges, homepageFeaturedProductIds, revision: row.revision, taxRates } satisfies CatalogHead;
+  const storefrontCatalogSettings = yield* query(
+    Schema.decodeUnknownEffect(StorefrontCatalogSettingsSchema)(row.storefrontCatalogSettings),
+    'Storefront catalog settings do not decode',
+  );
+  return {
+    aiChanges,
+    homepageFeaturedProductIds,
+    revision: row.revision,
+    storefrontCatalogSettings,
+    taxRates,
+  } satisfies CatalogHead;
 });
 
 /**
@@ -1666,7 +1686,12 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
             .limit(1),
         )).length > 0
       : undefined;
-  let state: MerchandiseState = { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) };
+  let state: MerchandiseState = {
+    movements,
+    orders: loadedOrders,
+    products: loaded.map((entry) => entry.product),
+    storefrontCatalogSettings: head.storefrontCatalogSettings,
+  };
   if (categoryIds !== undefined) {
     state = { ...state, categories: loadedCategories };
   }
@@ -1960,10 +1985,15 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
   yield* dropReclassifiedHolds(db, scope, changedProducts, held);
   yield* recordTaxClassificationLive(db, scope);
   const update = { revision: working.revision + 1, updatedAt: date(now) };
+  const settings = after.storefrontCatalogSettings;
+  const catalogUpdate =
+    settings === undefined || settings === before.storefrontCatalogSettings
+      ? update
+      : { ...update, storefrontCatalogSettings: settings };
   const heads = yield* query(
     db
       .update(catalogHeads)
-      .set(sliceChanged ? { ...update, aiChanges: slice ?? null } : update)
+      .set(sliceChanged ? { ...catalogUpdate, aiChanges: slice ?? null } : catalogUpdate)
       .where(and(whereScope(catalogHeads, scope), eq(catalogHeads.revision, working.revision)))
       .returning({ revision: catalogHeads.revision }),
     'Merchandise head could not be written',

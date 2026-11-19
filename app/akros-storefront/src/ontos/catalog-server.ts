@@ -4,6 +4,7 @@ import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 import { getActiveMarket } from "./active-market";
 import { catalogCache } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
+import { getConfig } from "./config";
 import { readRecords } from "./gateway";
 import {
   projectCategories,
@@ -94,14 +95,16 @@ const categoryPages = catalogCache<CategoryPage>({
 const readCatalog = async (
   marketId: string | undefined,
   storefrontCatalog: Record<string, unknown>,
-) =>
-  (await readRecords("merchandise", "records", {
+) => {
+  // Merchandise applies the company's saved listing policy for this e-shop.
+  const query = { ...storefrontCatalog, storefrontAppId: getConfig().appId };
+  return (await readRecords("merchandise", "records", {
     view: {
       storefront: true,
-      storefrontCatalog:
-        marketId === undefined ? storefrontCatalog : { ...storefrontCatalog, marketId },
+      storefrontCatalog: marketId === undefined ? query : { ...query, marketId },
     },
   })) as Record<string, unknown>;
+};
 /** The request's market (resolved from the path locale; see active-market.ts). */
 const marketIdOf = async () => (await getActiveMarket()).marketId;
 /** Cache keys of market-dependent entries. */

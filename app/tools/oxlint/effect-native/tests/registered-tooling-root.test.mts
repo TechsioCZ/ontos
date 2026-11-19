@@ -3,11 +3,15 @@ import nodePath from 'node:path';
 import { parseSync } from 'oxc-parser';
 import { expect, it } from 'effect-rstest';
 
-import { nativeModuleSourceReferences } from '../../anti-slop/effect/rules/registered-tooling-package-proof.ts';
+import {
+  nativeModuleSourceReferences,
+  registeredToolingPackageOwner,
+} from '../../anti-slop/effect/rules/registered-tooling-package-proof.ts';
 import { antiSlopEffectRule, appRoot, ruleTester, workspaceCase } from './rule-tester.mts';
 import type { InvalidCase, ValidCase } from './rule-tester.mts';
 
 const rootFile = 'commands/audit.mts';
+const packageManifestFile = 'package.json';
 const factoryFile = 'commands/parser.mts';
 const unrelatedData = 'export const data = 1;';
 const evidenceFilename = 'consumer.mts';
@@ -49,7 +53,7 @@ const scenario = (
 ) => {
   const workspace = workspaceCase([
     {
-      path: 'package.json',
+      path: packageManifestFile,
       source: JSON.stringify({ name: 'tooling-owner', scripts: registered ? { audit: `node ./${rootFile}` } : {} }),
     },
     { path: rootFile, source },
@@ -239,7 +243,7 @@ const additionalInvalid = [
   ),
   scenario('a package export cannot expose its tooling process', command, [
     {
-      path: 'package.json',
+      path: packageManifestFile,
       source: JSON.stringify({ exports: { './audit': `./${rootFile}` }, scripts: { audit: `node ./${rootFile}` } }),
     },
   ]),
@@ -352,6 +356,30 @@ ruleTester.run(
     ],
   },
 );
+
+for (const [name, directory, accepted] of [
+  ['emitted Next.js bundles do not consume a tooling root', '.next/server', true],
+  ['an authored dynamic loader still revokes tooling root custody', 'src', false],
+] as const) {
+  it(name, () => {
+    const workspace = workspaceCase([
+      { path: packageManifestFile, source: JSON.stringify({ scripts: { audit: `node ./${rootFile}` } }) },
+      { path: rootFile, source: command },
+      { path: factoryFile, source: factory },
+      {
+        path: `${directory}/webpack-runtime.js`,
+        source:
+          "function runtime() {} runtime.u = (id) => id + '.js'; runtime.load = (id) => require('./' + runtime.u(id));",
+      },
+    ]);
+    workspace.create();
+    try {
+      expect(registeredToolingPackageOwner(workspace.file(rootFile))).toBe(accepted ? workspace.directory : null);
+    } finally {
+      workspace.remove();
+    }
+  });
+}
 
 it('shares only lexical native-loader source evidence and refuses an invalid program', () => {
   expect(nativeModuleSourceReferences(null)).toBeNull();

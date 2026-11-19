@@ -1,3 +1,14 @@
+.sf-auth-card .sf-auth-form,
+.sf-registration-card .sf-auth-form {
+  --font-weight-label: var(--font-weight-normal);
+  --padding-form-control-block-sm: var(--dimension-2);
+  --height-form-control-sm: calc(
+    var(--border-width-form-control) * 2 + var(--padding-form-control-block-sm) * 2 +
+      max(1lh, var(--line-height-form-control-sm))
+  );
+  --padding-input-sm: var(--dimension-2) var(--padding-input-inline-sm);
+}
+
 /* Inline auth links share Button tokens while retaining the surrounding text layout. */
 [data-sf-auth-link] {
   --font-weight-button: var(--font-weight-semibold);

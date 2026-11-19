@@ -11,7 +11,7 @@ const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs',
 const TEST_SOURCE = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 const TEST_DIRECTORY = /(?:^|[/\\])(?:tests?|__tests__)[/\\]/u;
 // These are dependency, VCS, and emitted-artifact boundaries, not source ownership exemptions.
-const ARTIFACT_DIRECTORIES = new Set(['node_modules', '.git', '.codex', '.output', '.cache', 'dist', 'coverage']);
+const ARTIFACT_DIRECTORIES = new Set(['node_modules', '.git', '.codex', '.next', '.output', '.cache', 'dist', 'coverage']);
 const NODE_ENTRY = /^node (?<entry>\.\/[A-Za-z0-9_./-]+\.[cm]?[jt]s)$/u;
 
 const object = (value: unknown): Record<string, unknown> | null =>

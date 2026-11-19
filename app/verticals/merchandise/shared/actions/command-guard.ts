@@ -39,6 +39,7 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'ArchiveDemoProduct',
   'CreateCategory',
   'UpdateCategory',
+  'ConfigureStorefrontCatalog',
   // Market price lists and bulk market assortment change money and the whole offer of a market.
   'ConfigureMarket',
   'RemoveMarket',

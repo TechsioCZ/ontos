@@ -65,7 +65,7 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
             }
             if (sql.startsWith('select') && sql.includes(headTable)) {
               // Values mode follows SELECT order: aiChanges, bootstrapCheckpoint, homepageFeaturedProductIds, revision,
-              // taxRates.
+              // storefrontCatalogSettings, taxRates.
               return Effect.succeed(
                 head === undefined
                   ? []
@@ -75,6 +75,7 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
                         bootstrapCheckpoint: head.checkpoint,
                         homepageFeaturedProductIds: [],
                         revision: head.revision,
+                        storefrontCatalogSettings: {},
                         taxRates: null,
                       },
                     ],

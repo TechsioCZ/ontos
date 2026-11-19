@@ -1,10 +1,10 @@
 .sf-variant-detail {
   --sf-variant-detail-width: 960px;
   --container-dialog-center-w-max: var(--sf-variant-detail-width);
-  --container-dialog-center-h-max: calc(100dvh - var(--dimension-32));
+  --height-dialog-center-h-max: calc(100dvh - var(--dimension-32));
   --spacing-dialog-content: var(--dimension-16);
   --padding-dialog-content: var(--dimension-24);
-  --text-dialog-title: var(--text-xl);
+  --text-dialog-heading-size: var(--text-base);
   --color-dialog-content-bg: var(--color-base);
   --height-form-control-md: var(--dimension-44);
   --color-button-border-secondary: var(--color-border-primary);
@@ -29,6 +29,5 @@
 @media (max-width: 767px) {
   .sf-variant-detail {
     --padding-dialog-content: var(--dimension-16);
-    --text-dialog-title: var(--text-lg);
   }
 }

@@ -32,6 +32,29 @@ type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 const apply = (state: MerchandiseState, command: CommandInput, resourceId: string, now = t0) =>
   evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId, tax: TEST_TAX });
 
+it.effect('stores listing preferences independently per storefront and preserves unchanged settings', () =>
+  Effect.gen(function* configureStorefrontListings() {
+    const command = {
+      _tag: 'ConfigureStorefrontCatalog',
+      mainSourceProductsOnly: false,
+      storefrontAppId: 'akros-storefront',
+    } as const;
+    const first = yield* apply(empty, command, 'settings');
+    const second = yield* apply(
+      first.state,
+      { ...command, mainSourceProductsOnly: true, storefrontAppId: 'n1-storefront' },
+      'settings',
+    );
+    expect(second.state.storefrontCatalogSettings).toEqual({
+      'akros-storefront': { mainSourceProductsOnly: false },
+      'n1-storefront': { mainSourceProductsOnly: true },
+    });
+    const unchanged = yield* apply(second.state, command, 'settings');
+    expect(unchanged.state).toBe(second.state);
+    expect(second.state.products).toBe(empty.products);
+  }),
+);
+
 const addProduct = (state: MerchandiseState, resourceId: string, sku: string, priceMinor: number) =>
   apply(
     state,

@@ -40,6 +40,8 @@
   --height-form-control-sm: var(--dimension-60);
   --padding-input-sm: var(--dimension-20) var(--dimension-24);
   --padding-input-md: var(--dimension-20) var(--dimension-24);
+  --padding-input-inline-sm: var(--dimension-24);
+  --padding-input-inline-md: var(--dimension-24);
   --radius-input-sm: var(--dimension-8);
   --text-input-sm: var(--dimension-20);
   --text-label-sm: var(--dimension-20);

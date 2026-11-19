@@ -1,6 +1,8 @@
 // Page data of the staff E-shop screens (definePageData: prepared before the Shell reveals a page, kept per document,
 // revalidated after writes and live changes) and the one way they run Market Actions and merchandise commands.
 import { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
+import { ManageCatalogPayloadSchema } from '@app/merchandise/apis/manage-catalog-action';
+import { executeManageCatalog } from '@app/merchandise/apis/manage-catalog-action/client';
 import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
 import { RecordsRequestSchema } from '@app/merchandise/apis/records';
 import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
@@ -74,7 +76,9 @@ const executeRecords = (payload: RecordsRequestEncoded, requestCorrelation: stri
     Effect.flatMap((request) => executeMerchandiseRecords(request, requestCorrelation)),
   );
 
-const marketSettingsView: RecordsRequestEncoded = { view: { limit: 0, markets: true, ordersLimit: 0, summary: true } };
+const marketSettingsView: RecordsRequestEncoded = {
+  view: { limit: 0, markets: true, ordersLimit: 0, storefrontCatalogSettings: true, summary: true },
+};
 
 /** Merchandise market settings (currency, rate, rounding, offer mode) and whether the person manages the catalogue. */
 export const marketSettingsData = definePageData({
@@ -240,6 +244,16 @@ export const marketActionEffect = <P, A, E extends ProblemLike, D extends Proble
       onFailure: (error): WriteOutcome<A> => ({ ok: false, reason: writeFailure(error) }),
       onSuccess: (value): WriteOutcome<A> => ({ ok: true, value }),
     }),
+  );
+
+/** Uses the catalogue owner's revision and authority, independently of market administration. */
+export const saveStorefrontCatalog = (storefrontAppId: string, mainSourceProductsOnly: boolean, revision: number) =>
+  marketActionEffect(
+    Schema.decodeUnknownEffect(ManageCatalogPayloadSchema)({
+      command: { _tag: 'ConfigureStorefrontCatalog', mainSourceProductsOnly, storefrontAppId },
+      expectedRevision: revision,
+    }),
+    executeManageCatalog,
   );
 
 /** A merchandise command in its wire form (the screens build ConfigureMarket and SetProductMarketOffer). */

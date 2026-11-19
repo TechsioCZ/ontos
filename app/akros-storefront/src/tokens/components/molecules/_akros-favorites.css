@@ -10,10 +10,10 @@
 .sf-favorites-dialog {
   --spacing-dialog-content: var(--sf-favorites-gap);
   --padding-dialog-content: var(--sf-favorites-inset);
-  --text-dialog-title: var(--text-xl);
+  --text-dialog-heading-size: var(--text-base);
   --color-dialog-content-bg: var(--color-base);
   --container-dialog-center-w-max: var(--sf-favorites-width);
-  --container-dialog-center-h-max: calc(100dvh - var(--dimension-32));
+  --height-dialog-center-h-max: calc(100dvh - var(--dimension-32));
   --height-form-control-md: var(--dimension-44);
   --size-checkbox: var(--dimension-20);
   --radius-checkbox: var(--radius-xs);

@@ -38,6 +38,7 @@ import {
   PartyIdSchema,
   ProductIdSchema,
   ProductMetadataSchema,
+  StorefrontAppIdSchema,
   ProductUnitSchema,
   ShippingMethodSchema,
   VariantIdSchema,
@@ -401,7 +402,13 @@ const ApplyEditOrderCommandSchema = Schema.TaggedStruct('EditOrder', {
   shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
 });
 
+const ApplyConfigureStorefrontCatalogCommandSchema = Schema.TaggedStruct('ConfigureStorefrontCatalog', {
+  mainSourceProductsOnly: Schema.Boolean,
+  storefrontAppId: StorefrontAppIdSchema,
+});
+
 export const MerchandiseCommandSchema = Schema.Union([
+  ApplyConfigureStorefrontCatalogCommandSchema,
   ApplyCreateProductCommandSchema,
   /** Edits one storefront category; appends a history entry. A renamed category also renames its products' `category`. */
   ApplyUpdateCategoryCommandSchema,
@@ -547,6 +554,7 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
 
 export const ManageCatalogPayloadSchema = Schema.Struct({
   command: Schema.Union([
+    ApplyConfigureStorefrontCatalogCommandSchema,
     ApplyUpdateProductCommandSchema,
     ApplyChangePriceCommandSchema,
     ApplyBulkUpdateProductsCommandSchema,

@@ -42,6 +42,7 @@ type OwnerReadQuery =
               readonly productIds?: readonly string[];
               readonly q?: string;
               readonly slug?: string;
+              readonly storefrontAppId?: string;
             }
           | {
               readonly includeCategories: false;

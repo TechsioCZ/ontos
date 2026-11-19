@@ -89,7 +89,7 @@ export function HomeCarousel({
           className="pointer-events-none absolute inset-x-0 bottom-0 w-full max-[431px]:static"
           controlPosition="unset"
         >
-          <Carousel.Indicators className="pointer-events-none">
+          <Carousel.Indicators className="pointer-events-none w-full">
             {slides.map((slide, index) => (
               <Carousel.Indicator
                 className="pointer-events-auto max-md:items-end max-md:pb-1 max-[431px]:items-center max-[431px]:pb-0"

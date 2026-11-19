@@ -42,8 +42,9 @@ type Server = typeof import("@/ontos/catalog-server");
 type Query = { view: { storefrontCatalog: Record<string, unknown> } };
 /** The owner query without its market (every read is asserted to carry the request's market). */
 const catalogOf = (call: unknown[]) => {
-  const { marketId, ...query } = (call[2] as Query).view.storefrontCatalog;
+  const { storefrontAppId, marketId, ...query } = (call[2] as Query).view.storefrontCatalog;
   expect(marketId).toBe(requestMarket.id);
+  expect(storefrontAppId).toBe("sroubshop-storefront");
   return query;
 };
 
@@ -88,6 +89,7 @@ let server: Server;
 beforeEach(async () => {
   // Fresh module per test: the product and navigation caches are process-local.
   vi.resetModules();
+  vi.stubEnv("ONTOS_STOREFRONT_APP_ID", "sroubshop-storefront");
   requestMarket.id = czMarketId;
   server = await vi.importActual<Server>("@/ontos/catalog-server");
   vi.mocked(readRecords).mockReset();
@@ -124,7 +126,10 @@ beforeEach(async () => {
   });
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 describe("OntOS catalog server reads", () => {
   it("keeps price-free navigation fresh for 15 minutes but refreshes home and detail after 10 seconds", async () => {
@@ -208,6 +213,7 @@ describe("OntOS catalog server reads", () => {
           pageSize: 24,
           fields: "card",
           includeCategories: false,
+          storefrontAppId: "sroubshop-storefront",
           marketId: czMarketId,
         },
       },

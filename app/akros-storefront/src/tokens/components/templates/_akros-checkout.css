@@ -55,6 +55,7 @@
   --text-phone-input-sm: var(--sf-checkout-body-size);
   --text-label-sm: var(--dimension-20);
   --padding-input-sm: var(--dimension-24);
+  --padding-input-inline-sm: var(--dimension-24);
   --size-steps-indicator-md: var(--dimension-40);
   --spacing-steps-list: 0px;
   --spacing-steps-trigger: var(--dimension-8);

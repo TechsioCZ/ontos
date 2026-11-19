@@ -230,7 +230,12 @@ export function HeaderSearch() {
             size="md"
             allResultsLink={
               searchError || searchLoading ? undefined : (
-                <Link as={StoreLink} href={resultsHref} onClick={() => setOpen(false)}>
+                <Link
+                  as={StoreLink}
+                  href={resultsHref}
+                  onClick={() => setOpen(false)}
+                  size="current"
+                >
                   {cs.search.allResults(remoteTotal)}
                 </Link>
               )

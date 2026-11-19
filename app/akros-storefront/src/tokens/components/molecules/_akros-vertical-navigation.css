@@ -26,6 +26,10 @@
   );
 }
 
+.sf-sidebar__desktop [data-sf-catalog] {
+  --spacing-vertical-navigation-item-sm: var(--dimension-32);
+}
+
 /* The kit's sm navigation link recipe, emitted once instead of ~1 KB on every link. */
 .sf-catalog-link {
   @apply relative cursor-pointer font-button transition duration-200 motion-reduce:transition-none motion-safe:not-disabled:active:scale-97;

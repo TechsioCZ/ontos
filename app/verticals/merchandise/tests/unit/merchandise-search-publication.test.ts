@@ -570,6 +570,7 @@ const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.provider
                   bootstrapCheckpoint: checkpoint,
                   homepageFeaturedProductIds: [],
                   revision: 1,
+                  storefrontCatalogSettings: {},
                   taxRates: null,
                 },
               ]

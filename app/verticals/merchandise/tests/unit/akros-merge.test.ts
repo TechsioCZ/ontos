@@ -80,6 +80,22 @@ it('orders seed products first and appends current-only products last', () => {
   expect(mergeSeed(current, seed).products.map((entry) => entry.id)).toEqual(['p1', 'p2', 'p-extra']);
 });
 
+it('backfills source listing identity without changing product publication or staff edits', () => {
+  const current = state({
+    products: [product('orphan', { currentPriceMinor: 99, published: true, sourceGroupId: 'source-1' })],
+  });
+  const seed = state({
+    products: [product('orphan', { sourceBaseProduct: false, sourceGroupId: 'source-1' })],
+  });
+  const result = mergeSeed(current, seed);
+  expect(result.products[0]?.sourceBaseProduct).toBe(false);
+  expect(result.products[0]?.published).toBe(true);
+  expect(result.products[0]?.currentPriceMinor).toBe(99);
+  expect(mergeSeed(result, seed)).toEqual(result);
+  const otherSource = state({ products: [product('orphan', { sourceGroupId: 'source-2' })] });
+  expect(mergeSeed(otherSource, seed).products[0]?.sourceBaseProduct).toBeUndefined();
+});
+
 it('keeps current price and name, fills only missing imageAlt', () => {
   const current = state({ products: [product('p1', { currentPriceMinor: 99, name: 'Vlastní název' })] });
   const seed = state({ products: [product('p1', { imageAlt: 'Alt ze semene', imageSrc: '/img.jpg' })] });

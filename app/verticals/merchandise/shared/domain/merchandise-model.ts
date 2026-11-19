@@ -3,7 +3,7 @@
 // re-read the current product afterwards (brief requirement 7d).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { currencyOf, MarketCurrencySchema, OrderMarketSchema } from './market-offers.ts';
 import type { MarketCurrency } from './market-offers.ts';
 
@@ -194,6 +194,30 @@ export const CategoryNodeSchema = Schema.Struct({
 });
 export type CategoryNode = typeof CategoryNodeSchema.Type;
 
+export const StorefrontAppIdSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(120),
+  Schema.isPattern(/^[a-z][a-z0-9-]*$/u),
+).pipe(Schema.brand('MerchandiseStorefrontAppId'));
+/** Catalog presentation settings, scoped to this company and keyed by registered storefront application id. */
+export const StorefrontCatalogSettingsSchema = Schema.Record(
+  StorefrontAppIdSchema,
+  Schema.Struct({
+    mainSourceProductsOnly: Schema.Boolean,
+  }),
+);
+export type StorefrontCatalogSettings = typeof StorefrontCatalogSettingsSchema.Type;
+/** Both stage shops sell the imported AKROS source catalogue, so they list only its main products by default. */
+const MAIN_SOURCE_PRODUCTS_ONLY_STOREFRONTS: ReadonlySet<string> = new Set([
+  'akros-storefront',
+  'sroubshop-storefront',
+]);
+export const mainSourceProductsOnlyFor = (settings: StorefrontCatalogSettings, storefrontAppId: string): boolean =>
+  Option.match(Schema.decodeUnknownOption(StorefrontAppIdSchema)(storefrontAppId), {
+    onNone: () => false,
+    onSome: (id) => settings[id]?.mainSourceProductsOnly ?? MAIN_SOURCE_PRODUCTS_ONLY_STOREFRONTS.has(id),
+  });
+
 export const ProductMetadataSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
   /** Optional direct memberships in addition to the primary category; absent preserves legacy behavior. */
@@ -213,6 +237,8 @@ export const ProductMetadataSchema = Schema.Struct({
   isSale: Schema.optionalKey(Schema.Boolean),
   lengthMm: Schema.optionalKey(MeasurementSchema),
   sourceGroupId: Schema.optionalKey(SourceGroupIdSchema),
+  /** Imported main catalog item. False keeps orphan source variants out of lists, but not direct reads. */
+  sourceBaseProduct: Schema.optionalKey(Schema.Boolean),
   sourceProductId: Schema.optionalKey(SourceProductIdSchema),
   /** Storefront visibility; absent means published when active. */
   published: Schema.optionalKey(Schema.Boolean),

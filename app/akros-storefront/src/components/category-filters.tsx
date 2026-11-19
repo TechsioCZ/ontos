@@ -135,7 +135,7 @@ export function CategoryFilters({
           {cs.filters.found}: <strong>{count}</strong>. {cs.filters.unitPriceNote}
         </p>
         <div className="flex flex-wrap items-center gap-4">
-          <Link as={StoreLink} href={pathname}>
+          <Link as={StoreLink} href={pathname} size="current">
             {cs.filters.clear}
           </Link>
           <Button type="submit" variant="primary" size="sm" uppercase>
