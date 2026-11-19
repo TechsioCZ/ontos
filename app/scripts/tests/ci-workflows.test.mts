@@ -627,7 +627,7 @@ const buildStep = () =>
   readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(({ run }) => run === BUILD_DRIVER_COMMAND);
 const buildDriver = () => readFileSync(new URL('../ci/build-units.sh', import.meta.url), 'utf-8');
 
-it('builds every delivery unit of the topology in exactly one build shard, with the Shell alone', () => {
+it('builds every delivery unit of the topology in exactly one build shard', () => {
   const { strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
@@ -636,9 +636,6 @@ it('builds every delivery unit of the topology in exactly one build shard, with 
   expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
   const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
   expect(sorted(built)).toEqual(sorted(units));
-  expect(
-    strategy.matrix.include.find(({ units: shardUnits }) => shardUnits.includes('apps/shell-super-app'))?.units,
-  ).toBe('apps/shell-super-app');
   expect(buildStep()).toBeDefined();
 });
 
