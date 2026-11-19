@@ -532,7 +532,8 @@ const isLocalVersion = (version: string) => /^(?:file:|link:|workspace:(?:[./]|.
  * list.
  */
 const workspaceEntries = (text: string): readonly string[] => {
-  const lines = text.split(/\r?\n/u);
+  // pnpm's reader also breaks a line at a carriage return that stands alone.
+  const lines = text.split(/\r\n?|\n/u);
   const keys = new Set<string>();
   for (const line of lines) {
     if (/^(?:\s|#|- |$)/u.test(line)) {

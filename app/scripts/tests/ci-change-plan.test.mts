@@ -1174,6 +1174,7 @@ it('reads every packages entry of pnpm-workspace.yaml, and nothing it does not u
     workspace.replace(last, '  - "n1-storefront"#not-a-comment\n'),
     // Not one plain mapping: pnpm's reader ignores text after a document end, so only this reader can refuse it.
     `${workspace}\n...\n@ ignored after the document end\n`,
+    `${workspace}\r...\n  @ ignored after the document end\n`,
     `${workspace}\n---\nother: true\n`,
     `%YAML 1.2\n${workspace}`,
     `${workspace}catalogMode: strict\n`,
