@@ -23,6 +23,8 @@ for (const directory of [
   'verticals/commerce-market-catalog',
   'verticals/catalog',
   'packages/catalog-selection-contracts',
+  // The provider whose operation verify-market-eligibility-v1 declares as a call.
+  'packages/customer-market-retirement-contracts',
 ]) {
   collect(directory);
 }

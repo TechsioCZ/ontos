@@ -23759,6 +23759,20 @@ export const hasOriginalReadServiceFactoryProvenance = (
 };
 
 /** The identical complete Read proof used by the combined seam, without inventing a service-factory export. */
+/** A read given to `defineRead` as the single-entry `{ run }` object: main's SDK form. */
+const isRunFormRead = (source: string, name: string): boolean => {
+  const readExpression = assignedExpression(
+    source,
+    new RegExp(`export const ${escapeRegExp(toCamelCase(name))}Read\\s*=\\s*`, 'u'),
+  );
+  const handler = readExpression === undefined ? undefined : callArgument(readExpression, /^defineRead\(/u, 1);
+  return (
+    handler !== undefined &&
+    topLevelObjectEntries(handler)?.length === 1 &&
+    objectPropertyValue(handler, 'run') !== undefined
+  );
+};
+
 export const hasCompleteGeneratedModuleRead = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
@@ -23768,19 +23782,15 @@ export const hasCompleteGeneratedModuleRead = (
   diagnostics?: string[],
 ): boolean => {
   const source = sources.get(readFile);
+  const contribution = { contractStem: name, kind: MODULE_API_KIND, name } as const;
   return (
     readFile === `${ownerPath}/src/api/${name}.read.ts` &&
     source !== undefined &&
     hasGeneratedSourceHeader(source, MODULE_API_HEADER) &&
-    hasCompleteContributionReadStaged(
-      source,
-      { contractStem: name, kind: MODULE_API_KIND, name },
-      moduleId,
-      sources,
-      readFile,
-      ownerPath,
-      diagnostics,
-    )
+    // A `{ run }` read has no phases for the staged proof to bind: it is judged by main's handler rules.
+    (isRunFormRead(source, name)
+      ? hasCompleteContributionRead(source, contribution, moduleId, sources, readFile, ownerPath)
+      : hasCompleteContributionReadStaged(source, contribution, moduleId, sources, readFile, ownerPath, diagnostics))
   );
 };
 
