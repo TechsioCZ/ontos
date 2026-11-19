@@ -186,6 +186,9 @@ export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-
 
 // @ontos-core-read legal-entity-detail
 export { legalEntityDetailRead } from './generated-reads/legal-entity-detail.ts';
+
+// @ontos-core-read asset-metadata
+export { assetMetadataRead } from './generated-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
@@ -965,6 +968,7 @@ export { changeTenantModuleStateAction } from './modules/actions/change-tenant-m
 export { confirmAssetAction } from './modules/actions/confirm-asset.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { renameDisplayFilenameAction } from './modules/actions/rename-display-filename.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';

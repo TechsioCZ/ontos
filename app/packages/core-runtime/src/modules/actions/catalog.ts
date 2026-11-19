@@ -9,6 +9,7 @@ import { changeTenantModuleStateAction } from './change-tenant-module-state.acti
 import { confirmAssetAction } from './confirm-asset.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
+import { renameDisplayFilenameAction } from './rename-display-filename.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
 import { setSelfApiKeyBindingStatusAction } from './set-self-api-key-binding-status.action.ts';
@@ -28,6 +29,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   confirmAssetAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
   recordSupportImpersonationAction.descriptor,
+  renameDisplayFilenameAction.descriptor,
   reservePrincipalBindingAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
   setSelfApiKeyBindingStatusAction.descriptor,
