@@ -1,5 +1,5 @@
-import { Context, Schema } from 'effect';
-import type { Effect, Stream } from 'effect';
+import { Context, Effect, Schema } from 'effect';
+import type { Stream } from 'effect';
 
 import { actionErrorSchema } from '../actions/error-schema.ts';
 
@@ -138,3 +138,19 @@ export interface ObjectStorageService {
 export class ObjectStorage extends Context.Service<ObjectStorage, ObjectStorageService>()(
   '@app/core-runtime/media/object-storage/ObjectStorage',
 ) {}
+
+const notConfigured = () =>
+  Effect.fail(
+    new ObjectStorageNetworkError({ code: 'object_storage_network_error', reason: 'No object store is configured' }),
+  );
+
+/**
+ * The port of a host that has no object store configured: it never reaches a provider, and its identity matches no
+ * asset, so every read of bytes ends as an unavailable request (a retryable 503), never as corruption or absence.
+ */
+export const unconfiguredObjectStorage: ObjectStorageService = {
+  get: notConfigured,
+  providerId: 'core-media-unconfigured',
+  put: notConfigured,
+  stat: notConfigured,
+};

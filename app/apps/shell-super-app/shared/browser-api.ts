@@ -8,7 +8,7 @@ import {
 } from './access-admin-api.ts';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -898,6 +898,19 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
     ),
   )
   // @ontos-codesmith-core-read-api-groups:end
+
+  // Core Media byte delivery (#1443, #1436): a hand-written streaming edge. Its success body is the exact verified
+  // bytes of one asset; it carries no storage value, takes only the asset id and runs its own governed
+  // `download` Core Read on every request.
+  .add(
+    HttpApiGroup.make('coreMediaDownload').add(
+      HttpApiEndpoint.get('downloadAsset', '/core/media/assets/:mediaAssetId/content', {
+        error: identityErrors,
+        params: { mediaAssetId: Schema.String.check(Schema.isUUID()) },
+        success: HttpApiSchema.StreamUint8Array({ contentType: 'application/octet-stream' }),
+      }),
+    ),
+  )
   .add(GatewayContextApiGroup)
   .add(ExternalIdentityApiGroup)
   .add(accessAdminRolesGroup)

@@ -88,12 +88,12 @@ export class ContentDigest {
 
   finish(): Effect.Effect<ContentIdentity> {
     return Effect.promise(async () => {
-      this.#finished ??= this.#settle();
+      this.#finished ??= this.#conclude();
       return await this.#finished;
     });
   }
 
-  async #settle(): Promise<ContentIdentity> {
+  async #conclude(): Promise<ContentIdentity> {
     if (this.#native === undefined) {
       return identityOf(this.#byteSize, this.#pure.digest());
     }

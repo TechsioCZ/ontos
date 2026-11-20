@@ -1,7 +1,21 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Ref, Schema, Stream } from 'effect';
+import {
+  Cause,
+  Context,
+  Crypto,
+  Deferred,
+  DateTime,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Stream,
+} from 'effect';
 import type { Scope } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
@@ -54,14 +68,20 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import { assetDownloadRead } from '../../src/generated-reads/asset-download.ts';
 import { assetMetadataRead } from '../../src/generated-reads/asset-metadata.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
-import { MediaAssetNotFound } from '../../src/media/errors.ts';
+import { MediaDownloadSource } from '../../src/media/download-contract.ts';
+import { MediaDownloadAborted, streamConfirmedBytes } from '../../src/media/download.ts';
+import { MediaAssetNotFound, MediaIntegrityFailed, MediaNotReady, MediaUnavailable } from '../../src/media/errors.ts';
+import { MediaIntegrityRecorder, integrityRecordRequest } from '../../src/media/integrity-recorder.ts';
 import { ProvenMediaIntegrityFinding } from '../../src/media/integrity-contract.ts';
-import { ObjectStorage } from '../../src/media/object-storage.ts';
+import { ObjectStorage, ObjectStorageNetworkError } from '../../src/media/object-storage.ts';
+import type { ObjectStorageService } from '../../src/media/object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { StoredMediaObjectVerification, verifyStoredMediaObject } from '../../src/media/verification.ts';
 import { MediaIntegrityFindingSchema } from '../../src/media/verified-read.ts';
+import type { MediaIntegrityFinding, MediaVerifiableAsset } from '../../src/media/verified-read.ts';
 import { confirmAssetAction } from '../../src/modules/actions/confirm-asset.action.ts';
 import { recordAssetIntegrityFailureAction } from '../../src/modules/actions/record-asset-integrity-failure.action.ts';
 import { renameDisplayFilenameAction } from '../../src/modules/actions/rename-display-filename.action.ts';
@@ -127,6 +147,8 @@ const METADATA_HOLDER = uid(12);
 const RENAME_HOLDER = uid(13);
 const PROPOSE_HOLDER = uid(14);
 const INTEGRITY_HOLDER = uid(15);
+const DOWNLOAD_HOLDER = uid(16);
+const OTHER_DOWNLOAD_HOLDER = uid(17);
 const SYSTEM_MACHINE = uid(20);
 const INTEGRATION_MACHINE = uid(21);
 const IMPORT_MACHINE = uid(22);
@@ -136,10 +158,11 @@ const CONFIRM = 'core.media.asset.confirm';
 const METADATA = 'core.media.asset-metadata.read';
 const RENAME = 'core.media.display-filename.rename';
 const INTEGRITY = 'core.media.asset-integrity.fail';
+const DOWNLOAD = 'core.media.asset-download.read';
 const INGEST = 'core.media.ingest';
 const INTEGRITY_WORKLOAD = 'core.media.integrity';
 
-/** The catalog a bootstrap releases: the five real Core Media declarations, taken from the real descriptors. */
+/** The catalog a bootstrap releases: the six real Core Media declarations, taken from the real descriptors. */
 const mediaModules: readonly AccessCatalogModule[] = [
   {
     descriptors: [
@@ -148,6 +171,7 @@ const mediaModules: readonly AccessCatalogModule[] = [
       renameDisplayFilenameAction.descriptor,
       recordAssetIntegrityFailureAction.descriptor,
       assetMetadataRead.descriptor,
+      assetDownloadRead.descriptor,
     ].flatMap((descriptor) =>
       descriptor.accessDeclaration === undefined
         ? []
@@ -163,6 +187,10 @@ const digestOf = (bytes: Uint8Array) => Hex.encode(sha256(bytes));
 
 const failureOf = <Value, Failure>(exit: Exit.Exit<Value, Failure>): Failure | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
+
+/** Whatever typed failure an effect ended with, or none when it succeeded. */
+const failedWith = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
+  Effect.exit(effect).pipe(Effect.map(failureOf));
 
 /** The refusal an Action ended with, or none when it ran (or failed for another reason). */
 const refusalOf = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
@@ -462,6 +490,8 @@ const seedMediaTenant = Effect.fn('CoreMediaAuthorizationTest.seed')(function* s
       { kind: 'human', principalId: RENAME_HOLDER },
       { kind: 'human', principalId: PROPOSE_HOLDER },
       { kind: 'human', principalId: INTEGRITY_HOLDER },
+      { kind: 'human', principalId: DOWNLOAD_HOLDER },
+      { kind: 'human', principalId: OTHER_DOWNLOAD_HOLDER },
       { kind: 'system', principalId: SYSTEM_MACHINE },
       { kind: 'integration', principalId: INTEGRATION_MACHINE },
       { kind: 'service', principalId: IMPORT_MACHINE },
@@ -816,6 +846,121 @@ const recordIntegrityAs = (
       })
       .pipe(Effect.provideService(ProvenMediaIntegrityFinding, finding));
   });
+
+/** A recorder that records nothing: the rows that are not about corruption must never reach it. */
+const noRecorder: typeof MediaIntegrityRecorder.Service = {
+  record: () => Effect.die('No corruption may be recorded here'),
+};
+
+/**
+ * A provider whose body delivers two slices and then waits for the gate before the last one: a transfer in flight with
+ * real timing and no sleep. It reads the real stored object, so only the pacing differs.
+ */
+const gatedStorage = (inner: ObjectStorageService, gate: Deferred.Deferred<true>): ObjectStorageService => ({
+  ...inner,
+  get: (key) =>
+    inner.get(key).pipe(
+      Effect.map((opened) => ({
+        ...opened,
+        body: Stream.concat(
+          Stream.fromIterable([content.slice(0, 12), content.slice(12, 24)]),
+          Stream.fromEffect(Deferred.await(gate)).pipe(Stream.map(() => content.slice(24))),
+        ),
+      })),
+    ),
+});
+
+/** What a transfer's consumer does with each chunk: keep it and signal that bytes are flowing. */
+const receiverOf = (received: Uint8Array[], flowing: Deferred.Deferred<true>) => (chunk: Uint8Array) =>
+  Effect.sync(() => received.push(chunk)).pipe(Effect.andThen(Deferred.succeed(flowing, true)));
+
+/**
+ * One download request as the Shell edge runs it: the governed `download` Read first (a fresh decision), then, only
+ * for an allowed request, the verified bytes. It mirrors the host composition exactly, so every refusal below is the
+ * real gate's and the real runtime's.
+ */
+const downloadAs = (
+  world: MediaWorld,
+  principalId: string,
+  mediaAssetRef: MediaRef,
+  options: {
+    readonly legalEntityId?: string;
+    readonly recorder?: typeof MediaIntegrityRecorder.Service;
+    readonly runtime?: 'dead' | 'live';
+    readonly storage?: ObjectStorageService;
+    readonly tenantScopeOf?: string;
+  } = {},
+) =>
+  Effect.gen(function* download() {
+    const principal = yield* world.scenario.scopeFor(principalId, options.legalEntityId);
+    let offered = Option.none<MediaVerifiableAsset>();
+    const authorization = yield* (options.runtime === 'dead' ? world.dead : world.live)
+      .runRead({
+        input: { mediaAssetRef },
+        principal,
+        registration: assetDownloadRead,
+        transport: { correlationId: `d20-download-${mediaAssetRef.resourceId}` },
+      })
+      .pipe(
+        Effect.provideService(MediaDownloadSource, {
+          offer: (asset) =>
+            Effect.sync(() => {
+              offered = Option.some(asset);
+            }),
+        }),
+      );
+    if (Option.isNone(offered)) {
+      return yield* Effect.die('The download Read offered no stored object');
+    }
+    return yield* streamConfirmedBytes(offered.value, authorization).pipe(
+      Effect.provideService(ObjectStorage, options.storage ?? world.storage.service),
+      Effect.provideService(MediaIntegrityRecorder, options.recorder ?? noRecorder),
+    );
+  });
+
+/** The whole body of a download, collected, and whether it ended cleanly. */
+const bodyOf = (download: Effect.Success<ReturnType<typeof downloadAs>>) =>
+  Effect.exit(Stream.runCollect(download.body)).pipe(
+    Effect.map((exit) => (Exit.isSuccess(exit) ? Buffer.concat(exit.value) : exit)),
+  );
+
+/** A ready asset whose bytes really are in the provider: reserved, stored and confirmed through the real Actions. */
+const readyWithBytes = Effect.fn('CoreMediaAuthorizationTest.readyWithBytes')(function* readyWithBytes(
+  world: MediaWorld,
+  key: string,
+) {
+  const reserved = yield* reserve(world, OWNER, `${key}-reserve`);
+  const verification = yield* storeAndVerify(world, OWNER, reserved.mediaAssetRef);
+  yield* confirmAs(world, OWNER, reserved.mediaAssetRef, verification, `${key}-confirm`);
+  return reserved.mediaAssetRef;
+});
+
+const providerCalls = (world: MediaWorld) => world.storage.calls.pipe(Effect.map((calls) => calls.length));
+
+/** The decision events a download left: one row per request, kind `download`, only metadata. */
+const downloadEventCount = (world: MediaWorld, ref: MediaRef) =>
+  world.scenario.admin
+    .unsafe<{ count: string }>(
+      `select count(*)::text as count from core.data_access_events
+       where tenant_id = $1 and access_kind = 'download' and target_resource_id = $2`,
+      [world.scenario.tenantId, ref.resourceId],
+    )
+    .pipe(Effect.map((rows) => Number(rows[0]?.count ?? '0')));
+
+/** The recorder of the host: proven corruption goes to the integrity Action under the bound integrity workload. */
+const integrityRecorderOf = (world: MediaWorld) =>
+  world.scenario.scopeFor(SYSTEM_MACHINE).pipe(
+    Effect.map((principal): typeof MediaIntegrityRecorder.Service => ({
+      record: (finding: MediaIntegrityFinding, mediaAssetRef) =>
+        world.live
+          .runAction({
+            ...integrityRecordRequest(finding, mediaAssetRef),
+            principal,
+            registration: recordAssetIntegrityFailureAction,
+          })
+          .pipe(Effect.provideService(ProvenMediaIntegrityFinding, finding), Effect.orDie, Effect.asVoid),
+    })),
+  );
 
 /**
  * The result of one operation of the matrix: did the handler run, and if not, was the stop the gate's own refusal.
@@ -1564,6 +1709,359 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             yield* reconcile(scenario);
             expect(ranOf(yield* runAll('cell'))).toEqual({ metadata: true, rename: false, upload: true });
             expect((yield* rowOf(world, ref.resourceId))?.display_filename).toBe('reconciled.pdf');
+          }),
+        ),
+    );
+    suite.effect(
+      'the download is its own permission: metadata, rename and every other grant give no bytes, the holder gets exactly the confirmed ones, and no refusal reaches the provider',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* downloadIsSeparate() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [METADATA], principalId: METADATA_HOLDER, slot: 3 });
+            yield* grantOnly(world, seeded, { keys: [RENAME], principalId: RENAME_HOLDER, slot: 4 });
+            yield* grantOnly(world, seeded, { keys: [UPLOAD, CONFIRM], principalId: UPLOAD_HOLDER, slot: 1 });
+            yield* grantOnly(world, seeded, { keys: [DOWNLOAD], principalId: DOWNLOAD_HOLDER, slot: 9 });
+            yield* memberWithoutRole(world, seeded, PLAIN, 'member');
+            yield* reconcile(scenario);
+            const ref = yield* readyWithBytes(world, 'sep');
+
+            const matrix = [
+              { holds: 'none', principalId: PLAIN },
+              { holds: 'metadata', principalId: METADATA_HOLDER },
+              { holds: 'rename', principalId: RENAME_HOLDER },
+              { holds: 'upload', principalId: UPLOAD_HOLDER },
+              { holds: 'download', principalId: DOWNLOAD_HOLDER },
+            ] as const;
+            for (const { holds, principalId } of matrix) {
+              const callsBefore = yield* providerCalls(world);
+              const download = yield* attemptOf(downloadAs(world, principalId, ref));
+              expect(download.ran, `${principalId.slice(-2)} download`).toBe(holds === 'download');
+              if (holds !== 'download') {
+                // The stop is the gate's own refusal, and the provider was never asked for anything.
+                expect(download.gateRefused, `${principalId.slice(-2)} download`).toBe(true);
+                expect(yield* providerCalls(world)).toBe(callsBefore);
+              }
+              // Download is not the other capabilities either: only the metadata holder reads, only the rename holder renames.
+              const metadata = yield* attemptOf(readAs(world, principalId, ref));
+              expect(metadata.ran, `${principalId.slice(-2)} metadata`).toBe(holds === 'metadata');
+              const rename = yield* attemptOf(
+                renameAs(world, principalId, ref, `sep-rename-${principalId.slice(-2)}`, { name: 'x.pdf' }),
+              );
+              expect(rename.ran, `${principalId.slice(-2)} rename`).toBe(holds === 'rename');
+            }
+
+            // The holder's download delivers exactly the confirmed size and SHA-256, and leaves one `download` event.
+            const eventsBefore = yield* downloadEventCount(world, ref);
+            const download = yield* downloadAs(world, DOWNLOAD_HOLDER, ref);
+            const delivered = yield* bodyOf(download);
+            expect(Buffer.isBuffer(delivered) ? delivered.equals(Buffer.from(content)) : false).toBe(true);
+            expect(download.authorization.byteSize).toBe(content.byteLength);
+            expect(download.authorization.contentSha256).toBe(digestOf(content));
+            expect(yield* downloadEventCount(world, ref)).toBe(eventsBefore + 1);
+            // Every request is its own decision: a second download is a second event, nothing was reused.
+            yield* bodyOf(yield* downloadAs(world, DOWNLOAD_HOLDER, ref));
+            expect(yield* downloadEventCount(world, ref)).toBe(eventsBefore + 2);
+            // The negative controls: the download holder still cannot read metadata or rename.
+            expect((yield* attemptOf(readAs(world, DOWNLOAD_HOLDER, ref))).gateRefused).toBe(true);
+            expect(
+              (yield* attemptOf(renameAs(world, DOWNLOAD_HOLDER, ref, 'sep-dl-rename', { name: 'y.pdf' }))).gateRefused,
+            ).toBe(true);
+            // The tenant owner of a freshly bootstrapped tenant holds the download too (full access, sensitive included).
+            expect((yield* attemptOf(downloadAs(world, OWNER, ref))).ran).toBe(true);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'a non-ready asset, an unknown id and another tenant give no bytes, no provider call and the not-found answer is one answer',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* noBytesWithoutReadyAsset() {
+            const seeded = yield* seedMediaTenant(world);
+            yield* grantOnly(world, seeded, { keys: [DOWNLOAD], principalId: DOWNLOAD_HOLDER, slot: 9 });
+            const foreignTenantId = uid(7000);
+            yield* world.bootstrapForeign({
+              legalEntityIds: [uid(7001)],
+              principalId: FOREIGN_OWNER,
+              tenantId: foreignTenantId,
+            });
+            yield* reconcile(world.scenario);
+            const uploaded = (yield* reserve(world, OWNER, 'nr-open')).mediaAssetRef;
+            const ready = yield* readyWithBytes(world, 'nr');
+            const foreign = yield* seedAsset(world, { tenantId: foreignTenantId });
+            const unknown = refOf(world.scenario.tenantId, uid(8000));
+            const callsBefore = yield* providerCalls(world);
+
+            // Reserved but not confirmed: nothing may be presented as the confirmed asset.
+            const notReady = yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, uploaded));
+            expect(Schema.is(MediaNotReady)(notReady)).toBe(true);
+            // A failed asset is not ready either, and the failure is the same request-level answer (the real
+            // corruption path is proven in the corruption row below; here the closed row is the fixture).
+            yield* world.scenario.admin.unsafe(
+              `update core.media_assets set processing_status = 'failed' where tenant_id = $1 and media_asset_id = $2`,
+              [world.scenario.tenantId, ready.resourceId],
+            );
+            expect(Schema.is(MediaNotReady)(yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, ready)))).toBe(true);
+            // The foreign tenant's asset and an unknown id are one and the same answer, with no provider call.
+            const foreignAnswer = yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, foreign));
+            const unknownAnswer = yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, unknown));
+            expect(Schema.is(ReadHandlerNotFound)(foreignAnswer)).toBe(true);
+            expect(Schema.is(ReadHandlerNotFound)(unknownAnswer)).toBe(true);
+            expect(foreignAnswer).toEqual(unknownAnswer);
+            // And the reverse: the foreign owner's trusted scope cannot download this tenant's asset.
+            const foreignScope = yield* scopeOf({
+              principalId: FOREIGN_OWNER,
+              tenantId: TenantIdSchema.make(foreignTenantId),
+            });
+            const reverse = yield* Effect.exit(
+              world.live
+                .runRead({
+                  input: { mediaAssetRef: ready },
+                  principal: foreignScope,
+                  registration: assetDownloadRead,
+                  transport: { correlationId: 'foreign-download' },
+                })
+                .pipe(Effect.provideService(MediaDownloadSource, { offer: () => Effect.die('must not be offered') })),
+            );
+            expect(Schema.is(ReadHandlerNotFound)(failureOf(reverse))).toBe(true);
+            expect(yield* providerCalls(world)).toBe(callsBefore);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'a denied, approval-only, unreachable or undeclared decision fails closed with its own typed refusal and no byte',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* failsClosed() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [DOWNLOAD], principalId: DOWNLOAD_HOLDER, slot: 9 });
+            yield* memberWithoutRole(world, seeded, PLAIN, 'member');
+            yield* reconcile(scenario);
+            const ref = yield* readyWithBytes(world, 'closed');
+            const callsBefore = yield* providerCalls(world);
+
+            // DENIED: no grant at all.
+            const denied = yield* failedWith(downloadAs(world, PLAIN, ref));
+            expect(Schema.is(ReadPermissionDenied)(denied)).toBe(true);
+            // NEEDS_APPROVAL cannot be granted for a download at all: the declaration offers `run` only, so a role cell
+            // that would only propose it is refused when the grant is written to the engine, and nothing is projected.
+            // (Any other non-ALLOWED outcome the Read runtime refuses the same way: src/reads/runtime.ts.)
+            yield* grantOnly(world, seeded, {
+              keys: [DOWNLOAD],
+              mode: 'propose',
+              principalId: PROPOSE_HOLDER,
+              slot: 5,
+            });
+            const projected = yield* Effect.exit(
+              scenario.scopeFor(OWNER).pipe(Effect.flatMap((scope) => scenario.writer.reconcileTenant({ scope }))),
+            );
+            expect(Exit.isFailure(projected)).toBe(true);
+            expect(String(failureOf(projected)?.reason)).toContain('does not declare the propose mode');
+            // UNAVAILABLE: an engine that cannot be reached is a retryable refusal, never an allow.
+            const unavailable = yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, ref, { runtime: 'dead' }));
+            expect(Schema.is(ReadPermissionUnavailable)(unavailable)).toBe(true);
+            const unreachable = yield* world.dead.boundGate.decide({
+              carrier: carrierOf(assetDownloadRead.descriptor),
+              legalEntityScope: 'optional',
+              now: DECISION_AT,
+              scope: yield* scenario.scopeFor(DOWNLOAD_HOLDER),
+              target: targetOf(ref.resourceId),
+            });
+            expect(unreachable.outcome).toBe('UNAVAILABLE');
+            // A missing declaration is refused by the seam, whatever the principal holds.
+            const missing = yield* scenario.decide({ carrier: {}, legalEntityScope: 'optional', principalId: OWNER });
+            expect(missing.outcome).toBe('DENIED');
+            // Each outcome is distinct from the others and from a missing asset, and none reached the provider.
+            expect(Schema.is(ReadHandlerNotFound)(denied)).toBe(false);
+            expect(yield* providerCalls(world)).toBe(callsBefore);
+            // The negative control: the same holder downloads on the live engine.
+            expect(Buffer.isBuffer(yield* bodyOf(yield* downloadAs(world, DOWNLOAD_HOLDER, ref)))).toBe(true);
+          }),
+        ),
+    );
+
+    suite.effect('an agent is refused the download as a sensitive read: it can neither be granted nor run', () =>
+      withMediaWorld((world) =>
+        Effect.gen(function* agentDownload() {
+          const seeded = yield* seedMediaTenant(world);
+          const { scenario } = world;
+          yield* insertMembership(scenario.admin, scenario.tenantId, {
+            agentId: AGENT,
+            kind: 'member',
+            recordedBy: OWNER,
+            scopeId: seeded.tenantScope,
+          });
+          yield* reconcile(scenario);
+          const ref = yield* readyWithBytes(world, 'agent-dl');
+          const callsBefore = yield* providerCalls(world);
+          const decision = yield* world.live.boundGate.decide({
+            carrier: carrierOf(assetDownloadRead.descriptor),
+            legalEntityScope: 'optional',
+            now: DECISION_AT,
+            scope: yield* scenario.scopeFor(AGENT),
+            target: targetOf(ref.resourceId),
+          });
+          expect(decision.outcome).toBe('DENIED');
+          expect(Schema.is(ReadPermissionDenied)(yield* failedWith(downloadAs(world, AGENT, ref)))).toBe(true);
+          // A role that would let an agent run the sensitive download is refused when the grant is written to the engine.
+          yield* insertRoleWithCells(scenario.admin, scenario.tenantId, {
+            capabilityKeys: [DOWNLOAD],
+            catalogSnapshotId: seeded.bootstrapped.catalogSnapshotId,
+            createdBy: OWNER,
+            roleId: uid(910),
+            roleRevisionId: uid(911),
+            scopeId: seeded.tenantScope,
+          });
+          yield* insertAssignment(scenario.admin, scenario.tenantId, {
+            agentId: AGENT,
+            assignedBy: OWNER,
+            incarnationId: uid(912),
+            roleId: uid(910),
+            roleRevisionId: uid(911),
+            scopeId: seeded.tenantScope,
+          });
+          const projected = yield* Effect.exit(
+            scenario.scopeFor(OWNER).pipe(Effect.flatMap((scope) => scenario.writer.reconcileTenant({ scope }))),
+          );
+          expect(Exit.isFailure(projected)).toBe(true);
+          expect(yield* providerCalls(world)).toBe(callsBefore);
+        }),
+      ),
+    );
+
+    suite.effect(
+      'a revoked grant stops the next download at once, while a transfer already authorized at its start finishes with the confirmed bytes (#1436 H1=A)',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* transferSurvivesRevocation() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            const granted = yield* grantOnly(world, seeded, {
+              keys: [DOWNLOAD],
+              principalId: DOWNLOAD_HOLDER,
+              slot: 9,
+            });
+            yield* grantOnly(world, seeded, { keys: [DOWNLOAD], principalId: OTHER_DOWNLOAD_HOLDER, slot: 11 });
+            yield* reconcile(scenario);
+            const ref = yield* readyWithBytes(world, 'transfer');
+
+            const gate = yield* Deferred.make<true>();
+            const firstChunkSeen = yield* Deferred.make<true>();
+            const gated = gatedStorage(world.storage.service, gate);
+
+            // The request starts while the grant stands: it is authorized once, at its start.
+            const started = yield* downloadAs(world, DOWNLOAD_HOLDER, ref, { storage: gated });
+            const received: Uint8Array[] = [];
+            const transfer = yield* Stream.runForEach(started.body, receiverOf(received, firstChunkSeen)).pipe(
+              Effect.forkChild,
+            );
+            yield* Deferred.await(firstChunkSeen);
+            expect(received.length).toBeGreaterThan(0);
+
+            // The permission is revoked while bytes are still flowing.
+            yield* scenario.admin.unsafe(
+              `update core.access_assignments set status = 'revoked' where tenant_id = $1 and incarnation_id = $2`,
+              [scenario.tenantId, granted.assignmentId],
+            );
+            yield* reconcile(scenario);
+
+            // A new request, a reconnect and a retry of the very same asset are each a new decision: all refused now,
+            // with nothing left over from the earlier decision, and no provider byte read for them.
+            const callsBefore = yield* providerCalls(world);
+            for (const attempt of ['new-request', 'reconnect', 'retry']) {
+              const refused = yield* attemptOf(downloadAs(world, DOWNLOAD_HOLDER, ref));
+              expect(refused, attempt).toMatchObject({ gateRefused: true, ran: false });
+            }
+            expect(yield* providerCalls(world)).toBe(callsBefore);
+            // The revocation is the holder's alone: another holder of the same capability still downloads.
+            expect((yield* attemptOf(downloadAs(world, OTHER_DOWNLOAD_HOLDER, ref))).ran).toBe(true);
+
+            // The transfer that was authorized at its start finishes: exactly the confirmed size and SHA-256.
+            yield* Deferred.succeed(gate, true);
+            yield* Fiber.join(transfer);
+            const assembled = Buffer.concat(received);
+            expect(assembled.byteLength).toBe(started.authorization.byteSize);
+            expect(digestOf(assembled)).toBe(started.authorization.contentSha256);
+            expect(assembled.equals(Buffer.from(content))).toBe(true);
+
+            // A fresh assignment restores the capability for the next request only: the refusal was the revocation.
+            yield* insertAssignment(scenario.admin, scenario.tenantId, {
+              assignedBy: OWNER,
+              incarnationId: uid(1093),
+              principalId: DOWNLOAD_HOLDER,
+              roleId: granted.roleId,
+              roleRevisionId: uid(1091),
+              scopeId: granted.scopeId,
+            });
+            yield* reconcile(scenario);
+            expect((yield* attemptOf(downloadAs(world, DOWNLOAD_HOLDER, ref))).ran).toBe(true);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'proven corruption aborts the body without a clean end and is closed as failed by the integrity workload, while an outage changes nothing',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* corruptDownload() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [DOWNLOAD], principalId: DOWNLOAD_HOLDER, slot: 9 });
+            yield* reconcile(scenario);
+            yield* scenario.bindWorkload({ principalId: SYSTEM_MACHINE, workloadKey: INTEGRITY_WORKLOAD });
+            const recorder = yield* integrityRecorderOf(world);
+            const ref = yield* readyWithBytes(world, 'corrupt');
+            const key = deriveMediaStorageKey({ mediaAssetId: ref.resourceId, tenantId: world.scenario.tenantId });
+            const rowBefore = yield* rowOf(world, ref.resourceId);
+
+            // An outage changes nothing: the request is unavailable, the asset stays ready and downloads once it is back.
+            const outage: ObjectStorageService = {
+              ...world.storage.service,
+              get: () =>
+                Effect.fail(
+                  new ObjectStorageNetworkError({ code: 'object_storage_network_error', reason: 'fault injection' }),
+                ),
+            };
+            expect(
+              Schema.is(MediaUnavailable)(
+                yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, ref, { storage: outage })),
+              ),
+            ).toBe(true);
+            expect((yield* rowOf(world, ref.resourceId))?.processing_status).toBe('ready');
+
+            // The same-size bytes are replaced out of band: the body aborts, never ending cleanly, short of the announced length.
+            const tampered = encoder.encode('THE BYTES OF ONE GOVERNED MEDIA ASSET!'.slice(0, content.byteLength));
+            expect(tampered.byteLength).toBe(content.byteLength);
+            yield* world.storage.service.put({ body: Stream.make(tampered), contentType: 'application/pdf', key });
+            const download = yield* downloadAs(world, DOWNLOAD_HOLDER, ref, { recorder });
+            const exit = yield* Effect.exit(Stream.runCollect(download.body));
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(Schema.is(MediaDownloadAborted)(failureOf(exit))).toBe(true);
+            // The finding went through the integrity Action under the bound workload: closed as failed, identity kept.
+            const afterFirst = yield* rowOf(world, ref.resourceId);
+            expect(afterFirst?.processing_status).toBe('failed');
+            expect(afterFirst).toMatchObject({ display_filename: rowBefore?.display_filename });
+            // And a later request is no longer a download of the confirmed asset.
+            expect(Schema.is(MediaNotReady)(yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, ref)))).toBe(true);
+
+            // A complete object of ANOTHER size is the same proof: refused before any byte, closed as failed.
+            const second = yield* readyWithBytes(world, 'corrupt-size');
+            const secondKey = deriveMediaStorageKey({
+              mediaAssetId: second.resourceId,
+              tenantId: world.scenario.tenantId,
+            });
+            yield* world.storage.service.put({
+              body: Stream.make(encoder.encode('another, longer body than the confirmed one')),
+              contentType: 'application/pdf',
+              key: secondKey,
+            });
+            const sizeRefusal = yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, second, { recorder }));
+            expect(Schema.is(MediaIntegrityFailed)(sizeRefusal)).toBe(true);
+            expect((yield* rowOf(world, second.resourceId))?.processing_status).toBe('failed');
           }),
         ),
     );
