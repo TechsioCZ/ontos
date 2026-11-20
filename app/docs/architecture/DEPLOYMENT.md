@@ -465,7 +465,7 @@ Each step is its own block: paste one, read what it prints, and go on only as th
 3. **Commit**, only when the plan of step 2 matched:
 
    ```sh
-   node scripts/bootstrap-stage-accounts.mts --commit
+   node scripts/bootstrap-stage-accounts.mts --commit; STAGE_ACCOUNTS_COMMIT_EXIT=$?
    ```
 
    The real run decides again under its own locks, so it may still refuse what changed since the rehearsal. It prints each attached login, each departure with every write it made, and each connected app it ended. It succeeded only when it exits 0 and prints no `Stage accounts bootstrap failed` line.
@@ -473,17 +473,17 @@ Each step is its own block: paste one, read what it prints, and go on only as th
 4. **Verify** with the rehearsal of the same, unchanged file:
 
    ```sh
-   node scripts/bootstrap-stage-accounts.mts
+   node scripts/bootstrap-stage-accounts.mts; STAGE_ACCOUNTS_VERIFY_EXIT=$?
    ```
 
    After a real run that succeeded it prints every Principal as retired already and every login as attached already, each writing nothing, and no refusal. Only then does the quiet window end and may people reconnect their apps in the new tenant.
 
    **Rerun rule.** The real run is run once. When it failed or was interrupted, this rehearsal tells what it left. When it prints every Principal as retired already and every login as attached already, the move transaction committed: run step 3 again with the same, unchanged file, which writes nothing more of the moves (a replay still ends, and prints, a connected app that went live since) and finishes what is left: the reconcile of the tenants people left and the token clean-up. An attached login's replay finds its Principal and binding by the ids the file names, so an app its person reconnected meanwhile does not refuse the rerun, though nobody should reconnect before step 3 succeeds. When the rehearsal prints the moves again, nothing of them was written: resolve what the failure named, then go back to step 2. Never edit the file between a run that may have committed and its rerun: it is what the rerun recovers from.
 
-5. **Remove the file**, only after step 4 printed the completed state and no refusal:
+5. **Remove the file**, only after the real run of step 3 exited 0 and step 4 printed the completed state and no refusal. Step 4 alone is not enough: it prints the moves as completed also after a real run whose reconcile or token clean-up failed, and the file is what the rerun recovers from. The block keeps the file unless both steps recorded exit 0 in this shell, so pasting it early removes nothing:
 
    ```sh
-   rm /tmp/stage-accounts.json
+   if [ "${STAGE_ACCOUNTS_COMMIT_EXIT:-1}" = 0 ] && [ "${STAGE_ACCOUNTS_VERIFY_EXIT:-1}" = 0 ]; then rm /tmp/stage-accounts.json; else echo 'kept: the real run and its verification have not both exited 0'; fi
    ```
 
 Every later canonical state change uses a typed Action.
