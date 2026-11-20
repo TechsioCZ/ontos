@@ -163,7 +163,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
     );
 
     suite.effect(
-      'answers a provider 404 as a missing object and a differing declared length as inconsistent metadata',
+      'answers a provider 404 as a missing object and a completely read object of another length as proven corruption',
       (ctx) =>
         Effect.gen(function* missingAndLength() {
           const base = yield* emulatorConfig(ctx);
@@ -181,12 +181,15 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
             contentType: 'text/plain',
             key,
           });
-          expect(
-            yield* verify(storage, readyRow(storage, key, { byteSize: content.byteLength, contentSha256 })),
-          ).toEqual({
-            outcome: 'inconsistent_metadata',
-            reason: 'declared_size_differs',
-          });
+          const other = encoder.encode('another, longer object body');
+          const outcome = yield* verify(
+            storage,
+            readyRow(storage, key, { byteSize: content.byteLength, contentSha256 }),
+          );
+          expect(outcome.outcome).toBe('integrity_failed');
+          if (outcome.outcome === 'integrity_failed') {
+            expect(outcome.finding.observed).toEqual({ byteSize: other.byteLength, contentSha256: digestOf(other) });
+          }
         }),
     );
 

@@ -24,8 +24,9 @@ import { makeInMemoryObjectStorage, withObjectStorageFaults } from '../../src/te
 
 /*
  * The verified read of a READY asset (#1434 H1=A). The five outcomes are distinct, and only the proven one,
- * a completely and cleanly read object of the recorded length whose digest differs, is corruption. Every other
- * way a read can go wrong is a request-level result that changes nothing durable.
+ * a completely and cleanly read object whose size or digest differs from the recorded one, is corruption. Every other
+ * way a read can go wrong is a request-level result that changes nothing durable. A completely read object of
+ * ANOTHER size is corruption like another digest (#1434 BR-06); a short, doubtful or interrupted read is not.
  */
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -178,8 +179,55 @@ it.effect('proves corruption from a complete read of the recorded length whose d
   }),
 );
 
-it.effect('refuses, without reading a byte, an object whose declared length differs from the recorded one', () =>
-  Effect.gen(function* otherLength() {
+it.effect(
+  'proves corruption from a complete read of ANOTHER length (#1434 BR-06): a different size is corruption',
+  () =>
+    Effect.gen(function* otherLength() {
+      const longer = encoder.encode('a different and longer confirmed body');
+      const storage = yield* withStored(longer);
+      const outcome = yield* verify(storage.service);
+      expect(outcome.outcome).toBe('integrity_failed');
+      if (outcome.outcome !== 'integrity_failed') {
+        return;
+      }
+      expect(isMediaIntegrityFinding(outcome.finding)).toBe(true);
+      expect(outcome.finding.observed).toEqual({ byteSize: longer.byteLength, contentSha256: digestOf(longer) });
+      expect(outcome.finding.recorded).toMatchObject({
+        byteSize: content.byteLength,
+        contentSha256: digestOf(content),
+      });
+      // A shorter object that is read completely is corruption in the same way.
+      const shorter = yield* withStored(content.slice(0, 5));
+      expect((yield* verify(shorter.service)).outcome).toBe('integrity_failed');
+    }),
+);
+
+it.effect(
+  'never proves corruption from another length unless the whole object was read with the promised framing',
+  () =>
+    Effect.gen(function* otherLengthDoubtful() {
+      const storage = yield* withStored(content);
+      const longer = encoder.encode('a different and longer confirmed body');
+      const brokenFraming: ObjectStorageService = {
+        ...storage.service,
+        // The provider declares a longer object, but the clean end delivers fewer bytes than it declared.
+        get: () => Effect.succeed({ body: Stream.make(longer.slice(0, 7)), stat: { byteSize: longer.byteLength } }),
+      };
+      expect(yield* verify(brokenFraming)).toEqual({ outcome: 'unavailable', reason: 'framing_inconsistent' });
+      const droppedMidway: ObjectStorageService = {
+        ...storage.service,
+        get: () =>
+          Effect.succeed({
+            body: Stream.concat(Stream.make(longer.slice(0, 7)), Stream.fail(network)),
+            stat: { byteSize: longer.byteLength },
+          }),
+      };
+      expect(yield* verify(droppedMidway)).toMatchObject({ outcome: 'unavailable', reason: 'provider_failure' });
+    }),
+);
+
+it.effect('a streaming consumer refuses, without reading a byte, an object whose declared length differs', () =>
+  Effect.gen(function* otherLengthStream() {
     const storage = yield* withStored(encoder.encode('a different and longer confirmed body'));
     let pulled = false;
     const watching: ObjectStorageService = {
@@ -195,19 +243,35 @@ it.effect('refuses, without reading a byte, an object whose declared length diff
           })),
         ),
     };
-    // Conservative by the ratified rule: a differing declared length is not the framing proof of corruption.
-    expect(yield* verify(watching)).toEqual({ outcome: 'inconsistent_metadata', reason: 'declared_size_differs' });
+    const exit = yield* openVerifiedMediaStream(readyAsset()).pipe(
+      Effect.provideService(ObjectStorage, watching),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+        read: { outcome: 'inconsistent_metadata', reason: 'declared_size_differs' },
+      });
+    }
     expect(pulled).toBe(false);
   }),
 );
 
-it.effect('refuses an object whose technical version pin differs from the recorded one', () =>
+it.effect('reads the whole object under another technical version pin and judges only the bytes', () =>
   Effect.gen(function* otherVersion() {
     const storage = yield* withStored(content, { versionRefs: true });
-    expect(yield* verify(storage.service, readyAsset({ storageObjectVersionRef: 'v9' }))).toEqual({
-      outcome: 'inconsistent_metadata',
-      reason: 'version_differs',
-    });
+    // The pin is technical, never the identity: the same bytes under another pin are still the confirmed bytes.
+    expect((yield* verify(storage.service, readyAsset({ storageObjectVersionRef: 'v9' }))).outcome).toBe('verified');
+    const tampered = yield* withStored(encoder.encode('THE CONFIRMED BYTES OF ONE ASSET'), { versionRefs: true });
+    expect((yield* verify(tampered.service, readyAsset({ storageObjectVersionRef: 'v9' }))).outcome).toBe(
+      'integrity_failed',
+    );
+    // A streaming consumer still refuses a pin that differs before the first byte.
+    const exit = yield* openVerifiedMediaStream(readyAsset({ storageObjectVersionRef: 'v9' })).pipe(
+      Effect.provideService(ObjectStorage, storage.service),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
     // No recorded pin means no pin to compare, whatever the provider reports now.
     expect((yield* verify(storage.service, readyAsset({ storageObjectVersionRef: null }))).outcome).toBe('verified');
   }),
@@ -278,12 +342,16 @@ it.effect('answers a failing closing stat as unavailable: the read cannot be pro
 it('refuses a value that is not a complete finding of corruption', () => {
   const recorded = { byteSize: 1, contentSha256: 'a'.repeat(64) };
   const base = { providerId: PROVIDER, storageKey: key };
-  // Equal digests, another length and a plain missing field are none of them a finding.
+  // An observation equal to the recorded identity and a plain missing field are none of them a finding.
   expect(isMediaIntegrityFinding({ ...base, observed: { byteSize: 1, contentSha256: 'a'.repeat(64) }, recorded })).toBe(
     false,
   );
+  // Another length is a finding, even with an equal digest field: size is part of the confirmed identity (BR-06).
+  expect(isMediaIntegrityFinding({ ...base, observed: { byteSize: 2, contentSha256: 'a'.repeat(64) }, recorded })).toBe(
+    true,
+  );
   expect(isMediaIntegrityFinding({ ...base, observed: { byteSize: 2, contentSha256: 'b'.repeat(64) }, recorded })).toBe(
-    false,
+    true,
   );
   expect(isMediaIntegrityFinding({ ...base, recorded })).toBe(false);
   expect(isMediaIntegrityFinding({ ...base, observed: { byteSize: 1, contentSha256: 'b'.repeat(64) }, recorded })).toBe(

@@ -25,11 +25,13 @@ import { MediaProviderIdSchema, isSameStoredObject } from './verification.ts';
  *   object that changed while it was read). Never durable, never time promoted, never corruption.
  * - `missing_object`: the provider holds no object under the key. The Core row still exists, so this is neither
  *   an absent Media Asset nor proof of corruption.
- * - `inconsistent_metadata`: the Core row or the provider's own stat disagrees with the confirmed identity before
- *   any byte is read. Delivery is refused; nothing is claimed about the bytes.
- * - `integrity_failed`: PROVEN corruption, and only that (design-review M3): the provider declared exactly the
- *   recorded length and identity, the stream ended with the framing it promised, the object did not change while
- *   it was read, and the digest differs.
+ * - `inconsistent_metadata`: the Core row is not a sealed ready identity, or (for a consumer that must not read
+ *   a byte it would refuse to deliver) the provider's own stat already disagrees with the confirmed identity.
+ *   Delivery is refused; nothing is claimed about the bytes.
+ * - `integrity_failed`: PROVEN corruption, and only that (#1434 BR-06): the whole object was read, the stream
+ *   ended with exactly the length the provider declared, the object did not change while it was read, and its
+ *   size or its digest differs from the confirmed identity. A different size of a completely read object is
+ *   corruption exactly like a different digest; a short, doubtful or interrupted read proves nothing.
  */
 
 const UnavailableReasonSchema = Schema.Literals([
@@ -50,9 +52,9 @@ const InconsistentMetadataReasonSchema = Schema.Literals([
   'not_sealed',
   /** The recorded size, digest or storage key is not a value Core could have written. */
   'identity_invalid',
-  /** The provider declares another length than the recorded one: not proof of what the bytes are. */
+  /** The provider declares another length than the recorded one: a streaming consumer refuses before a byte. */
   'declared_size_differs',
-  /** The provider's technical version pin differs from the recorded one. */
+  /** The provider's technical version pin differs from the recorded one: a streaming consumer refuses before a byte. */
   'version_differs',
 ]);
 type MediaInconsistentMetadataReason = typeof InconsistentMetadataReasonSchema.Type;
@@ -68,13 +70,13 @@ export const MediaIntegrityFindingSchema = Schema.Struct({
   }),
   storageKey: MediaStorageKeySchema,
 }).pipe(
-  // The shape itself carries the proof rule: the delivered length IS the recorded one, so only the digest can differ.
+  // The shape itself carries the proof rule: what was completely read differs from the recorded identity.
   Schema.check(
     Schema.makeFilter((finding) =>
-      finding.observed.byteSize === finding.recorded.byteSize &&
+      finding.observed.byteSize !== finding.recorded.byteSize ||
       finding.observed.contentSha256 !== finding.recorded.contentSha256
         ? undefined
-        : 'A finding of corruption is a complete read of the recorded length with another digest',
+        : 'A finding of corruption is a complete read that differs from the recorded size or digest',
     ),
   ),
   Schema.brand('MediaIntegrityFinding'),
@@ -183,11 +185,14 @@ const statRefusalOf = (
 };
 
 /**
- * Everything that can be refused before a byte is read: the row, the provider identity, and the provider's own
- * stat against the recorded one. The opened body is released unread when the stat already disagrees.
+ * Everything that can be refused before a byte is read: the row and the provider identity, and, for a consumer
+ * that delivers the bytes (`refuseStatMismatch`), the provider's own stat against the recorded one, with the
+ * opened body released unread. A full verification does not refuse on the stat: it reads the whole object, because
+ * only a complete read can prove that another size is corruption.
  */
 const openRecordedObject = Effect.fn('MediaVerifiedRead.open')(function* openRecordedObject(
   asset: MediaVerifiableAsset,
+  options: { readonly refuseStatMismatch: boolean },
 ) {
   const recorded = yield* recordedIdentityOf(asset);
   const storage = yield* ObjectStorage;
@@ -195,7 +200,7 @@ const openRecordedObject = Effect.fn('MediaVerifiedRead.open')(function* openRec
     return yield* interrupted({ outcome: 'unavailable', reason: 'provider_mismatch' });
   }
   const opened = yield* storage.get(recorded.storageKey).pipe(Effect.mapError(providerInterruption));
-  const refusal = statRefusalOf(opened.stat, recorded);
+  const refusal = options.refuseStatMismatch ? statRefusalOf(opened.stat, recorded) : undefined;
   if (refusal !== undefined) {
     // The body is never consumed: pulling nothing releases it without reading the object.
     yield* Stream.runDrain(Stream.take(opened.body, 0)).pipe(Effect.ignore);
@@ -207,7 +212,7 @@ const openRecordedObject = Effect.fn('MediaVerifiedRead.open')(function* openRec
 /**
  * The verdict once the stream ended cleanly. The order is the proof rule: a clean end must have delivered the
  * length the provider declared (framing), and the object must be the same one after the read as before it;
- * only then does a differing digest prove corruption.
+ * only then does a differing size or digest prove corruption.
  */
 const verdictOf = Effect.fn('MediaVerifiedRead.verdict')(function* verdictOf(
   opened: OpenedObject,
@@ -222,7 +227,7 @@ const verdictOf = Effect.fn('MediaVerifiedRead.verdict')(function* verdictOf(
   if (!isSameStoredObject(opened.stat, after)) {
     return yield* interrupted({ outcome: 'unavailable', reason: 'object_changed' });
   }
-  if (observed.contentSha256 === opened.recorded.contentSha256) {
+  if (observed.byteSize === opened.recorded.byteSize && observed.contentSha256 === opened.recorded.contentSha256) {
     return {
       byteSize: observed.byteSize,
       contentSha256: observed.contentSha256,
@@ -277,7 +282,7 @@ export const openVerifiedMediaStream = Effect.fn('MediaVerifiedRead.openStream')
   asset: MediaVerifiableAsset,
 ) {
   const storage = yield* ObjectStorage;
-  const opened = yield* openRecordedObject(asset);
+  const opened = yield* openRecordedObject(asset, { refuseStatMismatch: true });
   return {
     body: verifiedBody(opened).pipe(Stream.provideService(ObjectStorage, storage)),
     byteSize: opened.recorded.byteSize,
@@ -294,7 +299,7 @@ export const verifyReadyMediaAsset = Effect.fn('MediaVerifiedRead.verify')(funct
   asset: MediaVerifiableAsset,
 ) {
   const read = Effect.gen(function* read() {
-    const opened = yield* openRecordedObject(asset);
+    const opened = yield* openRecordedObject(asset, { refuseStatMismatch: false });
     const tally = new ContentTally();
     yield* opened.body.pipe(
       Stream.runForEach((chunk) => Effect.sync(() => tally.add(chunk))),
