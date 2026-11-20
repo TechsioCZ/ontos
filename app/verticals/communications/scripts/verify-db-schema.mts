@@ -382,6 +382,7 @@ const historyConstraints: readonly {
     contains: [
       "'RECEIVED'",
       'jsonb_array_length(results) = 0',
+      '"reconcilesEvidenceRef"',
       '"ANONYMIZED"',
       '"FAILED_AFTER_POSSIBLE_MUTATION"',
       '"FAILED_BEFORE_ANY_MUTATION"',

@@ -893,6 +893,7 @@ export const privacyExecutionEvidence = communicationsSchema.table.withRLS(
       .$type<
         {
           contentRef: string;
+          reconcilesEvidenceRef?: string;
           result:
             | 'ANONYMIZED'
             | 'FAILED_AFTER_POSSIBLE_MUTATION'
@@ -918,10 +919,10 @@ export const privacyExecutionEvidence = communicationsSchema.table.withRLS(
     check('communications_privacy_evidence_identity_ck', sql`btrim(${table.evidenceRef}) <> ''`),
     check('communications_privacy_evidence_phase_ck', sql`${table.phase} in ('RECEIVED', 'IN_PROGRESS', 'COMPLETED')`),
     check('communications_privacy_evidence_scope_ck', sql`${table.scopeDigest} ~ '^[0-9a-f]{64}$'`),
-    // a result is one closed value per content ref and nothing else; the phase RECEIVED has no result yet
+    // a result is one closed value per content ref and, optionally, the earlier evidence it reconciles; the phase RECEIVED has no result yet
     check(
       'communications_privacy_evidence_results_ck',
-      sql`jsonb_typeof(${table.results}) = 'array' and (${table.phase} <> 'RECEIVED' or jsonb_array_length(${table.results}) = 0) and not jsonb_path_exists(${table.results}, '$[*] ? (@.type() != "object" || !exists(@.contentRef ? (@.type() == "string" && @ != "")) || !exists(@.result ? (@ == "ANONYMIZED" || @ == "FAILED_AFTER_POSSIBLE_MUTATION" || @ == "FAILED_BEFORE_ANY_MUTATION" || @ == "NOT_EXECUTED" || @ == "RECTIFIED" || @ == "REMOVED" || @ == "RESTRICTED")) || exists(@.keyvalue() ? (@.key != "contentRef" && @.key != "result")))')`,
+      sql`jsonb_typeof(${table.results}) = 'array' and (${table.phase} <> 'RECEIVED' or jsonb_array_length(${table.results}) = 0) and not jsonb_path_exists(${table.results}, '$[*] ? (@.type() != "object" || !exists(@.contentRef ? (@.type() == "string" && @ != "")) || !exists(@.result ? (@ == "ANONYMIZED" || @ == "FAILED_AFTER_POSSIBLE_MUTATION" || @ == "FAILED_BEFORE_ANY_MUTATION" || @ == "NOT_EXECUTED" || @ == "RECTIFIED" || @ == "REMOVED" || @ == "RESTRICTED")) || exists(@.keyvalue() ? (@.key != "contentRef" && @.key != "reconcilesEvidenceRef" && @.key != "result")) || exists(@.reconcilesEvidenceRef ? (@.type() != "string" || @ == "")))')`,
     ),
     ...tenantRlsPolicies('privacy_execution_evidence', table.tenantId),
   ],

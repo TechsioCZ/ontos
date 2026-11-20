@@ -229,7 +229,7 @@ describe("the owner's answer in Privacy's own Owner Execution Outcome vocabulary
     overrides: Parameters<typeof evaluateCommunicationsOwnerMeasure>[0] extends infer Input ? Partial<Input> : never,
   ) =>
     evaluateCommunicationsOwnerMeasure({
-      blockers: [],
+      blockerAssessment: { assessedByRef: 'FICTIONAL-privacy-assessment-1', blockers: [] },
       confirmedAt,
       coverage: foundCoverage(),
       evidence: [],
@@ -306,7 +306,12 @@ describe("the owner's answer in Privacy's own Owner Execution Outcome vocabulary
     );
     expect(failedBefore.status).toBe('TECHNICAL_FAILED');
     const blocked = mapped(
-      evaluate({ blockers: [{ blockerRef: 'FICTIONAL-hold', contentRefs: [intentRef('a')], kind: 'LEGAL_HOLD' }] }),
+      evaluate({
+        blockerAssessment: {
+          assessedByRef: 'FICTIONAL-privacy-assessment-1',
+          blockers: [{ blockerRef: 'FICTIONAL-hold', contentRefs: [intentRef('a')], kind: 'LEGAL_HOLD' }],
+        },
+      }),
     );
     expect(blocked.status).toBe('BLOCKED');
     const noData = mapped(evaluate({ coverage: coverageOf(allComplete()) }));

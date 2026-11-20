@@ -1,4 +1,7 @@
-import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
+import {
+  normalizePrivacyMeasureHandoff,
+  PrivacyMeasureHandoffSchema,
+} from '@app/privacy/domain/privacy-measure-handoff';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { PrivacyMeasureSchema } from '@app/shared-contracts';
 import type { PrivacyMeasureEncoded, PrivacyOwnerExecutionOutcomeEncoded } from '@app/shared-contracts';
@@ -8,7 +11,7 @@ import { Hex } from 'effect/encoding';
 import { CommunicationsOwnerLookupSchema } from '../apis/privacy-owner-coverage.ts';
 import type { CommunicationsOwnerLookup } from '../apis/privacy-owner-coverage.ts';
 import { COMMUNICATIONS_OWNER_CAPABILITY } from './inventory.ts';
-import type { OwnerExecutionEvidenceRecord } from './outcome.ts';
+import type { OwnerBlockerAssessment, OwnerExecutionEvidenceRecord } from './outcome.ts';
 
 /**
  * How a measure Privacy handed over becomes the owner contract's measure (#595-#605) and how the owner's answer becomes
@@ -21,14 +24,18 @@ const DispatchedMeasureSchema = PrivacyMeasureSchema;
 /** Why the owner cannot evaluate a handed-over measure at all. A rejection is a truthful BUSINESS_REJECTED answer. */
 export const MeasureRejectionSchema = Schema.Literals([
   'EXPORT_IS_NOT_A_COMMUNICATIONS_OWNER_MEASURE',
+  'HANDOFF_DOES_NOT_MATCH_THE_RECORDED_HANDOFF',
   'HANDOFF_IS_NOT_FOR_COMMUNICATIONS',
   'HANDOFF_OWNER_SCOPE_DOES_NOT_NAME_THE_SUBJECT_LOOKUPS_OF_THE_MEASURE',
   'HANDOFF_OWNER_SCOPE_IS_ABSENT_OR_INVALID',
+  'RECORDED_OWNER_SCOPE_DIGEST_DOES_NOT_MATCH_THE_HANDOFF',
   'RESTRICTION_KIND_IS_AMBIGUOUS',
 ]);
 export type MeasureRejection = typeof MeasureRejectionSchema.Type;
 
 export interface DispatchedMeasure {
+  /** Privacy's blocker assessment of this measure, exactly as the handoff carries it; absent means NOT assessed. */
+  readonly blockerAssessment?: OwnerBlockerAssessment | undefined;
   readonly lookups: readonly CommunicationsOwnerLookup[];
   readonly measure: PrivacyMeasureEncoded;
 }
@@ -109,7 +116,11 @@ export const communicationsMeasureOf = (
   const decoded = decodeMeasure(raw).pipe(Result.flatMap(encodeMeasure));
   return Result.isFailure(decoded)
     ? Result.fail('HANDOFF_OWNER_SCOPE_IS_ABSENT_OR_INVALID')
-    : Result.succeed({ lookups: lookups.success, measure: decoded.success });
+    : Result.succeed({
+        blockerAssessment: ownerScope.blockerAssessment,
+        lookups: lookups.success,
+        measure: decoded.success,
+      });
 };
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -162,21 +173,6 @@ export const sha256Hex = Effect.fn('Communications.PrivacyMeasure.sha256')(funct
   return Hex.encode(yield* crypto.digest('SHA-256', new TextEncoder().encode(text)));
 });
 
-const sortedOwnerScope = (
-  ownerScope: PrivacyMeasureHandoff['ownerScope'],
-): Pick<PrivacyMeasureHandoff, 'ownerScope'> =>
-  ownerScope === undefined
-    ? {}
-    : {
-        ownerScope: {
-          ...ownerScope,
-          requestedScopePartRefs: ownerScope.requestedScopePartRefs.toSorted(),
-          trustedLookups: ownerScope.trustedLookups.toSorted((left, right) =>
-            left.lookupRef.localeCompare(right.lookupRef),
-          ),
-        },
-      };
-
 const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHandoffSchema));
 
 /**
@@ -186,16 +182,7 @@ const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHa
  */
 export const fingerprintCommunicationsHandoff = Effect.fn('Communications.PrivacyMeasure.fingerprint')(
   function* fingerprint(handoff: PrivacyMeasureHandoff) {
-    const { ownerScope, ...rest } = handoff;
-    const normalized: PrivacyMeasureHandoff = {
-      ...rest,
-      contentScopeRefs: handoff.contentScopeRefs.toSorted(),
-      expectedEvidenceRefs: handoff.expectedEvidenceRefs.toSorted(),
-      preconditionRefs: handoff.preconditionRefs.toSorted(),
-      resourceRefs: handoff.resourceRefs.toSorted(),
-      ...sortedOwnerScope(ownerScope),
-    };
-    return yield* sha256Hex(yield* encodeHandoff(normalized));
+    return yield* sha256Hex(yield* encodeHandoff(normalizePrivacyMeasureHandoff(handoff)));
   },
 );
 

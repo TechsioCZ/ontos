@@ -112,10 +112,14 @@ export const privacyOwnerExecutionReceiptForScope = (
       return reject(dispatched.failure);
     }
     const digest = yield* sha256Hex(ownerScopeCanonicalText(dispatched.success)).pipe(Effect.mapError(unavailable));
-    if (stored.handoffFingerprint !== fingerprint || stored.scopeDigest !== digest) {
-      return reject('HANDOFF_OWNER_SCOPE_IS_ABSENT_OR_INVALID');
+    if (stored.handoffFingerprint !== fingerprint) {
+      // Another handoff under a recorded idempotency identity is a conflict, not an invalid owner scope.
+      return reject('HANDOFF_DOES_NOT_MATCH_THE_RECORDED_HANDOFF');
     }
-    const { lookups, measure } = dispatched.success;
+    if (stored.scopeDigest !== digest) {
+      return reject('RECORDED_OWNER_SCOPE_DIGEST_DOES_NOT_MATCH_THE_HANDOFF');
+    }
+    const { blockerAssessment, lookups, measure } = dispatched.success;
     const coverageRequest = decodeCoverageRequest({ scope: measure.scope, trustedLookups: lookups });
     const coverage = Result.isFailure(coverageRequest)
       ? Option.some({ coverage: incompleteCoverage(measure, DateTime.formatIso(now)) })
@@ -125,7 +129,8 @@ export const privacyOwnerExecutionReceiptForScope = (
     }
     const evidence: readonly StoredExecutionEvidence[] = document.evidence;
     const owner = evaluateCommunicationsOwnerMeasure({
-      blockers: [],
+      // Communications has no hold source of its own: blocker applicability is exactly what Privacy's handoff says, or unassessed.
+      blockerAssessment,
       confirmedAt: DateTime.formatIso(now),
       coverage: coverage.value.coverage,
       evidence: evidenceRecordsOf(evidence, measure, digest),

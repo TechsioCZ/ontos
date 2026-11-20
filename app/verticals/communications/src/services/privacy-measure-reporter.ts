@@ -1,4 +1,4 @@
-import { isVerifiedOutboxWorkerHandlerContext } from '@app/core-runtime';
+import { isVerifiedOutboxWorkerHandlerContext, requireModuleOperation } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy/api/client';
 import { RecordOwnerExecutionOutcomeActionAlreadyCommittedProblemSchema } from '@app/privacy/api/record-owner-execution-outcome-action';
@@ -36,6 +36,17 @@ export interface PrivacyMeasureReporterOperations {
 export class PrivacyMeasureReporter extends Context.Service<PrivacyMeasureReporter, PrivacyMeasureReporterService>()(
   '@app/communications/services/privacy-measure-reporter/PrivacyMeasureReporter',
 ) {}
+
+const requirementUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new PrivacyMeasureReportError({
+      code: 'privacy_measure_report_unavailable',
+      reason: 'Privacy outcome reporting is unavailable in the current Composition',
+      retryable: true,
+    }),
+    'cause',
+    { value: cause },
+  );
 
 // Keep only recognized public failure metadata: transport and configuration causes can carry assertions or the handoff.
 const gatewayFailureSchema = Schema.Struct({
@@ -79,6 +90,8 @@ export const privacyMeasureReporterService = (): Effect.Effect<PrivacyMeasureRep
           retryable: false,
         });
       }
+      // The Composition must provide the operation that reports to Privacy: a deployment without it retries, never drops.
+      yield* requireModuleOperation(REPORT_OWNER_OUTCOME_REQUIREMENT).pipe(Effect.mapError(requirementUnavailable));
       const source: PrivacyDispatchSubject['source'] = { _tag: 'Worker', context };
       const crypto = yield* Crypto.Crypto;
       const [issued, digest] = yield* Effect.all(

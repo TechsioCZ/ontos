@@ -45,12 +45,25 @@ const lookup = {
   resourceId: 'customer-1',
   resourceType: 'fixture.recipient',
 };
-const ownerScope = {
+const baseScope = {
   controllerRef: 'FICTIONAL-controller',
   requestedScopePartRefs: [...scopePartRefs],
   requestedScopeRef: 'FICTIONAL-requested-scope',
   trustedLookups: [lookup],
 };
+/** Privacy's explicit statement that blocker applicability was assessed and found nothing: the fact a result needs. */
+const assessment = (
+  blockers: readonly { blockerRef: string; contentRefs: readonly string[]; kind: 'LEGAL_HOLD' }[] = [],
+) => ({
+  assessedByRef: 'FICTIONAL-privacy-assessment-1',
+  blockers,
+});
+const ownerScope = { ...baseScope, blockerAssessment: assessment() };
+const restriction = {
+  dispositionDecision: 'RESTRICT',
+  kind: 'RESTRICT',
+  requestedResult: 'restrict message metadata',
+} as const;
 /** A frozen picture of every owner table except the two append-only Privacy measure tables. */
 const ownerDataHash = (world: World) =>
   world.database.inTenant(world.tenantId, (transaction) =>
@@ -112,7 +125,7 @@ const measureWorld = Effect.gen(function* measureWorld() {
       .coverage(
         decodeCoverageRequest({
           scope: {
-            ...ownerScope,
+            ...baseScope,
             ownerCapability: 'communications.core',
             subject: { _tag: 'RESOLVED_DATA_SUBJECT', subjectRef: 'FICTIONAL-subject-1' },
             tenantId: world.tenantId,
@@ -129,13 +142,44 @@ const measureWorld = Effect.gen(function* measureWorld() {
   return { targets, world };
 });
 
+/** A recorded handoff, its fingerprint and receipt/confirm helpers over one real world. */
+const recordedMeasure = (overrides: Partial<typeof PrivacyMeasureHandoffSchema.Encoded> = {}) =>
+  Effect.gen(function* recordMeasure() {
+    const { targets, world } = yield* measureWorld;
+    const handoff = handoffOf(world.tenantId, targets, overrides);
+    const invocation = yield* nextId;
+    const recorded = yield* world.database.inTenant(world.tenantId, (transaction) =>
+      recordPrivacyMeasureHandoff(transaction, handoff, invocation),
+    );
+    const receipt = (attempt = 1) =>
+      world.database
+        .inTenant(world.tenantId, (transaction) =>
+          privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+            attempt,
+            handoff,
+          }),
+        )
+        .pipe(Effect.map((answer) => Option.getOrThrow(answer)));
+    const confirm = (payload: Partial<RecordOwnerExecutionEvidencePayload>, confirmationInvocation = invocation) =>
+      world.database
+        .inTenant(world.tenantId, (transaction) =>
+          ownerExecutionEvidenceFor(transaction).record(
+            evidenceOf(handoff, recorded.fingerprint, payload),
+            confirmationInvocation,
+          ),
+        )
+        .pipe(Effect.catchTag('OwnerExecutionEvidenceRejected', (rejected) => Effect.succeed(rejected.refusal)));
+    return { confirm, handoff, invocation, receipt, recorded, targets, world };
+  });
+
 describe('Communications owner receipt of a Privacy Measure on native PostgreSQL (AC-14 AC-15 AC-16)', () => {
   it.live(
     'is RECEIVED after the handoff, becomes PARTIAL then SUCCEEDED only through human-confirmed evidence, and changes no owner data',
     () =>
       Effect.gen(function* receiptLifecycle() {
         const { targets, world } = yield* measureWorld;
-        const handoff = handoffOf(world.tenantId, targets);
+        // A restriction keeps the data, so the owner tables show no signal of it: the human-confirmed Action is its evidence.
+        const handoff = handoffOf(world.tenantId, targets, restriction);
         const invocation = yield* nextId;
         const receiptOf = (current: PrivacyMeasureHandoff, attempt = 1) =>
           world.database.inTenant(world.tenantId, (transaction) =>
@@ -188,7 +232,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
         const partial = yield* confirm(
           evidenceOf(handoff, recorded.fingerprint, {
             evidenceRef: 'FICTIONAL-evidence-1',
-            results: [{ contentRef: first ?? '', result: 'ANONYMIZED' }],
+            results: [{ contentRef: first ?? '', result: 'RESTRICTED' }],
           }),
         );
         expect(partial).toEqual({
@@ -204,7 +248,7 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
         yield* confirm(
           evidenceOf(handoff, recorded.fingerprint, {
             evidenceRef: 'FICTIONAL-evidence-2',
-            results: targets.map((contentRef) => ({ contentRef, result: 'ANONYMIZED' as const })),
+            results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })),
           }),
         );
         const done = Option.getOrThrow(yield* receiptOf(handoff)).outcome;
@@ -283,7 +327,10 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
         ),
       );
       expect(conflict.handoffFingerprint).toBe(recorded.fingerprint);
-      expect(conflict.outcome.status).toBe('BUSINESS_REJECTED');
+      expect(conflict.outcome).toMatchObject({
+        reason: 'HANDOFF_DOES_NOT_MATCH_THE_RECORDED_HANDOFF',
+        status: 'BUSINESS_REJECTED',
+      });
       // a handoff of another Tenant is never answered
       const foreign = handoffOf('00000000-0000-4000-8000-0000000000ff', targets);
       expect(
@@ -334,6 +381,151 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
           ),
         );
         expect(conflicting.outcome).toBe('CONFLICT');
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('never reports a human claim of ANONYMIZED as achieved while the owner data still holds the target', () =>
+    Effect.gen(function* anonymizeClaim() {
+      const { confirm, receipt, targets, world } = yield* recordedMeasure();
+      const dataBefore = yield* ownerDataHash(world);
+      yield* confirm({ results: targets.map((contentRef) => ({ contentRef, result: 'ANONYMIZED' as const })) });
+      const answer = (yield* receipt()).outcome;
+      expect(answer).toMatchObject({
+        reason: 'CLAIMED_ANONYMIZATION_CONTRADICTED_BY_CURRENT_COVERAGE',
+        status: 'INDETERMINATE',
+      });
+      expect(answer.includedResourceRefs).toEqual([]);
+      expect(yield* ownerDataHash(world)).toBe(dataBefore);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('is never SUCCEEDED while Privacy assessed no blocker applicability, and says why', () =>
+    Effect.gen(function* unassessed() {
+      const { confirm, receipt, targets } = yield* recordedMeasure({
+        ...restriction,
+        ownerScope: baseScope,
+      });
+      expect((yield* receipt()).outcome).toMatchObject({
+        reason: 'HOLD_APPLICABILITY_NOT_ASSESSED',
+        status: 'RECEIVED',
+      });
+      yield* confirm({ results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })) });
+      const answer = (yield* receipt()).outcome;
+      expect(answer).toMatchObject({ reason: 'HOLD_APPLICABILITY_NOT_ASSESSED', status: 'BLOCKED' });
+      expect(answer.includedResourceRefs).toEqual([]);
+      expect(answer.remainingResourceRefs).toEqual(targets);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('keeps a held target out of the achieved part even with confirmed human evidence', () =>
+    Effect.gen(function* heldTarget() {
+      const { targets, world } = yield* measureWorld;
+      const [held] = targets;
+      const handoff = handoffOf(world.tenantId, targets, {
+        ...restriction,
+        ownerScope: {
+          ...baseScope,
+          blockerAssessment: assessment([
+            { blockerRef: 'FICTIONAL-legal-hold-1', contentRefs: [held ?? ''], kind: 'LEGAL_HOLD' },
+          ]),
+        },
+      });
+      const invocation = yield* nextId;
+      const recorded = yield* world.database.inTenant(world.tenantId, (transaction) =>
+        recordPrivacyMeasureHandoff(transaction, handoff, invocation),
+      );
+      const read = () =>
+        world.database
+          .inTenant(world.tenantId, (transaction) =>
+            privacyOwnerExecutionReceiptForScope(transaction, operationalScope(world.tenantId)).receipt({
+              attempt: 1,
+              handoff,
+            }),
+          )
+          .pipe(Effect.map((answer) => Option.getOrThrow(answer).outcome));
+      expect(yield* read()).toMatchObject({
+        reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT',
+        status: 'BLOCKED',
+      });
+      yield* world.database.inTenant(world.tenantId, (transaction) =>
+        ownerExecutionEvidenceFor(transaction).record(
+          evidenceOf(handoff, recorded.fingerprint, {
+            results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })),
+          }),
+          invocation,
+        ),
+      );
+      const answer = yield* read();
+      expect(answer).toMatchObject({ status: 'PARTIAL' });
+      expect(answer.includedResourceRefs).toEqual(targets.slice(1));
+      expect(answer.remainingResourceRefs).toEqual([held]);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('replays an identical confirmation as a no-op even with a fresh invocation, and refuses other content', () =>
+    Effect.gen(function* replay() {
+      const { confirm, targets } = yield* recordedMeasure(restriction);
+      const results = targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const }));
+      expect(yield* confirm({ results })).toMatchObject({ outcome: 'RECORDED' });
+      const fresh = yield* nextId;
+      expect(yield* confirm({ results: [...results].toReversed() }, fresh)).toMatchObject({ outcome: 'EXISTS' });
+      expect(yield* confirm({ results: results.slice(1) }, fresh)).toBe(
+        'EVIDENCE_REF_ALREADY_RECORDED_WITH_OTHER_CONTENT',
+      );
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('settles a possible mutation only through an explicit reconciliation of the same target', () =>
+    Effect.gen(function* reconcile() {
+      const { confirm, receipt, targets } = yield* recordedMeasure(restriction);
+      const [first] = targets;
+      yield* confirm({
+        evidenceRef: 'FICTIONAL-evidence-failed',
+        results: targets.map((contentRef) => ({ contentRef, result: 'FAILED_AFTER_POSSIBLE_MUTATION' as const })),
+      });
+      expect((yield* receipt()).outcome).toMatchObject({
+        reason: 'OWNER_ACTION_FAILED_AFTER_POSSIBLE_MUTATION',
+        status: 'INDETERMINATE',
+      });
+      // a reconciliation naming no recorded failure, or another target's failure, is refused by name
+      for (const reconcilesEvidenceRef of ['FICTIONAL-never-recorded']) {
+        expect(
+          yield* confirm({
+            evidenceRef: 'FICTIONAL-evidence-bad',
+            results: [{ contentRef: first ?? '', reconcilesEvidenceRef, result: 'RESTRICTED' }],
+          }),
+        ).toBe('RECONCILIATION_DOES_NOT_NAME_A_POSSIBLE_MUTATION_FAILURE_OF_THE_SAME_TARGET');
+      }
+      // a later success without it resolves nothing
+      yield* confirm({
+        evidenceRef: 'FICTIONAL-evidence-later',
+        results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })),
+      });
+      expect((yield* receipt()).outcome.status).toBe('INDETERMINATE');
+      yield* confirm({
+        evidenceRef: 'FICTIONAL-evidence-reconciled',
+        results: targets.map((contentRef) => ({
+          contentRef,
+          reconcilesEvidenceRef: 'FICTIONAL-evidence-failed',
+          result: 'RESTRICTED' as const,
+        })),
+      });
+      expect((yield* receipt()).outcome.status).toBe('SUCCEEDED');
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'answers a later attempt with the current state under its own outcome identity, the same one on every repeat',
+    () =>
+      Effect.gen(function* laterAttempt() {
+        const { confirm, receipt, targets } = yield* recordedMeasure(restriction);
+        const first = (yield* receipt(1)).outcome;
+        expect(first.status).toBe('RECEIVED');
+        yield* confirm({ results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })) });
+        const second = (yield* receipt(2)).outcome;
+        expect(second).toMatchObject({ attempt: 2, status: 'SUCCEEDED' });
+        expect(second.outcomeId).not.toBe(first.outcomeId);
+        expect((yield* receipt(2)).outcome.outcomeId).toBe(second.outcomeId);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

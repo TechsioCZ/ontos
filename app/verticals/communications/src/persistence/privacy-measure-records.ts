@@ -17,6 +17,7 @@ export const StoredEvidenceSchema = Schema.Struct({
   results: Schema.Array(
     Schema.Struct({
       contentRef: Schema.String,
+      reconcilesEvidenceRef: Schema.optionalKey(Schema.String),
       result: Schema.Literals([
         'ANONYMIZED',
         'FAILED_AFTER_POSSIBLE_MUTATION',

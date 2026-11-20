@@ -9,7 +9,7 @@ import {
   isSameMeasureIdentity,
   manualDispositionProcess,
 } from '../../shared/privacy-owner/outcome.ts';
-import type { OwnerMeasureEvaluationInput } from '../../shared/privacy-owner/outcome.ts';
+import type { OwnerBlockerAssessment, OwnerMeasureEvaluationInput } from '../../shared/privacy-owner/outcome.ts';
 import {
   allComplete,
   confirmedAt,
@@ -22,15 +22,18 @@ import {
 } from './support/privacy-owner-fixtures.ts';
 
 /** Without evidence the targets are still found (pending); with evidence the owner's rows are gone unless a test says otherwise. */
-const hold = (contentRefs: readonly string[]) => [
-  { blockerRef: 'FICTIONAL-hold-1', contentRefs, kind: 'LEGAL_HOLD' as const },
-];
+const assessed = (blockers: OwnerBlockerAssessment['blockers'] = []): OwnerBlockerAssessment => ({
+  assessedByRef: 'FICTIONAL-privacy-assessment-1',
+  blockers,
+});
+const hold = (contentRefs: readonly string[]) =>
+  assessed([{ blockerRef: 'FICTIONAL-hold-1', contentRefs, kind: 'LEGAL_HOLD' as const }]);
 const relationships = (holders: ReturnType<typeof externalCopyInventoryOf>) =>
   holders.map(({ holderRef, relationship }) => [holderRef, relationship]);
 
 const evaluate = (overrides: Partial<OwnerMeasureEvaluationInput> = {}) =>
   evaluateCommunicationsOwnerMeasure({
-    blockers: [],
+    blockerAssessment: assessed(),
     confirmedAt,
     coverage: (overrides.evidence?.length ?? 0) > 0 ? coverageOf(allComplete()) : foundCoverage(),
     evidence: [],
@@ -252,12 +255,14 @@ describe('Owner Execution Outcome of Communications', () => {
   });
 
   it('is never ACHIEVED while a current Legal Hold sits on an evidenced target: BLOCKED or PARTIAL with the reason', () => {
-    expect(evaluate({ blockers: hold([intentRef('a'), intentRef('b')]), evidence: [evidenceOf()] })).toMatchObject({
+    expect(
+      evaluate({ blockerAssessment: hold([intentRef('a'), intentRef('b')]), evidence: [evidenceOf()] }),
+    ).toMatchObject({
       affectedContentRefs: [],
       reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_EVIDENCED_TARGET',
       status: 'BLOCKED',
     });
-    expect(evaluate({ blockers: hold([intentRef('a')]), evidence: [evidenceOf()] })).toMatchObject({
+    expect(evaluate({ blockerAssessment: hold([intentRef('a')]), evidence: [evidenceOf()] })).toMatchObject({
       affectedContentRefs: [intentRef('b')],
       reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_PART_OF_THE_EVIDENCED_TARGETS',
       remainingContentRefs: [intentRef('a')],
@@ -310,7 +315,7 @@ describe('Owner Execution Outcome of Communications', () => {
 
   it('is BLOCKED by a Current Legal Hold or retention obligation on a destructive target, before any owner effect', () => {
     const outcome = evaluate({
-      blockers: [{ blockerRef: 'FICTIONAL-hold-1', contentRefs: [intentRef('a')], kind: 'LEGAL_HOLD' }],
+      blockerAssessment: hold([intentRef('a')]),
     });
     expect(outcome.status).toBe('BLOCKED');
     expect(outcome.remainingContentRefs).toEqual([intentRef('a'), intentRef('b')]);
@@ -359,6 +364,162 @@ describe('Owner Execution Outcome of Communications', () => {
   it('answers a repeated handoff identically: the same measure never changes the data or the state', () => {
     expect(evaluate()).toEqual(evaluate());
     expect(evaluate({ previousMeasure: measureOf() })).toEqual(evaluate());
+  });
+});
+
+const evaluateUnassessed = (overrides: Partial<OwnerMeasureEvaluationInput> = {}) => {
+  const { blockerAssessment: _assessment, ...input } = {
+    blockerAssessment: assessed(),
+    confirmedAt,
+    coverage: (overrides.evidence?.length ?? 0) > 0 ? coverageOf(allComplete()) : foundCoverage(),
+    evidence: [],
+    evidenceRefs: ['FICTIONAL-handoff-evidence'],
+    measure: measureOf(),
+    outcomeRef: 'FICTIONAL-outcome-1',
+    ...overrides,
+  };
+  return evaluateCommunicationsOwnerMeasure(input);
+};
+const both = (result: 'ANONYMIZED' | 'RECTIFIED' | 'RESTRICTED' | 'REMOVED') =>
+  [intentRef('a'), intentRef('b')].map((contentRef) => ({ contentRef, result }));
+const reconciling = (reconcilesEvidenceRef: string) =>
+  both('REMOVED').map((entry) => ({ ...entry, reconcilesEvidenceRef }));
+const later = (overrides: Partial<ReturnType<typeof evidenceOf>> = {}) =>
+  evidenceOf({
+    confirmedAt: DateTime.makeUnsafe('2026-11-19T13:00:00.000Z'),
+    evidenceRef: 'FICTIONAL-later',
+    results: both('REMOVED'),
+    ...overrides,
+  });
+
+/**
+ * [#1410 PRIV-COM-09, review] A result is never reported from a human claim alone: blocker applicability must have been assessed
+ * by Privacy, and the claim must agree with what the owner currently holds, the same way the evidence-free answer is checked.
+ */
+describe('Evidence is judged against the owner holdings and the assessed blockers', () => {
+  it('never defaults an unassessed blocker applicability to "none": a pending measure says so', () => {
+    expect(evaluateUnassessed()).toMatchObject({
+      reason: 'HOLD_APPLICABILITY_NOT_ASSESSED',
+      status: 'PENDING',
+    });
+    expect(evaluate().reason).toBe('AWAITING_HUMAN_CONFIRMED_OWNER_ACTION');
+  });
+
+  it('is BLOCKED, not ACHIEVED or PARTIAL, when every or part of the targets are evidenced but nothing was assessed', () => {
+    for (const results of [both('REMOVED'), [{ contentRef: intentRef('a'), result: 'REMOVED' as const }]]) {
+      expect(evaluateUnassessed({ evidence: [evidenceOf({ results })] })).toMatchObject({
+        affectedContentRefs: [],
+        reason: 'HOLD_APPLICABILITY_NOT_ASSESSED',
+        remainingContentRefs: [intentRef('a'), intentRef('b')],
+        status: 'BLOCKED',
+      });
+    }
+    // an explicit "no blocker assessed by <ref>" is the one fact that lets the same evidence through
+    expect(evaluate({ blockerAssessment: assessed(), evidence: [evidenceOf()] }).status).toBe('ACHIEVED');
+  });
+
+  it('lets a listed blocker block every operation on the affected target, with or without evidence', () => {
+    for (const intendedOutcome of ['RECTIFY', 'ENFORCE_PROCESSING_RESTRICTION'] as const) {
+      const result = intendedOutcome === 'RECTIFY' ? ('RECTIFIED' as const) : ('RESTRICTED' as const);
+      expect(
+        evaluate({
+          blockerAssessment: hold([intentRef('a')]),
+          coverage: foundCoverage(),
+          evidence: [evidenceOf({ results: both(result) })],
+          measure: measureOf({ intendedOutcome }),
+        }),
+      ).toMatchObject({
+        affectedContentRefs: [intentRef('b')],
+        remainingContentRefs: [intentRef('a')],
+        status: 'PARTIAL',
+      });
+    }
+    // a started Action over a held target is blocked too, exactly as the evidence-free answer is
+    expect(
+      evaluate({
+        blockerAssessment: hold([intentRef('a')]),
+        evidence: [evidenceOf({ phase: 'IN_PROGRESS', results: [] })],
+      }),
+    ).toMatchObject({ reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT', status: 'BLOCKED' });
+  });
+
+  it('never accepts a claimed ANONYMIZED while the data subject lookup still FINDS the target', () => {
+    const measure = measureOf({ intendedOutcome: 'ANONYMIZE' });
+    const evidence = [evidenceOf({ results: both('ANONYMIZED') })];
+    expect(evaluate({ coverage: foundCoverage(), evidence, measure })).toMatchObject({
+      reason: 'CLAIMED_ANONYMIZATION_CONTRADICTED_BY_CURRENT_COVERAGE',
+      reconciliationRequired: true,
+      status: 'INDETERMINATE',
+    });
+    expect(evaluate({ coverage: coverageOf(allComplete()), evidence, measure }).status).toBe('ACHIEVED');
+  });
+
+  it('never accepts RECTIFIED or RESTRICTED for a target the owner does not hold', () => {
+    for (const [intendedOutcome, result] of [
+      ['RECTIFY', 'RECTIFIED'],
+      ['ENFORCE_DISPOSITION_RESTRICTION', 'RESTRICTED'],
+    ] as const) {
+      const measure = measureOf({ intendedOutcome });
+      const evidence = [evidenceOf({ results: both(result) })];
+      // held and found: the human-confirmed Action is the evidence (the owner tables carry no rectification or restriction signal)
+      expect(evaluate({ coverage: foundCoverage(), evidence, measure }).status).toBe('ACHIEVED');
+      // not held under complete coverage: the claim is contradicted, never achieved
+      expect(evaluate({ coverage: coverageOf(allComplete()), evidence, measure })).toMatchObject({
+        reason: 'CLAIMED_RESULT_TARGET_NOT_HELD_BY_OWNER',
+        reconciliationRequired: true,
+        status: 'INDETERMINATE',
+      });
+      // not found under incomplete coverage proves nothing either way
+      const incomplete = coverageOf(
+        allComplete({
+          PROVIDER_COPY_WORKING_COPY_PROTECTION: { coverageStatus: 'PARTIAL', unresolvedReason: 'BACKUP' },
+        }),
+      );
+      expect(evaluate({ coverage: incomplete, evidence, measure })).toMatchObject({
+        reason: 'COMMUNICATIONS_OWNER_SCOPE_COVERAGE_INCOMPLETE',
+        status: 'INDETERMINATE',
+      });
+    }
+  });
+
+  it('keeps a possible-mutation failure INDETERMINATE after a later success that does not reconcile it', () => {
+    const failed = evidenceOf({
+      evidenceRef: 'FICTIONAL-failed',
+      results: [{ contentRef: intentRef('a'), result: 'FAILED_AFTER_POSSIBLE_MUTATION' }],
+    });
+    // a later definite result is not a reconciliation
+    expect(evaluate({ evidence: [failed, later()] })).toMatchObject({
+      reason: 'OWNER_ACTION_FAILED_AFTER_POSSIBLE_MUTATION',
+      status: 'INDETERMINATE',
+    });
+    // only a later COMPLETED result that names THIS failure for the same target settles it
+    expect(evaluate({ evidence: [failed, later({ results: reconciling('FICTIONAL-failed') })] }).status).toBe(
+      'ACHIEVED',
+    );
+    for (const wrong of [
+      later({ results: reconciling('FICTIONAL-another-failure') }),
+      later({ phase: 'IN_PROGRESS', results: reconciling('FICTIONAL-failed') }),
+      later({
+        results: [{ contentRef: intentRef('b'), reconcilesEvidenceRef: 'FICTIONAL-failed', result: 'REMOVED' }],
+      }),
+    ]) {
+      expect(evaluate({ evidence: [failed, wrong] }).status).toBe('INDETERMINATE');
+    }
+    // a reconciliation can never come BEFORE the failure it claims to settle
+    const early = later({
+      confirmedAt: DateTime.makeUnsafe('2026-11-19T11:00:00.000Z'),
+      results: reconciling('FICTIONAL-failed'),
+    });
+    expect(evaluate({ evidence: [failed, early] }).status).toBe('INDETERMINATE');
+    // a possible mutation that was reconciled and then failed again is unresolved again
+    const again = later({
+      confirmedAt: DateTime.makeUnsafe('2026-11-19T14:00:00.000Z'),
+      evidenceRef: 'FICTIONAL-again',
+      results: [{ contentRef: intentRef('a'), result: 'FAILED_AFTER_POSSIBLE_MUTATION' }],
+    });
+    expect(evaluate({ evidence: [failed, later({ results: reconciling('FICTIONAL-failed') }), again] }).status).toBe(
+      'INDETERMINATE',
+    );
   });
 });
 
@@ -475,7 +636,7 @@ describe('Manual disposition process contract', () => {
   it('keeps a measure on an external provider copy pending: a provider API request is not provider-side disposition', () => {
     const providerRef = 'step-22-provider:provider-a';
     const outcome = evaluateCommunicationsOwnerMeasure({
-      blockers: [],
+      blockerAssessment: assessed(),
       confirmedAt,
       coverage: coverageOf(allComplete({ PROVIDER_COPY_WORKING_COPY_PROTECTION: { foundContentRefs: [providerRef] } })),
       evidence: [],

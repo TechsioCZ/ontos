@@ -524,7 +524,7 @@ describe('Observing, evaluating and handing over change nothing (AC-05 AC-12 AC-
         for (let delivery = 0; delivery < 3; delivery += 1) {
           // a repeated handoff, a retention boundary and an owner restart all reach the same answer
           const outcome = evaluateCommunicationsOwnerMeasure({
-            blockers: [],
+            blockerAssessment: { assessedByRef: 'FICTIONAL-privacy-assessment-1', blockers: [] },
             confirmedAt: '2026-11-19T12:00:00.000Z',
             coverage: { ...coverage, scope: measure.scope },
             evidence: [],

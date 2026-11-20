@@ -41,7 +41,61 @@ const settled = (
 });
 
 const decodeDocument = Schema.decodeUnknownEffect(HandoffDocumentSchema);
+type HandoffDocument = typeof HandoffDocumentSchema.Type;
+type StoredEvidence = HandoffDocument['evidence'][number];
+
+type EvidenceResults = StoredEvidence['results'] | RecordOwnerExecutionEvidencePayload['results'];
+
+/** The same results, whatever their order: a record names every target at most once. */
+const sameResults = (left: EvidenceResults, right: EvidenceResults): boolean =>
+  left.length === right.length &&
+  left.every((entry) =>
+    right.some(
+      (other) =>
+        other.contentRef === entry.contentRef &&
+        other.result === entry.result &&
+        other.reconcilesEvidenceRef === entry.reconcilesEvidenceRef,
+    ),
+  );
+
+/**
+ * The same confirmation submitted again: the same evidence reference, phase, exact scope and results. WHO submitted it again
+ * (a fresh Core idempotency key, so another invocation) does not make it different content: it is a clean no-op replay.
+ */
+const identicalRecord = (
+  document: HandoffDocument,
+  payload: RecordOwnerExecutionEvidencePayload,
+  scopeDigest: string,
+): boolean =>
+  document.evidence.some(
+    (stored) =>
+      stored.evidenceRef === payload.evidenceRef &&
+      stored.phase === payload.phase &&
+      stored.scopeDigest === scopeDigest &&
+      sameResults(stored.results, payload.results),
+  );
+
+/** A reconciliation names an EARLIER recorded possible-mutation failure of the very same target, and nothing else. */
+const reconcilesRecordedFailures = (document: HandoffDocument, payload: RecordOwnerExecutionEvidencePayload): boolean =>
+  payload.results.every(
+    ({ contentRef, reconcilesEvidenceRef }) =>
+      reconcilesEvidenceRef === undefined ||
+      document.evidence.some(
+        (stored) =>
+          stored.evidenceRef === reconcilesEvidenceRef &&
+          stored.results.some(
+            (entry) => entry.contentRef === contentRef && entry.result === 'FAILED_AFTER_POSSIBLE_MUTATION',
+          ),
+      ),
+  );
+
 const decodeAnswer = Schema.decodeUnknownEffect(RecordEvidenceAnswerSchema);
+
+const readDocument = (transaction: ScopedTransactionExecutor, idempotencyKey: string) =>
+  transaction.invoke(readPrivacyMeasureHandoffRoutine, [idempotencyKey]).pipe(
+    Effect.flatMap((rows) => decodeDocument(rows[0]?.result)),
+    Effect.mapError(unavailable),
+  );
 
 export interface OwnerExecutionEvidenceService {
   readonly record: (
@@ -61,10 +115,7 @@ export class OwnerExecutionEvidence extends Context.Service<OwnerExecutionEviden
  */
 export const ownerExecutionEvidenceFor = (transaction: ScopedTransactionExecutor): OwnerExecutionEvidenceService => ({
   record: Effect.fn('CommunicationsOwnerEvidence.record')(function* record(payload, confirmationInvocationId) {
-    const rows = yield* transaction
-      .invoke(readPrivacyMeasureHandoffRoutine, [payload.idempotencyKey])
-      .pipe(Effect.mapError(unavailable));
-    const document = yield* decodeDocument(rows[0]?.result).pipe(Effect.mapError(unavailable));
+    const document = yield* readDocument(transaction, payload.idempotencyKey);
     if (Option.isNone(document.record)) {
       return yield* refused('NO_HANDOFF_RECORDED_FOR_THIS_MEASURE', 'No handoff is recorded for this measure');
     }
@@ -82,6 +133,15 @@ export const ownerExecutionEvidenceFor = (transaction: ScopedTransactionExecutor
         'A confirmed result names content that Privacy did not approve',
       );
     }
+    if (identicalRecord(document, payload, stored.scopeDigest)) {
+      return settled(payload, 'EXISTS');
+    }
+    if (!reconcilesRecordedFailures(document, payload)) {
+      return yield* refused(
+        'RECONCILIATION_DOES_NOT_NAME_A_POSSIBLE_MUTATION_FAILURE_OF_THE_SAME_TARGET',
+        'A reconciliation must name an earlier recorded possible-mutation failure of the same target',
+      );
+    }
     const answerRows = yield* transaction
       .invoke(recordPrivacyExecutionEvidenceRoutine, [
         payload.evidenceRef,
@@ -97,8 +157,18 @@ export const ownerExecutionEvidenceFor = (transaction: ScopedTransactionExecutor
       Match.when('RECORDED', (outcome) => Effect.succeed(settled(payload, outcome))),
       Match.when('EXISTS', (outcome) => Effect.succeed(settled(payload, outcome))),
       Match.when('CONFLICT', () =>
-        Effect.fail(
-          refused('EVIDENCE_REF_ALREADY_RECORDED_WITH_OTHER_CONTENT', 'The evidence reference holds other content'),
+        // A concurrent submission of the same content stored it first: look again before calling it a conflict.
+        readDocument(transaction, payload.idempotencyKey).pipe(
+          Effect.flatMap((current) =>
+            identicalRecord(current, payload, stored.scopeDigest)
+              ? Effect.succeed(settled(payload, 'EXISTS'))
+              : Effect.fail(
+                  refused(
+                    'EVIDENCE_REF_ALREADY_RECORDED_WITH_OTHER_CONTENT',
+                    'The evidence reference holds other content',
+                  ),
+                ),
+          ),
         ),
       ),
       Match.when('SCOPE_MISMATCH', () =>

@@ -7,7 +7,6 @@ import {
   defineOutboxWorker,
   defineTenantModuleEntrypoint,
   isVerifiedOutboxWorkerHandlerContext,
-  requireModuleOperation,
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
@@ -23,7 +22,7 @@ import { tenantScopedRunner } from '../handoff/tenant-scoped-runner.ts';
 import { storeUnavailable } from '../handoff/handoff-errors.ts';
 import { PrivacyMeasureReportError } from '../services/privacy-measure-report-error.ts';
 import { recordPrivacyMeasureHandoff } from '../services/privacy-measure-handoff-record.ts';
-import { PrivacyMeasureReporter, REPORT_OWNER_OUTCOME_REQUIREMENT } from '../services/privacy-measure-reporter.ts';
+import { PrivacyMeasureReporter } from '../services/privacy-measure-reporter.ts';
 
 const owner = 'communications.core';
 const workerKey = 'communications.core.receive-privacy-measure';
@@ -93,19 +92,6 @@ export const handleReceivePrivacyMeasure = Effect.fn('ReceivePrivacyMeasure.hand
   if (recorded.outcome === 'CONFLICT') {
     return yield* conflict();
   }
-  yield* requireModuleOperation(REPORT_OWNER_OUTCOME_REQUIREMENT).pipe(
-    Effect.mapError((cause) =>
-      Object.defineProperty(
-        new PrivacyMeasureReportError({
-          code: 'privacy_measure_report_unavailable',
-          reason: 'Privacy outcome reporting is unavailable in the current Composition',
-          retryable: true,
-        }),
-        'cause',
-        { value: cause },
-      ),
-    ),
-  );
   const reporter = yield* PrivacyMeasureReporter;
   yield* reporter.report(handoff, 1, context);
   return yield* Effect.logInfo('Privacy measure taken over by its owner').pipe(

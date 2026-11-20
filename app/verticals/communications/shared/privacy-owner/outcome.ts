@@ -42,6 +42,17 @@ export type EvidencedTargetResult = typeof EvidencedTargetResultSchema.Type;
 export const OwnerExecutionPhaseSchema = Schema.Literals(['COMPLETED', 'IN_PROGRESS', 'RECEIVED']);
 export type OwnerExecutionPhase = typeof OwnerExecutionPhaseSchema.Type;
 
+/**
+ * One confirmed result for one target. `reconcilesEvidenceRef` is the explicit reconciliation fact: it names the EARLIER evidence
+ * record whose FAILED_AFTER_POSSIBLE_MUTATION result for the same target the human has since resolved with this (different)
+ * result. Without it, a possible mutation stays unresolved however many later results follow.
+ */
+export interface EvidencedTargetEntry {
+  readonly contentRef: string;
+  readonly reconcilesEvidenceRef?: string;
+  readonly result: EvidencedTargetResult;
+}
+
 export interface OwnerExecutionEvidenceRecord {
   readonly confirmedAt: DateTime.Utc;
   /** The authorized human who separately confirmed THIS exact owner Action. Their identity is a reference only. */
@@ -49,7 +60,7 @@ export interface OwnerExecutionEvidenceRecord {
   readonly evidenceRef: string;
   readonly measureRef: string;
   readonly phase: OwnerExecutionPhase;
-  readonly results: readonly { readonly contentRef: string; readonly result: EvidencedTargetResult }[];
+  readonly results: readonly EvidencedTargetEntry[];
   /**
    * The EXACT owner scope the Action ran for: owner, tenant, controller, subject, requested scope, scope parts and trusted
    * lookups. Evidence for another subject, controller or lookup is never evidence for this measure.
@@ -65,8 +76,18 @@ export interface OwnerMeasureBlocker {
   readonly kind: 'LEGAL_HOLD' | 'RETENTION_OBLIGATION';
 }
 
-export interface OwnerMeasureEvaluationInput {
+/**
+ * Privacy's explicit statement of blocker applicability for one measure: who assessed it and what it found. An empty list is
+ * "no blocker assessed by `assessedByRef`". Communications has no hold source of its own, so it never invents either.
+ */
+export interface OwnerBlockerAssessment {
+  readonly assessedByRef: string;
   readonly blockers: readonly OwnerMeasureBlocker[];
+}
+
+export interface OwnerMeasureEvaluationInput {
+  /** Absent means NOT ASSESSED, which is never read as "no blocker": an unassessed measure can never be ACHIEVED. */
+  readonly blockerAssessment?: OwnerBlockerAssessment | undefined;
   readonly confirmedAt: PrivacyOwnerExecutionOutcomeEncoded['confirmedAt'];
   readonly coverage: PrivacyOwnerCoverageResultEncoded;
   readonly evidence: readonly OwnerExecutionEvidenceRecord[];
@@ -146,9 +167,6 @@ const achievedFor = {
   RECTIFY: ['RECTIFIED'],
 } as const satisfies Record<PrivacyMeasureEncoded['intendedOutcome'], readonly EvidencedTargetResult[]>;
 
-const isDestructive = (outcome: PrivacyMeasureEncoded['intendedOutcome']): boolean =>
-  outcome === 'DELETE' || outcome === 'ANONYMIZE';
-
 type OutcomeStatus = PrivacyOwnerExecutionOutcomeEncoded['status'];
 
 const outcomeOf = (
@@ -191,15 +209,46 @@ const latestResults = (
 };
 
 /**
+ * A possible-mutation failure is resolved only by an explicit reconciliation fact: a LATER, COMPLETED record whose result for the
+ * same target names this very failure (`reconcilesEvidenceRef`) and settles it with a result other than another possible
+ * mutation. A later result that merely follows it, however definite it looks, resolves nothing.
+ */
+const isReconciled = (
+  records: readonly OwnerExecutionEvidenceRecord[],
+  failed: OwnerExecutionEvidenceRecord,
+  contentRef: string,
+): boolean =>
+  records.some(
+    (later) =>
+      later !== failed &&
+      later.phase === 'COMPLETED' &&
+      byConfirmation(failed, later) <= 0 &&
+      later.results.some(
+        (entry) =>
+          entry.contentRef === contentRef &&
+          entry.reconcilesEvidenceRef === failed.evidenceRef &&
+          entry.result !== 'FAILED_AFTER_POSSIBLE_MUTATION',
+      ),
+  );
+
+const hasUnresolvedPossibleMutation = (records: readonly OwnerExecutionEvidenceRecord[], contentRef: string): boolean =>
+  records.some(
+    (record) =>
+      record.results.some(
+        ({ contentRef: ref, result }) => ref === contentRef && result === 'FAILED_AFTER_POSSIBLE_MUTATION',
+      ) && !isReconciled(records, record, contentRef),
+  );
+
+/**
  * Partitions the exact targets by what matching, human-confirmed evidence reports for each of them. ONLY the results of a
  * COMPLETED Action can make a target achieved: a result inside an IN_PROGRESS or RECEIVED record never counts, even when it
- * sits next to a COMPLETED one. A failure that may have mutated is read from every record, whatever its phase: a possible
- * mutation is never ignored.
+ * sits next to a COMPLETED one. A failure that may have mutated is read from every record, whatever its phase, and stays
+ * unresolved until an explicit reconciliation fact settles it: a possible mutation is never ignored and never erased by a
+ * later result.
  */
 const partitionByEvidence = (measure: PrivacyMeasureEncoded, evidence: readonly OwnerExecutionEvidenceRecord[]) => {
   const accepted = new Set<EvidencedTargetResult>(achievedFor[measure.intendedOutcome]);
   const completed = latestResults(evidence.filter(({ phase }) => phase === 'COMPLETED'));
-  const everything = latestResults(evidence);
   const affected = measure.targetContentRefs.filter((ref) => {
     const result = completed.get(ref);
     return result !== undefined && accepted.has(result);
@@ -211,12 +260,46 @@ const partitionByEvidence = (measure: PrivacyMeasureEncoded, evidence: readonly 
       (ref) => completed.get(ref) === 'FAILED_BEFORE_ANY_MUTATION',
     ),
     remaining: measure.targetContentRefs.filter((ref) => !affectedSet.has(ref)),
-    uncertain: measure.targetContentRefs.filter((ref) => everything.get(ref) === 'FAILED_AFTER_POSSIBLE_MUTATION'),
+    uncertain: measure.targetContentRefs.filter((ref) => hasUnresolvedPossibleMutation(evidence, ref)),
   };
 };
 
 const currentlyFoundRefs = (coverage: PrivacyOwnerCoverageResultEncoded): ReadonlySet<string> =>
   new Set(coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs));
+
+const heldRefsOf = (assessment: OwnerBlockerAssessment | undefined): ReadonlySet<string> =>
+  new Set((assessment?.blockers ?? []).flatMap(({ contentRefs }) => contentRefs));
+
+/**
+ * A claimed result must be consistent with what the owner CURRENTLY holds, for every operation:
+ * - DELETE and ANONYMIZE take the data away from the data subject's exact-reference lookup (identifiability removed is the point
+ *   of ANONYMIZE), so a claimed target that the lookup still FINDS is a contradiction that only reconciliation settles.
+ * - RECTIFY and RESTRICT keep the data, so a claimed target the owner does not hold cannot be achieved: absence from complete
+ *   coverage contradicts the claim, and absence from incomplete coverage proves nothing either way.
+ * Communications' own tables carry no signal of a rectification or a restriction, so for those two the confirmed result of the
+ * human-confirmed owner Action (#600) is the evidence once the owner holds the target and Privacy assessed the blockers.
+ */
+const contradictionOf = (
+  outcome: PrivacyMeasureEncoded['intendedOutcome'],
+  affected: readonly string[],
+  coverage: PrivacyOwnerCoverageResultEncoded,
+): string | undefined => {
+  const found = currentlyFoundRefs(coverage);
+  if (outcome === 'DELETE') {
+    return affected.some((ref) => found.has(ref)) ? 'CLAIMED_REMOVAL_CONTRADICTED_BY_CURRENT_COVERAGE' : undefined;
+  }
+  if (outcome === 'ANONYMIZE') {
+    return affected.some((ref) => found.has(ref))
+      ? 'CLAIMED_ANONYMIZATION_CONTRADICTED_BY_CURRENT_COVERAGE'
+      : undefined;
+  }
+  if (affected.every((ref) => found.has(ref))) {
+    return undefined;
+  }
+  return coverage.coverageStatus === 'COMPLETE'
+    ? 'CLAIMED_RESULT_TARGET_NOT_HELD_BY_OWNER'
+    : 'COMMUNICATIONS_OWNER_SCOPE_COVERAGE_INCOMPLETE';
+};
 
 const evaluateWithEvidence = (
   input: OwnerMeasureEvaluationInput,
@@ -235,6 +318,12 @@ const evaluateWithEvidence = (
     // A failure after a possible mutation is never retried or settled by a guess: the owner reconciles first.
     return conclude('INDETERMINATE', 'OWNER_ACTION_FAILED_AFTER_POSSIBLE_MUTATION');
   }
+  const { blockerAssessment } = input;
+  const held = heldRefsOf(blockerAssessment);
+  if (partition.affected.length === 0 && measure.targetContentRefs.some((ref) => held.has(ref))) {
+    // The same current blocker that stops the evidence-free answer stops a measure whose Action has settled nothing.
+    return conclude('BLOCKED', 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT', [], [...measure.targetContentRefs]);
+  }
   const [latest] = matching.toSorted((left, right) => byConfirmation(right, left));
   // The Action's own latest word wins while it has not ended: a started Action is IN_PROGRESS, a taken-over one RECEIVED.
   if (latest?.phase === 'IN_PROGRESS' && partition.remaining.length > 0) {
@@ -244,28 +333,28 @@ const evaluateWithEvidence = (
     return conclude('RECEIVED', 'MEASURE_RECEIVED_BY_OWNER_NOTHING_STARTED');
   }
   let { affected, remaining } = partition;
-  if (isDestructive(measure.intendedOutcome)) {
-    // A destructive result is cross-checked against what the owner CURRENTLY holds: a claimed removal that the exact-reference
-    // lookup still FINDS is a contradiction that only reconciliation settles, never ACHIEVED.
-    const found = currentlyFoundRefs(input.coverage);
-    if (measure.intendedOutcome === 'DELETE' && affected.some((ref) => found.has(ref))) {
-      return conclude('INDETERMINATE', 'CLAIMED_REMOVAL_CONTRADICTED_BY_CURRENT_COVERAGE');
-    }
-    const held = new Set(input.blockers.flatMap(({ contentRefs }) => contentRefs));
-    if (affected.some((ref) => held.has(ref))) {
-      // A current Legal Hold or retention obligation on a target never lets that target count as achieved.
-      const unresolved = new Set(remaining);
-      remaining = measure.targetContentRefs.filter((ref) => held.has(ref) || unresolved.has(ref));
-      affected = affected.filter((ref) => !held.has(ref));
-      return affected.length === 0
-        ? conclude('BLOCKED', 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_EVIDENCED_TARGET', affected, remaining)
-        : conclude(
-            'PARTIAL',
-            'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_PART_OF_THE_EVIDENCED_TARGETS',
-            affected,
-            remaining,
-          );
-    }
+  // What the evidence says must be consistent with what the owner currently holds, exactly as the evidence-free answer is.
+  const contradiction = contradictionOf(measure.intendedOutcome, affected, input.coverage);
+  if (contradiction !== undefined) {
+    return conclude('INDETERMINATE', contradiction);
+  }
+  if (affected.length > 0 && blockerAssessment === undefined) {
+    // Blocker applicability was never assessed by Privacy: no target counts as achieved, whatever a human confirmed.
+    return conclude('BLOCKED', 'HOLD_APPLICABILITY_NOT_ASSESSED', [], [...measure.targetContentRefs]);
+  }
+  if (affected.some((ref) => held.has(ref))) {
+    // A current Legal Hold or retention obligation on a target never lets that target count as achieved.
+    const unresolved = new Set(remaining);
+    remaining = measure.targetContentRefs.filter((ref) => held.has(ref) || unresolved.has(ref));
+    affected = affected.filter((ref) => !held.has(ref));
+    return affected.length === 0
+      ? conclude('BLOCKED', 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_EVIDENCED_TARGET', affected, remaining)
+      : conclude(
+          'PARTIAL',
+          'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_PART_OF_THE_EVIDENCED_TARGETS',
+          affected,
+          remaining,
+        );
   }
   if (remaining.length === 0) {
     return conclude('ACHIEVED', 'EVERY_TARGET_EVIDENCED_BY_CONFIRMED_OWNER_ACTION');
@@ -323,11 +412,8 @@ export const evaluateCommunicationsOwnerMeasure = (
   if (coverage.coverageStatus !== 'COMPLETE' && coverage.contentStatus !== 'FOUND') {
     return outcomeOf(input, 'INDETERMINATE', 'COMMUNICATIONS_OWNER_SCOPE_COVERAGE_INCOMPLETE', untouched(measure));
   }
-  const targets = new Set(measure.targetContentRefs);
-  if (
-    isDestructive(measure.intendedOutcome) &&
-    input.blockers.some(({ contentRefs }) => contentRefs.some((contentRef) => targets.has(contentRef)))
-  ) {
+  const held = heldRefsOf(input.blockerAssessment);
+  if (measure.targetContentRefs.some((contentRef) => held.has(contentRef))) {
     return outcomeOf(input, 'BLOCKED', 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT', untouched(measure));
   }
   const currentContent = currentlyFoundRefs(coverage);
@@ -342,7 +428,12 @@ export const evaluateCommunicationsOwnerMeasure = (
         )
       : outcomeOf(input, 'INDETERMINATE', 'COMMUNICATIONS_OWNER_SCOPE_COVERAGE_INCOMPLETE', untouched(measure));
   }
-  return outcomeOf(input, 'PENDING', 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION', untouched(measure));
+  return outcomeOf(
+    input,
+    'PENDING',
+    input.blockerAssessment === undefined ? 'HOLD_APPLICABILITY_NOT_ASSESSED' : 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION',
+    untouched(measure),
+  );
 };
 
 /* ------------------------------------------------------------------------------------------------ */
