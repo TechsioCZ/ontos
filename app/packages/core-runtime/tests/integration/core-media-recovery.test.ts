@@ -552,6 +552,31 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media integrity 
     }).pipe(Effect.scoped),
   );
 
+  suite.effect('closes a ready asset as failed when the completely read object has ANOTHER size (#1434 BR-06)', () =>
+    Effect.gen(function* otherSize() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      yield* harness.bind(world, world.system, INTEGRITY_WORKLOAD);
+      const uploaded = yield* uploadReadyAsset(harness, world, world.human, content, { key: 'other-size' });
+      const longer = encoder.encode(`${'Y'.repeat(content.byteLength)}-and-more`);
+      yield* harness.storage.service.put({
+        body: Stream.make(longer),
+        contentType: 'application/pdf',
+        key: deriveMediaStorageKey({ mediaAssetId: uploaded.mediaAssetId, tenantId: world.tenantId }),
+      });
+      const finding = yield* findingOf(harness, world, uploaded.mediaAssetId);
+      expect(finding.observed).toEqual({ byteSize: longer.byteLength, contentSha256: digestOf(longer) });
+      const result = yield* recordIntegrity(harness, world, world.system, {
+        finding,
+        key: 'other-size-record',
+        mediaAssetRef: uploaded.reservation.mediaAssetRef,
+      });
+      expect(result.processingStatus).toBe('failed');
+      const after = yield* harness.rowOf(world.tenantId, uploaded.mediaAssetId);
+      expect(after).toMatchObject({ byte_size: BigInt(content.byteLength), processing_status: 'failed' });
+    }).pipe(Effect.scoped),
+  );
+
   suite.effect('never changes a ready asset for an outage, however often it repeats, and serves it again after', () =>
     Effect.gen(function* outage() {
       const harness = yield* openHarness();
