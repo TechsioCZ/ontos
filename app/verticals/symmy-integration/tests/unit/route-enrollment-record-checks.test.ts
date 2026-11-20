@@ -13,9 +13,16 @@ describe('route enrollment record check definitions', () => {
     expect(normalizeConstraintDefinition(textCheck)).toBe(normalizeConstraintDefinition(textCheck));
   });
 
-  it('leave only whitespace and identifier quotes free', () => {
-    const quoted = changeCheck.replaceAll('previous_revision', '"previous_revision"').replaceAll(' AND ', '\n    AND ');
-    expect(normalizeConstraintDefinition(quoted)).toBe(normalizeConstraintDefinition(changeCheck));
+  it('leave only whitespace free', () => {
+    const reflowed = changeCheck.replaceAll(' AND ', '\n    AND ');
+    expect(reflowed).not.toBe(changeCheck);
+    expect(normalizeConstraintDefinition(reflowed)).toBe(normalizeConstraintDefinition(changeCheck));
+  });
+
+  it('refuse the change check once a literal holds another character', () => {
+    const altered = changeCheck.replace("'enroll'::text, 'replace'", `'en"roll'::text, 'replace'`);
+    expect(altered).not.toBe(changeCheck);
+    expect(normalizeConstraintDefinition(altered)).not.toBe(normalizeConstraintDefinition(changeCheck));
   });
 
   it('refuse the change check once its final OR loses its grouping', () => {
