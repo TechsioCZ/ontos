@@ -162,11 +162,11 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   languagePolicyReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   messageHistoryDetailReadApiLive.pipe(
     GovernedReadLayer.provide(governedReadRuntimeLive),
-    GovernedReadLayer.provide(communicationsHistoryReadPortsLive),
+    Layer.provide(communicationsHistoryReadPortsLive),
   ),
   messageHistoryListReadApiLive.pipe(
     GovernedReadLayer.provide(governedReadRuntimeLive),
-    GovernedReadLayer.provide(communicationsHistoryReadPortsLive),
+    Layer.provide(communicationsHistoryReadPortsLive),
   ),
   prepareTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   privacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
