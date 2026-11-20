@@ -25,7 +25,6 @@ export {
   PrivacyOwnerCoverageResultSchema,
   PrivacyOwnerCoverageStatusSchema,
   PrivacyOwnerExecutionOutcomeSchema,
-  PrivacyOwnerExecutionReceiptRequestSchema,
   PrivacyOwnerExecutionStatusSchema,
   PrivacyOwnerReconciliationResultSchema,
   PrivacyOwnerReconciliationStatusSchema,
@@ -65,7 +64,6 @@ export {
   privacyDispatchReceiptVerdict,
 } from './privacy-dispatch-consumers.ts';
 export type { PrivacyDispatchConsumer } from './privacy-dispatch-consumers.ts';
-export type { PrivacyOwnerExecutionReceiptRequest } from './privacy-owner-contract.ts';
 
 export {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
