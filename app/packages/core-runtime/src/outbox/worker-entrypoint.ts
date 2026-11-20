@@ -1,9 +1,9 @@
 export {
   SystemPrincipalContextResolver,
   SystemPrincipalContextResolverLive,
-  registerSystemWorkload,
   registeredAdmissionAuthContextRef,
 } from '../auth/system-principal-context.ts';
+export { registerSystemWorkload } from '../auth/system-workload-registration.ts';
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
 export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
 export { ActionPermissionCheckError } from '../actions/errors.ts';
