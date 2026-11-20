@@ -18,6 +18,7 @@ const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'lifecycle_policy_required',
   'lifecycle_policy_not_configured',
   'operation_not_published',
+  'call_not_declared',
   'module_not_active',
   'company_not_active',
   'integration_principal_not_active',
@@ -29,6 +30,7 @@ const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'route_id_conflict',
   'route_drift',
   'revision_not_advanced',
+  'revision_not_current',
   'outstanding_work',
   'route_not_enrolled',
 ]);
