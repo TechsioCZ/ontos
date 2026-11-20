@@ -14608,6 +14608,32 @@
             "role": "action",
             "scope": "system"
           }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.system-workload-enrollment.change",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.change-system-workload-enrollment",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
         }
       ],
       "moduleId": "core.identity"

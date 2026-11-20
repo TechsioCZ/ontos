@@ -6,7 +6,8 @@ import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Crypto, DateTime, Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../src/auth/system-principal-context.ts';
+import { makeSystemPrincipalContextResolver } from '../../src/auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../../src/auth/system-workload-registration.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';

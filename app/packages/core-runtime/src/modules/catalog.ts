@@ -241,6 +241,16 @@ export const buildInstalledModuleCatalog = (
       workerKeys.add(workerKey);
     }
   }
+  // `core.identity.change-system-workload-enrollment` relies on one owning module per system workload key.
+  const systemWorkloadKeys = new Set<string>();
+  for (const contract of byModuleId.values()) {
+    for (const workloadKey of contract.manifest.systemWorkloads ?? []) {
+      if (systemWorkloadKeys.has(workloadKey)) {
+        throw invalid('a system workload key may be declared by only one module in the installed catalog');
+      }
+      systemWorkloadKeys.add(workloadKey);
+    }
+  }
   return assembleInstalledModuleCatalog(
     [...byModuleId.values()],
     [...byAppId.values()].map((contract) => ({
@@ -258,6 +268,7 @@ const findConflictingDeploymentAppIds = (
   const byAppId = new Map<OntosDeploymentAppId, OntosModuleDeploymentContract[]>();
   const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
   const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
+  const bySystemWorkloadKey = new Map<string, OntosModuleDeploymentContract[]>();
   for (const contract of candidates) {
     const {
       deployment: { appId },
@@ -270,8 +281,16 @@ const findConflictingDeploymentAppIds = (
     for (const { workerKey } of contract.runtime.outboxSubscriptions) {
       byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
     }
+    for (const workloadKey of contract.manifest.systemWorkloads ?? []) {
+      bySystemWorkloadKey.set(workloadKey, [...(bySystemWorkloadKey.get(workloadKey) ?? []), contract]);
+    }
   }
-  for (const conflicts of [...byAppId.values(), ...byModuleId.values(), ...byWorkerKey.values()]) {
+  for (const conflicts of [
+    ...byAppId.values(),
+    ...byModuleId.values(),
+    ...byWorkerKey.values(),
+    ...bySystemWorkloadKey.values(),
+  ]) {
     if (conflicts.length > 1) {
       for (const contract of conflicts) {
         conflictingAppIds.add(contract.deployment.appId);

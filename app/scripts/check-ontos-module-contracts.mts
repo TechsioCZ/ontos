@@ -77,6 +77,7 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
 } from './scaffolding/shared.mts';
+import { systemWorkloadRegistrationIssues } from './system-workload-registrations.mts';
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
@@ -465,6 +466,36 @@ const validateSplitMarkerOwnership = (manifest: string, registration: string, de
     return yield* Effect.void;
   });
 
+/**
+ * The system workloads a module's own source registers are exactly the ones its manifest declares in
+ * `systemWorkloads`, so the published contract names every key Core may enroll a Tenant's system Principal for, and
+ * no other. Tests are not the module's source.
+ */
+const validateSystemWorkloadRegistrations = (
+  verticalDirectory: string,
+  appId: string,
+  derived: OntosModuleDeploymentContract,
+) =>
+  Effect.gen(function* validateSystemWorkloads() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const paths = (yield* walkSourceFiles(verticalDirectory)).filter(
+      (filePath) => !filePath.includes(`${path.sep}tests${path.sep}`),
+    );
+    const files = [];
+    for (const filePath of paths) {
+      const content = yield* fileSystem.readFileString(filePath);
+      if (content.includes('registerSystemWorkload')) {
+        files.push({ content, path: path.relative(verticalDirectory, filePath) });
+      }
+    }
+    const issues = systemWorkloadRegistrationIssues({
+      appId,
+      declared: derived.manifest.systemWorkloads ?? [],
+      files,
+    });
+    return issues.length === 0 ? yield* Effect.void : yield* failure(issues.join('\n'));
+  });
+
 const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contractUrl: string) =>
   Effect.gen(function* checkVerticalContract() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -529,6 +560,7 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     if (derived.deployment.appId !== appId || derived.manifest.module.id !== manifestModuleId) {
       return yield* failure(`${appId} authored module contract disagrees with generated owner metadata`);
     }
+    yield* validateSystemWorkloadRegistrations(verticalDirectory, appId, derived);
     yield* Effect.all([
       validateEmittedContract(verticalDirectory, 'dist', derived),
       validateEmittedContract(verticalDirectory, 'dist-cloudflare', derived),

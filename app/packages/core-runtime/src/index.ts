@@ -158,9 +158,10 @@ export {
   SystemPrincipalContextResolverLive,
   SystemPrincipalContextUnavailableError,
   makeSystemPrincipalContextResolver,
-  registerSystemWorkload,
   registeredAdmissionAuthContextRef,
 } from './auth/system-principal-context.ts';
+export { registerSystemWorkload } from './auth/system-workload-registration.ts';
+export type { SystemWorkloadRegistration } from './auth/system-workload-registration.ts';
 export {
   SupportRecoveryPrincipalContextDeniedError,
   SupportRecoveryPrincipalContextResolver,
@@ -173,7 +174,7 @@ export type {
   SupportRecoveryPrincipalContextResolverConfiguration,
   SupportRecoveryPrincipalContextResolverService,
 } from './auth/support-recovery-principal-context.ts';
-export type { SystemPrincipalContextError, SystemWorkloadRegistration } from './auth/system-principal-context.ts';
+export type { SystemPrincipalContextError } from './auth/system-principal-context.ts';
 export {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
@@ -961,6 +962,7 @@ export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
 export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
+export { changeSystemWorkloadEnrollmentAction } from './modules/actions/change-system-workload-enrollment.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';

@@ -94,6 +94,68 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
     reason: identityReason,
   }),
 ]);
+const SystemWorkloadModuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)).pipe(
+  Schema.brand('ModuleKey'),
+);
+const SystemWorkloadKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.brand('WorkloadKey'),
+);
+const systemWorkloadEnrollmentChange = {
+  moduleKey: SystemWorkloadModuleKeySchema,
+  reason: identityReason,
+  workloadKey: SystemWorkloadKeySchema,
+};
+/**
+ * `core.identity.change-system-workload-enrollment`: the Tenant's system Principal for one system workload an active
+ * module declares. No Principal id or kind is part of the request; Core decodes the exact keys.
+ */
+export const ChangeSystemWorkloadEnrollmentPayloadSchema = Schema.Union([
+  Schema.TaggedStruct('ENROLL', systemWorkloadEnrollmentChange),
+  Schema.TaggedStruct('END', systemWorkloadEnrollmentChange),
+]);
+const systemWorkloadBinding = Schema.Struct({ incarnation: Schema.String, workloadKey: SystemWorkloadKeySchema });
+const systemWorkloadCall = {
+  audience: AppIdSchema,
+  entrypointKey: EntrypointKeySchema,
+  schemaVersion: Schema.String,
+};
+/**
+ * The enrolled worker identity: every binding it holds, the ones this request added, and each owner workload still
+ * pending with its declared calls and why no installed receiver active for the Tenant serves them yet.
+ */
+const systemWorkloadEnrollment = {
+  added: Schema.Array(systemWorkloadBinding),
+  bindingIncarnation: Schema.String,
+  held: Schema.Array(systemWorkloadBinding),
+  moduleKey: SystemWorkloadModuleKeySchema,
+  pending: Schema.Array(
+    Schema.Struct({
+      calls: Schema.Array(Schema.Struct({ ...systemWorkloadCall, reason: Schema.String })),
+      workloadKey: SystemWorkloadKeySchema,
+    }),
+  ),
+  principalId: PrincipalIdSchema,
+  principalStatus: principalStatus.pick(['active', 'disabled']),
+  workloadKey: SystemWorkloadKeySchema,
+};
+export const SystemWorkloadEnrollmentResponseSchema = Schema.Union([
+  Schema.TaggedStruct('ENROLLED', systemWorkloadEnrollment),
+  Schema.TaggedStruct('ALREADY_ENROLLED', systemWorkloadEnrollment),
+  Schema.TaggedStruct('ENDED', {
+    bindingIncarnation: Schema.String,
+    /** The calls the module's installed contract declares for this identity; absent when it is no longer installed. */
+    declaredCalls: Schema.optionalKey(Schema.Array(Schema.Struct(systemWorkloadCall))),
+    moduleKey: SystemWorkloadModuleKeySchema,
+    pendingWork: Schema.Literal('not_visible_to_core'),
+    principalId: PrincipalIdSchema,
+    revoked: Schema.Array(systemWorkloadBinding),
+    workloadKey: SystemWorkloadKeySchema,
+  }),
+  Schema.TaggedStruct('NOT_ENROLLED', {
+    moduleKey: SystemWorkloadModuleKeySchema,
+    workloadKey: SystemWorkloadKeySchema,
+  }),
+]);
 export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
@@ -653,6 +715,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           headers: IdentityRequestHeadersSchema,
           payload: ChangePrincipalStatusPayloadSchema,
           success: PrincipalMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('changeSystemWorkloadEnrollment', '/auth/identity/system-workload-enrollments', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ChangeSystemWorkloadEnrollmentPayloadSchema,
+          success: SystemWorkloadEnrollmentResponseSchema,
         }),
       )
       .add(

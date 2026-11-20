@@ -6,10 +6,10 @@ import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-c
 import {
   SystemPrincipalContextResolver,
   SystemPrincipalContextResolverLive,
-  registerSystemWorkload,
   registeredAdmissionAuthContextRef,
   systemPrincipalContextResolverFromRepository,
 } from '../../src/auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../../src/auth/system-workload-registration.ts';
 
 import { CoreDatabase } from '../../src/db/client.ts';
 import { makeTestDatabase } from '../support/database.ts';
