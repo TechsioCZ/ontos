@@ -4,6 +4,7 @@ import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './te
 import { Effect, Schema } from 'effect';
 
 import { AccessKeySyntaxSchema, WorkloadKeySchema } from '../authorization/access-key-syntax.ts';
+import { shellHostedCoreOperations } from '../sdk/core-operations.ts';
 import { CoreOperationRouteSchema, RequirementCallerSchema } from '../sdk/index.ts';
 import type { AnyDeclaredCall, DeclaredCalls } from '../sdk/index.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
@@ -99,9 +100,25 @@ export type OntosOperationContract = typeof OntosOperationContractSchema.Type;
 const unique = (values: readonly string[]): boolean => new Set(values).size === values.length;
 const owns = (moduleId: string, key: string): boolean => key.startsWith(`${moduleId}.`);
 
-/** A provider whose module id is a Core module: Core itself satisfies it, never the composition. */
-export const isCoreOperationProvider = (provider: { readonly moduleId: string }): boolean =>
-  provider.moduleId.startsWith('core.');
+/** A Core operation the Shell host serves to modules over the module route (#1443): the closed set in `core-operations`. */
+export const isShellHostedCoreProvider = (provider: {
+  readonly entrypointKey: string;
+  readonly moduleId: string;
+}): boolean =>
+  shellHostedCoreOperations.some(
+    (operation) =>
+      operation.provider.moduleId === provider.moduleId && operation.provider.entrypointKey === provider.entrypointKey,
+  );
+
+/**
+ * A provider whose module id is a Core module that Core runs IN-PROCESS: Core itself satisfies it, never the
+ * composition. A Core operation the Shell host serves (`isShellHostedCoreProvider`) is reached over the module
+ * route like a vertical's, so it is not one.
+ */
+export const isCoreOperationProvider = (provider: {
+  readonly entrypointKey: string;
+  readonly moduleId: string;
+}): boolean => provider.moduleId.startsWith('core.') && !isShellHostedCoreProvider(provider);
 
 /**
  * Core runs a Core provider in-process with the execution's own principal, so its requirement names no
@@ -118,6 +135,9 @@ const requirementCallersIssue = (requirement: OntosOperationRequirement): string
   }
   if (callers.length === 0) {
     return `operation requirement ${requirement.key} must declare at least one caller or none at all`;
+  }
+  if (isShellHostedCoreProvider(requirement.provider) && callers.some(({ kind }) => kind !== 'person')) {
+    return `operation requirement ${requirement.key} on a Shell-hosted Core provider may only relay the requester (person)`;
   }
   return unique(callers.map(({ kind }) => kind))
     ? undefined
@@ -154,6 +174,11 @@ const requirementCallersIssues = (
   const callers = requirement.callers ?? [];
   if (callers.length === 0) {
     return [`${label}: requirement ${requirement.key} must declare the callers a call to its provider may carry`];
+  }
+  if (isShellHostedCoreProvider(requirement.provider) && callers.some(({ kind }) => kind !== 'person')) {
+    return [
+      `${label}: requirement ${requirement.key} on a Shell-hosted Core provider may only relay the requester (person)`,
+    ];
   }
   return callers.flatMap((caller) =>
     caller.kind === 'person' ||
