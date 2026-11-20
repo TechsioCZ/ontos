@@ -2135,6 +2135,37 @@ const membershipResult = Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSo
   items: [{ groupRef: selectedMembershipGroup, outcome: 'ALREADY_MANAGED' }],
   source: membershipPayload.source,
 });
+const organizationMembershipProfile = {
+  moduleId: 'commerce.customer-context',
+  resourceId: '10000000-0000-4000-8000-000000000031',
+  resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+  tenantId,
+};
+/** The same assignment of an organization's profile, stated under the organization's business processing. */
+const organizationMembershipEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...membershipEffect,
+  intent: {
+    _tag: 'CustomerGroupMembership',
+    payload: {
+      effectiveAt: membershipPayload.effectiveAt,
+      groupRef: selectedMembershipGroup,
+      manager: membershipPayload.manager,
+      operation: 'ASSIGN',
+      processingKind: 'ORG_BUSINESS_REFERENCE',
+      profile: { profileKind: 'COUNTERPARTY', profileRef: organizationMembershipProfile },
+      reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
+      route: membershipPayload.route,
+      source: membershipPayload.source,
+    },
+  },
+  ref: { ...membershipEffect.ref, originalTarget: organizationMembershipProfile },
+});
+const organizationMembershipReceipt = Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSourceResultSchema)({
+  items: [{ groupRef: selectedMembershipGroup, outcome: 'ALREADY_MANAGED' }],
+  processingKind: 'ORG_BUSINESS_REFERENCE',
+  reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
+  source: membershipPayload.source,
+});
 const membershipAdapter = Effect.gen(function* membershipAdapter() {
   const adapters = yield* makeSymmyPartyCommerceAdapters;
   const selected = adapters.find(
@@ -2307,6 +2338,33 @@ describe('current qualified Group Definition before first Membership write', () 
       const recovered = yield* adapter.recover({ ...original, originalRequestHash: 'a'.repeat(64) });
       expect(recovered.status).toBe('unavailable');
       expect(peer.membershipReceipt.sent).toHaveLength(0);
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('recovers an organization membership under its business processing, never as a person', () =>
+    Effect.gen(function* organizationRecovery() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.membershipReceipt.succeed(organizationMembershipReceipt);
+      const adapter = yield* membershipAdapter;
+      const recovered = yield* adapter.recover(
+        yield* withOriginalRequest({
+          ...input(),
+          effect: organizationMembershipEffect,
+          legalEntityId: sellingLegalEntityId,
+          routeKey: 'customerGroupCustomersBatch',
+        }),
+      );
+      expect(recovered.status).toBe('settled');
+      expect(peer.membershipReceipt.bodies).toEqual([
+        {
+          effectId: membershipPayload.source.effectId,
+          manager: membershipPayload.manager,
+          processingKind: 'ORG_BUSINESS_REFERENCE',
+          profile: { profileKind: 'COUNTERPARTY', profileRef: organizationMembershipProfile },
+          route: membershipPayload.route,
+        },
+      ]);
       expect(peer.membership.sent).toHaveLength(0);
     }).pipe(asSymmyWorker),
   );

@@ -2102,12 +2102,16 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
   if (pinnedHash !== input.originalRequestHash) {
     return unavailableRecovery;
   }
-  const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)({
+  const query = {
     effectId: payload.source.effectId,
     manager: payload.manager,
     profile: payload.profile,
     route: payload.route,
-  });
+  };
+  // The owner reads an organization's receipt under its business processing, never under a person's.
+  const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)(
+    payload.processingKind === undefined ? query : { ...query, processingKind: payload.processingKind },
+  );
   const requestHash = yield* readRequestHash(CustomerGroupMembershipSourceReceiptRequestSchema, request);
   const authorized = yield* freshRecoveryContext(
     crypto,
