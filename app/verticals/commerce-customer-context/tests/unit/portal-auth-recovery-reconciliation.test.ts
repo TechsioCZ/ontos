@@ -52,7 +52,9 @@ const makeReconciliationStore = (input: {
       peekDispatchedPasswordResetLedger: unusedRequiredMethod,
       peekEmailVerificationLedger: () => Effect.succeed(input.ledgerBinding),
       peekPasswordResetLedger: () => Effect.succeed(input.ledgerBinding),
-      readOtpChallenge: () => Effect.succeed(Option.none()),
+      readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+      readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+      readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
       recordRecoveryReconciliation: (conflict) =>
         Effect.sync(() => {
           recorded.push(conflict);
@@ -273,7 +275,9 @@ const makeIndeterminateStore = (input: {
       peekDispatchedPasswordResetLedger: () => Effect.succeed(input.dispatchedBinding),
       peekEmailVerificationLedger: unusedRequiredMethod,
       peekPasswordResetLedger: unusedRequiredMethod,
-      readOtpChallenge: unusedRequiredMethod,
+      readEmailVerificationIssuanceState: unusedRequiredMethod,
+      readOtpIssuanceState: unusedRequiredMethod,
+      readPasswordResetIssuanceState: unusedRequiredMethod,
       recordRecoveryReconciliation: (conflict) =>
         Effect.sync(() => {
           recorded.push(conflict);

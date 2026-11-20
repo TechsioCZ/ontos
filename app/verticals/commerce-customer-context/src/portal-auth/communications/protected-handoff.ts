@@ -17,15 +17,31 @@ import { OwnerSlotStop } from './owner-slot-stop.ts';
  * slot and only while Auth's Current lifecycle says the issuance is usable. Nothing is ever reproduced or reissued here;
  * a restart, an expiry or a spent issuance is a truthful stop and only Auth itself can issue a new one.
  *
+ * OPEN ITEM (D2): the last mile is single-instance and in-process. The protected handoff lives in this process's memory, so the
+ * completion of an owner-rendered slot works only when the delivery that held the issuance and the Communications worker that
+ * asks for the slot run in the SAME process; another instance, or a restart, answers NOT_RESUMABLE (a truthful stop, never a
+ * reproduction). A cross-process last mile needs a published contract between the two owners: either a published Auth Read of
+ * the issuance's Current lifecycle together with a published Auth completion Action that returns the slot value, or the
+ * protected value stored by Auth under its own key. None of that is published, so nothing here claims a deployment topology
+ * other than one process.
+ *
  * Per-flow restart recognition (AC-06): after a restart the issuance is recognised only as NOT_RESUMABLE. The verification
  * link is a stateless signed token, a reset link is not reproducible from Auth's digest-only ledger, and a one-time code is
  * never stored by Auth outside the provider, so none of the three can be rebuilt safely; Auth's answer is the stop.
  */
 
-/** What Auth's own ledger says about a held issuance now. A flow without a ledger answers CURRENT and relies on expiry and settlement. */
+/**
+ * What Auth's own ledger says about a held issuance now, as the real distinct state its rows prove: a spent issuance is CONSUMED,
+ * an expired one EXPIRED, a replaced one SUPERSEDED, and one its rows no longer say anything about NOT_RESUMABLE (never REVOKED:
+ * the ledger holds no revocation, only Auth's own `settle` does). A flow without a ledger answers CURRENT and relies on expiry
+ * and settlement.
+ */
 export type IssuanceLedgerProbe = (
   held: HeldIssuance,
-) => Effect.Effect<'CONSUMED' | 'CURRENT' | 'NO_LONGER_CURRENT', PortalAuthIssuanceStateUnavailable>;
+) => Effect.Effect<
+  'CONSUMED' | 'CURRENT' | 'EXPIRED' | 'NOT_RESUMABLE' | 'SUPERSEDED',
+  PortalAuthIssuanceStateUnavailable
+>;
 
 /** The provider-issuance context the enrollment gateway reserves BEFORE it asks the provider to issue, so the callback can name the issuance. */
 export interface IssuanceReservation {

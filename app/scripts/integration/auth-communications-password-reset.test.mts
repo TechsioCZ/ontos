@@ -223,7 +223,8 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued.reset).toHaveLength(1);
         const page = yield* (yield* historyReads(world)).list();
-        expect(page.items[0]?.headline).toMatchObject({ reasonCodes: ['SOURCE_STALE'] });
+        // the request states the issuance's own expiry (`validUntil`): past it the stop is the concrete SOURCE_NO_LONGER_VALID
+        expect(page.items[0]?.headline).toMatchObject({ reasonCodes: ['SOURCE_NO_LONGER_VALID'] });
         expect(page.items[0]?.headline.status).not.toBe('PROVIDER_ACCEPTED');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
@@ -240,7 +241,12 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       const outcome = yield* step(world, world.messageHandoff, yield* onlyIntent(world));
       expect(outcome.kind).not.toBe('HANDED_OFF');
       expect(world.mailbox).toHaveLength(0);
-      expect((yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes).toEqual(['SOURCE_STALE']);
+      // Auth's own reset ledger row is `consumed`: the stop is the concrete SOURCE_CONSUMED, never the generic category
+      const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
+      // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+      // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+      expect(codes[0]).toBe('SOURCE_CONSUMED');
+      expect(codes).not.toContain('SOURCE_STALE');
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -447,7 +453,11 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(outcome.kind).not.toBe('HANDED_OFF');
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued.reset).toHaveLength(1);
-        expect((yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes).toEqual(['SOURCE_STALE']);
+        const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
+        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+        expect(codes[0]).toBe('SOURCE_NOT_RESUMABLE');
+        expect(codes).not.toContain('SOURCE_STALE');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

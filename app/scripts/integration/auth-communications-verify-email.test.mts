@@ -195,6 +195,9 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(later.kind).not.toBe('HANDED_OFF');
         expect(expired.world.mailbox).toHaveLength(0);
         expect(expired.realm.issued.verification).toHaveLength(1);
+        expect((yield* (yield* historyReads(expired.world)).list()).items[0]?.headline.reasonCodes).toEqual([
+          'SOURCE_NO_LONGER_VALID',
+        ]);
 
         const spent = yield* setup();
         yield* spent.create();
@@ -205,9 +208,11 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         );
         expect(spent.world.mailbox).toHaveLength(0);
         expect(spent.realm.issued.verification).toHaveLength(1);
-        expect((yield* (yield* historyReads(spent.world)).list()).items[0]?.headline.reasonCodes).toEqual([
-          'SOURCE_STALE',
-        ]);
+        const codes = (yield* (yield* historyReads(spent.world)).list()).items[0]?.headline.reasonCodes ?? [];
+        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+        expect(codes[0]).toBe('SOURCE_CONSUMED');
+        expect(codes).not.toContain('SOURCE_STALE');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

@@ -13,8 +13,10 @@ import { portalAuthCommunicationRequest } from '../../../src/portal-auth/communi
 import { CommercePortalAuthIssuedFacts } from '../../../src/portal-auth/communications/issued-facts.ts';
 import { CommercePortalAuthTrustedScope } from '../../../src/portal-auth/communications/trusted-scope.ts';
 import type { PortalAuthTrustedScopeUnavailable } from '../../../src/portal-auth/communications/trusted-scope-unavailable.ts';
-import { withCause } from '../problems-support.ts';
 import type { CommercePortalAuthEmailDelivery } from './auth.ts';
+import { otpChallengeKeyOf } from './otp-challenge-key.ts';
+import type { CommercePortalAuthOtpChallengeKey } from './recovery/store-service.ts';
+import { withSafeCause } from './safe-failure.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-service.ts';
 
 /**
@@ -50,16 +52,27 @@ interface StoredIssuanceFacts {
 
 const STORED_FACTS_OPERATION = 'stored-issuance-facts';
 
+/**
+ * The stored facts of an issuance are read WITH the live secret in hand: the failure of a read keeps only its safe kind (and the
+ * SQLSTATE of a database failure), so no code, token, link or echoed statement can end up in an error cause, an Effect Cause or a
+ * log line.
+ */
 const storedFactsUnavailable = (cause?: unknown) =>
-  withCause(new PortalAuthCommunicationUnavailable({ operation: STORED_FACTS_OPERATION }), cause);
+  cause === undefined
+    ? new PortalAuthCommunicationUnavailable({ operation: STORED_FACTS_OPERATION })
+    : withSafeCause(new PortalAuthCommunicationUnavailable({ operation: STORED_FACTS_OPERATION }), cause);
 
 const storedFactsOf = Effect.fn('CommercePortalAuthCommunicationsEmail.storedFacts')(function* storedFacts(
   issued: IssuedSecret,
 ): Effect.fn.Return<StoredIssuanceFacts, PortalAuthCommunicationUnavailable, CommercePortalAuthIssuedFacts> {
   const store = yield* CommercePortalAuthIssuedFacts;
   if (issued.flow === 'otp') {
+    // the exact challenge of THIS issuance for THIS user: no key, no challenge, no submission
+    if (Option.isNone(issued.challengeKey)) {
+      return yield* storedFactsUnavailable();
+    }
     const challenge = yield* store
-      .locateOtpChallenge({ otp: issued.secret })
+      .locateOtpChallenge({ challengeKey: issued.challengeKey.value, otp: issued.secret, userId: issued.user.id })
       .pipe(Effect.mapError(storedFactsUnavailable));
     return yield* Option.match(challenge, {
       onNone: () => Effect.fail(storedFactsUnavailable()),
@@ -83,6 +96,8 @@ const storedFactsOf = Effect.fn('CommercePortalAuthCommunicationsEmail.storedFac
 });
 
 interface IssuedSecret {
+  /** For a one-time code: the two-factor challenge key the plugin stored it under; absent for a link and when it cannot be named. */
+  readonly challengeKey: Option.Option<CommercePortalAuthOtpChallengeKey>;
   readonly flow: PortalAuthEmailFlow;
   /** The provider token Auth's ledger knows the issuance by; absent for a one-time code. */
   readonly ledgerToken: Option.Option<Redacted.Redacted>;
@@ -167,7 +182,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       const issuance = yield* issuanceOf(issued, reservation, stored.expiresAt).pipe(
         Effect.provideContext(context),
         Effect.mapError((cause) =>
-          withCause(new PortalAuthCommunicationUnavailable({ operation: ISSUANCE_REFERENCE_OPERATION }), cause),
+          withSafeCause(new PortalAuthCommunicationUnavailable({ operation: ISSUANCE_REFERENCE_OPERATION }), cause),
         ),
       );
       // the request is validated against the published contract BEFORE the secret is held, so a refused request leaves nothing behind
@@ -191,6 +206,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       data: Parameters<CommercePortalAuthEmailDelivery['sendVerificationEmail']>[0],
     ) {
       yield* issue({
+        challengeKey: Option.none(),
         flow: 'verify-email',
         ledgerToken: Option.some(Redacted.make(data.token)),
         secret: Redacted.make(data.url),
@@ -201,6 +217,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       data: Parameters<CommercePortalAuthEmailDelivery['sendResetPassword']>[0],
     ) {
       yield* issue({
+        challengeKey: Option.none(),
         flow: 'reset-password',
         ledgerToken: Option.some(Redacted.make(data.token)),
         secret: Redacted.make(data.url),
@@ -209,8 +226,16 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
     }, run);
     const sendOTP = Effect.fnUntraced(function* sendOTPEffect(
       data: Parameters<CommercePortalAuthEmailDelivery['sendOTP']>[0],
+      ctx?: Parameters<CommercePortalAuthEmailDelivery['sendOTP']>[1],
     ) {
-      yield* issue({ flow: 'otp', ledgerToken: Option.none(), secret: Redacted.make(data.otp), user: data.user });
+      const challengeKey = yield* otpChallengeKeyOf(ctx);
+      yield* issue({
+        challengeKey,
+        flow: 'otp',
+        ledgerToken: Option.none(),
+        secret: Redacted.make(data.otp),
+        user: data.user,
+      });
     }, run);
     return { sendOTP, sendResetPassword, sendVerificationEmail } satisfies CommercePortalAuthEmailDelivery;
   }),

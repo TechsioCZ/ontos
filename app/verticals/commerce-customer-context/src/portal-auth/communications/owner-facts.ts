@@ -22,7 +22,7 @@ export const issuanceSourceStateOf = (currentness: IssuanceCurrentness): string 
     Match.when('CURRENT', () => PORTAL_AUTH_ISSUANCE_STATE.current),
     Match.when('EXPIRED', () => PORTAL_AUTH_ISSUANCE_STATE.expired),
     Match.when('CONSUMED', () => PORTAL_AUTH_ISSUANCE_STATE.consumed),
-    Match.whenOr('REVOKED', 'NO_LONGER_CURRENT', () => PORTAL_AUTH_ISSUANCE_STATE.revoked),
+    Match.when('REVOKED', () => PORTAL_AUTH_ISSUANCE_STATE.revoked),
     Match.when('SUPERSEDED', () => PORTAL_AUTH_ISSUANCE_STATE.superseded),
     Match.when('NOT_RESUMABLE', () => PORTAL_AUTH_ISSUANCE_STATE.notResumable),
     Match.exhaustive,

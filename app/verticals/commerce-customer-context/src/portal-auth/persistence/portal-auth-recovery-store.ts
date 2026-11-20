@@ -1,5 +1,5 @@
 import { isSqlError } from 'effect/sql/SqlError';
-import { and, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
 import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Ref, Schema } from 'effect';
 
 import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
@@ -8,12 +8,15 @@ import type {
   CommercePortalAuthRecoveryReconciliationConflictClass,
 } from '../../../api/portal-auth/provider/recovery/contracts.ts';
 import { withCause } from '../../../api/portal-auth/problems-support.ts';
+import { withSafeCause } from '../../../api/portal-auth/provider/safe-failure.ts';
 import { normalizeCommercePortalAuthEmail } from '../email-normalization.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/provider/recovery/unavailable.ts';
 import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import type {
+  CommercePortalAuthIssuanceLedgerState,
   CommercePortalAuthOtpChallenge,
+  CommercePortalAuthOtpChallengeKey,
   CommercePortalAuthRecoveryLedgerBinding,
   CommercePortalAuthRecoveryResetClaim,
   CommercePortalAuthRecoveryStore,
@@ -52,11 +55,38 @@ const VerificationLedgerRecordSchema = Schema.Struct({
 });
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
+/** Better Auth stores a two-factor code under `2fa-otp-<key>`; the realm hashes every verification identifier at rest. */
+const OTP_IDENTIFIER_PREFIX = '2fa-otp-';
+
+const digestBytes = (crypto: Crypto.Crypto, value: string) => crypto.digest('SHA-256', new TextEncoder().encode(value));
+
+const base64UrlOf = (bytes: Uint8Array): string =>
+  btoa(String.fromCodePoint(...bytes))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '');
+
+/** The code part of a stored one-time code (`<code>:<count>`). */
+const otpCodeOf = (value: string): string => value.split(':')[0] ?? '';
+
 /** The failed presentations Better Auth counted in a stored one-time code (`<code>:<count>`). */
 const otpAttemptsOf = (value: string): number => Math.trunc(Number(value.split(':')[1] ?? '')) || 0;
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   withCause(
+    new CommercePortalAuthRecoveryUnavailable({
+      operation,
+      reason: `Commerce portal authentication ${operation} could not complete`,
+    }),
+    cause,
+  );
+
+/**
+ * The unavailable of a path that handles a live secret (a one-time code, its challenge, a token): the failure is replaced by its
+ * safe kind, so no statement, parameter or echoed value can reach a log, an error `cause` or an Effect Cause.
+ */
+const unavailableSafe = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
+  withSafeCause(
     new CommercePortalAuthRecoveryUnavailable({
       operation,
       reason: `Commerce portal authentication ${operation} could not complete`,
@@ -204,6 +234,15 @@ const digestText = (crypto: Crypto.Crypto, value: string) =>
 
 const digestToken = (crypto: Crypto.Crypto, token: Redacted.Redacted) =>
   crypto.digest('SHA-256', new TextEncoder().encode(Redacted.value(token))).pipe(Effect.map(bytesToHex));
+
+/**
+ * Whether two secrets are the same, compared as their SHA-256 digests: the comparison never branches on where the secrets first
+ * differ, so its timing says nothing about a secret a caller does not already hold.
+ */
+const sameSecret = (crypto: Crypto.Crypto, left: string, right: string) =>
+  Effect.all([digestText(crypto, left), digestText(crypto, right)], { concurrency: 1 }).pipe(
+    Effect.map(([first, second]) => first === second),
+  );
 
 const epochMillis = (value: Date): number => {
   const date = DateTime.make(value);
@@ -1079,51 +1118,189 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
 
     const OTP_ONLY_DIGITS = /^\d{1,12}$/u;
 
+    /** The identifier Better Auth stores a two-factor code under: its key, hashed (SHA-256, base64url) as the realm configures. */
+    const storedOtpIdentifier = (key: string) =>
+      digestBytes(crypto, `${OTP_IDENTIFIER_PREFIX}${key}`).pipe(Effect.map(base64UrlOf));
+
+    /** The pending two-factor sign-in row names the user, so the user a sign-in challenge belongs to is read from it, never assumed. */
+    const challengeOwnedBy = Effect.fn('CommercePortalAuthRecoveryStore.challengeOwnedBy')(function* ownership(
+      key: CommercePortalAuthOtpChallengeKey,
+      userId: string,
+      now: Date,
+    ) {
+      if (key.kind === 'SESSION') {
+        // a session challenge key is `<user id>!<session id>`: the key itself carries the user it was issued for
+        return true;
+      }
+      const pending = yield* digestBytes(crypto, Redacted.value(key.cookie)).pipe(Effect.map(base64UrlOf));
+      const [row] = yield* database
+        .select({ value: verification.value })
+        .from(verification)
+        .where(and(eq(verification.identifier, pending), gt(verification.expiresAt, now)))
+        .orderBy(desc(verification.createdAt))
+        .limit(1);
+      return row !== undefined && row.value === userId;
+    });
+
     /**
-     * The stored challenge of a freshly issued one-time code. Better Auth keeps its verification identifiers hashed, so the
-     * challenge cannot be named by its session binding from here; the code the plugin stored (plain, `<code>:<failed attempts>`)
-     * is the link. A code that two live challenges hold at once cannot be told apart, so it names none: fail closed, never a
-     * guess at another account's challenge.
+     * The stored challenge of a freshly issued one-time code. The challenge is found by the KEY Better Auth stores the code under
+     * (its hashed identifier), bound to the user it was issued for, and the code is compared in this process in constant time:
+     * the code is never a bound parameter, so no failure of a statement can echo it. A challenge that holds another code, or
+     * belongs to another user, names none: fail closed, never a guess at another account's challenge.
      */
     const locateOtpChallenge = Effect.fn('CommercePortalAuthRecoveryStore.locateOtpChallenge')(
       function* locateOtpChallengeEffect(input: {
+        readonly challengeKey: CommercePortalAuthOtpChallengeKey;
         readonly otp: Redacted.Redacted;
+        readonly userId: string;
       }): Effect.fn.Return<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable> {
         const code = Redacted.value(input.otp);
         if (!OTP_ONLY_DIGITS.test(code)) {
           return Option.none();
         }
         const now = yield* DateTime.nowAsDate;
-        const matches = yield* database
-          .select({ expiresAt: verification.expiresAt, identifier: verification.identifier, value: verification.value })
+        const plainKey =
+          input.challengeKey.kind === 'SESSION'
+            ? `${input.userId}!${input.challengeKey.sessionId}`
+            : Redacted.value(input.challengeKey.cookie);
+        const [identifier, owned] = yield* Effect.all(
+          [
+            storedOtpIdentifier(plainKey).pipe(
+              Effect.mapError((cause) => unavailableSafe('otp-challenge-locate-hash', cause)),
+            ),
+            challengeOwnedBy(input.challengeKey, input.userId, now).pipe(
+              Effect.mapError((cause) => unavailableSafe('otp-challenge-locate-owner', cause)),
+            ),
+          ],
+          { concurrency: 1 },
+        );
+        if (!owned) {
+          return Option.none();
+        }
+        const [newest] = yield* database
+          .select({ expiresAt: verification.expiresAt, value: verification.value })
           .from(verification)
-          .where(and(like(verification.value, `${code}:%`), gt(verification.expiresAt, now)))
-          .pipe(Effect.mapError((cause) => unavailable('otp-challenge-locate', cause)));
-        const [only] = matches;
-        return matches.length === 1 && only !== undefined
+          .where(and(eq(verification.identifier, identifier), gt(verification.expiresAt, now)))
+          .orderBy(desc(verification.createdAt))
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailableSafe('otp-challenge-locate', cause)));
+        const matches =
+          newest !== undefined &&
+          (yield* sameSecret(crypto, otpCodeOf(newest.value), code).pipe(
+            Effect.mapError((cause) => unavailableSafe('otp-challenge-locate-compare', cause)),
+          ));
+        return newest !== undefined && matches
           ? Option.some({
-              attempts: otpAttemptsOf(only.value),
-              challenge: Redacted.make(only.identifier),
-              expiresAt: only.expiresAt,
+              attempts: otpAttemptsOf(newest.value),
+              challenge: Redacted.make(identifier),
+              expiresAt: newest.expiresAt,
             })
           : Option.none();
       },
     );
 
-    const readOtpChallenge = Effect.fn('CommercePortalAuthRecoveryStore.readOtpChallenge')(
-      function* readOtpChallengeEffect(input: {
+    const readOtpIssuanceState = Effect.fn('CommercePortalAuthRecoveryStore.readOtpIssuanceState')(
+      function* readOtpIssuanceStateEffect(input: {
         readonly challenge: Redacted.Redacted;
-      }): Effect.fn.Return<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable> {
+        readonly maxFailedAttempts: number;
+        readonly otp: Redacted.Redacted;
+      }): Effect.fn.Return<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const [row] = yield* database
+        const [newest] = yield* database
           .select({ expiresAt: verification.expiresAt, value: verification.value })
           .from(verification)
-          .where(and(eq(verification.identifier, Redacted.value(input.challenge)), gt(verification.expiresAt, now)))
+          .where(eq(verification.identifier, Redacted.value(input.challenge)))
+          .orderBy(desc(verification.createdAt))
           .limit(1)
-          .pipe(Effect.mapError((cause) => unavailable('otp-challenge-read', cause)));
-        return row === undefined
-          ? Option.none()
-          : Option.some({ attempts: otpAttemptsOf(row.value), challenge: input.challenge, expiresAt: row.expiresAt });
+          .pipe(Effect.mapError((cause) => unavailableSafe('otp-challenge-read', cause)));
+        // Better Auth deletes the challenge when a verification consumes it (and re-stores it only with a counted failure)
+        if (newest === undefined) {
+          return 'CONSUMED';
+        }
+        if (epochMillis(newest.expiresAt) <= epochMillis(now)) {
+          return 'EXPIRED';
+        }
+        const sameCode = yield* sameSecret(crypto, otpCodeOf(newest.value), Redacted.value(input.otp)).pipe(
+          Effect.mapError((cause) => unavailableSafe('otp-challenge-read-compare', cause)),
+        );
+        if (!sameCode) {
+          return 'SUPERSEDED';
+        }
+        return otpAttemptsOf(newest.value) < input.maxFailedAttempts ? 'CURRENT' : 'CONSUMED';
+      },
+    );
+
+    const readEmailVerificationIssuanceState = Effect.fn(
+      'CommercePortalAuthRecoveryStore.readEmailVerificationIssuanceState',
+    )(function* readEmailVerificationIssuanceStateEffect(input: {
+      readonly providerSubjectId: string;
+      readonly token: Redacted.Redacted;
+    }): Effect.fn.Return<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable> {
+      const now = yield* DateTime.nowAsDate;
+      const digest = yield* digestToken(crypto, input.token).pipe(
+        Effect.mapError((cause) => unavailableSafe('verification-state-hash', cause)),
+      );
+      const rows = yield* database
+        .select({ expiresAt: verification.expiresAt, value: verification.value })
+        .from(verification)
+        .where(eq(verification.identifier, emailVerificationIdentifier(digest)))
+        .pipe(Effect.mapError((cause) => unavailableSafe('verification-state-read', cause)));
+      const decoded = rows.flatMap((row) => {
+        const record = decodeVerificationLedgerRecord(row.value);
+        return Option.isSome(record) ? [{ ...record.value, expiresAt: row.expiresAt }] : [];
+      });
+      const own = decoded.find(({ providerSubjectId }) => providerSubjectId === input.providerSubjectId);
+      if (own !== undefined) {
+        return epochMillis(own.expiresAt) > epochMillis(now) ? 'CURRENT' : 'EXPIRED';
+      }
+      if (decoded.length > 0) {
+        // the same token is now registered for another binding: a newer issuance replaced it
+        return 'SUPERSEDED';
+      }
+      // the ledger row is deleted when the verification completes, when a newer link replaces it and when it expires; only the
+      // account says which: a verified address means this verification was spent, anything else is not located
+      const [account] = yield* database
+        .select({ emailVerified: user.emailVerified })
+        .from(user)
+        .where(eq(user.id, input.providerSubjectId))
+        .limit(1)
+        .pipe(Effect.mapError((cause) => unavailableSafe('verification-state-account', cause)));
+      return account?.emailVerified === true ? 'CONSUMED' : 'NOT_LOCATED';
+    });
+
+    const readPasswordResetIssuanceState = Effect.fn('CommercePortalAuthRecoveryStore.readPasswordResetIssuanceState')(
+      function* readPasswordResetIssuanceStateEffect(input: {
+        readonly providerSubjectId: string;
+        readonly token: Redacted.Redacted;
+      }): Effect.fn.Return<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable> {
+        const now = yield* DateTime.nowAsDate;
+        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
+          Effect.mapError((cause) => unavailableSafe('password-reset-state-hash', cause)),
+        );
+        const [row] = yield* database
+          .select({
+            expiresAt: recoveryResetLedger.expiresAt,
+            providerSubjectId: recoveryResetLedger.providerSubjectId,
+            state: recoveryResetLedger.state,
+          })
+          .from(recoveryResetLedger)
+          .where(eq(recoveryResetLedger.tokenDigest, tokenDigest))
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailableSafe('password-reset-state-read', cause)));
+        if (row === undefined) {
+          return 'NOT_LOCATED';
+        }
+        // a terminal row cleared its binding when it was written, so its state is read before the binding
+        if (row.state === RESET_LEDGER_STATE_CONSUMED || row.state === RESET_LEDGER_STATE_DISPATCHED) {
+          return 'CONSUMED';
+        }
+        if (row.state === RESET_LEDGER_STATE_EXPIRED || epochMillis(row.expiresAt) <= epochMillis(now)) {
+          return 'EXPIRED';
+        }
+        if (row.state !== RESET_LEDGER_STATE_PENDING) {
+          return 'NOT_LOCATED';
+        }
+        return row.providerSubjectId === input.providerSubjectId ? 'CURRENT' : 'SUPERSEDED';
       },
     );
 
@@ -1138,7 +1315,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       peekDispatchedPasswordResetLedger,
       peekEmailVerificationLedger,
       peekPasswordResetLedger,
-      readOtpChallenge,
+      readEmailVerificationIssuanceState,
+      readOtpIssuanceState,
+      readPasswordResetIssuanceState,
       recordRecoveryReconciliation,
       registerEmailVerificationToken,
       registerPasswordResetToken,

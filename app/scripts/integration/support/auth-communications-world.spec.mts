@@ -1,3 +1,11 @@
+/**
+ * OPEN ITEM (D3): these end-to-end suites reach into the PRIVATE source and tests of two verticals (Communications and
+ * Commerce Customer Context, with its Portal Auth realm) by relative path, because neither of them publishes a testing seam for what
+ * they need. The established seam is `@app/<vertical>/testing/*` exports (a vertical's own labelled doubles and worlds); until
+ * Communications and Commerce Customer Context publish theirs, this suite is a test of the INTEGRATION and must be read as
+ * coupled to those internals: a refactor of either vertical's private files is expected to break it, and the fix is to publish
+ * the seam, never to widen the private reach.
+ */
 import { CommunicationRequestSchema } from '../../../packages/communications-contracts/src/communication-request.ts';
 import type { CommunicationRequestEncoded } from '../../../packages/communications-contracts/src/communication-request.ts';
 import { NodeCrypto } from '@effect/platform-node';

@@ -39,14 +39,15 @@ export interface HeldIssuance {
  * - EXPIRED / CONSUMED / REVOKED: no longer usable (CONSUMED also covers a one-time code Better Auth spent or exhausted at its
  *   failed-attempt limit);
  * - SUPERSEDED: a newer issuance of the same flow and subject replaced it;
- * - NO_LONGER_CURRENT: Auth's ledger no longer offers it (consumed, revoked or superseded; the ledger does not say which);
- * - NOT_RESUMABLE: this runtime does not hold the issuance (a restart or another instance) and never reproduces it.
+ * - NOT_RESUMABLE: this runtime does not hold the issuance (a restart or another instance), or Auth's own rows no longer say
+ *   anything about it (it was not located); it is never reproduced and never reported as revoked.
+ * Every state is a fact Auth read, never a guess: a ledger that cannot tell which of the terminal states applies reports
+ * NOT_RESUMABLE, the one state that claims nothing more than "Auth cannot continue this issuance".
  */
 export const IssuanceCurrentnessSchema = Schema.Literals([
   'CONSUMED',
   'CURRENT',
   'EXPIRED',
-  'NO_LONGER_CURRENT',
   'NOT_RESUMABLE',
   'REVOKED',
   'SUPERSEDED',

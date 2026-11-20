@@ -1,7 +1,11 @@
+import { createHash, randomUUID } from 'node:crypto';
+
+import { inArray, like } from 'drizzle-orm';
 import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
+import { verification } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
 import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
 import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
 import { privacyNotAllowed } from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
@@ -33,6 +37,10 @@ import {
  * path, the trusted language, the provider. Every text is FICTIONAL; no approved copy exists.
  */
 
+const MINE = 'user-mine';
+const FOREIGN = 'user-foreign';
+/** How Better Auth stores a verification identifier at rest in this realm: SHA-256, base64url. */
+const hashed = (identifier: string) => createHash('sha256').update(identifier).digest('base64url');
 const POLL_MS = 25;
 const POLL_LIMIT = 200;
 
@@ -177,6 +185,9 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         }).pipe(Effect.provide(TestClock.layer()));
         expect(later.kind).not.toBe('HANDED_OFF');
         expect(expired.world.mailbox).toHaveLength(0);
+        expect((yield* (yield* historyReads(expired.world)).list()).items[0]?.headline.reasonCodes).toEqual([
+          'SOURCE_NO_LONGER_VALID',
+        ]);
 
         const consumed = yield* setup();
         yield* sendCode(consumed.world, consumed.realm, consumed.challenge.headers);
@@ -197,9 +208,11 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         ).not.toBe('HANDED_OFF');
         expect(consumed.world.mailbox).toHaveLength(0);
         expect(consumed.realm.issued).toHaveLength(1);
-        expect((yield* (yield* historyReads(consumed.world)).list()).items[0]?.headline.reasonCodes).toEqual([
-          'SOURCE_STALE',
-        ]);
+        const codes = (yield* (yield* historyReads(consumed.world)).list()).items[0]?.headline.reasonCodes ?? [];
+        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+        expect(codes[0]).toBe('SOURCE_CONSUMED');
+        expect(codes).not.toContain('SOURCE_STALE');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -212,6 +225,11 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
       const older = yield* onlyIntent(world, 0);
       const newer = yield* onlyIntent(world, 1);
       expect((yield* step(world, world.messageHandoff, older)).kind).not.toBe('HANDED_OFF');
+      const reasons = (yield* (yield* historyReads(world)).list()).items.flatMap(
+        ({ headline }) => headline.reasonCodes,
+      );
+      expect(reasons[0]).toBe('SOURCE_SUPERSEDED');
+      expect(reasons).not.toContain('SOURCE_STALE');
       expect((yield* step(world, world.messageHandoff, newer)).kind).toBe('HANDED_OFF');
       expect(world.mailbox).toHaveLength(1);
       expect(codeIn(textOf(world.mailbox[0]))).toBe(realm.issued[1]);
@@ -230,6 +248,11 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         expect((yield* step(world, world.messageHandoff, intentId)).kind).not.toBe('HANDED_OFF');
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued).toHaveLength(1);
+        const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
+        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
+        expect(codes[0]).toBe('SOURCE_NOT_RESUMABLE');
+        expect(codes).not.toContain('SOURCE_STALE');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -299,6 +322,111 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         expect(unbound.world.mailbox).toHaveLength(0);
         expect(unbound.world.privacyQueries).toHaveLength(0);
         expect((yield* (yield* historyReads(unbound.world)).list()).items[0]?.headline.status).toBe('SUPPRESSED');
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  /**
+   * [#1406 binding] The challenge of a code is found by the KEY Better Auth stores it under and bound to the user, on the real
+   * Postgres schema: another live challenge that holds the SAME code can neither fail the lookup closed nor be taken for it.
+   * The rows below are exactly the shapes the two-factor plugin writes (a hashed `2fa-otp-<key>` identifier holding
+   * `<code>:<count>`, and the pending sign-in row that names the user).
+   */
+  it.live(
+    '[AUTH-COM-07] a foreign live challenge holding the SAME code never cross-binds and never blocks the real one',
+    () =>
+      Effect.gen(function* binding() {
+        const { realm: otpRealm } = yield* setup();
+        const { database, store } = otpRealm.realm;
+        const code = '613204';
+        const mine = `cookie-${randomUUID()}`;
+        const foreign = `cookie-${randomUUID()}`;
+        const now = yield* DateTime.nowAsDate;
+        const future = DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { minutes: 10 }));
+        const row = (identifier: string, value: string) => ({
+          createdAt: now,
+          expiresAt: future,
+          id: randomUUID(),
+          identifier: hashed(identifier),
+          updatedAt: now,
+          value,
+        });
+        const rows = [
+          row(`2fa-otp-${mine}`, `${code}:0`),
+          row(mine, MINE),
+          row(`2fa-otp-${foreign}`, `${code}:0`),
+          row(foreign, FOREIGN),
+        ];
+        yield* database.executor.insert(verification).values(rows);
+        yield* Effect.addFinalizer(() =>
+          database.executor
+            .delete(verification)
+            .where(
+              inArray(
+                verification.id,
+                rows.map(({ id }) => id),
+              ),
+            )
+            .pipe(Effect.orDie),
+        );
+        const locate = (cookie: string, userId: string, otp = code) =>
+          store.locateOtpChallenge({
+            challengeKey: { cookie: Redacted.make(cookie), kind: 'SIGN_IN' },
+            otp: Redacted.make(otp),
+            userId,
+          });
+        // two live challenges hold the same code: each user still finds exactly its OWN challenge
+        expect(Option.isSome(yield* locate(mine, MINE))).toBe(true);
+        expect(Option.isSome(yield* locate(foreign, FOREIGN))).toBe(true);
+        expect((yield* locate(mine, MINE)).pipe(Option.map(({ challenge }) => Redacted.value(challenge)))).toEqual(
+          Option.some(hashed(`2fa-otp-${mine}`)),
+        );
+        // a challenge named by another user's cookie is never taken for this user's, whatever code it holds
+        expect(Option.isNone(yield* locate(foreign, MINE))).toBe(true);
+        expect(Option.isNone(yield* locate(mine, FOREIGN))).toBe(true);
+        // another code, or a key no row exists for, locates nothing
+        expect(Option.isNone(yield* locate(mine, MINE, '000000'))).toBe(true);
+        expect(Option.isNone(yield* locate(`cookie-${randomUUID()}`, MINE))).toBe(true);
+        // a session challenge is keyed by the user too: another user's id can never name this one
+        expect(
+          Option.isNone(
+            yield* store.locateOtpChallenge({
+              challengeKey: { kind: 'SESSION', sessionId: 'session-1' },
+              otp: Redacted.make(code),
+              userId: MINE,
+            }),
+          ),
+        ).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AUTH-COM-07] the state of a code is read from its real challenge: current, superseded by a newer code, then consumed',
+    () =>
+      Effect.gen(function* states() {
+        const { challenge, realm, world } = yield* setup();
+        yield* sendCode(world, realm, challenge.headers);
+        yield* sendCode(world, realm, challenge.headers);
+        const [first, second] = realm.issued;
+        expect(first).not.toBe(second);
+        // the plugin stored both codes under the SAME challenge; the test reads that challenge's stored identifier
+        const [stored] = yield* realm.realm.database.executor
+          .select({ identifier: verification.identifier })
+          .from(verification)
+          .where(like(verification.value, `${second ?? ''}:%`));
+        const stateOf = (code: string | undefined) =>
+          realm.realm.store.readOtpIssuanceState({
+            challenge: Redacted.make(stored?.identifier ?? ''),
+            maxFailedAttempts: 5,
+            otp: Redacted.make(code ?? ''),
+          });
+        expect(yield* stateOf(second)).toBe('CURRENT');
+        expect(yield* stateOf(first)).toBe('SUPERSEDED');
+        yield* Effect.promise(
+          async () =>
+            await realm.auth.api.verifyTwoFactorOTP({ body: { code: second ?? '' }, headers: challenge.headers }),
+        );
+        // the verification consumed the challenge: no row is left, which is "spent", never "current" or "revoked"
+        expect(yield* stateOf(second)).toBe('CONSUMED');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

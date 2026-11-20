@@ -50,6 +50,8 @@ const held = (
   secret: Redacted.make(SECRET),
 });
 
+type ProbedState = Effect.Success<ReturnType<IssuanceLedgerProbe>>;
+const probed = (state: ProbedState) => state;
 const current: IssuanceLedgerProbe = () => Effect.succeed('CURRENT');
 const withHandoff = (probe: IssuanceLedgerProbe = current) =>
   Effect.gen(function* handoff() {
@@ -138,41 +140,44 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect('a new verification link or code supersedes the earlier one of the same subject and flow, and no other', () =>
-    Effect.gen(function* supersede() {
-      const handoff = yield* withHandoff();
-      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-      yield* handoff.hold(held('otp', 'pa-a'), { supersede: true });
-      yield* handoff.hold(held('otp', 'pa-b', { subject: 'subject-2' }), { supersede: true });
-      yield* handoff.hold(held('otp', 'pa-c'), { supersede: true });
-      expect(yield* handoff.currentness(ref('pa-a'))).toBe('SUPERSEDED');
-      expect(yield* handoff.currentness(ref('pa-b'))).toBe('CURRENT');
-      expect(yield* handoff.currentness(ref('pa-c'))).toBe('CURRENT');
-    }).pipe(Effect.provide(TestClock.layer())),
+  it.effect(
+    'a new verification link or code supersedes the earlier one of the same subject and flow, and no other',
+    () =>
+      Effect.gen(function* supersede() {
+        const handoff = yield* withHandoff();
+        yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+        yield* handoff.hold(held('otp', 'pa-a'), { supersede: true });
+        yield* handoff.hold(held('otp', 'pa-b', { subject: 'subject-2' }), { supersede: true });
+        yield* handoff.hold(held('otp', 'pa-c'), { supersede: true });
+        expect(yield* handoff.currentness(ref('pa-a'))).toBe('SUPERSEDED');
+        expect(yield* handoff.currentness(ref('pa-b'))).toBe('CURRENT');
+        expect(yield* handoff.currentness(ref('pa-c'))).toBe('CURRENT');
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect(
-    "reads Auth's own ledger: an issuance the ledger no longer offers is NO_LONGER_CURRENT, an unreadable ledger is uncertainty",
+    "reads Auth's own ledger: each real end the ledger proves is its own state, an unreadable ledger is uncertainty",
     () =>
       Effect.gen(function* ledger() {
-        const offered = { unreadable: false, value: true };
+        const offered = { unreadable: false, value: probed('CURRENT') };
         const handoff = yield* withHandoff((entry) =>
           offered.unreadable
             ? Effect.fail(new PortalAuthIssuanceStateUnavailable({ flow: entry.issuance.flow }))
-            : Effect.succeed(offered.value ? 'CURRENT' : 'NO_LONGER_CURRENT'),
+            : Effect.succeed(offered.value),
         );
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
         yield* handoff.hold(held('verify-email', 'pa-l'), { supersede: true });
         expect(yield* handoff.currentness(ref('pa-l'))).toBe('CURRENT');
-        offered.value = false;
-        expect(yield* handoff.currentness(ref('pa-l'))).toBe('NO_LONGER_CURRENT');
+        for (const state of ['CONSUMED', 'EXPIRED', 'NOT_RESUMABLE', 'SUPERSEDED'] as const) {
+          offered.value = state;
+          expect(yield* handoff.currentness(ref('pa-l'))).toBe(state);
+        }
         offered.unreadable = true;
         expect(
           Schema.is(PortalAuthIssuanceStateUnavailable)(yield* Effect.flip(handoff.currentness(ref('pa-l')))),
         ).toBe(true);
-        expect(issuanceSourceStateOf('NO_LONGER_CURRENT')).toBe(
-          'commerce.customer-context.portal-auth.issuance-revoked',
-        );
+        // only Auth's own settlement is a revocation; the ledger never reports one
+        expect(issuanceSourceStateOf('REVOKED')).toBe('commerce.customer-context.portal-auth.issuance-revoked');
       }).pipe(Effect.provide(TestClock.layer())),
   );
 

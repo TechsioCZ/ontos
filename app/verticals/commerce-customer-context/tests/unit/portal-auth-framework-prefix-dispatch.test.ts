@@ -102,7 +102,9 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
       findAccountSubjectForEmail: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       locateOtpChallenge: () => Effect.succeed(Option.none()),
       peekDispatchedPasswordResetLedger: () => Effect.die('unused: this test drives email verification only'),
-      readOtpChallenge: () => Effect.succeed(Option.none()),
+      readEmailVerificationIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+      readOtpIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
+      readPasswordResetIssuanceState: () => Effect.succeed('NOT_LOCATED' as const),
       // Read by the evidence path, not by detection: the verify route names the ledger subject on
       // its intent row. This route's ledger holds no binding for the token the test submits.
       peekEmailVerificationLedger: () => Effect.succeed(Option.none()),

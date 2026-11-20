@@ -1,14 +1,20 @@
+import { inspect } from 'node:util';
+
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+import { withCause } from '../../api/portal-auth/problems-support.ts';
 import { ledgerProbeOver } from '../../api/portal-auth/provider/communications-ledger-probe.ts';
-import { COMMERCE_PORTAL_AUTH_MFA_POLICY } from '../../api/portal-auth/provider/mfa/plugin.ts';
+import { CommercePortalAuthRecoveryUnavailable } from '../../api/portal-auth/provider/recovery/unavailable.ts';
+import type { CommercePortalAuthIssuanceLedgerState } from '../../api/portal-auth/provider/recovery/store-service.ts';
 import { PORTAL_AUTH_ISSUANCE_STATE, PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../shared/portal-auth-communications.ts';
 import { CommercePortalAuthCommunicationOutcomeReader } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
+import { IssuanceCurrentnessSchema } from '../../src/portal-auth/communications/issuance.ts';
 import type { HeldIssuance, IssuanceCurrentness } from '../../src/portal-auth/communications/issuance.ts';
+import { PortalAuthIssuanceStateUnavailable } from '../../src/portal-auth/communications/issuance-state-unavailable.ts';
 import { issuanceSourceStateOf } from '../../src/portal-auth/communications/owner-facts.ts';
 import { OwnerSlotStopReasonSchema } from '../../src/portal-auth/communications/owner-slot-stop.ts';
 import {
@@ -45,29 +51,31 @@ const heldOf = (flow: PortalAuthEmailFlow, ref: string, ledgerToken?: Redacted.R
 };
 const OTP_CHALLENGE = Redacted.make('fictional-challenge-id');
 
-const storeOver = (challenge: Option.Option<{ attempts: number }>) => ({
-  peekEmailVerificationLedger: () => Effect.succeed(Option.none()),
-  peekPasswordResetLedger: () => Effect.succeed(Option.none()),
-  readOtpChallenge: ({ challenge: key }: { challenge: Redacted.Redacted }) =>
-    Effect.succeed(
-      challenge.pipe(
-        Option.map(({ attempts }) => ({
-          attempts,
-          challenge: key,
-          expiresAt: new Date('2026-11-19T10:10:00Z'),
-        })),
-      ),
-    ),
-});
+/** A store whose three issuance reads answer the scripted real state of Auth's own rows. */
+const storeAnswering = (state: CommercePortalAuthIssuanceLedgerState) => {
+  const reads: string[] = [];
+  const read = (flow: string) => () =>
+    Effect.sync(() => {
+      reads.push(flow);
+      return state;
+    });
+  return {
+    reads,
+    store: {
+      readEmailVerificationIssuanceState: read('verify-email'),
+      readOtpIssuanceState: read('otp'),
+      readPasswordResetIssuanceState: read('reset-password'),
+    },
+  };
+};
 
 describe('Portal Auth issuance states and the one-time code state (#1406)', () => {
-  it('every lifecycle end is its OWN source state key, and every owner-slot stop reason is distinct', () => {
+  it('every lifecycle end is its OWN source state key, and no state is shared or a catch-all', () => {
     const states = (
       [
         'CONSUMED',
         'CURRENT',
         'EXPIRED',
-        'NO_LONGER_CURRENT',
         'NOT_RESUMABLE',
         'REVOKED',
         'SUPERSEDED',
@@ -76,28 +84,72 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
     expect(states.filter((state) => state !== PORTAL_AUTH_ISSUANCE_STATE.current)).toContain(
       PORTAL_AUTH_ISSUANCE_STATE.superseded,
     );
-    // NO_LONGER_CURRENT is the ledger's own "not offered any more" (it cannot say which): it shares REVOKED's key, nothing else shares one
+    // the ledger's "not offered any more" no longer exists as a state: it could not say which end it was, so it is never mapped to REVOKED
     expect(new Set(states).size).toBe(6);
+    expect(IssuanceCurrentnessSchema.literals).not.toContain('NO_LONGER_CURRENT');
     expect(OwnerSlotStopReasonSchema.literals).toContain('SUPERSEDED');
+    expect(OwnerSlotStopReasonSchema.literals).not.toContain('NO_LONGER_CURRENT');
   });
 
+  it.effect("the probe reports each REAL state of Auth's rows as its own state and never as revoked", () =>
+    Effect.gen(function* realStates() {
+      const expected = [
+        ['CONSUMED', 'CONSUMED'],
+        ['CURRENT', 'CURRENT'],
+        ['EXPIRED', 'EXPIRED'],
+        ['NOT_LOCATED', 'NOT_RESUMABLE'],
+        ['SUPERSEDED', 'SUPERSEDED'],
+      ] as const satisfies readonly (readonly [CommercePortalAuthIssuanceLedgerState, IssuanceCurrentness])[];
+      for (const flow of ['verify-email', 'reset-password', 'otp'] as const) {
+        for (const [state, probed] of expected) {
+          const { reads, store } = storeAnswering(state);
+          expect(yield* ledgerProbeOver(store)(heldOf(flow, `pa-${flow}`, OTP_CHALLENGE))).toBe(probed);
+          // exactly the read of THIS flow was made: the flows never read each other's rows
+          expect(reads).toEqual([flow]);
+          expect(issuanceSourceStateOf(probed)).not.toBe(PORTAL_AUTH_ISSUANCE_STATE.revoked);
+        }
+      }
+    }),
+  );
+
   it.effect(
-    'a one-time code is CURRENT only while its two-factor challenge exists below the plugin failed-attempt limit',
+    'an issuance without a ledger token was not located: NOT_RESUMABLE, never revoked, and nothing is read',
     () =>
-      Effect.gen(function* otpState() {
-        const held = heldOf('otp', 'pa-otp-1', OTP_CHALLENGE);
-        const limit = COMMERCE_PORTAL_AUTH_MFA_POLICY.maxFailedAttempts;
-        expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: 0 })))(held)).toBe('CURRENT');
-        expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: limit - 1 })))(held)).toBe('CURRENT');
-        // exhausted: the plugin refuses it, so it is never sent as a valid code
-        expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: limit })))(held)).toBe('CONSUMED');
-        // consumed by a verification (the plugin deletes the challenge) or spent
-        expect(yield* ledgerProbeOver(storeOver(Option.none()))(held)).toBe('CONSUMED');
-        // a code whose challenge was never located has nothing to be current against
-        expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: 0 })))(heldOf('otp', 'pa-otp-2'))).toBe(
-          'NO_LONGER_CURRENT',
-        );
+      Effect.gen(function* notLocated() {
+        for (const flow of ['verify-email', 'reset-password', 'otp'] as const) {
+          const { reads, store } = storeAnswering('CURRENT');
+          const state = yield* ledgerProbeOver(store)(heldOf(flow, `pa-${flow}-1`));
+          expect(state).toBe('NOT_RESUMABLE');
+          expect(issuanceSourceStateOf(state)).toBe(PORTAL_AUTH_ISSUANCE_STATE.notResumable);
+          expect(reads).toEqual([]);
+        }
       }),
+  );
+
+  it.effect('an unreadable ledger is uncertainty carrying only the safe kind of the failure', () =>
+    Effect.gen(function* unreadable() {
+      const secret = 'fictional-secret';
+      const failure = () =>
+        Effect.fail(
+          withCause(
+            new CommercePortalAuthRecoveryUnavailable({
+              operation: 'ledger-read',
+              reason: 'The ledger is unavailable',
+            }),
+            new Error(`select ... params: ${secret}`),
+          ),
+        );
+      const failing = {
+        readEmailVerificationIssuanceState: failure,
+        readOtpIssuanceState: failure,
+        readPasswordResetIssuanceState: failure,
+      };
+      for (const flow of ['verify-email', 'reset-password', 'otp'] as const) {
+        const unavailable = yield* Effect.flip(ledgerProbeOver(failing)(heldOf(flow, `pa-${flow}-2`, OTP_CHALLENGE)));
+        expect(Schema.is(PortalAuthIssuanceStateUnavailable)(unavailable)).toBe(true);
+        expect(inspect(unavailable, { depth: 8, showHidden: true })).not.toContain(secret);
+      }
+    }),
   );
 
   it.effect('a restart (a fresh handoff that never held the issuance) is NOT_RESUMABLE and reveals nothing', () =>
