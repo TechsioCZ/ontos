@@ -68,6 +68,7 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import { assetCurrentRead } from '../../src/generated-reads/asset-current.ts';
 import { assetDownloadRead } from '../../src/generated-reads/asset-download.ts';
 import { assetMetadataRead } from '../../src/generated-reads/asset-metadata.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
@@ -149,6 +150,7 @@ const PROPOSE_HOLDER = uid(14);
 const INTEGRITY_HOLDER = uid(15);
 const DOWNLOAD_HOLDER = uid(16);
 const OTHER_DOWNLOAD_HOLDER = uid(17);
+const CURRENT_HOLDER = uid(18);
 const SYSTEM_MACHINE = uid(20);
 const INTEGRATION_MACHINE = uid(21);
 const IMPORT_MACHINE = uid(22);
@@ -159,6 +161,7 @@ const METADATA = 'core.media.asset-metadata.read';
 const RENAME = 'core.media.display-filename.rename';
 const INTEGRITY = 'core.media.asset-integrity.fail';
 const DOWNLOAD = 'core.media.asset-download.read';
+const CURRENT = 'core.media.asset-current.read';
 const INGEST = 'core.media.ingest';
 const INTEGRITY_WORKLOAD = 'core.media.integrity';
 
@@ -172,6 +175,7 @@ const mediaModules: readonly AccessCatalogModule[] = [
       recordAssetIntegrityFailureAction.descriptor,
       assetMetadataRead.descriptor,
       assetDownloadRead.descriptor,
+      assetCurrentRead.descriptor,
     ].flatMap((descriptor) =>
       descriptor.accessDeclaration === undefined
         ? []
@@ -492,6 +496,7 @@ const seedMediaTenant = Effect.fn('CoreMediaAuthorizationTest.seed')(function* s
       { kind: 'human', principalId: INTEGRITY_HOLDER },
       { kind: 'human', principalId: DOWNLOAD_HOLDER },
       { kind: 'human', principalId: OTHER_DOWNLOAD_HOLDER },
+      { kind: 'human', principalId: CURRENT_HOLDER },
       { kind: 'system', principalId: SYSTEM_MACHINE },
       { kind: 'integration', principalId: INTEGRATION_MACHINE },
       { kind: 'service', principalId: IMPORT_MACHINE },
@@ -917,6 +922,32 @@ const downloadAs = (
       Effect.provideService(MediaIntegrityRecorder, options.recorder ?? noRecorder),
     );
   });
+
+/**
+ * The Current V1 owner read (#1443) through the real runtime as one principal: one governed call for a whole set of
+ * refs. The provider is the in-memory double unless the case injects another, and the call reads no byte.
+ */
+const currentAs = (
+  world: MediaWorld,
+  principalId: string,
+  mediaAssetRefs: readonly [MediaRef, ...MediaRef[]],
+  options: {
+    readonly legalEntityId?: string;
+    readonly runtime?: 'dead' | 'live';
+    readonly storage?: ObjectStorageService;
+  } = {},
+) =>
+  world.scenario.scopeFor(principalId, options.legalEntityId).pipe(
+    Effect.flatMap((principal) =>
+      (options.runtime === 'dead' ? world.dead : world.live).runRead({
+        input: { mediaAssetRefs },
+        principal,
+        registration: assetCurrentRead,
+        transport: { correlationId: `d20-current-${mediaAssetRefs[0].resourceId}` },
+      }),
+    ),
+    Effect.provideService(ObjectStorage, options.storage ?? world.storage.service),
+  );
 
 /** The whole body of a download, collected, and whether it ended cleanly. */
 const bodyOf = (download: Effect.Success<ReturnType<typeof downloadAs>>) =>
@@ -2062,6 +2093,214 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             const sizeRefusal = yield* failedWith(downloadAs(world, DOWNLOAD_HOLDER, second, { recorder }));
             expect(Schema.is(MediaIntegrityFailed)(sizeRefusal)).toBe(true);
             expect((yield* rowOf(world, second.resourceId))?.processing_status).toBe('failed');
+          }),
+        ),
+    );
+    suite.effect(
+      'Current is its own permission: no other media grant yields it, the holder gets one answer per ref, and a refused call never reaches the provider',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* currentIsSeparate() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [METADATA], principalId: METADATA_HOLDER, slot: 3 });
+            yield* grantOnly(world, seeded, { keys: [RENAME], principalId: RENAME_HOLDER, slot: 4 });
+            yield* grantOnly(world, seeded, { keys: [UPLOAD, CONFIRM], principalId: UPLOAD_HOLDER, slot: 1 });
+            yield* grantOnly(world, seeded, { keys: [DOWNLOAD], principalId: DOWNLOAD_HOLDER, slot: 9 });
+            yield* grantOnly(world, seeded, { keys: [CURRENT], principalId: CURRENT_HOLDER, slot: 12 });
+            yield* memberWithoutRole(world, seeded, PLAIN, 'member');
+            yield* reconcile(scenario);
+            const ref = yield* readyWithBytes(world, 'cur-sep');
+
+            for (const principalId of [PLAIN, METADATA_HOLDER, RENAME_HOLDER, UPLOAD_HOLDER, DOWNLOAD_HOLDER]) {
+              const callsBefore = yield* providerCalls(world);
+              const refused = yield* attemptOf(currentAs(world, principalId, [ref]));
+              // The stop is the gate's own refusal for the whole call: no entry, no handler, no provider call.
+              expect(refused, principalId.slice(-2)).toMatchObject({ gateRefused: true, ran: false });
+              expect(yield* providerCalls(world)).toBe(callsBefore);
+            }
+
+            // The holder, and the bootstrapped owner, get exactly one AVAILABLE entry with the constant revision 1.
+            for (const principalId of [CURRENT_HOLDER, OWNER]) {
+              const answer = yield* currentAs(world, principalId, [ref]);
+              expect(answer.entries).toEqual([
+                { current: { resourceRef: ref, revision: 1 }, kind: 'AVAILABLE', resourceRef: ref },
+              ]);
+            }
+            // Current grants neither metadata nor bytes.
+            expect((yield* attemptOf(readAs(world, CURRENT_HOLDER, ref))).gateRefused).toBe(true);
+            expect((yield* attemptOf(downloadAs(world, CURRENT_HOLDER, ref))).gateRefused).toBe(true);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'Current answers each ref from the live row and the provider: only a ready, present asset is AVAILABLE, and nothing else is ever promoted, stored or switched',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* currentStates() {
+            yield* seedMediaTenant(world);
+            const foreignTenantId = uid(7100);
+            yield* world.bootstrapForeign({
+              legalEntityIds: [uid(7101)],
+              principalId: FOREIGN_OWNER,
+              tenantId: foreignTenantId,
+            });
+            yield* reconcile(world.scenario);
+            const { tenantId } = world.scenario;
+            const setAt = (mediaAssetId: string, processingStatus: string) =>
+              world.scenario.admin.unsafe(
+                `update core.media_assets set processing_status = $3 where tenant_id = $1 and media_asset_id = $2`,
+                [tenantId, mediaAssetId, processingStatus],
+              );
+            const ready = yield* readyWithBytes(world, 'cur-ready');
+            const uploaded = (yield* reserve(world, OWNER, 'cur-uploaded')).mediaAssetRef;
+            const scanning = yield* readyWithBytes(world, 'cur-scanning');
+            yield* setAt(scanning.resourceId, 'scanning');
+            const failed = yield* readyWithBytes(world, 'cur-failed');
+            yield* setAt(failed.resourceId, 'failed');
+            const foreign = yield* seedAsset(world, { tenantId: foreignTenantId });
+            const unknown = refOf(tenantId, uid(8100));
+            // A ref that names the foreign tenant with this tenant's asset id is the same answer as a missing asset.
+            const mislabelled = refOf(foreignTenantId, ready.resourceId);
+            const refs = [ready, uploaded, scanning, failed, foreign, unknown, mislabelled] as const;
+            const rowsBefore = yield* assetCount(world);
+            const linksBefore = yield* world.scenario.admin.unsafe(`select 1 from core.media_links`);
+            const callsBefore = yield* world.storage.calls.pipe(Effect.map((calls) => calls.length));
+
+            const answer = yield* currentAs(world, OWNER, refs);
+            expect(answer.entries.map(({ kind, resourceRef }) => [kind, resourceRef.resourceId])).toEqual([
+              ['AVAILABLE', ready.resourceId],
+              ['CURRENT_UNVERIFIED', uploaded.resourceId],
+              ['CURRENT_UNVERIFIED', scanning.resourceId],
+              ['CURRENT_UNVERIFIED', failed.resourceId],
+              ['ABSENT', foreign.resourceId],
+              ['ABSENT', unknown.resourceId],
+              ['ABSENT', ready.resourceId],
+            ]);
+            // Every entry is the requested ref exactly, and only the AVAILABLE one carries revision 1 and no revisionId.
+            expect(answer.entries.map(({ resourceRef }) => resourceRef)).toEqual([...refs]);
+            const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(answer);
+            expect(serialized).not.toContain('revisionId');
+            expect(serialized).not.toContain('secret-version');
+            expect(answer.entries.filter(({ kind }) => kind === 'AVAILABLE')).toHaveLength(1);
+            // The call changed nothing, wrote no link and asked the provider for one stat, of the ready asset.
+            expect(yield* assetCount(world)).toBe(rowsBefore);
+            expect(yield* world.scenario.admin.unsafe(`select 1 from core.media_links`)).toEqual(linksBefore);
+            expect((yield* rowOf(world, ready.resourceId))?.processing_status).toBe('ready');
+            const newCalls = (yield* world.storage.calls).slice(callsBefore);
+            // Only the ready asset reached the provider; a row that is not ready is refused before any call.
+            expect(newCalls.map(({ operation }) => operation)).toEqual(['stat']);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'Current never repeats an old answer: a replaced object, a missing object, an outage and a later revocation each change the next answer, and a new upload leaves the earlier asset alone',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* currentIsLive() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            const granted = yield* grantOnly(world, seeded, { keys: [CURRENT], principalId: CURRENT_HOLDER, slot: 12 });
+            yield* reconcile(scenario);
+            const a = yield* readyWithBytes(world, 'cur-a');
+            const firstKind = ({ entries }: Effect.Success<ReturnType<typeof currentAs>>) => entries[0]?.kind;
+            const kindOf = (ref: MediaRef, options: Parameters<typeof currentAs>[3] = {}) =>
+              currentAs(world, CURRENT_HOLDER, [ref], options).pipe(Effect.map(firstKind));
+            expect(yield* kindOf(a)).toBe('AVAILABLE');
+
+            // A second upload B never changes the Current of A: A is still its own V1 with revision 1.
+            const b = yield* readyWithBytes(world, 'cur-b');
+            const both = yield* currentAs(world, CURRENT_HOLDER, [a, b]);
+            expect(both.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'AVAILABLE']);
+            expect(both.entries.map((entry) => (entry.kind === 'AVAILABLE' ? entry.current.revision : 0))).toEqual([
+              1, 1,
+            ]);
+
+            // The object of A is replaced by a longer one out of band: the next answer is not AVAILABLE, nothing is closed.
+            const key = deriveMediaStorageKey({ mediaAssetId: a.resourceId, tenantId: scenario.tenantId });
+            yield* world.storage.service.put({
+              body: Stream.make(encoder.encode('another and a longer body than the confirmed one')),
+              contentType: 'application/pdf',
+              key,
+            });
+            expect(yield* kindOf(a)).toBe('CURRENT_UNVERIFIED');
+            expect((yield* rowOf(world, a.resourceId))?.processing_status).toBe('ready');
+            // The very same bytes are put back: the next answer follows the provider again, with no memory of the last one.
+            yield* world.storage.service.put({ body: Stream.make(content), contentType: 'application/pdf', key });
+            expect(yield* kindOf(a)).toBe('AVAILABLE');
+
+            // A provider that holds no object for a ready row: unverified, never ABSENT, never corruption.
+            const emptyProvider = yield* makeInMemoryObjectStorage();
+            expect(yield* kindOf(a, { storage: emptyProvider.service })).toBe('CURRENT_UNVERIFIED');
+            // A provider outage is UNAVAILABLE for this request and changes nothing durable.
+            const outage: ObjectStorageService = {
+              ...world.storage.service,
+              stat: () =>
+                Effect.fail(
+                  new ObjectStorageNetworkError({ code: 'object_storage_network_error', reason: 'fault injection' }),
+                ),
+            };
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              expect(yield* kindOf(a, { storage: outage })).toBe('UNAVAILABLE');
+            }
+            expect((yield* rowOf(world, a.resourceId))?.processing_status).toBe('ready');
+            expect(yield* kindOf(a)).toBe('AVAILABLE');
+
+            // An unreachable decision engine fails the whole call closed: no entry at all, and the provider is not asked.
+            const callsBefore = yield* providerCalls(world);
+            const unavailable = yield* failedWith(currentAs(world, CURRENT_HOLDER, [a], { runtime: 'dead' }));
+            expect(Schema.is(ReadPermissionUnavailable)(unavailable)).toBe(true);
+            expect(yield* providerCalls(world)).toBe(callsBefore);
+
+            // Revoking the grant stops the very next call: the earlier AVAILABLE is no evidence.
+            yield* scenario.admin.unsafe(
+              `update core.access_assignments set status = 'revoked' where tenant_id = $1 and incarnation_id = $2`,
+              [scenario.tenantId, granted.assignmentId],
+            );
+            yield* reconcile(scenario);
+            const revoked = yield* attemptOf(currentAs(world, CURRENT_HOLDER, [a]));
+            expect(revoked).toMatchObject({ gateRefused: true, ran: false });
+            expect(yield* providerCalls(world)).toBe(callsBefore);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'an agent is refused Current even holding it through a role, and the refusal never reaches the provider',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* currentRefusals() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* insertRoleWithCells(scenario.admin, scenario.tenantId, {
+              capabilityKeys: [CURRENT],
+              catalogSnapshotId: seeded.bootstrapped.catalogSnapshotId,
+              createdBy: OWNER,
+              roleId: uid(920),
+              roleRevisionId: uid(921),
+              scopeId: seeded.tenantScope,
+            });
+            yield* insertMembership(scenario.admin, scenario.tenantId, {
+              agentId: AGENT,
+              kind: 'member',
+              recordedBy: OWNER,
+              scopeId: seeded.tenantScope,
+            });
+            yield* insertAssignment(scenario.admin, scenario.tenantId, {
+              agentId: AGENT,
+              assignedBy: OWNER,
+              incarnationId: uid(922),
+              roleId: uid(920),
+              roleRevisionId: uid(921),
+              scopeId: seeded.tenantScope,
+            });
+            yield* reconcile(scenario);
+            const ref = yield* readyWithBytes(world, 'cur-agent');
+            const callsBefore = yield* providerCalls(world);
+            expect(yield* attemptOf(currentAs(world, AGENT, [ref]))).toMatchObject({ gateRefused: true, ran: false });
+            expect(yield* providerCalls(world)).toBe(callsBefore);
           }),
         ),
     );

@@ -14752,6 +14752,32 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "core.media.asset-current.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.api.asset-current",
+            "moduleKey": "core.media",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "core.media.asset-download.read",
             "kind": "read",
             "modes": [

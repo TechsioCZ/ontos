@@ -192,6 +192,9 @@ export { assetMetadataRead } from './generated-reads/asset-metadata.ts';
 
 // @ontos-core-read asset-download
 export { assetDownloadRead } from './generated-reads/asset-download.ts';
+
+// @ontos-core-read asset-current
+export { assetCurrentRead } from './generated-reads/asset-current.ts';
 // @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
