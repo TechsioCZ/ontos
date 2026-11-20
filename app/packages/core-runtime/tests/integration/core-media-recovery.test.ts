@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Cause, Crypto, DateTime, Effect, Exit, Option, Predicate, Schema, Stream } from 'effect';
+import { Cause, Crypto, DateTime, Effect, Exit, Logger, Option, Predicate, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
@@ -29,7 +29,12 @@ import { MediaAssetIdSchema, MediaTenantIdSchema } from '../../src/media/identit
 import { checkTemporaryObjectCleanup } from '../../src/media/cleanup-eligibility.ts';
 import { reconcileUncertainUpload, mayStartIndependentUpload } from '../../src/media/reconciliation.ts';
 import { ProvenMediaIntegrityFinding } from '../../src/media/integrity-contract.ts';
-import { ObjectStorage, ObjectStorageNetworkError, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
+import {
+  ObjectStorage,
+  ObjectStorageNetworkError,
+  ObjectStorageServerError,
+  ObjectStorageTimeout,
+} from '../../src/media/object-storage.ts';
 import type { ObjectStorageService } from '../../src/media/object-storage.ts';
 import type { ConfirmAssetPayloadSchema, UploadAssetPayloadSchema } from '../../src/media/upload-contract.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
@@ -1369,6 +1374,113 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media cleanup el
       expect(
         refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: neverReserved, tenantId: other.tenantId })),
       ).toEqual(['target_unverified']);
+    }).pipe(Effect.scoped),
+  );
+});
+
+const SECRETS = [
+  'https://',
+  'http://',
+  'X-Amz',
+  'Authorization',
+  'AKIA',
+  'TOKENSECRET',
+  'SIGSECRET',
+  'secret-brochure',
+  'core-media/v1/',
+] as const;
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media recovery logging on PostgreSQL', (suite) => {
+  suite.effect('logs only redacted references and categories, and records no secret in logs or evidence', () =>
+    Effect.gen(function* logging() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      yield* harness.bind(world, world.system, INTEGRITY_WORKLOAD);
+      const emitted: { readonly annotations: string; readonly keys: readonly string[]; readonly message: string }[] =
+        [];
+      const logger = Logger.make((options) => {
+        const { annotations, message } = Logger.formatStructured.log(options);
+        emitted.push({
+          annotations: JSON.stringify(annotations),
+          keys: Object.keys(annotations).toSorted(),
+          message: JSON.stringify(message),
+        });
+      });
+      const captured = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])));
+      // A provider failure whose own text carries everything that must never be logged.
+      const leaky = new ObjectStorageServerError({
+        code: 'object_storage_server_error',
+        reason:
+          'GET https://bucket.example/core-media/v1/abc?X-Amz-Signature=SIGSECRET Authorization: AWS4 Credential=AKIAXXXX token=TOKENSECRET',
+      });
+      const uploaded = yield* uploadReadyAsset(harness, world, world.human, content, {
+        key: 'logging',
+        overrides: { displayFilename: 'secret-brochure.pdf' },
+      });
+      const row = yield* verifiableRowOf(harness, world.tenantId, uploaded.mediaAssetId);
+      const outage = yield* withObjectStorageFaults([{ failure: leaky, operation: 'get' }]).pipe(
+        Effect.provideService(ObjectStorage, harness.storage.service),
+      );
+      yield* captured(verifyReadyMediaAsset(row).pipe(Effect.provideService(ObjectStorage, outage)));
+      yield* captured(
+        reconcileAsset(harness, world, world.human, {
+          key: 'logging-reconcile',
+          mediaAssetRef: uploaded.reservation.mediaAssetRef,
+        }),
+      );
+      yield* captured(checkCleanup(harness, world, { mediaAssetId: uploaded.mediaAssetId }));
+      const pending = yield* reserveAsset(harness, world, world.human, content, { key: 'logging-pending' });
+      yield* captured(
+        reconcileAsset(harness, world, world.human, {
+          key: 'logging-pending-reconcile',
+          mediaAssetRef: pending.mediaAssetRef,
+          storage: outage,
+        }),
+      );
+      yield* harness.storage.service.put({
+        body: Stream.make(tampered),
+        contentType: 'application/pdf',
+        key: deriveMediaStorageKey({ mediaAssetId: uploaded.mediaAssetId, tenantId: world.tenantId }),
+      });
+      const finding = yield* findingOf(harness, world, uploaded.mediaAssetId);
+      yield* captured(verifyReadyMediaAsset(row).pipe(Effect.provideService(ObjectStorage, harness.storage.service)));
+      yield* recordIntegrity(harness, world, world.system, {
+        finding,
+        key: 'logging-integrity',
+        mediaAssetRef: uploaded.reservation.mediaAssetRef,
+      });
+      const media = emitted.filter(({ message }) => message === '"core.media.recovery"');
+      // verified read x2, reconcile x2, cleanup check x1: every one a closed, redacted line.
+      expect(media.length).toBeGreaterThanOrEqual(5);
+      const forbidden = [
+        ...SECRETS,
+        uploaded.mediaAssetId,
+        world.tenantId,
+        row.storageKey,
+        digestOf(content),
+        digestOf(tampered),
+        Buffer.from(content).toString('base64'),
+        new TextDecoder().decode(content),
+      ];
+      for (const line of media) {
+        expect(line.keys).toEqual(['category', 'operation', 'providerFailure', 'ref']);
+        for (const secret of forbidden) {
+          expect(line.annotations.includes(secret), `a log line carries ${secret}`).toBe(false);
+        }
+      }
+      expect(media.some(({ annotations }) => annotations.includes('object_storage_server_error'))).toBe(true);
+      const evidence = yield* harness.admin.unsafe<{ text: string }>(
+        `select (to_jsonb(a))::text as text from core.audit_events a where tenant_id = $1
+         union all select (to_jsonb(d))::text from core.data_access_events d where tenant_id = $1`,
+        [world.tenantId],
+      );
+      expect(evidence.length).toBeGreaterThan(0);
+      for (const { text } of evidence) {
+        for (const secret of [...SECRETS, new TextDecoder().decode(content), Buffer.from(content).toString('base64')]) {
+          expect(text.includes(secret), `evidence carries ${secret}`).toBe(false);
+        }
+      }
     }).pipe(Effect.scoped),
   );
 });
