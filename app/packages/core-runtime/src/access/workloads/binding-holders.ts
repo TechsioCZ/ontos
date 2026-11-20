@@ -12,8 +12,8 @@ import { TenantIdSchema } from '../ids.ts';
 /** One active Principal holding an active binding of a workload. */
 export interface WorkloadBindingHolder {
   /**
-   * An API key authenticates as the Principal: it holds an active, unrevoked Better Auth API-key binding of the staff
-   * namespace, the binding the Shell gateway resolves an `x-api-key` to (`resolveBetterAuthApiKey`).
+   * The Principal holds an active, unrevoked Better Auth API-key auth binding of the staff namespace, the binding the
+   * Shell gateway resolves an `x-api-key` to (`resolveBetterAuthApiKey`).
    */
   readonly apiKey: boolean;
   readonly kind: PrincipalKind;
@@ -24,9 +24,9 @@ const querySchema = Schema.Struct({ tenantId: TenantIdSchema, workloadKey: Workl
 
 /**
  * Factual registry read for an operator check: every active Principal of an active Tenant that holds an active
- * binding of one workload, in Principal order, and whether an API key authenticates as it. It names who may run the
- * workload; it constructs no authentication context and grants nothing. A caller decides on the whole list, so another
- * holder of the same workload is never hidden by a limit.
+ * binding of one workload, in Principal order, and whether each holds an active, unrevoked API-key auth binding. It
+ * names who may run the workload; it constructs no authentication context and grants nothing. A caller decides on the
+ * whole list, so another holder of the same workload is never hidden by a limit.
  */
 export const readActiveWorkloadBindingHolders = Effect.fn('AccessWorkloadBindings.readActiveHolders')(
   function* readActiveHolders(transaction: Pick<CoreTransaction, 'select'>, tenantId: string, workloadKey: string) {
