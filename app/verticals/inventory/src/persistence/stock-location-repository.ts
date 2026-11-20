@@ -12,18 +12,11 @@ import type {
 } from '../../shared/domain/stock-location.ts';
 import type { StockLocationRef } from '../../shared/resources/stock-location.ts';
 import { StockLocationPersistenceRejected } from './stock-location-persistence-rejected.ts';
+import { StockLocationPersistenceUnavailable } from '../../shared/domain/stock-location-persistence-unavailable.ts';
 import { inventoryStockLocationRevisions, inventoryStockLocations } from './stock-location-table.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 type StockLocationRow = typeof inventoryStockLocations.$inferSelect;
-
-export class StockLocationPersistenceUnavailable extends Schema.TaggedError<StockLocationPersistenceUnavailable>()(
-  'StockLocationPersistenceUnavailable',
-  {
-    code: Schema.Literal('stock_location_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
 
 /** Transaction-scoped owner port. Implementations must append a revision when saving a transition. */
 export interface StockLocationPersistence {

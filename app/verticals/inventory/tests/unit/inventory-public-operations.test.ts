@@ -16,6 +16,9 @@ import {
 const expectedActionKeys = [
   'commerce.inventory.select-inventory-backend',
   'commerce.inventory.import-source-assertion',
+  'commerce.inventory.register-stock-item',
+  'commerce.inventory.create-stock-location',
+  'commerce.inventory.establish-stock-position',
   'commerce.inventory.resolve-inventory-source-conflict',
   'commerce.inventory.compensate-inventory-pre-commit',
   'commerce.inventory.create-inventory-reservation',
@@ -133,7 +136,7 @@ describe('Inventory public owner contracts', () => {
   it('exports the exact launch client pairs plus the #1038 governed Position-set read pair', () => {
     const actualOperationClientExports = Object.keys(inventoryPublicClient).filter((key) => key.startsWith('execute'));
 
-    expect(inventoryPublicActionContracts).toHaveLength(20);
+    expect(inventoryPublicActionContracts).toHaveLength(23);
     expect(inventoryGovernedReadContracts).toHaveLength(11);
     expect(new Set(actualOperationClientExports)).toEqual(new Set(expectedOperationClientExports));
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSet).toBe(executeCurrentRelevantStockPositionSet);

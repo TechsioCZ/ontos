@@ -50,6 +50,7 @@ import { correctCatalogToStockBindingActionApiLive } from './correct-catalog-to-
 import { correctExternalStockCorrelationActionApiLive } from './correct-external-stock-correlation-action-server.ts';
 import { correctStockPositionActionApiLive } from './correct-stock-position-action-server.ts';
 import { createInventoryReservationActionApiLive } from './create-inventory-reservation-action-server.ts';
+import { createStockLocationActionApiLive } from './create-stock-location-action-server.ts';
 import { currentRelevantStockPositionSetReadApiLive } from './current-relevant-stock-position-set-read-server.ts';
 import { currentStockEvidenceForAvailabilityReadApiLive } from './current-stock-evidence-for-availability-read-server.ts';
 import { endCatalogToStockBindingActionApiLive } from './end-catalog-to-stock-binding-action-server.ts';
@@ -58,6 +59,7 @@ import { endStockSharingEligibilityActionApiLive } from './end-stock-sharing-eli
 import { establishCatalogToStockBindingActionApiLive } from './establish-catalog-to-stock-binding-action-server.ts';
 import { establishCommitmentProtectionActionApiLive } from './establish-commitment-protection-action-server.ts';
 import { establishExternalStockCorrelationActionApiLive } from './establish-external-stock-correlation-action-server.ts';
+import { establishStockPositionActionApiLive } from './establish-stock-position-action-server.ts';
 import { establishStockSharingEligibilityActionApiLive } from './establish-stock-sharing-eligibility-action-server.ts';
 import { importSourceAssertionActionApiLive } from './import-source-assertion-action-server.ts';
 import { inventoryBackendConfigurationCurrentReadApiLive } from './inventory-backend-configuration-current-read-server.ts';
@@ -67,6 +69,7 @@ import { inventoryReservationDetailReadApiLive } from './inventory-reservation-d
 import { inventorySourceConflictDetailReadApiLive } from './inventory-source-conflict-detail-read-server.ts';
 import { inventorySourceImportReceiptReadApiLive } from './inventory-source-import-receipt-read-server.ts';
 import { recoverInventoryEffectActionApiLive } from './recover-inventory-effect-action-server.ts';
+import { registerStockItemActionApiLive } from './register-stock-item-action-server.ts';
 import { releaseInventoryReservationActionApiLive } from './release-inventory-reservation-action-server.ts';
 import { reservationConfirmationVerificationReadApiLive } from './reservation-confirmation-verification-read-server.ts';
 import { resolveInventorySourceConflictActionApiLive } from './resolve-inventory-source-conflict-action-server.ts';
@@ -206,6 +209,7 @@ export const makeInventoryApiRuntime = (
     correctExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     correctStockPositionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    createStockLocationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentRelevantStockPositionSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     currentStockEvidenceForAvailabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     endCatalogToStockBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -214,6 +218,7 @@ export const makeInventoryApiRuntime = (
     establishCatalogToStockBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     establishCommitmentProtectionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     establishExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    establishStockPositionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     establishStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     importSourceAssertionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     inventoryBackendConfigurationCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -223,6 +228,7 @@ export const makeInventoryApiRuntime = (
     inventorySourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     inventorySourceImportReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     recoverInventoryEffectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    registerStockItemActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     releaseInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reservationConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     resolveInventorySourceConflictActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

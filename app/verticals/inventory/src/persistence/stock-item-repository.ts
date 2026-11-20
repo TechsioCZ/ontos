@@ -5,7 +5,7 @@ import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { StockItemRejected, StockItemSchema } from '../../shared/domain/stock-item.ts';
 import type { ExactCatalogSelectionMeaningId, StockItem, StockItemInstant } from '../../shared/domain/stock-item.ts';
-import { StockItemPersistenceUnavailable } from './stock-item-persistence-error.ts';
+import { StockItemPersistenceUnavailable } from '../../shared/domain/stock-item-persistence-unavailable.ts';
 import { inventoryStockItems } from './stock-item-table.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
