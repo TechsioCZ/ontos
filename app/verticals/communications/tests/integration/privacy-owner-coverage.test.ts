@@ -2,7 +2,7 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PrivacyOwnerCoverageRequestSchema } from '../../shared/apis/privacy-owner-coverage.ts';
@@ -622,7 +622,7 @@ describe('Observing, evaluating and handing over change nothing (AC-05 AC-12 AC-
         const refused = yield* world.database
           .inTenant(world.tenantId, (transaction) => transaction.delete(messageIntents))
           .pipe(Effect.exit);
-        expect(refused._tag).toBe('Failure');
+        expect(Exit.isFailure(refused)).toBe(true);
         expect((yield* world.read((tx) => tx.select().from(messageIntents))).length).toBeGreaterThan(0);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
