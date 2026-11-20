@@ -1,0 +1,217 @@
+[
+  {
+    "from": "packages/pricing-contracts",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "packages/pricing-contracts",
+    "to": "verticals/party-registry",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/assortment",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/assortment",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/assortment",
+    "to": "verticals/commerce-market-catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/availability",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/availability",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/availability",
+    "to": "verticals/inventory",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/catalog",
+    "to": "verticals/party-registry",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-cart",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-cart",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "apps/shell-super-app",
+    "class": "test"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "verticals/commerce-cart",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "verticals/commerce-market-catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "verticals/party-registry",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "verticals/price-group-catalog",
+    "class": "test"
+  },
+  {
+    "from": "verticals/commerce-customer-context",
+    "to": "verticals/privacy",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-market-catalog",
+    "to": "apps/shell-super-app",
+    "class": "test"
+  },
+  {
+    "from": "verticals/commerce-market-catalog",
+    "to": "verticals/commerce-customer-context",
+    "class": "test"
+  },
+  {
+    "from": "verticals/commerce-market-catalog",
+    "to": "verticals/storefront-registry",
+    "class": "test"
+  },
+  {
+    "from": "verticals/commerce-order",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/commerce-order",
+    "to": "verticals/tax",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/inventory",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/inventory",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/party-registry",
+    "to": "verticals/privacy",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/payment",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/pricing",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/pricing",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/pricing",
+    "to": "verticals/commerce-market-catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/privacy",
+    "to": "apps/shell-super-app",
+    "class": "test"
+  },
+  {
+    "from": "verticals/privacy",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/privacy",
+    "to": "verticals/party-registry",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/privacy",
+    "to": "verticals/symmy-integration",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/assortment",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/commerce-customer-context",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/inventory",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/party-registry",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/price-group-catalog",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/pricing",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/privacy",
+    "class": "runtime"
+  },
+  {
+    "from": "verticals/symmy-integration",
+    "to": "verticals/tax",
+    "class": "runtime"
+  }
+]

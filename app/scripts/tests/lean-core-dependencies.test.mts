@@ -1,13 +1,19 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect } from 'effect';
 import type { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { checkLeanCoreDependencies } from '../check-lean-core-dependencies.mts';
+import {
+  checkLeanCoreDependencies,
+  checkModuleEdgeFreeze,
+  moduleEdgeBaselineRelative,
+} from '../check-lean-core-dependencies.mts';
 
 const commercePrivateFixturePath = 'verticals/commerce-customer-context/src/api/private.ts';
 
@@ -740,5 +746,282 @@ it.live('admits only the exact Privacy profile-authority client composition pair
         ).toHaveLength(1);
       }
     }
+  }),
+);
+
+const workspaceRange = 'workspace:*';
+const alphaModule = 'verticals/alpha';
+const betaModule = 'verticals/beta';
+const alphaManifest = 'verticals/alpha/package.json';
+const alphaUsesBeta = 'verticals/alpha/src/uses-beta.ts';
+const alphaBetaTest = 'verticals/alpha/tests/unit/beta.test.ts';
+const alphaToBetaEdge = 'verticals/alpha -> verticals/beta';
+const betaImportSource = "import { beta } from '@app/beta';\n";
+const alphaImportSource = "import { alpha } from '@app/alpha';\n";
+const alphaName = '@app/alpha';
+
+const freezeManifest = (name: string, fields: Readonly<Record<string, Readonly<Record<string, string>>>> = {}) =>
+  JSON.stringify({ name, ...fields });
+
+/** Two modules, a package and an app, with no edge between them. */
+const freezeWorkspace = {
+  [alphaManifest]: freezeManifest(alphaName),
+  'apps/shell/package.json': freezeManifest('@app/shell'),
+  'packages/contracts/package.json': freezeManifest('@app/contracts'),
+  'verticals/alpha/src/index.ts': 'export const alpha = 1;\n',
+  'verticals/beta/package.json': freezeManifest('@app/beta'),
+  'verticals/beta/src/index.ts': 'export const beta = 1;\n',
+} as const;
+
+type FreezeFiles = Readonly<Record<string, string>>;
+
+const freezeBaseline = (entries: readonly { readonly class: string; readonly from: string; readonly to: string }[]) =>
+  ({ [moduleEdgeBaselineRelative]: JSON.stringify(entries) }) as const;
+
+const alphaToBeta = { class: 'runtime', from: alphaModule, to: betaModule } as const;
+const alphaToShell = { class: 'runtime', from: alphaModule, to: 'apps/shell' } as const;
+const betaImport = { [alphaUsesBeta]: betaImportSource } as const;
+const shellImport = { 'verticals/alpha/src/uses-shell.ts': "import { shell } from '@app/shell';\n" } as const;
+const alphaDevDependsOnBeta = {
+  [alphaBetaTest]: betaImportSource,
+  [alphaManifest]: freezeManifest(alphaName, { devDependencies: { '@app/beta': workspaceRange } }),
+} as const;
+
+const writeFreezeFiles = (root: string, files: FreezeFiles) =>
+  Effect.all(
+    Object.entries(files).map(([relative, source]) =>
+      Effect.tryPromise(async () => {
+        await mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+        await writeFile(path.join(root, relative), source);
+      }),
+    ),
+    { discard: true },
+  );
+
+const freezeRoot = (files: FreezeFiles) =>
+  Effect.gen(function* freezeRootProgram() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-lean-core-freeze-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    yield* writeFreezeFiles(root, { ...freezeWorkspace, ...files });
+    return root;
+  });
+
+const freezeReport = (root: string, base?: string) =>
+  checkModuleEdgeFreeze(root, { base }).pipe(Effect.provide(NodeServices.layer));
+
+const reportedViolations = (root: string, base?: string) =>
+  Effect.map(freezeReport(root, base), ({ violations }) =>
+    violations.map(({ file, line, reason }) => `${file}:${line}: ${reason}`),
+  );
+
+const freezeViolations = (files: FreezeFiles) => Effect.flatMap(freezeRoot(files), (root) => reportedViolations(root));
+
+const baselineFile = (reason: string) => `${moduleEdgeBaselineRelative}:1: ${reason}`;
+const moduleToModule = 'A module takes no edge to another module';
+/** The violation of a frozen edge the baseline does not list, reported at `at`, the first place that makes it. */
+const unlisted = (rule: string, edge: string, edgeClass: string, made: string, at = made) =>
+  `${at}: ${rule} unless ${moduleEdgeBaselineRelative} lists it: ${edge} is a ${edgeClass} edge and the baseline does not list it; made by ${made}`;
+
+it.live('freezes a new module-to-module runtime edge until the baseline lists it with its class', () =>
+  Effect.gen(function* newModuleEdge() {
+    const edge = {
+      [alphaManifest]: freezeManifest(alphaName, { dependencies: { '@app/beta': workspaceRange } }),
+      [alphaUsesBeta]: betaImportSource,
+    };
+    expect(yield* freezeViolations(edge)).toEqual([
+      unlisted(
+        moduleToModule,
+        alphaToBetaEdge,
+        'runtime',
+        `${alphaManifest} dependencies; ${alphaUsesBeta}:1`,
+        `${alphaManifest}:1`,
+      ),
+    ]);
+    expect(yield* freezeViolations({ ...edge, ...freezeBaseline([alphaToBeta]) })).toEqual([]);
+  }),
+);
+
+it.live('counts an edge declared only in devDependencies as runtime once a non-test source imports it', () =>
+  Effect.gen(function* devDependencyRuntimeImport() {
+    const declared = { ...alphaDevDependsOnBeta, ...freezeBaseline([{ ...alphaToBeta, class: 'test' }]) };
+    expect(yield* freezeViolations(declared)).toEqual([]);
+    expect(yield* freezeViolations({ ...declared, ...betaImport })).toEqual([
+      `${alphaManifest}:1: ${moduleToModule} unless ${moduleEdgeBaselineRelative} lists it: ${alphaToBetaEdge} is a runtime edge and the baseline lists it only as test; made by ${alphaManifest} devDependencies; ${alphaUsesBeta}:1; ${alphaBetaTest}:1`,
+    ]);
+  }),
+);
+
+it.live('derives an edge from an undeclared package import, and refuses a source whose edges it cannot read', () =>
+  Effect.gen(function* undeclaredImport() {
+    expect(
+      yield* freezeViolations({
+        [alphaUsesBeta]: "export const load = () => import('@app/beta/shared/beta-value');\n",
+        'verticals/alpha/src/unreadable.ts': 'export const = ;\n',
+      }),
+    ).toEqual([
+      'verticals/alpha/src/unreadable.ts:1: Workspace source does not parse, so the package edges it makes are unknown',
+      unlisted(moduleToModule, alphaToBetaEdge, 'runtime', `${alphaUsesBeta}:1`),
+    ]);
+  }),
+);
+
+it.live('attributes a relative import that leaves the package to the package owning its target', () =>
+  Effect.gen(function* relativeEscape() {
+    expect(
+      yield* freezeViolations({
+        // Stays inside its own package, and leaves for a file no workspace package owns: no edge.
+        'verticals/alpha/src/inside.ts':
+          "import { alpha } from './index.ts';\nimport { tool } from '../../../scripts/tool.mts';\n",
+        'verticals/alpha/tests/unit/reaches-beta.test.ts': "import { beta } from '../../../beta/src/index.ts';\n",
+      }),
+    ).toEqual([unlisted(moduleToModule, alphaToBetaEdge, 'test', 'verticals/alpha/tests/unit/reaches-beta.test.ts:1')]);
+  }),
+);
+
+it.live('freezes the edges of a package to a module and of a module to an app, and no other kind', () =>
+  Effect.gen(function* frozenKinds() {
+    expect(
+      yield* freezeViolations({
+        // An app may reach a module, and a module or a package may reach a package.
+        'apps/shell/src/composition.ts': alphaImportSource,
+        'packages/contracts/src/uses-alpha.ts': alphaImportSource,
+        'verticals/alpha/src/uses-contracts.ts': "import { contract } from '@app/contracts';\n",
+        'verticals/beta/tests/unit/shell.test.ts': "import { shell } from '@app/shell';\n",
+      }),
+    ).toEqual([
+      unlisted(
+        'A package under packages/ takes no edge to a module',
+        'packages/contracts -> verticals/alpha',
+        'runtime',
+        'packages/contracts/src/uses-alpha.ts:1',
+      ),
+      unlisted(
+        'A module takes no edge to an app',
+        'verticals/beta -> apps/shell',
+        'test',
+        'verticals/beta/tests/unit/shell.test.ts:1',
+      ),
+    ]);
+  }),
+);
+
+it.live('fails a baseline entry whose edge is gone, and a baseline that is out of order', () =>
+  Effect.gen(function* staleEntry() {
+    const betaToAlpha = { class: 'runtime', from: betaModule, to: alphaModule } as const;
+    expect(yield* freezeViolations(freezeBaseline([alphaToBeta]))).toEqual([
+      baselineFile(`Baseline entry ${alphaToBetaEdge} (runtime) is no frozen edge of the tree any more: remove it`),
+    ]);
+    const bothWays = { ...betaImport, 'verticals/beta/src/uses-alpha.ts': alphaImportSource };
+    expect(yield* freezeViolations({ ...bothWays, ...freezeBaseline([alphaToBeta, betaToAlpha]) })).toEqual([]);
+    expect(yield* freezeViolations({ ...bothWays, ...freezeBaseline([betaToAlpha, alphaToBeta]) })).toEqual([
+      baselineFile(
+        'Baseline entry 2 is out of order or repeats an edge: entries are sorted by from, then to, one per edge',
+      ),
+    ]);
+  }),
+);
+
+it.live('fails a baseline entry whose class is wider than the edge the tree has', () =>
+  Effect.gen(function* narrowedClass() {
+    expect(yield* freezeViolations({ ...alphaDevDependsOnBeta, ...freezeBaseline([alphaToBeta]) })).toEqual([
+      baselineFile(
+        `Baseline entry ${alphaToBetaEdge} is runtime, but the tree has it only as test (${alphaManifest} devDependencies; ${alphaBetaTest}:1): change its class to test`,
+      ),
+    ]);
+  }),
+);
+
+/** A repository whose first commit holds base and whose second holds head on top of it; root is its top. */
+const comparisonRepository = (base: FreezeFiles, head: FreezeFiles) =>
+  Effect.gen(function* comparisonRepositoryProgram() {
+    const root = yield* freezeRoot(base);
+    const git = (...args: readonly string[]) =>
+      execFileSync(
+        '/usr/bin/git',
+        ['-c', 'user.name=Lean Core test', '-c', 'user.email=lean-core@example.invalid', ...args],
+        { cwd: root, encoding: 'utf-8' },
+      ).trim();
+    git('init', '--quiet');
+    git('add', '--all');
+    git('commit', '--quiet', '-m', 'base');
+    const baseCommit = git('rev-parse', 'HEAD');
+    yield* writeFreezeFiles(root, head);
+    git('add', '--all');
+    git('commit', '--quiet', '-m', 'head');
+    return { baseCommit, root };
+  });
+
+const absentFromBase = (edge: string, commit: string) =>
+  baselineFile(
+    `Baseline entry ${edge} (runtime) is not an edge of the comparison base ${commit}: the baseline only shrinks, so no new edge enters it`,
+  );
+
+it.live('fails a head baseline that names an edge the comparison base does not have, or widens a class', () =>
+  Effect.gen(function* edgeAbsentFromBase() {
+    const added = yield* comparisonRepository(
+      { ...betaImport, ...freezeBaseline([alphaToBeta]) },
+      { ...shellImport, ...freezeBaseline([alphaToShell, alphaToBeta]) },
+    );
+    // Rules 1 to 4 hold on the head; only the comparison with the base finds the new edge.
+    expect(yield* reportedViolations(added.root)).toEqual([]);
+    expect(yield* reportedViolations(added.root, added.baseCommit)).toEqual([
+      absentFromBase('verticals/alpha -> apps/shell', added.baseCommit),
+    ]);
+    const widened = yield* comparisonRepository(
+      { [alphaBetaTest]: betaImportSource, ...freezeBaseline([{ ...alphaToBeta, class: 'test' }]) },
+      { ...betaImport, ...freezeBaseline([alphaToBeta]) },
+    );
+    expect(yield* reportedViolations(widened.root, widened.baseCommit)).toEqual([
+      baselineFile(
+        `Baseline entry ${alphaToBetaEdge} is runtime, but the comparison base ${widened.baseCommit} has it only as test (${alphaBetaTest}:1): the baseline only shrinks, so no class widens`,
+      ),
+    ]);
+    // A shrinking baseline passes: the head drops the edge and its entry.
+    const shrunk = yield* comparisonRepository(
+      { ...betaImport, ...shellImport, ...freezeBaseline([alphaToShell, alphaToBeta]) },
+      { [alphaUsesBeta]: 'export {};\n', ...freezeBaseline([alphaToShell]) },
+    );
+    expect(yield* reportedViolations(shrunk.root, shrunk.baseCommit)).toEqual([]);
+  }),
+);
+
+it.live('fails closed when the comparison base cannot be read', () =>
+  Effect.gen(function* unreadableComparisonBase() {
+    const { root } = yield* comparisonRepository(freezeBaseline([]), {
+      ...betaImport,
+      ...freezeBaseline([alphaToBeta]),
+    });
+    const absent = 'f'.repeat(40);
+    expect(yield* reportedViolations(root, absent)).toEqual([
+      baselineFile(
+        `The comparison base ${absent} cannot be read (it names no commit of this repository), so the shrink-only rule fails closed`,
+      ),
+    ]);
+  }),
+);
+
+it.live('admits a first baseline against a base without one only when the base tree has every entry', () =>
+  Effect.gen(function* firstBaseline() {
+    const admitted = yield* comparisonRepository(betaImport, freezeBaseline([alphaToBeta]));
+    const report = yield* freezeReport(admitted.root, admitted.baseCommit);
+    expect(report.violations).toEqual([]);
+    expect(report.shrinkOnly).toBe(
+      `Shrink-only rule: the comparison base ${admitted.baseCommit} has no baseline, so its tree was derived and holds every baseline entry with the same or a wider class.`,
+    );
+    const refused = yield* comparisonRepository(betaImport, {
+      ...shellImport,
+      ...freezeBaseline([alphaToShell, alphaToBeta]),
+    });
+    expect(yield* reportedViolations(refused.root, refused.baseCommit)).toEqual([
+      absentFromBase('verticals/alpha -> apps/shell', refused.baseCommit),
+    ]);
+  }),
+);
+
+it.live("passes today's tree against its committed baseline", () =>
+  Effect.gen(function* todaysTree() {
+    expect(yield* reportedViolations(fileURLToPath(new URL('../..', import.meta.url)))).toEqual([]);
   }),
 );
