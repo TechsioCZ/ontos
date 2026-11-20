@@ -26,8 +26,7 @@ export const ROUTE_ENROLLMENT_RECORD_CHECKS = [
 ] as const;
 
 /**
- * A printed constraint definition with only what the printing leaves free made uniform: runs of whitespace and the
- * double quotes of quoted identifiers. Parentheses, operators, literals and casts stay as printed.
+ * A printed constraint definition with only what the printing leaves free made uniform: runs of whitespace.
+ * Parentheses, operators, identifiers, literals and casts stay as printed; none of these column names needs quoting.
  */
-export const normalizeConstraintDefinition = (definition: string): string =>
-  definition.replaceAll('"', '').replaceAll(/\s+/gu, ' ').trim();
+export const normalizeConstraintDefinition = (definition: string): string => definition.replaceAll(/\s+/gu, ' ').trim();
