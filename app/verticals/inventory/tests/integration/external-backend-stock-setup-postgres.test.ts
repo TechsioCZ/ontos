@@ -110,7 +110,8 @@ const CATALOG_RETIRED_SELECTION_MEANING_ID = 'catalog-variant:fixture-sku-retire
  * The state an External Business System stock import needs is established only through the governed
  * Inventory Actions an operator invokes; no owner row is inserted by the test. The final import is the exact
  * owner operation the Symmy stock route enrolls: one ABSOLUTE_PHYSICAL_ON_HAND assertion ordered by the
- * source revision, issued by the selected external backend.
+ * source revision, issued by the selected external backend. Every step, the import and its receipt read included,
+ * runs under an operator's staff token, not under a registered workload.
  */
 it.live('operator Actions set up one external-backend Stock Position whose source stock import is accepted', () =>
   Effect.gen(function* externalBackendStockSetup() {
@@ -557,7 +558,8 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
       receivedAt: observedAt,
       sourceReference: 'erp-stock:snapshot:1',
     });
-    // The import commits but its acknowledgement is lost: the caller holds only the public problem's invocation.
+    // The import commits but its acknowledgement is lost: the operator holds only the invocation id the public
+    // commit-indeterminate problem names.
     fixture.faultNextTransaction('lost-ack');
     const lostImport = yield* run(
       requireExecutionResult(
@@ -573,8 +575,13 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
     assert(Schema.is(ImportSourceAssertionActionCommitIndeterminateProblemSchema)(lostImport));
     expect(lostImport).toMatchObject({ resolution: 'RESOLVE_COMMIT', retryCommand: false, status: 503 });
 
-    // 7. The caller recovers the accepted row through Inventory's public receipt read with that invocation,
-    // with its ERP provenance.
+    // 7. The operator recovers the accepted row, with its ERP provenance, through Inventory's public receipt read
+    // by that invocation id, without an administrative lookup. This proves operator recovery only: the staff
+    // token carries no registered recovery, so the read's signed-recovery check
+    // (src/api/inventory-source-import-receipt.read.ts) is skipped. Registered-workload recovery of this receipt
+    // is not covered by any database-backed test: tests/unit/inventory-source-import-receipt.test.ts checks only
+    // the signed-claim match, and apps/shell-super-app/tests/integration/registered-workload-gateway-native.test.ts
+    // covers registered recovery for other owners' operations, not for this read.
     const receipt = yield* run(
       executeInventorySourceImportReceiptWithAuthorization(
         {

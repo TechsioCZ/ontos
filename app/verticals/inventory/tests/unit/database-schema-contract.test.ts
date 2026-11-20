@@ -835,6 +835,25 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   expect(bindingCorrectionWorkerFence).toContain("request_json #>> '{authority,selection,exactReservationCapability}'");
   expect(bindingCorrectionWorkerFence).toContain("request_json #>> '{authority,selection,stockCorrectionCapability}'");
   expect(bindingCorrectionWorkerFence).not.toContain('CREATE TRIGGER');
+  // Stock Position establishment locks the backend configuration before the Stock Item. The latest reservation
+  // finalizer keeps that order: its Obligation insert (KEY SHARE on the configuration) precedes its Requirement
+  // insert (KEY SHARE on the Item).
+  const finalizerDefinition =
+    /CREATE (?:OR REPLACE )?FUNCTION "inventory"\."finalize_reservation_create_effect_for_worker"\(/u;
+  const latestFinalizerMigration =
+    EffectArray.reverse(folders)
+      .map(readMigration)
+      .find((migration) => finalizerDefinition.test(migration)) ?? '';
+  const latestFinalizerStart = latestFinalizerMigration.search(finalizerDefinition);
+  const latestFinalizer = latestFinalizerMigration.slice(
+    latestFinalizerStart,
+    latestFinalizerMigration.indexOf('\n$$;', latestFinalizerStart),
+  );
+  const obligationInsert = latestFinalizer.indexOf('INSERT INTO "inventory"."obligations"');
+  expect(obligationInsert).toBeGreaterThan(-1);
+  expect(latestFinalizer.indexOf('INSERT INTO "inventory"."obligation_requirements"')).toBeGreaterThan(
+    obligationInsert,
+  );
   expect(bindingCorrectionImpact).toContain(
     'ALTER TABLE "inventory"."binding_correction_reconciliations" FORCE ROW LEVEL SECURITY',
   );
