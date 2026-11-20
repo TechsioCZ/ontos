@@ -147,12 +147,57 @@ const sourceOnlyReactPackages = [
   // A directory, not index.ts: esbuild appends a subpath import such as `@app/admin-ui/visible-text` to an
   // alias target, so a file target resolves to `index.ts/visible-text` and the owner bundle fails to build.
   { entry: 'packages/admin-ui/src', name: '@app/admin-ui' },
-  {
-    entry: 'verticals/facility-operations/src/components/record-discussion.tsx',
-    name: '@app/facility-operations/ui/record-discussion',
-  },
-  { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
 ] as const;
+
+/**
+ * Source-only React components that verticals export to other verticals. Their target is never named here: it is the
+ * file the exporting package's own `exports` entry names, as the importing vertical resolves it, and only a vertical
+ * that declares the package as a runtime dependency gets the alias. Those packages are already whole in its unit
+ * identity (runtimeClosure of scripts/ci/unit-inputs.mts), so the exporting manifest read here is one of its inputs,
+ * and a vertical without the dependency reads nothing of them: a path of another vertical named here made every unit's
+ * identity hold that vertical and everything it imports. A declared package without the export fails the build.
+ */
+const sourceOnlyReactExports = [
+  '@app/facility-operations/ui/record-discussion',
+  '@app/tagging/components/tag-controls',
+];
+
+const RuntimeDependenciesSchema = Schema.fromJsonString(
+  Schema.Struct({
+    dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  }),
+);
+
+/** The `--alias` arguments of the source-only exports a vertical can import, each resolved through its own export. */
+export const sourceOnlyExportAliases = (
+  verticalDirectory: string,
+  specifiers: readonly string[] = sourceOnlyReactExports,
+) =>
+  Effect.gen(function* sourceOnlyExportAliasesEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const platformPath = yield* Path.Path;
+    const manifestPath = platformPath.join(verticalDirectory, 'package.json');
+    const manifest = yield* fileSystem.readFileString(manifestPath).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(RuntimeDependenciesSchema)),
+      Effect.mapError((cause) => failure(`unable to read the runtime dependencies of ${manifestPath}`, cause)),
+    );
+    const declared = new Set(
+      [manifest.dependencies, manifest.peerDependencies, manifest.optionalDependencies].flatMap((entries) =>
+        Object.keys(entries ?? {}),
+      ),
+    );
+    const resolveFromVertical = createRequire(manifestPath);
+    return yield* Effect.forEach(
+      specifiers.filter((specifier) => declared.has(specifier.split('/').slice(0, 2).join('/'))),
+      (specifier) =>
+        Effect.try({
+          catch: (cause) => failure(`${specifier} is not an export of the package ${manifestPath} depends on`, cause),
+          try: () => `--alias:${specifier}=${resolveFromVertical.resolve(specifier)}`,
+        }),
+    );
+  });
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
   pattern.test(value) ? Effect.succeed(value) : Effect.fail(failure(`${label} must be one safe generated identifier`));
@@ -266,6 +311,7 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
         catch: (cause) => failure('unable to resolve the repository esbuild executable', cause),
         try: repositoryEsbuildPath,
       });
+      const exportAliases = yield* sourceOnlyExportAliases(verticalDirectory);
       const handle = yield* spawner
         .spawn(
           ChildProcess.make(
@@ -282,6 +328,7 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
                 (sourcePackage) =>
                   `--alias:${sourcePackage.name}=${platformPath.join(workspaceRoot, sourcePackage.entry)}`,
               ),
+              ...exportAliases,
               `--outfile=${bundlePath}`,
             ],
             { cwd: workspaceRoot },
