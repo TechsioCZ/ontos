@@ -72,6 +72,10 @@ Probes:
 - The API token is a Cloudflare API token with Email Sending. It is stored as the `app` service secret `SMTP_PASSWORD` and referenced as `CLOUDFLARE_EMAIL_API_TOKEN: ${SMTP_PASSWORD}`.
 - Sender: `noreply@ontos-stage.web-revolution.cz`.
 
+### Symmy write routes
+
+`ONTOS_SYMMY_JOB_RETENTION_POLICIES` in `zerops.yaml` (`app`, `run.envVariables`) holds the retention policy of each Symmy write route on stage, one JSON entry per route (`SymmyJobRetentionPolicySchema`). The Symmy owner refuses every write on a route without its entry, and the route enrollment command (`verticals/symmy-integration/scripts/route-enrollment.mts`) refuses to enroll it. YAML variables are read-only in Zerops, so adding a write route means adding its entry there and deploying first; enroll the route only after that deploy is live. It is a runtime variable, outside every unit's build identity (`scripts/ci/unit-inputs.mts` hashes build variables only), so it rebuilds nothing: a `zerops.yaml` change deploys every stage service (`scripts/zerops/delivery-plan.mts`), and the new `app` container starts its processes with the new value. The production materializer drops it, so a production copy admits no Symmy write route until production configures its own.
+
 ### Build
 
 - Node builds and runtimes use Zerops' `alpine/nodejs@26` image and its `node` executable. Builds install the workspace's pinned pnpm version; no Node archive is downloaded or included in the deployment. The local and CI Node patch pin remains in `.mise.toml`, while Zerops manages its image's Node 26 patch version.
