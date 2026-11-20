@@ -543,16 +543,16 @@ describe('Symmy route bindings', () => {
     ).toEqual([`The integration principal holds none of ${admit}, needed for job admission`]);
   });
 
-  it('refuses a route principal no API key authenticates as, whatever bindings it holds', () => {
+  it('refuses a route principal without an active API-key binding, whatever workload bindings it holds', () => {
     const { bindings } = derive([symmy, catalog, priceGroups]);
-    const keyless = [
+    const unbound = [
       { apiKey: false, kind: 'integration' as const, principalId: integrationId },
       { apiKey: false, kind: 'system' as const, principalId: systemId },
     ];
-    const holders = new Map(symmyBindingWorkloads(bindings).map((workload) => [workload, keyless] as const));
+    const holders = new Map(symmyBindingWorkloads(bindings).map((workload) => [workload, unbound] as const));
     expect(checkSymmyRouteBindings({ bindings, holders, principalId: integrationId }).refusals).toEqual([
       {
-        code: 'integration_api_key_missing',
+        code: 'integration_api_key_binding_missing',
         detail:
           'No active, unrevoked API-key binding of the staff namespace authenticates as the route principal, so the Shell resolves no x-api-key to it',
       },

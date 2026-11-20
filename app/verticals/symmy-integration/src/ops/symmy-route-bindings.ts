@@ -389,8 +389,8 @@ export const symmyBindingWorkloads = (bindings: readonly SymmyRequiredBinding[])
 ];
 
 /**
- * Checks each required binding by name against Core's holders: the integration principal (of kind integration, and the
- * principal an API key authenticates as) holds one workload of each of its bindings, and exactly one active system
+ * Checks each required binding by name against Core's holders: the integration principal (of kind integration, holding
+ * an active, unrevoked API-key binding) holds one workload of each of its bindings, and exactly one active system
  * principal holds each executor workload, the same one for every workload, as the Symmy worker runs as one identity.
  * Returns the refusals, each naming the missing or ambiguous binding, and the executor of each workload.
  */
@@ -410,7 +410,7 @@ export const checkSymmyRouteBindings = (input: {
   });
   if (held.length > 0 && !held.some(({ apiKey }) => apiKey)) {
     refusals.push({
-      code: 'integration_api_key_missing',
+      code: 'integration_api_key_binding_missing',
       detail:
         'No active, unrevoked API-key binding of the staff namespace authenticates as the route principal, so the Shell resolves no x-api-key to it',
     });

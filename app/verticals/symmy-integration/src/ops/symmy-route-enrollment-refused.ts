@@ -25,7 +25,7 @@ const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'company_not_active',
   'integration_principal_not_active',
   'integration_principal_not_integration',
-  'integration_api_key_missing',
+  'integration_api_key_binding_missing',
   'integration_binding_missing',
   'executor_binding_missing',
   'executor_binding_not_unique',
