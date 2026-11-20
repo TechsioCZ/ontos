@@ -2,8 +2,8 @@
  * One operator enrollment of one Symmy route, over the administrative Core database.
  *
  * The runtime role only reads `symmy_integration.job_routes`; the route is written by the migration and operator
- * login, whose writes the route trigger publishes as the route's execution gate and whose every change raises the
- * route's change token. Every check reads published or Core facts through their owners' exported readers. An apply
+ * login, whose writes the route trigger publishes as the route's execution gate and whose every change gives the route
+ * a new change token. Every check reads published or Core facts through their owners' exported readers. An apply
  * transaction first takes the enrollment lock of the route's Tenant, principal and source family
  * (`symmyRouteEnrollmentLockKey`), so its checks across companies and sibling routes see every enrollment committed
  * before it; it then reads the route rows and outstanding work under the route's row lock, writes, reads the write
@@ -281,13 +281,15 @@ const readRelatedRoutes = (transaction: Transaction, request: SymmyRouteEnrollme
     .for('share')
     .pipe(Effect.mapError(unavailable('The related routes could not be read')));
 
-/** The jobs and synchronous admissions of the route that a replacement refuses on and a deactivation strands. */
+/**
+ * The jobs and synchronous admissions of the route that a replacement refuses on and a deactivation strands. Both are
+ * read whatever the route's kind, so a route of a kind the command cannot enroll still names what it admitted.
+ */
 const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(function* outstandingWork(
   transaction: Transaction,
   request: SymmyRouteEnrollmentRequest,
-  inventory: SymmyRouteInventory,
 ) {
-  const jobs = yield* transaction
+  const jobsRead = transaction
     .selectDistinct({ jobId: symmyImportJobs.jobId, state: symmyJobEffects.state })
     .from(symmyImportJobs)
     .innerJoin(
@@ -315,22 +317,21 @@ const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(functi
     .orderBy(symmyImportJobs.jobId, symmyJobEffects.state)
     .limit(OUTSTANDING_LIMIT + 1)
     .pipe(Effect.mapError(unavailable('The outstanding jobs of the route could not be read')));
-  const admissions =
-    inventory.admission === 'sync'
-      ? yield* transaction
-          .select({ admissionId: symmySyncAdmissions.admissionId })
-          .from(symmySyncAdmissions)
-          .where(
-            and(
-              eq(symmySyncAdmissions.tenantId, request.tenantId),
-              eq(symmySyncAdmissions.routeId, request.routeId),
-              isNull(symmySyncAdmissions.retentionReceipt),
-            ),
-          )
-          .orderBy(symmySyncAdmissions.admissionId)
-          .limit(OUTSTANDING_LIMIT + 1)
-          .pipe(Effect.mapError(unavailable('The outstanding admissions of the route could not be read')))
-      : [];
+  const admissionsRead = transaction
+    .select({ admissionId: symmySyncAdmissions.admissionId })
+    .from(symmySyncAdmissions)
+    .where(
+      and(
+        eq(symmySyncAdmissions.tenantId, request.tenantId),
+        eq(symmySyncAdmissions.routeId, request.routeId),
+        isNull(symmySyncAdmissions.retentionReceipt),
+      ),
+    )
+    .orderBy(symmySyncAdmissions.admissionId)
+    .limit(OUTSTANDING_LIMIT + 1)
+    .pipe(Effect.mapError(unavailable('The outstanding admissions of the route could not be read')));
+  // Both reads use the one connection of the transaction, so they run one after the other.
+  const [jobs, admissions] = yield* Effect.all([jobsRead, admissionsRead], { concurrency: 1 });
   return yield* decodeOutstandingWork({
     admissions: admissions.slice(0, OUTSTANDING_LIMIT).map(({ admissionId }) => admissionId),
     jobs: jobs.slice(0, OUTSTANDING_LIMIT),
@@ -419,10 +420,11 @@ const recordChange = (
     })
     .pipe(Effect.mapError(unavailable('The route change could not be recorded')));
 
-/** The executors and source peers a receipt names, from the checks the change ran. */
+/** The executors and source peers a receipt names, and the refusals of the checks the change ran. */
 interface RouteChecked {
   readonly executors: readonly { readonly principalId: string; readonly workloadKey: string }[];
   readonly peers: ReturnType<typeof symmyRelatedRouteRefusals>['peers'];
+  readonly refusals: readonly SymmyRouteEnrollmentRefusal[];
 }
 
 /** The bindings, Core facts and sibling routes a route depends on: none of them decides a deactivation. */
@@ -462,22 +464,26 @@ export type SymmyRouteEnrollmentRun =
   | { readonly mode: 'dry-run' }
   | { readonly mode: 'verify' };
 
+/** What every change but a deactivation is checked against: the route's inventory and the bindings it needs. */
+interface SymmyRouteCheckBasis {
+  readonly inventory: SymmyRouteInventory;
+  readonly plan: Pick<SymmyRouteBindingPlan, 'bindings' | 'moduleKeys'>;
+}
+
 const writtenOutcome = { deactivate: 'deactivated', insert: 'enrolled', replace: 'replaced' } as const;
 const plannedOutcome = { deactivate: 'would_deactivate', insert: 'would_enroll', replace: 'would_replace' } as const;
 
 /**
- * The transaction of one change, for a request already checked against its inventory, the active composition and the
- * retention configuration (a deactivation needs none of them): under the enrollment lock in apply, the route rows,
- * then the decided change with the facts it depends on, the write, its read-back and its record.
+ * The transaction of one change: under the enrollment lock in apply, the route rows, then the decided change with the
+ * facts it depends on (a deactivation depends on none of them), the write, its read-back and its record.
  */
-export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(function* enrollSymmyRoute(input: {
+const changeSymmyRoute = Effect.fn('SymmyRouteEnrollment.change')(function* changeSymmyRoute(input: {
+  readonly basis: Option.Option<SymmyRouteCheckBasis>;
   readonly change: SymmyRouteChange;
-  readonly inventory: SymmyRouteInventory;
-  readonly plan: Pick<SymmyRouteBindingPlan, 'bindings' | 'moduleKeys'>;
   readonly request: SymmyRouteEnrollmentRequest;
   readonly run: SymmyRouteEnrollmentRun;
 }) {
-  const { change, inventory, plan, request, run } = input;
+  const { basis, change, request, run } = input;
   const database = yield* openDatabase;
   return yield* database
     .transaction(
@@ -491,6 +497,12 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
         const byRouteId = Option.isNone(bySelector)
           ? yield* readRouteId(transaction, request, rowLock)
           : Option.none<RouteRow>();
+        // A deactivation depends on no inventory, binding, Core fact or sibling route: a route stops even once they are
+        // gone, and a stored route of a kind the command cannot enroll stops as well.
+        const checks: Effect.Effect<RouteChecked, SymmyRouteEnrollmentUnavailable> = Option.match(basis, {
+          onNone: () => Effect.succeed({ executors: [], peers: [], refusals: [] }),
+          onSome: ({ inventory, plan }) => routeChecks(transaction, { inventory, plan, request }),
+        });
         const receipt = (
           outcome: SymmyRouteEnrollmentReceipt['outcome'],
           checked: RouteChecked,
@@ -503,7 +515,7 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
             executors: checked.executors,
             mode: run.mode,
             outcome,
-            requiredBindings: plan.bindings,
+            requiredBindings: Option.match(basis, { onNone: () => [], onSome: ({ plan }) => plan.bindings }),
             routeId: request.routeId,
             routeKey: request.routeKey,
             runtimePrerequisites: symmyRuntimePrerequisites(request),
@@ -520,7 +532,7 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
           return decodeReceipt(fields).pipe(Effect.mapError(unavailable('The enrollment receipt could not be built')));
         };
         if (run.mode === 'verify') {
-          const checked = yield* routeChecks(transaction, { inventory, plan, request });
+          const checked = yield* checks;
           yield* refused(checked.refusals);
           const stored = Option.getOrUndefined(bySelector);
           if (stored === undefined || stored.routeId !== request.routeId) {
@@ -542,18 +554,11 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
           return yield* decision;
         }
         const storedToken = bySelector.pipe(Option.map(({ changeToken }) => changeToken));
-        // A deactivation depends on no binding, Core fact or sibling route: a route stops even once they are gone.
-        const checked: RouteChecked =
-          change.kind === 'deactivate'
-            ? { executors: [], peers: [] }
-            : yield* routeChecks(transaction, { inventory, plan, request }).pipe(
-                Effect.tap(({ refusals }) => refused(refusals)),
-              );
+        const checked = yield* checks.pipe(Effect.tap(({ refusals }) => refused(refusals)));
         if (decision.kind === 'unchanged') {
           return yield* receipt('unchanged', checked, { changeToken: storedToken, strandedWork: Option.none() });
         }
-        const outstanding =
-          decision.kind === 'insert' ? undefined : yield* outstandingWork(transaction, request, inventory);
+        const outstanding = decision.kind === 'insert' ? undefined : yield* outstandingWork(transaction, request);
         if (decision.kind === 'replace' && outstanding !== undefined) {
           yield* refused(symmyOutstandingRefusals(outstanding));
         }
@@ -566,14 +571,15 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
         }
         yield* writeRoute(transaction, request, decision);
         const stored = yield* readRouteId(transaction, request, 'update');
+        // The trigger gives every written row a token the sequence never handed out before, so it is never the old one.
         const readBack = stored.pipe(
           Option.filter((row) =>
             decision.kind === 'deactivate'
               ? !row.active &&
                 row.routeRevision === decision.previous.routeRevision &&
-                row.changeToken === decision.previous.changeToken + 1
+                row.changeToken !== decision.previous.changeToken
               : symmyRouteDifferences(request, row).length === 0 &&
-                (decision.kind === 'insert' || row.changeToken === decision.previous.changeToken + 1),
+                (decision.kind === 'insert' || row.changeToken !== decision.previous.changeToken),
           ),
         );
         if (Option.isNone(readBack)) {
@@ -596,9 +602,37 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
 });
 
 /**
+ * Enrolls, replaces or verifies one route already checked against its inventory, the active composition and the
+ * retention configuration, against the bindings, Core facts and sibling routes it depends on.
+ */
+export const enrollSymmyRoute = (
+  input: SymmyRouteCheckBasis & {
+    readonly change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>;
+    readonly request: SymmyRouteEnrollmentRequest;
+    readonly run: SymmyRouteEnrollmentRun;
+  },
+) =>
+  changeSymmyRoute({
+    basis: Option.some({ inventory: input.inventory, plan: input.plan }),
+    change: input.change,
+    request: input.request,
+    run: input.run,
+  });
+
+/**
+ * Deactivates the stored route of the request's selector at the token the operator read, whatever its kind and
+ * whatever it admitted: the receipt lists the work it strands.
+ */
+export const deactivateSymmyRoute = (input: {
+  readonly change: Extract<SymmyRouteChange, { readonly kind: 'deactivate' }>;
+  readonly request: SymmyRouteEnrollmentRequest;
+  readonly run: Exclude<SymmyRouteEnrollmentRun, { readonly mode: 'verify' }>;
+}) => changeSymmyRoute({ ...input, basis: Option.none() });
+
+/**
  * Runs one change of one route. dry-run and verify write nothing; apply inserts the route, replaces or deactivates it
- * at the revision the operator names as current, or leaves an identical route unchanged, reads it back and records who
- * applied the change and why. Any refusal or failure rolls back.
+ * at the change token the operator names as current, or leaves an identical route unchanged, reads it back and records
+ * who applied the change and why. Any refusal or failure rolls back.
  */
 export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(function* runSymmyRouteEnrollment(input: {
   readonly change: SymmyRouteChange;
@@ -617,6 +651,13 @@ export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(fun
           mode: 'apply',
         }
       : { mode: input.run.mode };
+  const { change } = input;
+  if (change.kind === 'deactivate') {
+    if (run.mode === 'verify') {
+      return yield* refuse(refusalOf('invalid_request', 'verify checks an enrolled route and deactivates nothing'));
+    }
+    return yield* deactivateSymmyRoute({ change, request, run });
+  }
   const found = symmyRouteInventoryOf(request.routeKey);
   if (!Option.isOption(found)) {
     return yield* refuse(found);
@@ -627,15 +668,6 @@ export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(fun
     );
   }
   const inventory = found.value;
-  if (input.change.kind === 'deactivate') {
-    return yield* enrollSymmyRoute({
-      change: input.change,
-      inventory,
-      plan: { bindings: [], moduleKeys: [] },
-      request,
-      run,
-    });
-  }
   yield* refused(symmyRouteRequestRefusals(request, inventory));
   const authority = yield* ActiveApplicationCompositionService;
   const { catalog } = yield* loadCheckedActiveApplicationComposition(authority).pipe(
@@ -660,5 +692,5 @@ export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(fun
       Option.getOrElse(retention, () => []),
     ),
   );
-  return yield* enrollSymmyRoute({ change: input.change, inventory, plan, request, run });
+  return yield* enrollSymmyRoute({ change, inventory, plan, request, run });
 });

@@ -153,6 +153,12 @@ const priceGroups = contract('price-group-catalog', 'pricing.price-group-catalog
   ],
 });
 
+/** Pricing publishing only the source reads named, under the Pricing source read workload. */
+const pricingReading = (published: readonly string[]) =>
+  contract('pricing', 'commerce.pricing', {
+    operationContracts: published.map((entrypointKey) => carrier(entrypointKey, ['commerce.pricing.source-read'])),
+  });
+
 const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => {
   const found = symmyRouteInventoryOf(routeKey);
   if (!Option.isOption(found) || Option.isNone(found)) {
@@ -263,7 +269,7 @@ describe('Symmy route bindings', () => {
     expect(derive([undeclared, catalog, priceGroups]).refusals).toEqual([
       {
         code: 'call_not_declared',
-        detail: 'The installed integration.symmy declares no single job call of commerce.catalog.create-product@2',
+        detail: 'The installed integration.symmy registers no job call of commerce.catalog.create-product@2',
       },
     ]);
     const unrequired = symmyWith(
@@ -378,10 +384,20 @@ describe('Symmy route bindings', () => {
     const declared = definePrices([symmy, pricing([marketRead]), market]);
     expect(declared.refusals).toEqual([]);
     expect(workloadsOf(declared.bindings, 'executor')).toContain(marketRead.workloadKey);
+    const required =
+      'The installed commerce.pricing requires commerce.market-catalog commerce.market-catalog.api.current-market-catalog@1 for commerce.pricing.define-price@2 (requirement commerce.pricing.requirement.define-price-market)';
     expect(definePrices([symmy, pricing([]), market]).refusals).toEqual([
+      { code: 'call_not_declared', detail: `${required} and registers no call to it under ${sourceWrite}` },
+    ]);
+    // Two calls that would serve the requirement leave the gateway no single call to admit.
+    const twice = pricing([
+      marketRead,
+      { ...marketRead, declarationKey: 'commerce.market-catalog.market-catalog.read-again' },
+    ]);
+    expect(definePrices([symmy, twice, market]).refusals).toEqual([
       {
         code: 'call_not_declared',
-        detail: `The installed commerce.pricing declares no single call under ${sourceWrite} for requirement commerce.pricing.requirement.define-price-market of commerce.pricing.define-price@2 (commerce.market-catalog commerce.market-catalog.api.current-market-catalog@1)`,
+        detail: `${required} and registers 2 calls, where one is needed, to it under ${sourceWrite}`,
       },
     ]);
     // The call must reach the module the requirement names, not only its operation.
@@ -389,7 +405,7 @@ describe('Symmy route bindings', () => {
       operationContracts: [carrier(marketRead.entrypointKey, [marketRead.workloadKey], marketRead.declarationKey)],
     });
     expect(definePrices([symmy, pricing([marketRead]), elsewhere]).refusals.map(({ detail }) => detail)).toEqual([
-      'The installed commerce.pricing calls commerce.other-market, not the provider of requirement commerce.pricing.requirement.define-price-market of commerce.pricing.define-price@2 (commerce.market-catalog commerce.market-catalog.api.current-market-catalog@1)',
+      `${required}, and its registered call reaches commerce.other-market`,
     ]);
 
     // Commerce customer context requires the organization-business check of a membership write but omits the call.
@@ -427,9 +443,26 @@ describe('Symmy route bindings', () => {
     ).toEqual([
       {
         code: 'call_not_declared',
-        detail: `The installed commerce.customer-context declares no single call under ${membershipWrite} for requirement commerce.customer-context.requirement.org-membership-write-privacy of commerce.customer-context.apply-customer-group-membership-source@1 (privacy.core privacy.core.api.organization-business-applicability@1)`,
+        detail: `The installed commerce.customer-context requires privacy.core privacy.core.api.organization-business-applicability@1 for commerce.customer-context.apply-customer-group-membership-source@1 (requirement commerce.customer-context.requirement.org-membership-write-privacy) and registers no call to it under ${membershipWrite}`,
       },
     ]);
+  });
+
+  it('asks the integration principal for the price reads the Shell makes for a REVISE, and only for one', () => {
+    const reads = ['commerce.pricing.api.price-schedule', 'commerce.pricing.api.price-group-source-prices'];
+    const unpublished = (entrypointKeys: readonly string[], published: readonly string[]) =>
+      deriveSymmyRouteBindings({
+        companyScoped: true,
+        contracts: [symmy, pricingReading(published), priceGroups],
+        enrolled: enrolledOf('priceListPricesBatch', entrypointKeys),
+        inventory: inventoryOf('priceListPricesBatch'),
+      }).refusals.flatMap(({ detail }) => (reads.some((read) => detail.startsWith(read)) ? [detail] : []));
+    expect(unpublished(['commerce.pricing.revise-price'], [])).toEqual([
+      'commerce.pricing.api.price-schedule@1 is not published by commerce.pricing',
+      'commerce.pricing.api.price-group-source-prices@1 is not published by commerce.pricing',
+    ]);
+    expect(unpublished(['commerce.pricing.revise-price'], reads)).toEqual([]);
+    expect(unpublished(['commerce.pricing.define-price'], [])).toEqual([]);
   });
 
   it('refuses a company-scoped call on a route that passes no company to it', () => {
@@ -454,8 +487,8 @@ describe('Symmy route bindings', () => {
   it('checks every binding by name and names the executor of each workload', () => {
     const { bindings } = derive([symmy, catalog, priceGroups]);
     const both = [
-      { kind: 'integration' as const, principalId: integrationId },
-      { kind: 'system' as const, principalId: systemId },
+      { apiKey: true, kind: 'integration' as const, principalId: integrationId },
+      { apiKey: false, kind: 'system' as const, principalId: systemId },
     ];
     const holders = new Map(symmyBindingWorkloads(bindings).map((workload) => [workload, both] as const));
     const satisfied = checkSymmyRouteBindings({ bindings, holders, principalId: integrationId });
@@ -477,7 +510,7 @@ describe('Symmy route bindings', () => {
 
     const shared = new Map<string, readonly WorkloadBindingHolder[]>([
       ...holders,
-      [productRead, [...both, { kind: 'system', principalId: otherSystemId }]],
+      [productRead, [...both, { apiKey: false, kind: 'system', principalId: otherSystemId }]],
     ]);
     expect(
       checkSymmyRouteBindings({ bindings, holders: shared, principalId: integrationId }).refusals.map(
@@ -488,7 +521,7 @@ describe('Symmy route bindings', () => {
     // The route context admits either Symmy workload; the admission needs its own.
     const pollOnly = new Map<string, readonly WorkloadBindingHolder[]>([
       ...holders,
-      [admit, [{ kind: 'system', principalId: systemId }]],
+      [admit, [{ apiKey: false, kind: 'system', principalId: systemId }]],
     ]);
     expect(
       checkSymmyRouteBindings({ bindings, holders: pollOnly, principalId: integrationId }).refusals.map(
@@ -497,11 +530,46 @@ describe('Symmy route bindings', () => {
     ).toEqual([`The integration principal holds none of ${admit}, needed for job admission`]);
   });
 
+  it('refuses a route principal no API key authenticates as, whatever bindings it holds', () => {
+    const { bindings } = derive([symmy, catalog, priceGroups]);
+    const keyless = [
+      { apiKey: false, kind: 'integration' as const, principalId: integrationId },
+      { apiKey: false, kind: 'system' as const, principalId: systemId },
+    ];
+    const holders = new Map(symmyBindingWorkloads(bindings).map((workload) => [workload, keyless] as const));
+    expect(checkSymmyRouteBindings({ bindings, holders, principalId: integrationId }).refusals).toEqual([
+      {
+        code: 'integration_api_key_missing',
+        detail:
+          'No active, unrevoked API-key binding of the staff namespace authenticates as the route principal, so the Shell resolves no x-api-key to it',
+      },
+    ]);
+  });
+
+  it('refuses executor workloads held by different system principals, as the worker is one identity', () => {
+    const { bindings } = derive([symmy, catalog, priceGroups]);
+    const integration = { apiKey: true, kind: 'integration' as const, principalId: integrationId };
+    const systemOf = (workload: string) => (workload === productRead ? otherSystemId : systemId);
+    const holders = new Map(
+      symmyBindingWorkloads(bindings).map(
+        (workload) =>
+          [
+            workload,
+            [integration, { apiKey: false, kind: 'system' as const, principalId: systemOf(workload) }],
+          ] as const,
+      ),
+    );
+    const checked = checkSymmyRouteBindings({ bindings, holders, principalId: integrationId });
+    expect(checked.refusals.map(({ code }) => code)).toEqual(['executor_principals_differ']);
+    expect(checked.refusals[0]?.detail).toContain(`${productRead} by ${otherSystemId}`);
+    expect(checked.refusals[0]?.detail).toContain(`${SYMMY_JOB_KEY} by ${systemId}`);
+  });
+
   it('refuses a route principal of another kind than integration', () => {
     const { bindings } = derive([symmy, catalog, priceGroups]);
     const holders = new Map(
       symmyBindingWorkloads(bindings).map(
-        (workload) => [workload, [{ kind: 'service' as const, principalId: integrationId }]] as const,
+        (workload) => [workload, [{ apiKey: true, kind: 'service' as const, principalId: integrationId }]] as const,
       ),
     );
     expect(checkSymmyRouteBindings({ bindings, holders, principalId: integrationId }).refusals[0]).toEqual({

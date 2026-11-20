@@ -5,7 +5,7 @@ ALTER TABLE symmy_integration.route_enrollment_records FORCE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE FUNCTION symmy_integration.guard_route_enrollment_record()
 RETURNS trigger LANGUAGE plpgsql
-SET search_path = pg_catalog, symmy_integration, pg_temp AS $
+SET search_path = pg_catalog, symmy_integration, pg_temp AS $$
 BEGIN
  IF TG_OP = 'INSERT' THEN
   NEW.database_session_user := session_user;
@@ -24,20 +24,22 @@ CREATE TRIGGER symmy_route_enrollment_records_no_truncate
 BEFORE TRUNCATE ON symmy_integration.route_enrollment_records
 FOR EACH STATEMENT EXECUTE FUNCTION symmy_integration.guard_route_enrollment_record();
 --> statement-breakpoint
--- Every route row carries a change token, whoever writes it: a new row starts above every token recorded for its route
--- id, and every change of a row raises the token by one, so one token names one state of the route.
+-- Every route row carries a change token, whoever writes it: every insert and every change of a row takes a new one
+-- from the sequence this migration owns, which never cycles and which no other role may use, so a token is never
+-- handed out twice, not even to a route deleted and enrolled again.
+REVOKE ALL ON SEQUENCE symmy_integration.job_route_change_tokens FROM PUBLIC, ontos_runtime;
+--> statement-breakpoint
 CREATE FUNCTION symmy_integration.advance_route_change_token()
 RETURNS trigger LANGUAGE plpgsql
-SET search_path = pg_catalog, symmy_integration, pg_temp AS $
+SET search_path = pg_catalog, symmy_integration, pg_temp AS $$
 BEGIN
  IF TG_OP = 'INSERT' THEN
-  NEW.change_token := 1 + coalesce((SELECT max(r.change_token) FROM symmy_integration.route_enrollment_records r
-    WHERE r.tenant_id = NEW.tenant_id AND r.route_id = NEW.route_id), 0);
+  NEW.change_token := nextval('symmy_integration.job_route_change_tokens');
   RETURN NEW;
  END IF;
  NEW.change_token := OLD.change_token;
  IF NEW IS DISTINCT FROM OLD THEN
-  NEW.change_token := OLD.change_token + 1;
+  NEW.change_token := nextval('symmy_integration.job_route_change_tokens');
  END IF;
  RETURN NEW;
 END; $$;

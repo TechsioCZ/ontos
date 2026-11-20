@@ -24,6 +24,71 @@ class SymmySchemaVerificationError extends Schema.TaggedError<SymmySchemaVerific
   { reason: Schema.String },
 ) {}
 
+/**
+ * The enrollment records keep their key, route index and checks, and the change tokens come from a sequence no other
+ * role may use, which gives every route row its token by default.
+ */
+const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmentRecords')(function* verifyRecords(
+  client: PgClient.PgClient,
+) {
+  const [records] = yield* client<{
+    readonly change_token_default: boolean;
+    readonly change_token_sequence: boolean;
+    readonly change_token_sequence_private: boolean;
+    readonly constraints: readonly string[] | null;
+    readonly primary_key: boolean;
+    readonly route_index: boolean;
+  }>`
+    select
+      (select array_agg(c.conname::text || ':' || c.contype::text || ':' || c.convalidated::text order by c.conname)
+        from pg_catalog.pg_constraint c
+        where c.conrelid = 'symmy_integration.route_enrollment_records'::regclass and c.contype <> 'n') as constraints,
+      exists(select 1 from pg_catalog.pg_constraint c join pg_catalog.pg_attribute a
+          on a.attrelid = c.conrelid and a.attname = 'record_id'
+        where c.conrelid = 'symmy_integration.route_enrollment_records'::regclass and c.contype = 'p'
+          and c.conkey = array[a.attnum]) as primary_key,
+      exists(select 1 from pg_catalog.pg_index i join pg_catalog.pg_class x on x.oid = i.indexrelid
+        where i.indrelid = 'symmy_integration.route_enrollment_records'::regclass
+          and x.relname = 'symmy_route_enrollment_records_route_idx' and not i.indisunique and i.indisvalid
+          and i.indpred is null and i.indexprs is null
+          and (select array_agg(a.attname::text order by k.ord)
+            from unnest(i.indkey) with ordinality k(attnum, ord)
+            join pg_catalog.pg_attribute a on a.attrelid = i.indrelid and a.attnum = k.attnum)
+            = array['tenant_id', 'route_id', 'recorded_at']) as route_index,
+      exists(select 1 from pg_catalog.pg_sequences s
+        where s.schemaname = 'symmy_integration' and s.sequencename = 'job_route_change_tokens' and not s.cycle
+          and s.increment_by = 1 and s.min_value = 1 and s.max_value = 2147483647 and s.cache_size = 1
+          and s.sequenceowner = (select pg_catalog.pg_get_userbyid(t.relowner) from pg_catalog.pg_class t
+            where t.oid = 'symmy_integration.job_routes'::regclass)) as change_token_sequence,
+      not exists(select 1 from pg_catalog.pg_class c
+        cross join lateral aclexplode(coalesce(c.relacl, acldefault('s', c.relowner))) a
+        where c.oid = 'symmy_integration.job_route_change_tokens'::regclass and a.grantee <> c.relowner)
+        as change_token_sequence_private,
+      exists(select 1 from pg_catalog.pg_attrdef d
+        join pg_catalog.pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+        join pg_catalog.pg_depend dep on dep.classid = 'pg_catalog.pg_attrdef'::regclass and dep.objid = d.oid
+        where d.adrelid = 'symmy_integration.job_routes'::regclass and a.attname = 'change_token'
+          and dep.refobjid = 'symmy_integration.job_route_change_tokens'::regclass) as change_token_default
+  `;
+  if (
+    !records?.primary_key ||
+    !records.route_index ||
+    !records.change_token_sequence ||
+    !records.change_token_sequence_private ||
+    !records.change_token_default ||
+    records.constraints?.join(',') !==
+      [
+        'route_enrollment_records_pkey:p:true',
+        'symmy_route_enrollment_records_change_ck:c:true',
+        'symmy_route_enrollment_records_text_ck:c:true',
+      ].join(',')
+  ) {
+    yield* new SymmySchemaVerificationError({
+      reason: 'Symmy route enrollment record key, index or checks, or the change token sequence, mismatch',
+    });
+  }
+});
+
 const verification = Effect.gen(function* verifySymmySchema() {
   const client = yield* PgClient.PgClient;
   const database = yield* makeWithDefaults({ relations: symmyIntegrationRelations });
@@ -140,6 +205,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
         'Symmy migration journal, route gate, change token or record triggers, or runtime schema privileges mismatch',
     });
   }
+  yield* verifyRouteEnrollmentRecords(client);
   const routines = yield* client<{
     readonly definer: boolean;
     readonly name: string;

@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "2cc6f627-6e7c-42fc-8097-252d768c8c59",
+  "id": "72b9708a-cd37-4a19-aee6-b5be6ce5c8cc",
   "prevIds": [
     "371a743d-3579-4a13-9222-4143b3aa2c53"
   ],
@@ -1102,7 +1102,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "1",
+      "default": "nextval('symmy_integration.job_route_change_tokens'::regclass)",
       "generated": null,
       "identity": null,
       "name": "change_token",
@@ -2232,7 +2232,7 @@
       "table": "job_routes"
     },
     {
-      "value": "\"change\" in ('enroll', 'replace', 'deactivate')\n        and (\"change\" = 'enroll') = (\"previous_revision\" is null)\n        and (\"change\" = 'enroll') = (\"previous_change_token\" is null)\n        and (\"previous_change_token\" is null or \"change_token\" = \"previous_change_token\" + 1)\n        and \"change_token\" >= 1\n        and (\"change\" <> 'deactivate' or \"previous_revision\" = \"route_revision\")",
+      "value": "\"change\" in ('enroll', 'replace', 'deactivate')\n        and (\"change\" = 'enroll') = (\"previous_revision\" is null)\n        and (\"change\" = 'enroll') = (\"previous_change_token\" is null)\n        and (\"previous_change_token\" is null or \"change_token\" <> \"previous_change_token\")\n        and \"change_token\" >= 1\n        and (\"change\" <> 'deactivate' or \"previous_revision\" = \"route_revision\")",
       "name": "symmy_route_enrollment_records_change_ck",
       "entityType": "checks",
       "schema": "symmy_integration",
@@ -2258,6 +2258,17 @@
       "entityType": "checks",
       "schema": "symmy_integration",
       "table": "sync_admissions"
+    },
+    {
+      "incrementBy": "1",
+      "minValue": "1",
+      "maxValue": "2147483647",
+      "startWith": "1",
+      "cacheSize": 1,
+      "cycle": false,
+      "name": "job_route_change_tokens",
+      "entityType": "sequences",
+      "schema": "symmy_integration"
     },
     {
       "as": "PERMISSIVE",

@@ -50,6 +50,7 @@ const principalId = '33333333-3333-4333-8333-333333333333';
 const routeId = '44444444-4444-4444-8444-444444444444';
 const peerRouteId = '55555555-5555-4555-8555-555555555555';
 const sourceRouteId = '66666666-6666-4666-8666-666666666666';
+const otherLegalEntityId = '77777777-7777-4777-8777-777777777777';
 const groupId = '77777777-7777-4777-8777-777777777777';
 const marketId = '88888888-8888-4888-8888-888888888888';
 const unitRef = {
@@ -667,48 +668,73 @@ describe('Symmy route state refusals', () => {
     ]);
   });
 
-  it('requires the active priceLists route and its price reads of a prices route that revises, both ways', () => {
+  it('requires the active priceLists route of its company and its price reads of a prices route that revises, both ways', () => {
     const revising = withConfiguration('priceListPricesBatch', { sourceRouteId });
-    const lists = (operations: readonly [Operation, ...Operation[]]) =>
-      storedRow(
-        request('priceLists', {
-          configuration: { items: [item('PRICE_GROUP', operations)], sourceRouteId },
-          routeId: peerRouteId,
-        }),
-      );
+    const priceReads: readonly [Operation, ...Operation[]] = [
+      associations,
+      groupDefinition,
+      priceSchedule,
+      groupSourcePrices,
+    ];
+    const listsOf = (
+      operations: readonly [Operation, ...Operation[]],
+      company: Partial<EncodedRequest>,
+      changes: Partial<EncodedRequest> = {},
+    ) =>
+      request('priceLists', {
+        configuration: { items: [item('PRICE_GROUP', operations)], sourceRouteId },
+        ...company,
+        ...changes,
+      });
+    const company = { legalEntityId };
+    const lists = (operations: readonly [Operation, ...Operation[]], listsCompany: Partial<EncodedRequest>) =>
+      storedRow(listsOf(operations, listsCompany, { routeId: peerRouteId }));
     expect(relatedRefusals(revising, [])).toEqual([
       'price_revision_reads_missing: A REVISE price is read through the active priceLists route of this principal, and none is enrolled',
     ]);
-    const withoutPrices = lists([associations, groupDefinition]);
+    const withoutPrices = lists([associations, groupDefinition], company);
     expect(relatedRefusals(revising, [withoutPrices])).toEqual([
       `price_revision_reads_missing: Route ${peerRouteId} (priceLists) does not enroll commerce.pricing.api.price-schedule@1, which a REVISE price reads`,
       `price_revision_reads_missing: Route ${peerRouteId} (priceLists) does not enroll commerce.pricing.api.price-group-source-prices@1, which a REVISE price reads`,
     ]);
-    const withPrices = lists([associations, groupDefinition, priceSchedule, groupSourcePrices]);
-    expect(relatedRefusals(revising, [withPrices])).toEqual([]);
+    expect(relatedRefusals(revising, [lists(priceReads, company)])).toEqual([]);
+    // The REVISE reads the prices of the priceLists route's company, so a Tenant-only one or another company's is refused.
+    expect(relatedRefusals(revising, [lists(priceReads, {})])).toEqual([
+      `price_revision_company_differs: Route ${peerRouteId} (priceLists) reads the prices of company none, not of ${legalEntityId}, which this route revises`,
+    ]);
+    expect(relatedRefusals(revising, [lists(priceReads, { legalEntityId: otherLegalEntityId })])).toEqual([
+      `price_revision_company_differs: Route ${peerRouteId} (priceLists) reads the prices of company ${otherLegalEntityId}, not of ${legalEntityId}, which this route revises`,
+    ]);
+    const tenantOnly = request(
+      'priceListPricesBatch',
+      { configuration: { ...valid.priceListPricesBatch().configuration, sourceRouteId } },
+      ['legalEntityId'],
+    );
+    expect(relatedRefusals(tenantOnly, [lists(priceReads, {})])).toEqual([
+      'company_scope_required: A REVISE price is read for one company, which this prices route does not name',
+    ]);
     expect(
       relatedRefusals(
         withConfiguration('priceListPricesBatch', { items: [item('PRICE', [definePrice])], sourceRouteId }),
         [],
       ),
     ).toEqual([]);
-    // A priceLists route keeps both reads while a prices route of the principal revises.
-    const listsRoute = withConfiguration('priceLists', { sourceRouteId });
+    // A priceLists route keeps both reads, in the company of every prices route of the principal that revises.
     const revisingRow = storedRow(
       request('priceListPricesBatch', {
         configuration: { ...valid.priceListPricesBatch().configuration, sourceRouteId },
         routeId: peerRouteId,
       }),
     );
-    expect(relatedRefusals(listsRoute, [revisingRow]).map((line) => line.split(':')[0])).toEqual([
-      'price_revision_reads_missing',
-      'price_revision_reads_missing',
+    expect(
+      relatedRefusals(listsOf([associations, groupDefinition], company), [revisingRow]).map(
+        (line) => line.split(':')[0],
+      ),
+    ).toEqual(['price_revision_reads_missing', 'price_revision_reads_missing']);
+    expect(relatedRefusals(listsOf(priceReads, company), [revisingRow])).toEqual([]);
+    expect(relatedRefusals(listsOf(priceReads, {}), [revisingRow])).toEqual([
+      `price_revision_company_differs: Route ${peerRouteId} (priceListPricesBatch) revises the prices of company ${legalEntityId}, which this route, of none, does not read`,
     ]);
-    const listsWithPrices = withConfiguration('priceLists', {
-      items: [item('PRICE_GROUP', [associations, groupDefinition, priceSchedule, groupSourcePrices])],
-      sourceRouteId,
-    });
-    expect(relatedRefusals(listsWithPrices, [revisingRow])).toEqual([]);
   });
 });
 
@@ -743,7 +769,7 @@ describe('Symmy route write decisions', () => {
   });
 
   it('refuses a replacement prepared before the route was stopped, at the revision it still carries', () => {
-    // Prepared at token 1, revision route-v0; the route was then deactivated, which keeps route-v0 and raises the token.
+    // Prepared at token 1, revision route-v0; the route was then deactivated, which keeps route-v0 and replaces the token.
     const enrollment = request('productsBatch');
     const running = storedRow(enrollment, { routeRevision: 'route-v0' });
     expect(decided(enrollment, { byRouteId: running, bySelector: running }, replaceAt(1))).toMatchObject({

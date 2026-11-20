@@ -49,6 +49,16 @@ export const SYMMY_INTEGRATION_TABLES = [
 ] as const;
 
 export const symmyIntegrationSchema = pgSchema(SYMMY_INTEGRATION_SCHEMA_NAME);
+
+/**
+ * The change tokens of every route row (`advance_route_change_token`). It never cycles and only the migration's role
+ * may use it, so no token is handed out twice: not to two states of one route, nor to a route deleted and enrolled
+ * again. Its largest value is the largest the integer column holds.
+ */
+export const symmyRouteChangeTokens = symmyIntegrationSchema.sequence('job_route_change_tokens', {
+  maxValue: '2147483647',
+});
+
 // Assertion redemption happens before a Tenant scope can be trusted.
 export const gatewayAssertionRedemptions = symmyIntegrationSchema.table(
   'gateway_assertion_redemptions',
@@ -89,10 +99,12 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
   {
     active: boolean('active').notNull(),
     /**
-     * Rises by one with every change of the row and is never handed out again for the route
+     * Replaced with every change of the row by a token of `symmyRouteChangeTokens`, which never hands one out twice
      * (`advance_route_change_token`): an operator replaces or deactivates the route at the token it read.
      */
-    changeToken: integer('change_token').default(1).notNull(),
+    changeToken: integer('change_token')
+      .default(sql`nextval('symmy_integration.job_route_change_tokens'::regclass)`)
+      .notNull(),
     fixtureIds: text('fixture_ids').array().notNull(),
     fixturePlan: jsonb('fixture_plan').$type<SymmyFixtureExecutionPlan>(),
     legalEntityId: uuid('legal_entity_id'),
@@ -193,7 +205,7 @@ export const symmyRouteEnrollmentRecords = symmyIntegrationSchema.table.withRLS(
       sql`${table.change} in ('enroll', 'replace', 'deactivate')
         and (${table.change} = 'enroll') = (${table.previousRevision} is null)
         and (${table.change} = 'enroll') = (${table.previousChangeToken} is null)
-        and (${table.previousChangeToken} is null or ${table.changeToken} = ${table.previousChangeToken} + 1)
+        and (${table.previousChangeToken} is null or ${table.changeToken} <> ${table.previousChangeToken})
         and ${table.changeToken} >= 1
         and (${table.change} <> 'deactivate' or ${table.previousRevision} = ${table.routeRevision})`,
     ),
