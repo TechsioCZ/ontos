@@ -137,7 +137,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
   'Core Media end to end: the Shell receiver of the Catalog Current handoff (row 7)',
   (suite) => {
     suite.effect(
-      'a module relays its requester with a real assertion: Core answers Current V1 for the exact refs, and a refusal, a replay, a wrong audience and a direct person assertion never answer',
+      'a module relays its requester with a real assertion: Core answers Current V1 for the exact refs, and a refusal, a replay, a wrong audience and a direct person assertion never answer (CONTROLLED FAULT INJECTION: provider unreachable for one request)',
       (ctx) =>
         withMediaE2eWorld(
           ctx,

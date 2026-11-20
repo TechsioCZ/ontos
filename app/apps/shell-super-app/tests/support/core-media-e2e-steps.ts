@@ -84,7 +84,7 @@ export const downloadOf = (edge: ShellEdge, actor: E2eActor, mediaAssetId: strin
     path: `/core/media/assets/${mediaAssetId}/content`,
   });
 
-export const metadataOf = (edge: ShellEdge, actor: E2eActor, mediaAssetId: string) =>
+export const metadataOf = (edge: ShellEdge, actor: E2eActor, mediaAssetId: string, tenantId = actor.tenantId) =>
   edge
     .request({
       actor,
@@ -93,7 +93,7 @@ export const metadataOf = (edge: ShellEdge, actor: E2eActor, mediaAssetId: strin
           moduleId: CORE_MEDIA_MODULE,
           resourceId: mediaAssetId,
           resourceType: CORE_MEDIA_RESOURCE_TYPE,
-          tenantId: actor.tenantId,
+          tenantId,
         },
       }),
       headers: { 'content-type': 'application/json', 'x-correlation-id': `e2e-meta-${mediaAssetId}` },

@@ -11,6 +11,7 @@ import { MEDIA_CAPABILITIES, withMediaE2eWorld } from '../support/core-media-e2e
 import type { E2eActor, MediaE2eWorld, ShellEdge } from '../support/core-media-e2e-fixture.ts';
 import {
   bytesOf,
+  currentOf,
   digestOf,
   downloadOf,
   failureCodeOf,
@@ -20,6 +21,7 @@ import {
   parseJson,
   patternBytes,
   putBytes,
+  refOf,
   renameAs,
   requireFaultInjection,
   reserve,
@@ -170,6 +172,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const id = reservation.mediaAssetRef.resourceId;
               expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);
               const before = yield* metadataOf(edge, owner, id);
+              const currentBefore = yield* currentOf(world, owner, [refOf(world.tenantId, id)]);
 
               const proposed = yield* failureCodeOf(
                 renameAs(world, proposer, reservation.mediaAssetRef, 'Proposed.pdf', 'rename-p'),
@@ -190,6 +193,9 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 processingStatus: 'ready',
               });
               expect(before.json).toMatchObject({ displayFilename: 'Original.pdf' });
+              // Current V1 is the asset's, not its name's: the answer is the same after the rename.
+              expect(currentBefore.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE']);
+              expect(yield* currentOf(world, owner, [refOf(world.tenantId, id)])).toEqual(currentBefore);
               expect((yield* downloadOf(edge, owner, id)).bytes).toEqual(bytes);
               expect((yield* rowsOf(world)).length).toBe(1);
             }),
@@ -324,6 +330,46 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     );
 
     suite.effect(
+      'row 4: a foreign principal naming this tenant in the reference learns nothing, and a grant aimed at one asset reaches that asset and no other',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* tenantAndResourceScope() {
+              const uploader = person(world, 'uploader');
+              const scoped = person(world, 'metadataOnly');
+              const foreignOwner = yield* needed(world.foreign.get('owner'), 'foreign owner');
+              yield* world.grant(uploader, uploaderCapabilities);
+              const edge = yield* world.shell;
+              const first = bytesOf('the asset the grant is aimed at');
+              const second = bytesOf('another asset of the same tenant');
+              const a = yield* readyAsset(world, edge, first, 'scope-a');
+              const b = yield* readyAsset(world, edge, second, 'scope-b');
+
+              // The reference names tenant T1, the principal is T2's owner: not found, like an id that never existed.
+              const crossTenant = yield* metadataOf(edge, foreignOwner, a, world.tenantId);
+              const unknown = yield* metadataOf(
+                edge,
+                foreignOwner,
+                '8d0e5b0e-2c61-4f43-a5a3-5f7b3c0d9a11',
+                world.tenantId,
+              );
+              expect(crossTenant.status).toBe(404);
+              expect(problemOf(crossTenant)).toBe(problemOf(unknown));
+              const crossCurrent = yield* currentOf(world, foreignOwner, [refOf(world.tenantId, a)]);
+              expect(crossCurrent.entries.map(({ kind }) => kind)).toEqual(['ABSENT']);
+
+              // Resource scope: the cells name asset A only. A is read and downloaded, B is not, with the same tenant.
+              yield* world.grant(scoped, readerCapabilities, { targets: [a] });
+              expect((yield* metadataOf(edge, scoped, a)).status).toBe(200);
+              expect((yield* downloadOf(edge, scoped, a)).bytes).toEqual(first);
+              expect((yield* metadataOf(edge, scoped, b)).status).toBe(403);
+              expect((yield* downloadOf(edge, scoped, b)).status).toBe(403);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
       'row 5: a new upload never updates or overwrites an earlier asset, not even when it is aimed at it',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>
@@ -355,7 +401,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const conflicting = yield* failureTagOf(
                 reserve(world, uploader, second, { idempotencyKey: 'earlier-a' }),
               );
-              expect(conflicting).not.toBe('none');
+              expect(conflicting).toBe('ActionRequestHashConflict');
               expect((yield* rowsOf(world)).length).toBe(2);
             }),
           ),

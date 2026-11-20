@@ -1,7 +1,7 @@
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
-import { Effect, Exit, Stream } from 'effect';
+import { Effect, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
@@ -13,6 +13,8 @@ import {
   bytesOf,
   digestOf,
   downloadOf,
+  failureCodeOf,
+  failureTagOf,
   metadataOf,
   patternBytes,
   putBytes,
@@ -126,6 +128,10 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(digestOf(download.bytes)).toBe(digestOf(bytes));
               expect(download.bytes).toEqual(bytes);
               expect(download.headers.get('cache-control')).toContain('no-store');
+              // The bytes come from the governed route itself: no redirect, no provider header, no reusable address.
+              for (const name of ['location', 'etag', 'x-amz-request-id', 'x-amz-version-id', 'server']) {
+                expect(download.headers.get(name), name).toBeNull();
+              }
               // The object the provider holds is the same bytes (observed straight at the emulator).
               expect(digestOf(yield* storedBytes(world, id))).toBe(digestOf(bytes));
               const row = yield* rowOf(world, id);
@@ -199,16 +205,14 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const first = yield* reserve(world, uploader, bytes, { idempotencyKey: 'retry-1' });
               const id = first.mediaAssetRef.resourceId;
               // The same operation again: not a second asset (the governed runtime answers the committed one).
-              const again = yield* Effect.exit(reserve(world, uploader, bytes, { idempotencyKey: 'retry-1' }));
-              if (Exit.isSuccess(again)) {
-                expect(again.value.mediaAssetRef.resourceId).toBe(id);
-              }
+              expect(yield* failureCodeOf(reserve(world, uploader, bytes, { idempotencyKey: 'retry-1' }))).toBe(
+                'action_already_committed',
+              );
               expect((yield* rowsOf(world)).length).toBe(1);
               // The same key with another request is a conflict, never a silent swap of the payload.
-              const conflicting = yield* Effect.exit(
-                reserve(world, uploader, bytesOf('another file'), { idempotencyKey: 'retry-1' }),
-              );
-              expect(Exit.isFailure(conflicting)).toBe(true);
+              expect(
+                yield* failureTagOf(reserve(world, uploader, bytesOf('another file'), { idempotencyKey: 'retry-1' })),
+              ).toBe('ActionRequestHashConflict');
               expect((yield* rowsOf(world)).length).toBe(1);
 
               expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);
@@ -292,15 +296,15 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // Never a success: a typed, retryable non-success, and the asset is not usable.
               expect(lost.status).toBe(503);
               expect(textOf(lost.bytes)).not.toMatch(/ready|contentSha256|storage|s3:/u);
-              expect((yield* rowOf(world, id))?.processing_status).not.toBe('ready');
+              expect((yield* rowOf(world, id))?.processing_status).toBe('uploaded');
               proxy.setRules([]);
-              expect((yield* downloadOf(edge, reader, id)).status).not.toBe(200);
+              expect((yield* downloadOf(edge, reader, id)).status).toBe(409);
 
               // A client that no longer holds the bytes cannot finish the attempt by sending nothing: an empty body is
               // not the declared identity, so there is no confirm-without-bytes route and none is needed here.
               const withoutBytes = yield* putBytes(edge, uploader, id, new Uint8Array(0));
-              expect(withoutBytes.status).not.toBe(200);
-              expect((yield* rowOf(world, id))?.processing_status).not.toBe('ready');
+              expect(withoutBytes.status).toBe(409);
+              expect((yield* rowOf(world, id))?.processing_status).toBe('uploaded');
 
               // The retry of the same attempt checks the stored bytes against the original intent and completes the
               // same asset: still exactly one.
