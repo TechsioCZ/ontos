@@ -128,9 +128,9 @@ export const parseSpiceDbConfig = (
 ): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> =>
   parseSpiceDbConfigWith(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
 
-export const loadSpiceDbConfig = Effect.fn('Config.loadSpiceDbConfig')(function* loadConfiguration(
+export const loadSpiceDbConfig = (
   options: LoadSpiceDbConfigOptions = {},
-): Effect.fn.Return<SpiceDbConfigValue, SpiceDbConfigError> {
+): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> => {
   const environmentProvider =
     options.environment === undefined
       ? ConfigProvider.fromEnv({ preserveEmptyStrings: true })
@@ -139,10 +139,10 @@ export const loadSpiceDbConfig = Effect.fn('Config.loadSpiceDbConfig')(function*
         });
   const envPath = options.envPath ?? SPICEDB_ROOT_ENV_PATH;
 
-  return yield* loadDotEnvProvider(envPath, configFailureWithCause).pipe(
+  return loadDotEnvProvider(envPath, configFailureWithCause).pipe(
     Effect.withSpan('Config.loadFileConfigProvider'),
     Effect.flatMap((fileProvider) => parseSpiceDbConfigWith(ConfigProvider.orElse(environmentProvider, fileProvider))),
   );
-});
+};
 
 export const SpiceDbConfigLive = Layer.effect(SpiceDbConfig, loadSpiceDbConfig());
