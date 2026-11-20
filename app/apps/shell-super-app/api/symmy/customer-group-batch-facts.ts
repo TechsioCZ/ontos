@@ -12,7 +12,12 @@ import { Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import { symmyUnavailableProblem } from './contract.ts';
 import type { SymmyIngressProblem } from './contract.ts';
-import { acquireSymmyReadAssertion, mapSymmyOwnerReadProblem, requireRouteRead } from './source-read-projections.ts';
+import {
+  acquireSymmyReadAssertion,
+  mapSymmyOwnerReadProblem,
+  requireRouteCompany,
+  requireRouteRead,
+} from './source-read-projections.ts';
 import type { SymmySourceReadScope } from './source-read-projections.ts';
 import type { SymmyIngressAdmission } from './transport.ts';
 
@@ -34,8 +39,10 @@ export interface SymmyCustomerGroupFactsInput {
 /**
  * What the Commerce owner holds for each group code of the route's own source: the group the code is bound to, its
  * revision, business code and meaning, and the order of the binding's last assertion. A code the source never bound
- * has no fact and becomes a create. Reading needs the route to enroll the definition source read (403 without it); an
- * answer about another source or tenant is never taken as a fact.
+ * has no fact and becomes a create. Reading needs the route to enroll the definition source read and to be enrolled for
+ * a company, since Commerce holds every group under one and an assertion without one carries no route scope (403
+ * without either, before any Commerce assertion is requested); an answer about another source or tenant is never taken
+ * as a fact.
  */
 export const readSymmyCustomerGroupDefinitionFacts = Effect.fn('SymmyCustomerGroupBatch.definitionFacts')(
   function* definitionFacts(
@@ -44,6 +51,7 @@ export const readSymmyCustomerGroupDefinitionFacts = Effect.fn('SymmyCustomerGro
   ): Effect.fn.Return<SymmyCustomerGroupDefinitionFacts, SymmyIngressProblem> {
     const { admission, groups, routeScope } = input;
     yield* requireRouteRead(routeScope, customerContextModule, definitionSourceRead);
+    const legalEntityId = yield* requireRouteCompany(routeScope);
     const authority = {
       issuer: routeScope.issuerId,
       mappingRevision: routeScope.sourceMappingVersion ?? routeScope.mappingVersion,
@@ -61,11 +69,7 @@ export const readSymmyCustomerGroupDefinitionFacts = Effect.fn('SymmyCustomerGro
           mode: 'CURRENT',
           recordId: code,
         }).pipe(Effect.catchTag('SchemaError', unavailable));
-        const assertion = yield* acquireSymmyReadAssertion(
-          admission,
-          customerContextAudience,
-          routeScope.legalEntityId,
-        );
+        const assertion = yield* acquireSymmyReadAssertion(admission, customerContextAudience, legalEntityId);
         // The governed client of the owner's published Read contract, as the generated client builds it.
         const current = yield* makeGovernedEffectBffClient(
           {

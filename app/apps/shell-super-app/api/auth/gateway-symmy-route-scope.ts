@@ -216,12 +216,14 @@ const admissionDefinitionRead = {
 /**
  * The owner reads of the destination that an assertion for this route proof may name. A read proof names every
  * enrolled, published read. An admission proof names at most the one definition read, once however many enrollment
- * items name it, and only where the destination publishes it as a current read.
+ * items name it, only for a route enrolled for a company, since an assertion without one carries no route scope, and
+ * only where the destination publishes it as a current read.
  */
 const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
   if (facts.sourcePurpose === 'admit') {
     const { entrypointKey, moduleId, routeKey, schemaVersion } = admissionDefinitionRead;
     return facts.routeKey === routeKey &&
+      route.legalEntityId !== undefined &&
       destination.manifest.module.id === moduleId &&
       route.allowedOwnerOperations.some(
         (operation) =>
