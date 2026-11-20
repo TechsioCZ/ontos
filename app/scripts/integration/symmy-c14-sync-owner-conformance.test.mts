@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 
 import { executeCreateProductUnitWithAuthorization } from '@app/catalog/api/client';
 import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
-import { CustomerGroupRefSchema } from '@app/commerce-customer-context/resources/customer-group';
 import {
   CustomerGroupSourceAuthorityFixtureUnavailable,
   seedCustomerGroupSourceAuthority,
@@ -18,7 +17,7 @@ import {
 import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
 import { GatewayForbiddenProblemSchema, GatewayUnavailableProblemSchema } from '@app/shared-contracts';
 import { makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { SymmyInternalExecutionPlanSchema, SymmyStockRowSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyCustomerGroupRowSchema, SymmyStockRowSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
 import { Config, DateTime, Duration, Effect, Fiber, FileSystem, Layer, Option, Queue, Redacted, Schema } from 'effect';
@@ -26,11 +25,7 @@ import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { prepareInternalSyncAuthority } from './support/symmy-c14-sync-authority.mts';
-import {
-  internalSyncSource,
-  makeInternalGroupCreatePlan,
-  makeInternalGroupUpdatePlan,
-} from './support/symmy-c14-sync-plans.mts';
+import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 import {
   deriveInternalStockAssertionId,
   makeInternalStockEnrollment,
@@ -70,9 +65,21 @@ const stockResponseSchema = Schema.Struct({
     }),
   ),
 });
+const groupResponseSchema = Schema.Struct({
+  items: Schema.NonEmptyArray(
+    Schema.Struct({ ...responseSchema.fields.items.value.fields, code: SymmyCustomerGroupRowSchema.fields.code }),
+  ),
+});
 type JsonBody = ReturnType<typeof HttpBody.json>;
 type StockRequestRow = ReturnType<typeof makeInternalStockRow>;
 const stockBody = (rows: readonly StockRequestRow[]) => HttpBody.json({ stock: rows });
+type GroupRequestRow = typeof SymmyCustomerGroupRowSchema.Encoded;
+const groupBody = (rows: readonly GroupRequestRow[]) => HttpBody.json({ customerGroups: rows });
+const groupOperation = (entrypointKey: string) => ({
+  entrypointKey,
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+});
 const inventoryOwner = 'commerce.inventory';
 const groupAppId = 'commerce-customer-context';
 const groupPath = 'customer-groups/batch';
@@ -194,37 +201,16 @@ it.live(
         const groupLogicalRouteId = randomUUID();
         const stockLogicalRouteId = randomUUID();
         const groupRecordId = 'INTERNAL_C14_SYNC_GROUP';
-        const groupSource = {
-          definitionEvidence: {
-            kind: 'SOURCE_RECORD' as const,
-            reference: groupRecordId,
-            revision: '1',
-          },
-          effectId: randomUUID(),
-          issuer: internalSyncSource.issuerId,
-          mappingRevision: internalSyncSource.mappingVersion,
-          namespace: internalSyncSource.namespace,
-          order: 1,
-          recordId: groupRecordId,
-          revision: '1',
-          route: { id: groupLogicalRouteId, revision: internalSyncSource.routeRevision },
-          sourceCode: groupRecordId,
-        };
-        const groupPayload = {
+        // The public group row states every owner fact; the route enrollment supplies the source and its authority.
+        const groupRow = {
           businessCode: 'INTERNAL_C14_SYNC_GROUP',
+          code: groupRecordId,
           description: 'Explicit internal fixture Group definition',
-          initialState: 'ACTIVE' as const,
           meaningKey: 'internal-c14.explicit-group-meaning',
           membershipCriteria: 'Only the explicitly named internal fixture customers',
           name: 'Internal synchronous Group',
           purpose: 'Internal source-owned customer classification',
-          reason: 'INTERNAL_C14 explicit governed Group definition',
-          source: groupSource,
         };
-        const groupPlan = yield* makeInternalGroupCreatePlan(
-          { occurrenceId: randomUUID(), recordId: groupRecordId },
-          groupPayload,
-        );
         const groupSetupRequest = {
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           fixture: isolated,
@@ -257,23 +243,33 @@ it.live(
         yield* seedCustomerGroupSourceAuthority(groupSetupRequest);
         const groupPolicy = { policyId: 'INTERNAL_C14_GROUP_SYNC_RETENTION', revision: '1' };
         const stockPolicy = { policyId: 'INTERNAL_C14_STOCK_SYNC_RETENTION', revision: '1' };
-        const encodedGroup = Schema.encodeSync(SymmyInternalExecutionPlanSchema)(groupPlan);
+        // The route enrolls the group create and update and the definition read that fences each row on the owner.
         const groupConfiguration = {
-          ...encodedGroup,
-          items: encodedGroup.items.map((item) => ({
-            ...item,
-            effects: [
-              ...item.effects,
-              {
-                effectKey: 'customer-group-update',
-                operation: {
-                  entrypointKey: 'commerce.customer-context.update-customer-group',
-                  moduleId: 'commerce.customer-context',
-                  schemaVersion: '1',
+          items: [
+            {
+              effects: [
+                {
+                  effectKey: 'customer-group-create',
+                  operation: groupOperation('commerce.customer-context.create-customer-group'),
                 },
+                {
+                  effectKey: 'customer-group-update',
+                  operation: groupOperation('commerce.customer-context.update-customer-group'),
+                },
+                {
+                  effectKey: 'customer-group-definition-read',
+                  operation: groupOperation('commerce.customer-context.api.customer-group-definition-source'),
+                },
+              ],
+              itemKey: 'customer-group',
+              source: {
+                entityKind: 'CUSTOMER_GROUP',
+                issuerId: internalSyncSource.issuerId,
+                sourceNamespace: internalSyncSource.namespace,
+                sourceRecordId: groupRecordId,
               },
-            ],
-          })),
+            },
+          ],
           sourceMappingVersion: internalSyncSource.mappingVersion,
           sourceRouteId: groupLogicalRouteId,
           sourceRouteRevision: internalSyncSource.routeRevision,
@@ -363,21 +359,10 @@ it.live(
             }
             return response;
           });
-        const submit = (
-          path: 'customer-groups/batch',
-          idempotencyKey: string,
-          plan: typeof SymmyInternalExecutionPlanSchema.Type,
-        ) =>
-          postSynchronous(
-            path,
-            idempotencyKey,
-            HttpBody.json({
-              contractVersion: 'INTERNAL_C14',
-              plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(plan),
-            }),
-          ).pipe(
+        const submit = (idempotencyKey: string, rows: readonly GroupRequestRow[]) =>
+          postSynchronous(groupPath, idempotencyKey, groupBody(rows)).pipe(
             Effect.flatMap((response) =>
-              response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(responseSchema))),
+              response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(groupResponseSchema))),
             ),
           );
         const submitStock = (idempotencyKey: string, rows: readonly StockRequestRow[]) =>
@@ -393,7 +378,9 @@ it.live(
               headers: idempotencyKey === undefined ? headers : { ...headers, 'idempotency-key': idempotencyKey },
             });
           });
-        const lostGroupResponse = yield* submit(groupPath, groupCreateKey, groupPlan);
+        const lostGroupResponse = yield* submit(groupCreateKey, [groupRow]);
+        expect(lostGroupResponse.items).toHaveLength(1);
+        expect(lostGroupResponse.items[0].code).toBe(groupRecordId);
         expect(lostGroupResponse.items[0].outcome).toBe('not_accepted');
         expect(lostGroupResponse.items[0].effects[0].status).toBe('indeterminate');
         const groupOutput = ownerOutput.get(groupAppId);
@@ -420,26 +407,20 @@ it.live(
           set route_revision='INTERNAL_C14_GROUP_RECEIVING_R2', mapping_version='INTERNAL_C14_GROUP_RECEIVING_MAP_R2'
           where tenant_id=${tenantId} and route_id=${groupRouteId}`;
         yield* fs.remove(groupFaultMarker);
-        const groupResult = yield* submit(groupPath, groupCreateKey, groupPlan);
+        const groupResult = yield* submit(groupCreateKey, [groupRow]);
         if (groupResult.items[0].outcome !== 'accepted') {
           const diagnostics = yield* Effect.all(ownerDiagnostics);
           return yield* new SymmyC14ProductFixtureUnavailable({
             message: `The committed Group receipt did not recover: ${JSON.stringify(groupResult)}; gateway ${JSON.stringify(yield* shell.gatewayDiagnostics())}; owners ${diagnostics.join('\n')}`,
           });
         }
+        expect(groupResult.items[0].code).toBe(groupRecordId);
         expect(groupResult.items[0].outcome).toBe('accepted');
         expect(groupResult.items[0].effects[0].status).toBe('accepted_change');
-        const groupReplay = yield* submit(groupPath, groupCreateKey, groupPlan);
+        const groupReplay = yield* submit(groupCreateKey, [groupRow]);
         expect(groupReplay).toEqual(groupResult);
-        const deniedGroupPlan = yield* makeInternalGroupCreatePlan(
-          { occurrenceId: randomUUID(), recordId: groupRecordId },
-          groupPayload,
-        );
         const deniedGroupWrite = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
-          body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(deniedGroupPlan),
-          }),
+          body: yield* groupBody([groupRow]),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_GROUP_REVOKED_WRITER' },
         });
         expect(deniedGroupWrite.status).toBe(503);
@@ -457,34 +438,23 @@ it.live(
         const [group] = groups;
         assert.isDefined(group);
         expect(group.revision).toBe(1);
-        const groupRef = yield* Schema.decodeUnknownEffect(CustomerGroupRefSchema)({
-          moduleId: 'commerce.customer-context',
-          resourceId: group.customer_group_id,
-          resourceType: 'commerce.customer-context.customer-group',
-          tenantId,
-        });
-        const renamePlan = yield* makeInternalGroupUpdatePlan(
-          { occurrenceId: randomUUID(), recordId: groupRecordId },
-          {
-            description: groupPayload.description,
-            expectedRevision: 1,
-            groupRef,
-            membershipCriteria: groupPayload.membershipCriteria,
-            name: 'Internal synchronous Group renamed',
-            purpose: groupPayload.purpose,
-            reason: 'INTERNAL_C14 cosmetic rename preserves Group meaning',
-            source: { ...groupSource, order: 2, revision: '2' },
-          },
-        );
-        const rename = yield* submit(groupPath, 'INTERNAL_C14_GROUP_RENAME', renamePlan);
+        // The same code with the same business code and meaning revises the group its code is bound to.
+        const renamedRow = { ...groupRow, name: 'Internal synchronous Group renamed' };
+        const rename = yield* submit('INTERNAL_C14_GROUP_RENAME', [renamedRow]);
         if (rename.items[0].outcome !== 'accepted') {
           const diagnostics = yield* Effect.all(ownerDiagnostics);
           return yield* new SymmyC14ProductFixtureUnavailable({
             message: `The cosmetic Group rename did not commit: ${JSON.stringify(rename)}; gateway ${JSON.stringify(yield* shell.gatewayDiagnostics())}; owners ${diagnostics.join('\n')}`,
           });
         }
+        expect(rename.items[0].code).toBe(groupRecordId);
         expect(rename.items[0].outcome).toBe('accepted');
         expect(rename.items[0].effects[0].status).toBe('accepted_change');
+        // The update kept the binding of the code and followed the order of its last assertion.
+        expect(
+          yield* admin`select customer_group_id,source_code,source_order from commerce_customer_context.customer_group_definition_source_bindings
+            where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}`,
+        ).toEqual([{ customer_group_id: group.customer_group_id, source_code: groupRecordId, source_order: 2 }]);
         const unitContext = yield* shell.issueFixtureSetupGateway({ audience: 'catalog' });
         const unitPayload = {
           code: 'INTERNAL_C14_SYNC_UNIT',
@@ -734,25 +704,12 @@ it.live(
         assert.isDefined(receivedAtFact);
         expect(receivedAtFact.admitted_at).toBe(receivedAtFact.imported_at);
         expect(Date.parse(receivedAtFact.admitted_at)).toBeGreaterThanOrEqual(DateTime.toEpochMillis(observedAt));
-        const changedMeaningPlan = yield* makeInternalGroupUpdatePlan(
-          { occurrenceId: randomUUID(), recordId: groupRecordId },
+        const meaningConflict = yield* submit('INTERNAL_C14_GROUP_CHANGED_MEANING', [
           {
-            description: groupPayload.description,
-            expectedRevision: 2,
-            groupRef,
+            ...renamedRow,
             membershipCriteria: 'A different customer classification must not replace the existing Group meaning',
-            name: 'Internal synchronous Group renamed',
-            purpose: groupPayload.purpose,
-            reason: 'INTERNAL_C14 explicit conflicting source meaning',
-            source: {
-              ...groupSource,
-              definitionEvidence: { ...groupSource.definitionEvidence, revision: '3' },
-              order: 3,
-              revision: '3',
-            },
           },
-        );
-        const meaningConflict = yield* submit(groupPath, 'INTERNAL_C14_GROUP_CHANGED_MEANING', changedMeaningPlan);
+        ]);
         expect(meaningConflict.items[0].outcome).toBe('not_accepted');
         if (meaningConflict.items[0].effects[0].status !== 'conflict') {
           const diagnostics = yield* Effect.all(ownerDiagnostics);
@@ -768,21 +725,22 @@ it.live(
         expect(unchangedMeaning).toEqual({ customer_group_id: group.customer_group_id, revision: 2 });
         const nameOnly = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
           body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: {
-              ...encodedGroup,
-              items: encodedGroup.items.map((item) => ({
-                ...item,
-                effects: item.effects.map((effect) => ({
-                  ...effect,
-                  intent: { _tag: 'CustomerGroupCreate', payload: { name: 'A name alone proves no Group meaning' } },
-                })),
-              })),
-            },
+            customerGroups: [{ code: groupRecordId, name: 'A name alone proves no Group meaning' }],
           }),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_GROUP_NAME_ONLY' },
         });
         expect(nameOnly.status).toBe(400);
+        // The retired internal bodies are invalid on the public route.
+        for (const [idempotencyKey, body] of [
+          ['INTERNAL_C14_GROUP_VERSIONED', { contractVersion: 'INTERNAL_C14', customerGroups: [groupRow] }],
+          ['INTERNAL_C14_GROUP_FIXTURE', { fixtureId: 'INTERNAL_C14' }],
+        ] as const) {
+          const retired = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
+            body: yield* HttpBody.json(body),
+            headers: { ...headers, 'idempotency-key': idempotencyKey },
+          });
+          expect(retired.status).toBe(400);
+        }
         const [jobs] =
           yield* admin`select count(*)::integer as count from symmy_integration.import_jobs where tenant_id=${tenantId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),

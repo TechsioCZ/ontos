@@ -1,3 +1,4 @@
+import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import {
   CustomerGroupMembershipSourceReceiptNotFoundProblemSchema,
   CustomerGroupMembershipSourceReceiptRequestSchema,
@@ -12,17 +13,13 @@ import { SourceProcessingContextSchema } from '@app/privacy/api';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
 import { seedCommittedProfileSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
-import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
-import {
-  SymmyInternalExecutionPlanSchema,
-  SymmyRouteExecutionConfigurationSchema,
-} from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyRouteExecutionConfigurationSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
 import { PgClient } from '@effect/sql-pg';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Effect, Option, Redacted, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 
 import {
@@ -31,8 +28,8 @@ import {
   observeCustomerFixtureUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
+import { customerOccurrenceId } from './support/symmy-c14-customer-public.mts';
 import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
-import { makeInternalMembershipPlan } from './support/symmy-c14-membership-plan.mts';
 import { prepareManualMembershipNativeFixture } from './support/symmy-c14-membership-manual.mts';
 import {
   issueMembershipFixtureRecovery,
@@ -44,7 +41,7 @@ import {
   startProductWorker,
   SymmyC14ProductFixtureUnavailable,
 } from './support/symmy-c14-product-runtime.mts';
-import { internalSyncSource, makeInternalGroupCreatePlan } from './support/symmy-c14-sync-plans.mts';
+import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const planJson = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
@@ -61,6 +58,21 @@ const effectSchema = Schema.Struct({
   invocationId: Schema.OptionFromNullOr(uuidText),
   state: Schema.String,
 });
+const [membershipAssignmentSchema] = ApplyCustomerGroupMembershipSourcePayloadSchema.members;
+const pinnedMembershipSchema = Schema.Struct({
+  effectId: Schema.toEncoded(SymmyEffectIdSchema),
+  payload: membershipAssignmentSchema,
+});
+const commerceOperation = (entrypointKey: string) => ({
+  entrypointKey,
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+});
+/**
+ * The occurrence the admission derives for the first customer of a request (plan item `membership-0`). It is the
+ * same seed and digest the customers route uses; the pinned plan of the first job checks it before it is relied on.
+ */
+const membershipOccurrenceId = (idempotencyKey: string) => customerOccurrenceId(idempotencyKey, 'membership-0');
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
 
@@ -108,16 +120,11 @@ it.live(
         const groupRecordId = 'INTERNAL_C14_GROUP/source key:Žluťoučký';
         const selectedRouteCode = 'INTERNAL_C14_SELECTED_GROUP_ROUTE';
         const groupSource = {
-          definitionEvidence: { kind: 'SOURCE_RECORD' as const, reference: groupRecordId, revision: '1' },
-          effectId: yield* uuid,
           issuer: internalSyncSource.issuerId,
           mappingRevision: internalSyncSource.mappingVersion,
           namespace: internalSyncSource.namespace,
-          order: 1,
           recordId: groupRecordId,
-          revision: '1',
           route: { id: sourceRouteId, revision: internalSyncSource.routeRevision },
-          sourceCode: 'INTERNAL_C14_DIFFERENT_SOURCE_CODE',
         };
         yield* seedCustomerGroupSourceAuthority({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -154,22 +161,29 @@ it.live(
             tenantId,
           },
         });
-        const groupPlan = yield* makeInternalGroupCreatePlan(
-          { occurrenceId: yield* uuid, recordId: groupRecordId },
-          {
-            businessCode: 'INTERNAL_C14_MEMBERSHIP_GROUP',
-            description: 'Explicit internal native Membership classification',
-            initialState: 'ACTIVE',
-            meaningKey: 'internal-c14.membership-classification',
-            membershipCriteria: 'Explicitly named internal native customer profiles',
-            name: 'Internal native Membership Group',
-            purpose: 'Internal selected source classification',
-            reason: 'INTERNAL_C14 explicit source Group producer',
-            source: groupSource,
-          },
-        );
+        // The group route enrolls the create and the definition read that fences each public row on the owner.
         const groupConfiguration = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
-          ...Schema.encodeSync(SymmyInternalExecutionPlanSchema)(groupPlan),
+          items: [
+            {
+              effects: [
+                {
+                  effectKey: 'customer-group-create',
+                  operation: commerceOperation('commerce.customer-context.create-customer-group'),
+                },
+                {
+                  effectKey: 'customer-group-definition-read',
+                  operation: commerceOperation('commerce.customer-context.api.customer-group-definition-source'),
+                },
+              ],
+              itemKey: 'customer-group',
+              source: {
+                entityKind: 'CUSTOMER_GROUP',
+                issuerId: groupSource.issuer,
+                sourceNamespace: groupSource.namespace,
+                sourceRecordId: groupRecordId,
+              },
+            },
+          ],
           sourceRouteId,
         });
         const groupPolicy = { policyId: 'INTERNAL_C14_MEMBERSHIP_GROUP_RETENTION', revision: '1' };
@@ -200,8 +214,17 @@ it.live(
         const headers = { 'x-api-key': Redacted.value(fixture.providerKey.secret) };
         const groupResponse = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/batch`, {
           body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(groupPlan),
+            customerGroups: [
+              {
+                businessCode: 'INTERNAL_C14_MEMBERSHIP_GROUP',
+                code: groupRecordId,
+                description: 'Explicit internal native Membership classification',
+                meaningKey: 'internal-c14.membership-classification',
+                membershipCriteria: 'Explicitly named internal native customer profiles',
+                name: 'Internal native Membership Group',
+                purpose: 'Internal selected source classification',
+              },
+            ],
           }),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_MEMBERSHIP_GROUP_CREATE' },
         });
@@ -212,7 +235,7 @@ it.live(
         }
         const groupResult = yield* groupResponse.json;
         expect(groupResult).toMatchObject({
-          items: [{ effects: [{ status: 'accepted_change' }], outcome: 'accepted' }],
+          items: [{ code: groupRecordId, effects: [{ status: 'accepted_change' }], outcome: 'accepted' }],
         });
         const observationInput = {
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -220,13 +243,7 @@ it.live(
           operatorPrincipalId: integration.issuerPrincipalId,
           operatorProviderUserId: shell.providerUserId,
           ownedDatabase: isolated,
-          source: {
-            issuer: groupSource.issuer,
-            mappingRevision: groupSource.mappingRevision,
-            namespace: groupSource.namespace,
-            recordId: groupRecordId,
-            route: groupSource.route,
-          },
+          source: groupSource,
           tenantId,
         };
         const group = yield* observeCustomerGroupSourceNativeFixture(observationInput);
@@ -250,73 +267,8 @@ it.live(
         ]) {
           expect(yield* observeCustomerGroupSourceNativeFixture(invalid).pipe(Effect.isFailure)).toBe(true);
         }
-        const occurrenceId = yield* uuid;
-        const removalOccurrenceId = yield* uuid;
         const manual = yield* prepareManualMembershipNativeFixture(fixture);
         expect(manual.membership.management).toEqual({ kind: 'MANUAL' });
-        const memberRecordId = 'INTERNAL_C14_EXPLICIT_MEMBER';
-        const source = {
-          issuer: groupSource.issuer,
-          namespace: groupSource.namespace,
-          occurrenceId,
-          recordId: memberRecordId,
-          recordType: 'CUSTOMER_GROUP_MEMBERSHIP',
-          routeRef: sourceRouteId,
-        };
-        const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
-          connections: isolated.connections,
-          contexts: [source, { ...source, occurrenceId: removalOccurrenceId }].flatMap((exactSource) =>
-            (['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
-              authMethod: 'system' as const,
-              principalId: systemId,
-              request: {
-                consumerModuleId: 'commerce.customer-context' as const,
-                operation,
-                source: exactSource,
-                target: {
-                  kind: 'RETAIL_CUSTOMER_PROFILE' as const,
-                  resourceId: fixture.profileReceipt.profileRef.resourceId,
-                },
-              },
-            })),
-          ),
-          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_MEMBERSHIP_DATA_CONTRACT',
-          controllerRef: 'internal:membership-conformance',
-          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-          governancePrincipalId: fixture.governancePrincipalId,
-          legalEntityId,
-          meaning: 'Independent current internal DATA authority for this exact explicit Membership and receipt only',
-          profileReceipt: fixture.proofTransport,
-          tenantId,
-        });
-        expect(dataPrivacy.personAdmission.partyRef).toEqual(fixture.partyReceipt.partyRef);
-        expect(dataPrivacy.profileReceipt.result.profileRef).toEqual(fixture.profileReceipt.profileRef);
-        yield* restartOwner(fixture, 'privacy', {
-          ...environment,
-          ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-            Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-          )([...fixture.privacy.contexts, ...dataPrivacy.contexts]),
-        });
-        const memberPlan = yield* makeInternalMembershipPlan({
-          effectiveAt: DateTime.formatIso(yield* DateTime.now),
-          groupRef: group.value.groupRef,
-          manager: {
-            factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
-            issuer: groupSource.issuer,
-            sourceNamespace: groupSource.namespace,
-            tenantId,
-          },
-          operation: 'ASSIGN',
-          profile: { profileKind: 'RETAIL', profileRef: fixture.profileReceipt.profileRef },
-          reason: 'INTERNAL_C14 explicit named customer assignment',
-          route: groupSource.route,
-          source: {
-            assertionId: occurrenceId,
-            effectId: 'INTERNAL_C14_ASSIGNED_AT_ADMISSION',
-            order: 1,
-            sourceRecordId: memberRecordId,
-          },
-        });
         const selector = {
           kind: 'CUSTOMER_GROUP' as const,
           source: {
@@ -328,8 +280,20 @@ it.live(
           },
           target: group.value.groupRef,
         };
+        // The selected group route enrolls the source membership write only; the selector binds the created group.
         const memberConfiguration = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
-          ...Schema.encodeSync(SymmyInternalExecutionPlanSchema)(memberPlan),
+          items: [
+            {
+              effects: [{ effectKey: 'customer-group-assignment', operation: commerceOperation(membershipActionKey) }],
+              itemKey: 'customer-group-assignment',
+              source: {
+                entityKind: 'CUSTOMER_GROUP_MEMBERSHIP',
+                issuerId: groupSource.issuer,
+                sourceNamespace: groupSource.namespace,
+                sourceRecordId: groupRecordId,
+              },
+            },
+          ],
           selector,
           sourceRouteId,
         });
@@ -343,12 +307,14 @@ it.live(
           tenantId,
         };
         const selectedCode = encodeSymmySourceSelector(selectorScope, groupRecordId, group.value.groupRef.resourceId);
-        const submit = (code = selectedCode, idempotencyKey = 'INTERNAL_C14_SELECTED_MEMBERSHIP', plan = memberPlan) =>
+        // The customer exactly as GET /admin/customers returns its profile reference.
+        const customer = { profileRef: { ...fixture.profileReceipt.profileRef, kind: 'RETAIL' as const } };
+        const membershipKey = 'INTERNAL_C14_SELECTED_MEMBERSHIP';
+        const deniedKey = 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED';
+        const customersBody = HttpBody.jsonUnsafe({ customers: [customer] });
+        const submit = (code = selectedCode, idempotencyKey = membershipKey, body: HttpBody.HttpBody = customersBody) =>
           client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/${code}/customers/batch`, {
-            body: HttpBody.jsonUnsafe({
-              contractVersion: 'INTERNAL_C14',
-              plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(plan),
-            }),
+            body,
             headers: { ...headers, 'idempotency-key': idempotencyKey },
           });
         for (const wrongScope of [
@@ -383,6 +349,73 @@ it.live(
         const beforeWorker = yield* effects;
         expect(beforeWorker).toHaveLength(1);
         expect(beforeWorker.every(({ invocationId }) => Option.isNone(invocationId))).toBe(true);
+        const pinnedMemberships = (jobId: string) =>
+          admin`select effect_id as "effectId",effect #> '{intent,payload}' as payload from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${jobId}`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(pinnedMembershipSchema))),
+          );
+        const manager = {
+          factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+          issuer: groupSource.issuer,
+          sourceNamespace: groupSource.namespace,
+          tenantId,
+        };
+        // The admission pinned one source ASSIGN of the profile to the group the route binds, under lineage order 1.
+        const [pinned] = yield* pinnedMemberships(admitted.jobId);
+        assert.isDefined(pinned);
+        expect(pinned.payload).toMatchObject({
+          groupRef: group.value.groupRef,
+          manager,
+          operation: 'ASSIGN',
+          profile: { profileKind: 'RETAIL', profileRef: fixture.profileReceipt.profileRef },
+          route: groupSource.route,
+          source: { assertionId: membershipOccurrenceId(membershipKey), effectId: pinned.effectId, order: 1 },
+        });
+        expect(
+          yield* admin`select source_order from symmy_integration.membership_source_orders where tenant_id=${tenantId} and effect_id=${pinned.effectId}`,
+        ).toEqual([{ source_order: 1 }]);
+        // Privacy authorizes the exact source of this membership and of the later one of the same lineage only.
+        const source = {
+          issuer: groupSource.issuer,
+          namespace: groupSource.namespace,
+          occurrenceId: pinned.payload.source.assertionId,
+          recordId: pinned.payload.source.sourceRecordId,
+          recordType: 'CUSTOMER_GROUP_MEMBERSHIP',
+          routeRef: sourceRouteId,
+        };
+        const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
+          connections: isolated.connections,
+          contexts: [source, { ...source, occurrenceId: membershipOccurrenceId(deniedKey) }].flatMap((exactSource) =>
+            (['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
+              authMethod: 'system' as const,
+              principalId: systemId,
+              request: {
+                consumerModuleId: 'commerce.customer-context' as const,
+                operation,
+                source: exactSource,
+                target: {
+                  kind: 'RETAIL_CUSTOMER_PROFILE' as const,
+                  resourceId: fixture.profileReceipt.profileRef.resourceId,
+                },
+              },
+            })),
+          ),
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_MEMBERSHIP_DATA_CONTRACT',
+          controllerRef: 'internal:membership-conformance',
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId: fixture.governancePrincipalId,
+          legalEntityId,
+          meaning: 'Independent current internal DATA authority for this exact explicit Membership and receipt only',
+          profileReceipt: fixture.proofTransport,
+          tenantId,
+        });
+        expect(dataPrivacy.personAdmission.partyRef).toEqual(fixture.partyReceipt.partyRef);
+        expect(dataPrivacy.profileReceipt.result.profileRef).toEqual(fixture.profileReceipt.profileRef);
+        yield* restartOwner(fixture, 'privacy', {
+          ...environment,
+          ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
+            Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
+          )([...fixture.privacy.contexts, ...dataPrivacy.contexts]),
+        });
         const worker = yield* startProductWorker(fixture.workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELECTED_MEMBERSHIP',
@@ -484,7 +517,12 @@ it.live(
               outcome: 'ASSIGNED',
             },
           ],
-          source: { assertionId: occurrenceId, effectId: effect.effectId },
+          source: {
+            assertionId: source.occurrenceId,
+            effectId: effect.effectId,
+            order: 1,
+            sourceRecordId: source.recordId,
+          },
         });
         expect(yield* readReceipt).toEqual(receipt);
         const currentMemberships = yield* manual.read;
@@ -499,39 +537,24 @@ it.live(
         });
         const assigned = receipt.items.find((item) => item.outcome === 'ASSIGNED' && 'membership' in item);
         assert(assigned !== undefined && 'membership' in assigned);
-        const removalPlan = yield* makeInternalMembershipPlan({
-          effectiveAt: DateTime.formatIso(yield* DateTime.now),
-          expectedRevision: assigned.membership.revision,
-          groupRef: group.value.groupRef,
-          manager: {
-            factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
-            issuer: groupSource.issuer,
-            sourceNamespace: groupSource.namespace,
-            tenantId,
-          },
-          membershipRef: assigned.membership.membershipRef,
-          operation: 'REMOVE',
-          profile: { profileKind: 'RETAIL', profileRef: fixture.profileReceipt.profileRef },
-          reason: 'INTERNAL_C14 explicit removal on the assignment-only route',
-          route: groupSource.route,
-          source: {
-            assertionId: removalOccurrenceId,
-            effectId: 'INTERNAL_C14_REMOVE_AT_ADMISSION',
-            order: 2,
-            sourceRecordId: memberRecordId,
-          },
-        });
+        expect(
+          currentMemberships.memberships.find(
+            (membership) => membership.membershipRef.resourceId === assigned.membership.membershipRef.resourceId,
+          ),
+        ).toMatchObject({ management: { kind: 'EXTERNAL_SOURCE', manager }, revision: assigned.membership.revision });
         const membershipInvocations = admin`select action_invocation_id from core.action_invocations where tenant_id=${tenantId} and action_key=${membershipActionKey} order by action_invocation_id`;
         const admittedJobs = admin`select job_id from symmy_integration.import_jobs where tenant_id=${tenantId} and route_id=${memberRouteId} order by job_id`;
         const beforeRemoval = yield* membershipInvocations;
         const jobsBeforeRemoval = yield* admittedJobs;
-        const rejectedRemoval = yield* submit(selectedCode, 'INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE', removalPlan);
-        expect(rejectedRemoval.status).toBe(403);
-        expect(
-          yield* rejectedRemoval.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(GatewayForbiddenProblemSchema))),
-        ).toMatchObject({
-          status: 403,
-        });
+        // The assignment-only route has no removal: neither a customer that asks for one nor the retired internal plan
+        // body is admitted.
+        for (const [idempotencyKey, body] of [
+          ['INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE', { customers: [{ ...customer, operation: 'REMOVE' }] }],
+          ['INTERNAL_C14_SELECTED_MEMBERSHIP_PLAN', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
+        ] as const) {
+          const rejectedRemoval = yield* submit(selectedCode, idempotencyKey, HttpBody.jsonUnsafe(body));
+          expect(rejectedRemoval.status).toBe(400);
+        }
         expect(yield* membershipInvocations).toEqual(beforeRemoval);
         expect(yield* admittedJobs).toEqual(jobsBeforeRemoval);
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
@@ -547,9 +570,17 @@ it.live(
         expect(retired.lifecycle).toBe('RETIRED');
         const deniedReceipt = yield* readReceipt.pipe(Effect.flip);
         expect(Schema.is(CustomerGroupMembershipSourceReceiptNotFoundProblemSchema)(deniedReceipt)).toBe(true);
-        const deniedResponse = yield* submit(selectedCode, 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED');
+        const deniedResponse = yield* submit(selectedCode, deniedKey);
         expect(deniedResponse.status).toBe(202);
         const deniedJob = yield* deniedResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        // The new assertion is the one Privacy was seeded for: the same record, the next order of the lineage.
+        const [deniedPinned] = yield* pinnedMemberships(deniedJob.jobId);
+        assert.isDefined(deniedPinned);
+        expect(deniedPinned.payload.source).toMatchObject({
+          assertionId: membershipOccurrenceId(deniedKey),
+          order: 2,
+          sourceRecordId: source.recordId,
+        });
         const deniedWorker = yield* startProductWorker(fixture.workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',
