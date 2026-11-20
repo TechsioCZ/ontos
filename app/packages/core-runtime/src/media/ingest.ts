@@ -57,13 +57,15 @@ export const uploadResponseHeaders = {
 } as const;
 
 /**
- * The idempotent request of the confirm Action for one asset. The same asset is the same intent whoever retries the
- * upload, so a replay returns the first answer, and an uncertain attempt (which commits nothing) is simply run again
- * under the same key.
+ * The request of the confirm Action for one ATTEMPT to complete an asset. Each request of the edge is its own fresh
+ * decision: a key shared by every attempt would replay a refusal (a caller who lacked the capability once, or whose
+ * evidence was unprovable) as the answer of every later one. The attempt is the caller's own freshness (its
+ * correlation and a clock reading), and nothing is lost by it: the asset row arbitrates, the Action's transition is
+ * conditional, and a retry that finds the asset sealed follows the row instead of sealing it again.
  */
-export const confirmAssetRequest = (mediaAssetRef: MediaAssetRef) => ({
+export const confirmAssetRequest = (mediaAssetRef: MediaAssetRef, attempt: string) => ({
   idempotencyKey: Hex.encode(
-    sha256(utf8ToBytes(`core.media.confirm\0${mediaAssetRef.tenantId}\0${mediaAssetRef.resourceId}`)),
+    sha256(utf8ToBytes(`core.media.confirm\0${mediaAssetRef.tenantId}\0${mediaAssetRef.resourceId}\0${attempt}`)),
   ),
   payload: { mediaAssetRef },
 });

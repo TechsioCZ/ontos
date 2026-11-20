@@ -2639,19 +2639,23 @@ const coreMediaUploadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'c
         return yield* Effect.fail(shellCapabilityUnavailableProblem());
       }
       const actions = yield* ActionRuntime;
-      const confirmation = confirmAssetRequest(mediaAssetRef);
       return yield* ingestMediaBytes({
         asset: offered.value,
         body: request.stream,
         confirm: (verification) =>
-          actions
-            .runAction({
-              payload: confirmation.payload,
-              principal,
-              registration: confirmAssetAction,
-              transport: { correlationId, idempotencyKey: confirmation.idempotencyKey },
-            })
-            .pipe(Effect.provideService(StoredMediaObjectVerification, verification)),
+          Clock.currentTimeNanos.pipe(
+            Effect.flatMap((attempt) => {
+              // Each request is its own fresh decision of the confirm capability; the asset row arbitrates.
+              const confirmation = confirmAssetRequest(mediaAssetRef, `${correlationId}\0${attempt}`);
+              return actions.runAction({
+                payload: confirmation.payload,
+                principal,
+                registration: confirmAssetAction,
+                transport: { correlationId, idempotencyKey: confirmation.idempotencyKey },
+              });
+            }),
+            Effect.provideService(StoredMediaObjectVerification, verification),
+          ),
         contentLength: parseContentLength(headerValue(request.headers, 'content-length')),
         mediaAssetRef,
         principalId: principal.principalId,

@@ -307,9 +307,10 @@ it('parses only an exact decimal Content-Length', () => {
   }
 });
 
-it('derives one confirm identity per asset and never carries a locator in it', () => {
-  const first = confirmAssetRequest(mediaAssetRef);
-  expect(first).toEqual(confirmAssetRequest(mediaAssetRef));
+it('derives one confirm identity per attempt, never reusing a refusal, and carries no locator in it', () => {
+  const first = confirmAssetRequest(mediaAssetRef, 'attempt-one');
+  expect(first).toEqual(confirmAssetRequest(mediaAssetRef, 'attempt-one'));
+  expect(confirmAssetRequest(mediaAssetRef, 'attempt-two').idempotencyKey).not.toBe(first.idempotencyKey);
   expect(first.idempotencyKey).toMatch(/^[0-9a-f]{64}$/u);
   expect(first.idempotencyKey).not.toContain(storageKey);
   expect(first.payload).toEqual({ mediaAssetRef });
