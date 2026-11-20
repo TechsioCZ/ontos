@@ -8,6 +8,8 @@ paths_file="${1:?Pass the changed-paths output file}"
 
 mode=full
 reason='This event requires the complete suite.'
+# The commit the exact comparison ran against, published for the checks that hold a baseline to it.
+comparison_base=
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
   reason="${QUEUE_PROOF_RUN:?A proven commit names its proving run} already passed every gate of this workflow on this exact tree."
@@ -58,6 +60,7 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
     [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] &&
     git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" &&
     git diff --name-only --no-renames -z "$BASE_SHA" "$HEAD_SHA" >"$paths_file"; then
+    comparison_base="$BASE_SHA"
     count=0
     documentation=true
     while IFS= read -r -d '' path; do
@@ -104,6 +107,7 @@ fi
 printf 'mode=%s\n' "$mode" >>"$GITHUB_OUTPUT"
 printf 'lintSweep=%s\n' "$lint_sweep" >>"$GITHUB_OUTPUT"
 printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
+printf 'base=%s\n' "$comparison_base" >>"$GITHUB_OUTPUT"
 if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
     "workspace-gate":"skipped", "workspace-unit":"skipped", "static-contracts":"skipped",
