@@ -12,7 +12,12 @@ import {
 import { admitRegisteredAssertionWorkload } from './gateway-registered-assertion.ts';
 import { admitRegisteredGatewayWorkload } from './gateway-workload-evidence.ts';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
-import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
+import {
+  PrincipalResolver,
+  TenantModuleStateService,
+  isShellHostedCoreProvider,
+  tenantStatesAllowingAccess,
+} from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -50,6 +55,46 @@ import { gatewayPublishedOperationAccess, loadGatewayModuleBindings } from './ga
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidence } from './gateway-originator-evidence.ts';
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
+
+type InstalledContract = ShellInstalledCatalog['contracts'][number];
+
+/**
+ * The Core modules whose Shell-hosted operations the source module's reviewed manifest declares a requirement on,
+ * relaying the requester (`person`). This is the issuer-owned rule that admits the Shell deployment as an audience:
+ * it comes from the installed contract of the attested source release, never from the request.
+ */
+const shellHostedProviderModules = (source: InstalledContract | undefined): readonly string[] => [
+  ...new Set(
+    (source?.manifest.requirements?.operations ?? []).flatMap((requirement) =>
+      isShellHostedCoreProvider(requirement.provider) &&
+      requirement.callers?.some((caller) => caller.kind === 'person') === true
+        ? [requirement.provider.moduleId]
+        : [],
+    ),
+  ),
+];
+
+/**
+ * The modules the delegated context is for: the installed destination, or, for the Shell deployment, the Core
+ * modules whose operations the Shell hosts for the source module. The Shell is an audience only for the requester
+ * a module relays (never for asynchronous work) and only while the attested source release declares exactly that.
+ * Empty means there is no destination.
+ */
+const destinationModuleIds = (input: {
+  readonly installed: ShellInstalledCatalog;
+  readonly payload: GatewayDelegationRequestPayload;
+  readonly sourceContract: InstalledContract | undefined;
+}): readonly string[] => {
+  const { installed, payload, sourceContract } = input;
+  const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+  if (destination !== undefined) {
+    return [destination.manifest.module.id];
+  }
+  return payload.audience === installed.composition.shell.deployment.appId &&
+    Predicate.isTagged(payload.subject, 'Assertion')
+    ? shellHostedProviderModules(sourceContract)
+    : [];
+};
 
 export type GatewayDelegationRequestPayload = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>;
 
@@ -580,11 +625,11 @@ export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegatio
     if (installed.composition.revision !== payload.compositionRevision) {
       return yield* new GatewayDelegationError({ code: 'reload_required' });
     }
-    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+    const destinationModules = destinationModuleIds({ installed, payload, sourceContract });
     if (
       sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
       binding.compositionRevision !== installed.composition.revision ||
-      destination === undefined
+      destinationModules.length === 0
     ) {
       return yield* delegationForbidden();
     }
@@ -611,7 +656,7 @@ export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegatio
       .pipe(Effect.mapError(scopeFailure));
 
     const moduleStates = yield* TenantModuleStateService;
-    const moduleKeys = [sourceContract.manifest.module.id, destination.manifest.module.id];
+    const moduleKeys = [sourceContract.manifest.module.id, ...destinationModules];
     const states = yield* moduleStates
       .getTenantModuleStates(principal.tenantId, moduleKeys)
       .pipe(Effect.mapError(delegationUnavailable));

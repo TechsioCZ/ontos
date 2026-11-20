@@ -834,7 +834,10 @@ export {
   canonicalOntosPublicApiKey,
   projectOntosModuleOperationContracts,
 } from './modules/manifest.ts';
-export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
+export {
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  isShellHostedCoreProvider,
+} from './modules/module-dependency-contracts.ts';
 export {
   OntosRegisteredWorkloadCallSchema,
   OntosRegisteredWorkloadCallsSchema,
