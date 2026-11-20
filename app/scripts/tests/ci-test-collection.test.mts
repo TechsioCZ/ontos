@@ -11,6 +11,13 @@ import { parse, stringify } from 'yaml';
 
 import { parseCiMatrices } from '../ci/ci-matrices.mts';
 
+/**
+ * What this guard is for: a test file that no CI job collects, the accident that once left 84 files unrun. It reads the
+ * workflow, the matrices and the integration executor as written and fails on anything between a job and its test
+ * runner that it does not model. It is not a defence against a step someone deliberately configures not to execute:
+ * shell options passed through a step's environment, an argument quoted so that pnpm matches nothing, or a task moved
+ * to a row whose job never dispatches it are left to review.
+ */
 const app = path.resolve(import.meta.dirname, '../..');
 const read = (file: string) => readFileSync(path.join(app, file), 'utf-8');
 const packageManifest = 'package.json';
