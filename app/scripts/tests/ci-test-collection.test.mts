@@ -20,6 +20,15 @@ const checkoutProofFile = 'scripts/tests/stage-n1-checkout.test.mts';
 const topologyJob = 'node-topology-proof';
 const uncollectedCensus = 'Uncollected census files';
 const uncollectedBrowser = 'Uncollected executable browser tests';
+const browserUnknownStep = 'browser unknown step key';
+const browserUnknownDefaults = 'browser unknown defaults key';
+const invalidPackageSelector = 'package selector without dot slash';
+const unsupportedDispatchShell = 'Unsupported test dispatch shell: bash -n {0}';
+const unsupportedDispatchStep = 'Unsupported test dispatch step:';
+const rootAndListMutation = 'root AND-list script';
+const scratchUnitCommand = 'rstest run --project unit';
+const syntaxOnlyBrowserShell = 'syntax-only browser shell';
+const organizationTask = 'whole:organization';
 const wrongWorkingDirectory = 'app/scripts';
 const rstestConfig = 'rstest.config.ts';
 const sourceJob = 'workspace-gate';
@@ -65,7 +74,33 @@ const browserConfigMutation = (mutation: string, original: string) => {
     ? original.replace(chromiumAnchor, `${chromiumAnchor} dependencies: ['setup'],`)
     : null;
 };
+const browserDispatchMutation = (mutation: string, workflow: string, shell: string) => {
+  const anchor = 'run: mise exec -- pnpm --filter @app/shell-super-app test:e2e';
+  const transforms = new Map([
+    [invalidPackageSelector, () => workflow.replaceAll('@app/shell-super-app', shell)],
+    [syntaxOnlyBrowserShell, () => workflow.replace(anchor, `shell: bash -n {0}\n        ${anchor}`)],
+    [browserUnknownStep, () => workflow.replace(anchor, `futureDispatchOption: do not execute\n        ${anchor}`)],
+    [
+      browserUnknownDefaults,
+      () => workflow.replace('shell: bash', 'shell: bash\n    futureDispatchOption: do not execute'),
+    ],
+    ['syntax-only inherited browser shell', () => workflow.replace('shell: bash', 'shell: bash -n {0}')],
+  ]);
+  return transforms.get(mutation)?.();
+};
 const browserMutationFailure = (mutation: string) => {
+  if (mutation === invalidPackageSelector) {
+    return 'Unsupported pnpm filter: apps/shell-super-app';
+  }
+  if (mutation.includes('syntax-only')) {
+    return unsupportedDispatchShell;
+  }
+  if (mutation === browserUnknownDefaults) {
+    return 'Unsupported test dispatch defaults:';
+  }
+  if (mutation === browserUnknownStep) {
+    return unsupportedDispatchStep;
+  }
   if (mutation === browserShardMutation) {
     return 'Unsupported Playwright collection option: --shard';
   }
@@ -286,9 +321,44 @@ const configProjects = (file: string, readInput = read) => {
   });
 };
 
+// Every dispatch boundary is closed: credit only fully modelled keys, selectors and shell text; reject the
+// offending input rather than extracting a plausible runner from an otherwise unmodelled execution path.
+// Like matrixDispatcher, this fixed supervisor grammar models the task handoffs and their status propagation.
+// Only literal file arrays and terminal exec commands vary; routing/control-flow changes require a new model.
+const validateIntegrationExecutor = (executor: string) => {
+  // A backslash in a shell comment does not continue that comment onto the next executable line.
+  const lines = executor
+    .replaceAll(/^[\t ]*#[^\n]*/gmu, '')
+    .replaceAll('\\\n', ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+  const model = read('scripts/tests/support/ci-integration-executor.txt').trim().split('\n');
+  let index = 0;
+  for (const expected of model) {
+    if (expected === '@@ARRAY@@') {
+      while (index < lines.length && lines[index] !== ')') {
+        expect(lines[index], `Unsupported integration executor array item: ${lines[index]}`).toMatch(
+          /^[A-Za-z0-9_./-]+$/u,
+        );
+        index += 1;
+      }
+    } else {
+      const line = lines[index] ?? '<end of script>';
+      const supported = expected.startsWith('@@EXEC@@')
+        ? (expected.endsWith(' ;;') ? /^exec .+ ;;$/u : /^exec [^;]+$/u).test(line)
+        : line === expected;
+      expect(supported, `Unsupported integration executor line: ${line}; expected ${expected}`).toBe(true);
+      index += 1;
+    }
+  }
+  expect(index === lines.length, `Unsupported integration executor line: ${lines[index]}`).toBe(true);
+};
+
 // Follow the executor's actual task branches, including shell array handoffs and CLI excludes. A package's project
 // alone is not enough: migration files deliberately leave its shards and must have their whole task in the matrix.
 const integrationCommand = (executor: string, task: string) => {
+  validateIntegrationExecutor(executor);
   const arrays = new Map(
     [...executor.matchAll(/^(?<name>\w+)=\((?<items>[\s\S]*?)^\)/gmu)].map((match) => [
       match.groups?.name ?? '',
@@ -300,7 +370,7 @@ const integrationCommand = (executor: string, task: string) => {
       .replaceAll(/"\$\{(?<name>\w+)\[@\]\}"/gu, (_match, name: string) =>
         name === 'excluded'
           ? excluded.map((file) => `--exclude ${file}`).join(' ')
-          : (arrays.get(name) ?? []).join(' '),
+          : (arrays.get(name) ?? expect.fail(`Unsupported integration executor array: ${name}`)).join(' '),
       )
       .replaceAll(`"\${task%#*}"`, task.split('#')[0] ?? '')
       .replaceAll('"$task"', task)
@@ -351,29 +421,30 @@ const PackageSchema = Schema.Struct({
 });
 const ConditionSchema = Schema.Union([Schema.String, Schema.Boolean]);
 const DefaultsSchema = Schema.Struct({
-  run: Schema.optionalKey(Schema.Struct({ 'working-directory': Schema.optionalKey(Schema.String) })),
+  run: Schema.optionalKey(
+    Schema.Struct({
+      shell: Schema.optionalKey(Schema.String),
+      'working-directory': Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+const StepSchema = Schema.Struct({
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean]))),
+  if: Schema.optionalKey(ConditionSchema),
+  name: Schema.optionalKey(Schema.String),
+  run: Schema.optionalKey(Schema.String),
+  shell: Schema.optionalKey(Schema.String),
+  'working-directory': Schema.optionalKey(Schema.String),
 });
 const WorkflowSchema = Schema.Struct({
-  defaults: Schema.optionalKey(DefaultsSchema),
+  defaults: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   env: Schema.Struct({ CI_MATRICES_OVERLAY: Schema.String }),
   jobs: Schema.Record(
     Schema.String,
     Schema.Struct({
-      defaults: Schema.optionalKey(DefaultsSchema),
+      defaults: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
       if: Schema.optionalKey(ConditionSchema),
-      steps: Schema.optionalKey(
-        Schema.Array(
-          Schema.Struct({
-            env: Schema.optionalKey(
-              Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
-            ),
-            if: Schema.optionalKey(ConditionSchema),
-            name: Schema.optionalKey(Schema.String),
-            run: Schema.optionalKey(Schema.String),
-            'working-directory': Schema.optionalKey(Schema.String),
-          }),
-        ),
-      ),
+      steps: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
       strategy: Schema.optionalKey(
         Schema.Struct({
           matrix: Schema.Struct({
@@ -385,7 +456,35 @@ const WorkflowSchema = Schema.Struct({
   ),
 });
 type Workflow = typeof WorkflowSchema.Type;
-type WorkflowStep = NonNullable<Workflow['jobs'][string]['steps']>[number];
+type WorkflowStep = typeof StepSchema.Type;
+type WorkflowInputStep = NonNullable<Workflow['jobs'][string]['steps']>[number];
+const modelDefaults = (input: NonNullable<Workflow['defaults']> | undefined) => {
+  const result = Schema.decodeUnknownResult(DefaultsSchema, { onExcessProperty: 'error' })(input ?? {});
+  if (Result.isFailure(result)) {
+    return expect.fail(`Unsupported test dispatch defaults: ${JSON.stringify(input)}: ${String(result.failure)}`);
+  }
+  return result.success;
+};
+
+const modelStep = (workflow: Workflow, job: Workflow['jobs'][string], input: WorkflowInputStep) => {
+  const decoded = Schema.decodeUnknownResult(StepSchema, { onExcessProperty: 'error' })(input);
+  if (Result.isFailure(decoded)) {
+    return expect.fail(`Unsupported test dispatch step: ${JSON.stringify(input)}: ${String(decoded.failure)}`);
+  }
+  const step = decoded.success;
+  const workflowDefaults = modelDefaults(workflow.defaults);
+  const jobDefaults = modelDefaults(job.defaults);
+  const shell = step.shell ?? jobDefaults.run?.shell ?? workflowDefaults.run?.shell;
+  expect(shell === undefined || shell === 'bash', `Unsupported test dispatch shell: ${shell}`).toBe(true);
+  const directory = path.posix.relative(
+    'app',
+    step['working-directory'] ??
+      jobDefaults.run?.['working-directory'] ??
+      workflowDefaults.run?.['working-directory'] ??
+      '.',
+  );
+  return { ...step, directory };
+};
 const staticallyFalse = (condition: typeof ConditionSchema.Type | undefined) =>
   condition === false ||
   (Schema.is(Schema.String)(condition) && /^(?:false|\$\{\{\s*false\s*\}\})$/u.test(condition.trim()));
@@ -418,15 +517,6 @@ const jobEnabled = (job: Workflow['jobs'][string], name: string) => {
   const condition = jobConditions.get(name);
   return stepEnabled({ if: job.if }, condition === undefined ? [] : [`\${{ ${condition} }}`]);
 };
-const stepDirectory = (workflow: Workflow, job: Workflow['jobs'][string], step: WorkflowStep) =>
-  path.posix.relative(
-    'app',
-    step['working-directory'] ??
-      job.defaults?.run?.['working-directory'] ??
-      workflow.defaults?.run?.['working-directory'] ??
-      '.',
-  );
-
 const unwrapCommand = (input: readonly string[]) => {
   let tokens = [...input];
   const environment = new Set([
@@ -467,6 +557,7 @@ const unwrapCommand = (input: readonly string[]) => {
 // terminal command may additionally use "${BASH_SOURCE[0]}" and a leading exec (never a sequence).
 // Simple commands are pnpm, rstest, vitest, playwright, echo (no credit), the exact node/bash adapters below, and the
 // shared-contracts typecheck. No other shell executable, expansion, control operator or redirection is accepted.
+// Other AND lists (including the root test:unit script, unused by today's matrices) fail with the complete input.
 // These two exact package scripts are the only AND lists in the credited call graph today. They have a known
 // generator/typecheck prerequisite and a required-success RHS; a successful CI job therefore executed both.
 const understoodAndLists = new Set([
@@ -580,6 +671,18 @@ for command in "\${failed[@]}"; do
   echo "::error title=Gate command failed::$command"
 done
 [[ \${#failed[@]} -eq 0 ]]`;
+const pnpmTarget = (directory: string, selector: string, packages: ReadonlyMap<string, typeof PackageSchema.Type>) => {
+  const target =
+    selector === '.' || selector === './' || selector.startsWith('./') || selector.startsWith('../')
+      ? [...packages.keys()].find((root) => path.posix.normalize(path.posix.join(directory, selector)) === root)
+      : [...packages].find(([, manifest]) => manifest.name === selector)?.[0];
+  if (target === undefined || !/^(?:@?[A-Za-z0-9_./-]+)$/u.test(selector)) {
+    return expect.fail(
+      `Unsupported pnpm filter: ${selector}. Use an exact workspace package name or an explicit ./ or ../ package directory.`,
+    );
+  }
+  return target;
+};
 const pnpmInvocation = (
   directory: string,
   args: readonly string[],
@@ -598,18 +701,24 @@ const pnpmInvocation = (
       expect.fail(`Unsupported pnpm collection option: ${option}`);
     }
   }
-  const selected = (selector: string, target: string) =>
-    selector === packages.get(target)?.name || path.posix.normalize(path.posix.join(directory, selector)) === target;
-  const included = selectors.filter((selector) => !selector.startsWith('!'));
-  const excluded = selectors.filter((selector) => selector.startsWith('!')).map((selector) => selector.slice(1));
+  const included = new Set(
+    selectors
+      .filter((selector) => !selector.startsWith('!'))
+      .map((selector) => pnpmTarget(directory, selector, packages)),
+  );
+  const excluded = new Set(
+    selectors
+      .filter((selector) => selector.startsWith('!'))
+      .map((selector) => pnpmTarget(directory, selector.slice(1), packages)),
+  );
   const targets =
     selectors.length === 0 && !recursive
       ? [directory]
       : [...packages.keys()].filter(
           (target) =>
-            target !== '.' &&
-            (included.length === 0 || included.some((selector) => selected(selector, target))) &&
-            !excluded.some((selector) => selected(selector, target)),
+            (target !== '.' || included.has('.')) &&
+            (included.size === 0 || included.has(target)) &&
+            !excluded.has(target),
         );
   return { targets, tokens };
 };
@@ -880,18 +989,12 @@ const browserInvocation = (input: readonly string[], directory: string, packages
   if (executable !== 'pnpm' || filter !== '--filter') {
     return null;
   }
-  const target = [...packages].find(
-    ([root, manifest]) =>
-      manifest.name === selector || path.posix.normalize(path.posix.join(directory, selector)) === root,
-  );
-  if (target === undefined) {
-    return expect.fail(`Unknown browser package: ${selector}`);
-  }
-  const [root, manifest] = target;
+  const root = pnpmTarget(directory, selector, packages);
+  const manifest = packages.get(root);
   let tokens = command[0] === 'run' ? command.slice(1) : command;
   const [script = '', ...extra] = tokens;
   if (/^test(?::[\w-]+)*$/u.test(script)) {
-    const parts = shellCommands(manifest.scripts?.[script] ?? '');
+    const parts = shellCommands(manifest?.scripts?.[script] ?? '');
     expect(parts.length, `Unsupported browser script chain: ${root}:${script}`).toBe(1);
     tokens = [...(parts[0] ?? []), ...extra];
   }
@@ -945,17 +1048,17 @@ const browserCollection = (inputs: BrowserInputs) => {
   expect(job.strategy?.matrix.include, 'browser matrix dispatcher').toBe(
     `\${{ fromJSON(needs.ci-plan.outputs.integrationBrowser) }}`,
   );
-  for (const step of job.steps ?? []) {
-    if (
-      ![
-        'Run parallel authenticated browser tests without retries',
-        'Verify browser recovery into a newly published release',
-      ].includes(step.name ?? '') ||
-      !stepEnabled(step, ["matrix.suite == 'browser'"])
-    ) {
+  for (const input of (job.steps ?? []).filter((step) =>
+    [
+      'Run parallel authenticated browser tests without retries',
+      'Verify browser recovery into a newly published release',
+    ].some((name) => step.name === name),
+  )) {
+    const step = modelStep(inputs.workflow, job, input);
+    if (!stepEnabled(step, ["matrix.suite == 'browser'"])) {
       continue;
     }
-    const directory = stepDirectory(inputs.workflow, job, step);
+    const { directory } = step;
     expect(
       directory === '..' || directory.startsWith('../'),
       `Browser working directory is outside the app workspace: ${directory}`,
@@ -1223,12 +1326,13 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
     );
     const dispatch = job.steps?.find((step) => step.name === `Run \${{ matrix.name }}`);
     expect(dispatch, `Missing matrix dispatch step: ${jobName}`).toBeDefined();
-    if (dispatch === undefined || !stepEnabled(dispatch)) {
+    const step = dispatch === undefined ? undefined : modelStep(workflow, job, dispatch);
+    if (step === undefined || !stepEnabled(step)) {
       return;
     }
-    expect(dispatch.env?.COMMANDS, `${jobName}: commands binding`).toBe(`\${{ matrix.commands }}`);
-    expect(dispatch.run?.trim(), `Unsupported matrix dispatcher body: ${jobName}`).toBe(matrixDispatcher);
-    const directory = stepDirectory(workflow, job, dispatch);
+    expect(step.env?.COMMANDS, `${jobName}: commands binding`).toBe(`\${{ matrix.commands }}`);
+    expect(step.run?.trim(), `Unsupported matrix dispatcher body: ${jobName}`).toBe(matrixDispatcher);
+    const { directory } = step;
     expect(directory, `${jobName}: matrix dispatch working directory must be app`).toBe('');
     for (const row of rows) {
       commands.runCommand('.', row.commands);
@@ -1263,9 +1367,12 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
       ) {
         continue;
       }
-      for (const step of job.steps ?? []) {
-        if (step.name === stepName && stepEnabled(step, conditions)) {
-          commands.runCommand(stepDirectory(workflow, job, step) || '.', step.run ?? '');
+      for (const input of job.steps ?? []) {
+        if (input.name === stepName) {
+          const step = modelStep(workflow, job, input);
+          if (stepEnabled(step, conditions)) {
+            commands.runCommand(step.directory || '.', step.run ?? '');
+          }
         }
       }
     }
@@ -1292,12 +1399,13 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
             'Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry',
         );
         expect(dispatch, 'Missing owner integration dispatch step').toBeDefined();
-        if (dispatch !== undefined && stepEnabled(dispatch, ["matrix.suite == 'integration'"])) {
-          expect(dispatch.run, 'Unsupported owner integration dispatcher').toBe(
+        const step = dispatch === undefined ? undefined : modelStep(workflow, job, dispatch);
+        if (step !== undefined && stepEnabled(step, ["matrix.suite == 'integration'"])) {
+          expect(step.run, 'Unsupported owner integration dispatcher').toBe(
             'bash scripts/ci/run-integration-suites.sh',
           );
-          expect(dispatch.env?.INTEGRATION_TASKS, 'owner tasks binding').toBe(`\${{ toJSON(matrix.tasks) }}`);
-          expect(stepDirectory(workflow, job, dispatch), 'owner dispatch working directory must be app').toBe('');
+          expect(step.env?.INTEGRATION_TASKS, 'owner tasks binding').toBe(`\${{ toJSON(matrix.tasks) }}`);
+          expect(step.directory, 'owner dispatch working directory must be app').toBe('');
           collectIntegration();
         }
       }
@@ -1335,8 +1443,17 @@ it(`accounts for the bounded CI/manual census: ${censusScope}`, () => {
   checkCollection(app, manual);
 });
 
+const rootUnitScript =
+  Schema.decodeUnknownSync(Schema.fromJsonString(PackageSchema))(read(packageManifest)).scripts?.['test:unit'] ??
+  expect.fail('Missing root test:unit script');
+
 it.each([
   ...[...unsupportedShellCommands.keys()].map((mutation) => [mutation, 'Unsupported CI command']),
+  [invalidPackageSelector, 'Unsupported pnpm filter: packages/example'],
+  ['matrix step syntax-only shell', unsupportedDispatchShell],
+  ['literal step syntax-only shell', unsupportedDispatchShell],
+  ['matrix step unknown key', unsupportedDispatchStep],
+  [rootAndListMutation, rootUnitScript],
   ['echo-only package command', uncollectedCensus],
   ['echo-only runner command', uncollectedCensus],
   ['removed matrix dispatch step', 'Missing matrix dispatch step'],
@@ -1393,7 +1510,7 @@ it.each([
       'package.json',
       JSON.stringify({
         name: 'scratch',
-        scripts: { 'test:lint-rules': 'rstest run --project unit', 'test:unit': 'rstest run --project unit' },
+        scripts: { 'test:lint-rules': scratchUnitCommand, 'test:unit': scratchUnitCommand },
       }),
     ],
     [
@@ -1418,7 +1535,7 @@ it.each([
         row.commands = commands;
       }
     };
-    const changeStep = (job: keyof typeof fixtureWorkflow.jobs, changes: Partial<WorkflowStep>) => {
+    const changeStep = (job: keyof typeof fixtureWorkflow.jobs, changes: WorkflowInputStep) => {
       const [step] = fixtureWorkflow.jobs[job].steps;
       if (step === undefined) {
         expect.fail(`Missing scratch step: ${mutation}`);
@@ -1431,6 +1548,48 @@ it.each([
         name,
         () => setCommands(command),
       ]),
+      [
+        invalidPackageSelector,
+        () => {
+          write(workspaceFile, 'packages: [packages/*]');
+          write(
+            'packages/example/package.json',
+            JSON.stringify({ name: '@scratch/example', scripts: { 'test:unit': scratchUnitCommand } }),
+          );
+          write(
+            'packages/example/tests/example.test.mts',
+            "import { it } from 'effect-rstest'; it('example', () => {});",
+          );
+          setCommands('pnpm run test:unit\npnpm --filter packages/example run test:unit');
+        },
+      ],
+      ...['matrix step syntax-only shell', 'literal step syntax-only shell'].map((name): [string, () => void] => [
+        name,
+        () => {
+          changeStep(name.startsWith('literal') ? lintJob : sourceJob, { shell: 'bash -n {0}' });
+        },
+      ]),
+      [
+        'matrix step unknown key',
+        () => {
+          const [step] = fixtureWorkflow.jobs[sourceJob].steps;
+          fixtureWorkflow.jobs[sourceJob].steps = [{ ...step, futureDispatchOption: 'do not execute' }];
+        },
+      ],
+      [
+        rootAndListMutation,
+        () => {
+          write(
+            packageManifest,
+            JSON.stringify({
+              name: 'scratch',
+              scripts: {
+                'test:unit': rootUnitScript,
+              },
+            }),
+          );
+        },
+      ],
       [
         'echo-only package command',
         () => {
@@ -1587,6 +1746,11 @@ it.each([
 });
 
 it.each([
+  invalidPackageSelector,
+  syntaxOnlyBrowserShell,
+  'syntax-only inherited browser shell',
+  browserUnknownStep,
+  browserUnknownDefaults,
   'invocation removed',
   'uninvoked package',
   'testIgnore',
@@ -1647,7 +1811,10 @@ it.each([
     }
     check();
     const configMutation = browserConfigMutation(mutation, readInput(configFile));
-    if (mutation === 'invocation removed') {
+    const dispatchMutation = browserDispatchMutation(mutation, readInput(workflowFile), shell);
+    if (dispatchMutation !== undefined) {
+      write(workflowFile, dispatchMutation);
+    } else if (mutation === 'invocation removed') {
       // Leave the browser matrix row and targeted login repeat intact.
       const original = readInput(workflowFile);
       const changed = original.replace(
@@ -1736,6 +1903,84 @@ it.each([
       }
     }
     check();
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+});
+
+const integrationExecutorFile = 'scripts/ci/run-integration-suites.sh';
+it.each([
+  ['whole arm early exit', '    whole:organization)\n', '      exit 0\n', organizationTask],
+  [
+    'comment continuation cannot hide an executable',
+    '    whole:organization)\n',
+    '      # literal comment \\\n      exit 0\n',
+    organizationTask,
+  ],
+  [
+    'second whole arm early exit',
+    '    whole:organization-identity)\n',
+    '      exit 0\n',
+    'whole:organization-identity',
+  ],
+  ['nonliteral array item', 'core_runtime_migrations=(\n', '  $(exit 0)\n', organizationTask],
+  ['appended supervisor executable', '', 'unknown-command', organizationTask],
+  ['supervisor early exit', 'set -euo pipefail\n', 'exit 0\n', organizationTask],
+  ['shard arm early exit', '  if [[ "$task" == root:* ]]; then\n', '    exit 0\n', 'root:1/1'],
+  ['shard arm unknown executable', '  if [[ "$task" == root:* ]]; then\n', '    unknown-command\n', 'root:1/1'],
+])('rejects unmodelled executor input: %s; restores to green', (_name, anchor, insertion, task) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'ontos-executor-collection-'));
+  const root = path.join(scratch, 'app');
+  const write = (file: string, text: string) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(read(workflowFile)));
+  try {
+    write(
+      workflowFile,
+      stringify({
+        defaults: workflow.defaults,
+        env: workflow.env,
+        jobs: { 'owner-integration': workflow.jobs['owner-integration'] },
+      }),
+    );
+    write(
+      matrixFile,
+      JSON.stringify({
+        integration: [{ name: 'Scratch integration', suite: 'integration', tasks: [task] }],
+        source: [],
+        unit: [],
+      }),
+    );
+    write(workflow.env.CI_MATRICES_OVERLAY, '{}');
+    write(workspaceFile, 'packages: []');
+    write(packageManifest, JSON.stringify({ name: 'scratch' }));
+    write(
+      rstestConfig,
+      "export default defineConfig({ projects: [{ name: 'integration', include: ['scripts/integration/**/*.test.mts'] }] });",
+    );
+    const suite = task.startsWith('root:')
+      ? 'executor.test.mts'
+      : `${task === organizationTask ? 'organization-source-customer-owner' : 'organization-source-customer-identity'}-conformance.test.mts`;
+    write(`scripts/integration/${suite}`, "import { it } from 'effect-rstest'; it('must execute', () => {});");
+    const original = read(integrationExecutorFile);
+    write(integrationExecutorFile, original);
+    checkCollection(root, new Map());
+    write(
+      integrationExecutorFile,
+      anchor === '' ? `${original}\n${insertion}\n` : original.replace(anchor, anchor + insertion),
+    );
+    expect(() => checkCollection(root, new Map())).toThrow(
+      insertion
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => !line.startsWith('#'))
+        .join('\n')
+        .trim(),
+    );
+    write(integrationExecutorFile, original);
+    checkCollection(root, new Map());
   } finally {
     rmSync(scratch, { force: true, recursive: true });
   }

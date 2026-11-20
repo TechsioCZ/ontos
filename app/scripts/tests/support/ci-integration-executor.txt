@@ -1,0 +1,160 @@
+set -euo pipefail
+if [[ "${1:-}" == --shell-shard ]]; then
+task="${2:?}"
+shift 2
+task_pid=''
+terminate_shell_shard() {
+trap '' TERM
+diagnostic="${RUNNER_TEMP:-/tmp}/shell-hang-${ONTOS_CI_WORKER_SLOT}-$$.diag.log"
+timeout --kill-after=1s 10s bash scripts/ci/capture-integration-hang.sh "$task" >"$diagnostic" 2>&1 || true
+cat "$diagnostic"
+if [[ -n "$task_pid" ]]; then
+kill -TERM -- "-$task_pid" 2>/dev/null || true
+timeout --kill-after=1s 3s tail --pid="$task_pid" -f /dev/null || true
+kill -KILL -- "-$task_pid" 2>/dev/null || true
+fi
+exit 124
+}
+trap terminate_shell_shard TERM
+setsid "$@" &
+task_pid=$!
+status=0
+wait "$task_pid" || status=$?
+exit "$status"
+fi
+if [[ "${1:-}" == --task ]]; then
+task="${2:?}"
+[[ "${ONTOS_CI_WORKER_SLOT:?}" =~ ^[0-3]$ ]] || exit 2
+export ONTOS_CI_WORKER_SLOT="$((ONTOS_CI_WORKER_SLOT + 1))"
+if [[ -n "${ONTOS_CI_ISOLATED_WORKERS:-}" ]]; then
+bash scripts/ci/reset-integration-database.sh "$ONTOS_CI_WORKER_SLOT"
+fi
+started=$SECONDS
+echo "Suite start: slot=$ONTOS_CI_WORKER_SLOT task=$task"
+status=0
+TIMEFORMAT="Suite CPU: task=$task user=%3Us system=%3Ss"
+time bash "${BASH_SOURCE[0]}" --execute "$task" || status=$?
+echo "Suite wall time: $((SECONDS - started))s slot=$ONTOS_CI_WORKER_SLOT task=$task status=$status"
+exit "$status"
+fi
+core_runtime_migrations=(
+@@ARRAY@@
+)
+customer_context_migrations=(
+@@ARRAY@@
+)
+party_migrations=(
+@@ARRAY@@
+)
+excluding() {
+excluded=()
+for file in "$@"; do excluded+=(--exclude "$file"); done
+}
+if [[ "${1:-}" == --execute ]]; then
+task="${2:?}"
+case "$task" in
+whole:party-worker)
+@@EXEC@@ ;;
+whole:migrations)
+@@EXEC@@ ;;
+whole:organization)
+@@EXEC@@ ;;
+whole:organization-identity)
+@@EXEC@@ ;;
+whole:customer-readback)
+@@EXEC@@ ;;
+whole:customer-roundtrip)
+@@EXEC@@ ;;
+whole:pricing-routes)
+@@EXEC@@ ;;
+whole:migrator-owner-access)
+@@EXEC@@ ;;
+whole:stage-recovery)
+@@EXEC@@ ;;
+whole:vat-deploy-sequence)
+@@EXEC@@ ;;
+whole:core-runtime-migrations)
+@@EXEC@@ ;;
+whole:customer-context-migrations)
+@@EXEC@@ ;;
+whole:party-migrations)
+@@EXEC@@ ;;
+whole:privacy)
+@@EXEC@@ ;;
+whole:privacy-recovery)
+@@EXEC@@ ;;
+whole:pricing)
+@@EXEC@@ ;;
+whole:preproposal-basis)
+@@EXEC@@ ;;
+whole:preproposal-approval)
+@@EXEC@@ ;;
+esac
+if [[ "$task" == root:* ]]; then
+@@EXEC@@
+fi
+if [[ "$task" == ./verticals/party-registry#* ]]; then
+excluding "${party_migrations[@]}"
+@@EXEC@@
+fi
+if [[ "$task" == ./packages/core-runtime#* ]]; then
+excluding "${core_runtime_migrations[@]}"
+@@EXEC@@
+fi
+if [[ "$task" == ./verticals/commerce-customer-context#* ]]; then
+excluding "${customer_context_migrations[@]}"
+@@EXEC@@
+fi
+if [[ "$task" == ./apps/shell-super-app#* ]]; then
+@@EXEC@@
+fi
+if [[ "$task" == *#* ]]; then
+if [[ "${task%#*}" == ./verticals/privacy ]]; then
+@@EXEC@@
+fi
+if [[ "${task%#*}" == ./verticals/pricing ]]; then
+@@EXEC@@
+fi
+@@EXEC@@
+fi
+if [[ "$task" == ./verticals/pricing ]]; then
+@@EXEC@@
+fi
+@@EXEC@@
+fi
+tasks=()
+task_lines="$(jq -er '.[]' <<<"${INTEGRATION_TASKS:?}")"
+while IFS= read -r task; do tasks+=("$task"); done <<<"$task_lines"
+if [[ ${#tasks[@]} -eq 0 ]]; then
+exit 2
+fi
+if [[ "${1:-}" == --list ]]; then
+printf '%s\0' "${tasks[@]}"
+exit 0
+fi
+read -ra cpu_before < /proc/stat
+lanes="${INTEGRATION_LANES:-4}"
+[[ "$lanes" == 2 || "$lanes" == 4 ]] || exit 2
+started=$SECONDS
+status=0
+exclusive_tasks=(whole:pricing ./verticals/commerce-market-catalog#1/4 ./verticals/party-registry#4/4)
+parallel_tasks=()
+for task in "${tasks[@]}"; do
+if [[ " ${exclusive_tasks[*]} " == *" $task "* ]]; then
+ONTOS_CI_WORKER_SLOT=0 bash scripts/ci/run-integration-suites.sh --task "$task" || status=$?
+else
+parallel_tasks+=("$task")
+fi
+done
+if [[ ${#parallel_tasks[@]} -gt 0 ]]; then
+printf '%s\0' "${parallel_tasks[@]}" |
+xargs -0 --max-procs="$lanes" --max-args=1 --process-slot-var=ONTOS_CI_WORKER_SLOT        bash scripts/ci/run-integration-suites.sh --task || status=$?
+fi
+read -ra cpu_after < /proc/stat
+total=0
+for ((field = 1; field <= 8; field++)); do
+total=$((total + cpu_after[field] - cpu_before[field]))
+done
+idle=$((cpu_after[4] + cpu_after[5] - cpu_before[4] - cpu_before[5]))
+awk -v idle="$idle" -v total="$total" -v wall="$((SECONDS - started))" -v cores="$(nproc)"    'BEGIN { printf "Integration CPU: wall=%ss cores=%s idle-core-seconds=%.1f idle-cores-average=%.2f\n", wall, cores, wall*cores*idle/total, cores*idle/total }'
+exit "$status"
