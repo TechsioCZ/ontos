@@ -46,7 +46,12 @@ const emulatorConfig = (ctx: { readonly skip: () => void }) =>
     // The root environment file is deliberately not consulted: a test must never pick up a real provider.
     envPath: '/nonexistent/core-media-s3-test.env',
   }).pipe(
-    Effect.catchTag('ObjectStorageConfigError', () => Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never))),
+    // Skipped only when no endpoint is configured at all; a partial or malformed configuration fails the test.
+    Effect.catchTag('ObjectStorageConfigError', (failure) =>
+      failure.reason === 'CORE_MEDIA_S3_ENDPOINT is required'
+        ? Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never))
+        : Effect.fail(failure),
+    ),
     Effect.filterOrFail(
       (settings) => LOOPBACK.has(settings.endpoint.hostname),
       () => new ObjectStorageConfigError({ reason: 'The S3 integration suite writes only to a loopback emulator' }),
@@ -96,26 +101,40 @@ const storageFor = makeS3ObjectStorage;
 const failureOf = <Value>(effect: Effect.Effect<Value, ObjectStorageFailure>) =>
   Effect.flip(effect).pipe(Effect.map((failure) => failure));
 
-/** The keys that still have an unfinished multipart upload, read from the provider with a signed request. */
-const unfinishedUploadKeys = Effect.fn('S3IntegrationTest.unfinishedUploads')(function* unfinishedUploads(
+/** One signed request straight to the provider, outside the adapter (used to observe and to seed the emulator). */
+const rawProviderRequest = Effect.fn('S3IntegrationTest.raw')(function* rawProviderRequest(
   settings: S3ObjectStorageConfigValue,
+  method: 'DELETE' | 'GET' | 'POST',
+  url: URL,
 ) {
-  const url = new URL(`${settings.endpoint.origin}/${settings.bucket}?uploads`);
   const client = yield* HttpClient.HttpClient;
   // The provider's own clock signs the request: its `Date` header answers any request, even a refused one.
   const clock = yield* client.execute(HttpClientRequest.get(settings.endpoint.href));
   const headers = signS3Request({
     accessKeyId: settings.accessKeyId,
     headers: {},
-    method: 'GET',
+    method,
     now: DateTime.makeUnsafe(clock.headers['date'] ?? ''),
     payloadSha256: EMPTY_PAYLOAD_SHA256,
     region: settings.region,
     secretAccessKey: settings.secretAccessKey,
     url,
   });
-  const response = yield* client.execute(HttpClientRequest.get(url.href).pipe(HttpClientRequest.setHeaders(headers)));
+  return yield* client.execute(HttpClientRequest.make(method)(url.href).pipe(HttpClientRequest.setHeaders(headers)));
+});
+
+/** The keys that still have an unfinished multipart upload; it fails unless the provider answers a real listing. */
+const unfinishedUploadKeys = Effect.fn('S3IntegrationTest.unfinishedUploads')(function* unfinishedUploads(
+  settings: S3ObjectStorageConfigValue,
+) {
+  const response = yield* rawProviderRequest(
+    settings,
+    'GET',
+    new URL(`${settings.endpoint.origin}/${settings.bucket}?uploads`),
+  );
   const text = yield* response.text;
+  expect(response.status).toBe(200);
+  expect(text).toContain('<ListMultipartUploadsResult');
   return [...text.matchAll(/<Key>(?<key>[^<]+)<\/Key>/gu)].map((match) => match.groups?.['key'] ?? '');
 });
 
@@ -150,6 +169,22 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
         const opened = yield* storage.get(key);
         expect(opened.stat.byteSize).toBe(bytes.byteLength);
         expect((yield* tallyOf(opened.body)).contentSha256).toBe(digestOf(bytes));
+      }),
+    );
+
+    emulatorIt('sees an unfinished multipart upload (positive control for the abort assertions)', (ctx) =>
+      Effect.gen(function* positiveControl() {
+        const base = yield* emulatorConfig(ctx);
+        const key = yield* freshKey;
+        const url = new URL(`${base.endpoint.origin}/${base.bucket}/${key}?uploads`);
+        const started = yield* rawProviderRequest(base, 'POST', url);
+        expect(started.status).toBe(200);
+        const uploadId = /<UploadId>(?<id>[^<]+)<\/UploadId>/u.exec(yield* started.text)?.groups?.['id'] ?? '';
+        expect(yield* unfinishedUploadKeys(base)).toContain(key);
+        const abort = new URL(`${base.endpoint.origin}/${base.bucket}/${key}`);
+        abort.searchParams.set('uploadId', uploadId);
+        expect((yield* rawProviderRequest(base, 'DELETE', abort)).status).toBe(204);
+        expect(yield* unfinishedUploadKeys(base)).not.toContain(key);
       }),
     );
 

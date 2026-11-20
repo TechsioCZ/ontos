@@ -3,7 +3,13 @@ import { DateTime, Effect, Option, Ref, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
-import { ObjectStorage, ObjectStorageServerError, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
+import {
+  ObjectStorage,
+  ObjectStorageObjectExists,
+  ObjectStorageServerError,
+  ObjectStorageTimeout,
+} from '../../src/media/object-storage.ts';
+import type { ObjectStorageService } from '../../src/media/object-storage.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import type { MediaByteHopAsset } from '../../src/media/byte-stream.ts';
 import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
@@ -279,6 +285,42 @@ it.effect('is uncertain, not failed or absent, when the provider times out or an
       );
       expect(tagOf(result)).toBe('MediaIngestUncertain');
     }
+  }),
+);
+
+it.effect('is uncertain, not conflicting, when a create-only write finds an object already stored', () =>
+  Effect.gen(function* alreadyStored() {
+    const storage = yield* makeInMemoryObjectStorage();
+    const faulty = yield* withObjectStorageFaults([
+      {
+        failure: new ObjectStorageObjectExists({ code: 'object_storage_object_exists', reason: 'r' }),
+        operation: 'put',
+      },
+    ]).pipe(Effect.provideService(ObjectStorage, storage.service));
+    const result = yield* Effect.flip(
+      streamMediaObject({ asset: reserved(), body: chunked(content), principalId: reservingPrincipal }).pipe(
+        Effect.provideService(ObjectStorage, faulty),
+      ),
+    );
+    expect(tagOf(result)).toBe('MediaIngestUncertain');
+  }),
+);
+
+it.effect('tells the provider the declared size of the reserved asset', () =>
+  Effect.gen(function* declaredSize() {
+    const storage = yield* makeInMemoryObjectStorage();
+    const seen = yield* Ref.make<readonly (number | undefined)[]>([]);
+    const spying: ObjectStorageService = {
+      ...storage.service,
+      put: (request) =>
+        Ref.update(seen, (sizes) => [...sizes, request.byteSize]).pipe(
+          Effect.andThen(() => storage.service.put(request)),
+        ),
+    };
+    yield* streamMediaObject({ asset: reserved(), body: chunked(content), principalId: reservingPrincipal }).pipe(
+      Effect.provideService(ObjectStorage, spying),
+    );
+    expect(yield* Ref.get(seen)).toStrictEqual([content.byteLength]);
   }),
 );
 
