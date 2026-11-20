@@ -59,7 +59,7 @@ export const amzDate = (now: DateTime.Utc): string =>
     .replaceAll(/[-:]/gu, '')
     .replace(/\.\d{3}/u, '');
 
-export const sha256HexOf = (bytes: Uint8Array): string => Hex.encode(sha256(bytes));
+const sha256HexOf = (bytes: Uint8Array): string => Hex.encode(sha256(bytes));
 
 export const EMPTY_PAYLOAD_SHA256 = sha256HexOf(new Uint8Array(0));
 

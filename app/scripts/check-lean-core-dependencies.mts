@@ -288,6 +288,7 @@ const allowedCoreExternalSpecifiers = new Set([
   // the platform package (its Redis and websocket clients) out.
   '@effect/platform-node/NodeHttpServer',
   '@effect/sql-pg',
+  '@noble/hashes/hmac.js',
   '@noble/hashes/sha2.js',
   '@noble/hashes/utils.js',
   'drizzle-kit',

@@ -1,10 +1,9 @@
-import { Crypto, DateTime, Duration, Effect, Exit, Layer, Option, Stream } from 'effect';
+import { Crypto, DateTime, Duration, Effect, Exit, Option, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 import type { HttpClientError, HttpClientResponse } from 'effect/http';
 
 import {
-  ObjectStorage,
   ObjectStorageChecksumUnsupported,
   ObjectStorageNetworkError,
   ObjectStorageObjectExists,
@@ -558,9 +557,3 @@ export const makeS3ObjectStorage = Effect.fn('S3ObjectStorage.make')(function* m
   };
   return service;
 });
-
-/** The adapter as the port's layer. The configuration is the caller's: load it with `loadS3ObjectStorageConfig`. */
-export const S3ObjectStorageLive = (
-  config: S3ObjectStorageConfigValue,
-): Layer.Layer<ObjectStorage, never, Crypto.Crypto | HttpClient.HttpClient> =>
-  Layer.effect(ObjectStorage, makeS3ObjectStorage(config));
