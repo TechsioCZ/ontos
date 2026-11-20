@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Schema } from 'effect';
+import { Clock, Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -15,7 +15,7 @@ import {
 import { AccessChangesStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
 import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
 import { AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
-import { AccessPeopleStoreLive, PEOPLE_CHANGE_LOCK_NAMESPACE } from '../../src/access/intent/people-store.ts';
+import { AccessPeopleStoreLive } from '../../src/access/intent/people-store.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
 import { projectionWriteRefusal } from '../../src/access/intent/projection-write-error.ts';
 import { AccessTeamStoreLive } from '../../src/access/intent/teams.ts';
@@ -518,19 +518,72 @@ const destinationBootstrap = (tenantId: string): StageTenantBootstrap => ({
 });
 
 /** The colleague and the bystander administer the company beside the owner, as two e-shop logins do. */
-const companyAdministrators = (stage: Stage, bystanderUntil = 'null') =>
+const companyAdministrators = (stage: Stage) =>
   `insert into core.access_memberships
      (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, valid_until, recorded_by)
    values ('${uid(77)}', '${stage.tenantId}', '${legalEntityScopeId(TenantIdSchema.make(stage.tenantId), LegalEntityIdSchema.make(company))}',
            '${colleague}', 'access_admin', 'active', now() - interval '1 day', null, '${owner}'),
           ('${uid(78)}', '${stage.tenantId}', '${legalEntityScopeId(TenantIdSchema.make(stage.tenantId), LegalEntityIdSchema.make(company))}',
-           '${bystander}', 'access_admin', 'active', now() - interval '1 day', ${bystanderUntil}, '${owner}')`;
+           '${bystander}', 'access_admin', 'active', now() - interval '1 day', null, '${owner}')`;
 
-/** The owner's tenant path is suspended, so the owner administers no company and only the named administrators count. */
-const suspendOwnerPath = (stage: Stage) =>
-  `update core.access_memberships set status = 'suspended'
-     where tenant_id = '${stage.tenantId}' and principal_id = '${owner}' and kind = 'member'
+/** The owner's tenant member path is suspended (or resumed): a suspended owner administers nothing and acts for nobody. */
+const ownerPath = (stage: Stage, status: 'active' | 'suspended') =>
+  `update core.access_memberships set status = '${status}'
+     where tenant_id = '${stage.tenantId}' and principal_id = '${owner}' and kind = 'member' and status <> 'revoked'
        and scope_id = '${tenantContextScopeId(TenantIdSchema.make(stage.tenantId))}'`;
+
+/** The owner's Principal disabled or active again: only an active person acts as the tenant owner. */
+const ownerStatus = (stage: Stage, status: 'active' | 'disabled') =>
+  `update core.principals set status = '${status}', disabled_at = ${status === 'disabled' ? 'now()' : 'null'}
+     where tenant_id = '${stage.tenantId}' and principal_id = '${owner}'`;
+
+const timestampOf = (millis: number) => `to_timestamp(${millis} / 1000.0)`;
+
+/**
+ * Replaces the owner's tenant ownership with one row of the given period, as a time-boxed ownership is recorded: the
+ * bootstrap's open-ended row is ended first, since a person holds one live row of a kind per scope.
+ */
+const ownershipFor = (stage: Stage, period: { readonly from: number; readonly until?: number }) => [
+  `update core.access_memberships set status = 'revoked', ended_at = now(), ended_by = '${owner}'
+     where tenant_id = '${stage.tenantId}' and principal_id = '${owner}' and kind = 'owner' and status <> 'revoked'`,
+  `insert into core.access_memberships
+     (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, valid_until, recorded_by)
+   values ('${uid(86)}', '${stage.tenantId}', '${tenantContextScopeId(TenantIdSchema.make(stage.tenantId))}',
+           '${owner}', 'owner', 'active', ${timestampOf(period.from)},
+           ${period.until === undefined ? 'null' : timestampOf(period.until)}, '${owner}')`,
+];
+
+/** The period of the owner's replacing ownership row, in epoch milliseconds, as the database stored it. */
+const ownershipPeriodOf = (stage: Stage) =>
+  stage.admin
+    .unsafe<{ readonly from: string; readonly until: string | null }>(
+      `select floor(extract(epoch from valid_from) * 1000)::bigint::text as from,
+              floor(extract(epoch from valid_until) * 1000)::bigint::text as until
+         from core.access_memberships where membership_id = '${uid(86)}'`,
+    )
+    .pipe(
+      Effect.orDie,
+      Effect.flatMap(([row]) =>
+        row === undefined
+          ? Effect.die(new Error('the owner holds no replacing ownership row'))
+          : Effect.succeed({ from: Number(row.from), until: row.until === null ? undefined : Number(row.until) }),
+      ),
+    );
+
+/**
+ * Runs a case on a clock of its own, started at the database's clock: only the case moves it, so a decision time is
+ * exactly where the case put it however slowly the run goes.
+ */
+const onDatabaseClock = <Value, Failure>(stage: Stage, body: (startedAt: number) => Effect.Effect<Value, Failure>) =>
+  Effect.gen(function* onDatabaseClockEffect() {
+    const clock = yield* TestClock.make();
+    const [row] = yield* stage.admin
+      .unsafe<{ readonly ms: string }>(`select floor(extract(epoch from clock_timestamp()) * 1000)::bigint::text as ms`)
+      .pipe(Effect.orDie);
+    const startedAt = Number(row?.ms);
+    yield* clock.setTime(startedAt);
+    return yield* body(startedAt).pipe(Effect.provideService(Clock.Clock, clock));
+  }).pipe(Effect.scoped);
 
 /**
  * How many backends of the case's database wait on a lock another transaction holds. The query pauses on the server
@@ -547,6 +600,43 @@ const blockedBackends = (stage: Stage) =>
       Effect.orDie,
     );
 
+/**
+ * Polls, for at most about ten seconds, until a backend running `statement` waits on a lock the backend `holder`
+ * holds: the one transaction a case parks, not any wait of the database.
+ */
+const untilBlockedBy = (stage: Stage, holder: number, statement: string, attempts = 500): Effect.Effect<void> =>
+  stage.admin
+    .unsafe<{ readonly blocked: number }>(
+      `select count(*)::int as blocked from pg_stat_activity, pg_sleep(0.02)
+        where datname = current_database() and ${holder} = any(pg_blocking_pids(pid))
+          and position('${statement}' in lower(query)) > 0`,
+    )
+    .pipe(
+      Effect.orDie,
+      Effect.flatMap(([row]) => {
+        if ((row?.blocked ?? 0) > 0) {
+          return Effect.void;
+        }
+        return attempts > 1
+          ? untilBlockedBy(stage, holder, statement, attempts - 1)
+          : Effect.die(new Error(`no "${statement}" ever waited on backend ${holder}`));
+      }),
+    );
+
+/**
+ * Starts `run` and, once it waits on the share lock behind the backend `holder`, moves the case's clock to `to`: the
+ * run takes its decision time only after that lock is released.
+ */
+const startThenMoveClock =
+  <Value, Failure>(stage: Stage, run: Effect.Effect<Value, Failure>, to: number) =>
+  (holder: number) =>
+    Effect.gen(function* startThenMoveClockEffect() {
+      const running = yield* Effect.forkChild(run);
+      yield* untilBlockedBy(stage, holder, 'for share');
+      yield* TestClock.setTime(to);
+      return running;
+    });
+
 /** Polls, for at most about ten seconds, until at least `count` backends wait on a lock. */
 const untilBlocked = (stage: Stage, count: number, attempts = 500): Effect.Effect<void> =>
   blockedBackends(stage).pipe(
@@ -562,25 +652,31 @@ const untilBlocked = (stage: Stage, count: number, attempts = 500): Effect.Effec
 
 /**
  * Runs `body` while another transaction holds what `lock` takes, then lets that transaction commit. The body sees the
- * lock held from its first statement, and the lock is released however the body ends.
+ * lock held from its first statement, is handed the backend that holds it when it asks, and the lock is released
+ * however the body ends.
  */
-const whileHolding = <Value, Failure>(stage: Stage, lock: string, body: Effect.Effect<Value, Failure>) =>
+const whileHolding = <Value, Failure>(
+  stage: Stage,
+  lock: string,
+  body: Effect.Effect<Value, Failure> | ((holder: number) => Effect.Effect<Value, Failure>),
+) =>
   Effect.gen(function* whileHoldingEffect() {
-    const held = yield* Deferred.make<null>();
+    const held = yield* Deferred.make<number>();
     const release = yield* Deferred.make<null>();
     const holder = yield* Effect.forkChild(
       stage.admin
         .withTransaction(
           Effect.gen(function* holdLock() {
+            const [backend] = yield* stage.admin.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid');
             yield* stage.admin.unsafe(lock);
-            yield* Deferred.succeed(held, null);
+            yield* Deferred.succeed(held, backend?.pid ?? 0);
             yield* Deferred.await(release);
           }),
         )
         .pipe(Effect.orDie),
     );
-    yield* Deferred.await(held);
-    const value = yield* body.pipe(
+    const backend = yield* Deferred.await(held);
+    const value = yield* (Effect.isEffect(body) ? body : body(backend)).pipe(
       Effect.flatMap((result) => Effect.as(Deferred.succeed(release, null), result)),
       Effect.ensuring(Deferred.succeed(release, null)),
     );
@@ -1004,49 +1100,54 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     ),
   );
 
-  suite.effect('retires a company administrator only while another administrator of the company stays', () =>
+  suite.effect('retires a company administrator only through a tenant owner who still reaches the tenant', () =>
     withStage((stage) =>
-      Effect.gen(function* retiresCompanyAdministrators() {
-        const { tenantId } = stage;
-        yield* stage
-          .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
-          .pipe(failClosed);
-        // The colleague and the bystander administer the company; the owner's path is suspended, so neither of them
-        // has the owner as a successor. The owner still owns the tenant and is the identity the operator acts through.
-        yield* seed(stage, companyAdministrators(stage), suspendOwnerPath(stage));
-        const retiringColleague = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
-        // A disabled person administers nothing, whatever their membership rows say: the colleague would be the last.
-        yield* seed(
-          stage,
-          `update core.principals set status = 'disabled', disabled_at = now()
-             where tenant_id = '${tenantId}' and principal_id = '${bystander}'`,
-        );
-        expect(yield* refusalOf(stage, retiringColleague, [colleague, bystander])).toMatch(
-          /ownership_transfer_required/u,
-        );
-        yield* seed(
-          stage,
-          `update core.principals set status = 'active', disabled_at = null
-             where tenant_id = '${tenantId}' and principal_id = '${bystander}'`,
-        );
-        // The bystander stays to administer the company, so the colleague may leave, administration included.
-        yield* stage.reconcile({ ...emptyRun, ...retiringColleague }).pipe(failClosed);
-        const administration = yield* stage.admin
-          .unsafe<{ readonly ended_by: string; readonly ended_reason: string; readonly status: string }>(
-            `select status, ended_by::text as ended_by, ended_reason from core.access_memberships
-              where membership_id = '${uid(77)}'`,
-          )
-          .pipe(Effect.orDie);
-        // The history names the tenant owner acting through the bootstrap, never the person who left.
-        expect(administration).toEqual([{ ended_by: owner, ended_reason: STAGE_RETIREMENT_REASON, status: 'revoked' }]);
-        // Now the bystander is the company's last administrator and has no successor.
-        const before = yield* peopleRowsOf(stage, [bystander]);
-        const refused = yield* stage
-          .reconcile({ ...emptyRun, retiredPrincipals: [leaving(tenantId, bystander, 'bystander')] })
-          .pipe(Effect.flip);
-        expect(refused.reason).toMatch(/ownership_transfer_required/u);
-        expect(yield* peopleRowsOf(stage, [bystander])).toBe(before);
-      }),
+      onDatabaseClock(stage, () =>
+        Effect.gen(function* retiresThroughALiveOwner() {
+          const { tenantId } = stage;
+          yield* stage
+            .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
+            .pipe(failClosed);
+          yield* seed(stage, companyAdministrators(stage));
+          const retiringColleague = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+          const watched = [owner, colleague, bystander];
+          // An owner whose tenant path is suspended administers nothing, so no accountable identity would act.
+          yield* seed(stage, ownerPath(stage, 'suspended'));
+          expect(yield* refusalOf(stage, retiringColleague, watched)).toMatch(/has 0 live owners/u);
+          yield* seed(stage, ownerPath(stage, 'active'));
+          // A disabled owner is no person who acts, whatever their membership rows say.
+          yield* seed(stage, ownerStatus(stage, 'disabled'));
+          expect(yield* refusalOf(stage, retiringColleague, watched)).toMatch(/has 0 live owners/u);
+          yield* seed(stage, ownerStatus(stage, 'active'));
+          // The owner acts and stays, so the colleague may leave, administration included.
+          yield* stage.reconcile({ ...emptyRun, ...retiringColleague }).pipe(failClosed);
+          const administration = yield* stage.admin
+            .unsafe<{ readonly ended_by: string; readonly ended_reason: string; readonly status: string }>(
+              `select status, ended_by::text as ended_by, ended_reason from core.access_memberships
+                where membership_id = '${uid(77)}'`,
+            )
+            .pipe(Effect.orDie);
+          // The history names the tenant owner acting through the bootstrap, never the person who left.
+          expect(administration).toEqual([
+            { ended_by: owner, ended_reason: STAGE_RETIREMENT_REASON, status: 'revoked' },
+          ]);
+          // The acting owner administers every company of the tenant, so the bystander is never its last
+          // administrator: they leave too, and the owner keeps the company.
+          yield* stage
+            .reconcile({ ...emptyRun, retiredPrincipals: [leaving(tenantId, bystander, 'bystander')] })
+            .pipe(failClosed);
+          const principalRows = yield* stage.admin
+            .unsafe<{ readonly person: string; readonly status: string }>(
+              `select principal_id::text as person, status from core.principals
+                where tenant_id = '${tenantId}' and principal_id in ('${owner}', '${bystander}') order by 1`,
+            )
+            .pipe(Effect.orDie);
+          expect(principalRows).toEqual([
+            { person: owner, status: 'active' },
+            { person: bystander, status: 'archived' },
+          ]);
+        }),
+      ),
     ),
   );
 
@@ -1263,43 +1364,68 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
   );
 
   suite.effect(
-    'counts an administrator who stays only if they still administer once the departure holds its lock',
+    'decides at the time it holds every lock: an ownership that runs out while the run waits counts for nobody',
     () =>
       withStage((stage) =>
-        Effect.gen(function* decidesAtLockTime() {
+        onDatabaseClock(stage, (startedAt) =>
+          Effect.gen(function* decidesAtLockTime() {
+            const { tenantId } = stage;
+            yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+            // The owner's ownership runs out five seconds of the case's own clock from now; that clock moves only when the
+            // case moves it, so a slow run cannot let the ownership run out before the departure waits.
+            yield* seed(stage, ...ownershipFor(stage, { from: startedAt - 86_400_000, until: startedAt + 5000 }));
+            const period = yield* ownershipPeriodOf(stage);
+            const expiresAt = period.until ?? Number.POSITIVE_INFINITY;
+            // Before the departure starts, the owner still owns the tenant: otherwise this case proves nothing.
+            const before = yield* Clock.currentTimeMillis;
+            expect(period.from <= before && before < expiresAt).toBe(true);
+            const watched = [owner, colleague];
+            const untouched = yield* peopleRowsOf(stage, watched);
+            // Another transaction holds the owner's Principal row, so the departure takes the People lock, the colleague's
+            // rows and then waits exactly on the share lock of its administrators, before it takes the decision time.
+            // The departure now waits on that row; its clock moves past the ownership's end, then the row is released.
+            const departure = yield* whileHolding(
+              stage,
+              `select 1 from core.principals where tenant_id = '${tenantId}' and principal_id = '${owner}' for update`,
+              startThenMoveClock(
+                stage,
+                stage.reconcile({ ...emptyRun, retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] }),
+                expiresAt + 1,
+              ),
+            );
+            expect(yield* Clock.currentTimeMillis).toBeGreaterThan(expiresAt);
+            const refused = yield* Fiber.join(departure).pipe(Effect.flip);
+            expect(refused.reason).toMatch(/has 0 live owners/u);
+            expect(yield* peopleRowsOf(stage, watched)).toBe(untouched);
+          }),
+        ),
+      ),
+  );
+
+  suite.effect('an ownership that has not started yet makes nobody the owner a departure acts through', () =>
+    withStage((stage) =>
+      onDatabaseClock(stage, (startedAt) =>
+        Effect.gen(function* decidesOnStartedOwnership() {
           const { tenantId } = stage;
-          yield* stage
-            .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
-            .pipe(failClosed);
-          // The bystander's administration runs out a few seconds from now; the owner's path is suspended.
-          yield* seed(stage, companyAdministrators(stage, `now() + interval '3 seconds'`), suspendOwnerPath(stage));
-          const before = yield* peopleRowsOf(stage, [colleague, bystander]);
-          // The departure starts while the bystander still administers, waits for the tenant's People lock, and gets
-          // it only after the bystander's administration ended: it decides then, so the colleague is the last one.
-          const departure = yield* whileHolding(
-            stage,
-            `select pg_advisory_xact_lock(hashtext('${PEOPLE_CHANGE_LOCK_NAMESPACE}'), hashtext('${tenantId}'))`,
-            Effect.gen(function* expireWhileWaiting() {
-              const running = yield* Effect.forkChild(
-                stage
-                  .reconcile({ ...emptyRun, retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] })
-                  .pipe(TestClock.withLive),
-              );
-              yield* untilBlocked(stage, 1);
-              yield* stage.admin
-                .unsafe(
-                  `select pg_sleep(greatest(0, extract(epoch from valid_until - now())) + 0.5)
-                   from core.access_memberships where membership_id = '${uid(78)}'`,
-                )
-                .pipe(Effect.orDie);
-              return running;
-            }),
-          );
-          const refused = yield* Fiber.join(departure).pipe(Effect.flip);
-          expect(refused.reason).toMatch(/ownership_transfer_required/u);
-          expect(yield* peopleRowsOf(stage, [colleague, bystander])).toBe(before);
+          yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+          // The owner's only ownership starts an hour from the case's clock.
+          const startsAt = startedAt + 3_600_000;
+          yield* seed(stage, ...ownershipFor(stage, { from: startsAt }));
+          expect((yield* ownershipPeriodOf(stage)).from).toBeGreaterThan(yield* Clock.currentTimeMillis);
+          const retiringColleague = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+          expect(yield* refusalOf(stage, retiringColleague, [owner, colleague])).toMatch(/has 0 live owners/u);
+          // Once it has started, the same file retires the colleague through that owner.
+          yield* TestClock.setTime(startsAt);
+          yield* stage.reconcile({ ...emptyRun, ...retiringColleague }).pipe(failClosed);
+          const left = yield* stage.admin
+            .unsafe<{ readonly status: string }>(
+              `select status from core.principals where tenant_id = '${tenantId}' and principal_id = '${colleague}'`,
+            )
+            .pipe(Effect.orDie);
+          expect(left).toEqual([{ status: 'archived' }]);
         }),
       ),
+    ),
   );
 
   suite.effect('plans the second leaver of a tenant on every write of the first, an ended delegation included', () =>

@@ -14,7 +14,7 @@ import { asDate } from '../access/intent/persistence.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
 import { AccessTeamStore } from '../access/intent/teams.ts';
 import type { AccessTeamWithMembers } from '../access/intent/teams.ts';
-import { planMembershipEnd } from '../access/lifecycle/people-commands.ts';
+import { hasLiveMembershipPath, membershipIsLive, planMembershipEnd } from '../access/lifecycle/people-commands.ts';
 import type { PeopleIntentWrite } from '../access/lifecycle/people-commands.ts';
 import { administrationOf } from '../access/lifecycle/people-service.ts';
 import { sameHolder } from '../access/model.ts';
@@ -870,24 +870,61 @@ interface PrincipalRetirement {
 
 /** What every departure of one tenant is decided with, read at decision time under the run's locks. */
 interface TenantDecision {
+  /** The administrators who are active persons of the tenant, share-locked until the run commits. */
+  readonly active: ReadonlySet<string>;
   readonly at: Date;
   readonly authenticationNamespaceId: string;
-  /** The administrators who are active persons of the tenant, share-locked until the run commits. */
-  readonly eligible: ReadonlySet<string>;
   readonly enrollment: DatabaseIdentityEnrollment;
   readonly scope: OperationalScope;
 }
+
+/** One tenant of a run once every lock of it is held: its leavers, its people intent and its active administrators. */
+interface LockedTenant {
+  readonly active: ReadonlySet<string>;
+  readonly leavers: readonly StageRetiredPrincipalIdentity[];
+  readonly reading: OperationalScope;
+  readonly view: StagePeopleView;
+}
+
+/**
+ * Whether a management row still administers at the decision time, read the way the People owner rules should read
+ * it: the row itself is active, has started and has not run out; its holder is an active person whose Principal row
+ * this run share-locked; and the holder's membership path to the scope it administers (the tenant for an owner) is
+ * live then. Every fact is checked at the one time taken after every lock of the run is held.
+ */
+const administersAt =
+  (input: {
+    readonly active: ReadonlySet<string>;
+    readonly at: Date;
+    readonly memberships: readonly AccessMembership[];
+    readonly tenantScopeId: AccessScopeId;
+  }) =>
+  (membership: AccessMembership): boolean =>
+    membership.kind !== 'member' &&
+    membershipIsLive(membership, input.at) &&
+    personIdsOf(membership.holder).some(
+      (principalId) =>
+        input.active.has(principalId) &&
+        hasLiveMembershipPath({
+          at: input.at,
+          holder: PrincipalIdSchema.make(principalId),
+          memberships: input.memberships,
+          scopeId: membership.kind === 'owner' ? input.tenantScopeId : membership.scopeId,
+          tenantScopeId: input.tenantScopeId,
+        }),
+    );
 
 /** A row that is not revoked and has not run out: it still projects, now or once it starts. */
 const notEnded = (row: { readonly status: string; readonly validUntil?: Date | undefined }, at: Date) =>
   row.status !== 'revoked' && row.status !== 'expired' && (row.validUntil === undefined || at < row.validUntil);
 
 /**
- * Locks every leaver's Principal row FOR UPDATE before anything about it is read. A writer that adds a binding, a
- * personal key or an agent connection to a Principal references that row: its foreign key takes a KEY SHARE lock,
- * which FOR UPDATE excludes, and the external identity writer locks the row FOR UPDATE itself. None of them takes the
- * People lock, so this row lock is what keeps every one of them out between this run's decision and its commit:
- * they wait, then find the Principal archived.
+ * Locks every leaver's Principal row FOR UPDATE before anything about it is read, then every binding and agent
+ * connection it already has. A writer that adds a binding, a personal key or an agent connection to a Principal
+ * references that row: its foreign key takes a KEY SHARE lock, which FOR UPDATE excludes, and the external identity
+ * writer locks the row FOR UPDATE itself. None of them takes the People lock, so this row lock is what keeps every one
+ * of them out between this run's decision and its commit: they wait, then find the Principal archived. The existing
+ * bindings and connections are locked here, before the decision time, so no later read of them waits.
  */
 const lockLeavers = Effect.fn('StageContextBootstrap.lockLeavers')(function* lockLeaversEffect(
   transaction: CoreTransaction,
@@ -917,21 +954,70 @@ const lockLeavers = Effect.fn('StageContextBootstrap.lockLeavers')(function* loc
     .orderBy(principals.principalId)
     .for('update')
     .pipe(Effect.mapError(bootstrapFailureFromCause));
+  const leaverIds = leavers.map(({ principalId }) => principalId);
+  yield* transaction
+    .select({ id: principalAuthBindings.principalAuthBindingId })
+    .from(principalAuthBindings)
+    .where(
+      and(eq(principalAuthBindings.tenantId, first.tenantId), inArray(principalAuthBindings.principalId, leaverIds)),
+    )
+    .orderBy(principalAuthBindings.principalAuthBindingId)
+    .for('update')
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  yield* transaction
+    .select({ id: accessAgentConnections.connectionId })
+    .from(accessAgentConnections)
+    .where(
+      and(eq(accessAgentConnections.tenantId, first.tenantId), inArray(accessAgentConnections.principalId, leaverIds)),
+    )
+    .orderBy(accessAgentConnections.connectionId)
+    .for('update')
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
   return yield* Effect.void;
 });
 
 /**
- * The decision facts of one tenant. A leaver who owns the tenant is refused first. Every person holding an owner or
- * administrator membership is read with their Principal row share-locked: only an active person counts as an administrator who stays, and none of them can be
- * disabled or archived before this run commits. The one owner among them is the identity the stage operator's file
- * acts through (ADR-0028); a tenant without exactly one live owner who is an active person is refused, because no
- * accountable identity would write its history.
+ * Share-locks the Principal row of every person who holds an owner or administrator row of the tenant, whatever its
+ * validity, so none of them can be disabled or archived before this run commits, and returns those who are active
+ * persons. Only a lock is taken here; what counts is decided at the decision time, after every lock of the run.
  */
-const tenantDecisionOf = Effect.fn('StageContextBootstrap.tenantDecisionOf')(function* tenantDecisionOfEffect(
+const lockAdministrators = Effect.fn('StageContextBootstrap.lockAdministrators')(function* lockAdministratorsEffect(
   transaction: CoreTransaction,
   view: StagePeopleView,
-  leavers: readonly StageRetiredPrincipalIdentity[],
   reading: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
+): Effect.fn.Return<ReadonlySet<string>, StageContextBootstrapError> {
+  const administrators = [
+    ...new Set(
+      view.memberships.flatMap((membership) =>
+        membership.kind !== 'member' && membership.status !== 'revoked' ? personIdsOf(membership.holder) : [],
+      ),
+    ),
+  ].toSorted();
+  if (administrators.length === 0) {
+    return new Set<string>();
+  }
+  yield* installOperationalScope(transaction, reading, enrollment).pipe(Effect.mapError(bootstrapFailureFromCause));
+  const rows = yield* transaction
+    .select({ kind: principals.kind, principalId: principals.principalId, status: principals.status })
+    .from(principals)
+    .where(and(eq(principals.tenantId, reading.tenantId), inArray(principals.principalId, administrators)))
+    .orderBy(principals.principalId)
+    .for('share')
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  return new Set(
+    rows.flatMap(({ kind, principalId, status }) => (kind === 'human' && status === 'active' ? [principalId] : [])),
+  );
+});
+
+/**
+ * The decision facts of one tenant, taken at the decision time with every lock of the run held. A leaver who owns the
+ * tenant is refused first. The one owner whose owner row administers at that time (started, not run out, an active
+ * person, a live tenant membership path) is the identity the stage operator's file acts through (ADR-0028); a tenant
+ * without exactly one such owner is refused, because no accountable identity would write its history.
+ */
+const tenantDecisionOf = Effect.fn('StageContextBootstrap.tenantDecisionOf')(function* tenantDecisionOfEffect(
+  locked: LockedTenant,
   context: {
     readonly at: Date;
     readonly authenticationNamespaceId: string;
@@ -939,64 +1025,49 @@ const tenantDecisionOf = Effect.fn('StageContextBootstrap.tenantDecisionOf')(fun
   },
 ): Effect.fn.Return<TenantDecision, StageContextBootstrapError> {
   const { at } = context;
-  const managing = view.memberships.filter((membership) => membership.kind !== 'member' && notEnded(membership, at));
+  const { active, leavers, reading, view } = locked;
   const leaving = new Set(leavers.map(({ principalId }) => principalId));
   // No tenant owner leaves through the operator path, a co-owner included: ownership moves only through People.
   if (
-    managing.some(
+    view.memberships.some(
       (membership) =>
-        membership.kind === 'owner' && personIdsOf(membership.holder).some((principalId) => leaving.has(principalId)),
+        membership.kind === 'owner' &&
+        notEnded(membership, at) &&
+        personIdsOf(membership.holder).some((principalId) => leaving.has(principalId)),
     )
   ) {
     return yield* failure(
       'A tenant owner is never retired through the stage accounts bootstrap; transfer the ownership through People first',
     );
   }
-  const administrators = [...new Set(managing.flatMap(({ holder }) => personIdsOf(holder)))].toSorted();
-  yield* installOperationalScope(transaction, reading, context.enrollment).pipe(
-    Effect.mapError(bootstrapFailureFromCause),
-  );
-  const active =
-    administrators.length === 0
-      ? []
-      : yield* transaction
-          .select({ principalId: principals.principalId })
-          .from(principals)
-          .where(
-            and(
-              eq(principals.tenantId, reading.tenantId),
-              inArray(principals.principalId, administrators),
-              eq(principals.kind, 'human'),
-              eq(principals.status, 'active'),
-            ),
-          )
-          .orderBy(principals.principalId)
-          .for('share')
-          .pipe(Effect.mapError(bootstrapFailureFromCause));
-  const eligible: ReadonlySet<string> = new Set(active.map(({ principalId }) => principalId));
+  const { tenantScopeId } = view;
+  const administers =
+    tenantScopeId === undefined
+      ? () => false
+      : administersAt({ active, at, memberships: view.memberships, tenantScopeId });
+  // `administers` holds an owner only while they are an active person over a live tenant path.
   const owners = [
     ...new Set(
-      managing.flatMap((membership) =>
-        membership.kind === 'owner' && membership.status === 'active' && membership.validFrom <= at
-          ? personIdsOf(membership.holder)
-          : [],
+      view.memberships.flatMap((membership) =>
+        membership.kind === 'owner' && administers(membership) ? personIdsOf(membership.holder) : [],
       ),
     ),
-  ].filter((principalId) => eligible.has(principalId));
+  ];
   const [owner] = owners;
   if (owner === undefined || owners.length > 1) {
     return yield* failure(
       `The stage accounts bootstrap retires a login only through the tenant's one owner; tenant ${reading.tenantId} has ${owners.length} live owners who are active persons`,
     );
   }
-  return { ...context, eligible, scope: yield* operatorScopeOf({ ownerId: owner, tenantId: reading.tenantId }) };
+  return { ...context, active, scope: yield* operatorScopeOf({ ownerId: owner, tenantId: reading.tenantId }) };
 });
 
 /**
  * Plans one person leaving a tenant that stays, as the governed "person leaves" command does when the tenant owner
  * ends somebody's membership: Core's membership-end planner, run as the owner acting for the stage operator, ends the
  * tenant member row and everything that stood on it, and refuses the last administrator of any scope, counting only
- * administrators who are active persons at decision time (a tenant owner was refused with the tenant's facts).
+ * a management row that administers at the decision time: started, not run out, held by an active person over a
+ * live membership path (a tenant owner was refused with the tenant's facts).
  * Before that it refuses whatever the departure would leave projectable and whatever it would take from somebody else: a binding of another login or
  * credential, a live delegation the person granted or manages, a team place and a live agent connection. Every
  * refusal is decided here; nothing is written.
@@ -1115,18 +1186,28 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
             membership.validFrom <= at &&
             (membership.validUntil === undefined || at < membership.validUntil),
         );
-  // Only an administrator who is an active person stays to administer; the leaver's own rows decide what they give up.
-  const counted = view.memberships.filter((membership) =>
-    personIdsOf(membership.holder).every(
-      (principalId) => principalId === retired.principalId || decision.eligible.has(principalId),
-    ),
-  );
+  // Only a management row that administers at the decision time counts for somebody who stays; the leaver's own rows
+  // decide what they give up, and member rows only carry the paths.
+  const counted = (scopeId: AccessScopeId) => {
+    const administers = administersAt({
+      active: decision.active,
+      at,
+      memberships: view.memberships,
+      tenantScopeId: scopeId,
+    });
+    return view.memberships.filter(
+      (membership) =>
+        membership.kind === 'member' ||
+        personIdsOf(membership.holder).includes(retired.principalId) ||
+        administers(membership),
+    );
+  };
   const peopleWrites =
     ending === undefined || tenantScopeId === undefined
       ? []
       : (yield* planMembershipEnd({
           actor: PrincipalIdSchema.make(scope.principalId),
-          administration: administrationOf(counted, tenantScopeId, at),
+          administration: administrationOf(counted(tenantScopeId), tenantScopeId, at),
           assignments: view.assignments,
           at,
           delegations: view.delegations,
@@ -1347,9 +1428,10 @@ interface PlannedRetirements {
 
 /**
  * Every attached login and retired Principal of one operator file, in ONE transaction: each tenant's People lock,
- * then every leaver's Principal row, then the decision time, then every refusal decided from what the transaction
- * reads, and only then every write. A refusal writes nothing, and a run that stops after the commit is completed by
- * running the same file again, which finds each move already made and reconciles its tenants.
+ * then every leaver's Principal row with its bindings and connections, then each tenant's administrators' Principal
+ * rows, then the decision time, then every refusal decided from what the transaction reads, and only then every
+ * write. A refusal writes nothing, and a run that stops after the commit is completed by running the same file again,
+ * which finds each move already made and reconciles its tenants.
  */
 const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveLoginsEffect(
   transaction: CoreTransaction,
@@ -1373,16 +1455,9 @@ const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveL
       discard: true,
     },
   );
-  // Decided now, after every wait for a lock: a membership that ran out while this run waited no longer counts.
-  const decided = { ...context, at: yield* DateTime.nowAsDate };
-  const attachments = yield* Effect.forEach(
-    input.attachedLogins,
-    (login) => attachmentOf(transaction, login, context.authenticationNamespaceId),
-    { concurrency: 1 },
-  );
-  const retirements = yield* Effect.forEach(
+  const locked = yield* Effect.forEach(
     retiredTenantIds,
-    Effect.fn(function* tenantRetirementsOf(tenantId) {
+    Effect.fn(function* lockTenant(tenantId) {
       const leavers = leaversOf(tenantId);
       const [first] = leavers;
       if (first === undefined) {
@@ -1392,7 +1467,24 @@ const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveL
       // and write below runs as the tenant owner acting for the stage operator.
       const reading = yield* stageScopeOf(first);
       const view = yield* peopleViewOf(reading);
-      const decision = yield* tenantDecisionOf(transaction, view, leavers, reading, decided);
+      const active = yield* lockAdministrators(transaction, view, reading, context.enrollment);
+      return [{ active, leavers, reading, view } satisfies LockedTenant];
+    }),
+    { concurrency: 1 },
+  );
+  // Decided now, after every wait for a lock: a row that ran out while this run waited no longer counts, and one that
+  // has not started yet does not count either.
+  const decided = { ...context, at: yield* DateTime.nowAsDate };
+  const attachments = yield* Effect.forEach(
+    input.attachedLogins,
+    (login) => attachmentOf(transaction, login, context.authenticationNamespaceId),
+    { concurrency: 1 },
+  );
+  const retirements = yield* Effect.forEach(
+    locked.flat(),
+    Effect.fn(function* tenantRetirementsOf(tenant) {
+      const { leavers, view } = tenant;
+      const decision = yield* tenantDecisionOf(tenant, decided);
       const planned = yield* Effect.reduce(
         leavers,
         (): PlannedRetirements => ({ plans: [], view }),
