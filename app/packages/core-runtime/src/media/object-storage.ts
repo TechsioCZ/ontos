@@ -55,10 +55,22 @@ const ObjectStorageChecksumMismatchValue = actionErrorSchema('ObjectStorageCheck
 export type ObjectStorageChecksumMismatch = InstanceType<typeof ObjectStorageChecksumMismatchValue>;
 export { ObjectStorageChecksumMismatchValue as ObjectStorageChecksumMismatch };
 
+/**
+ * A create-only write found an object under the key. It is neither a success nor a failed store: the existing
+ * bytes are untouched and only a read-back can say whether they are the ones that were meant.
+ */
+const ObjectStorageObjectExistsValue = actionErrorSchema('ObjectStorageObjectExists', {
+  code: Schema.Literal('object_storage_object_exists'),
+  ...safeReason,
+});
+export type ObjectStorageObjectExists = InstanceType<typeof ObjectStorageObjectExistsValue>;
+export { ObjectStorageObjectExistsValue as ObjectStorageObjectExists };
+
 export type ObjectStorageFailure =
   | ObjectStorageChecksumMismatch
   | ObjectStorageChecksumUnsupported
   | ObjectStorageNetworkError
+  | ObjectStorageObjectExists
   | ObjectStorageObjectMissing
   | ObjectStorageServerError
   | ObjectStorageTimeout;
@@ -67,6 +79,7 @@ export const ObjectStorageFailureSchema = Schema.Union([
   ObjectStorageChecksumMismatchValue,
   ObjectStorageChecksumUnsupportedValue,
   ObjectStorageNetworkErrorValue,
+  ObjectStorageObjectExistsValue,
   ObjectStorageObjectMissingValue,
   ObjectStorageServerErrorValue,
   ObjectStorageTimeoutValue,
@@ -81,6 +94,11 @@ export interface ObjectStat {
 export interface PutObjectRequest<BodyError> {
   /** The streamed bytes. A failing body fails `put`, and nothing may be left readable under the key. */
   readonly body: Stream.Stream<Uint8Array, BodyError>;
+  /**
+   * The exact length the body is declared to have, when the caller knows it. A provider that transfers in parts
+   * uses it to size them; it is never a limit and never replaces the caller's own count of the bytes.
+   */
+  readonly byteSize?: number;
   readonly contentType: string;
   /** Ask the provider to verify this lowercase hex SHA-256; a provider that cannot fails with `ObjectStorageChecksumUnsupported`. */
   readonly expectedSha256?: string;
@@ -106,7 +124,11 @@ export interface ObjectStorageService {
    * every later step compares it, so bytes are only ever read through the provider that holds them.
    */
   readonly providerId: string;
-  /** A failed put is not proof that nothing was stored: the outcome can be uncertain. */
+  /**
+   * A failed put is not proof that nothing was stored: the outcome can be uncertain. A provider that can write
+   * create-only refuses to replace an object under the key with `ObjectStorageObjectExists`; one that cannot may
+   * replace it, which is why only the Media Asset row decides which key may be written again.
+   */
   readonly put: <BodyError>(
     request: PutObjectRequest<BodyError>,
   ) => Effect.Effect<ObjectStat, BodyError | ObjectStorageFailure>;

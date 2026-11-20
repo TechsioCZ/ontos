@@ -110,10 +110,11 @@ const reservedContentStream = <BodyError>(
  * - `failed` and `scanning` accept no bytes.
  * - A provider failure is uncertain, never "nothing stored" and never "failed": the object may be there.
  *
- * Two cases stay provider-dependent and are not closed here, because closing them needs a create-only or
- * version-pinned write that belongs to the deferred provider lane: a put that races a sealed `ready` after this
- * hop read the row as `uploaded`, and a same-size overwrite between the verification and the ready commit when
- * the provider reports no `versionRef`.
+ * Two cases stay provider-dependent: a put that races a sealed `ready` after this hop read the row as
+ * `uploaded`, and a same-size overwrite between the verification and the ready commit when the provider reports
+ * no `versionRef`. A provider that writes create-only (the S3 adapter does when the deployment states the
+ * provider honours `If-None-Match: *`) refuses to replace an existing object with `ObjectStorageObjectExists`,
+ * which this hop reports as an uncertain ingest; a provider without it keeps the race open.
  */
 export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* streamMediaObject<BodyError>(
   input: MediaByteHopInput<BodyError>,
@@ -164,15 +165,17 @@ export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* stre
     tally,
     'The received bytes differ from the declared size or SHA-256',
   );
-  const stat = yield* storage.put({ body: counted, contentType: asset.mimeType, key }).pipe(
-    Effect.catchIf(isObjectStorageFailure, (failure) =>
-      Effect.fail(
-        new MediaIngestUncertain({
-          code: 'media_ingest_uncertain',
-          reason: `The provider did not confirm the stored bytes (${failure.code})`,
-        }),
+  const stat = yield* storage
+    .put({ body: counted, byteSize: Number(asset.byteSize), contentType: asset.mimeType, key })
+    .pipe(
+      Effect.catchIf(isObjectStorageFailure, (failure) =>
+        Effect.fail(
+          new MediaIngestUncertain({
+            code: 'media_ingest_uncertain',
+            reason: `The provider did not confirm the stored bytes (${failure.code})`,
+          }),
+        ),
       ),
-    ),
-  );
+    );
   return { ...tally.finish(), kind: 'stored', stat } as const satisfies MediaByteHopResult;
 });
