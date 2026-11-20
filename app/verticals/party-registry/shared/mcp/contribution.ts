@@ -47,6 +47,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
       destructive: true,
       title: { cs: 'Ukončit vztah mezi subjekty', en: 'End a party relationship' },
     },
+    // Only the enrolling Commerce delegation may mutate its original retail Party.
+    'enroll-retail-customer': OntosMcpHidden,
     'execute-privacy-measure': {
       title: {
         cs: 'Provést opatření ochrany osobních údajů (oprava, anonymizace, výmaz)',
@@ -147,6 +149,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     'organization-ico-facts': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'organization-record-facts': OntosMcpHidden,
+    // Historical ownership proof for the enrolling Commerce workload, never an agent tool.
+    'owned-retail-party-result': OntosMcpHidden,
     'party-contact-point-detail': { title: { cs: 'Detail kontaktu subjektu', en: 'Party contact details' } },
     'party-contact-points': { title: { cs: 'Kontakty subjektu', en: 'Party contacts' } },
     'party-correction': { title: { cs: 'Oprava údajů subjektu', en: 'Party fact corrections' } },
