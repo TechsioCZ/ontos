@@ -217,7 +217,9 @@ const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => (
  *   profile) or an organization plan (Party create, Counterparty onboarding and profile) (`enrolledSource`); the
  *   current profile read before a company ICO change (`currentOrganizationIcoTarget`); the Privacy intake check the
  *   admission makes with the integration principal (`requireSymmyCustomerIntakePrivacy`).
- * - customerGroupsBatch: the Customer Group create and update a synchronous admission executes (`syncIntentAllowed`).
+ * - customerGroupsBatch: the Customer Group create and update a synchronous admission executes (`syncIntentAllowed`);
+ *   the definition read the Shell makes for each group code with the integration principal before it admits, which
+ *   it makes only for a route that enrolls it and names a company (`readSymmyCustomerGroupDefinitionFacts`).
  * - customerGroupCustomersBatch: the membership apply of one selected Customer Group and the group definition read
  *   the adapter makes before it (`currentMembershipDefinition`).
  * - adminProducts, adminCustomers, priceLists, adminRegions: the reads `SymmyGovernedDispatch.read` and its
@@ -284,10 +286,12 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     'customerGroupsBatch',
     {
       admission: 'sync',
+      companyRequired: true,
       family: 'customerGroups',
       operations: [
         executor(customerGroupOperation('commerce.customer-context.create-customer-group'), { required: true }),
         executor(customerGroupOperation('commerce.customer-context.update-customer-group')),
+        shellRead(customerModule, 'commerce.customer-context.api.customer-group-definition-source', true),
       ],
     },
   ],
