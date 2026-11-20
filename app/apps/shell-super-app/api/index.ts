@@ -2093,9 +2093,6 @@ const acquireSymmyIngressRouteProof = Effect.fn('ShellGateway.acquireSymmyIngres
     principal,
     requestCorrelation: (yield* symmyCorrelationId(request)) ?? 'missing',
     routeRequest,
-    sourcePurpose: ['adminCustomers', 'adminProducts', 'adminRegions', 'priceLists'].includes(routeRequest.routeKey)
-      ? 'read'
-      : 'admit',
   }).pipe(
     Effect.catchTag('GatewayDelegationError', (error) =>
       Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
@@ -2103,7 +2100,7 @@ const acquireSymmyIngressRouteProof = Effect.fn('ShellGateway.acquireSymmyIngres
   );
 });
 
-const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* admitSymmyIngressEffect(
+export const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* admitSymmyIngressEffect(
   rawKey: string,
   request: HttpServerRequest.HttpServerRequest,
   endpoint: string,

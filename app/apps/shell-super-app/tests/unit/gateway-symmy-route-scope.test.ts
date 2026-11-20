@@ -2,16 +2,21 @@ import {
   buildApplicationCompositionCatalog,
   defineTenantModuleEntrypoint,
   LegalEntityContext,
+  PrincipalResolver,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
-import { DateTime, Effect, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import { ConfigProvider, DateTime, Effect, Layer, Tracer } from 'effect';
+import { FetchHttpClient, HttpServerRequest } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
+import { ApiKeyService } from '../../api/auth/api-key-service.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import {
   acquireSymmyRouteScopeProof,
@@ -20,7 +25,10 @@ import {
   readSymmyRouteScope,
   requireSymmyRouteWorkload,
 } from '../../api/auth/gateway-symmy-route-scope.ts';
+import { admitSymmyIngress } from '../../api/index.ts';
+import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import type { ShellInstalledCatalog } from '../../api/modules/installed-module-catalog.ts';
 import {
@@ -58,11 +66,69 @@ const request = {
   principal,
   requestCorrelation: 'route-proof-transport-test',
   routeRequest: { routeKey: 'adminCustomers' as const },
-  sourcePurpose: 'read' as const,
+};
+
+/** A Symmy release that publishes its admission Actions, its route-context Read and an unrelated Read. */
+const moduleId = 'integration.symmy';
+const fixtureContract = makeModuleContractFixture({
+  appId: 'symmy-integration',
+  buildMarker: 'native-route-build',
+  moduleId,
+});
+const admissionKeys = ['integration.symmy.admit-symmy-job', 'integration.symmy.admit-symmy-sync'];
+const readKeys = [
+  'integration.symmy.api.symmy-sync-admission',
+  'integration.symmy.api.symmy-route-context',
+  'integration.symmy.api.unrelated-read',
+];
+const symmyContract = {
+  ...fixtureContract,
+  manifest: {
+    ...fixtureContract.manifest,
+    publicSurface: {
+      ...fixtureContract.manifest.publicSurface,
+      actions: admissionKeys.map((actionKey) => ({
+        accessWorkload: { reason: 'Exact integration admission', workloads: ['integration.symmy-admit'] },
+        actionKey,
+        auditProfile: 'standard',
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'protected' },
+          entrypointKey: actionKey,
+          moduleKey: moduleId,
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleId: moduleId,
+        schemaVersion: '1',
+      })),
+      api: [
+        {
+          key: 'integration.symmy.api.route-reads',
+          operationKeys: readKeys.map((_, index) => `read${index}.execute`),
+        },
+      ],
+      operationContracts: readKeys.map((entrypointKey, index) => ({
+        apiKey: 'integration.symmy.api.route-reads',
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'protected' },
+          entrypointKey,
+          moduleKey: moduleId,
+          role: 'api',
+        }),
+        operationKey: `read${index}.execute`,
+        schemaVersion: '1',
+      })),
+    },
+  },
 };
 
 const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly activeBinding?: boolean;
+  /** The namespace of the eligible key binding: the Shell's own resolver binds API keys in the staff namespace. */
+  readonly authenticationNamespaceId?: string;
   readonly catalog?: ShellInstalledCatalog;
   readonly replayIdempotencyDigest?: string;
   readonly responseTenant?: string;
@@ -74,7 +140,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   const calls: {
     readonly authorization: string | null;
     readonly body: string;
-    readonly correlation: string | null;
+    readonly headers: Readonly<Record<string, string>>;
     readonly url: string;
   }[] = [];
   const fakeFetch: typeof fetch = async (input, init) => {
@@ -82,7 +148,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     calls.push({
       authorization: incoming.headers.get('authorization'),
       body: await incoming.text(),
-      correlation: incoming.headers.get('x-correlation-id'),
+      headers: Object.fromEntries(incoming.headers),
       url: incoming.url,
     });
     const ownerResponse = { ...response, tenantId: options.responseTenant ?? response.tenantId };
@@ -105,7 +171,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         options.activeBinding !== false &&
         parameters.includes(principal.authBindingId) &&
         parameters.includes('native-route-key') &&
-        parameters.includes(principal.authenticationNamespaceId)
+        parameters.includes(options.authenticationNamespaceId ?? principal.authenticationNamespaceId)
         ? [{ principal_id: principal.principalId }]
         : [],
     );
@@ -185,7 +251,7 @@ it.effect('obtains route scope from the protected generated owner Read and refus
     );
     expect(JSON.parse(current.calls[0]?.body ?? '{}')).toEqual({ routeKey: 'adminCustomers' });
     // The Shell passes only its sanitized correlation id; the route read forwards exactly that value.
-    expect(current.calls[0]?.correlation).toBe(request.requestCorrelation);
+    expect(current.calls[0]?.headers['x-correlation-id']).toBe(request.requestCorrelation);
     const authorization = current.calls[0]?.authorization ?? '';
     expect(decodeJwt(authorization.slice('Bearer '.length)).aud).toBe('symmy-integration');
   }),
@@ -207,19 +273,45 @@ it.effect('rejects a different tenant returned by the owner and a revoked authen
 );
 
 it.effect(
-  'requires the workload of the named route: a write admits, a business read admits or polls, a job polls',
+  'derives what each route asks of its caller from the route inventory, for admission and route scope alike',
   () =>
-    Effect.gen(function* routeWorkloads() {
+    Effect.gen(function* inventoryPurposes() {
+      const routes = Object.keys({ ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES });
       const current = yield* fixture({});
-      yield* Effect.gen(function* checkRouteWorkloads() {
-        for (const route of ['productsBatch', 'adminProducts', 'job']) {
+      const unknown = yield* Effect.gen(function* checkRouteWorkloads() {
+        for (const route of routes) {
           yield* requireSymmyRouteWorkload(principal, route);
         }
-        const unknown = yield* Effect.flip(requireSymmyRouteWorkload(principal, 'unknownRoute'));
-        expect(unknown.code).toBe('forbidden');
+        return yield* Effect.flip(requireSymmyRouteWorkload(principal, 'unknownRoute'));
       }).pipe(Effect.provide(current.layer));
-      expect(current.purposes).toEqual(['admit', 'read', 'poll']);
+      expect(unknown.code).toBe('forbidden');
+      // A write admits, a business read admits or polls, and only the job read polls; an unknown route never reaches SQL.
+      expect(Object.fromEntries(routes.map((route, index) => [route, current.purposes[index]]))).toEqual({
+        adminCustomers: 'read',
+        adminProducts: 'read',
+        adminRegions: 'read',
+        assortmentRulesFixtureBatch: 'admit',
+        customerGroupCustomersBatch: 'admit',
+        customerGroupsBatch: 'admit',
+        customersBatch: 'admit',
+        inventoryStockBatch: 'admit',
+        job: 'poll',
+        priceListPricesBatch: 'admit',
+        priceLists: 'read',
+        priceListsBatchUpsert: 'admit',
+        productsBatch: 'admit',
+        sellerVatDeclarationsFixtureBatch: 'admit',
+      });
+      expect(current.purposes).toHaveLength(routes.length);
       expect(current.calls).toHaveLength(0);
+      // The route proof takes the same purpose for its route; the caller cannot name one.
+      const proofs = yield* fixture({});
+      yield* Effect.gen(function* acquireRouteProofs() {
+        for (const routeKey of ['adminCustomers', 'productsBatch'] as const) {
+          yield* acquireSymmyRouteScopeProof({ ...request, routeRequest: { routeKey } });
+        }
+      }).pipe(Effect.provide(proofs.layer));
+      expect(proofs.purposes).toEqual(['read', 'admit']);
       const revoked = yield* fixture({ activeBinding: false });
       const failure = yield* requireSymmyRouteWorkload(principal, 'job').pipe(
         Effect.flip,
@@ -229,15 +321,58 @@ it.effect(
     }),
 );
 
-it.effect('refuses an admit-purpose claim for a read route before requesting owner authority', () =>
-  Effect.gen(function* sourcePurposeControl() {
-    const current = yield* fixture({});
-    const failure = yield* acquireSymmyRouteScopeProof({ ...request, sourcePurpose: 'admit' }).pipe(
-      Effect.flip,
-      Effect.provide(current.layer),
+it.effect('forwards the safe correlation id of an admitted request to the owner, never the caller key it repeats', () =>
+  Effect.gen(function* admittedCorrelation() {
+    const snapshot = yield* makeCompositionSnapshot([symmyContract]);
+    const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+    const current = yield* fixture({
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      catalog: { ...catalog, composition: snapshot.composition },
+    });
+    const apiKey = 'synthetic-symmy-caller-key';
+    const traceId = 'f'.repeat(32);
+    const ingressRequest = HttpServerRequest.fromWeb(
+      new Request(`https://shell.test${SYMMY_ROUTES.adminCustomers.path}`, {
+        headers: { 'x-api-key': apiKey, 'x-correlation-id': `caller-${apiKey}` },
+      }),
     );
-    expect(failure.code).toBe('forbidden');
-    expect(current.calls).toHaveLength(0);
+    // The caller names no company, so the access gate is never asked; this one denies everything.
+    const identity = Layer.mergeAll(
+      Layer.succeed(AccessDecisionGate, makeShellTestAccessGate()),
+      Layer.succeed(
+        ApiKeyService,
+        makeApiKeyServiceDouble({ verify: () => Effect.succeed({ providerKeyId: 'native-route-key' }) }),
+      ),
+      Layer.succeed(
+        PrincipalResolver,
+        makePrincipalResolverDouble({
+          resolveBetterAuthApiKey: () =>
+            Effect.succeed({
+              authBindingId: principal.authBindingId,
+              displayName: 'Symmy caller',
+              principalId: principal.principalId,
+              principalKind: 'integration',
+              tenantId: principal.tenantId,
+            }),
+        }),
+      ),
+    );
+    yield* Effect.gen(function* admitAndScopeRoute() {
+      const admission = yield* admitSymmyIngress(apiKey, ingressRequest, 'adminCustomers');
+      yield* admission.acquireRouteAssertion({ routeKey: 'adminCustomers' });
+    }).pipe(
+      Effect.withParentSpan(Tracer.externalSpan({ spanId: '1'.repeat(16), traceId })),
+      Effect.provide(Layer.mergeAll(current.layer, identity)),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, ingressRequest),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ ONTOS_GATEWAY_MODULE_BINDINGS: '[]' }),
+      ),
+    );
+    expect(current.calls).toHaveLength(1);
+    // The caller's id repeats its key, so the owner receives the trace id instead.
+    expect(current.calls[0]?.headers['x-correlation-id']).toBe(traceId);
+    expect(JSON.stringify(current.calls)).not.toContain(apiKey);
   }),
 );
 
@@ -268,63 +403,7 @@ it.effect('refuses route metadata that names an owner operation absent from the 
 
 it.effect('signs only exact admission Actions and the approved v1 sync lookup for an admit-purpose route', () =>
   Effect.gen(function* signedSyncAdmissionRoute() {
-    const moduleId = 'integration.symmy';
-    const fixtureContract = makeModuleContractFixture({
-      appId: 'symmy-integration',
-      buildMarker: 'native-route-build',
-      moduleId,
-    });
-    const admissionKeys = ['integration.symmy.admit-symmy-job', 'integration.symmy.admit-symmy-sync'];
-    const readKeys = [
-      'integration.symmy.api.symmy-sync-admission',
-      'integration.symmy.api.symmy-route-context',
-      'integration.symmy.api.unrelated-read',
-    ];
-    const snapshot = yield* makeCompositionSnapshot([
-      {
-        ...fixtureContract,
-        manifest: {
-          ...fixtureContract.manifest,
-          publicSurface: {
-            ...fixtureContract.manifest.publicSurface,
-            actions: admissionKeys.map((actionKey) => ({
-              accessWorkload: { reason: 'Exact integration admission', workloads: ['integration.symmy-admit'] },
-              actionKey,
-              auditProfile: 'standard',
-              entrypoint: defineTenantModuleEntrypoint({
-                access: 'write',
-                authorization: { kind: 'protected' },
-                entrypointKey: actionKey,
-                moduleKey: moduleId,
-                role: 'action',
-              }),
-              idempotency: 'required',
-              legalEntityScope: 'optional',
-              owningModuleId: moduleId,
-              schemaVersion: '1',
-            })),
-            api: [
-              {
-                key: 'integration.symmy.api.route-reads',
-                operationKeys: readKeys.map((_, index) => `read${index}.execute`),
-              },
-            ],
-            operationContracts: readKeys.map((entrypointKey, index) => ({
-              apiKey: 'integration.symmy.api.route-reads',
-              entrypoint: defineTenantModuleEntrypoint({
-                access: 'read',
-                authorization: { kind: 'protected' },
-                entrypointKey,
-                moduleKey: moduleId,
-                role: 'api',
-              }),
-              operationKey: `read${index}.execute`,
-              schemaVersion: '1',
-            })),
-          },
-        },
-      },
-    ]);
+    const snapshot = yield* makeCompositionSnapshot([symmyContract]);
     const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
     const current = yield* fixture({ catalog: { ...catalog, composition: snapshot.composition } });
     const assertion = yield* Effect.gen(function* issueExactAdmissionLookup() {
@@ -332,7 +411,6 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
         ...request,
         compositionRevision: snapshot.composition.revision,
         routeRequest: { routeKey: 'customersBatch' },
-        sourcePurpose: 'admit',
       });
       return yield* issueSymmyRouteScopeAssertion(proof, { audience: 'symmy-integration', legalEntityId, principal });
     }).pipe(Effect.provide(current.layer));
@@ -384,7 +462,6 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
           ...request,
           compositionRevision: snapshot.composition.revision,
           routeRequest: { replayIdempotencyKey: 'retained-receipt-key', routeKey },
-          sourcePurpose: 'admit',
         });
         return yield* issueSymmyRouteScopeAssertion(proof, { audience: 'symmy-integration', legalEntityId, principal });
       }).pipe(Effect.provide(retained.layer));
