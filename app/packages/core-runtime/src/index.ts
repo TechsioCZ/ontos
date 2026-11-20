@@ -158,9 +158,10 @@ export {
   SystemPrincipalContextResolverLive,
   SystemPrincipalContextUnavailableError,
   makeSystemPrincipalContextResolver,
-  registerSystemWorkload,
   registeredAdmissionAuthContextRef,
 } from './auth/system-principal-context.ts';
+export { registerSystemWorkload } from './auth/system-workload-registration.ts';
+export type { SystemWorkloadRegistration } from './auth/system-workload-registration.ts';
 export {
   SupportRecoveryPrincipalContextDeniedError,
   SupportRecoveryPrincipalContextResolver,
@@ -173,7 +174,7 @@ export type {
   SupportRecoveryPrincipalContextResolverConfiguration,
   SupportRecoveryPrincipalContextResolverService,
 } from './auth/support-recovery-principal-context.ts';
-export type { SystemPrincipalContextError, SystemWorkloadRegistration } from './auth/system-principal-context.ts';
+export type { SystemPrincipalContextError } from './auth/system-principal-context.ts';
 export {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
