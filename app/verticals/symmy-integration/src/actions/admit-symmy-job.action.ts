@@ -52,7 +52,11 @@ const handleAdmitSymmyJob = Effect.fn('SymmyJobAdmission.handle')(function* admi
   }
   const admitted = yield* context.services
     .admit(payload, context.actionInvocationId, (plan) => requireSymmyCustomerIntakePrivacy(context.scope, plan))
-    .pipe(Effect.mapError(({ code }) => new AdmitSymmyJobRejected(rejected[code])));
+    .pipe(
+      // The caller gets the public problem only; the service log names the store's refusal, never the payload.
+      Effect.tapError(({ code }) => Effect.logWarning({ boundary: 'symmy-job-admission', code })),
+      Effect.mapError(({ code }) => new AdmitSymmyJobRejected(rejected[code])),
+    );
   if (admitted.inserted && admitted.executionReady) {
     const work = yield* Schema.decodeEffect(OutboxPayloadSchema)({ jobId: admitted.jobId }).pipe(
       Effect.catchTag('SchemaError', () => new AdmitSymmyJobRejected(rejected.unavailable)),
