@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { renameDisplayFilenameAction, uploadAssetAction } from '@app/core-runtime';
+import { assetCurrentRead, renameDisplayFilenameAction, uploadAssetAction } from '@app/core-runtime';
 import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
@@ -10,6 +10,9 @@ import type { E2eActor, MediaE2eWorld, ShellEdge } from './core-media-e2e-fixtur
  * The steps every Core Media end-to-end scenario is made of. A step is one real request: a governed Action run, or an
  * HTTP request to the production Shell on loopback. Nothing here decides an outcome; the answers are the system's.
  */
+
+const CORE_MEDIA_MODULE = 'core.media';
+const CORE_MEDIA_RESOURCE_TYPE = 'core.media.asset';
 
 export const digestOf = (bytes: Uint8Array): string => Hex.encode(sha256(bytes));
 export const bytesOf = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text);
@@ -87,9 +90,9 @@ export const metadataOf = (edge: ShellEdge, actor: E2eActor, mediaAssetId: strin
       actor,
       body: JSON.stringify({
         mediaAssetRef: {
-          moduleId: 'core.media',
+          moduleId: CORE_MEDIA_MODULE,
           resourceId: mediaAssetId,
-          resourceType: 'core.media.asset',
+          resourceType: CORE_MEDIA_RESOURCE_TYPE,
           tenantId: actor.tenantId,
         },
       }),
@@ -185,9 +188,9 @@ export const renameAs = (
         payload: {
           displayFilename,
           mediaAssetRef: {
-            moduleId: 'core.media',
+            moduleId: CORE_MEDIA_MODULE,
             resourceId: mediaAssetRef.resourceId,
-            resourceType: 'core.media.asset',
+            resourceType: CORE_MEDIA_RESOURCE_TYPE,
             tenantId: actor.tenantId,
           },
         },
@@ -213,3 +216,26 @@ export const untilStatus = Effect.fn('CoreMediaE2e.untilStatus')(function* until
   }
   return answer;
 });
+
+export const refOf = (tenantId: string, mediaAssetId: string) =>
+  ({
+    moduleId: CORE_MEDIA_MODULE,
+    resourceId: mediaAssetId,
+    resourceType: CORE_MEDIA_RESOURCE_TYPE,
+    tenantId,
+  }) as const;
+
+/** The Core owner Current V1 read for the exact refs, run as the actor through the governed Read runtime. */
+export const currentOf = (world: MediaE2eWorld, actor: E2eActor, refs: readonly ReturnType<typeof refOf>[]) =>
+  Effect.gen(function* currentStep() {
+    const principal = yield* principalOf(actor);
+    const [first, ...rest] = refs;
+    return yield* world.withStorage(
+      world.reads.runRead({
+        input: { mediaAssetRefs: first === undefined ? [] : [first, ...rest] },
+        principal,
+        registration: assetCurrentRead,
+        transport: { correlationId: `e2e-current-${actor.name}` },
+      }),
+    );
+  });
