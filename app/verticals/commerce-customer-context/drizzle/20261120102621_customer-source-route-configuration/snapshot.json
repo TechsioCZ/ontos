@@ -1,10 +1,10 @@
 {
-  "id": "3ef59303-54a9-407d-8f53-b22d1384c063",
+  "version": "8",
+  "dialect": "postgres",
+  "id": "67ea2ffb-c2d5-441b-a4c7-648af6c2bb60",
   "prevIds": [
     "502bfed6-09ff-4f48-8e50-bfc001e90a1f"
   ],
-  "version": "8",
-  "dialect": "postgres",
   "ddl": [
     {
       "name": "commerce_customer_context",
@@ -205,6 +205,12 @@
     {
       "isRlsEnabled": true,
       "name": "customer_setting_revisions",
+      "entityType": "tables",
+      "schema": "commerce_customer_context"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "customer_source_route_history",
       "entityType": "tables",
       "schema": "commerce_customer_context"
     },
@@ -2656,6 +2662,19 @@
       "table": "customer_group_definition_source_routes"
     },
     {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_group_definition_source_routes"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -3327,6 +3346,19 @@
       "generated": null,
       "identity": null,
       "name": "completeness_contract_revision",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_group_membership_source_routes"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
       "entityType": "columns",
       "schema": "commerce_customer_context",
       "table": "customer_group_membership_source_routes"
@@ -5815,6 +5847,19 @@
       "table": "customer_profile_source_routes"
     },
     {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_profile_source_routes"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -6125,6 +6170,149 @@
       "entityType": "columns",
       "schema": "commerce_customer_context",
       "table": "customer_setting_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_route",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "previous_route",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_id",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_kind",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
     },
     {
       "type": "text",
@@ -10391,6 +10579,19 @@
       "table": "saved_address_source_routes"
     },
     {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "saved_address_source_routes"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -11712,6 +11913,20 @@
       "columns": [
         "tenant_id",
         "legal_entity_id",
+        "route_kind",
+        "route_id",
+        "generation"
+      ],
+      "nameExplicit": true,
+      "name": "ccc_source_route_history_pk",
+      "entityType": "pks",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
         "basis_id"
       ],
       "nameExplicit": true,
@@ -12683,6 +12898,19 @@
       "entityType": "uniques",
       "schema": "commerce_customer_context",
       "table": "customer_setting_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "ccc_source_route_history_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
     },
     {
       "nameExplicit": true,
@@ -13739,6 +13967,13 @@
       "table": "customer_group_definition_source_receipts"
     },
     {
+      "value": "\"generation\" > 0",
+      "name": "ccc_group_def_source_route_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_group_definition_source_routes"
+    },
+    {
       "value": "\"mapping_revision\" is null or (\"mapping_revision\" = btrim(\"mapping_revision\") and length(\"mapping_revision\") > 0)",
       "name": "ccc_group_def_source_route_mapping_ck",
       "entityType": "checks",
@@ -13842,6 +14077,13 @@
       "entityType": "checks",
       "schema": "commerce_customer_context",
       "table": "customer_group_membership_source_receipts"
+    },
+    {
+      "value": "\"generation\" > 0",
+      "name": "ccc_membership_source_route_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_group_membership_source_routes"
     },
     {
       "value": "\"route_id\" = btrim(\"route_id\") and length(\"route_id\") > 0",
@@ -14299,6 +14541,13 @@
       "table": "customer_profile_source_bindings"
     },
     {
+      "value": "\"generation\" > 0",
+      "name": "ccc_profile_source_route_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_profile_source_routes"
+    },
+    {
       "value": "cardinality(\"source_reader_principal_ids\") <= 32 and array_position(\"source_reader_principal_ids\", null) is null",
       "name": "ccc_profile_source_readers_ck",
       "entityType": "checks",
@@ -14381,6 +14630,41 @@
       "entityType": "checks",
       "schema": "commerce_customer_context",
       "table": "customer_setting_revisions"
+    },
+    {
+      "value": "\"route_kind\" in ('PROFILE', 'GROUP_DEFINITION', 'MEMBERSHIP', 'SAVED_ADDRESS')",
+      "name": "ccc_source_route_history_kind_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "value": "jsonb_typeof(\"current_route\") = 'object' and (\"previous_route\" is null or jsonb_typeof(\"previous_route\") = 'object')",
+      "name": "ccc_source_route_history_document_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "value": "\"generation\" > 0",
+      "name": "ccc_source_route_history_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "value": "\"route_id\" = btrim(\"route_id\") and length(\"route_id\") > 0",
+      "name": "ccc_source_route_history_route_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") > 0",
+      "name": "ccc_source_route_history_reason_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
     },
     {
       "value": "\"generation\" > 0",
@@ -15452,6 +15736,13 @@
       "entityType": "checks",
       "schema": "commerce_customer_context",
       "table": "saved_address_source_receipts"
+    },
+    {
+      "value": "\"generation\" > 0",
+      "name": "ccc_saved_address_source_route_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "saved_address_source_routes"
     },
     {
       "value": "\"route_ref\" = btrim(\"route_ref\") and length(\"route_ref\") > 0",
@@ -17639,6 +17930,71 @@
       "entityType": "policies",
       "schema": "commerce_customer_context",
       "table": "customer_setting_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "ccc_source_route_history_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "ccc_source_route_history_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "ccc_source_route_history_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "ccc_source_route_history_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "ALL",
+      "roles": [
+        "public"
+      ],
+      "using": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_customer_context\".\"customer_source_route_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_customer_context\".\"customer_source_route_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "ccc_source_route_history_scope_owner_routine",
+      "entityType": "policies",
+      "schema": "commerce_customer_context",
+      "table": "customer_source_route_history"
     },
     {
       "as": "PERMISSIVE",
