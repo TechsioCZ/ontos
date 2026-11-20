@@ -31,7 +31,7 @@ import {
   observeCustomerFixtureUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
-import { customerOccurrenceId } from './support/symmy-c14-customer-public.mts';
+import { groupMembershipOccurrenceId } from './support/symmy-c14-customer-public.mts';
 import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
 import { prepareManualMembershipNativeFixture } from './support/symmy-c14-membership-manual.mts';
 import {
@@ -71,11 +71,6 @@ const commerceOperation = (entrypointKey: string) => ({
   moduleId: 'commerce.customer-context',
   schemaVersion: '1',
 });
-/**
- * The occurrence the admission derives for the first customer of a request (plan item `membership-0`). It is the
- * same seed and digest the customers route uses; the pinned plan of the first job checks it before it is relied on.
- */
-const membershipOccurrenceId = (idempotencyKey: string) => customerOccurrenceId(idempotencyKey, 'membership-0');
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
 
@@ -270,6 +265,17 @@ it.live(
         ]) {
           expect(yield* observeCustomerGroupSourceNativeFixture(invalid).pipe(Effect.isFailure)).toBe(true);
         }
+        /**
+         * The occurrence the admission derives for the first customer (plan item `membership-0`) of a request on the
+         * member route that selects this group; the pinned plan of the first job checks it before it is relied on.
+         */
+        const membershipOccurrenceId = (idempotencyKey: string) =>
+          groupMembershipOccurrenceId({
+            groupId: group.value.groupRef.resourceId,
+            idempotencyKey,
+            itemKey: 'membership-0',
+            routeId: memberRouteId,
+          });
         const manual = yield* prepareManualMembershipNativeFixture(fixture);
         expect(manual.membership.management).toEqual({ kind: 'MANUAL' });
         const selector = {

@@ -5,6 +5,7 @@ import {
   symmyCustomerContactRecordSeed,
   symmyCustomerOccurrenceSeed,
   symmyCustomerRecordSeed,
+  symmyGroupMembershipOccurrenceSeed,
 } from '@app/symmy-integration/symmy-internal-contracts';
 import type { Schema } from 'effect';
 
@@ -19,6 +20,10 @@ const uuidFromDigest = (digest: string): string =>
 /** The occurrence of the plan item `itemKey` (`customer-0`, `address-0-1`) of the request sent with `idempotencyKey`. */
 export const customerOccurrenceId = (idempotencyKey: string, itemKey: string): string =>
   uuidFromDigest(hex(symmyCustomerOccurrenceSeed(idempotencyKey, itemKey)));
+
+/** The occurrence of the plan item `itemKey` of a `POST /customer-groups/{code}/customers/batch` request. */
+export const groupMembershipOccurrenceId = (input: Parameters<typeof symmyGroupMembershipOccurrenceSeed>[0]): string =>
+  uuidFromDigest(hex(symmyGroupMembershipOccurrenceSeed(input)));
 
 /** The source record of a customer id the owners accept as it is (at most 200 characters, no surrounding blanks). */
 export const customerRecordId = (customerId: string): string =>

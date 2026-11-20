@@ -639,6 +639,7 @@ const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(fun
 ) {
   const { scope, transaction } = context;
   return yield* buildSymmyGroupMembershipPlan({
+    admittedRouteId: route.routeId,
     authority: sourceAuthority(route, template),
     digest: hash,
     idempotencyKey: input.idempotencyKey,

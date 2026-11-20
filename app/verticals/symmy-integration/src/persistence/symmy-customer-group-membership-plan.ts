@@ -8,6 +8,7 @@ import {
   symmyGroupMembershipRecordSeed,
 } from '../../shared/domain/symmy-customer-group-batch.ts';
 import type { SymmyGroupCustomerRows } from '../../shared/domain/symmy-customer-group-batch.ts';
+import { symmyGroupMembershipOccurrenceSeed } from '../../shared/domain/symmy-group-membership-occurrence.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { uuidFromDigest } from './derived-identity.ts';
@@ -63,6 +64,8 @@ const lineageOrder: Order.Order<SymmyGroupMembershipLineage> = Order.combine(
 const profileId = (row: SymmyGroupCustomerRows[number]) => row.profile.profileRef.resourceId;
 
 export interface SymmyGroupMembershipPlanInput<Failure, ReserveFailure> {
+  /** The Symmy route the request was admitted on. One key sent to two group routes names two assertions. */
+  readonly admittedRouteId: string;
   /** The authority of the source route: the route identity and revision every assertion cites. */
   readonly authority: SymmyCustomerSourceAuthority;
   /** A stable hex digest. Replays of one Idempotency-Key must reproduce every derived identity. */
@@ -90,7 +93,7 @@ export const buildSymmyGroupMembershipPlan = Effect.fn('SymmyGroupMembershipPlan
   function* buildSymmyGroupMembershipPlan<Failure, ReserveFailure>(
     input: SymmyGroupMembershipPlanInput<Failure, ReserveFailure>,
   ) {
-    const { authority, digest, idempotencyKey, legalEntityId, reserve, template, tenantId } = input;
+    const { admittedRouteId, authority, digest, idempotencyKey, legalEntityId, reserve, template, tenantId } = input;
     const { selector } = template;
     const enrolled = template.items.find(({ effects }) => effects.some(isMembershipWrite));
     const rows = canonicalSymmyGroupCustomers(input.rows);
@@ -116,7 +119,14 @@ export const buildSymmyGroupMembershipPlan = Effect.fn('SymmyGroupMembershipPlan
       const [record, occurrence] = yield* Effect.all(
         [
           digest(symmyGroupMembershipRecordSeed(selector.source.sourceRecordId, profile.profileRef.resourceId)),
-          digest(`occurrence\u0000${idempotencyKey}\u0000${itemKey}`),
+          digest(
+            symmyGroupMembershipOccurrenceSeed({
+              groupId: groupRef.resourceId,
+              idempotencyKey,
+              itemKey,
+              routeId: admittedRouteId,
+            }),
+          ),
         ],
         { concurrency: 1 },
       );

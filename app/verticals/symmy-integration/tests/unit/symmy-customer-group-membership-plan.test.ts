@@ -103,9 +103,14 @@ const build = (
   book: Ledger,
   rows: ReturnType<typeof rowsOf>,
   template: SymmyFixtureExecutionPlan = templateFor(wholesale, 'symmy-wholesale'),
-  options: { readonly idempotencyKey?: string; readonly withoutLegalEntity?: boolean } = {},
+  options: {
+    readonly admittedRoute?: string;
+    readonly idempotencyKey?: string;
+    readonly withoutLegalEntity?: boolean;
+  } = {},
 ) =>
   buildSymmyGroupMembershipPlan({
+    admittedRouteId: options.admittedRoute ?? admittedRouteId,
     authority,
     digest,
     idempotencyKey: options.idempotencyKey ?? 'members-key-1',
@@ -124,6 +129,9 @@ const assignmentOf = (plan: SymmyFixtureExecutionPlan, index: number) =>
   Schema.decodeUnknownSync(AssignmentIntentSchema)(plan.items[index]?.effects[0]?.intent).payload;
 const lower = 'abcdef00-6666-4666-8666-666666666666';
 type PlanItem = SymmyFixtureExecutionPlan['items'][number];
+/** The assertion the first membership of a plan states. */
+const assertion = (plan: Option.Option<SymmyFixtureExecutionPlan>) =>
+  assignmentOf(Option.getOrThrow(plan), 0).source.assertionId;
 
 describe('Symmy group membership plan from the public customers', () => {
   it.effect('assigns each profile to the selected group under its manager, route and reserved order', () =>
@@ -198,6 +206,22 @@ describe('Symmy group membership plan from the public customers', () => {
       expect(book.reserved.map(({ profileId }) => profileId)).toEqual([lower, later]);
       expect(plan.items.map(({ itemKey }) => itemKey)).toEqual(['membership-0', 'membership-1']);
       expect(assignmentOf(plan, 0).profile.profileRef.resourceId).toBe(later);
+    }),
+  );
+
+  it.effect('names one assertion per admitted route and selected group for one key and position', () =>
+    Effect.gen(function* distinctAssertions() {
+      const book = ledger();
+      const rows = rowsOf(profile(lower));
+      const first = assertion(yield* build(book, rows));
+      expect(assertion(yield* build(book, rows))).toBe(first);
+      const otherRoute = assertion(
+        yield* build(book, rows, templateFor(wholesale, 'symmy-wholesale'), {
+          admittedRoute: '88888888-8888-4888-8888-888888888888',
+        }),
+      );
+      const otherGroup = assertion(yield* build(book, rows, templateFor(retail, 'symmy-retail')));
+      expect(new Set([first, otherRoute, otherGroup]).size).toBe(3);
     }),
   );
 

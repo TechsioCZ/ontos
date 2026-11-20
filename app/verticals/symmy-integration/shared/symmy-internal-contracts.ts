@@ -49,3 +49,4 @@ export type {
   SymmyCustomerGroupRows,
   SymmyGroupCustomerRows,
 } from './domain/symmy-customer-group-batch.ts';
+export { symmyGroupMembershipOccurrenceSeed } from './domain/symmy-group-membership-occurrence.ts';
