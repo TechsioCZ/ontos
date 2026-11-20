@@ -25,14 +25,49 @@ const withoutComments = (text: string): string =>
 const FORBIDDEN: readonly (readonly [string, RegExp])[] = [
   ['a Schedule or Cron', /\b(?:Schedule|Cron)\b/u],
   ['a timer', /\b(?:setTimeout|setInterval|setImmediate)\b/u],
-  ['a retry, repeat, sleep or timeout', /Effect\.(?:retry|repeat|schedule|sleep|timeout|timeoutOption|delay)\b/u],
+  [
+    'an Effect retry, repeat, schedule, sleep, timeout or delay',
+    /Effect\.(?:retry|repeat|schedule|sleep|timeout|delay)\w*/u,
+  ],
+  [
+    'a Stream or Layer time operator',
+    /(?:Stream|Layer|Schedule)\.(?:retry|repeat|schedule|timeout|debounce|throttle|aggregateWithin)\w*/u,
+  ],
+  ['a timeout, interval or deadline name', /\b(?:timeout|interval|deadline|backoff|maxAttempts|attempts)\w*\b/iu],
   ['a Duration', /\bDuration\b/u],
   ['a delete call', /\.delete\(|\bdeleteObject\b|\bremoveObject\b|\bunlink\b/u],
   ['a delete statement', /\bdelete\s+from\b/iu],
 ];
 
-/** The one number recovery code may carry: the length of the redacted log reference. */
-const ALLOWED_NUMBERS = new Set(['16']);
+/** The numbers recovery code may carry: zero, one, and the length of the redacted log reference. */
+const ALLOWED_NUMBERS = new Set(['0', '1', '16']);
+
+/** The guard is only worth having if it fails on the shapes it exists for. */
+const violationsOf = (code: string): readonly string[] => [
+  ...FORBIDDEN.filter(([, pattern]) => pattern.test(code)).map(([name]) => name),
+  ...[...code.matchAll(/(?<![\w.'-])\d[\d_]*(?![\w'-])/gu)]
+    .filter(([number]) => !ALLOWED_NUMBERS.has(number))
+    .map(([number]) => `the number ${number}`),
+];
+
+it('flags every retry, repeat, timeout, schedule and number shape it exists to catch', () => {
+  for (const code of [
+    'Effect.retry(policy)',
+    'Effect.retryOrElse(a, b)',
+    'Effect.repeatN(x, 3)',
+    'Effect.timeoutOrElse(x)',
+    'Effect.scheduleForked(x)',
+    'Stream.timeout(x)',
+    'const maxAttempts = 3',
+    'const wait = 1_000',
+    'setTimeout(f, 0)',
+    'Schedule.exponential(x)',
+    'repository.delete(id)',
+  ]) {
+    expect(violationsOf(code).length, code).toBeGreaterThan(0);
+  }
+  expect(violationsOf('const ref = key.slice(0, 16)')).toEqual([]);
+});
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('core media recovery guards', (suite) => {
   suite.effect('contains no scheduler, timer, retry, deadline, delete or invented number', () =>
@@ -44,7 +79,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media recovery
         for (const [name, pattern] of FORBIDDEN) {
           expect(pattern.test(code), `${relative} contains ${name}`).toBe(false);
         }
-        for (const [number] of code.matchAll(/(?<![\w.'-])\d{2,}(?![\w'-])/gu)) {
+        for (const [number] of code.matchAll(/(?<![\w.'-])\d[\d_]*(?![\w'-])/gu)) {
           expect(ALLOWED_NUMBERS.has(number), `${relative} carries the number ${number}`).toBe(true);
         }
       }

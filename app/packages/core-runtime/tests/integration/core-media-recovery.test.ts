@@ -654,6 +654,38 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media integrity 
     }).pipe(Effect.scoped),
   );
 
+  suite.effect('answers no finding of other content for an asset that is already failed', () =>
+    Effect.gen(function* failedForeign() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      yield* harness.bind(world, world.system, INTEGRITY_WORKLOAD);
+      const target = yield* corruptReadyAsset(harness, world, 'failed-foreign-target');
+      const other = yield* corruptReadyAsset(harness, world, 'failed-foreign-other');
+      const targetFinding = yield* findingOf(harness, world, target.mediaAssetId);
+      const otherFinding = yield* findingOf(harness, world, other.mediaAssetId);
+      yield* recordIntegrity(harness, world, world.system, {
+        finding: targetFinding,
+        key: 'failed-foreign-record',
+        mediaAssetRef: target.reservation.mediaAssetRef,
+      });
+      // The identical finding is an idempotent answer; another asset's finding gets no answer at all.
+      yield* recordIntegrity(harness, world, world.system, {
+        finding: targetFinding,
+        key: 'failed-foreign-again',
+        mediaAssetRef: target.reservation.mediaAssetRef,
+      });
+      const foreign = yield* Effect.exit(
+        recordIntegrity(harness, world, world.system, {
+          finding: otherFinding,
+          key: 'failed-foreign-other-finding',
+          mediaAssetRef: target.reservation.mediaAssetRef,
+        }),
+      );
+      expect(failureTagOf(foreign)).toBe('MediaContentConflict');
+      expect((yield* harness.rowOf(world.tenantId, other.mediaAssetId))?.processing_status).toBe('ready');
+    }).pipe(Effect.scoped),
+  );
+
   suite.effect('refuses a finding that does not describe this asset, a non-ready asset and a stale proof', () =>
     Effect.gen(function* refusals() {
       const harness = yield* openHarness();
@@ -801,6 +833,8 @@ const reconcileAsset = (
         }),
     }).pipe(Effect.provideService(ObjectStorage, options.storage ?? harness.storage.service));
   });
+
+const confirmMustNotRun = () => Effect.die('the confirm Action must not run for a row that cannot be read');
 
 const storedOnlyWhen = (when: 'after' | 'before', harness: Harness) =>
   withObjectStorageFaults([{ failure: timeout, operation: 'put', times: 1, when }]).pipe(
@@ -962,9 +996,24 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media reconcilia
         ...harness.storage.service,
         get: () => Effect.succeed({ body: Stream.make(content.slice(0, 5)), stat: { byteSize: content.byteLength } }),
       };
+      // Another writer replaces the object after the read began: the read cannot be proven to be of one object.
+      const replaced: ObjectStorageService = {
+        ...harness.storage.service,
+        get: (objectKey) =>
+          harness.storage.service.get(objectKey).pipe(
+            Effect.tap(() =>
+              harness.storage.service.put({
+                body: Stream.make(encoder.encode('replaced')),
+                contentType: 'application/pdf',
+                key: objectKey,
+              }),
+            ),
+          ),
+      };
       const cases = [
         [outage, 'provider_failure'],
         [shortRead, 'framing_inconsistent'],
+        [replaced, 'object_changed'],
       ] as const;
       for (const [storage, reason] of cases) {
         const reconciled = yield* reconcileAsset(harness, world, world.human, {
@@ -976,6 +1025,28 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media reconcilia
         expect(mayStartIndependentUpload(reconciled)).toBe(false);
       }
       expect(yield* harness.rowOf(world.tenantId, mediaAssetId)).toEqual(before);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('leaves a row Core could not have written unresolved, without a provider call or a defect', () =>
+    Effect.gen(function* inconsistentRow() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'inconsistent' });
+      const callsBefore = (yield* harness.storage.calls).length;
+      const row = yield* verifiableRowOf(harness, world.tenantId, reservation.mediaAssetRef.resourceId);
+      const unreadable = [
+        { ...row, storageKey: 'core-media/v1/not-a-key' },
+        { ...row, contentSha256: null, processingStatus: 'ready' },
+        { ...row, byteSize: -1n, processingStatus: 'ready' },
+      ];
+      for (const asset of unreadable) {
+        const reconciled = yield* reconcileUncertainUpload({ asset, confirm: confirmMustNotRun }).pipe(
+          Effect.provideService(ObjectStorage, harness.storage.service),
+        );
+        expect(reconciled).toEqual({ outcome: 'unresolved', reason: 'row_inconsistent' });
+      }
+      expect((yield* harness.storage.calls).length).toBe(callsBefore);
     }).pipe(Effect.scoped),
   );
 

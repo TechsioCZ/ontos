@@ -16,6 +16,7 @@ import {
 } from '../../media/integrity-contract.ts';
 import type { RecordAssetIntegrityFailurePayload } from '../../media/integrity-contract.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../media/public-contract.ts';
+import { logMediaRecovery, mediaRecoveryRef } from '../../media/recovery-log.ts';
 import { mediaAssetRepositoryFromTransaction } from '../../media/repository.ts';
 import type { MediaAssetRecord } from '../../media/repository.ts';
 import { isMediaIntegrityFinding } from '../../media/verified-read.ts';
@@ -92,18 +93,19 @@ const handleRecordAssetIntegrityFailure = Effect.fn('RecordAssetIntegrityFailure
       observed: finding.observed,
       processingStatus: 'failed',
     } as const;
-    // Already closed (by an earlier finding or a proven upload mismatch): the effect exists, record nothing twice.
-    if (asset.processingStatus === 'failed') {
-      return failedResult;
-    }
-    if (asset.processingStatus !== 'ready') {
+    if (asset.processingStatus !== 'ready' && asset.processingStatus !== 'failed') {
       return yield* new MediaNotReady({
         code: 'media_not_ready',
         reason: 'Corruption is only recorded for a ready asset',
       });
     }
+    // A finding of other content, or of another asset, is refused whatever the row's status is: it never gets an answer.
     if (!describesRow(finding, asset)) {
       return yield* conflict('The finding does not describe the identity this asset was confirmed with');
+    }
+    // Already closed by an earlier identical finding: the effect exists, record nothing twice.
+    if (asset.processingStatus === 'failed') {
+      return failedResult;
     }
     const moved = yield* repository.recordIntegrityFailure(mediaAssetId, finding.recorded);
     if (moved.kind === 'rejected') {
@@ -112,6 +114,11 @@ const handleRecordAssetIntegrityFailure = Effect.fn('RecordAssetIntegrityFailure
         ? failedResult
         : yield* conflict('The asset changed while the finding was being recorded');
     }
+    yield* logMediaRecovery({
+      category: 'integrity_failed',
+      operation: 'integrity',
+      ref: mediaRecoveryRef(asset.storageKey),
+    });
     yield* context.recordAuditEvidence({
       finding: 'integrity_failed',
       observedByteSize: finding.observed.byteSize,

@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import { MediaIngestUncertain, MediaIntegrityFailed } from './errors.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -41,6 +41,8 @@ export type ReconcilableMediaAsset = Pick<
 type UnresolvedReason =
   | Extract<MediaStoredObjectVerification, { readonly outcome: 'unverifiable' }>['reason']
   | 'evidence_disagrees'
+  /** The row holds a size, digest or key Core could not have written: nothing is read or guessed from it. */
+  | 'row_inconsistent'
   | 'state_not_recoverable';
 
 export type MediaUploadReconciliation =
@@ -64,6 +66,8 @@ export interface ReconcileUploadInput<Failure extends { readonly _tag: string },
   ) => Effect.Effect<ConfirmResult, Failure | MediaIngestUncertain | MediaIntegrityFailed, Requirements>;
 }
 
+const SealedIdentitySchema = Schema.Struct({ byteSize: MediaByteSizeSchema, contentSha256: MediaContentSha256Schema });
+
 /** A new independent upload may begin only after the original intent was closed as failed. */
 export const mayStartIndependentUpload = (reconciliation: MediaUploadReconciliation): boolean =>
   reconciliation.outcome === 'closed_failed';
@@ -80,8 +84,10 @@ const unresolvedFor = (verification: MediaStoredObjectVerification): UnresolvedR
 
 /**
  * Settles one uploaded asset against the real provider and the database, through the confirm Action only:
- * `ready` and `failed` rows are answered from the row itself (a succeeded or closed intent never runs again and
- * the provider is not asked), and an `uploaded` row is read back from the provider and judged by the Action.
+ * `ready` and `failed` rows are answered from the row the caller read: a succeeded or closed intent never runs again and
+ * the provider is not asked. The confirm Action's conditional update, not that snapshot, arbitrates any change, and a
+ * `failed` row is final whether it was closed as an upload or later by proven corruption. An `uploaded` row is read back
+ * from the provider and judged by the Action. A row holding a value Core could not have written is `row_inconsistent`.
  */
 export const reconcileUncertainUpload = Effect.fn('MediaReconciliation.reconcile')(function* reconcileUncertainUpload<
   Failure extends { readonly _tag: string },
@@ -89,10 +95,14 @@ export const reconcileUncertainUpload = Effect.fn('MediaReconciliation.reconcile
 >(input: ReconcileUploadInput<Failure, Requirements>) {
   const { asset } = input;
   if (asset.processingStatus === 'ready') {
-    const sealed = yield* Schema.decodeUnknownEffect(
-      Schema.Struct({ byteSize: MediaByteSizeSchema, contentSha256: MediaContentSha256Schema }),
-    )({ byteSize: Number(asset.byteSize), contentSha256: asset.contentSha256 }).pipe(Effect.orDie);
-    return yield* conciliated({ ...sealed, outcome: 'completed' }, asset.storageKey);
+    const sealed = yield* Schema.decodeUnknownEffect(SealedIdentitySchema)({
+      byteSize: Number(asset.byteSize),
+      contentSha256: asset.contentSha256,
+    }).pipe(Effect.option);
+    return yield* Option.match(sealed, {
+      onNone: () => conciliated({ outcome: 'unresolved', reason: 'row_inconsistent' }, asset.storageKey),
+      onSome: (identity) => conciliated({ ...identity, outcome: 'completed' }, asset.storageKey),
+    });
   }
   if (asset.processingStatus === 'failed') {
     return yield* conciliated({ outcome: 'closed_failed' }, asset.storageKey);
@@ -100,10 +110,13 @@ export const reconcileUncertainUpload = Effect.fn('MediaReconciliation.reconcile
   if (asset.processingStatus !== 'uploaded') {
     return yield* conciliated({ outcome: 'unresolved', reason: 'state_not_recoverable' }, asset.storageKey);
   }
-  const storageKey = yield* Schema.decodeUnknownEffect(MediaStorageKeySchema)(asset.storageKey).pipe(Effect.orDie);
+  const storageKey = yield* Schema.decodeUnknownEffect(MediaStorageKeySchema)(asset.storageKey).pipe(Effect.option);
+  if (Option.isNone(storageKey)) {
+    return yield* conciliated({ outcome: 'unresolved', reason: 'row_inconsistent' }, asset.storageKey);
+  }
   const verification = yield* verifyStoredMediaObject({
     expected: { byteSize: Number(asset.byteSize), contentSha256: asset.contentSha256 ?? undefined },
-    storageKey,
+    storageKey: storageKey.value,
     storageProvider: asset.storageProvider,
   });
   return yield* input.confirm(verification).pipe(
