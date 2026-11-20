@@ -16,6 +16,7 @@ import {
   RevisionSchema,
   SourceOnboardingSchema,
   SourceStateKeySchema,
+  SourceStopReasonSchema,
 } from './vocabulary.ts';
 
 /** Closed set of ways a source owner can evidence the contact that was valid at the original event (#1395, 1B). */
@@ -109,6 +110,13 @@ export const TransactionalMessageTypeSchema = Schema.Struct({
    */
   documents: Schema.optionalKey(DocumentPolicySchema),
   eligibleSourceStates: Schema.NonEmptyArray(SourceStateKeySchema),
+  /**
+   * Which closed stop reason a source state OUTSIDE `eligibleSourceStates` means (#1406). Absent or not listed means the generic
+   * `SOURCE_STATE_INELIGIBLE`; a state is either eligible or listed here, never both.
+   */
+  ineligibleSourceStates: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ reason: SourceStopReasonSchema, state: SourceStateKeySchema })),
+  ),
   /** Stable plain-language statement of what the type means; documentation, not message copy. */
   meaning: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   onboarding: SourceOnboardingSchema,

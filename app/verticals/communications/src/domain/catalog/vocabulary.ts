@@ -29,6 +29,21 @@ export type CommunicationPurposeKey = typeof CommunicationPurposeKeySchema.Type;
 /** Source occurrence state a type is eligible for, named by the source owner's contract. */
 export const SourceStateKeySchema = lowerDottedText.pipe(Schema.brand('CommunicationSourceStateKey'));
 
+/**
+ * The closed reasons a source owner's own lifecycle can stop a message with, each its OWN fact in the history (#1406): the issued
+ * thing expired, was consumed, was revoked, can no longer be continued by its owner (NOT_RESUMABLE) or was replaced by a newer
+ * one (SUPERSEDED). A type declares which of its source states means which (`ineligibleSourceStates`); a state it does not
+ * declare stays the generic `SOURCE_STATE_INELIGIBLE`.
+ */
+export const SourceStopReasonSchema = Schema.Literals([
+  'SOURCE_CONSUMED',
+  'SOURCE_EXPIRED',
+  'SOURCE_NOT_RESUMABLE',
+  'SOURCE_REVOKED',
+  'SOURCE_SUPERSEDED',
+]);
+export type SourceStopReason = typeof SourceStopReasonSchema.Type;
+
 /** Reference to a Privacy purpose; resolved by the Privacy gate, never interpreted by the catalog. */
 export const PrivacyPurposeKeySchema = lowerDottedText.pipe(Schema.brand('CommunicationPrivacyPurposeKey'));
 export type PrivacyPurposeKey = typeof PrivacyPurposeKeySchema.Type;

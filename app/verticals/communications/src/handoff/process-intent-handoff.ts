@@ -4,6 +4,8 @@ import { Clock, Data, DateTime, Duration, Effect, Exit, Match, Option, Schema } 
 
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import type { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
+import { ineligibleStateReasonOf } from '../domain/catalog/decision.ts';
+import type { StaleSourceReason } from '../domain/catalog/decision.ts';
 import type { MessageIntentIdentity } from '../domain/catalog/decision.ts';
 import type { TransactionalMessageType } from '../domain/catalog/message-type.ts';
 import {
@@ -279,6 +281,7 @@ export const sourceCurrentnessOf = (
   type: {
     readonly currentness: { readonly requireLatestSourceRevision: boolean };
     readonly eligibleSourceStates: readonly string[];
+    readonly ineligibleSourceStates?: readonly { readonly reason: StaleSourceReason; readonly state: string }[] | undefined;
   },
   revision: number,
   facts: { readonly latestRevision: number; readonly state: string },
@@ -294,7 +297,7 @@ export const sourceCurrentnessOf = (
   }
   return type.eligibleSourceStates.includes(facts.state)
     ? SourceCurrentness.Current()
-    : SourceCurrentness.Stale({ reason: 'SOURCE_STATE_INELIGIBLE' });
+    : SourceCurrentness.Stale({ reason: ineligibleStateReasonOf(type, facts.state) });
 };
 
 /**

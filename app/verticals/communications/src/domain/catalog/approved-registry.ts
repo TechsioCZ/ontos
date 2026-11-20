@@ -12,6 +12,14 @@ const decodeType = Schema.decodeUnknownResult(TransactionalMessageTypeSchema, { 
 const PORTAL_AUTH_OWNER = 'commerce.customer-context';
 /** The one source state in which an Auth issuance may still lead to a message; every other state stops it (expired, consumed, revoked). */
 const PORTAL_AUTH_ISSUANCE_CURRENT = 'commerce.customer-context.portal-auth.issuance-current';
+/** Each other state Auth reports means its own closed stop reason in the history (#1406); the names equal Auth's `PORTAL_AUTH_ISSUANCE_STATE`. */
+const PORTAL_AUTH_INELIGIBLE_STATES = [
+  { reason: 'SOURCE_CONSUMED', state: 'commerce.customer-context.portal-auth.issuance-consumed' },
+  { reason: 'SOURCE_EXPIRED', state: 'commerce.customer-context.portal-auth.issuance-expired' },
+  { reason: 'SOURCE_NOT_RESUMABLE', state: 'commerce.customer-context.portal-auth.issuance-not-resumable' },
+  { reason: 'SOURCE_REVOKED', state: 'commerce.customer-context.portal-auth.issuance-revoked' },
+  { reason: 'SOURCE_SUPERSEDED', state: 'commerce.customer-context.portal-auth.issuance-superseded' },
+] as const;
 /** Where the ORIGINAL recipient contact comes from: the endpoint Auth bound to the issuance, evidenced by its issuance-time snapshot. */
 const PORTAL_AUTH_CONTACT = {
   contactOwner: PORTAL_AUTH_OWNER,
@@ -35,6 +43,7 @@ const portalAuthType = (flow: string, meaning: string): TransactionalMessageType
       audience: { mode: 'INDIVIDUAL' },
       currentness: { requireLatestSourceRevision: true },
       eligibleSourceStates: [PORTAL_AUTH_ISSUANCE_CURRENT],
+      ineligibleSourceStates: PORTAL_AUTH_INELIGIBLE_STATES.map((declared) => ({ ...declared })),
       meaning,
       onboarding: 'ACTIVE',
       privacyPurposeRefs: [`commerce.customer-context.portal-auth.${flow}`],

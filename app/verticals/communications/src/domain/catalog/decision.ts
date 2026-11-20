@@ -6,7 +6,7 @@ import type { CommunicationDecisionContext, CommunicationDecisionRequest, Recipi
 import type { AudienceSlot, TransactionalMessageType } from './message-type.ts';
 import { findMessageTypeByPurpose } from './registry.ts';
 import type { MessageTypeRegistry } from './registry.ts';
-import { ResendRefusalSchema, resourceRefKey } from './vocabulary.ts';
+import { ResendRefusalSchema, resourceRefKey, SourceStopReasonSchema } from './vocabulary.ts';
 import type {
   ApprovedRuleKey,
   AudienceSlotKey,
@@ -52,6 +52,7 @@ export const NoMessageReasonSchema = Schema.Union([
     'APPROVED_NO_MESSAGE',
     'RECIPIENT_AUTHORITY_MISSING',
   ]),
+  SourceStopReasonSchema,
   ResendRefusalSchema,
 ]);
 export type NoMessageReason = typeof NoMessageReasonSchema.Type;
@@ -62,9 +63,19 @@ type SourceModuleId = CommunicationDecisionRequest['source']['moduleKey'];
  * BR-08: a source state or revision that moved on makes the request stale. The source owner caused that change and
  * already knows it, so it is a stop with its reason, never a failure Communications reports against a required type.
  */
-export const StaleSourceReasonSchema = Schema.Literals(['SOURCE_REVISION_NOT_CURRENT', 'SOURCE_STATE_INELIGIBLE']);
+export const StaleSourceReasonSchema = Schema.Union([
+  Schema.Literals(['SOURCE_REVISION_NOT_CURRENT', 'SOURCE_STATE_INELIGIBLE']),
+  SourceStopReasonSchema,
+]);
 export type StaleSourceReason = typeof StaleSourceReasonSchema.Type;
 export const isStaleSourceReason = Schema.is(StaleSourceReasonSchema);
+
+/** The closed reason a source state outside the type's eligible states means: its declared one, else the generic one (#1406). */
+export const ineligibleStateReasonOf = (
+  type: { readonly ineligibleSourceStates?: readonly { readonly reason: StaleSourceReason; readonly state: string }[] | undefined },
+  state: string,
+): StaleSourceReason =>
+  type.ineligibleSourceStates?.find((declared) => declared.state === state)?.reason ?? 'SOURCE_STATE_INELIGIBLE';
 
 /** Why an audience slot produced no candidate; the slot is skipped and no fallback recipient is invented. */
 export const UnresolvedSlotReasonSchema = Schema.Literals(['RECIPIENT_AMBIGUOUS', 'RECIPIENT_AUTHORITY_MISSING']);
@@ -195,7 +206,7 @@ const admissionBlock = (
     return 'SOURCE_ONBOARDING_INACTIVE';
   }
   if (!type.eligibleSourceStates.includes(context.source.state)) {
-    return 'SOURCE_STATE_INELIGIBLE';
+    return ineligibleStateReasonOf(type, context.source.state);
   }
   if (type.currentness.requireLatestSourceRevision && request.occurrence.revision !== context.source.latestRevision) {
     return 'SOURCE_REVISION_NOT_CURRENT';

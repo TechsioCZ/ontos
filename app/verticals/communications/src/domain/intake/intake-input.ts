@@ -42,7 +42,8 @@ export const decodeIntakeInput = Effect.fn('Communications.decodeIntakeInput')(f
   )({
     bindings: encoded.originalRecipients,
     decisionRequest: {
-      occurrence: encoded.occurrence,
+      // `validUntil` is the source's stated expiry: it lives on the stored request and the handoff gate, not in the decision's identity
+      occurrence: { occurrenceId: encoded.occurrence.occurrenceId, revision: encoded.occurrence.revision },
       purpose: encoded.purpose,
       source: encoded.source,
       tenantId: encoded.scope.tenantId,
