@@ -24,19 +24,23 @@ import {
   principals,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import type {
+  ConfigureCustomerSourceRoutePayloadSchema} from '../../shared/actions/configure-customer-source-route.ts';
 import {
-  ConfigureCustomerSourceRoutePayloadSchema,
   ConfigureCustomerSourceRouteResultSchema,
 } from '../../shared/actions/configure-customer-source-route.ts';
+import { CustomerGroupDefinitionSourceRequestSchema } from '../../shared/apis/customer-group-definition-source.ts';
 import {
-  CustomerSourceRouteRequestSchema,
   CustomerSourceRouteResponseSchema,
 } from '../../shared/apis/customer-source-route.ts';
-import type { CustomerSourceRouteResponse } from '../../shared/apis/customer-source-route.ts';
+import type { CustomerSourceRouteResponse ,
+  CustomerSourceRouteRequestSchema} from '../../shared/apis/customer-source-route.ts';
+import { AddressBookProfileSchema, SavedAddressPurposesSchema } from '../../shared/domain/address-book.ts';
 import {
   CustomerSourceRouteUnavailable,
   StoredCustomerSourceRouteSchema,
 } from '../../shared/domain/customer-source-route.ts';
+import { SavedAddressSourceAssertionSchema } from '../../shared/domain/saved-address-source.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { configureCustomerSourceRouteAction } from '../../src/actions/configure-customer-source-route.action.ts';
@@ -57,9 +61,9 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const transport = () => ({
+const transport = (idempotencyKey: string) => ({
   correlationId: randomUUID(),
-  idempotencyKey: randomUUID(),
+  idempotencyKey,
   targetModuleKey: 'commerce.customer-context',
 });
 const json = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Json));
@@ -176,29 +180,32 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
   const reader = yield* enroll(tenantId, 'integration', SOURCE_READ);
   const secondReader = yield* enroll(tenantId, 'integration', SOURCE_READ);
   const principal = { ...fixture.manager, legalEntityId };
-  const decide = (input: Decision) =>
-    Schema.decodeEffect(ConfigureCustomerSourceRoutePayloadSchema)(input).pipe(
-      Effect.flatMap((payload) =>
-        runAction({ payload, principal, registration: configureCustomerSourceRouteAction, transport: transport() }),
-      ),
-      Effect.provideContext(runtimeContext),
-    );
-  const configure = (expectedGeneration: number | null, reason: string, route: Route) =>
-    decide({ _tag: 'CONFIGURE', expectedGeneration, reason, route });
+  /**
+   * One decision exactly as the Action's HTTP runner hands it over: the wire payload, which the runtime decodes, and
+   * the saved original reply asked for when the same idempotency key is replayed.
+   */
+  const decide = (payload: Decision, idempotencyKey: string = randomUUID()) =>
+    runAction({
+      payload,
+      principal,
+      registration: configureCustomerSourceRouteAction,
+      savedReply: 'answer',
+      transport: transport(idempotencyKey),
+    }).pipe(Effect.provideContext(runtimeContext));
+  const configure = (expectedGeneration: number | null, reason: string, route: Route, idempotencyKey?: string) =>
+    decide({ _tag: 'CONFIGURE', expectedGeneration, reason, route }, idempotencyKey);
   const pause = (routeKind: RouteKind, routeId: string, expectedGeneration: number, reason = 'Pause imports') =>
     decide({ _tag: 'PAUSE', expectedGeneration, reason, routeId, routeKind });
-  const readRoute = (request: typeof CustomerSourceRouteRequestSchema.Encoded, actor = principal) =>
-    Schema.decodeEffect(CustomerSourceRouteRequestSchema)(request).pipe(
-      Effect.flatMap((input) =>
-        Context.get(runtimeContext, ReadRuntime).runRead({
-          input,
-          principal: actor,
-          registration: customerSourceRouteRead,
-          transport: { correlationId: randomUUID(), targetModuleKey: 'commerce.customer-context' },
-        }),
-      ),
-      Effect.provideContext(runtimeContext),
-    );
+  /** The wire request, which the Read runtime decodes. */
+  const readRoute = (input: typeof CustomerSourceRouteRequestSchema.Encoded, actor = principal) =>
+    Context.get(runtimeContext, ReadRuntime)
+      .runRead({
+        input,
+        principal: actor,
+        registration: customerSourceRouteRead,
+        transport: { correlationId: randomUUID(), targetModuleKey: 'commerce.customer-context' },
+      })
+      .pipe(Effect.provideContext(runtimeContext));
   /** One owner routine call as the runtime role, inside the installed Tenant and Legal Entity scope. */
   const owner = (statement: SQL) =>
     runtime.transaction((transaction) =>
@@ -291,11 +298,15 @@ const addressSource = (effectId: string) => ({
   identity: {
     issuer: 'internal-ebs',
     namespace: 'customer-addresses',
+    occurrenceId: `address-${effectId}-r1`,
     recordId: `address-${effectId}`,
     recordType: 'address',
     routeRef: 'internal-address-route',
   },
   mappingRevision: '1',
+  order: 1,
+  purposes: ['DELIVERY'],
+  revision: 'r1',
   routeRevision: '1',
 });
 
@@ -370,14 +381,21 @@ it.live(
         expect(yield* groupPage(null)).toEqual(responseOf({ _tag: 'ABSENT' }));
         expect(yield* admin.select().from(customerSourceRouteHistory)).toEqual([]);
 
-        // PostgreSQL renders a uuid in lower case, so an upper-case request stores the same principal.
+        // Two create-only requests race on the route lock: one stores generation 1, and the other, which also expected
+        // no stored route, is an expectation mismatch although it states the same route.
         const route = groupRoute(writer);
-        const [first, concurrent] = yield* Effect.all(
-          [configure(null, bind, route), configure(null, bind, { ...route, principalId: writer.toUpperCase() })],
-          { concurrency: 2 },
-        );
+        const [first, concurrent] = yield* Effect.all([configure(null, bind, route), configure(null, bind, route)], {
+          concurrency: 2,
+        });
         expect([first, concurrent]).toContainEqual(resultOf({ _tag: 'CONFIGURED', generation: 1, route }));
-        expect([first, concurrent]).toContainEqual(resultOf({ _tag: 'UNCHANGED', generation: 1, route }));
+        expect([first, concurrent]).toContainEqual(
+          resultOf({ _tag: 'REJECTED', currentGeneration: 1, reason: 'EXPECTATION_MISMATCH' }),
+        );
+        // Under the generation read, the same route is UNCHANGED. PostgreSQL renders a uuid in lower case, so an
+        // upper-case request states the same principal.
+        expect(yield* configure(1, 'Restate the route', { ...route, principalId: writer.toUpperCase() })).toEqual(
+          resultOf({ _tag: 'UNCHANGED', generation: 1, route }),
+        );
 
         const paused = { ...route, active: false };
         expect(yield* configure(null, 'Stale operator view', paused)).toEqual(
@@ -399,7 +417,15 @@ it.live(
         );
         expect(yield* storedGroups()).toEqual([inactive]);
         expect(yield* historyOf(route.route.id)).toHaveLength(2);
-        expect(yield* configure(2, 'Resume', route)).toEqual(resultOf({ _tag: 'CONFIGURED', generation: 3, route }));
+        const resume = randomUUID();
+        expect(yield* configure(2, 'Resume', route, resume)).toEqual(
+          resultOf({ _tag: 'CONFIGURED', generation: 3, route }),
+        );
+        // An exact replay of the same idempotency key is answered by the Action runtime with the original result; the
+        // routine decides nothing again, so no generation and no history row is added.
+        expect(yield* configure(2, 'Resume', route, resume)).toEqual(
+          resultOf({ _tag: 'CONFIGURED', generation: 3, route }),
+        );
         // A -> B -> A: the route equals what generation 1 stored, yet a decision taken against generation 1 is stale.
         expect(yield* pause('GROUP_DEFINITION', route.route.id, 1, 'Late pause')).toEqual(
           resultOf({ _tag: 'REJECTED', currentGeneration: 3, reason: 'EXPECTATION_MISMATCH' }),
@@ -410,6 +436,7 @@ it.live(
         for (const statement of [
           sql`select * from commerce_customer_context.configure_customer_source_route(${tenantId}::uuid,${otherEntity}::uuid,${json(
             {
+              _tag: 'CONFIGURE',
               actingPrincipalId: fixture.manager.principalId,
               actionInvocationId: randomUUID(),
               enrolledReaderPrincipalIds: [],
@@ -419,8 +446,9 @@ it.live(
               route: paused,
             },
           )}::jsonb)`,
-          sql`select * from commerce_customer_context.pause_customer_source_route(${tenantId}::uuid,${otherEntity}::uuid,${json(
+          sql`select * from commerce_customer_context.configure_customer_source_route(${tenantId}::uuid,${otherEntity}::uuid,${json(
             {
+              _tag: 'PAUSE',
               actingPrincipalId: fixture.manager.principalId,
               actionInvocationId: randomUUID(),
               expectedGeneration: 3,
@@ -508,6 +536,13 @@ it.live(
           .where(eq(customerSourceRouteHistory.tenantId, tenantId))
           .pipe(Effect.exit);
         expect(Exit.isFailure(rewritten)).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* admin
+              .execute(sql`truncate table commerce_customer_context.customer_source_route_history`, 'objects')
+              .pipe(Effect.exit),
+          ),
+        ).toBe(true);
 
         // A second administrator reads what a decision would replace, and the decisions taken so far, newest first.
         const entry = (generation: number, reason: string) => ({
@@ -597,7 +632,7 @@ it.live(
         expect(yield* configure(null, bind, profileRoute(writer, EffectArray.reverse(readers)))).toEqual(
           resultOf({ _tag: 'CONFIGURED', generation: 1, route: profile }),
         );
-        expect(yield* configure(null, 'Same readers, another order', profile)).toEqual(
+        expect(yield* configure(1, 'Same readers, another order', profile)).toEqual(
           resultOf({ _tag: 'UNCHANGED', generation: 1, route: profile }),
         );
         for (const other of [membershipRoute(writer), addressRoute(writer)]) {
@@ -815,22 +850,37 @@ it.live(
           owner(
             sql`select outcome, group_json from commerce_customer_context.apply_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,'CREATE',${json(intent)}::jsonb,now(),${principalId}::uuid,${randomUUID()}::uuid)`,
           ).pipe(Effect.map((row) => ({ groupId: row?.group_json?.groupRef.resourceId ?? '', outcome: row?.outcome })));
-        const readGroup = (principalId: string, intent: GroupIntent, route: SourceRoute, mode = 'RECEIPT') =>
-          owner(
-            sql`select outcome, result from commerce_customer_context.read_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${json(
-              {
-                effectId: intent.source.effectId,
-                expectedIntent: intent,
-                expectedOperation: 'CREATE',
-                issuer: intent.source.issuer,
-                mappingRevision: intent.source.mappingRevision,
-                mode,
-                namespace: intent.source.namespace,
-                recordId: intent.source.recordId,
-                route,
-              },
-            )}::jsonb)`,
+        // The request the Group definition Read decodes for each mode and hands to its routine.
+        const groupRequest = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceRequestSchema, {
+          onExcessProperty: 'error',
+        });
+        const readGroup = (
+          principalId: string,
+          intent: GroupIntent,
+          route: SourceRoute,
+          mode: 'CURRENT' | 'RECEIPT' = 'RECEIPT',
+        ) => {
+          const identity = {
+            issuer: intent.source.issuer,
+            mappingRevision: intent.source.mappingRevision,
+            namespace: intent.source.namespace,
+            route,
+          };
+          const request = groupRequest(
+            mode === 'CURRENT'
+              ? { ...identity, mode, recordId: intent.source.recordId }
+              : {
+                  ...identity,
+                  effectId: intent.source.effectId,
+                  expectedIntent: intent,
+                  expectedOperation: 'CREATE',
+                  mode,
+                },
           );
+          return owner(
+            sql`select outcome, result from commerce_customer_context.read_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${json(request)}::jsonb)`,
+          );
+        };
 
         const profileSource = (effectId: string, recordId: string, route: SourceRoute) => ({
           effectId,
@@ -937,14 +987,33 @@ it.live(
             sql`select outcome, result from commerce_customer_context.apply_customer_group_membership_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,clock_timestamp(),${json(command)}::jsonb)`,
           );
         // Saved Address authorization is checked before any address is written, so it shows the route's answer alone.
+        // Its input is the one the Saved Address source service builds for an ADD from the Action payload's own parts.
+        const addressInput = Schema.decodeUnknownSync(
+          Schema.Struct({
+            operation: Schema.Literal('ADD'),
+            profile: AddressBookProfileSchema,
+            purposes: SavedAddressPurposesSchema,
+            source: SavedAddressSourceAssertionSchema,
+          }),
+          { onExcessProperty: 'error' },
+        );
         const authorizeAddress = (principalId: string, effectId: string) =>
           owner(
             sql`select outcome from commerce_customer_context.authorize_saved_address_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,'commerce.customer-context.add-saved-address',${'a'.repeat(64)},${json(
-              {
+              addressInput({
                 operation: 'ADD',
-                profile: { kind: 'RETAIL', profileRef: { resourceId: randomUUID(), tenantId } },
+                profile: {
+                  kind: 'RETAIL',
+                  profileRef: {
+                    moduleId: 'commerce.customer-context',
+                    resourceId: randomUUID(),
+                    resourceType: 'commerce.customer-context.retail-customer-profile',
+                    tenantId,
+                  },
+                },
+                purposes: ['DELIVERY'],
                 source: addressSource(effectId),
-              },
+              }),
             )}::jsonb)`,
           );
 
@@ -993,8 +1062,29 @@ it.live(
           result: { _tag: 'CURRENT' },
         });
         expect(yield* readGroup(reader, group, routes.group.route)).toMatchObject(denied);
-        for (const mode of ['CURRENT', 'RECEIPT']) {
+        for (const mode of ['CURRENT', 'RECEIPT'] as const) {
           expect(yield* readGroup(secondReader, group, routes.group.route, mode)).toMatchObject(denied);
+        }
+        // A second route of the same issuer and namespace names no reader. The reader of the first route reads only the
+        // definitions that route stored and is refused this route's, through either route; the writer reads both
+        // through either route, as on main.
+        const otherRoute = { ...groupRoute(writer), route: { id: 'internal-group-route-b', revision: '1' } };
+        expect(yield* configure(null, bind, otherRoute)).toEqual(
+          resultOf({ _tag: 'CONFIGURED', generation: 1, route: otherRoute }),
+        );
+        const otherGroup = groupIntent('group-create-b', '79', 'BRONZE', otherRoute.route);
+        expect(yield* writeGroup(writer, otherGroup)).toMatchObject({ outcome: 'CREATED' });
+        for (const route of [routes.group.route, otherRoute.route]) {
+          expect(yield* readGroup(reader, otherGroup, route, 'CURRENT')).toMatchObject(denied);
+        }
+        for (const [definition, route] of [
+          [otherGroup, routes.group.route],
+          [group, otherRoute.route],
+        ] as const) {
+          expect(yield* readGroup(writer, definition, route, 'CURRENT')).toMatchObject({
+            outcome: 'FOUND',
+            result: { _tag: 'CURRENT' },
+          });
         }
 
         // Each route is paused; no fresh write of its kind is admitted any more, and its reader reads nothing.

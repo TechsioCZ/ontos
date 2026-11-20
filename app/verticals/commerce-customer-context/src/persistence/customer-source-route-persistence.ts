@@ -14,9 +14,9 @@ import type {
   CustomerSourceRouteResponse,
 } from '../../shared/apis/customer-source-route.ts';
 import {
+  ConfigureCustomerSourceRoutePayloadSchema,
   ConfigureCustomerSourceRouteResultSchema,
   CustomerSourceRouteGenerationSchema,
-  CustomerSourceRouteSchema,
   CustomerSourceRouteUnavailable,
 } from '../../shared/domain/customer-source-route.ts';
 import type {
@@ -55,6 +55,7 @@ const configureCustomerSourceRouteRoutine = defineScopedRoutine({
     outcome: Schema.Literals([
       'CONFIGURED',
       'UNCHANGED',
+      'PAUSED',
       'EXPECTATION_MISMATCH',
       'PRINCIPAL_INELIGIBLE',
       'SOURCE_IDENTITY_IMMUTABLE',
@@ -63,22 +64,6 @@ const configureCustomerSourceRouteRoutine = defineScopedRoutine({
     stored_route: Schema.Unknown,
   }),
   routineKey: 'customer-source-route.configure',
-  schema: DATABASE_SCHEMA,
-});
-const pauseCustomerSourceRouteRoutine = defineScopedRoutine({
-  name: 'pause_customer_source_route',
-  ownerModuleKey: OWNER_MODULE_KEY,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'jsonb' },
-  ],
-  resultSchema: Schema.Struct({
-    current_generation: generationColumn,
-    outcome: Schema.Literals(['PAUSED', 'UNCHANGED', 'EXPECTATION_MISMATCH']),
-    previous_generation: generationColumn,
-  }),
-  routineKey: 'customer-source-route.pause',
   schema: DATABASE_SCHEMA,
 });
 const readCustomerSourceRouteRoutine = defineScopedRoutine({
@@ -107,7 +92,7 @@ const unavailable = (cause?: unknown) =>
     'cause',
     { configurable: true, value: cause },
   );
-const encodeRoute = Schema.encodeEffect(CustomerSourceRouteSchema);
+const encodePayload = Schema.encodeEffect(ConfigureCustomerSourceRoutePayloadSchema);
 const decodeResult = Schema.decodeUnknownEffect(ConfigureCustomerSourceRouteResultSchema, {
   onExcessProperty: 'error',
 });
@@ -171,90 +156,57 @@ export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRoute
     };
   });
 
-  const configureRoute = Effect.fn('CustomerSourceRoute.configureRoute')(function* configureRoute(
-    { actingPrincipalId, actionInvocationId }: CustomerSourceRouteConfiguration,
-    payload: Extract<ConfigureCustomerSourceRoutePayload, { readonly _tag: 'CONFIGURE' }>,
+  /** CONFIGURE: lock the route, then read Core's enrollment for it in this transaction, before the routine decides. */
+  const lockedEnrollment = Effect.fn('CustomerSourceRoute.lockedEnrollment')(function* lockedEnrollment(
+    route: CustomerSourceRoute,
   ) {
-    // lock -> read Core's enrollment -> write, all in this one transaction, whose statements run one after another.
-    const [route, [lock]] = yield* Effect.all(
-      [
-        encodeRoute(payload.route),
-        transaction.invoke(lockCustomerSourceRouteRoutine, [payload.route._tag, payload.route.route.id]),
-      ],
-      { concurrency: 1 },
-    ).pipe(Effect.mapError(unavailable));
+    const [lock] = yield* transaction
+      .invoke(lockCustomerSourceRouteRoutine, [route._tag, route.route.id])
+      .pipe(Effect.mapError(unavailable));
     if (lock === undefined) {
       return yield* unavailable();
     }
-    const enrolled = yield* enrolledPrincipals(payload.route);
+    return yield* enrolledPrincipals(route);
+  });
+
+  /** The one routine decides both requests; a pause reads no Core enrollment, as it only clears the active flag. */
+  const configure = Effect.fn('CustomerSourceRoute.configure')(function* configure({
+    actingPrincipalId,
+    actionInvocationId,
+    payload,
+  }: CustomerSourceRouteConfiguration) {
+    const request = yield* encodePayload(payload).pipe(Effect.mapError(unavailable));
+    const enrolled = yield* Match.value(payload).pipe(
+      Match.tagsExhaustive({
+        CONFIGURE: ({ route }) => lockedEnrollment(route),
+        PAUSE: () => Effect.succeed({}),
+      }),
+    );
     const [row] = yield* transaction
-      .invoke(configureCustomerSourceRouteRoutine, [
-        {
-          actingPrincipalId,
-          actionInvocationId,
-          expectedGeneration: Option.getOrNull(payload.expectedGeneration),
-          reason: payload.reason,
-          route,
-          ...enrolled,
-        },
-      ])
+      .invoke(configureCustomerSourceRouteRoutine, [{ ...request, actingPrincipalId, actionInvocationId, ...enrolled }])
       .pipe(Effect.mapError(unavailable));
     if (row === undefined) {
       return yield* unavailable();
     }
     const result = yield* decodeResult(
-      row.outcome === 'CONFIGURED' || row.outcome === 'UNCHANGED'
-        ? { _tag: row.outcome, generation: row.current_generation, route: row.stored_route }
-        : { _tag: 'REJECTED', currentGeneration: row.current_generation, reason: row.outcome },
-    ).pipe(Effect.mapError(unavailable));
-    return {
-      currentGeneration: Option.fromNullishOr(row.current_generation),
-      previousGeneration: Option.fromNullishOr(row.previous_generation),
-      result,
-    } satisfies CustomerSourceRouteDecision;
-  });
-
-  /** A pause reads no Core enrollment: it changes only the stored active flag of a route that already exists. */
-  const pauseRoute = Effect.fn('CustomerSourceRoute.pauseRoute')(function* pauseRoute(
-    { actingPrincipalId, actionInvocationId }: CustomerSourceRouteConfiguration,
-    payload: Extract<ConfigureCustomerSourceRoutePayload, { readonly _tag: 'PAUSE' }>,
-  ) {
-    const [row] = yield* transaction
-      .invoke(pauseCustomerSourceRouteRoutine, [
-        {
-          actingPrincipalId,
-          actionInvocationId,
-          expectedGeneration: payload.expectedGeneration,
-          reason: payload.reason,
-          routeId: payload.routeId,
-          routeKind: payload.routeKind,
-        },
-      ])
-      .pipe(Effect.mapError(unavailable));
-    if (row === undefined) {
-      return yield* unavailable();
-    }
-    const result = yield* decodeResult(
-      row.outcome === 'EXPECTATION_MISMATCH'
-        ? { _tag: 'REJECTED', currentGeneration: row.current_generation, reason: row.outcome }
-        : { _tag: 'PAUSED', generation: row.current_generation },
-    ).pipe(Effect.mapError(unavailable));
-    return {
-      currentGeneration: Option.fromNullishOr(row.current_generation),
-      previousGeneration: Option.fromNullishOr(row.previous_generation),
-      result,
-    } satisfies CustomerSourceRouteDecision;
-  });
-
-  return Effect.succeed({
-    configure: (configuration: CustomerSourceRouteConfiguration) =>
-      Match.value(configuration.payload).pipe(
-        Match.tagsExhaustive({
-          CONFIGURE: (payload) => configureRoute(configuration, payload),
-          PAUSE: (payload) => pauseRoute(configuration, payload),
-        }),
+      Match.value(row.outcome).pipe(
+        Match.when(Match.is('CONFIGURED', 'UNCHANGED'), (tag) => ({
+          _tag: tag,
+          generation: row.current_generation,
+          route: row.stored_route,
+        })),
+        Match.when('PAUSED', () => ({ _tag: 'PAUSED', generation: row.current_generation })),
+        Match.orElse((reason) => ({ _tag: 'REJECTED', currentGeneration: row.current_generation, reason })),
       ),
+    ).pipe(Effect.mapError(unavailable));
+    return {
+      currentGeneration: Option.fromNullishOr(row.current_generation),
+      previousGeneration: Option.fromNullishOr(row.previous_generation),
+      result,
+    } satisfies CustomerSourceRouteDecision;
   });
+
+  return Effect.succeed({ configure });
 };
 
 const readUnavailable = (cause?: unknown) =>

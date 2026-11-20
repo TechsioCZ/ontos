@@ -90,7 +90,6 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'observe_party_merge_reconciliation',
   'open_profile_reconciliation',
   'organization_profile_ico_state',
-  'pause_customer_source_route',
   'persist_commerce_quantity_rule_assignments',
   'persist_commerce_quantity_rule_state',
   'persist_customer_payment_terms',
@@ -219,6 +218,7 @@ const EXPECTED_TRIGGER_NAMES = [
   'ccc_retail_ico_inventory_refresh',
   'ccc_saved_address_source_receipts_append_only',
   'ccc_source_route_history_append_only',
+  'ccc_source_route_history_no_truncate',
   'customer_payment_term_entitlements_retirement_guard',
   'customer_payment_term_preferences_retirement_guard',
   'market_bootstrap_policy_retirement_guard',
@@ -348,6 +348,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                        'ccc_group_def_source_receipts_append_only',
                        'ccc_profile_source_receipts_append_only',
                        'ccc_source_route_history_append_only',
+                       'ccc_source_route_history_no_truncate',
                        'ccc_profile_ico_migration_history_append_only',
                        'ccc_access_journal_append_only',
                        'ccc_address_reconciliation_receipts_append_only_trg',
@@ -430,7 +431,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
       row.exclusion_count !== 11,
       row.group_description_column_count !== 1,
       row.group_description_constraint_count !== 1,
-      row.append_only_trigger_count !== 16,
+      row.append_only_trigger_count !== 17,
       row.trigger_count !== EXPECTED_TRIGGER_NAMES.length,
       !sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES),
       row.journal_count !== 1,
@@ -458,7 +459,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
           `replayInfrastructureSafe=${row.replay_infrastructure_safe}, rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
           `groupDescriptionColumn=${row.group_description_column_count}/1, ` +
           `groupDescriptionConstraint=${row.group_description_constraint_count}/1, ` +
-          `appendOnlyTriggers=${row.append_only_trigger_count}/16, ` +
+          `appendOnlyTriggers=${row.append_only_trigger_count}/17, ` +
           `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
           `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +
           `journal=${row.journal_count}/1, ` +
