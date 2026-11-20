@@ -347,8 +347,8 @@ const browserProof = ({
           );
         });
         return {
-          assertCleanupRecorded: () => assert.ok(!cleanupRecordFailed, PROOF_FAILED),
           blocked,
+          cleanupRecorded: () => !cleanupRecordFailed,
           pending,
           requests,
           responses,
@@ -456,21 +456,23 @@ const browserProof = ({
           if (!isProduct) {
             return await choose(index + 1);
           }
-          const stock = page.locator('.n1-product-stock-desktop');
-          const availability = (await stock.count()) === 1 ? await stock.textContent() : '';
-          if (availability?.trim() === 'Vyprodáno') {
-            return await choose(index + 1);
-          }
           // The storefront explicitly asks for a variant on a parent product. Its linked variants are candidates.
           if ((await page.getByRole('button', { exact: true, name: 'Vyberte variantu' }).count()) === 1) {
             assert.ok((await page.locator('a[href*="variantId="]').count()) > 0, 'Variant selection has no variants');
+            return await choose(index + 1);
+          }
+          const stock = page.locator('.n1-product-stock-desktop');
+          const availability = (await stock.count()) === 1 ? await stock.textContent() : '';
+          // Only positively available offers are fixtures. Unknown availability and sold-out stock
+          // are legitimate business states, independent of whether their Add control exists or is enabled.
+          if (!/^(?:Skladem|Poslední kusy)(?:\s|$)/u.test(availability?.trim() ?? '')) {
             return await choose(index + 1);
           }
           phase = 'purchase-control';
           const add = page.getByRole('button', { exact: true, name: 'Přidat do košíku' });
           assert.equal(await add.count(), 1, 'Expected exactly one purchase control');
           // Playwright's real actionability wait includes cart hydration enabling the button.
-          // Missing, duplicate or permanently disabled controls are errors, never stock evidence.
+          // On an available offer, missing, duplicate or permanently disabled controls are errors.
           await add.click({ trial: true });
           const quantity = page.getByRole('spinbutton');
           const minimum = await quantity.getAttribute('aria-valuemin');
@@ -627,11 +629,15 @@ const browserProof = ({
         return assert.fail(PROOF_FAILED);
       } finally {
         await Promise.all(network.pending);
+        const cleanupRecorded = network.cleanupRecorded();
+        if (!cleanupRecorded) {
+          summary = { ...Object.fromEntries(Object.entries(summary)), state: 'failed-cleanup-required' };
+        }
         save('requests.json', network.requests);
         save('responses.json', network.responses);
         save('blocked.json', network.blocked);
         save(RESULT_FILE, summary);
-        network.assertCleanupRecorded();
+        assert.ok(cleanupRecorded, PROOF_FAILED);
       }
     },
   });

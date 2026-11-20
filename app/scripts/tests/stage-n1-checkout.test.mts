@@ -20,6 +20,12 @@ const scope = {
 };
 const CART_PATH = '/api/cart-quote';
 const CHECKOUT_PATH = '/api/checkout';
+const STATUS_PATH = '/api/checkout/status';
+const CHECKOUT_PAGE = '/cs/pokladna';
+const RESULT_FILE = 'result.json';
+const ALL_UNKNOWN = 'all-unknown';
+const UNKNOWN_FIRST = 'unknown-first';
+const UNKNOWN_MISSING_ADD = 'unknown-missing-add';
 const CART_SENTINEL_MODE = 'cart-sentinel';
 const CHECKOUT_SENTINEL_MODE = 'checkout-sentinel';
 const PRODUCT_CAP = 'product-cap';
@@ -62,12 +68,20 @@ const boundedCatalogue = (mode: string, url: URL): string | null => {
       : '',
   );
 };
+const unknownProduct = document(
+  '<div class="n1-product-stock-desktop">Dostupnost nelze ověřit</div><button disabled>Přidat do košíku</button>',
+);
+const firstProduct = (mode: string) =>
+  [UNKNOWN_FIRST, ALL_UNKNOWN, UNKNOWN_MISSING_ADD].includes(mode) ? unknownProduct : product('first');
 const selectedProduct = (mode: string) => {
   const html = product('second');
   const addMarkup = '<button id="add">';
   const disabled = html.replace(addMarkup, '<button id="add" disabled>');
   return (
     new Map([
+      [ALL_UNKNOWN, unknownProduct],
+      [UNKNOWN_MISSING_ADD, unknownProduct.replace('<button disabled>Přidat do košíku</button>', '')],
+      ['limited', html.replace('Skladem', 'Poslední kusy 2 ks')],
       ['dead-add', disabled],
       ['missing-add', html.replace(`${addMarkup}Přidat do košíku</button>`, '<span id="add"></span>')],
       ['duplicate-add', html.replace(addMarkup, `<button>Přidat do košíku</button>${addMarkup}`)],
@@ -94,6 +108,20 @@ ${['city', 'email', 'firstName', 'lastName', 'postalCode', 'street'].map((name) 
 <input type="radio" name="shippingMethod" value="OSOBNI_ODBER">
 <button>Ověřit objednávku</button></form><div id="verified"></div>
 <script>
+const guardKey = 'n1-checkout-guard-v1:stage';
+const showReceipt = (result) => {
+  verified.innerHTML = '<h1>Objednávka byla přijata</h1><h2>Objednávka ' + result.orderNumber + '</h2>';
+};
+const recover = async (guard) => {
+  const response = await fetch('${STATUS_PATH}', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientRequestId: guard.clientRequestId, scope: guard.scope }) });
+  showReceipt((await response.json()).result);
+};
+const storedGuard = localStorage.getItem(guardKey);
+if (storedGuard !== null) recover(JSON.parse(storedGuard));
+addEventListener('storage', (event) => {
+  if (event.key === guardKey && event.newValue !== null) recover(JSON.parse(event.newValue));
+});
 form.onsubmit = async (event) => {
   event.preventDefault();
   const cart = JSON.parse(localStorage.getItem('n1-cart-v1:stage'));
@@ -107,12 +135,17 @@ form.onsubmit = async (event) => {
   const result = await response.json();
   if (result.outcome === 'VALID') {
     verified.innerHTML = '<button>Objednat</button>';
-    verified.querySelector('button').onclick = (event) => {
+    verified.querySelector('button').onclick = async (event) => {
       event.currentTarget.disabled = true;
-      return fetch('${CHECKOUT_PATH}', {
+      const placed = await fetch('${CHECKOUT_PATH}', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, mode: 'place' })
       });
+      const result = await placed.json();
+      localStorage.setItem(guardKey, JSON.stringify({
+        clientRequestId: body.clientRequestId, lines: body.lines, scope: body.scope
+      }));
+      showReceipt(result);
     };
   }
 };
@@ -149,6 +182,10 @@ it.effect('fails loudly with only an allowlisted category when Chromium is missi
 
 for (const scenario of [
   { mode: 'sequence', status: 0 },
+  { mode: UNKNOWN_FIRST, status: 0 },
+  { mode: ALL_UNKNOWN, status: 3 },
+  { mode: UNKNOWN_MISSING_ADD, status: 3 },
+  { mode: 'limited', status: 0 },
   { mode: 'empty', status: 3 },
   { mode: 'all-rejected', status: 3 },
   { mode: CART_SENTINEL_MODE, status: 1 },
@@ -236,7 +273,7 @@ for (const scenario of [
         const documents = new Map([
           ['/cs', document('<a href="/cs/produkt/first">První</a><a href="/cs/kategorie/all">Kategorie</a>')],
           ['/cs/kategorie/all', document('<a href="/cs/produkt/second">Druhý</a>')],
-          ['/cs/produkt/first', product('first')],
+          ['/cs/produkt/first', firstProduct(scenario.mode)],
           [
             SECOND_PRODUCT,
             url.searchParams.has('variantId')
@@ -246,7 +283,7 @@ for (const scenario of [
                 ),
           ],
           ['/cs/kosik', cart],
-          ['/cs/pokladna', checkoutDocument(scenario.mode)],
+          [CHECKOUT_PAGE, checkoutDocument(scenario.mode)],
         ]);
         const html = scenario.mode === 'empty' ? document('') : (documents.get(url.pathname) ?? document(''));
         return HttpServerResponse.html(html);
@@ -276,12 +313,12 @@ for (const scenario of [
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(sentinel);
       const contents = yield* Effect.all(files.map((name) => fs.readFileString(path.join(directory, name))));
       expect(contents.join('\n')).not.toContain(sentinel);
-      const summary = yield* fs.readFileString(path.join(directory, 'result.json'));
+      const summary = yield* fs.readFileString(path.join(directory, RESULT_FILE));
       if (scenario.status === 0) {
         expect(summary).toContain('"state":"passed"');
         expect(summary).toContain(scenario.mode === 'kept' ? 'currently-served-n1-build' : 'packaged-n1-build');
         expect(posts).toEqual([
-          { path: CART_PATH, selection: 'first' },
+          ...(scenario.mode === UNKNOWN_FIRST ? [] : [{ path: CART_PATH, selection: 'first' }]),
           { path: CART_PATH, selection: 'second' },
           { path: CHECKOUT_PATH, selection: 'PPL' },
           { path: CHECKOUT_PATH, selection: 'OSOBNI_ODBER' },
@@ -303,6 +340,13 @@ for (const scenario of [
         ]);
       }
       if (scenario.mode === 'mismatch') {
+        expect(posts).toEqual([]);
+      }
+      if (scenario.mode === UNKNOWN_FIRST) {
+        expect(visited).toContain('/cs/produkt/first');
+        expect(visited).toContain(SECOND_PRODUCT);
+      }
+      if ([ALL_UNKNOWN, UNKNOWN_MISSING_ADD].includes(scenario.mode)) {
         expect(posts).toEqual([]);
       }
       if (scenario.mode === 'page-cap') {
@@ -346,7 +390,7 @@ it.live('exits with an allowlisted deadline verdict when the local server never 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(4);
     expect(result.stdout).toContain('"state":"deadline"');
     expect(result.stderr).not.toContain('TimeoutError');
-    expect(yield* fs.readFileString(path.join(directory, 'result.json'))).toBe('{"mode":"quote","state":"deadline"}');
+    expect(yield* fs.readFileString(path.join(directory, RESULT_FILE))).toBe('{"mode":"quote","state":"deadline"}');
     return yield* Effect.void;
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -391,7 +435,7 @@ it.live('retains only cleanup identifiers before sending a place request that ne
         ['/cs', document('<a href="/cs/produkt/second">Produkt</a>')],
         [SECOND_PRODUCT, product('second')],
         ['/cs/kosik', cart],
-        ['/cs/pokladna', checkout],
+        [CHECKOUT_PAGE, checkout],
       ]);
       return HttpServerResponse.html(documents.get(request.url) ?? document(''));
     }).pipe(Effect.orDie);
@@ -435,3 +479,128 @@ it.live('retains only cleanup identifiers before sending a place request that ne
     return yield* Effect.void;
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+for (const journalWritable of [true, false]) {
+  it.live(
+    `persists the placement verdict and identity when the response journal is ${journalWritable ? 'writable' : 'unwritable'}`,
+    () =>
+      Effect.gen(function* placementJournalVerdict() {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const journal = path.join(directory, 'place-responses.jsonl');
+        if (!journalWritable) {
+          yield* fs.makeDirectory(journal);
+        }
+        const placements: (typeof CheckoutRequestSchema.Type)[] = [];
+        const recoveries: unknown[] = [];
+        const placed = {
+          issues: [],
+          lines: [{ productId: 'second', quantity: 1, unitPriceMinor: 100, variantId: 'blue' }],
+          orderId: 'fixture-order',
+          orderNumber: 'TEST-001',
+          outcome: 'PLACED',
+          scope,
+          shippingPriceMinor: 0,
+          totalMinor: 100,
+          totalVatMinor: 17,
+        };
+        const browserPath = yield* Config.String('PLAYWRIGHT_BROWSERS_PATH').pipe(Config.option);
+        const application = Effect.gen(function* placementJournalHttp() {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          if (request.method === 'POST') {
+            const body = yield* request.json;
+            if (request.url === CART_PATH) {
+              return HttpServerResponse.jsonUnsafe({
+                issues: [],
+                outcome: 'VALID',
+                scope,
+                totalMinor: 100,
+                totalVatMinor: 17,
+              });
+            }
+            if (request.url === STATUS_PATH) {
+              recoveries.push(body);
+              return HttpServerResponse.jsonUnsafe({ result: placed, state: 'confirmed' });
+            }
+            const input = yield* Schema.decodeUnknownEffect(CheckoutRequestSchema)(body);
+            if (input.mode === 'place') {
+              placements.push(input);
+              return HttpServerResponse.jsonUnsafe(placed);
+            }
+            return HttpServerResponse.jsonUnsafe({
+              ...placed,
+              orderId: null,
+              orderNumber: null,
+              outcome: 'VALID',
+            });
+          }
+          const documents = new Map([
+            ['/cs', document('<a href="/cs/produkt/second">Produkt</a>')],
+            [SECOND_PRODUCT, product('second')],
+            ['/cs/kosik', cart],
+            [CHECKOUT_PAGE, checkout],
+          ]);
+          return HttpServerResponse.html(documents.get(request.url) ?? document(''));
+        }).pipe(Effect.orDie);
+        const context = yield* Layer.build(
+          HttpServer.serve(application).pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
+        );
+        const { address } = Context.get(context, HttpServer.HttpServer);
+        if (NetAddress.isUnixPathAddress(address)) {
+          return yield* Effect.die(EXPECTED_TCP);
+        }
+        const result = yield* collectToolingProcess(
+          ChildProcess.make(
+            'node',
+            [probe, 'place', '--i-will-clean-up', '--origin', `http://127.0.0.1:${address.port}`, '--out', directory],
+            {
+              env: {
+                ...Option.match(browserPath, {
+                  onNone: () => ({}),
+                  onSome: (value) => ({ PLAYWRIGHT_BROWSERS_PATH: value }),
+                }),
+                E2E_PLAYWRIGHT_MODULE: playwrightModule,
+                HOME: yield* Config.String('HOME'),
+                PATH: yield* Config.String('PATH'),
+              },
+            },
+          ),
+        );
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(journalWritable ? 0 : 1);
+        const summary = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(
+          yield* fs.readFileString(path.join(directory, RESULT_FILE)),
+        );
+        expect(placements).toHaveLength(1);
+        const [input] = placements;
+        expect(input).toBeDefined();
+        expect(summary).toMatchObject({
+          clientRequestId: input?.clientRequestId,
+          mode: 'place',
+          orderId: placed.orderId,
+          orderNumber: placed.orderNumber,
+          scope,
+          state: journalWritable ? 'passed-cleanup-required' : 'failed-cleanup-required',
+        });
+        expect(recoveries.length).toBeGreaterThanOrEqual(2);
+        expect(
+          Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(
+            (yield* fs.readFileString(path.join(directory, 'place-requests.jsonl'))).trim(),
+          ),
+        ).toEqual({ clientRequestId: input?.clientRequestId, lines: input?.lines, scope });
+        if (journalWritable) {
+          expect(
+            Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))((yield* fs.readFileString(journal)).trim()),
+          ).toEqual({
+            clientRequestId: input?.clientRequestId,
+            orderId: placed.orderId,
+            orderNumber: placed.orderNumber,
+          });
+        } else {
+          expect(yield* fs.readDirectory(journal)).toEqual([]);
+          expect(result.stdout).toContain('"state":"failed-cleanup-required"');
+          expect(result.stdout).not.toContain('"state":"passed-cleanup-required"');
+        }
+        return yield* Effect.void;
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
