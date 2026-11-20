@@ -1,4 +1,6 @@
 import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
+import { RequirementCallerSchema } from '@app/core-runtime/sdk';
+import type { RequirementCaller } from '@app/core-runtime/sdk';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Option, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
@@ -74,6 +76,8 @@ const intakeProfile =
   'call_not_declared: The installed privacy.core requires commerce.customer-context commerce.customer-context.api.customer-profile-organization-ico-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-profile) and registers no call to it under privacy.core.source-processing-check';
 const intakePartyRecovery =
   'call_not_declared: The installed privacy.core requires party.registry party.registry.api.organization-record-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-party) and registers no recovery call to it under privacy.core.source-processing-check';
+const partyReceiptRecovery =
+  'call_not_declared: The installed party.registry requires privacy.core privacy.core.api.organization-business-applicability@1 for party.registry.api.party-source-effect-receipt@1 (requirement party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy) and registers no recovery call to it under party.registry.source-read';
 const intakeProfileRecovery =
   'call_not_declared: The installed privacy.core requires commerce.customer-context commerce.customer-context.api.customer-profile-organization-ico-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-profile) and registers no recovery call to it under privacy.core.source-processing-check';
 
@@ -85,7 +89,7 @@ it.effect(
       expect(requiredOnly('customersBatch', contracts)).toEqual([
         intakeParty,
         intakeProfile,
-        'call_not_declared: The installed party.registry requires privacy.core privacy.core.api.organization-business-applicability@1 for party.registry.api.party-source-effect-receipt@1 (requirement party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy) and registers no recovery call to it under party.registry.source-read',
+        partyReceiptRecovery,
         intakePartyRecovery,
         intakeProfileRecovery,
       ]);
@@ -103,6 +107,64 @@ it.effect(
         identity: 'integration',
         purpose: 'commerce.customer-context.api.customer-group-definition-source@1',
         workloads: ['commerce.customer-context.source-read'],
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  60_000,
+);
+
+/** Main's contracts with these callers declared on the named requirements, and nothing else changed. */
+const declaringCallers = (
+  contracts: readonly SymmyRouteContract[],
+  callers: Readonly<Record<string, readonly RequirementCaller[]>>,
+): SymmyRouteContract[] =>
+  contracts.map((contract) => {
+    const { requirements } = contract.manifest;
+    return requirements === undefined
+      ? contract
+      : {
+          ...contract,
+          manifest: {
+            ...contract.manifest,
+            requirements: {
+              ...requirements,
+              operations: requirements.operations.map((requirement) => {
+                const declared = callers[requirement.key];
+                return declared === undefined ? requirement : { ...requirement, callers: declared };
+              }),
+            },
+          },
+        };
+  });
+
+it.effect(
+  "stops asking main's routes for a registered call to a requirement that declares only a person, and asks for a live-only one live",
+  () =>
+    Effect.gen(function* declaredOnMain() {
+      const callersOf = Schema.decodeUnknownSync(Schema.Array(RequirementCallerSchema));
+      const person = callersOf([{ kind: 'person', legalEntityScope: 'subject' }]);
+      const liveOnly = callersOf([
+        {
+          declarationKey: 'integration.symmy.symmy-source-organization-facts.read',
+          kind: 'registered',
+          legalEntityScope: 'subject',
+          liveOnly: true,
+          pinPrincipal: false,
+        },
+      ]);
+      const contracts = declaringCallers(yield* mainContracts, {
+        'privacy.core.requirement.customer-intake-organization-party': person,
+        'privacy.core.requirement.customer-intake-organization-profile': person,
+        'privacy.core.requirement.organization-business-source-facts': liveOnly,
+      });
+      // Party's receipt recovery is a registration Party has yet to make, not a caller declaration.
+      expect(requiredOnly('customersBatch', contracts)).toEqual([partyReceiptRecovery]);
+      const membership = requiredOnlyPlan('customerGroupCustomersBatch', contracts);
+      expect(membership.refusals).toEqual([]);
+      // The live call Privacy registers is still asked for and followed.
+      expect(membership.bindings).toContainEqual({
+        identity: 'executor',
+        purpose: 'integration.symmy.api.symmy-source-organization-facts@1',
+        workloads: ['integration.symmy.source-organization-facts.read'],
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,

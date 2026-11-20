@@ -3,11 +3,11 @@
  * operation's lease and selecting the one caller identity the execution implies. The definition-time
  * check of declared calls is `declaredCallsIssues` in `modules/module-dependency-contracts.ts`.
  */
-import { Effect, Layer, Match } from 'effect';
+import { Effect, Layer, Match, Result } from 'effect';
 
 import { isCoreOperationProvider, sameOperationProvider } from '../modules/module-dependency-contracts.ts';
 import { readModuleOperationRequirement } from '../modules/module-operation-execution.ts';
-import type { ExecutionIdentity, RequirementCaller } from '../sdk/index.ts';
+import type { ExecutionIdentity, RequestExecution, RequirementCaller } from '../sdk/index.ts';
 import { CallRequirementUnresolved } from './call-requirement-unresolved.ts';
 import { CallRequirements } from './call-requirements.ts';
 import type { CallRequirementsService } from './call-requirements.ts';
@@ -96,12 +96,24 @@ const registeredCaller = (
     : Effect.succeed(Object.freeze({ ...pinned, recoveryRequestHash: facts.recoveryRequestHash }));
 };
 
-const relayedCaller = (permitted: readonly RequirementCaller[]): Effect.Effect<SelectedCaller, CallerNotPermitted> =>
-  permittedOfKind(permitted, 'person').pipe(
-    Effect.map((caller): SelectedCaller =>
-      Object.freeze({ kind: 'person', legalEntityScope: caller.legalEntityScope }),
-    ),
-  );
+/**
+ * The permitted caller a request of this provenance calls as, or the kind it wanted when the requirement
+ * permits none: a verified workload calls as the requirement's `registered` caller, and a recovery too
+ * unless that caller is `liveOnly`, which refuses the recovery rather than relay it; any other request, and
+ * a workload or recovery under a requirement that declares no `registered` caller, relays as its `person`
+ * caller. `selectCaller` decides by it, and so does a check of the calls a registered workload reaches.
+ */
+export const requestCaller = (
+  via: RequestExecution['via'],
+  permitted: readonly RequirementCaller[],
+): Result.Result<CallerOfKind<'person' | 'registered'>, CallerNotPermitted['wanted']> => {
+  const registered = permitted.find((caller): caller is CallerOfKind<'registered'> => caller.kind === 'registered');
+  if ((via === 'workload' || via === 'recovery') && registered !== undefined) {
+    return via === 'recovery' && registered.liveOnly === true ? Result.fail('registered') : Result.succeed(registered);
+  }
+  const person = permitted.find((caller): caller is CallerOfKind<'person'> => caller.kind === 'person');
+  return person === undefined ? Result.fail('person') : Result.succeed(person);
+};
 
 /**
  * For a vertical provider only (a Core provider is `in_process` without selection). The caller identity
@@ -110,10 +122,10 @@ const relayedCaller = (permitted: readonly RequirementCaller[]): Effect.Effect<S
  * which calls as the `registered` declaration of its requirement when the requirement declares one
  * (with `recoveryRequestHash` for a recovery and `expectedPrincipalId` when the caller pins the
  * principal; the gateway attests a workload only through a registration, and a provider that declares
- * none was always sent the relayed scope). A Core system principal has no verified workload, so it
- * relays. The chosen kind must be in `permitted`, else `CallerNotPermitted`. An Action invocation has
- * no caller kind until the Action adapter adds its admission kinds; a worker delivery calls as the
- * registered workload.
+ * none was always sent the relayed scope), except a recovery under a `liveOnly` caller, which is refused
+ * (`requestCaller`). A Core system principal has no verified workload, so it relays. The chosen kind must
+ * be in `permitted`, else `CallerNotPermitted`. An Action invocation has no caller kind until the Action
+ * adapter adds its admission kinds; a worker delivery calls as the registered workload.
  */
 export const selectCaller = (
   identity: ExecutionIdentity,
@@ -123,14 +135,16 @@ export const selectCaller = (
   Match.value(identity).pipe(
     Match.tagsExhaustive({
       ActionInvocation: () => Effect.fail(new CallerNotPermitted({ wanted: 'none' })),
-      Request: ({ via }) => {
-        const registered = permitted.find(
-          (caller): caller is CallerOfKind<'registered'> => caller.kind === 'registered',
-        );
-        return (via === 'workload' || via === 'recovery') && registered !== undefined
-          ? registeredCaller(registered, facts, via === 'recovery')
-          : relayedCaller(permitted);
-      },
+      Request: ({ via }) =>
+        Result.match(requestCaller(via, permitted), {
+          onFailure: (wanted) => Effect.fail(new CallerNotPermitted({ wanted })),
+          onSuccess: (caller) =>
+            caller.kind === 'registered'
+              ? registeredCaller(caller, facts, via === 'recovery')
+              : Effect.succeed<SelectedCaller>(
+                  Object.freeze({ kind: 'person', legalEntityScope: caller.legalEntityScope }),
+                ),
+        }),
       WorkerDelivery: () =>
         permittedOfKind(permitted, 'workload').pipe(
           Effect.map((caller): SelectedCaller =>

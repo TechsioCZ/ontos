@@ -286,6 +286,33 @@ it.effect('sends a recovery call as the registered caller with the hash of the d
   }),
 );
 
+it.effect('answers Forbidden without sending for a recovery under a live-only caller, and sends its live call', () =>
+  Effect.gen(function* liveOnlyRecovery() {
+    const liveOnly = callersOf([
+      {
+        declarationKey: 'commerce.market-catalog.subject.read',
+        kind: 'registered',
+        legalEntityScope: 'tenant',
+        liveOnly: true,
+        pinPrincipal: false,
+      },
+    ]);
+    const recovery = harness({ resolve: Effect.succeed(resolvedModule(liveOnly)) });
+    const refused = yield* recovery.execute(requestOf(moduleCall, { count: 5 }, { _tag: 'Request', via: 'recovery' }));
+    expect(isForbidden(refused.outcome)).toBe(true);
+    expect(refused.record.callerKind).toBe('refused');
+    expect(recovery.sent).toHaveLength(0);
+    const live = harness({ resolve: Effect.succeed(resolvedModule(liveOnly)) });
+    const sent = yield* live.execute(requestOf(moduleCall, { count: 5 }, { _tag: 'Request', via: 'workload' }));
+    expect(isOk(sent.outcome)).toBe(true);
+    expect(live.sent[0]?.request.caller).toEqual({
+      declarationKey: 'commerce.market-catalog.subject.read',
+      kind: 'registered',
+      legalEntityScope: 'tenant',
+    });
+  }),
+);
+
 it.effect('runs a Core provider in-process for every identity kind, without caller selection', () =>
   Effect.gen(function* coreForEveryone() {
     const identities: readonly ExecutionIdentity[] = [

@@ -1,5 +1,8 @@
+import { requestCaller } from '@app/core-runtime';
 import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement';
-import { Option } from 'effect';
+import { RequirementCallerSchema } from '@app/core-runtime/sdk';
+import type { RequirementCaller } from '@app/core-runtime/sdk';
+import { Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
@@ -197,6 +200,10 @@ const definePrices = (contracts: readonly SymmyRouteContract[]) =>
     enrolled: enrolledOf('productsBatch', ['commerce.pricing.define-price']),
     inventory: products(),
   });
+/** Whether Core calls a requirement declaring these callers as its registered caller for a request of this provenance. */
+const registeredBy = (callers: readonly RequirementCaller[] | 'undeclared', via: 'recovery' | 'workload') =>
+  callers === 'undeclared' ||
+  Result.match(requestCaller(via, callers), { onFailure: () => false, onSuccess: ({ kind }) => kind === 'registered' });
 const derive = (contracts: readonly SymmyRouteContract[]) =>
   deriveSymmyRouteBindings({ companyScoped: true, contracts, enrolled: enrolledProducts(), inventory: products() });
 const workloadsOf = (bindings: readonly SymmyRequiredBinding[], identity: SymmyRequiredBinding['identity']) =>
@@ -459,6 +466,110 @@ describe('Symmy route bindings', () => {
         detail: `The installed privacy.core requires party.registry party.registry.api.organization-record-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-party) and registers no call to it under ${privacyCheck.workloadKey}`,
       },
     ]);
+  });
+
+  it('asks a requirement for a registered call exactly where Core would call it as its registered caller', () => {
+    // Commerce customer context checks the Organization with Privacy for a membership write and again when it reads the
+    // write's receipt in recovery; Privacy requires Party's Organization record facts for that check.
+    const sourceRead = 'commerce.customer-context.source-read';
+    const businessCheck = {
+      audience: 'privacy',
+      declarationKey: 'privacy.core.organization-business-applicability.read',
+      entrypointKey: 'privacy.core.api.organization-business-applicability',
+      jobKey: SYMMY_JOB_KEY,
+      legalEntityScope: 'required' as const,
+      schemaVersion: '1',
+      sourceWorkloadKey: 'commerce.customer-context.source-write',
+      workloadKey: 'privacy.core.organization-business-check',
+    };
+    const businessRecovery = { ...businessCheck, allowRecoverySource: true, sourceWorkloadKey: sourceRead };
+    const recordFacts = {
+      audience: 'party-registry',
+      declarationKey: 'party.registry.organization-record-facts.read',
+      entrypointKey: 'party.registry.api.organization-record-facts',
+      jobKey: SYMMY_JOB_KEY,
+      legalEntityScope: 'optional' as const,
+      schemaVersion: '1',
+      sourceWorkloadKey: businessCheck.workloadKey,
+      workloadKey: 'party.registry.source-read',
+    };
+    const apply = 'commerce.customer-context.apply-customer-group-membership-source';
+    const receipt = 'commerce.customer-context.api.customer-group-membership-source-receipt';
+    const customerContext = contract(
+      'commerce-customer-context',
+      'commerce.customer-context',
+      {
+        actions: receivingAction(apply),
+        operationContracts: [
+          ...receivingRead('commerce.customer-context.api.customer-group-definition-source'),
+          ...receivingRead(receipt),
+        ],
+      },
+      [businessCheck, businessRecovery],
+      [...requires(apply, [businessCheck]), ...requires(receipt, [businessRecovery])],
+    );
+    const party = contract('party-registry', 'party.registry', {
+      operationContracts: [carrier(recordFacts.entrypointKey, [recordFacts.workloadKey], recordFacts.declarationKey)],
+    });
+    const membership = inventoryOf('customerGroupCustomersBatch');
+    /** The plan when Privacy declares these callers for the requirement and registers these calls (live only). */
+    const planWith = (callers: readonly RequirementCaller[] | 'undeclared', calls: Calls) => {
+      const requirements = requires(businessCheck.entrypointKey, [recordFacts]).map((requirement) =>
+        callers === 'undeclared' ? requirement : { ...requirement, callers },
+      );
+      const privacy = contract(
+        'privacy',
+        'privacy.core',
+        {
+          operationContracts: [
+            carrier(businessCheck.entrypointKey, [businessCheck.workloadKey], businessCheck.declarationKey),
+          ],
+        },
+        calls,
+        requirements,
+      );
+      return deriveSymmyRouteBindings({
+        companyScoped: true,
+        contracts: [symmy, customerContext, privacy, party],
+        enrolled: membership.operations,
+        inventory: membership,
+      });
+    };
+    const required = `The installed privacy.core requires party.registry party.registry.api.organization-record-facts@1 for privacy.core.api.organization-business-applicability@1 (requirement privacy.core.api.organization-business-applicability.requirement.party.registry.api.organization-record-facts)`;
+    const refusal = (live: boolean) =>
+      `${required} and registers no ${live ? '' : 'recovery '}call to it under ${businessCheck.workloadKey}`;
+    const callersOf = Schema.decodeUnknownSync(Schema.Array(RequirementCallerSchema));
+    const person = callersOf([{ kind: 'person', legalEntityScope: 'subject' }]);
+    const registered = { declarationKey: recordFacts.declarationKey, kind: 'registered', legalEntityScope: 'tenant' };
+    const always = callersOf([{ ...registered, pinPrincipal: false }]);
+    const liveOnly = callersOf([{ ...registered, liveOnly: true, pinPrincipal: false }]);
+    const workload = callersOf([
+      { declarationKey: recordFacts.declarationKey, kind: 'workload', legalEntityScope: 'tenant' },
+    ]);
+    // Whether the route asks for the live and the recovery call: a requirement that declares no callers for both, as before.
+    const cases = [
+      { callers: 'undeclared', live: true, recovery: true },
+      { callers: person, live: false, recovery: false },
+      { callers: always, live: true, recovery: true },
+      { callers: [...person, ...always], live: true, recovery: true },
+      { callers: liveOnly, live: true, recovery: false },
+      { callers: [...person, ...liveOnly], live: true, recovery: false },
+      { callers: workload, live: false, recovery: false },
+    ] as const;
+    for (const { callers, live, recovery } of cases) {
+      // Core's own selection names the same calls, so the route check and Core cannot disagree.
+      expect({ live: registeredBy(callers, 'workload'), recovery: registeredBy(callers, 'recovery') }).toEqual({
+        live,
+        recovery,
+      });
+      const unregistered = planWith(callers, []).refusals.map(({ detail }) => detail);
+      expect(unregistered).toEqual([...(live ? [refusal(true)] : []), ...(recovery ? [refusal(false)] : [])]);
+      const liveRegistered = planWith(callers, [recordFacts]);
+      expect(liveRegistered.refusals.map(({ detail }) => detail)).toEqual(recovery ? [refusal(false)] : []);
+      // The live call is followed exactly when it is asked for.
+      expect(liveRegistered.moduleKeys.includes('party.registry')).toBe(live);
+      expect(workloadsOf(liveRegistered.bindings, 'executor').includes(recordFacts.workloadKey)).toBe(live);
+    }
   });
 
   it('asks the integration principal for the price reads the Shell makes for a REVISE, and only for one', () => {

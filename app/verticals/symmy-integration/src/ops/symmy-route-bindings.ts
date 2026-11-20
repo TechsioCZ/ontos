@@ -12,18 +12,21 @@
  * Symmy declares no caller for one of them is refused. The nested calls start from the requirements: every requirement
  * the owner of a reached operation declares for exactly that operation needs one call the owner registers under the
  * workload the operation is served with, to the required provider, so a requirement without its call is refused by
- * name and a route needs only what its own operations can call, at any depth. A call the owner names as an intrinsic
- * requirement, which the gateway admits from any of its operations, is followed when it is registered.
+ * name and a route needs only what its own operations can call, at any depth. A requirement that declares its
+ * callers needs that call only when Core would make it as the registered caller (`requestCaller`): never when it
+ * relays the call as a person, and not in recovery for a live-only registered caller. A call the owner names as an
+ * intrinsic requirement, which the gateway admits from any of its operations, is followed when it is registered.
  *
  * The integration principal needs one published workload of every Symmy carrier and Shell read the route uses, and
  * the workload of every live call (the gateway checks that the original integration principal holds it). Every call,
  * recovery included, runs as the one active system principal holding its workload, and a job route also needs exactly
  * one system principal holding the Symmy job workload.
  */
-import { registeredWorkloadCallReceiverIssue } from '@app/core-runtime';
+import { registeredWorkloadCallReceiverIssue, requestCaller } from '@app/core-runtime';
 import type { OntosRegisteredWorkloadCallInput, RegisteredWorkloadCallReceiver } from '@app/core-runtime';
 import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement';
-import { Option, Schema } from 'effect';
+import type { RequirementCaller } from '@app/core-runtime/sdk';
+import { Option, Result, Schema } from 'effect';
 
 import { admitSymmyJobAction } from '../actions/admit-symmy-job.action.ts';
 import { admitSymmySyncAction } from '../actions/admit-symmy-sync.action.ts';
@@ -64,6 +67,7 @@ interface Provider extends RequiredOperation {
   readonly moduleId: string;
 }
 interface OperationRequirement {
+  readonly callers?: readonly RequirementCaller[] | undefined;
   readonly entrypointKey: string;
   readonly key: string;
   readonly provider: Provider;
@@ -115,6 +119,18 @@ const operationRequirements = (caller: Contract, served: string) =>
   (caller.manifest.requirements?.operations ?? []).filter(
     ({ entrypointKey, provider }) => entrypointKey === served && !provider.moduleId.startsWith('core.'),
   );
+
+/**
+ * Whether the owner, serving a registered call live (as a verified workload) or in recovery, makes the requirement's
+ * call as its registered caller and so needs it registered: by Core's own selection when the requirement declares its
+ * callers, and always when it declares none, as the gateway then admits the call only through a registration.
+ */
+const needsRegisteredCall = ({ callers }: OperationRequirement, live: boolean) =>
+  callers === undefined ||
+  Result.match(requestCaller(live ? 'workload' : 'recovery', callers), {
+    onFailure: () => false,
+    onSuccess: ({ kind }) => kind === 'registered',
+  });
 
 /** The installed module of the app a call is addressed to. */
 const receivingModule = (contracts: readonly Contract[], call: Call) =>
@@ -217,7 +233,9 @@ const followCall = (
       candidate.sourceActionKey === undefined &&
       candidate.recoveryOf === undefined,
   );
-  for (const requirement of operationRequirements(receiver, call.entrypointKey)) {
+  for (const requirement of operationRequirements(receiver, call.entrypointKey).filter((candidate) =>
+    needsRegisteredCall(candidate, live),
+  )) {
     const required = `The installed ${moduleId} requires ${providerName(requirement.provider)} for ${symmyOperationName(call)} (requirement ${requirement.key})`;
     const declared = served.filter((candidate) => sameVersion(candidate, requirement.provider));
     const [only] = declared;

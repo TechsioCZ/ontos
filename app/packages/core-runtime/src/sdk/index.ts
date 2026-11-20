@@ -122,7 +122,8 @@ export const moduleOperation = <
  *   hash of the decoded call input. `pinPrincipal` sends `expectedPrincipalId` (the execution's
  *   principal), as the privacy module does today. It must match an entry of the module's
  *   `registeredWorkloadCalls` with the same `declarationKey` and the provider's `entrypointKey`, so the
- *   two declarations cannot drift.
+ *   two declarations cannot drift. `liveOnly` admits it for a verified workload alone: a recovery under
+ *   the requirement is refused, never relayed in its place.
  * - `workload`: the calling module as a registered workload (gateway `RegisteredWorkload`), for a
  *   worker delivery. Reserved until workers run on this kernel; matched against
  *   `registeredWorkloadCalls` the same way.
@@ -142,6 +143,7 @@ export const RequirementCallerSchema = Schema.Union([
     declarationKey: CallerDeclarationKeySchema,
     kind: Schema.Literal('registered'),
     legalEntityScope: CallerLegalEntityScopeSchema,
+    liveOnly: Schema.optionalKey(Schema.Literal(true)),
     pinPrincipal: Schema.Boolean,
   }),
   Schema.Struct({

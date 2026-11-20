@@ -836,6 +836,7 @@ export type {
   OntosRegisteredWorkloadCallInput,
   RegisteredWorkloadCallReceiver,
 } from './modules/registered-workload-calls.ts';
+export { requestCaller } from './execution/requirements.ts';
 export {
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosMcpCommandActionsSchema,

@@ -1,11 +1,11 @@
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { CallRequirements } from '../../src/execution/call-requirements.ts';
 import type { CallerSource } from '../../src/execution/contract.ts';
-import { CallRequirementsLive, selectCaller } from '../../src/execution/requirements.ts';
+import { CallRequirementsLive, requestCaller, selectCaller } from '../../src/execution/requirements.ts';
 import { defineOntosModuleManifest, OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import {
   declaredCallsIssues,
@@ -228,6 +228,56 @@ it.effect('pins the principal exactly when the caller declares pinPrincipal', ()
   }),
 );
 
+/** A registered caller of a requirement whose call a recovery never makes. */
+const liveOnly = callersOf([
+  { declarationKey, kind: 'registered', legalEntityScope: 'tenant', liveOnly: true, pinPrincipal: false },
+]);
+const recoveryFacts = { principalId, recoveryRequestHash: recoveryHash };
+
+it('takes liveOnly only as true, and keeps it in the published requirements', () => {
+  expect(() =>
+    callersOf([
+      { declarationKey, kind: 'registered', legalEntityScope: 'tenant', liveOnly: false, pinPrincipal: false },
+    ]),
+  ).toThrow();
+  const published = Schema.encodeSync(OntosModuleRequirementsSchema)(requirementsWith({ callers: liveOnly }));
+  expect(published.operations[0]?.callers).toEqual([
+    { declarationKey, kind: 'registered', legalEntityScope: 'tenant', liveOnly: true, pinPrincipal: false },
+  ]);
+});
+
+it.effect('calls a verified workload as a live-only registered caller and refuses a recovery under it', () =>
+  Effect.gen(function* liveOnlySelection() {
+    expect(yield* selectCaller(request('workload'), liveOnly, facts)).toEqual({
+      declarationKey,
+      kind: 'registered',
+      legalEntityScope: 'tenant',
+    });
+    // Refused with its hash, and where the requirement also permits a person: Core never relays in its place.
+    for (const callers of [liveOnly, [...person, ...liveOnly]]) {
+      expect((yield* Effect.flip(selectCaller(request('recovery'), callers, recoveryFacts))).wanted).toBe('registered');
+    }
+  }),
+);
+
+it.effect('selects for every request the caller requestCaller names, and refuses exactly the kind it refuses', () =>
+  Effect.gen(function* sharedRule() {
+    const workloadOnly = callersOf([{ declarationKey, kind: 'workload', legalEntityScope: 'tenant' }]);
+    const permitted = [person, registered(false), [...person, ...registered(true)], liveOnly, [...person, ...liveOnly]];
+    for (const callers of [...permitted, workloadOnly]) {
+      for (const via of ['person', 'recovery', 'system', 'workload'] as const) {
+        const selected = yield* Effect.result(
+          selectCaller(request(via), callers, via === 'recovery' ? recoveryFacts : facts),
+        );
+        const named = requestCaller(via, callers);
+        expect(Result.isSuccess(selected) ? selected.success.kind : selected.failure.wanted).toBe(
+          Result.isSuccess(named) ? named.success.kind : named.failure,
+        );
+      }
+    }
+  }),
+);
+
 it.effect('refuses a kind the requirement does not permit, a recovery without its hash and an Action invocation', () =>
   Effect.gen(function* refusals() {
     expect((yield* Effect.flip(selectCaller(request('person'), registered(true), facts))).wanted).toBe('person');
@@ -435,14 +485,19 @@ it('refuses calls on a { load } read at definition, so a registration never sees
 
 const decodeContract = Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema);
 
-const leaseFixture = () => {
-  const requirements = requirementsWith({ callers: person });
+const leaseFixture = (callers: CallersInput = person) => {
+  const requirements = requirementsWith({ callers });
+  // A registered caller is backed by its registered call, in the authored manifest and the installed contract alike.
+  const calls = callers.some(({ kind }) => kind === 'registered')
+    ? { registeredWorkloadCalls: Schema.encodeSync(OntosRegisteredWorkloadCallsSchema)(workloadCall) }
+    : {};
   const read = runRead({ subject: declaredCall(providerRead, requirementKey) });
   const consumerBase = makeModuleContractFixture({ appId: 'consumer-alpha', moduleId: consumerModule });
   const consumer = decodeContract({
     ...consumerBase,
     manifest: {
       ...consumerBase.manifest,
+      ...calls,
       requirements: Schema.encodeSync(OntosModuleRequirementsSchema)(requirements),
     },
   });
@@ -485,7 +540,7 @@ const leaseFixture = () => {
     loadCatalog: Effect.succeed(makeInstalledCatalogFixture(consumer, providerContract)),
     ownerRegistration: defineVerticalRuntimeRegistration({
       actions: [],
-      manifest: manifestOf(requirements),
+      manifest: { ...manifestOf(requirements), ...calls },
       outboxWorkers: [],
       reads: [read],
     }),
@@ -523,5 +578,21 @@ it.effect('resolves the requirement in the lease with its callers and refuses a 
     expect(missing.reason).toBe('not_declared');
     const outsideLease = yield* Effect.flip(resolve(requirementKey, providerRead, source));
     expect(outsideLease.reason).toBe('lease_mismatch');
+  }),
+);
+
+it.effect('resolves a live-only caller from the installed contract, which a recovery then cannot call as', () =>
+  Effect.gen(function* liveOnlyInLease() {
+    const { lease, principal } = leaseFixture(liveOnly);
+    const source: CallerSource = { _tag: 'RequestPrincipal', principal };
+    const { resolve } = yield* Effect.scoped(
+      Layer.build(CallRequirementsLive).pipe(Effect.map((context) => Context.get(context, CallRequirements))),
+    );
+    const resolved = yield* withModuleOperationExecution(lease, resolve(requirementKey, providerRead, source));
+    expect(resolved.callers).toEqual(liveOnly);
+    expect(yield* selectCaller(request('workload'), resolved.callers, facts)).toMatchObject({ kind: 'registered' });
+    expect((yield* Effect.flip(selectCaller(request('recovery'), resolved.callers, recoveryFacts))).wanted).toBe(
+      'registered',
+    );
   }),
 );
