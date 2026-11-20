@@ -2507,6 +2507,10 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
       if (Option.isNone(offered)) {
         return yield* failIdentityProblem(shellCapabilityUnavailableProblem());
       }
+      // HEAD falls back to this GET route: it is its own decision too, but it reads no provider byte and drops no stream.
+      if (request.method === 'HEAD') {
+        return HttpServerResponse.empty({ headers: downloadResponseHeaders(authorization) });
+      }
       const download = yield* streamConfirmedBytes(offered.value, authorization).pipe(
         Effect.catchTags({
           MediaIntegrityFailed: () => failIdentityProblem(shellPolicyUnprocessableProblem()),
