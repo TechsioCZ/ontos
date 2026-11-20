@@ -61,6 +61,14 @@ export const assetCurrentRead = defineRead<
   ObjectStorage
 >(
   {
+    // The Shell host answers this read for a MODULE that relays its requester (#1443 P2). The module is allow-listed
+    // here, by name, and the requester must hold `core.media.asset-current.read` themselves (`rights`): the module's
+    // own service credential adds no permission, and no other capability of Core Media accepts a module at all.
+    accessActor: {
+      callers: ['catalog'],
+      reason: 'Catalog resolves the Current of the Media Assets assigned to a Product or Variant for the requester',
+      subject: 'rights',
+    },
     accessDeclaration: {
       key: 'core.media.asset-current.read',
       kind: 'read',

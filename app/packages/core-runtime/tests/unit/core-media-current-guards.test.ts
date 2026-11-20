@@ -61,7 +61,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
           expect(code, `${file} must not write or read a link, a table or a row`).not.toMatch(
             /mediaLinks|media_links|\.insert\(|\.update\(|\.delete\(|\.execute\(/u,
           );
-          expect(code, `${file} must not assign to Catalog`).not.toMatch(/assign|catalog/iu);
+          // The one thing Core Media says about Catalog is the module it accepts a relayed requester from.
+          expect(code.replace(/accessActor:\s*\{[\s\S]*?\},\n/u, ''), `${file} must not assign to Catalog`).not.toMatch(
+            /assign|catalog/iu,
+          );
           // A provider version reference is a technical pin, never a revision or an identity of the answer.
           expect(code, `${file} must not read the provider version`).not.toMatch(/storageObjectVersionRef|versionRef/u);
         }
