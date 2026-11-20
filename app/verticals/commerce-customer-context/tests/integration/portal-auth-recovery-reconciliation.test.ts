@@ -312,12 +312,12 @@ it.live(
         const firstPeek = yield* peekLedger({ token: firstToken });
         expect(Option.isSome(firstPeek)).toBe(true);
         if (Option.isSome(firstPeek)) {
-          expect(firstPeek.value).toStrictEqual({ email, providerSubjectId, tokenDigest: firstDigest });
+          expect(firstPeek.value).toStrictEqual({ email, expiresAt, providerSubjectId, tokenDigest: firstDigest });
         }
         const secondPeek = yield* peekLedger({ token: secondToken });
         expect(Option.isSome(secondPeek)).toBe(true);
         if (Option.isSome(secondPeek)) {
-          expect(secondPeek.value).toStrictEqual({ email, providerSubjectId, tokenDigest: secondDigest });
+          expect(secondPeek.value).toStrictEqual({ email, expiresAt, providerSubjectId, tokenDigest: secondDigest });
         }
         return null;
       }),

@@ -5,8 +5,7 @@ import { Clock, Data, DateTime, Duration, Effect, Exit, Match, Option, Schema } 
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import type { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
 import { ineligibleStateReasonOf } from '../domain/catalog/decision.ts';
-import type { StaleSourceReason } from '../domain/catalog/decision.ts';
-import type { MessageIntentIdentity } from '../domain/catalog/decision.ts';
+import type { MessageIntentIdentity, StaleSourceReason } from '../domain/catalog/decision.ts';
 import type { TransactionalMessageType } from '../domain/catalog/message-type.ts';
 import {
   AudienceSlotKeySchema,

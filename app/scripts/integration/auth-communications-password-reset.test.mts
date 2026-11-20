@@ -299,9 +299,9 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         }
         // the request states the expiry Auth STORED, a few milliseconds before the callback: the policy lifetime, whatever the language
         const policyMs = COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds * 1000;
-        for (const lifetime of lifetimes) {
-          expect(lifetime).toBeLessThanOrEqual(policyMs);
-          expect(lifetime).toBeGreaterThan(policyMs - 5000);
+        for (const measuredLifetime of lifetimes) {
+          expect(measuredLifetime).toBeLessThanOrEqual(policyMs);
+          expect(measuredLifetime).toBeGreaterThan(policyMs - 5000);
         }
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );

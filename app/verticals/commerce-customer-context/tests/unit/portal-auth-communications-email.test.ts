@@ -5,9 +5,9 @@ import { describe, expect, it } from 'effect-rstest';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { CommercePortalAuthCommunicationsEmailLive } from '../../api/portal-auth/provider/communications-email-delivery.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from '../../api/portal-auth/provider/raw-email-delivery-service.ts';
-import { CommercePortalAuthRecoveryStoreService } from '../../api/portal-auth/provider/recovery/store-service.ts';
-import type { CommercePortalAuthRecoveryStore } from '../../api/portal-auth/provider/recovery/store-service.ts';
 import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
+import { CommercePortalAuthIssuedFacts } from '../../src/portal-auth/communications/issued-facts.ts';
+import type { IssuedFactsService } from '../../src/portal-auth/communications/issued-facts.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
 import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
 import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
@@ -58,10 +58,7 @@ const storedFacts = {
     Effect.succeed(
       Option.some({ email: USER.email, expiresAt: STORED_EXPIRY, providerSubjectId: USER.id, tokenDigest: 'digest' }),
     ),
-} satisfies Pick<
-  CommercePortalAuthRecoveryStore,
-  'locateOtpChallenge' | 'peekEmailVerificationLedger' | 'peekPasswordResetLedger'
->;
+} satisfies IssuedFactsService;
 
 const pending: PortalAuthSubmission = {
   decision: { intents: [{ intentId: 'intent-1', status: 'PENDING_HANDOFF' }], kind: 'MESSAGE_INTENTS' },
@@ -87,7 +84,7 @@ const fixture = (
     submitter,
     Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId: TENANT }) }),
     // the delivery reads only these three of the store: the stored expiry of the issuance it was just handed
-    Layer.succeed(CommercePortalAuthRecoveryStoreService, storedFacts as CommercePortalAuthRecoveryStore),
+    Layer.succeed(CommercePortalAuthIssuedFacts, storedFacts),
     commercePortalAuthPlatformCryptoLive,
   );
   const delivery = CommercePortalAuthCommunicationsEmailLive.pipe(Layer.provide(base));
@@ -223,7 +220,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
         Layer.mergeAll(
           world.handoffLayer,
           unconfiguredTrustedScopeLayer,
-          Layer.succeed(CommercePortalAuthRecoveryStoreService, storedFacts as CommercePortalAuthRecoveryStore),
+          Layer.succeed(CommercePortalAuthIssuedFacts, storedFacts),
           commercePortalAuthPlatformCryptoLive,
           Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, { submit: () => Effect.die('never called') }),
         ),

@@ -38,20 +38,6 @@ export interface CommercePortalAuthOtpChallenge {
 }
 
 export interface CommercePortalAuthRecoveryStore {
-  /**
-   * Read-only: the stored challenge of a one-time code that was just issued, found by the code Better Auth stored for it.
-   * None when no live challenge holds that code, or when more than one does (they cannot be told apart).
-   */
-  readonly locateOtpChallenge: (input: {
-    readonly otp: Redacted.Redacted;
-  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
-  /**
-   * Read-only: the CURRENT state of one stored challenge. None means Better Auth no longer holds it (consumed by a
-   * verification, spent by a failed-attempt reset, or expired and swept).
-   */
-  readonly readOtpChallenge: (input: {
-    readonly challenge: Redacted.Redacted;
-  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
   /** Read-only: true when the named provider subject still names an active account. */
   readonly accountExists: (input: {
     readonly providerSubjectId: string;
@@ -110,6 +96,13 @@ export interface CommercePortalAuthRecoveryStore {
     readonly email: string;
   }) => Effect.Effect<Option.Option<string>, CommercePortalAuthRecoveryUnavailable>;
   /**
+   * Read-only: the stored challenge of a one-time code that was just issued, found by the code Better Auth stored for it.
+   * None when no live challenge holds that code, or when more than one does (they cannot be told apart).
+   */
+  readonly locateOtpChallenge: (input: {
+    readonly otp: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
+  /**
    * Non-destructive: reads the binding of a password-reset row that is still claimed for a dispatch
    * whose outcome never came back. Unlike `peekPasswordResetLedger` this deliberately ignores
    * expiry — the token can no longer be spent, but whether the earlier dispatch changed the
@@ -131,6 +124,13 @@ export interface CommercePortalAuthRecoveryStore {
   readonly peekPasswordResetLedger: (input: {
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Read-only: the CURRENT state of one stored challenge. None means Better Auth no longer holds it (consumed by a
+   * verification, spent by a failed-attempt reset, or expired and swept).
+   */
+  readonly readOtpChallenge: (input: {
+    readonly challenge: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
   /**
    * Records one detected conflict. Writing this row is the only effect detection ever has: it
    * never updates `user`, `session` or `account`, and a duplicate detection of the same conflict

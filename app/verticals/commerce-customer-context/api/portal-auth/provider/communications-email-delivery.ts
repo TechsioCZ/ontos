@@ -10,13 +10,12 @@ import type { HeldIssuance, PortalAuthIssuance } from '../../../src/portal-auth/
 import { CommercePortalAuthProtectedHandoff } from '../../../src/portal-auth/communications/protected-handoff.ts';
 import type { IssuanceReservation } from '../../../src/portal-auth/communications/protected-handoff.ts';
 import { portalAuthCommunicationRequest } from '../../../src/portal-auth/communications/request.ts';
+import { CommercePortalAuthIssuedFacts } from '../../../src/portal-auth/communications/issued-facts.ts';
 import { CommercePortalAuthTrustedScope } from '../../../src/portal-auth/communications/trusted-scope.ts';
 import type { PortalAuthTrustedScopeUnavailable } from '../../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { withCause } from '../problems-support.ts';
 import type { CommercePortalAuthEmailDelivery } from './auth.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-service.ts';
-import { CommercePortalAuthRecoveryStoreService } from './recovery/store-service.ts';
-import type { CommercePortalAuthRecoveryStore } from './recovery/store-service.ts';
 
 /**
  * The Communications-routed form of the three Portal Auth e-mail callbacks (#1406). It is the ONLY place where an issued
@@ -51,19 +50,19 @@ interface StoredIssuanceFacts {
 
 const STORED_FACTS_OPERATION = 'stored-issuance-facts';
 
+const storedFactsUnavailable = (cause?: unknown) =>
+  withCause(new PortalAuthCommunicationUnavailable({ operation: STORED_FACTS_OPERATION }), cause);
+
 const storedFactsOf = Effect.fn('CommercePortalAuthCommunicationsEmail.storedFacts')(function* storedFacts(
-  store: Pick<
-    CommercePortalAuthRecoveryStore,
-    'locateOtpChallenge' | 'peekEmailVerificationLedger' | 'peekPasswordResetLedger'
-  >,
   issued: IssuedSecret,
-): Effect.fn.Return<StoredIssuanceFacts, PortalAuthCommunicationUnavailable> {
-  const unavailable = (cause?: unknown) =>
-    withCause(new PortalAuthCommunicationUnavailable({ operation: STORED_FACTS_OPERATION }), cause);
+): Effect.fn.Return<StoredIssuanceFacts, PortalAuthCommunicationUnavailable, CommercePortalAuthIssuedFacts> {
+  const store = yield* CommercePortalAuthIssuedFacts;
   if (issued.flow === 'otp') {
-    const challenge = yield* store.locateOtpChallenge({ otp: issued.secret }).pipe(Effect.mapError(unavailable));
+    const challenge = yield* store
+      .locateOtpChallenge({ otp: issued.secret })
+      .pipe(Effect.mapError(storedFactsUnavailable));
     return yield* Option.match(challenge, {
-      onNone: () => Effect.fail(unavailable()),
+      onNone: () => Effect.fail(storedFactsUnavailable()),
       onSome: (found) =>
         Effect.succeed({
           expiresAt: DateTime.fromDateUnsafe(found.expiresAt),
@@ -73,12 +72,12 @@ const storedFactsOf = Effect.fn('CommercePortalAuthCommunicationsEmail.storedFac
   }
   const peek = issued.flow === 'verify-email' ? store.peekEmailVerificationLedger : store.peekPasswordResetLedger;
   const binding = yield* Option.match(issued.ledgerToken, {
-    onNone: () => Effect.fail(unavailable()),
-    onSome: (token) => peek({ token }).pipe(Effect.mapError(unavailable)),
+    onNone: () => Effect.fail(storedFactsUnavailable()),
+    onSome: (token) => peek({ token }).pipe(Effect.mapError(storedFactsUnavailable)),
   });
   const expiresAt = Option.flatMapNullishOr(binding, ({ expiresAt: stored }) => stored);
   return yield* Option.match(expiresAt, {
-    onNone: () => Effect.fail(unavailable()),
+    onNone: () => Effect.fail(storedFactsUnavailable()),
     onSome: (stored) => Effect.succeed({ expiresAt: DateTime.fromDateUnsafe(stored), ledgerToken: issued.ledgerToken }),
   });
 });
@@ -143,10 +142,11 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
     const handoff = yield* CommercePortalAuthProtectedHandoff;
     const submitter = yield* CommercePortalAuthCommunicationRequestSubmitter;
     const trustedScope = yield* CommercePortalAuthTrustedScope;
-    const store = yield* CommercePortalAuthRecoveryStoreService;
-    const context = yield* Effect.context<Crypto.Crypto>();
+    const context = yield* Effect.context<Crypto.Crypto | CommercePortalAuthIssuedFacts>();
     const runWithContext = Effect.runPromiseWith(context);
-    const run: <A, E>(effect: Effect.Effect<A, E>) => ReturnType<typeof runWithContext<A, E>> = runWithContext;
+    const run: <A, E>(
+      effect: Effect.Effect<A, E, Crypto.Crypto | CommercePortalAuthIssuedFacts>,
+    ) => ReturnType<typeof runWithContext<A, E>> = runWithContext;
 
     const issue = Effect.fn('CommercePortalAuthCommunicationsEmail.issue')(function* issueMessage(
       issued: IssuedSecret,
@@ -155,12 +155,15 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       | PortalAuthCommunicationNotSent
       | PortalAuthCommunicationUnavailable
       | PortalAuthTrustedScopeUnavailable
-      | Schema.SchemaError
+      | Schema.SchemaError,
+      CommercePortalAuthIssuedFacts
     > {
       const scope = yield* trustedScope.current;
-      const reservation = yield* handoff.takeReservation(issued.flow, issued.user.id);
-      // Auth's own stored facts first: an issuance whose real expiry cannot be read is never submitted
-      const stored = yield* storedFactsOf(store, issued);
+      // Auth's own stored facts: an issuance whose real expiry cannot be read is never submitted
+      const [reservation, stored] = yield* Effect.all(
+        [handoff.takeReservation(issued.flow, issued.user.id), storedFactsOf(issued)],
+        { concurrency: 1 },
+      );
       const issuance = yield* issuanceOf(issued, reservation, stored.expiresAt).pipe(
         Effect.provideContext(context),
         Effect.mapError((cause) =>

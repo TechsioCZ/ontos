@@ -17,7 +17,7 @@ const NOW = DateTime.makeUnsafe('2026-11-19T10:00:00.000Z');
 const registry = Result.getOrThrow(buildMessageTypeRegistry(approvedMessageTypes));
 const AUTH = 'commerce.customer-context';
 const STATE = 'commerce.customer-context.portal-auth.issuance';
-const PURPOSES = approvedMessageTypes.filter(({ sourceOwner }) => sourceOwner === AUTH).map(({ purpose }) => purpose);
+const TYPES = approvedMessageTypes.filter(({ sourceOwner }) => sourceOwner === AUTH);
 const STOPS = [
   ['consumed', 'SOURCE_CONSUMED'],
   ['expired', 'SOURCE_EXPIRED'],
@@ -28,10 +28,11 @@ const STOPS = [
 
 describe('The three Portal Auth types in the production registry (#1406)', () => {
   it('are exactly three', () => {
-    expect(PURPOSES).toHaveLength(3);
+    expect(TYPES).toHaveLength(3);
   });
 
-  for (const purpose of PURPOSES) {
+  for (const type of TYPES) {
+    const { purpose } = type;
     it(`[${purpose}] a FOREIGN source module is refused with SOURCE_NOT_AUTHORIZED_FOR_TYPE`, () => {
       const decision = Result.getOrThrow(
         decideCommunication(
@@ -53,7 +54,6 @@ describe('The three Portal Auth types in the production registry (#1406)', () =>
           ),
         );
         expect(outcomeSummary(decision)).toMatchObject({ kind: 'NoMessage', reason });
-        const type = Option.getOrThrow(Option.fromNullishOr(registry.byPurpose.get(purpose as never)));
         expect(
           sourceCurrentnessOf(type, 1, { latestRevision: 1, state: `${STATE}-${name}` }, Option.none(), NOW),
         ).toMatchObject({ reason });

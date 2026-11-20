@@ -52,6 +52,9 @@ const VerificationLedgerRecordSchema = Schema.Struct({
 });
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
+/** The failed presentations Better Auth counted in a stored one-time code (`<code>:<count>`). */
+const otpAttemptsOf = (value: string): number => Math.trunc(Number(value.split(':')[1] ?? '')) || 0;
+
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   withCause(
     new CommercePortalAuthRecoveryUnavailable({
@@ -1075,7 +1078,6 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
     );
 
     const OTP_ONLY_DIGITS = /^\d{1,12}$/u;
-    const attemptsOf = (value: string) => Number.parseInt(value.split(':')[1] ?? '', 10) || 0;
 
     /**
      * The stored challenge of a freshly issued one-time code. Better Auth keeps its verification identifiers hashed, so the
@@ -1100,7 +1102,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         const [only] = matches;
         return matches.length === 1 && only !== undefined
           ? Option.some({
-              attempts: attemptsOf(only.value),
+              attempts: otpAttemptsOf(only.value),
               challenge: Redacted.make(only.identifier),
               expiresAt: only.expiresAt,
             })
@@ -1121,7 +1123,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           .pipe(Effect.mapError((cause) => unavailable('otp-challenge-read', cause)));
         return row === undefined
           ? Option.none()
-          : Option.some({ attempts: attemptsOf(row.value), challenge: input.challenge, expiresAt: row.expiresAt });
+          : Option.some({ attempts: otpAttemptsOf(row.value), challenge: input.challenge, expiresAt: row.expiresAt });
       },
     );
 

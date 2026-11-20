@@ -29,29 +29,34 @@ import {
 const INVOCATION = '22222222-2222-4222-8222-222222222222';
 const PA_OTP_3 = Schema.decodeSync(PortalAuthIssuanceRefSchema)('pa-otp-3');
 const ISSUED_AT = DateTime.makeUnsafe('2026-11-19T10:00:00.000Z');
-const heldOf = (flow: PortalAuthEmailFlow, ref: string, withToken = true): HeldIssuance => ({
-  endpoint: Redacted.make('fictional@example.test'),
-  issuance: {
-    expiresAt: DateTime.add(ISSUED_AT, { minutes: 10 }),
-    flow,
-    issuanceRef: Schema.decodeSync(PortalAuthIssuanceRefSchema)(ref),
-    issuedAt: ISSUED_AT,
-    providerSubjectId: 'subject-1',
-  },
-  ...(withToken ? { ledgerToken: Redacted.make('2fa-otp-fictional-key') } : {}),
-  secret: Redacted.make('fictional-secret'),
-});
+const heldOf = (flow: PortalAuthEmailFlow, ref: string, ledgerToken?: Redacted.Redacted): HeldIssuance => {
+  const base = {
+    endpoint: Redacted.make('fictional@example.test'),
+    issuance: {
+      expiresAt: DateTime.add(ISSUED_AT, { minutes: 10 }),
+      flow,
+      issuanceRef: Schema.decodeSync(PortalAuthIssuanceRefSchema)(ref),
+      issuedAt: ISSUED_AT,
+      providerSubjectId: 'subject-1',
+    },
+    secret: Redacted.make('fictional-secret'),
+  } satisfies HeldIssuance;
+  return ledgerToken === undefined ? base : { ...base, ledgerToken };
+};
+const OTP_CHALLENGE = Redacted.make('fictional-challenge-id');
 
 const storeOver = (challenge: Option.Option<{ attempts: number }>) => ({
   peekEmailVerificationLedger: () => Effect.succeed(Option.none()),
   peekPasswordResetLedger: () => Effect.succeed(Option.none()),
   readOtpChallenge: ({ challenge: key }: { challenge: Redacted.Redacted }) =>
     Effect.succeed(
-      Option.map(challenge, ({ attempts }) => ({
-        attempts,
-        challenge: key,
-        expiresAt: new Date('2026-11-19T10:10:00Z'),
-      })),
+      challenge.pipe(
+        Option.map(({ attempts }) => ({
+          attempts,
+          challenge: key,
+          expiresAt: new Date('2026-11-19T10:10:00Z'),
+        })),
+      ),
     ),
 });
 
@@ -67,7 +72,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
         'REVOKED',
         'SUPERSEDED',
       ] satisfies readonly IssuanceCurrentness[]
-    ).map(issuanceSourceStateOf);
+    ).map((currentness) => issuanceSourceStateOf(currentness));
     expect(states.filter((state) => state !== PORTAL_AUTH_ISSUANCE_STATE.current)).toContain(
       PORTAL_AUTH_ISSUANCE_STATE.superseded,
     );
@@ -80,7 +85,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
     'a one-time code is CURRENT only while its two-factor challenge exists below the plugin failed-attempt limit',
     () =>
       Effect.gen(function* otpState() {
-        const held = heldOf('otp', 'pa-otp-1');
+        const held = heldOf('otp', 'pa-otp-1', OTP_CHALLENGE);
         const limit = COMMERCE_PORTAL_AUTH_MFA_POLICY.maxFailedAttempts;
         expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: 0 })))(held)).toBe('CURRENT');
         expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: limit - 1 })))(held)).toBe('CURRENT');
@@ -89,7 +94,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
         // consumed by a verification (the plugin deletes the challenge) or spent
         expect(yield* ledgerProbeOver(storeOver(Option.none()))(held)).toBe('CONSUMED');
         // a code whose challenge was never located has nothing to be current against
-        expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: 0 })))(heldOf('otp', 'pa-otp-2', false))).toBe(
+        expect(yield* ledgerProbeOver(storeOver(Option.some({ attempts: 0 })))(heldOf('otp', 'pa-otp-2'))).toBe(
           'NO_LONGER_CURRENT',
         );
       }),
@@ -101,7 +106,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
       const live = yield* Effect.provide(
         Effect.gen(function* hold() {
           const handoff = yield* CommercePortalAuthProtectedHandoff;
-          yield* handoff.hold(heldOf('otp', 'pa-otp-3'), { supersede: true });
+          yield* handoff.hold(heldOf('otp', 'pa-otp-3', OTP_CHALLENGE), { supersede: true });
           return yield* handoff.currentness(PA_OTP_3);
         }),
         protectedHandoffLayer(() => Effect.succeed('CURRENT')),
@@ -145,7 +150,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
         const first = yield* begin;
         // the first creation held its issuance and submitted; the replays now race while the answer is lost
         const ref = Option.getOrThrow(yield* store.takeReservation('verify-email', 'subject-1')).issuanceRef;
-        yield* store.hold(heldOf('verify-email', ref, false), { supersede: true });
+        yield* store.hold(heldOf('verify-email', ref), { supersede: true });
         const results = yield* Effect.all(
           Array.from({ length: 8 }, () => begin),
           { concurrency: 'unbounded' },

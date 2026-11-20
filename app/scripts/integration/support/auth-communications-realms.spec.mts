@@ -1,6 +1,6 @@
 import { splitSetCookieHeader, applySetCookies } from 'better-auth/cookies';
 import { and, eq, isNotNull, like } from 'drizzle-orm';
-import { Config, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, Effect, Layer, Option, Redacted, Ref } from 'effect';
 import { randomInt, randomUUID } from 'node:crypto';
 
 import {
@@ -13,14 +13,7 @@ import {
   makeCommercePortalAuth,
 } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/auth.ts';
 import { ledgerProbeOver } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/communications-ledger-probe.ts';
-import {
-  COMMERCE_PORTAL_AUTH_POLICY,
-  parseCommercePortalAuthConfig,
-} from '../../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
-import {
-  COMMERCE_PORTAL_AUTH_MFA_POLICY,
-  createCommercePortalAuthTwoFactorPlugin,
-} from '../../../verticals/commerce-customer-context/api/portal-auth/provider/mfa/plugin.ts';
+import { parseCommercePortalAuthConfig } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthRecoveryProvider } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/recovery/provider-service.ts';
 import {
   CommercePortalAuthRecoveryProviderService,
@@ -58,7 +51,6 @@ import { cryptoLive, historyOfRequest, PORTAL_ORIGIN } from './auth-communicatio
  */
 
 const SECRET = 's'.repeat(64);
-const SignUpAnswerSchema = Schema.Struct({ user: Schema.Struct({ id: Schema.String }) });
 export const PASSWORD = 'P'.repeat(24);
 export const REPLACEMENT_PASSWORD = 'R'.repeat(24);
 const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
@@ -103,7 +95,7 @@ export const makePostgresRealm = Effect.fn('AuthCommunicationsRealm.postgres')(f
   const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(Effect.provide(cryptoLive));
   // Auth's own Current lifecycle of a held issuance is read from this very ledger
   world.ledgerProbe.current = ledgerProbeOver(store);
-  world.recoveryStore.current = store;
+  yield* Ref.set(world.recoveryStore, Option.some(store));
   // the provider's callback data as the account owner's inbox would see it: only tests read it, to play that owner
   const issued: IssuedTokens = { otp: [], reset: [], verification: [] };
   const tappedDelivery = {

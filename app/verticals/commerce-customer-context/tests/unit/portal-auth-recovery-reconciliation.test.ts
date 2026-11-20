@@ -48,9 +48,11 @@ const makeReconciliationStore = (input: {
       consumeRateLimitBudget: unusedRequiredMethod,
       dispatchPasswordResetLedger: unusedRequiredMethod,
       findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
+      locateOtpChallenge: () => Effect.succeed(Option.none()),
       peekDispatchedPasswordResetLedger: unusedRequiredMethod,
       peekEmailVerificationLedger: () => Effect.succeed(input.ledgerBinding),
       peekPasswordResetLedger: () => Effect.succeed(input.ledgerBinding),
+      readOtpChallenge: () => Effect.succeed(Option.none()),
       recordRecoveryReconciliation: (conflict) =>
         Effect.sync(() => {
           recorded.push(conflict);
@@ -267,9 +269,11 @@ const makeIndeterminateStore = (input: {
       consumeRateLimitBudget: unusedRequiredMethod,
       dispatchPasswordResetLedger: unusedRequiredMethod,
       findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
+      locateOtpChallenge: unusedRequiredMethod,
       peekDispatchedPasswordResetLedger: () => Effect.succeed(input.dispatchedBinding),
       peekEmailVerificationLedger: unusedRequiredMethod,
       peekPasswordResetLedger: unusedRequiredMethod,
+      readOtpChallenge: unusedRequiredMethod,
       recordRecoveryReconciliation: (conflict) =>
         Effect.sync(() => {
           recorded.push(conflict);

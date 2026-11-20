@@ -6,7 +6,8 @@ import type { Redacted } from 'effect';
 import { createHash, randomBytes } from 'node:crypto';
 
 import { CommercePortalAuthRawEmailDeliveryService } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/raw-email-delivery-service.ts';
-import { CommercePortalAuthRecoveryStoreService } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/recovery/store-service.ts';
+import { CommercePortalAuthIssuedFacts } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/issued-facts.ts';
+import type { IssuedFactsService } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/issued-facts.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/recovery/store-service.ts';
 import { CommercePortalAuthCommunicationsEmailLive } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/communications-email-delivery.ts';
 import {
@@ -156,6 +157,8 @@ const slotOf = portalAuthOwnerRenderedSlotOf;
  * One Tenant with approved FICTIONAL Czech and English revisions of the three Portal Auth types, the Auth protected handoff
  * and the owner doubles, over the real Communications persistence.
  */
+const SUBMIT_OPERATION = 'submit-communication-request';
+
 export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* makeWorld(options: AuthWorldOptions = {}) {
   const database = yield* makeRuntimeDatabase();
   const tenantId = yield* nextId;
@@ -392,15 +395,11 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     submit: (request: CommunicationRequestEncoded) =>
       Effect.gen(function* submit() {
         if (unavailableSubject.current) {
-          return yield* new PortalAuthCommunicationUnavailable({ operation: 'submit-communication-request' });
+          return yield* new PortalAuthCommunicationUnavailable({ operation: SUBMIT_OPERATION });
         }
         const run = yield* runner
           .submit(tenantId, decodeRequest(request), undefined, 'commerce.customer-context')
-          .pipe(
-            Effect.mapError(
-              () => new PortalAuthCommunicationUnavailable({ operation: 'submit-communication-request' }),
-            ),
-          );
+          .pipe(Effect.mapError(() => new PortalAuthCommunicationUnavailable({ operation: SUBMIT_OPERATION })));
         const { result } = run;
         const submission: PortalAuthSubmission =
           result.outcome === 'CONFLICT'
@@ -423,30 +422,27 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
         submissions.push({ request, submission });
         outboxes.push(run.outbox);
         if (lostAnswerSubject.current) {
-          return yield* new PortalAuthCommunicationUnavailable({ operation: 'submit-communication-request' });
+          return yield* new PortalAuthCommunicationUnavailable({ operation: SUBMIT_OPERATION });
         }
         return submission;
       }),
   };
 
   /** The realm's real recovery store, set once its realm exists: the delivery reads Auth's stored expiry and one-time code challenge from it. */
-  const recoveryStore: { current: CommercePortalAuthRecoveryStore | undefined } = { current: undefined };
+  const recoveryStore = yield* Ref.make(Option.none<CommercePortalAuthRecoveryStore>());
   const throughRealmStore = <Value, Failure>(
     read: (store: CommercePortalAuthRecoveryStore) => Effect.Effect<Value, Failure>,
   ) =>
-    Effect.suspend(() =>
-      recoveryStore.current === undefined
-        ? Effect.die('no Portal Auth realm is bound to the world')
-        : read(recoveryStore.current),
+    Ref.get(recoveryStore).pipe(
+      Effect.flatMap(
+        Option.match({ onNone: () => Effect.die('no Portal Auth realm is bound to the world'), onSome: read }),
+      ),
     );
   const delegatingStore = {
     locateOtpChallenge: (input) => throughRealmStore((store) => store.locateOtpChallenge(input)),
     peekEmailVerificationLedger: (input) => throughRealmStore((store) => store.peekEmailVerificationLedger(input)),
     peekPasswordResetLedger: (input) => throughRealmStore((store) => store.peekPasswordResetLedger(input)),
-  } satisfies Pick<
-    CommercePortalAuthRecoveryStore,
-    'locateOtpChallenge' | 'peekEmailVerificationLedger' | 'peekPasswordResetLedger'
-  >;
+  } satisfies IssuedFactsService;
 
   const rawDelivery = yield* CommercePortalAuthRawEmailDeliveryService.pipe(
     Effect.provide(
@@ -456,7 +452,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
             Layer.succeed(CommercePortalAuthProtectedHandoff, handoff),
             Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, submitter),
             Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId }) }),
-            Layer.succeed(CommercePortalAuthRecoveryStoreService, delegatingStore as CommercePortalAuthRecoveryStore),
+            Layer.succeed(CommercePortalAuthIssuedFacts, delegatingStore),
             cryptoLive,
           ),
         ),
@@ -472,7 +468,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     handoff,
     languageRef: language,
     ledgerProbe,
-    recoveryStore,
+    lostAnswerSubject,
     mailbox,
     messageHandoff,
     outboxes,
@@ -486,13 +482,13 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
         transaction: Parameters<Parameters<typeof database.inTenant>[1]>[0],
       ) => Effect.Effect<readonly Row[], unknown>,
     ) => database.inTenant(tenantId, select),
+    recoveryStore,
     runner,
     sourceReads,
     submissions,
     submitter,
     tenantId,
     types,
-    lostAnswerSubject,
     unavailableSubject,
   };
 });
