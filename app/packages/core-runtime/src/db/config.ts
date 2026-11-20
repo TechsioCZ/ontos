@@ -100,7 +100,11 @@ const configFailure = (reason: string, cause?: unknown): DatabaseConfigError =>
 interface ReadDatabaseUrlOptions {
   readonly configKey: DatabaseUrlKey;
   readonly provider: ConfigProvider.ConfigProvider;
-  /** Rejects query parameters that would override the URL's user, server or database. */
+  /**
+   * Reads the URL's server and database exactly as the PostgreSQL driver connects to them: query parameters that
+   * would override its user, server or database are rejected, and the host and the database name are percent-decoded
+   * by the driver's rule, the database being the path after its one leading slash (`//ontos` names `/ontos`).
+   */
   readonly rejectIdentityOverrides?: boolean;
 }
 
@@ -138,14 +142,17 @@ const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDataba
     return yield* configFailure(`${options.configKey} must not override its user, server or database with parameters`);
   }
 
+  const driverExact = options.rejectIdentityOverrides === true;
   const decoded = yield* Effect.try({
     catch: (error) => configFailure(invalidReason, error),
     try: () => ({
       authorityUser: decodeURIComponent(parsed.username),
-      database: decodeURIComponent(parsed.pathname.replace(/^\/+/u, '')),
+      // `@effect/sql-pg` strips one leading slash and decodes the rest; a bracketed IPv6 host is compared as written.
+      database: decodeURIComponent(parsed.pathname.replace(driverExact ? /^\//u : /^\/+/u, '')),
+      host: driverExact && !parsed.hostname.startsWith('[') ? decodeURIComponent(parsed.hostname) : parsed.hostname,
     }),
   });
-  const host = parsed.hostname;
+  const { host } = decoded;
   const port = parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
   const queryUser = parsed.searchParams.getAll('user').at(-1);
   const user = queryUser === undefined || queryUser.length === 0 ? decoded.authorityUser : queryUser;
@@ -163,16 +170,26 @@ const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDataba
   });
 });
 
-const parseDatabaseConfigWith = (provider: ConfigProvider.ConfigProvider, identity: DatabaseIdentity) =>
-  readDatabaseUrl({ configKey: identity.urlKey, provider });
+const parseDatabaseConfigWith = (
+  provider: ConfigProvider.ConfigProvider,
+  identity: DatabaseIdentity,
+  rejectIdentityOverrides = false,
+) => readDatabaseUrl({ configKey: identity.urlKey, provider, rejectIdentityOverrides });
 
 const readAdminDatabaseUrl = (provider: ConfigProvider.ConfigProvider, rejectIdentityOverrides = false) =>
   readDatabaseUrl({ configKey: 'DATABASE_ADMIN_URL', provider, rejectIdentityOverrides });
 
 const parseDatabaseConnectionPairWith = Effect.fn('Config.readDatabaseConnectionPair')(
-  function* readDatabaseConnectionPairEffect(provider: ConfigProvider.ConfigProvider, identity: DatabaseIdentity) {
+  function* readDatabaseConnectionPairEffect(
+    provider: ConfigProvider.ConfigProvider,
+    identity: DatabaseIdentity,
+    rejectIdentityOverrides: boolean,
+  ) {
     const [runtime, admin] = yield* Effect.all(
-      [parseDatabaseConfigWith(provider, identity), readAdminDatabaseUrl(provider)],
+      [
+        parseDatabaseConfigWith(provider, identity, rejectIdentityOverrides),
+        readAdminDatabaseUrl(provider, rejectIdentityOverrides),
+      ],
       { concurrency: 1 },
     );
 
@@ -240,12 +257,19 @@ export const parseDatabaseConfig = (
     SHARED_RUNTIME_IDENTITY,
   );
 
+/**
+ * The administrative and shared runtime connections of one environment. With `rejectIdentityOverrides`, both URLs are
+ * read exactly as the driver connects with them (`ReadDatabaseUrlOptions`), so `targetsSameDatabase` compares what the
+ * two pools really reach.
+ */
 export const parseDatabaseConnectionPair = (
   environment: DatabaseEnvironment,
+  options: { readonly rejectIdentityOverrides?: boolean } = {},
 ): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> =>
   parseDatabaseConnectionPairWith(
     ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
     SHARED_RUNTIME_IDENTITY,
+    options.rejectIdentityOverrides === true,
   );
 
 const loadWithProvider = <Value>(
@@ -306,7 +330,7 @@ export const loadDatabaseConnectionPair = (
   options: LoadDatabaseConnectionPairOptions = {},
 ): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> => {
   const identity = options.identity ?? SHARED_RUNTIME_IDENTITY;
-  return loadWithProvider((provider) => parseDatabaseConnectionPairWith(provider, identity), options);
+  return loadWithProvider((provider) => parseDatabaseConnectionPairWith(provider, identity, false), options);
 };
 
 /**

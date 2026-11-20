@@ -206,6 +206,59 @@ it.effect('compares the server, port and database two connections reach, never t
   }),
 );
 
+/** A pair read exactly as the driver connects with each URL, as the stage accounts command reads its two URLs. */
+const driverExactPairOf = (admin: string, runtime: string) =>
+  parseDatabaseConnectionPair({ DATABASE_ADMIN_URL: admin, DATABASE_URL: runtime }, { rejectIdentityOverrides: true });
+
+it.effect('reads a pair as the driver connects with it when asked to, and every other caller as before', () =>
+  Effect.gen(function* readsDriverExactPairs() {
+    const admin = 'postgresql://ontos_admin:admin@db18:5432/ontos';
+    const runtime = 'postgresql://ontos_runtime:runtime@db18:5432/ontos';
+    // Stage's own pair: two logins of the same host, port and database, with no query.
+    const stage = yield* driverExactPairOf(admin, runtime);
+    expect(targetsSameDatabase(stage.admin, stage.runtime)).toBe(true);
+    // The driver percent-decodes the host and the database name: `%64b18` is `db18`.
+    const encoded = yield* driverExactPairOf(admin, 'postgresql://ontos_runtime:runtime@%64b18:5432/%6Fntos');
+    expect([encoded.runtime.host, encoded.runtime.database]).toEqual(['db18', 'ontos']);
+    expect(targetsSameDatabase(encoded.admin, encoded.runtime)).toBe(true);
+    const database = yield* driverExactPairOf(
+      'postgresql://ontos_admin:admin@db18:5432/%64b18',
+      'postgresql://ontos_runtime:runtime@db18:5432/db18',
+    );
+    expect(targetsSameDatabase(database.admin, database.runtime)).toBe(true);
+    // It strips one leading slash: `//ontos` is the database `/ontos`, not `ontos`.
+    const doubled = yield* driverExactPairOf(admin, 'postgresql://ontos_runtime:runtime@db18:5432//ontos');
+    expect(doubled.runtime.database).toBe('/ontos');
+    expect(targetsSameDatabase(doubled.admin, doubled.runtime)).toBe(false);
+    // Every parameter that would move a connection to another user, server or database is refused, on either URL.
+    for (const parameter of [
+      'dbname=other',
+      'DBNAME=other',
+      'database=other',
+      'db=other',
+      'host=replica',
+      'hostaddr=10.0.0.2',
+      'port=5433',
+      'user=ontos_admin',
+    ]) {
+      for (const [adminUrl, runtimeUrl, key] of [
+        [admin, `${runtime}?${parameter}`, 'DATABASE_URL'],
+        [`${admin}?${parameter}`, runtime, 'DATABASE_ADMIN_URL'],
+      ] as const) {
+        const refused = yield* Effect.flip(driverExactPairOf(adminUrl, runtimeUrl));
+        expect(refused.reason).toBe(`${key} must not override its user, server or database with parameters`);
+      }
+    }
+    // A caller that does not ask reads the pair exactly as before: overrides accepted, every leading slash stripped.
+    const lenient = yield* parseDatabaseConnectionPair({
+      DATABASE_ADMIN_URL: admin,
+      DATABASE_URL: 'postgresql://ontos_runtime:runtime@db18:5432//ontos?dbname=other',
+    });
+    expect([lenient.runtime.host, lenient.runtime.database]).toEqual(['db18', 'ontos']);
+    expect(targetsSameDatabase(lenient.admin, lenient.runtime)).toBe(true);
+  }),
+);
+
 it.effect('each runtime identity loads from its own URL key and names that key when it is missing', () =>
   Effect.gen(function* identityKeysAreRead() {
     const environment = { environment: identityEnvironment, envPath: missingEnvPath };
