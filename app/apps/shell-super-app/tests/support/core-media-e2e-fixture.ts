@@ -730,8 +730,8 @@ const REQUIRED_ENVIRONMENT = [
  */
 export const skipScenario = (ctx: { readonly skip: (note?: string) => void }, note: string) =>
   Effect.gen(function* skipOrFail() {
-    const required = yield* Config.option(Config.String('D20_E2E_REQUIRED')).pipe(Effect.orDie);
-    if (Option.isSome(required) && required.value === '1') {
+    const mustRun = yield* Config.option(Config.String('D20_E2E_REQUIRED')).pipe(Effect.orDie);
+    if (Option.isSome(mustRun) && mustRun.value === '1') {
       return yield* Effect.die(`D20_E2E_REQUIRED is set but the scenario cannot run: ${note}`);
     }
     yield* Effect.sync(() => {
