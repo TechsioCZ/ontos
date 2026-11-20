@@ -285,6 +285,16 @@ export default defineConfig({
       },
     },
     {
+      // Better Auth's whole endpoint context is not reproducible in a unit fixture. The test scripts the three members the one-time
+      // code delivery reads (cookie name, secret, signed cookie) and tolerates a context that cannot name a session; the real
+      // plugin runs in the one-time code end-to-end suite.
+      files: ['verticals/commerce-customer-context/tests/unit/portal-auth-communications-email.test.ts'],
+      rules: {
+        'anti-slop/no-chained-type-assertions': 'off',
+        'typescript/no-unsafe-type-assertion': 'off',
+      },
+    },
+    {
       // The malformed evidence fixture must reach the runtime validator with a compile-time
       // owner type; accepting the cast is the assertion under test.
       files: ['verticals/assortment/tests/unit/decision-evaluation.test.ts'],

@@ -51,7 +51,8 @@ const decodeRef = Schema.decodeSync(PortalAuthIssuanceRefSchema);
  * The slice of Better Auth's endpoint context the delivery reads to name the two-factor challenge of a code (a pending sign-in
  * names it by its signed cookie), scripted and FICTIONAL. The real plugin is exercised by the end-to-end suite of the one-time code.
  */
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- SAFETY: the delivery reads only the cookie name, the secret and getSignedCookie of the context, and tolerates a context that cannot name a session; Better Auth's whole endpoint context is not reproduced by this fixture.
+// SAFETY: the delivery reads only the cookie name, the secret and getSignedCookie of the context, and tolerates a context that
+// cannot name a session; Better Auth's whole endpoint context is not reproduced by this fixture.
 const OTP_CONTEXT = {
   context: { createAuthCookie: () => ({ name: 'two_factor' }), secret: 'fictional-secret' },
   getSignedCookie: () => Promise.resolve('fictional-challenge-cookie'),
