@@ -74,23 +74,32 @@ const RouteKeySchema = SymmyRouteContextRequestSchema.fields.routeKey;
 export type SymmyEnrollmentRouteKey = typeof RouteKeySchema.Type;
 const versionText = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(80));
 
-/** One route of one Tenant, company and integration principal, exactly as the operator reviewed it. */
-export const SymmyRouteEnrollmentRequestSchema = Schema.Struct({
-  configuration: SymmyFixtureExecutionPlanSchema,
+/**
+ * What names one stored route: the selector it is found by (Tenant, integration principal, company, route kind and
+ * code) and its route id. A deactivation names the route by nothing else.
+ */
+export const SymmyRouteReferenceSchema = Schema.Struct({
   /** Absent only for a Tenant-only route. */
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  /** Required for a route that admits writes; it pins their retention. */
-  lifecyclePolicy: Schema.optionalKey(SymmyJobLifecyclePolicyRefSchema),
-  mappingVersion: versionText,
-  /** The integration principal the Symmy API key authenticates as. */
+  /** The integration principal Symmy authenticates as, through its API-key binding. */
   principalId: PrincipalIdSchema,
   /** The code the Symmy path names a selected Customer Group by; only the Customer Group membership route has one. */
   routeCode: Schema.optionalKey(SymmyDecodedSourceSelectorSchema.members[0].fields.code),
   /** Chosen by the operator, so the retention configuration can name the route before it is written. */
   routeId: SymmyLifecycleRouteIdSchema,
   routeKey: RouteKeySchema,
-  routeRevision: versionText,
   tenantId: TenantIdSchema,
+});
+export type SymmyRouteReference = typeof SymmyRouteReferenceSchema.Type;
+
+/** One route of one Tenant, company and integration principal, exactly as the operator reviewed it. */
+export const SymmyRouteEnrollmentRequestSchema = Schema.Struct({
+  ...SymmyRouteReferenceSchema.fields,
+  configuration: SymmyFixtureExecutionPlanSchema,
+  /** Required for a route that admits writes; it pins their retention. */
+  lifecyclePolicy: Schema.optionalKey(SymmyJobLifecyclePolicyRefSchema),
+  mappingVersion: versionText,
+  routeRevision: versionText,
 });
 export type SymmyRouteEnrollmentRequest = typeof SymmyRouteEnrollmentRequestSchema.Type;
 
@@ -744,26 +753,33 @@ export interface SymmyRouteVersion {
   readonly routeRevision: string;
 }
 
-/** The decided change, with the stored route it changes. */
+/** The decided enrollment or replacement, with the stored route it changes. */
 export type SymmyRouteEnrollmentWrite =
-  | { readonly kind: 'deactivate'; readonly previous: SymmyRouteVersion }
   | { readonly kind: 'insert' }
   | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace'; readonly previous: SymmyRouteVersion }
   | { readonly kind: 'unchanged' };
 
 const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
   new SymmyRouteEnrollmentRefused({ refusals: [refusal(code, detail)] });
+const staleToken = (current: RouteRow, expectedChangeToken: number) =>
+  refused(
+    'change_token_not_current',
+    `Route ${current.routeId} is at change token ${String(current.changeToken)}, not ${String(expectedChangeToken)}`,
+  );
+const reboundSelector = (current: RouteRow) =>
+  refused('route_id_conflict', `The selector is enrolled as route ${current.routeId}; a route id is never rebound`);
 
 /**
- * What one change does with the routes already holding its selector (Tenant, principal, company, route kind and code)
- * or its route id, decided under the enrollment lock. A change that writes is decided only at the token the operator
- * names; a request the stored route already satisfies writes nothing, so the replay of an applied change is unchanged
- * at any token. A replacement is decided here only as allowed: the store refuses it while work is outstanding.
+ * What one enrollment or replacement does with the routes already holding its selector (Tenant, principal, company,
+ * route kind and code) or its route id, decided under the enrollment lock. A replacement is decided only at the token
+ * the operator names; a request the stored route already satisfies writes nothing, so the replay of an applied change
+ * is unchanged at any token. A replacement is decided here only as allowed: the store refuses it while work is
+ * outstanding.
  */
 export const decideSymmyRouteWrite = (
   request: SymmyRouteEnrollmentRequest,
   existing: { readonly byRouteId: Option.Option<RouteRow>; readonly bySelector: Option.Option<RouteRow> },
-  change: SymmyRouteChange,
+  change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>,
 ): SymmyRouteEnrollmentWrite | SymmyRouteEnrollmentRefused => {
   if (Option.isNone(existing.bySelector)) {
     if (change.kind !== 'enroll') {
@@ -775,26 +791,7 @@ export const decideSymmyRouteWrite = (
   }
   const current = existing.bySelector.value;
   if (current.routeId !== request.routeId) {
-    return refused(
-      'route_id_conflict',
-      `The selector is enrolled as route ${current.routeId}; a route id is never rebound`,
-    );
-  }
-  const previous = { changeToken: current.changeToken, routeRevision: current.routeRevision };
-  const stale =
-    change.kind !== 'enroll' && current.changeToken !== change.expectedChangeToken
-      ? Option.some(
-          refused(
-            'change_token_not_current',
-            `Route ${current.routeId} is at change token ${String(current.changeToken)}, not ${String(change.expectedChangeToken)}`,
-          ),
-        )
-      : Option.none();
-  if (change.kind === 'deactivate') {
-    if (!current.active) {
-      return { kind: 'unchanged' };
-    }
-    return Option.isSome(stale) ? stale.value : { kind: 'deactivate', previous };
+    return reboundSelector(current);
   }
   const changed = symmyRouteDifferences(request, current);
   if (changed.length === 0) {
@@ -806,13 +803,47 @@ export const decideSymmyRouteWrite = (
       `Route ${current.routeId} at change token ${String(current.changeToken)} is enrolled with another ${changed.join(', ')}`,
     );
   }
-  if (Option.isSome(stale)) {
-    return stale.value;
+  if (current.changeToken !== change.expectedChangeToken) {
+    return staleToken(current, change.expectedChangeToken);
   }
   if (current.routeRevision === request.routeRevision) {
     return refused('revision_not_advanced', 'A replacement names a new route revision');
   }
-  return { changed, kind: 'replace', previous };
+  return {
+    changed,
+    kind: 'replace',
+    previous: { changeToken: current.changeToken, routeRevision: current.routeRevision },
+  };
+};
+
+/** The stored route a deactivation stops, or finds stopped already. */
+export type SymmyRouteDeactivation =
+  | { readonly kind: 'deactivate'; readonly route: RouteRow }
+  | { readonly kind: 'unchanged'; readonly route: RouteRow };
+
+/**
+ * What a deactivation does with the route holding its selector, decided under the enrollment lock: it stops the route
+ * of its route id at the token the operator names, whatever the route enrolls or admitted; a stopped route stays
+ * unchanged at any token, so the replay of an applied deactivation writes nothing.
+ */
+export const decideSymmyRouteDeactivation = (
+  reference: SymmyRouteReference,
+  bySelector: Option.Option<RouteRow>,
+  expectedChangeToken: number,
+): SymmyRouteDeactivation | SymmyRouteEnrollmentRefused => {
+  if (Option.isNone(bySelector)) {
+    return refused('route_not_enrolled', `No route ${reference.routeId} holds this selector`);
+  }
+  const route = bySelector.value;
+  if (route.routeId !== reference.routeId) {
+    return reboundSelector(route);
+  }
+  if (!route.active) {
+    return { kind: 'unchanged', route };
+  }
+  return route.changeToken === expectedChangeToken
+    ? { kind: 'deactivate', route }
+    : staleToken(route, expectedChangeToken);
 };
 
 /**

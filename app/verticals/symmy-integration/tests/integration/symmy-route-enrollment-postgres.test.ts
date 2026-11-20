@@ -225,9 +225,10 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
     Effect.gen(function* runEnrollment() {
       const change = input.change ?? enroll;
       if (change.kind === 'deactivate') {
+        // The store reads only the reference fields of the enrolled request.
         return input.run.mode === 'verify'
           ? yield* Effect.die('A deactivation is never verified')
-          : yield* deactivateSymmyRoute({ change, request: input.request, run: input.run });
+          : yield* deactivateSymmyRoute({ change, reference: input.request, run: input.run });
       }
       const found = symmyRouteInventoryOf(input.request.routeKey);
       const inventory = yield* Option.isOption(found) && Option.isSome(found)
@@ -574,7 +575,17 @@ it.effect(
         yield* admin`select change_token from symmy_integration.job_routes where tenant_id=${tenantId} and route_id=${stockRouteId}`.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(TokenSchema)),
         );
-      const stock = {
+      // The stored route has no plan: its reference is all a deactivation names.
+      const reference = {
+        legalEntityId,
+        principalId: integrationId,
+        routeId: stockRouteId,
+        routeKey: 'inventoryStockBatch',
+        tenantId,
+      };
+      // An enrollment of the stock route names what it would enroll.
+      const enrollment = {
+        ...reference,
         configuration: {
           items: [
             {
@@ -598,18 +609,17 @@ it.effect(
             },
           ],
         },
-        legalEntityId,
         mappingVersion: 'map-v1',
-        principalId: integrationId,
-        routeId: stockRouteId,
-        routeKey: 'inventoryStockBatch',
         routeRevision: 'route-v1',
-        tenantId,
       };
-      const command = (change: SymmyRouteChange, mode: 'apply' | 'dry-run') =>
+      const command = (
+        change: SymmyRouteChange,
+        mode: 'apply' | 'dry-run',
+        request: typeof enrollment | typeof reference = reference,
+      ) =>
         runSymmyRouteEnrollment({
           change,
-          request: stock,
+          request,
           run: mode === 'apply' ? { attribution, mode } : { mode },
         }).pipe(
           Effect.provideService(PgClient.PgClient, admin),
@@ -622,6 +632,10 @@ it.effect(
         listedAll: true,
         resolvedBy: 'integration.symmy.execute-symmy-retention',
       };
+      // A deactivation request carrying more than the reference is refused, not read in part.
+      expect((yield* refusals(command(deactivateAt(storedAt), 'dry-run', enrollment))).map(({ code }) => code)).toEqual(
+        ['invalid_request'],
+      );
       expect(yield* command(deactivateAt(storedAt), 'dry-run')).toMatchObject({
         changeToken: storedAt,
         outcome: 'would_deactivate',
@@ -631,8 +645,20 @@ it.effect(
       const stopped = yield* command(deactivateAt(storedAt), 'apply');
       expect(stopped).toMatchObject({ outcome: 'deactivated', strandedWork: stranded });
       expect(tokenOf(stopped)).not.toBe(storedAt);
+      // The record of the stop holds what the stored route held.
+      const [stopRecord] =
+        yield* admin`select change, legal_entity_id, previous_change_token, previous_revision, route_key, route_revision
+          from symmy_integration.route_enrollment_records where tenant_id=${tenantId} and route_id=${stockRouteId}`;
+      expect(stopRecord).toEqual({
+        change: 'deactivate',
+        legal_entity_id: legalEntityId,
+        previous_change_token: storedAt,
+        previous_revision: 'route-v1',
+        route_key: 'inventoryStockBatch',
+        route_revision: 'route-v1',
+      });
       // Anything but a deactivation of it is refused, as the command has no inventory of the stock route.
-      expect((yield* refusals(command(enroll, 'dry-run'))).map(({ code }) => code)).toEqual([
+      expect((yield* refusals(command(enroll, 'dry-run', enrollment))).map(({ code }) => code)).toEqual([
         'stock_route_pending_inventory_setup',
       ]);
     }).pipe(Effect.scoped, Effect.provide(services)),
