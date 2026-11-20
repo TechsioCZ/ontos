@@ -174,6 +174,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   // @ontos-codesmith-core-read-server-api-groups:end
   .add(ShellBrowserApi.groups.coreMediaDownload)
   .add(ShellBrowserApi.groups.coreHostedOperations)
+  .add(ShellBrowserApi.groups.coreMediaUpload)
   .add(GatewayContextApiGroup)
   .add(ShellBrowserApi.groups.externalIdentity)
   .add(ShellBrowserApi.groups.accessAdminRoles)
