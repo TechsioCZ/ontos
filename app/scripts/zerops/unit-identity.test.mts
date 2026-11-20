@@ -273,3 +273,43 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
   60_000,
 );
+
+/**
+ * A unit's identity holds what its own build reads. A script every unit build runs that names a file of another
+ * vertical (generate-ontos-module-contract.mts named two as alias targets) put that vertical, and everything it
+ * imports, into every unit: a source change there rebuilt all units. Only the units that import it may change.
+ */
+it.effect(
+  'changes the identity of the units that import a changed vertical, never of a unit that does not depend on it',
+  () =>
+    Effect.gen(function* committedIsolation() {
+      const { graph } = yield* readUnitIdentities('HEAD');
+      const digestAfter = (changed: string, directory: string) =>
+        unitInputDigest(directory, {
+          environment: [],
+          graph: unitInputGraph({
+            ...graph.workspace,
+            entries: graph.workspace.entries.map((entry) =>
+              entry.path === changed ? { ...entry, identity: `${entry.identity}-changed` } : entry,
+            ),
+          }),
+        });
+      for (const [changed, importer] of [
+        ['app/verticals/facility-operations/src/components/record-discussion.tsx', 'app/verticals/legal-agreements'],
+        ['app/verticals/tagging/src/components/tag-controls.tsx', 'app/verticals/merchandise'],
+      ] as const) {
+        for (const [directory, same] of [
+          ['app/verticals/tax', true],
+          [importer, false],
+        ] as const) {
+          const before = yield* unitInputDigest(directory, { environment: [], graph });
+          expect({ changed, directory, same: (yield* digestAfter(changed, directory)) === before }).toEqual({
+            changed,
+            directory,
+            same,
+          });
+        }
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  60_000,
+);
