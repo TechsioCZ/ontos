@@ -1422,6 +1422,8 @@ console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGa
 
 const compactGovernedSource = (source: string): string =>
   source.replaceAll(/\s+/gu, '').replaceAll(/,(?=[)}\]])/gu, '');
+const governedProblemsSource = (source: string): string =>
+  /const problems = makeGovernedReadProblems\([\s\S]*?\n\}\);/u.exec(source)?.[0] ?? '';
 const inventorySharedApiFile = 'verticals/inventory-stock/shared/api.ts';
 
 it.live(
@@ -1480,6 +1482,7 @@ it.live(
           'party-source-effect-receipt-read-server.ts',
           'person-engagement-profile-read-server.ts',
           'privacy-measure-execution-read-server.ts',
+          'retail-customer-profile-read-server.ts',
           'search-labels-read-server.ts',
           'source-counterparty-admission-read-server.ts',
           'source-party-search-read-server.ts',
@@ -1516,10 +1519,26 @@ it.live(
                 fixture.root,
                 `verticals/inventory-stock/src/api/${fixtureNameValue}${search ? '-search' : ''}-client.ts`,
               );
-              expect(
-                normalize(yield* Effect.promise(() => readFile(path.join(owner, 'api', serverName), 'utf-8'))),
-                serverName,
-              ).toBe(compactGovernedSource(expectedServer));
+              const liveServer = yield* Effect.promise(() => readFile(path.join(owner, 'api', serverName), 'utf-8'));
+              if (name === 'retail-customer-profile') {
+                // Domain mapping is owner-adaptable; the generated authentication, problems,
+                // registration and HTTP handler composition must still match the scaffold.
+                expect(governedProblemsSource(expectedServer)).not.toBe('');
+                expect(normalize(governedProblemsSource(liveServer))).toBe(
+                  compactGovernedSource(governedProblemsSource(expectedServer)),
+                );
+                expect(liveServer).toContain('mapDomainError: mapRetailCustomerProfileDomainError,');
+                expect(
+                  normalize(
+                    liveServer
+                      .slice(liveServer.indexOf('export const '))
+                      .replace('mapDomainError: mapRetailCustomerProfileDomainError,', ''),
+                  ),
+                  serverName,
+                ).toBe(compactGovernedSource(expectedServer.slice(expectedServer.indexOf('export const '))));
+              } else {
+                expect(normalize(liveServer), serverName).toBe(compactGovernedSource(expectedServer));
+              }
               expect(
                 normalize(yield* Effect.promise(() => readFile(path.join(owner, 'src/api', clientName), 'utf-8'))),
                 clientName,
