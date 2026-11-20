@@ -161,8 +161,9 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
 /**
  * What a synchronous admission carries besides its key and route. The stock route sends only its rows. The group route
  * sends its groups and, for a new admission, what the owner holds for each code, which the owner admission fences its
- * plan on. A route context the owner resolved only as the receipt of this key's saved admission enrolls no read: the
- * groups go alone, and the owner answers from that admission or refuses a different body as a conflict.
+ * plan on. The owner resolves a key that already has a saved group admission to that admission first, even on a route
+ * still configured, and such a context enrolls no read: the groups go alone, and the owner answers from that admission
+ * or refuses a different body as a conflict.
  */
 const syncAdmissionSource = Effect.fn('SymmyGovernedDispatch.syncAdmissionSource')(function* syncAdmissionSource(
   request: Parameters<SymmyIngressDispatch['apply']>[0]['request'],

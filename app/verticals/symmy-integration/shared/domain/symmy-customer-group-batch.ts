@@ -21,6 +21,10 @@ const definitionSource = create.source.schema.fields;
  * source record and the source code the Commerce owner binds to one group. Every other field is the owner's own
  * create field and is stated by the source; the business code is never derived from the code, and the meaning is
  * never derived from a name.
+ *
+ * Symmy states no revision or time for a group, so the order in which OntOS admits requests is the order: each
+ * admission asserts its code after the last assertion the owner holds, under a revision derived from its
+ * Idempotency-Key. A delayed older request admitted later wins.
  */
 export const SymmyCustomerGroupRowSchema = Schema.Struct({
   businessCode: create.businessCode,
