@@ -225,6 +225,8 @@ it.live(
             principalId: systemPrincipalId,
             routeId: groupLogicalRouteId,
             routeRevision: internalSyncSource.routeRevision,
+            // The Shell reads each code's current definition as the API-key integration principal before it admits.
+            sourceReaderPrincipalIds: [integration.principalId],
             tenantId,
           },
         };
