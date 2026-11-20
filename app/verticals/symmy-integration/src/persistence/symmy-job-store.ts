@@ -925,7 +925,8 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
 });
 /**
  * The context of a key's saved sync admission on a route whose plan is withdrawn or, for the customer groups route,
- * still configured: a group admission is answered from what it saved, never from a new owner read.
+ * still configured: a group admission is answered from what it saved, never from a new owner read. A key whose
+ * admission retention purged is refused here, as its admission refuses it, before any owner read.
  */
 const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRoute')(function* qualifyRetainedSyncRoute(
   transaction: ScopedTransactionExecutor,
@@ -940,13 +941,19 @@ const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRou
     return Option.none();
   }
   const [saved, duplicate] = yield* transaction
-    .select({ executionPlan: symmySyncAdmissions.executionPlan })
+    .select({
+      executionPlan: symmySyncAdmissions.executionPlan,
+      retentionReceipt: symmySyncAdmissions.retentionReceipt,
+    })
     .from(symmySyncAdmissions)
-    .where(and(syncAdmissionKey(row, row.routeKey, digest), isNull(symmySyncAdmissions.retentionReceipt)))
+    .where(syncAdmissionKey(row, row.routeKey, digest))
     .limit(2)
     .pipe(Effect.mapError(unavailable));
   if (saved === undefined || duplicate !== undefined) {
     return Option.none();
+  }
+  if (saved.retentionReceipt !== null) {
+    return yield* routeDenied();
   }
   const original = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(
     Effect.mapError(unavailable),

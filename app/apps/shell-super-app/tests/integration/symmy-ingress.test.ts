@@ -1755,6 +1755,18 @@ it.effect('answers a saved group key from its admission on a still-configured ro
       const body = Schema.decodeUnknownSync(Schema.Json)(await request.json());
       bodies.push(body);
       if (path.endsWith('/reads/symmy-route-context')) {
+        if (JSON.stringify(body).includes('"replayIdempotencyKey":"purged-group-key"')) {
+          return Response.json(
+            {
+              _tag: 'SymmyRouteContextForbiddenProblem',
+              detail: 'This integration route is not available to the current principal.',
+              status: 403,
+              title: 'Forbidden',
+              type: 'https://ontos.dev/problems/test-route-context',
+            },
+            { headers: { 'content-type': 'application/problem+json' }, status: 403 },
+          );
+        }
         return Response.json(
           JSON.stringify(body).includes(`"replayIdempotencyKey":"${idempotencyKey}"`) ? retainedRoute : configuredRoute,
         );
@@ -1838,6 +1850,11 @@ it.effect('answers a saved group key from its admission on a still-configured ro
     const fresh = yield* post(['bound-group'], 'fresh-group-key');
     expect(fresh.status).toBe(503);
     expect(paths).toEqual([`${releasePath}/reads/symmy-route-context`, definitionPath]);
+    // The owner's route lookup refuses a key whose saved admission retention purged: 403 before any definition read.
+    paths.length = 0;
+    const purged = yield* post(['bound-group'], 'purged-group-key');
+    expect(purged.status).toBe(403);
+    expect(paths).toEqual([`${releasePath}/reads/symmy-route-context`]);
   }),
 );
 
