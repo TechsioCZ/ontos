@@ -1832,7 +1832,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
     );
 
     suite.effect(
-      'a denied, approval-only, unreachable or undeclared decision fails closed with its own typed refusal and no byte',
+      'a denied, unreachable or undeclared decision fails closed with its own typed refusal and no byte, and approval cannot even be granted for a download',
       () =>
         withMediaWorld((world) =>
           Effect.gen(function* failsClosed() {
