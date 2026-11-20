@@ -15,6 +15,13 @@ export const pricingMcpContribution = defineOntosMcpContribution({
         en: 'Define a price',
       },
     },
+    'grant-external-price-source-authority': {
+      genericOnly: true,
+      title: {
+        cs: 'Povolit externímu zdroji přesnou cenu',
+        en: 'Grant an external source authority over an exact price',
+      },
+    },
     'manage-commitment-confirmation': 'hidden',
     'manage-contractual-discount': {
       destructive: true,

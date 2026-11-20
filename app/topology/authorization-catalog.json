@@ -12657,6 +12657,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.external-price-source-authority.grant",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "external-price-source-authority",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.grant-external-price-source-authority",
+            "moduleKey": "commerce.pricing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.price-group-source-prices.read",
             "kind": "read",
             "modes": [
