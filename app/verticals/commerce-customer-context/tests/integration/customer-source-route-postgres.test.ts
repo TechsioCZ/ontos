@@ -24,17 +24,14 @@ import {
   principals,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import type {
-  ConfigureCustomerSourceRoutePayloadSchema} from '../../shared/actions/configure-customer-source-route.ts';
-import {
-  ConfigureCustomerSourceRouteResultSchema,
-} from '../../shared/actions/configure-customer-source-route.ts';
+import { ConfigureCustomerSourceRouteResultSchema } from '../../shared/actions/configure-customer-source-route.ts';
+import type { ConfigureCustomerSourceRoutePayloadSchema } from '../../shared/actions/configure-customer-source-route.ts';
 import { CustomerGroupDefinitionSourceRequestSchema } from '../../shared/apis/customer-group-definition-source.ts';
-import {
-  CustomerSourceRouteResponseSchema,
+import { CustomerSourceRouteResponseSchema } from '../../shared/apis/customer-source-route.ts';
+import type {
+  CustomerSourceRouteRequestSchema,
+  CustomerSourceRouteResponse,
 } from '../../shared/apis/customer-source-route.ts';
-import type { CustomerSourceRouteResponse ,
-  CustomerSourceRouteRequestSchema} from '../../shared/apis/customer-source-route.ts';
 import { AddressBookProfileSchema, SavedAddressPurposesSchema } from '../../shared/domain/address-book.ts';
 import {
   CustomerSourceRouteUnavailable,
