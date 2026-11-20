@@ -9,6 +9,7 @@ import {
   issueApiKeyGatewayContext,
   issueDelegatedGatewayContext,
 } from '@app/shared-contracts/server/gateway-context-api-key';
+import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import {
   GatewayAuthenticationRequiredProblemSchema,
   GatewayForbiddenProblemSchema,
@@ -19,7 +20,7 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
 import { Config, Effect, Layer, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 
@@ -171,6 +172,32 @@ it.live(
         const assertion = yield* issue(actorKey.secret);
         expect(assertion.compositionRevision).toBe(snapshot.composition.revision);
         expect(assertion.apiBaseUrl).toContain('/party-registry/');
+        // An integration key without the Symmy workload a route requires is refused before its request is decoded.
+        const client = yield* HttpClient.HttpClient;
+        const symmyHeaders = { 'x-api-key': Redacted.value(actorKey.secret) };
+        const malformedSymmyStatuses = Effect.all([
+          client.post(`${shell.baseUrl}${SYMMY_ROUTES.productsBatch.path}`, {
+            body: HttpBody.text('{"unexpected":true}', 'application/json'),
+            headers: { ...symmyHeaders, 'idempotency-key': 'native-unbound-workload' },
+          }),
+          client.get(`${shell.baseUrl}${SYMMY_ROUTES.adminProducts.path}?audience=outside-module`, {
+            headers: symmyHeaders,
+          }),
+          client.get(`${shell.baseUrl}${SYMMY_ROUTES.job.path.replace('{id}', 'not-a-job-id')}`, {
+            headers: symmyHeaders,
+          }),
+        ]).pipe(Effect.map((responses) => responses.map(({ status }) => status)));
+        expect(yield* malformedSymmyStatuses).toEqual([403, 403, 403]);
+        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${actor.principalId},'integration.symmy-poll','active')`;
+        // The poll workload admits the job read and the business reads, whose decoders now answer; a write still needs admit.
+        expect(yield* malformedSymmyStatuses).toEqual([403, 400, 400]);
+        yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=now()
+          where tenant_id=${tenantId} and principal_id=${actor.principalId} and workload_key='integration.symmy-poll' and status='active'`;
+        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${actor.principalId},'integration.symmy-admit','active')`;
+        // The admit workload admits the write and the business reads, whose decoders now answer; the job read needs poll.
+        expect(yield* malformedSymmyStatuses).toEqual([400, 400, 403]);
         const staleRevision = snapshot.composition.revision === 'a'.repeat(64) ? 'b'.repeat(64) : 'a'.repeat(64);
         const staleRelease = yield* issueApiKeyGatewayContext(
           { audience: 'party-registry', compositionRevision: staleRevision },

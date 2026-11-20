@@ -3,6 +3,7 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase } from '@app/core-runtime/db/client';
+import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import {
   SymmyRouteContextRequestSchema,
   SymmyRouteContextResponseSchema,
@@ -27,13 +28,27 @@ type Route = typeof SymmyRouteContextResponseSchema.Type;
 type RouteRequest = typeof SymmyRouteContextRequestSchema.Encoded;
 const SourcePurposeSchema = Schema.Literals(['admit', 'read']);
 type SourcePurpose = typeof SourcePurposeSchema.Type;
+/** The job read polls: the owner's job status Read admits only the poll workload. */
+type WorkloadPurpose = SourcePurpose | 'poll';
 const routeJsonSchema = Schema.fromJsonString(SymmyRouteContextResponseSchema);
-const readRoutes: ReadonlySet<RouteRequest['routeKey']> = new Set([
-  'adminCustomers',
-  'adminProducts',
-  'adminRegions',
-  'priceLists',
-]);
+const symmyRouteInventory = { ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES };
+const purposeByMode = {
+  business_read: 'read',
+  durable_job: 'admit',
+  item_results: 'admit',
+  job_read: 'poll',
+} as const satisfies Record<(typeof symmyRouteInventory)[keyof typeof symmyRouteInventory]['mode'], WorkloadPurpose>;
+const routePurposes: ReadonlyMap<string, WorkloadPurpose> = new Map(
+  Object.entries(symmyRouteInventory).map(([route, { mode }]) => [route, purposeByMode[mode]]),
+);
+/**
+ * What the named Symmy route asks of its caller, read from the route inventory: a write admits, a business read
+ * reads and the job read polls. A route in neither inventory is forbidden.
+ */
+const symmyRoutePurpose = (route: string): Effect.Effect<WorkloadPurpose, GatewayDelegationError> => {
+  const purpose = routePurposes.get(route);
+  return purpose === undefined ? Effect.fail(delegationForbidden()) : Effect.succeed(purpose);
+};
 interface RouteScopeFacts {
   readonly compositionRevision: string;
   readonly principal: TrustedPrincipalContext;
@@ -74,7 +89,7 @@ const sameIdentity = (left: TrustedPrincipalContext, right: TrustedPrincipalCont
 /** Native identity and source-workload facts are read again for every projection attempt. */
 const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(function* validatePrincipal(
   candidate: TrustedPrincipalContext,
-  sourcePurpose: SourcePurpose,
+  purpose: WorkloadPurpose,
 ) {
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(candidate).pipe(
     Effect.mapError(delegationForbidden),
@@ -109,7 +124,7 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
       where p.tenant_id=${principal.tenantId}::uuid and p.principal_id=${principal.principalId}::uuid
         and p.kind='integration' and p.status='active'
         and exists(select 1 from core.access_workload_bindings w where w.tenant_id=p.tenant_id and w.principal_id=p.principal_id
-          and w.status='active' and (w.workload_key='integration.symmy-admit' or (${sourcePurpose}='read' and w.workload_key='integration.symmy-poll')))
+          and w.status='active' and ((${purpose}<>'poll' and w.workload_key='integration.symmy-admit') or (${purpose}<>'admit' and w.workload_key='integration.symmy-poll')))
       limit 2`,
           'objects',
         );
@@ -121,6 +136,17 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
   }
   return principal;
 });
+/**
+ * The tenant-local Symmy workload the named route requires, checked before its request is decoded: a write admits,
+ * a business read admits or polls, and the job read polls. An unknown route is forbidden.
+ */
+export const requireSymmyRouteWorkload = Effect.fn('SymmyRouteScope.requireWorkload')(function* requireWorkload(
+  principal: TrustedPrincipalContext,
+  route: string,
+) {
+  yield* validateRoutePrincipal(principal, yield* symmyRoutePurpose(route));
+});
+
 const validateCompany = Effect.fn('SymmyRouteScope.validateCompany')(function* company(route: Route, tenantId: string) {
   if (route.tenantId !== tenantId) {
     return yield* delegationForbidden();
@@ -145,15 +171,12 @@ export const acquireSymmyRouteScopeProof = Effect.fn('SymmyRouteScope.acquire')(
   readonly principal: TrustedPrincipalContext;
   readonly requestCorrelation: string;
   readonly routeRequest: RouteRequest;
-  readonly sourcePurpose: SourcePurpose;
 }) {
-  const sourcePurpose = yield* Schema.decodeUnknownEffect(SourcePurposeSchema)(input.sourcePurpose).pipe(
-    Effect.mapError(delegationForbidden),
-  );
   const routeRequest = yield* Schema.decodeUnknownEffect(SymmyRouteContextRequestSchema)(input.routeRequest).pipe(
     Effect.mapError(delegationForbidden),
   );
-  if ((sourcePurpose === 'read') !== readRoutes.has(routeRequest.routeKey)) {
+  const sourcePurpose = yield* symmyRoutePurpose(routeRequest.routeKey);
+  if (sourcePurpose === 'poll') {
     return yield* delegationForbidden();
   }
   const principal = yield* validateRoutePrincipal(input.principal, sourcePurpose);

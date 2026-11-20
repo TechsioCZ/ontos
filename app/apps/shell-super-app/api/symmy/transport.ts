@@ -87,6 +87,7 @@ import type {
   SymmyInternalProductsProjectionSchema,
 } from './read-projection-contracts.ts';
 
+import { SymmyAdmittedCaller } from './admitted-caller.ts';
 import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
 
 export const SymmyHostMount = Context.Reference<boolean>('@app/shell-super-app/api/symmy/transport/SymmyHostMount', {
@@ -249,9 +250,11 @@ export interface SymmyIngressDispatch {
 export class SymmyIngress extends Context.Service<
   SymmyIngress,
   {
+    /** `route` names the matched endpoint; admission checks the tenant-local workload that route requires. */
     readonly admit: (
       rawKey: string,
       request: HttpServerRequest.HttpServerRequest,
+      route: string,
     ) => Effect.Effect<SymmyIngressAdmission, SymmyIngressProblem, HttpServerRequest.HttpServerRequest>;
     readonly dispatch: SymmyIngressDispatch;
   }
@@ -417,6 +420,28 @@ export const SymmyHostMountLive = HttpRouter.middleware(
   { global: true },
 );
 
+/**
+ * Verifies the API key and admits the workload the matched route requires: 401 with the ApiKey challenge for a
+ * missing, blank or refused key, 403 for a refused principal or workload. Symmy authentication runs it for every
+ * route before HttpApi decodes the path, headers, query or body, so a caller who is not admitted never makes the
+ * Shell decode or map its request.
+ */
+export const admitSymmyCaller = Effect.fn('SymmyIngress.admitCaller')(function* admitSymmyIngressCaller(
+  ingress: typeof SymmyIngress.Service,
+  credential: Redacted.Redacted,
+  route: string,
+): Effect.fn.Return<typeof SymmyAdmittedCaller.Service, SymmyIngressProblem, HttpServerRequest.HttpServerRequest> {
+  yield* noStore;
+  const rawKey = Redacted.value(credential);
+  if (rawKey.trim().length === 0) {
+    return yield* requireAuthentication;
+  }
+  const admission = yield* ingress
+    .admit(rawKey, yield* HttpServerRequest.HttpServerRequest, route)
+    .pipe(Effect.catchTag('GatewayAuthenticationRequiredProblem', () => requireAuthentication));
+  return { admission, credential: Redacted.make(rawKey.trim()) };
+});
+
 const handle = <Request extends SymmyIngressRequest, Result, DispatchProblem>(
   success: Schema.Codec<Result, unknown>,
   dispatch: (
@@ -425,22 +450,12 @@ const handle = <Request extends SymmyIngressRequest, Result, DispatchProblem>(
   ) => Effect.Effect<Result, DispatchProblem>,
 ) => {
   const validateResult = Schema.decodeUnknownEffect(Schema.toType(success));
-  return Effect.fn('SymmyIngress.handle')(function* handleSymmyIngress(
-    rawKey: string | undefined,
-    request: Request,
-    httpRequest: HttpServerRequest.HttpServerRequest,
-  ) {
-    yield* noStore;
-    if (rawKey === undefined || rawKey.trim().length === 0) {
-      return yield* requireAuthentication;
-    }
-    if (yield* repeatsCredential(request, Redacted.make(rawKey.trim()))) {
+  return Effect.fn('SymmyIngress.handle')(function* handleSymmyIngress(request: Request) {
+    const { admission, credential } = yield* SymmyAdmittedCaller;
+    if (yield* repeatsCredential(request, credential)) {
       return yield* Effect.fail(symmyInvalidProblem);
     }
     const ingress = yield* SymmyIngress;
-    const admission = yield* ingress
-      .admit(rawKey, httpRequest)
-      .pipe(Effect.catchTag('GatewayAuthenticationRequiredProblem', () => requireAuthentication));
     const result = yield* dispatch(ingress, { admission, request }).pipe(
       Effect.tapError((problem) =>
         Predicate.isTagged(problem, 'GatewayAuthenticationRequiredProblem') ? apiKeyChallenge : Effect.void,
@@ -593,127 +608,81 @@ const stockRequest = (
 
 export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
   group
-    .handle('adminCustomers', ({ headers, query: { fields, ...read }, request }) =>
-      handleCustomersRead(
-        headers['x-api-key'],
-        {
-          query: { ...read, contractVersion: 'INTERNAL_C14', fields: fields?.filter(isSymmyCustomerFieldName) },
-          route: 'adminCustomers',
-        },
-        request,
-      ),
+    .handle('adminCustomers', ({ query: { fields, ...read } }) =>
+      handleCustomersRead({
+        query: { ...read, contractVersion: 'INTERNAL_C14', fields: fields?.filter(isSymmyCustomerFieldName) },
+        route: 'adminCustomers',
+      }),
     )
-    .handle('adminProducts', ({ headers, query: { fields, ...read }, request }) =>
-      handleProductsRead(
-        headers['x-api-key'],
-        {
-          fields: fields?.filter(isSymmyProductFieldName),
-          query: { ...read, contractVersion: 'INTERNAL_C14' },
-          route: 'adminProducts',
-        },
-        request,
-      ),
+    .handle('adminProducts', ({ query: { fields, ...read } }) =>
+      handleProductsRead({
+        fields: fields?.filter(isSymmyProductFieldName),
+        query: { ...read, contractVersion: 'INTERNAL_C14' },
+        route: 'adminProducts',
+      }),
     )
-    .handle('adminRegions', ({ headers, query: { fields, ...read }, request }) =>
-      handleRegionsRead(
-        headers['x-api-key'],
-        {
-          fields: fields?.filter(isSymmyRegionFieldName),
-          query: { ...read, contractVersion: 'INTERNAL_C14' },
-          route: 'adminRegions',
-        },
-        request,
-      ),
+    .handle('adminRegions', ({ query: { fields, ...read } }) =>
+      handleRegionsRead({
+        fields: fields?.filter(isSymmyRegionFieldName),
+        query: { ...read, contractVersion: 'INTERNAL_C14' },
+        route: 'adminRegions',
+      }),
     )
-    .handle('customerGroupCustomersBatch', ({ headers, params, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        {
-          code: params.code,
-          ...payload,
-          idempotencyKey: headers['idempotency-key'],
-          route: 'customerGroupCustomersBatch',
-        },
-        request,
-      ),
+    .handle('customerGroupCustomersBatch', ({ headers, params, payload }) =>
+      handleSubmit({
+        code: params.code,
+        ...payload,
+        idempotencyKey: headers['idempotency-key'],
+        route: 'customerGroupCustomersBatch',
+      }),
     )
-    .handle('customerGroupsBatch', ({ headers, payload, request }) =>
-      handleApply(
-        headers['x-api-key'],
-        syncRequest('customerGroupsBatch', payload, headers['idempotency-key']),
-        request,
-      ),
+    .handle('customerGroupsBatch', ({ headers, payload }) =>
+      handleApply(syncRequest('customerGroupsBatch', payload, headers['idempotency-key'])),
     )
-    .handle('customersBatch', ({ headers, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        {
-          customers: mapSymmyCustomersBatchRequest(payload),
-          idempotencyKey: headers['idempotency-key'],
-          route: 'customersBatch',
-        },
-        request,
-      ),
+    .handle('customersBatch', ({ headers, payload }) =>
+      handleSubmit({
+        customers: mapSymmyCustomersBatchRequest(payload),
+        idempotencyKey: headers['idempotency-key'],
+        route: 'customersBatch',
+      }),
     )
-    .handle('inventoryStockBatch', ({ headers, payload, request }) =>
-      handleStockApply(headers['x-api-key'], stockRequest(payload, headers['idempotency-key']), request),
+    .handle('inventoryStockBatch', ({ headers, payload }) =>
+      handleStockApply(stockRequest(payload, headers['idempotency-key'])),
     )
-    .handle('job', ({ headers, params, request }) =>
-      handlePoll(headers['x-api-key'], { id: params.id, route: 'job' }, request),
+    .handle('job', ({ params }) => handlePoll({ id: params.id, route: 'job' }))
+    .handle('priceListPricesBatch', ({ headers, payload }) =>
+      handleSubmit({
+        idempotencyKey: headers['idempotency-key'],
+        priceBatch: mapSymmyPriceListPricesBatchRequest(payload),
+        route: 'priceListPricesBatch',
+      }),
     )
-    .handle('priceListPricesBatch', ({ headers, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        {
-          idempotencyKey: headers['idempotency-key'],
-          priceBatch: mapSymmyPriceListPricesBatchRequest(payload),
-          route: 'priceListPricesBatch',
-        },
-        request,
-      ),
+    .handle('priceLists', ({ query }) =>
+      handlePriceListsRead({ query: { ...query, contractVersion: 'INTERNAL_C14' }, route: 'priceLists' }),
     )
-    .handle('priceLists', ({ headers, query, request }) =>
-      handlePriceListsRead(
-        headers['x-api-key'],
-        { query: { ...query, contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
-        request,
-      ),
+    .handle('priceListsBatchUpsert', ({ headers, payload }) =>
+      handleSubmit({
+        idempotencyKey: headers['idempotency-key'],
+        priceLists: mapSymmyPriceListsBatchRequest(payload),
+        route: 'priceListsBatchUpsert',
+      }),
     )
-    .handle('priceListsBatchUpsert', ({ headers, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        {
-          idempotencyKey: headers['idempotency-key'],
-          priceLists: mapSymmyPriceListsBatchRequest(payload),
-          route: 'priceListsBatchUpsert',
-        },
-        request,
-      ),
+    .handle('assortmentRulesFixtureBatch', ({ headers, payload }) =>
+      handleSubmit({ ...payload, idempotencyKey: headers['idempotency-key'], route: 'assortmentRulesFixtureBatch' }),
     )
-    .handle('assortmentRulesFixtureBatch', ({ headers, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'assortmentRulesFixtureBatch' },
-        request,
-      ),
+    .handle('sellerVatDeclarationsFixtureBatch', ({ headers, payload }) =>
+      handleSubmit({
+        ...payload,
+        idempotencyKey: headers['idempotency-key'],
+        route: 'sellerVatDeclarationsFixtureBatch',
+      }),
     )
-    .handle('sellerVatDeclarationsFixtureBatch', ({ headers, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'sellerVatDeclarationsFixtureBatch' },
-        request,
-      ),
-    )
-    .handle('productsBatch', ({ headers, payload, request }) =>
-      handleSubmit(
-        headers['x-api-key'],
-        {
-          idempotencyKey: headers['idempotency-key'],
-          products: mapSymmyProductsBatchRequest(payload),
-          route: 'productsBatch',
-        },
-        request,
-      ),
+    .handle('productsBatch', ({ headers, payload }) =>
+      handleSubmit({
+        idempotencyKey: headers['idempotency-key'],
+        products: mapSymmyProductsBatchRequest(payload),
+        route: 'productsBatch',
+      }),
     ),
 );
 export const SymmyIngressSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(SymmySchemaError, () =>

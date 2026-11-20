@@ -89,7 +89,7 @@ export const symmyUnsupportedProblem = (reason: typeof SymmyUnsupportedProblemSc
     type: 'https://ontos.dev/problems/symmy-unsupported',
   });
 
-const ingressProblems = [
+export const ingressProblems = [
   GatewayAuthenticationRequiredProblemSchema,
   GatewayForbiddenProblemSchema,
   GatewayRateLimitedProblemSchema,
@@ -100,17 +100,9 @@ const ingressProblems = [
 ];
 export type SymmyIngressProblem = (typeof ingressProblems)[number]['Type'] | typeof GatewayInternalProblemSchema.Type;
 
-const authenticationHeaders = {
-  'x-api-key': Schema.optionalKey(Schema.String),
-};
-const headers = Schema.Struct(authenticationHeaders);
 export const SymmyClientIdempotencyKeySchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,200}$/u)).pipe(
   Schema.brand('SymmyClientIdempotencyKey'),
 );
-const submitHeaders = Schema.Struct({
-  ...authenticationHeaders,
-  'idempotency-key': SymmyClientIdempotencyKeySchema,
-});
 const query = Schema.Struct({}).check(Schema.isMaxProperties(0));
 /** Paging fields shared by every read route, so each route's own query schema pages the same way. */
 export const symmyReadLimitSchema = Schema.NumberFromString.check(
@@ -260,22 +252,19 @@ export const SymmyFixtureJobStatusSchema = Schema.Union([
   }),
 ]);
 
-const base = { error: ingressProblems, headers, query };
+const base = { error: ingressProblems, query };
 export const symmyReadOptions = { ...base, query: SymmyInternalReadQuerySchema, success: SymmyFixtureReadSchema };
 export const symmyWriteOptions = {
   ...base,
   error: [...ingressProblems, SymmyIdempotencyRequiredProblemSchema, SymmyFixtureIntentConflictProblemSchema],
-  headers: Schema.Struct({
-    ...authenticationHeaders,
-    'idempotency-key': Schema.optionalKey(SymmyClientIdempotencyKeySchema),
-  }),
+  headers: Schema.Struct({ 'idempotency-key': Schema.optionalKey(SymmyClientIdempotencyKeySchema) }),
   payload: SymmyInternalWritePayloadSchema,
   success: SymmyFixtureItemResultsSchema,
 };
 export const symmySubmitOptions = {
   ...base,
   error: [...ingressProblems, SymmyFixtureIntentConflictProblemSchema],
-  headers: submitHeaders,
+  headers: Schema.Struct({ 'idempotency-key': SymmyClientIdempotencyKeySchema }),
   payload: SymmyInternalWritePayloadSchema,
   success: SymmyFixtureAdmissionSchema.pipe(HttpApiSchema.status(202)),
 };

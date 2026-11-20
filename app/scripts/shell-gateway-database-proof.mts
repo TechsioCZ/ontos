@@ -437,10 +437,10 @@ const bindingReferences = (model: Model, binding: Binding): readonly Identifier[
   model.referenceCache.set(binding, result);
   return result;
 };
-const immutable = (model: Model, binding: Binding): boolean =>
-  binding.kind !== 'mutable' &&
-  binding.kind !== 'parameter' &&
+const unwritten = (model: Model, binding: Binding): boolean =>
   !bindingReferences(model, binding).some((node) => model.writes.some((write) => inside(node, write)));
+const immutable = (model: Model, binding: Binding): boolean =>
+  binding.kind !== 'mutable' && binding.kind !== 'parameter' && unwritten(model, binding);
 const callOf = (model: Model, node: Span): CallExpression | undefined =>
   model.calls.find((call) => unwrap(call.callee) === node);
 const closestFunction = (model: Model, node: Span): FunctionNode | undefined =>
@@ -1063,7 +1063,8 @@ const moduleString = (model: Model, input: Expression, seen = new Set<Binding>()
   }
   return result;
 };
-const consumersConfined = (proof: IssuerProof, model: Model, spans: readonly RoleSpan[]): boolean => {
+/** True when no non-test module re-exports, star-exports or dynamically imports `file`. */
+const moduleSealed = (proof: IssuerProof, file: string): boolean => {
   for (const [consumer, source] of proof.sources) {
     if (testSource(consumer) || (!source.includes('export') && !source.includes('import'))) {
       continue;
@@ -1075,21 +1076,27 @@ const consumersConfined = (proof: IssuerProof, model: Model, spans: readonly Rol
     if (
       other.dynamicImports.some((node) => {
         const specifier = moduleString(other, node);
-        return specifier !== undefined && proof.resolve(consumer, specifier) === model.file;
+        return specifier !== undefined && proof.resolve(consumer, specifier) === file;
       })
     ) {
       return false;
     }
-    if (other.moduleEscapes.some((specifier) => proof.resolve(consumer, specifier) === model.file)) {
+    if (other.moduleEscapes.some((specifier) => proof.resolve(consumer, specifier) === file)) {
       return false;
     }
     if (
       [...other.exports.values()].some(
-        (entry) => !Schema.is(Schema.String)(entry) && proof.resolve(consumer, entry.source) === model.file,
+        (entry) => !Schema.is(Schema.String)(entry) && proof.resolve(consumer, entry.source) === file,
       )
     ) {
       return false;
     }
+  }
+  return true;
+};
+const consumersConfined = (proof: IssuerProof, model: Model, spans: readonly RoleSpan[]): boolean => {
+  if (!moduleSealed(proof, model.file)) {
+    return false;
   }
   const imports = sourceImports(proof, model.file);
   if (imports === undefined) {
@@ -1245,7 +1252,8 @@ const capabilityClosed = (proof: IssuerProof, model: Model, spans: readonly Role
   });
 };
 
-const symmyContract = (proof: IssuerProof, root: IssuerRoot): boolean => {
+/** The one group the Shell API contract adds as `symmy`, built on the public Symmy route inventory. */
+const symmyGroup = (proof: IssuerProof, root: IssuerRoot): SymbolValue | undefined => {
   const publicFile = proof.packageExports.get('@app/shared-contracts/symmy');
   const routes = publicFile === undefined ? undefined : proof.exported(publicFile, 'SYMMY_ROUTES');
   if (
@@ -1255,35 +1263,38 @@ const symmyContract = (proof: IssuerProof, root: IssuerRoot): boolean => {
       .replaceAll('\\', '/')
       .startsWith('packages/shared-contracts/src/')
   ) {
-    return false;
+    return undefined;
   }
   const { model } = root.contract;
   const initializer = root.contract.binding.init;
   if (initializer === undefined) {
-    return false;
+    return undefined;
   }
-  return model.calls.some(
-    (call) =>
-      inside(call, initializer) &&
-      call.arguments.some((argument) => {
-        if (argument.type === 'SpreadElement') {
-          return false;
-        }
-        const group = proof.symbol(model, argument);
-        if (group?.binding.init === undefined || baseGroup(proof, group.model, group.binding.init) !== 'symmy') {
-          return false;
-        }
-        return group.model.bindings.some(
-          (binding) =>
-            binding.origin?.source === '@app/shared-contracts/symmy' &&
-            binding.origin.imported === 'SYMMY_ROUTES' &&
-            sameSymbol(
-              proof.exported(proof.resolve(group.model.file, binding.origin.source) ?? '', binding.origin.imported),
-              routes,
-            ),
-        );
-      }),
+  // HttpApi.add keys groups by identifier, so a second `symmy` group would replace this one.
+  const added = model.calls.flatMap((call) =>
+    inside(call, initializer)
+      ? call.arguments.filter(
+          (argument) => argument.type !== 'SpreadElement' && baseGroup(proof, model, argument) === 'symmy',
+        )
+      : [],
   );
+  const [argument] = added;
+  const group =
+    added.length === 1 && argument !== undefined && argument.type !== 'SpreadElement'
+      ? proof.symbol(model, argument)
+      : undefined;
+  return group !== undefined &&
+    group.model.bindings.some(
+      (binding) =>
+        binding.origin?.source === '@app/shared-contracts/symmy' &&
+        binding.origin.imported === 'SYMMY_ROUTES' &&
+        sameSymbol(
+          proof.exported(proof.resolve(group.model.file, binding.origin.source) ?? '', binding.origin.imported),
+          routes,
+        ),
+    )
+    ? group
+    : undefined;
 };
 const contextService = (proof: IssuerProof, symbol: SymbolValue, owner: string): boolean => {
   const declaration = symbol.model.classes.find((node) => node.id?.start === symbol.binding.node.start);
@@ -1304,6 +1315,182 @@ const contextService = (proof: IssuerProof, symbol: SymbolValue, owner: string):
     factory.type === 'CallExpression' &&
     factory.arguments.length === 0 &&
     proof.native(symbol.model, factory.callee, 'Context', 'Service')
+  );
+};
+/** The options of a Shell-owned `HttpApiMiddleware.Service` class. */
+const middlewareOptions = (
+  proof: IssuerProof,
+  symbol: SymbolValue | undefined,
+  owner: string,
+): ObjectExpression | undefined => {
+  const declaration = symbol?.model.classes.find((node) => node.id?.start === symbol.binding.node.start);
+  const base =
+    declaration?.superClass === null || declaration?.superClass === undefined
+      ? undefined
+      : unwrap(declaration.superClass);
+  if (symbol === undefined || base?.type !== 'CallExpression' || base.arguments.length !== 2) {
+    return undefined;
+  }
+  const [key, options] = base.arguments;
+  const factory = unwrap(base.callee);
+  return key?.type === 'Literal' &&
+    (text(key) ?? '').startsWith(`@app/${owner}/`) &&
+    options?.type === 'ObjectExpression' &&
+    factory.type === 'CallExpression' &&
+    factory.arguments.length === 0 &&
+    proof.native(symbol.model, factory.callee, 'HttpApiMiddleware', 'Service')
+    ? options
+    : undefined;
+};
+/** The name of the one security scheme the middleware options declare. */
+const securityScheme = (options: ObjectExpression): string | undefined => {
+  const security = objectField(options, 'security');
+  const [scheme] = security?.type === 'ObjectExpression' ? security.properties : [];
+  return security?.type === 'ObjectExpression' &&
+    security.properties.length === 1 &&
+    scheme?.type === 'Property' &&
+    !scheme.computed &&
+    scheme.key.type !== 'PrivateIdentifier'
+    ? text(scheme.key)
+    : undefined;
+};
+interface GroupSecurity {
+  readonly middleware: SymbolValue;
+  readonly scheme: string;
+  readonly use: RoleSpan;
+}
+interface GroupLink {
+  readonly argument: Expression;
+  readonly call: CallExpression;
+  readonly method: string;
+}
+/** The `add`, `annotate`, `middleware` and `prefix` calls of a direct `HttpApiGroup.make` chain, outermost first. */
+const groupLinks = (proof: IssuerProof, model: Model, input: Expression): readonly GroupLink[] | undefined => {
+  const links: GroupLink[] = [];
+  let node = unwrap(input);
+  for (let hop = 0; hop < limit && node.type === 'CallExpression' && !node.optional; hop += 1) {
+    if (proof.native(model, node.callee, 'HttpApiGroup', 'make')) {
+      return links;
+    }
+    const callee = unwrap(node.callee);
+    const [argument] = node.arguments;
+    const method = callee.type === 'MemberExpression' && !callee.optional ? propertyName(callee) : undefined;
+    if (
+      callee.type !== 'MemberExpression' ||
+      method === undefined ||
+      !['add', 'annotate', 'middleware', 'prefix'].includes(method) ||
+      argument === undefined ||
+      argument.type === 'SpreadElement'
+    ) {
+      return undefined;
+    }
+    links.push({ argument, call: node, method });
+    node = unwrap(callee.object);
+  }
+  return undefined;
+};
+/** True when middleware options name every field literally and declare no security. */
+const declaresNoSecurity = (options: ObjectExpression): boolean =>
+  options.properties.every(
+    (field) =>
+      field.type === 'Property' &&
+      !field.computed &&
+      field.key.type !== 'PrivateIdentifier' &&
+      text(field.key) !== 'security',
+  );
+/**
+ * The one security middleware of a group. `HttpApiGroup.middleware` covers only the endpoints already added and
+ * an endpoint's middleware wraps in insertion order, so no endpoint may be added after it and the outermost call
+ * must be a boundary middleware that declares no security.
+ */
+const groupSecurity = (proof: IssuerProof, root: IssuerRoot, group: SymbolValue): GroupSecurity | undefined => {
+  const links = group.binding.init === undefined ? undefined : groupLinks(proof, group.model, group.binding.init);
+  if (links === undefined) {
+    return undefined;
+  }
+  const middlewares = links.map((link) =>
+    link.method === 'middleware' && link.call.arguments.length === 1
+      ? proof.symbol(group.model, link.argument)
+      : undefined,
+  );
+  const options = middlewares.map((middleware) => middlewareOptions(proof, middleware, root.owner));
+  const schemes = options.map((entry) => (entry === undefined ? undefined : securityScheme(entry)));
+  const index = schemes.findIndex((scheme) => scheme !== undefined);
+  const [boundary] = options;
+  const link = links[index];
+  const middleware = middlewares[index];
+  const scheme = schemes[index];
+  if (
+    boundary === undefined ||
+    !declaresNoSecurity(boundary) ||
+    link === undefined ||
+    middleware === undefined ||
+    scheme === undefined ||
+    schemes.filter((entry) => entry !== undefined).length !== 1 ||
+    links.slice(0, index).some((entry) => entry.method === 'add')
+  ) {
+    return undefined;
+  }
+  return { middleware, scheme, use: { model: group.model, span: link.argument } };
+};
+/** True when `binding` has `method` called on it inside `span`, directly or through the parameter of an `Effect.fn`. */
+const invokesMethod = (
+  proof: IssuerProof,
+  model: Model,
+  binding: Binding,
+  span: Span,
+  method: string,
+  hops = 0,
+): boolean =>
+  hops < limit &&
+  bindingReferences(model, binding).some((reference) => {
+    if (!inside(reference, span)) {
+      return false;
+    }
+    const member = model.members.find(
+      (node) => node.object === reference && !node.computed && !node.optional && propertyName(node) === method,
+    );
+    if (member !== undefined) {
+      return callOf(model, member) !== undefined;
+    }
+    const passed = (argument: Span): boolean => argument.start === reference.start && argument.end === reference.end;
+    const call = model.calls.find((node) => node.arguments.some(passed));
+    const callee = call === undefined ? undefined : proof.symbol(model, call.callee);
+    const fn =
+      callee?.binding.init === undefined ? undefined : callbackFunction(proof, callee.model, callee.binding.init);
+    const parameter = call === undefined ? undefined : fn?.params[call.arguments.findIndex(passed)];
+    const target =
+      callee === undefined || parameter?.type !== 'Identifier'
+        ? undefined
+        : bindingAt(callee.model, parameter.name, parameter);
+    return (
+      callee !== undefined &&
+      fn !== undefined &&
+      target !== undefined &&
+      unwritten(callee.model, target) &&
+      invokesMethod(proof, callee.model, target, fn, method, hops + 1)
+    );
+  });
+/** True when every runtime use of `target` outside tests is one of `allowed` and its module is not re-exported. */
+const confinedUses = (proof: IssuerProof, target: SymbolValue, allowed: readonly RoleSpan[]): boolean => {
+  const imports = sourceImports(proof, target.model.file);
+  return (
+    imports !== undefined &&
+    moduleSealed(proof, target.model.file) &&
+    [{ binding: target.binding, model: target.model }, ...imports].every((entry) => {
+      const imported = entry.binding.origin?.imported;
+      if (
+        imported !== undefined &&
+        imported !== '*' &&
+        !sameSymbol(proof.exported(target.model.file, imported), target)
+      ) {
+        return true;
+      }
+      return (
+        imported !== '*' &&
+        bindingReferences(entry.model, entry.binding).every((reference) => authorized(allowed, entry.model, reference))
+      );
+    })
   );
 };
 /** True when the Shell API contract adds a group whose base is `HttpApiGroup.make(name)`. */
@@ -1390,18 +1577,15 @@ const transportServices = (
   }
   return services;
 };
-const configuredServiceProgram = (
+/** The `Effect.gen` program of a root `Layer.effect(service, …)` whose Layer the root handlers provide to `transport`. */
+const configuredProgram = (
   proof: IssuerProof,
   root: IssuerRoot,
   service: SymbolValue,
   transport: SymbolValue,
   call: CallExpression,
 ): FunctionNode | undefined => {
-  if (
-    !inside(call, root.factory) ||
-    !proof.native(root.model, call.callee, 'Layer', 'effect') ||
-    call.arguments.length !== 2
-  ) {
+  if (!proof.native(root.model, call.callee, 'Layer', 'effect') || call.arguments.length !== 2) {
     return undefined;
   }
   const [tag, program] = call.arguments;
@@ -1426,15 +1610,21 @@ const configuredServiceProgram = (
   const symbol = provider?.id.type === 'Identifier' ? proof.symbol(root.model, provider.id) : undefined;
   return symbol !== undefined && layerProvides(proof, root.model, root.handlers, transport, symbol) ? fn : undefined;
 };
-const configuredMethodSpans = (
+interface ConfiguredMethod {
+  readonly call: CallExpression;
+  readonly configured: FunctionNode;
+  readonly program: FunctionNode;
+}
+/** The configured `method` of every root `Layer.effect(service, …)` provided to `transport`, with its program. */
+const configuredMethods = (
   proof: IssuerProof,
   root: IssuerRoot,
   service: SymbolValue,
   transport: SymbolValue,
   method: string,
-): readonly RoleSpan[] =>
+): readonly ConfiguredMethod[] =>
   root.model.calls.flatMap((call) => {
-    const fn = configuredServiceProgram(proof, root, service, transport, call);
+    const fn = configuredProgram(proof, root, service, transport, call);
     if (fn === undefined) {
       return [];
     }
@@ -1443,9 +1633,19 @@ const configuredMethodSpans = (
       returned?.argument === null || returned?.argument === undefined ? undefined : unwrap(returned.argument);
     const configured = fields?.type === 'ObjectExpression' ? objectField(fields, method) : undefined;
     return configured?.type === 'ArrowFunctionExpression' || configured?.type === 'FunctionExpression'
-      ? [{ model: root.model, span: configured }]
+      ? [{ call, configured, program: fn }]
       : [];
   });
+const configuredMethodSpans = (
+  proof: IssuerProof,
+  root: IssuerRoot,
+  service: SymbolValue,
+  transport: SymbolValue,
+  method: string,
+): readonly RoleSpan[] =>
+  configuredMethods(proof, root, service, transport, method).flatMap(({ call, configured }) =>
+    inside(call, root.factory) ? [{ model: root.model, span: configured }] : [],
+  );
 /** Spans of the configured `method` of every context service a mounted transport of group `name` invokes. */
 const ingressSpans = (proof: IssuerProof, root: IssuerRoot, name: string, method: string): readonly RoleSpan[] =>
   mountedTransports(proof, root, name).flatMap(({ groupBody, target }) =>
@@ -1453,8 +1653,55 @@ const ingressSpans = (proof: IssuerProof, root: IssuerRoot, name: string, method
       configuredMethodSpans(proof, root, service, target, method),
     ),
   );
-const symmyIngressSpans = (proof: IssuerProof, root: IssuerRoot): readonly RoleSpan[] =>
-  symmyContract(proof, root) ? ingressSpans(proof, root, 'symmy', 'admit') : [];
+/** The services a root middleware program obtains from the transport's module and admits through in `handler`. */
+const admittingServices = (
+  proof: IssuerProof,
+  root: IssuerRoot,
+  transport: SymbolValue,
+  program: FunctionNode,
+  handler: FunctionNode,
+): readonly SymbolValue[] =>
+  root.model.yields.flatMap((yielded) => {
+    const declaration = root.model.variables.find((node) => node.init === yielded);
+    const binding =
+      declaration?.id.type === 'Identifier' ? bindingAt(root.model, declaration.id.name, declaration.id) : undefined;
+    const service =
+      yielded.delegate && yielded.argument !== null && closestFunction(root.model, yielded) === program
+        ? proof.symbol(root.model, yielded.argument)
+        : undefined;
+    return service !== undefined &&
+      binding !== undefined &&
+      immutable(root.model, binding) &&
+      service.model === transport.model &&
+      contextService(proof, service, root.owner) &&
+      invokesMethod(proof, root.model, binding, handler, 'admit')
+      ? [service]
+      : [];
+  });
+/**
+ * Symmy admission (#1117) runs before HttpApi decodes a request: the `symmy` group's security middleware has one
+ * root Layer, provided to the mounted transport, whose security handler admits through the transport's ingress.
+ */
+const symmyIngressSpans = (proof: IssuerProof, root: IssuerRoot): readonly RoleSpan[] => {
+  const group = symmyGroup(proof, root);
+  const security = group === undefined ? undefined : groupSecurity(proof, root, group);
+  if (security === undefined) {
+    return [];
+  }
+  return mountedTransports(proof, root, 'symmy').flatMap(({ target }) =>
+    configuredMethods(proof, root, security.middleware, target, security.scheme).flatMap(
+      ({ call, configured, program }) => {
+        const [key] = call.arguments;
+        return key !== undefined &&
+          confinedUses(proof, security.middleware, [security.use, { model: root.model, span: key }])
+          ? admittingServices(proof, root, target, program, configured).flatMap((service) =>
+              configuredMethodSpans(proof, root, service, target, 'admit'),
+            )
+          : [];
+      },
+    ),
+  );
+};
 /** Payment gateway relay (#1157): the notification and reconciliation transports authorize one binding route. */
 const paymentRelayIngressSpans = (proof: IssuerProof, root: IssuerRoot): readonly RoleSpan[] =>
   ['paymentNotifications', 'paymentReconciliation'].flatMap((name) =>
