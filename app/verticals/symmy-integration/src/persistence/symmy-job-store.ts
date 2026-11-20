@@ -170,13 +170,17 @@ const reserveMembershipOrder = defineScopedRoutine({
   resultSchema: Schema.Struct({ effective_at: Schema.String, source_order: Schema.Int }),
   routineKey: 'symmy-membership.reserve-order',
 });
-/** Records the lineage order of every membership effect the admitted job pinned. */
+/**
+ * Records the lineage order of every membership effect the admitted job pinned, with the effective time only when the
+ * admission stated it itself (the public customers of a group), never a time an internal plan stated.
+ */
 const recordMembershipOrders = defineScopedRoutine({
   ...membershipRoutine,
   name: 'record_symmy_membership_orders',
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'boolean' },
   ],
   resultSchema: Schema.Struct({ recorded: Schema.Int }),
   routineKey: 'symmy-membership.record-orders',
@@ -1444,7 +1448,9 @@ export const symmyJobStoreFactory = (
               ),
             )
             .pipe(Effect.mapError(unavailable));
-          yield* transaction.invoke(recordMembershipOrders, [inserted.jobId]).pipe(Effect.mapError(unavailable));
+          yield* transaction
+            .invoke(recordMembershipOrders, [inserted.jobId, input.groupCustomers !== undefined])
+            .pipe(Effect.mapError(unavailable));
         }
         return {
           executionReady: inserted.executionPlan !== null,

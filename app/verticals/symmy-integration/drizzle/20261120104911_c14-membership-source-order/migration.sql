@@ -1,6 +1,6 @@
 CREATE TABLE "symmy_integration"."membership_source_orders" (
 	"effect_id" uuid NOT NULL,
-	"effective_at" timestamp with time zone NOT NULL,
+	"effective_at" timestamp with time zone,
 	"lineage_digest" text,
 	"source_order" integer,
 	"tenant_id" uuid,

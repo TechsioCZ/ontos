@@ -300,13 +300,15 @@ export const symmyJobEffects = symmyIntegrationSchema.table.withRLS(
  * The owner orders the memberships of one source manager per profile, whatever group they name, and refuses an older
  * order. One row is the order an admission reserved for one admitted membership effect. Its lineage is a digest of
  * the tenant, legal entity, source issuer, namespace and canonical profile, so no profile reference outlives the
- * erasure of the effect it orders. Rows are written and read only through the Symmy order routines.
+ * erasure of the effect it orders. The effective time is the one the admission itself stated for a public membership;
+ * a time an internal plan stated is not recorded, so it never moves another membership's time. Rows are written and
+ * read only through the Symmy order routines.
  */
 export const symmyMembershipSourceOrders = symmyIntegrationSchema.table.withRLS(
   'membership_source_orders',
   {
     effectId: uuid('effect_id').notNull(),
-    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }),
     lineageDigest: text('lineage_digest').notNull(),
     sourceOrder: integer('source_order').notNull(),
     tenantId: uuid('tenant_id').notNull(),

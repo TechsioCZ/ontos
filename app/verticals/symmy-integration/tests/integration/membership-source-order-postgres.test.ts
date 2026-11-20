@@ -61,6 +61,7 @@ const record = defineScopedRoutine({
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'boolean' },
   ],
   resultSchema: Schema.Struct({ recorded: Schema.Int }),
   routineKey: 'symmy-membership.record-orders',
@@ -78,8 +79,25 @@ const ready = defineScopedRoutine({
   schema: 'symmy_integration',
 });
 
+/** The reservation routine called with a company of the caller's choosing instead of the scope's own. */
+const reserveForCompany = defineScopedRoutine({
+  name: 'reserve_symmy_membership_order',
+  ownerModuleKey: 'integration.symmy',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: Schema.Struct({ effective_at: Schema.String, source_order: Schema.Int }),
+  routineKey: 'symmy-membership.reserve-order-for-company',
+  schema: 'symmy_integration',
+});
+
 const issuer = 'internal-membership-issuer';
 const namespace = 'internal-memberships';
+/** A digest from a hexadecimal seed, one per admission of a route. */
 const digest = (seed: string) => seed.repeat(64).slice(0, 64);
 
 class FixtureRollback extends Schema.TaggedError<FixtureRollback>()('FixtureRollback', {}) {}
@@ -106,9 +124,9 @@ it.effect(
             Effect.orDie,
           ),
       );
-      // Two enrolled routes, each selecting another group, share the membership source of one issuer.
-      const routeIds = { retail: crypto.randomUUID(), wholesale: crypto.randomUUID() };
-      const groupIds = { retail: crypto.randomUUID(), wholesale: crypto.randomUUID() };
+      // Three enrolled routes, each selecting another group, share the membership source of one issuer.
+      const routeIds = { outlet: crypto.randomUUID(), retail: crypto.randomUUID(), wholesale: crypto.randomUUID() };
+      const groupIds = { outlet: crypto.randomUUID(), retail: crypto.randomUUID(), wholesale: crypto.randomUUID() };
       yield* admin.insert(symmyJobRoutes).values(
         Object.entries(routeIds).map(([routeCode, routeId]) => ({
           active: true,
@@ -132,8 +150,11 @@ it.effect(
           ),
           Effect.scoped,
         );
-      /** The admission of one membership: reserve the lineage order, pin the job and its effect, record the order. */
-      const admit = (routeCode: keyof typeof routeIds, profile: string, seed: string) =>
+      /**
+       * The admission of one membership: reserve the lineage order, pin the job and its effect, record the order. A
+       * public membership takes the time its reservation states; an internal plan states its own time.
+       */
+      const admit = (routeCode: keyof typeof routeIds, profile: string, seed: string, planDatedAt?: string) =>
         scoped((transaction) =>
           Effect.gen(function* admitMembership() {
             const [reserved] = yield* transaction.invoke(reserve, [issuer, namespace, profile]);
@@ -155,7 +176,7 @@ it.effect(
               intent: {
                 _tag: 'CustomerGroupMembership',
                 payload: {
-                  effectiveAt: reserved.effective_at,
+                  effectiveAt: planDatedAt ?? reserved.effective_at,
                   groupRef: {
                     ...profileRef,
                     resourceId: groupIds[routeCode],
@@ -221,16 +242,16 @@ it.effect(
               tenantId,
               version: 0,
             });
-            const [recorded] = yield* transaction.invoke(record, [jobId]);
+            const [recorded] = yield* transaction.invoke(record, [jobId, planDatedAt === undefined]);
             return { effectId, effectiveAt: reserved.effective_at, order: reserved.source_order, recorded };
           }),
         );
       const isReady = (effectId: string) =>
         scoped((transaction) => transaction.invoke(ready, [effectId])).pipe(Effect.map(([row]) => row?.ready));
-      /** Moves an effect as a worker would: claimed, its lease lost in a restart, uncertain, then settled. */
+      /** Moves an effect as a worker would: claimed, its lease lost in a restart, uncertain, blocked, then settled. */
       const setState = Effect.fn('MembershipOrderFixture.setState')(function* setState(
         effectId: string,
-        state: 'attempting' | 'indeterminate' | 'settled',
+        state: 'attempting' | 'blocked' | 'indeterminate' | 'settled',
       ) {
         // A lease that ended long ago: the claiming worker is gone.
         const expiredLease = DateTime.toDate(DateTime.makeUnsafe('2000-01-01T00:00:00.000Z'));
@@ -240,11 +261,11 @@ it.effect(
             claimToken: state === 'attempting' ? crypto.randomUUID() : null,
             leaseUntil: state === 'attempting' ? expiredLease : null,
             outcome:
-              state === 'settled'
+              state === 'settled' || state === 'blocked'
                 ? Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
                     effectId,
                     owner: 'commerce.customer-context',
-                    status: 'accepted_change',
+                    status: state === 'settled' ? 'accepted_change' : 'denied',
                   })
                 : null,
             state,
@@ -292,6 +313,82 @@ it.effect(
       expect(other.order).toBe(1);
       expect(yield* isReady(other.effectId)).toBe(true);
 
+      // A blocked earlier membership is retried while its route is enrolled, so a later one waits for it. Once its
+      // route's revision changes it can write nothing at the owner, so nothing waits for it any longer.
+      const blockedProfile = crypto.randomUUID();
+      const blocked = yield* admit('outlet', blockedProfile, '11');
+      const unblocked = yield* admit('retail', blockedProfile, '12');
+      yield* setState(blocked.effectId, 'blocked');
+      expect(yield* isReady(unblocked.effectId)).toBe(false);
+      const outletRevision = (routeRevision: string) =>
+        admin
+          .update(symmyJobRoutes)
+          .set({ routeRevision })
+          .where(and(eq(symmyJobRoutes.tenantId, tenantId), eq(symmyJobRoutes.routeId, routeIds.outlet)));
+      yield* outletRevision('route-2');
+      expect(yield* isReady(unblocked.effectId)).toBe(true);
+      yield* outletRevision('route-1');
+      expect(yield* isReady(unblocked.effectId)).toBe(false);
+
+      // Only a time this ledger stated is a floor. An internal plan dated far ahead moves no later public time (the
+      // owner refuses that later assignment as stale instead); a time the ledger stated keeps every later one at or
+      // after it.
+      const datedProfile = crypto.randomUUID();
+      const planDated = yield* admit('wholesale', datedProfile, '13', '2099-01-01T00:00:00.000Z');
+      const afterPlan = yield* admit('retail', datedProfile, '14');
+      expect([planDated.order, afterPlan.order]).toEqual([1, 2]);
+      expect(afterPlan.effectiveAt < '2099-01-01T00:00:00.000Z').toBe(true);
+      const ledgerTimes = yield* admin
+        .select({
+          effectId: symmyMembershipSourceOrders.effectId,
+          effectiveAt: symmyMembershipSourceOrders.effectiveAt,
+        })
+        .from(symmyMembershipSourceOrders)
+        .where(
+          and(
+            eq(symmyMembershipSourceOrders.tenantId, tenantId),
+            sql`${symmyMembershipSourceOrders.effectId} in (${planDated.effectId}, ${afterPlan.effectId})`,
+          ),
+        );
+      expect(ledgerTimes.find(({ effectId }) => effectId === planDated.effectId)?.effectiveAt).toBeNull();
+      yield* admin
+        .update(symmyMembershipSourceOrders)
+        .set({ effectiveAt: DateTime.toDate(DateTime.makeUnsafe('2098-01-01T00:00:00.000Z')) })
+        .where(
+          and(
+            eq(symmyMembershipSourceOrders.tenantId, tenantId),
+            eq(symmyMembershipSourceOrders.effectId, afterPlan.effectId),
+          ),
+        );
+      const floored = yield* admit('outlet', datedProfile, '15');
+      expect(floored).toMatchObject({ effectiveAt: '2098-01-01T00:00:00.000Z', order: 3 });
+
+      // The routines serve the company the transaction is scoped to only, never another company of the tenant.
+      const otherCompany = crypto.randomUUID();
+      const foreignReservation = scoped((transaction) =>
+        transaction.invoke(reserveForCompany, [otherCompany, issuer, namespace, datedProfile]),
+      );
+      expect(yield* foreignReservation.pipe(Effect.isFailure)).toBe(true);
+      const foreignJobId = crypto.randomUUID();
+      yield* admin.insert(symmyImportJobs).values({
+        executionPlan: null,
+        fixtureId: 'INTERNAL_C14',
+        idempotencyDigest: digest('16'),
+        intentDigest: digest('16'),
+        jobId: foreignJobId,
+        legalEntityId: otherCompany,
+        mappingVersion: 'mapping-1',
+        phase: 'admitted',
+        principalId,
+        routeCode: 'wholesale',
+        routeId: routeIds.wholesale,
+        routeKey: 'customerGroupCustomersBatch',
+        routeRevision: 'route-1',
+        tenantId,
+      });
+      const foreignRecord = scoped((transaction) => transaction.invoke(record, [foreignJobId, true]));
+      expect(yield* foreignRecord.pipe(Effect.isFailure)).toBe(true);
+
       // Upgrade: a membership admitted before the ledger existed has no recorded order. The migration's own backfill
       // records it, so the next reservation continues above it and waits for it.
       const legacyProfile = crypto.randomUUID();
@@ -321,5 +418,37 @@ it.effect(
       expect(yield* isReady(upgraded.effectId)).toBe(false);
       yield* setState(legacy.effectId, 'settled');
       expect(yield* isReady(upgraded.effectId)).toBe(true);
+
+      // The backfill covers the owner's whole order range, and two effects with one order of a lineage fail it whole
+      // instead of one of them being dropped.
+      const collidingProfile = crypto.randomUUID();
+      const firstColliding = yield* admit('wholesale', collidingProfile, '17');
+      const secondColliding = yield* admit('retail', collidingProfile, '18');
+      const colliding = and(
+        eq(symmyMembershipSourceOrders.tenantId, tenantId),
+        sql`${symmyMembershipSourceOrders.effectId} in (${firstColliding.effectId}, ${secondColliding.effectId})`,
+      );
+      const collidingRows = admin
+        .select({ effectId: symmyMembershipSourceOrders.effectId, order: symmyMembershipSourceOrders.sourceOrder })
+        .from(symmyMembershipSourceOrders)
+        .where(colliding)
+        .orderBy(symmyMembershipSourceOrders.sourceOrder);
+      yield* admin.delete(symmyMembershipSourceOrders).where(colliding);
+      const pinOrder = (order: number) =>
+        admin
+          .update(symmyJobEffects)
+          .set({
+            effect: sql`jsonb_set(${symmyJobEffects.effect}, '{intent,payload,source,order}', to_jsonb(${order}::integer))`,
+          })
+          .where(and(eq(symmyJobEffects.tenantId, tenantId), eq(symmyJobEffects.effectId, secondColliding.effectId)));
+      yield* pinOrder(1);
+      expect(yield* admin.execute(sql.raw(backfill)).pipe(Effect.isFailure)).toBe(true);
+      expect(yield* collidingRows).toEqual([]);
+      yield* pinOrder(2_147_483_647);
+      yield* admin.execute(sql.raw(backfill));
+      expect(yield* collidingRows).toEqual([
+        { effectId: firstColliding.effectId, order: 1 },
+        { effectId: secondColliding.effectId, order: 2_147_483_647 },
+      ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
 );

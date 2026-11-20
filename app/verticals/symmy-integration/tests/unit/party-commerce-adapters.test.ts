@@ -1,7 +1,10 @@
 import { AssignCounterpartyPriceGroupResultSchema } from '@app/commerce-customer-context/actions/assign-counterparty-price-group';
 import { UpdateCustomerGroupResultSchema } from '@app/commerce-customer-context/actions/update-customer-group';
 import { AddSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/add-saved-address-action';
-import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
+import {
+  ApplyCustomerGroupMembershipSourceActionConflictProblemSchema,
+  ApplyCustomerGroupMembershipSourcePayloadSchema,
+} from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import {
   AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
   AssignCounterpartyPriceGroupPayloadSchema,
@@ -2305,6 +2308,32 @@ describe('current qualified Group Definition before first Membership write', () 
       expect(recovered.status).toBe('unavailable');
       expect(peer.membershipReceipt.sent).toHaveLength(0);
       expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('settles as stale a membership the owner already holds a later one of', () =>
+    Effect.gen(function* staleMembership() {
+      reset();
+      peer.groupDefinition.succeed(membershipCurrentGroup);
+      peer.membership.fail(
+        ApplyCustomerGroupMembershipSourceActionConflictProblemSchema,
+        ApplyCustomerGroupMembershipSourceActionConflictProblemSchema.make({
+          code: 'SOURCE_STALE',
+          detail: 'A newer Membership operation has already been accepted for this source and Profile',
+          status: 409,
+          title: 'Conflict',
+          type: 'about:blank',
+        }),
+      );
+      const adapter = yield* membershipAdapter;
+      const result = yield* adapter.execute({
+        ...input(),
+        effect: membershipEffect,
+        legalEntityId: sellingLegalEntityId,
+        routeKey: 'customerGroupCustomersBatch',
+        selector: membershipSelector,
+      });
+      expect(result.status).toBe('stale');
+      expect(peer.membership.sent).toHaveLength(1);
     }).pipe(asSymmyWorker),
   );
 });
